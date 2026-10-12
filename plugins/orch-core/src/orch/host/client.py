@@ -13,6 +13,9 @@ from ._socket import peer_credentials, recv
 from ._unix import UnsafePath
 from .listener import check_socket_path
 
+#: the ops this client calls above contract version 1 (§0.4: an op left out of ``hello.ops`` is assumed at 1)
+CLIENT_OPS: dict[str, int] = {"task.done": 2}
+
 
 class PinMismatch(UnsafePath):
     """The process behind the socket is not the one the trusted registry or pin names (a hard refusal, never a
@@ -111,7 +114,7 @@ class Connection:
     """
 
     def __init__(self, pin: Pin, *, client: str = "orch", timeout: float = 120) -> None:
-        hello = {"t": "hello", "proto": [1], "client": client, "caps": []}
+        hello = {"t": "hello", "proto": [1], "client": client, "caps": [], "ops": dict(CLIENT_OPS)}
         self.sock, self.welcome = handshake_pinned(pin, hello)
         self.timeout = timeout
         self.sock.settimeout(timeout)

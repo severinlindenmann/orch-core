@@ -235,18 +235,11 @@ def _find(entries: list[dict[str, Any]], code: str, run: Path | None, state: Pat
 
 
 def _socket(run: Path | None, state: Path, host_uid: int, workspace_id: str) -> Path:
-    """``--run``, else the service-managed run directory when a host serves there, else the dev ``<state>/run``."""
-    from .listener import default_run_directory
+    """``--run``, else the tier-A ``<state>/run`` (H7: a path that merely exists under the tier-B run directory never
+    wins)."""
+    from .enable import run_dir_for
 
-    if run is not None:
-        return run / workspace_id / "host.sock"
-    try:
-        service = default_run_directory(host_uid) / workspace_id / "host.sock"
-    except Exception:  # noqa: BLE001 - an unsupported platform has no service run directory
-        service = None
-    if service is not None and service.exists():
-        return service
-    return state / "run" / workspace_id / "host.sock"
+    return run_dir_for(state, run) / workspace_id / "host.sock"
 
 
 def _own_workspaces(state: Path, uid: int, pick: str | None) -> list[dict[str, Any]]:

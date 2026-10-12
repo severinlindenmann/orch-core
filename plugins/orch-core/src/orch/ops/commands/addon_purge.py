@@ -33,7 +33,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         sections += len(mine)
         artifacts += len(arts)
     done = h.run({"type": "addon.purged", "name": name}, "workspace", "purge addon " + name)
-    verb = "removes" if h.ctx.dry_run else "removed"
+    verb = "removes" if h.ctx.dry_run or (h.ctx.prepare is not None and h.ctx.prepare.dry_run) else "removed"
     lines = [f"{verb} {fields} fields, {sections} sections, {artifacts} artifacts of {tickets} tickets (events stay)"]
     return h.workspace_result(done, {"name": name}, "orch addon list", lines)
 

@@ -25,8 +25,8 @@ never gets here (``human_only``).
 
 **``wait``** is one request: the host parks it on its bus (H6a). Its socket timeout is the ``--timeout`` plus a margin.
 
-The run directory is ``ORCH_HOST_RUN_DIR`` when set (tests, dev), else the service-managed directory when a host serves
-there, else ``<state>/run`` (as ``orch host`` and ``orch sign``). It only says where to look: it is **not** a trust
+The run directory is ``ORCH_HOST_RUN_DIR`` when set (tests, dev), else ``<state>/run`` (tier A, as ``orch host`` and
+``orch sign``; H7). It only says where to look: it is **not** a trust
 input. Whom the socket may belong to comes from the registry or the root-owned pin, checked by the handshake.
 """
 
@@ -77,17 +77,11 @@ class Target:
 
 
 def workspace_socket(env: Mapping[str, str], state: Path, host_uid: int, workspace_id: str) -> Path:
-    from orch.host.listener import default_run_directory
+    """The workspace socket in the tier-A run directory (``ORCH_HOST_RUN_DIR``, else ``<state>/run``; H7). A path that
+    merely exists under the tier-B ``/Users/Shared/orch/run`` never wins: any local account can create it."""
+    from orch.host.enable import run_dir_for
 
-    if env.get("ORCH_HOST_RUN_DIR"):
-        return Path(env["ORCH_HOST_RUN_DIR"]) / workspace_id / "host.sock"
-    try:
-        service = default_run_directory(host_uid) / workspace_id / "host.sock"
-    except Exception:  # noqa: BLE001 - an unsupported platform has no service run directory
-        service = None
-    if service is not None and service.exists():
-        return service
-    return Path(state) / "run" / workspace_id / "host.sock"
+    return run_dir_for(Path(state), None, env) / workspace_id / "host.sock"
 
 
 def _unavailable(message: str) -> HostFailure:
@@ -370,13 +364,28 @@ def result_from(doc: Mapping[str, Any]) -> Result:
 
 def dry_text(op: Operation, prepared: Mapping[str, Any]) -> Result:
     """A person op under ``--dry-run`` in host mode: the host judged it (``human.prepare`` with ``dry_run``) and signs
-    nothing. The prepared request is not the op's result, so this names what would be signed."""
+    nothing. A host since H7 sends the inner op's would-be ``result``, rendered as direct mode renders its dry run; an
+    older host sends only the prepared request, so this names what would be signed."""
+    would = prepared.get("result")
+    if isinstance(would, Mapping):
+        return in_schema_order(op, result_from(would))
     types = [str(e.get("type")) for e in prepared.get("events") or []]
     return Result(
         data={"dry_run": True, "op": op.name, "events": types, "fingerprint": prepared.get("fingerprint")},
         lines=["dry-run: nothing was written", "would sign: " + ", ".join(types)],
         head=f"ok {op.name} dry-run",
     )
+
+
+def in_schema_order(op: Operation, res: Result) -> Result:
+    """``data``'s keys in the order of the op's output schema, as the direct-mode handler builds them. A person op's
+    result comes back from the request record the host stored as canonical JSON (sorted keys); the text and JSON
+    renderers keep key order, so this is what makes the two modes byte-identical (H7)."""
+    props = ((op.declaration.get("output") or {}).get("json") or {}).get("properties")
+    if isinstance(res.data, dict) and isinstance(props, Mapping):
+        first = {k: res.data[k] for k in props if k in res.data}
+        res.data = {**first, **{k: v for k, v in res.data.items() if k not in first}}
+    return res
 
 
 # --- the call ------------------------------------------------------------------------------------------------------
@@ -670,7 +679,7 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
             idem=idem,
             files=wire,
         )
-        return result_from(res)
+        return in_schema_order(op, result_from(res))
     except OrchError:
         raise
     except signer.SignerRefused as exc:

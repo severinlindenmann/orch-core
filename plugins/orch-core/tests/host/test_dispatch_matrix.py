@@ -78,7 +78,8 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
-    assert all(v == 1 for v in welcome["ops"].values())
+    # §0.4: every op at version 1 except task.done at 2 (H3b2's contract, listed since H7)
+    assert {k: v for k, v in welcome["ops"].items() if v != 1} == {"task.done": 2}
     assert {"ops/1", "outcome/1", "sub/1", "blob/1", "diff/1"} <= set(welcome["caps"])
     assert set(FILE_OPS) == {"blob.put", "blob.drop", "artifact.get"}
     assert GIT_OPS == {"diff": 1} and welcome["ops"]["diff"] == 1  # diff/1 lists both diff and artifact.get

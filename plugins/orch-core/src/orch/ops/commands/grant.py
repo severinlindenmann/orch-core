@@ -54,9 +54,16 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         event["label"] = h.call.text(args["label"], one_line=True, what="label")
     done = h.run(event, "workspace", f"issue grant {grant_id} for {hours} h")
     lines: list[str] = []
+    if ctx.prepare is not None and ctx.prepare.dry_run:  # as below: a dry run made no grant
+        return h.workspace_result(None, {"scope": event["scope"]}, None, ["no grant was made"])
     if ctx.prepare is not None:  # the result human.submit answers with once the signed grant landed
+        # the signing client shows the secret right after the commit and renders this result only once it has (H7:
+        # the same line and hint as direct mode)
         return h.workspace_result(
-            None, {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]}, None
+            None,
+            {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]},
+            "set ORCH_GRANT=<the value shown> for the harness",
+            ["the secret was shown on your terminal; clear its scrollback when the harness has it"],
         )
     if done is not None:
         try:

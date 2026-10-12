@@ -83,7 +83,13 @@ def direct(served, uid, **kw):
 def pinned(data):
     """The host pins the first merge base it sees (H6c): later diffs say ``host_pinned`` where direct mode, which keeps
     no host state, says ``local_ref``. Everything else is equal."""
-    return {**data, "sources": [{**s, "base_source": "local_ref" if s["base_source"] == "host_pinned" else s["base_source"]} for s in data["sources"]]}
+    return {
+        **data,
+        "sources": [
+            {**s, "base_source": "local_ref" if s["base_source"] == "host_pinned" else s["base_source"]}
+            for s in data["sources"]
+        ],
+    }
 
 
 def test_diff_is_served_and_listed(world):

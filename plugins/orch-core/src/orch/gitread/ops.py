@@ -154,7 +154,8 @@ def _same(a: str, b: str) -> bool:
 
 def _default_base(repo: Repo, head: str, tip: str | None, pinned: str | None) -> tuple[str, str, int, str | None]:
     """Section 0.8's base choice for ``head``: ``(base, base_source, base_moved, local merge base)``. The host-pinned
-    base while it is an ancestor of ``head``; else the merge base with the default branch's tip; else the first parent."""
+    base while it is an ancestor of ``head``; else the merge base with the default branch's tip; else the first
+    parent."""
     mb = repo.merge_base(head, tip) if tip is not None else None
     if pinned is not None and pinned in repo.ancestors(head):
         moved = 0
@@ -203,7 +204,12 @@ def _authorize(
         pushed_heads.append(sha)
         pushed_bases.add(sha)
         b = p.get("before")
-        if isinstance(b, dict) and isinstance(b.get("repo"), str) and _same(b["repo"], ident) and b.get("ref") == p["ref"]:
+        if (
+            isinstance(b, dict)
+            and isinstance(b.get("repo"), str)
+            and _same(b["repo"], ident)
+            and b.get("ref") == p["ref"]
+        ):
             pushed_bases.add(_sha_arg(b.get("sha"), repo, "pushes"))
     roots = [head0]
     for sha in pushed_heads:
@@ -277,7 +283,11 @@ def diff(
         assert ident is not None
         anc = repo.ancestors(head)
         base_pick = next(
-            (a["sha"] for a in _entries(ext.get("approvals") or [], repo, "approvals", 64) if _same(a["repo"], ident) and a["sha"] in anc),
+            (
+                a["sha"]
+                for a in _entries(ext.get("approvals") or [], repo, "approvals", 64)
+                if _same(a["repo"], ident) and a["sha"] in anc
+            ),
             None,
         )
         if base_pick is None:

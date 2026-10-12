@@ -1,4 +1,5 @@
-"""``diff`` since my approval and ``head``/``base`` in direct mode (H6c, §0.8, §0.8.5): the caller's own code approval is
+"""``diff`` since my approval and ``head``/``base`` in direct mode (H6c, §0.8, §0.8.5): the caller's own code approval
+is
 the base, another person's never is; ``head``/``base`` are authorized by the ticket's pushes."""
 
 from __future__ import annotations
@@ -57,7 +58,12 @@ def test_since_my_approval_uses_only_the_callers_own_approval(hws, scene):
     assert hws.view("1").gates["code"].counting == ()  # the new push voided it: the approval still names its commit
     got = diff(hws, since="my_approval", person=rita.ref)
     (src,) = got["sources"]
-    assert (src["base_sha"], src["head_sha"], src["base_source"], src["base_moved"]) == (s["c2"], s["c4"], "approved", 0)
+    assert (src["base_sha"], src["head_sha"], src["base_source"], src["base_moved"]) == (
+        s["c2"],
+        s["c4"],
+        "approved",
+        0,
+    )
     assert {c["sha"] for c in src["commits"]} == {s["c4"], s["c3b"], s["c3"]}
     assert sorted(f["path"] for f in got["files"]) == ["c3.txt", "c3b.txt", "c4.txt"]
     assert set(got) == {"sources", "files", "unified", "truncated"} and "approved" not in got["unified"]

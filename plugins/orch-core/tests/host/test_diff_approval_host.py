@@ -60,7 +60,10 @@ def test_head_and_base_after_a_push_are_authorized_by_the_ticket(rita_world):
     # a `show` observes the new head: a push approved -> two
     ok(c.req("show", {"ref": w.key}))
     got = ok(c.req("diff", {"ref": w.key, "repo": "proj", "base": approved}))["data"]["sources"][0]
-    assert (got["base_source"], got["base_sha"], got["head_sha"]) in {("pushed", approved, two), ("local_ref", approved, two)}
+    assert (got["base_source"], got["base_sha"], got["head_sha"]) in {
+        ("pushed", approved, two),
+        ("local_ref", approved, two),
+    }
     got = ok(c.req("diff", {"ref": w.key, "repo": "proj", "head": two, "base": one}))["data"]["sources"][0]
     assert (got["head_sha"], got["base_sha"], got["base_source"]) == (two, one, "first_parent")
     # this repo has no default branch: the observed head's range is its last commit, so `one` is no head to ask for

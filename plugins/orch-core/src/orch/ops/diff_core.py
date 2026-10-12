@@ -101,7 +101,9 @@ def pushes_of(store: Any, view: Any, name: str) -> list[dict[str, Any]]:
                     "repo": e["repo_id"],
                     "ref": e["ref"],
                     "sha": e["sha"],
-                    "before": None if not isinstance(b, dict) else {"repo": b["repo_id"], "ref": b["ref"], "sha": b["sha"]},
+                    "before": None
+                    if not isinstance(b, dict)
+                    else {"repo": b["repo_id"], "ref": b["ref"], "sha": b["sha"]},
                 }
             )
             if len(out) >= PUSHES_MAX:

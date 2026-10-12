@@ -42,7 +42,9 @@ def test_no_ext_and_a_bare_name_change_nothing(scene):
     plain = local.diff(r.path, branch="feat", default_branch=None)
     assert plain["base_sha"] == s["m1"] and plain["base_source"] == "local_ref" and plain["observed_base"] is None
     got = d(r)
-    assert {k: v for k, v in got.items() if k != "observed_base"} == {k: v for k, v in plain.items() if k != "observed_base"}
+    assert {k: v for k, v in got.items() if k != "observed_base"} == {
+        k: v for k, v in plain.items() if k != "observed_base"
+    }
     assert got["observed_base"] == s["m1"]  # what the host may pin
 
 

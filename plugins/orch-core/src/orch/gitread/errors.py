@@ -27,7 +27,8 @@ class Busy(Unavailable):
 
 
 class NotFound(Unavailable):
-    """A ``head``, ``base`` or ``since`` the ticket's authorized history does not contain (H6c). The reason is fixed text:
+    """A ``head``, ``base`` or ``since`` the ticket's authorized history does not contain (H6c).
+    The reason is fixed text:
     a commit that does not exist and one that exists outside the authorized ranges read alike."""
 
     code = "not_found"

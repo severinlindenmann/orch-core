@@ -129,6 +129,15 @@ export function HandoffDialog(p: HandoffDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [click.leftUnsettled])
 
+  // The terminal hand-off was refused because a signature of this action is unsettled: follow that request here.
+  useEffect(() => {
+    if (run.phase !== 'error' || run.error?.code !== 'click.unsettled' || !run.error.request_id) return
+    const id = run.error.request_id
+    run.reset(false)
+    click.attach(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.phase, run.error])
+
   const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
   const open = phase === 'preparing' || phase === 'waiting' || clickLive
   useEffect(() => {

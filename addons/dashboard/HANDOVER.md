@@ -966,6 +966,14 @@ convenience store is the login keychain, so `tests/click_child.py` swaps core's 
 for the 0600 file store of the disposable state; the keychain is never opened. The key is moved with the real
 `orch keys custody convenience` in a pty. Frontend: `components/sign/click-*.test.tsx`, `production/click.test.tsx`.
 
+**Unknown outcome (re-check rounds).** A sign whose answer is lost counts as unsettled: while it is in flight, and after an `uncertain`,
+the server refuses a new click or hand-off prepare, and a view or sign of another request, for the equal action (`click.unsettled` with
+the `request_id`; the UI re-attaches in a waiting state that polls `POST /click/state`, which reads the host through the server's own
+link). A signed action is remembered for 5 minutes so a lost browser answer reads "Signed" instead of preparing again. Logout, cancel
+and the restart sweep never touch an unsettled request. **This record is in memory only**: a dashboard restart loses it (and every
+session), and the host's request state stays authoritative (a request stays `bound` there for up to about 10 minutes; the signer child
+dies with the server and cannot re-submit; the ticket's activity shows a submit that landed).
+
 **Open points.** The rate limit (30 per minute) is mapped and unit tested, not provoked on the real signer. The server cannot show the
 prepared events of a click request (the signer holds them and validates them), so the hand-off's `expected()` event check is replaced by the
 signer's own checks and the op comparison on `view`.

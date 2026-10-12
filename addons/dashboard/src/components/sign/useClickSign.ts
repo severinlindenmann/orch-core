@@ -31,6 +31,8 @@ export interface ClickRun {
   problem: ClickProblem | null
   signed: ClickSigned | null
   start: (action: HandoffAction) => Promise<void>
+  /** Re-attach to a request the server says is unsettled (also from the terminal hand-off's refusal). */
+  attach: (requestId: string) => void
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   sign: (word?: string) => Promise<void>
@@ -109,6 +111,20 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     [setPhase],
   )
 
+  /** Follow a signature the server holds for this very action (in flight, unsettled or just signed): start nothing new. */
+  const attach = useCallback(
+    (requestId: string, why?: ApiError) => {
+      if (!ws) return
+      const open: ClickPrepared = { request_id: requestId, expires_at: '', op: '', confirm: 'click' }
+      live.current.prepared = open
+      live.current.ws = ws
+      setPrepared(open)
+      if (why) setProblem(clickProblem(why))
+      setPhase('settling')
+    },
+    [ws, setPhase],
+  )
+
   const start = useCallback(
     async (action: HandoffAction) => {
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
@@ -139,13 +155,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         // A retry of the same click keeps its key only while the failure may be a lost answer.
         if (!(e instanceof ApiError && e.retryable)) attempt.current = null
         if (e instanceof ApiError && e.code === 'click.unsettled' && e.request_id) {
-          // The server holds a signature of this very action whose outcome is unknown: follow that one, start nothing new.
-          const open: ClickPrepared = { request_id: e.request_id, expires_at: '', op: '', confirm: 'click' }
-          live.current.prepared = open
-          live.current.ws = ws
-          setPrepared(open)
-          setProblem(clickProblem(e))
-          setPhase('settling')
+          attach(e.request_id, e)
           return
         }
         fail(e)
@@ -153,7 +163,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         busy.current = false
       }
     },
-    [ws, setPhase, read, fail],
+    [ws, setPhase, read, fail, attach],
   )
 
   const review = useCallback(async () => {
@@ -326,5 +336,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote }
+  return { phase, prepared, view, problem, signed, start, attach, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote }
 }

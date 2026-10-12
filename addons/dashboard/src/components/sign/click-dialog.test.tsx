@@ -379,3 +379,16 @@ describe('every error code and reason has an honest message', () => {
     expect(clickProblem(new Error('boom')).next).toBe('retry')
   })
 })
+
+describe('the terminal hand-off follows an unsettled request too', () => {
+  it('a hand-off refused with click.unsettled re-attaches to that request (settling), not a plain error', async () => {
+    const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
+    flag(false) // click is not offered here: the dialog starts the hand-off by itself
+    s.prepare.mockRejectedValue(new ApiError(409, { code: 'click.unsettled', message: 'x', retryable: false, request_id: REQ }, 9))
+    const m = await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('click-settling', {}, T)
+    await waitFor(() => expect(stateSpy).toHaveBeenCalledWith(m.ws, REQ), T)
+    expect(within(dialog).queryByRole('button', { name: /Try again|Sign in the terminal instead/ })).toBeNull()
+  }, 20000)
+})

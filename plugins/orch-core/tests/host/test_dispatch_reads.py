@@ -50,6 +50,12 @@ def world(tmp_path):
 READS = sorted(op for op in served_ops() if op_kind(op)[0] in {"read", "person_read"})
 
 
+RECORDS_ARGS = {
+    "records.snapshot": {},
+    "records.export_check": {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main"},
+    "records.remote_private": {"on": False},
+}
+
 #: the dashboard reads (§0.8, §0.8.5) and the arguments that aim each at the ticket ``ref`` (or at everything)
 DASHBOARD_READS = {
     "ticket.query": lambda ref: {},
@@ -102,6 +108,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"offset": 0, "b64": "", "last": False, "size": 1, "upload_key": "a_01J9ZP0000000000000000000B"}
     if op == "blob.drop":
         return {"blob": "b_" + "A" * 26}
+    if op in RECORDS_ARGS:  # H11e: the records ops name no ticket
+        return RECORDS_ARGS[op]
     schema = ops.get(op).input
     props = schema.get("properties", {})
     out: dict = {}

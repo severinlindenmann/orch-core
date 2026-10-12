@@ -83,6 +83,7 @@ from jsonschema import Draft202012Validator
 from . import diff as git_diff
 from . import quick as quick_list
 from . import reads, sessions
+from . import records as records_ops
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
 from .auth import Redactor
@@ -203,6 +204,7 @@ def served_ops() -> dict[str, int]:
     out.update(HUMAN_OPS)
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
+    out.update(records_ops.RECORDS_OPS)
     return out
 
 
@@ -222,6 +224,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
+    if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
+        return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -351,7 +355,7 @@ class RegistryBackend:
     @property
     def caps(self) -> list[str]:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
-        return [*base, *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
+        return [*base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
@@ -521,6 +525,8 @@ class RegistryBackend:
                 result = self._host_op(call)
             elif op in READ_OPS:
                 result = reads.serve(call)
+            elif op in records_ops.RECORDS_OPS:
+                result = records_ops.serve(call)
             elif op in FILE_OPS or op in GIT_OPS or op in QUICK_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:

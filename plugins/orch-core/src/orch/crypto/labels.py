@@ -1,7 +1,8 @@
 """Protocol domain-separation labels (orch-relay protocol-v2 §3). One place; ``tests/crypto/test_vectors.py`` checks
 the table against ``vectors_v2.json`` and that the signature, AAD and hash labels are prefix-free.
 
-The event-signing labels of ticket-format §5.3 live in :data:`orch.canon.LABELS`; use those for events.
+The event-signing and checkpoint labels of ticket-format §5.3 live in :data:`orch.canon.LABELS`; use those for events.
+The vector table lists them too (relay sync), so the registry test compares this table plus the canon ones.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ LABELS: dict[str, str] = {
     "sig_sk_grant": "orch/v2/sig/sk-grant|",
     "sig_bridge": "orch/v2/sig/bridge|",
     "sig_cert_request": "orch/v2/sig/cert-request|",
+    "sig_genesis_pin": "orch/v2/sig/genesis-pin|",
     "sig_cert_rejection": "orch/v2/sig/cert-rejection|",
     "sig_enroll_request": "orch/v2/sig/enroll-request|",
     "sig_drop_object": "orch/v2/sig/drop-object|",
@@ -57,6 +59,15 @@ LABELS: dict[str, str] = {
     "h_sas": "orch/v2/sas|",
     "h_sas_cert": "orch/v2/sas-cert|",
     "h_dk_hash": "orch/v2/dk-hash|",
+    "h_wk_commit": "orch/v2/wk-commit|",
+    "h_event": "orch/v2/event|",
+    "h_gate": "orch/v2/gate|",
+    "h_grant_secret": "orch/v2/grant-secret|",
+    "h_people": "orch/v2/people|",
+    "h_policy": "orch/v2/policy|",
+    "h_question_id": "orch/v2/question-id|",
+    "h_section": "orch/v2/section|",
+    "h_value": "orch/v2/value|",
     "h_dek_commit": "orch/v2/dek-commit|",
     "h_card_key_commit": "orch/v2/card-key-commit|",
     "h_drop_parent": "orch/v2/drop-parent|",

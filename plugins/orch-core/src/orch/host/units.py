@@ -15,20 +15,42 @@ nor the user site can change what the service imports.
 from __future__ import annotations
 
 import plistlib
-import shlex
 from pathlib import Path
 
-__all__ = ["LAUNCHD_LABEL", "SYSTEMD_NAME", "launchd_plist", "program_arguments", "systemd_unit", "tmpfiles_conf"]
+__all__ = [
+    "LAUNCHD_LABEL",
+    "SYSTEMD_NAME",
+    "launchd_plist",
+    "program_arguments",
+    "systemd_quote",
+    "systemd_unit",
+    "tmpfiles_conf",
+]
 
 LAUNCHD_LABEL = "io.orch.host"
 SYSTEMD_NAME = "orch-host.service"
 
 
 def program_arguments(python: Path, release: Path, state_dir: Path, run_dir: Path | None = None) -> list[str]:
+    """The service's argv. Every value comes from the environment or the interpreter, so a control character (a newline
+    would end a unit line, NUL or another control byte breaks either format) is refused here, for both units."""
     args = [str(python), "-I", str(release / "bin" / "orch-host"), "run", "--state", str(state_dir)]
     if run_dir is not None:
         args += ["--run", str(run_dir)]
+    for arg in args:
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in arg):
+            raise ValueError(f"a control character in a unit argument: {arg!r}")
     return args
+
+
+def systemd_quote(arg: str) -> str:
+    """One ``ExecStart`` word in systemd's own syntax (systemd.service "Command lines", systemd.unit specifiers): a
+    double-quoted word with ``\\`` and ``\"`` escaped, ``%`` written ``%%`` (specifiers expand even inside quotes) and
+    ``$`` written ``$$`` (no variable expansion). Control characters are refused by :func:`program_arguments`."""
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in arg):
+        raise ValueError(f"a control character in a unit argument: {arg!r}")
+    out = arg.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$")
+    return f'"{out}"'
 
 
 def launchd_plist(
@@ -68,7 +90,7 @@ def systemd_unit(
         raise ValueError("the host never runs as root")
     if run_dir is None and host_uid is not None:
         run_dir = Path("/run/orch") / str(host_uid)
-    exec_start = " ".join(shlex.quote(a) for a in program_arguments(python, release, state_dir, run_dir))
+    exec_start = " ".join(systemd_quote(a) for a in program_arguments(python, release, state_dir, run_dir))
     lines = [
         "[Unit]",
         "Description=orch host",

@@ -169,10 +169,10 @@ def test_launchd_plist():
 
 def test_systemd_units_and_tmpfiles():
     user = units.systemd_unit(Path("/py"), Path("/rel/v"), Path("/s"))
-    assert "ExecStart=/py -I /rel/v/bin/orch-host run --state /s\n" in user
+    assert 'ExecStart="/py" "-I" "/rel/v/bin/orch-host" "run" "--state" "/s"\n' in user  # systemd quoting (H7)
     assert "Restart=always" in user and "WantedBy=default.target" in user and "User=" not in user
     system = units.systemd_unit(Path("/py"), Path("/rel/v"), Path("/s"), system=True, user="orch", host_uid=990)
-    assert "--run /run/orch/990" in system and "User=orch" in system and "WantedBy=multi-user.target" in system
+    assert '"--run" "/run/orch/990"' in system and "User=orch" in system and "WantedBy=multi-user.target" in system
     with pytest.raises(ValueError):
         units.systemd_unit(Path("/py"), Path("/rel/v"), Path("/s"), system=True)
     assert (

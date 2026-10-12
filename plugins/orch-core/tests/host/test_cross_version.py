@@ -1,7 +1,8 @@
 """H7 cross-version fixtures: an older client against the current host (§0.4).
 
-``fixtures/cross_version/v1_4_clients.json`` holds hello and request frames recorded from the clients of contract v1.4
-(the thin CLI of H4b and the dashboard's host link at 8873a4f8). Each is replayed byte for byte (after the
+``fixtures/cross_version/v1_4_clients.json`` holds hello and request frames of the clients of contract v1.4 (the thin
+CLI of H4b and the dashboard's host link at 8873a4f8), written by hand from their sources (not captured off a socket;
+the file says how). Each is replayed byte for byte (after the
 placeholders) on a real host. The rules checked: no shared major is ``fatal host.version_mismatch`` before any
 ``welcome``; an op the client expects at another version than the host serves is ``op.unsupported`` for that op only
 (the connection keeps working, nothing is appended); a frame with an unknown envelope key is ``req.invalid``; every

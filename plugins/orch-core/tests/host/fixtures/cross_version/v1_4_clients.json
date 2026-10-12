@@ -1,5 +1,5 @@
 {
-  "about": "H7 cross-version fixtures: frames recorded from clients of the previous contract (v1.4), replayed against the current host. Placeholders: $GRANT, $SESSION, $IDEM (a fresh a_<ULID>), $KEY (the ticket the setup created). `expect` is checked by tests/host/test_cross_version.py; `shape` lists the keys (with their JSON type) the old client reads, which the current host must still send with the same type (v1.4 and v1.5 only add keys, §0.4).",
+  "about": "H7 cross-version fixtures: frames of the clients of the previous contract (v1.4), replayed against the current host. Written by hand from those clients' sources, not captured off a socket: the hello frames are copied from the client code at the commits named in `source`, the requests are in the exact shape orch.host.client.Connection.call builds. Placeholders: $GRANT, $SESSION, $IDEM (a fresh a_<ULID>), $KEY (the ticket the setup created). `expect` is checked by tests/host/test_cross_version.py; `shape` lists the keys (with their JSON type) the old client reads, which the current host must still send with the same type (v1.4 and v1.5 only add keys, §0.4).",
   "clients": {
     "cli-v1.4": {
       "source": "orch.host.client.Connection of the thin CLI (H4b #409, b1926bf1; unchanged until H7): no ops member, so every op is assumed at version 1",

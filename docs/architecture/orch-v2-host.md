@@ -1497,7 +1497,8 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    `orchestrator/`): a `config.json` that names another registered workspace is `host.unavailable`, never routed there.
    An unreadable registry or pin counts as registered. A
    registered workspace whose host is down answers `host.unavailable` (exit 9, retryable, the catalog entry that already
-   existed for `init`), never a direct write. `help`, `describe`, `init` and `import v1` are always local (the host does
+   existed for `init`), never a direct write for the same state dir (an agent pointed at another `ORCH_STATE_DIR` is
+   the accepted H2a limit: it holds no workspace key there). `help`, `describe`, `init` and `import v1` are always local (the host does
    not serve them; the direct-mode guard still answers `host.required` for the last two on a registered workspace).
    `task done --run` in host mode runs `verify.cmd` on the client (see §0.8, `task.done`) and sends a receipt; it never
    forwards `run`.
@@ -1530,24 +1531,41 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 1. **The per-user service (`orch.host.enable`).** `orch host enable` installs the release (D-P2-4), writes the unit and
    starts it through the person's own service manager: a LaunchAgent `~/Library/LaunchAgents/io.orch.host.plist`
    (`launchctl bootstrap gui/<uid>`, `kickstart` when it is loaded and unchanged, `bootout` + `bootstrap` when it
-   changed) or a systemd user unit `$XDG_CONFIG_HOME/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
-   `start`/`restart`). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
+   changed) or a systemd user unit `~/.config/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
+   `start`/`restart`). The unit goes where the user's systemd manager searches: `~/.config` of the account, not the
+   CLI's `XDG_CONFIG_HOME` (a dev kit that sets one would put it where `systemctl --user` never looks). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
    `python -I <release>/current/bin/orch-host run --state <state> --run <state>/run`: in tier A the run directory is
    `<state>/run`, where the CLI, `orch sign` and the dashboard look; the root-owned tier-B directories come with H3c
-   (phase 3). The host's output goes to `<state>/host/host.log`. `enable` then waits up to 20 s for the control socket
-   and answers `host.unavailable` (naming the log) when nothing answers.
+   (phase 3). On macOS the host's output goes to `<state>/host/host.log` (`<state>/host` is created 0700 before the
+   bootstrap: launchd opens the log before exec); on Linux it goes to the journal (`journalctl --user -u
+   orch-host.service`). `enable` then waits up to 20 s for the control socket and answers `host.unavailable` naming
+   the log or the journal command when nothing answers.
+
+   Refused before anything is written (review of #422): a run directory whose socket paths would pass 100 bytes; a
+   control character in any unit value (the systemd `ExecStart` uses systemd's own quoting: double quotes, `\` and `"`
+   escaped, `%` as `%%`, `$` as `$$`); an interpreter or `orch` package inside a git work tree, a `.worktrees` checkout
+   or a registered workspace (the service would keep running whatever that tree holds next) unless `--dev`; and a unit
+   already installed for another state dir, run dir or interpreter (one label per UID): `host.busy` naming the fields,
+   unless `orch host enable --replace`. `register` never replaces. The default command runner refuses to call
+   `launchctl` or `systemctl` while `PYTEST_CURRENT_TEST` is set or `ORCH_NO_SERVICE_MANAGER=1`.
 2. **Registration turns host mode on.** `orch host register DIR` first checks the control socket; a host that answers
    (the service, or a dev host from `orch host run --foreground`) is used as it is, otherwise the service is enabled as
    above (`--no-service` never touches it). `--peer` is now optional: by default this UID maps to the person whose device
-   key for the workspace is on this machine (the key `orch init` made, matched against the workspace's devices); the
-   host checks the mapping again (F8). From then on the thin CLI (H4b) and the dashboard serve the workspace through the
+   key for the workspace is on this machine (the key `orch init` made, matched against the workspace's devices). A
+   removed, revoked or expired key, one without `decide`, or one whose person left counts as none: then `--peer` is
+   required. The host checks the mapping again (F8). From then on the thin CLI (H4b) and the dashboard serve the workspace through the
    host; `orch init` itself stays direct (see §3), and `orch init --host` remains for an empty directory.
 3. **`orch host status`** (alias `doctor`, `--json` for the document): the service (unit present, current, loaded,
    running, or none on this platform), whether a host answers on the control socket, every registered workspace (the
    host's state, whether its socket answers, the mapped person, click-to-sign on or off), the mode the CLI uses for the
    current directory (exactly `hostclient.locate`), and the problems with their fix (`orch host enable`,
-   `orch host restart`, a socket path over 100 bytes). It changes nothing. Exit 0 without problems, else 1.
-   `orch host` commands read `ORCH_HOST_RUN_DIR` like the CLI.
+   `orch host restart`, a socket path over 100 bytes). An installed unit that differs is reported by field (`python`,
+   `state`, `run`); a service for another state or run dir is a problem, but status never proposes replacing it (that
+   is the person's decision, `enable --replace`), and an interpreter that differs alone is no problem. Every printed
+   value has its control characters escaped. It changes nothing. Exit 0 without problems, else 1.
+   **Run directory, tier A:** `orch host`, the thin CLI and `orch sign` all use `--run`, else `ORCH_HOST_RUN_DIR`, else
+   `<state>/run` (`enable.run_dir_for`). A path that merely exists under the tier-B `/Users/Shared/orch/run/<uid>` is
+   no longer preferred: any local account can create it (H4b preferred it).
 4. **Parity.** Every case of the agent and person golden suites (`tests/ops/golden`, `golden_human`, `wait` included)
    runs in host mode on the same fixed workspace, built through a host from the start, and matches the same golden file
    (`tests/host/test_golden_host.py`). The one designed difference: `task done --run` in host mode names on stderr the
@@ -1560,7 +1578,9 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    CLI's hello sends `ops: {"task.done": 2}`. A client that does not list it (the v1.4 CLI) gets `op.unsupported` for
    `task.done`, never a contract-1 run: see the fixtures (D-P2-14).
 6. **Cross-version fixtures (D-P2-14).** `tests/host/fixtures/cross_version/v1_4_clients.json` holds the hello and
-   request frames of the v1.4 clients (the H4b CLI, the dashboard's host link at 8873a4f8) and the rules each must meet
+   request frames of the v1.4 clients (the H4b CLI, the dashboard's host link at 8873a4f8). They are written by hand from
+   those sources (the hello frames copied from the client code at those commits, the requests in the exact shape
+   `Connection.call` builds), not captured off a socket, and the rules each must meet
    on the current host (`tests/host/test_cross_version.py`): no shared major is `fatal host.version_mismatch` before any
    `welcome`; another op version is `op.unsupported` for that op only, nothing appended, the connection keeps working;
    an unknown envelope key is `req.invalid`; every key an old client reads is still sent with the same JSON type.
@@ -2725,6 +2745,8 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
 13. **H7 (additive):** a dry-run `human.prepare` also returns `result`, the inner op's would-be `Result` (§0.8.1
     `Prepared`); `welcome.ops` lists `task.done` at 2 as the table above always said (a client must list it in
     `hello.ops`); a committed person request's `Result` keeps the inner op's `lines`.
+    **Release note:** an older CLI (H4b, before H7) does not list `task.done` in its hello, so this host refuses its
+    `orch task done` with `op.unsupported` ("served at version 2, not 1"); update the CLI. Every other op still works.
 
 ---
 

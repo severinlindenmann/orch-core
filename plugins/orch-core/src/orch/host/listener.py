@@ -20,8 +20,12 @@ from ._unix import CheckedDirectory, UnsafePath, check_acl
 SocketKind = Literal["workspace", "control", "worker"]
 
 
+#: the longest socket path in UTF-8 bytes (``sun_path`` is 104 bytes on macOS, with room for the NUL)
+SOCKET_PATH_LIMIT = 100
+
+
 def check_socket_path(path: Path) -> None:
-    if not path.is_absolute() or ".." in path.parts or len(str(path).encode("utf-8")) > 100:
+    if not path.is_absolute() or ".." in path.parts or len(str(path).encode("utf-8")) > SOCKET_PATH_LIMIT:
         raise UnsafePath("Socket path must be absolute and at most 100 UTF-8 bytes")
 
 

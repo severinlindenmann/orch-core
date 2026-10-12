@@ -71,3 +71,87 @@ def _never_the_real_keychain():
         keychain.KeychainStore.__init__ = real_init
         keychain._open = real_open
         keychain.create_throwaway_keychain = real_create
+
+
+# --- H7: the service manager, the unit files and the release are never the owner's ----------------------------------
+
+
+def real_home() -> str:
+    import pwd
+
+    return os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+#: the owner's own service files and release pointer: a test run must leave them exactly as it found them
+REAL_SERVICE_FILES = (
+    ("Library", "LaunchAgents", "io.orch.host.plist"),
+    (".config", "systemd", "user", "orch-host.service"),
+    (".local", "share", "orch", "releases", "current"),
+)
+
+
+def _service_snapshot() -> dict[str, object]:
+    out: dict[str, object] = {}
+    for parts in REAL_SERVICE_FILES:
+        path = os.path.join(real_home(), *parts)
+        try:
+            st = os.lstat(path)
+            out[path] = (st.st_mode, st.st_size, st.st_mtime_ns, os.readlink(path) if os.path.islink(path) else None)
+        except FileNotFoundError:
+            out[path] = None
+    return out
+
+
+def refuse_real_home(path, what: str) -> None:
+    target = os.path.realpath(os.fspath(path))
+    home = real_home()
+    if target == home or target.startswith(home + os.sep):
+        raise AssertionError(f"a test tried to write {what} under the real home: {target}")
+
+
+def pytest_sessionstart(session):
+    session.config._orch_service_files = _service_snapshot()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    before = getattr(session.config, "_orch_service_files", None)
+    if before is not None and _service_snapshot() != before:
+        session.exitstatus = 1
+        raise AssertionError(f"the test run changed the owner's service files: {before} -> {_service_snapshot()}")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_service_manager(monkeypatch, tmp_path_factory):
+    """No test reaches launchctl or systemctl, and none writes a unit or a release under the real home (H7). The
+    service manager's commands all fail unless a test installs its own fake (``tests/host/test_host_mode_on.py``);
+    ``Manager.install`` and ``install_release`` refuse a target under the account's real home whatever ``HOME`` says;
+    ``ORCH_HOST_RUN_DIR`` always names a test directory, so no test talks to a real host's sockets. The production
+    runner refuses on its own as well while ``PYTEST_CURRENT_TEST`` is set."""
+    import subprocess
+
+    try:
+        from orch.host import cli, enable, release
+    except Exception:  # noqa: BLE001 - not importable here: nothing to guard
+        yield
+        return
+
+    def refuse(argv):
+        return subprocess.CompletedProcess(list(argv), 1, "", "service managers are off in tests")
+
+    monkeypatch.setattr(cli, "SERVICE_MANAGER", lambda unit: enable.Manager(unit, run=refuse))
+    real_install = enable.Manager.install
+
+    def install(self):
+        refuse_real_home(self.plan.unit_path, "a service unit")
+        return real_install(self)
+
+    monkeypatch.setattr(enable.Manager, "install", install)
+    real_release = release.install_release
+
+    def install_release(version=None, *, target=None, source=None):
+        refuse_real_home(target if target is not None else release.releases_dir(), "a release")
+        return real_release(version, target=target, source=source)
+
+    monkeypatch.setattr(release, "install_release", install_release)
+    monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(tmp_path_factory.getbasetemp() / "no-host-run"))
+    yield

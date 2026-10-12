@@ -6,16 +6,25 @@ itself: it only asks the service manager to.
 
 * **macOS:** a LaunchAgent ``~/Library/LaunchAgents/io.orch.host.plist`` in the person's GUI domain
   (``launchctl bootstrap gui/<uid>``; ``kickstart`` when it is loaded already).
-* **Linux:** a systemd user unit ``$XDG_CONFIG_HOME/systemd/user/orch-host.service`` (``systemctl --user enable
-  --now``).
+* **Linux:** a systemd user unit ``~/.config/systemd/user/orch-host.service`` (``daemon-reload``, ``enable``,
+  ``start``). The user manager searches its own config path, which is ``~/.config`` unless the manager itself was
+  started with another ``XDG_CONFIG_HOME``; the CLI's ``XDG_CONFIG_HOME`` is not used for the unit (a dev kit that sets
+  one would otherwise write the unit where ``systemctl --user`` never looks).
 * **Windows and anything else:** no service; the workspace stays in direct mode (owner re-plan, 12 Oct 2026).
 
 The unit runs ``<release>/current/bin/orch-host run --state <state> --run <run>`` with ``python -I``. In tier A the run
 directory is ``<state>/run``, the one the CLI, ``orch sign`` and the dashboard look in; the root-owned
 ``/Users/Shared/orch/run`` and ``/run/orch`` of tier B come with the setup helper (H3c, phase 3).
 
+**One service per UID.** The label is fixed, so a unit that is installed for another state dir, run dir or interpreter
+is never replaced silently (``enable`` refuses and names the fields; ``orch host enable --replace`` replaces it, and
+``register`` never does). **No dev code as the service:** an interpreter or ``orch`` package inside a git work tree, a
+``.worktrees`` checkout or a workspace is refused unless ``--dev``: the unit would keep running whatever that tree holds
+next.
+
 Every outside effect goes through :class:`Manager` (the commands through ``run``, the files under ``home``), so tests
-use a fake runner and a temporary home: nothing here touches the real user's launchd or systemd in a test.
+use a fake runner and a temporary home. As a second fence, the default runner refuses to call ``launchctl`` or
+``systemctl`` at all while ``PYTEST_CURRENT_TEST`` is set or ``ORCH_NO_SERVICE_MANAGER=1``.
 """
 
 from __future__ import annotations
@@ -31,7 +40,17 @@ from typing import Any
 
 from . import units
 
-__all__ = ["Manager", "Plan", "Unsupported", "plan", "run_dir_for", "wait_for_control"]
+__all__ = [
+    "Manager",
+    "Plan",
+    "Unsupported",
+    "dev_source",
+    "differences",
+    "plan",
+    "run_dir_for",
+    "unit_fields",
+    "wait_for_control",
+]
 
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
 #: seconds ``enable`` waits for the started host's control socket
@@ -89,16 +108,87 @@ def plan(
         content = units.launchd_plist(python, release, Path(state), log_dir=log_dir, run_dir=Path(run))
         return Plan("launchd", path, content, Path(state), Path(run), release, uid)
     if platform.startswith("linux"):
-        xdg = env.get("XDG_CONFIG_HOME", "")
-        base = Path(xdg) if xdg.startswith("/") else Path(home) / ".config"
-        path = base / "systemd" / "user" / units.SYSTEMD_NAME
+        path = Path(home) / ".config" / "systemd" / "user" / units.SYSTEMD_NAME
         content = units.systemd_unit(python, release, Path(state), run_dir=Path(run)).encode()
         return Plan("systemd", path, content, Path(state), Path(run), release, uid)
     raise Unsupported(f"no per-user service on {platform}: workspaces stay in direct mode")
 
 
 def _default_run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
+        raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
     return subprocess.run(list(argv), capture_output=True, text=True, timeout=30, check=False)
+
+
+def _arg_after(args: list[str], flag: str) -> str | None:
+    return args[args.index(flag) + 1] if flag in args[:-1] else None
+
+
+def _unquote_systemd(line: str) -> list[str]:
+    import re
+
+    words = re.findall(r'"((?:[^"\\]|\\.)*)"', line)
+    return [re.sub(r"\\(.)", r"\1", w).replace("%%", "%").replace("$$", "$") for w in words]
+
+
+def unit_fields(kind: str, content: bytes) -> dict[str, str | None] | None:
+    """``{python, state, run}`` of a unit file's command, or ``None`` when it cannot be read as one of ours."""
+    try:
+        if kind == "launchd":
+            import plistlib
+
+            args = [str(a) for a in plistlib.loads(content).get("ProgramArguments") or []]
+        else:
+            line = next(x for x in content.decode().splitlines() if x.startswith("ExecStart="))
+            args = _unquote_systemd(line[len("ExecStart=") :])
+    except Exception:  # noqa: BLE001 - not a unit of ours: the caller treats it as different
+        return None
+    if not args:
+        return None
+    return {"python": args[0], "state": _arg_after(args, "--state"), "run": _arg_after(args, "--run")}
+
+
+def differences(unit: Plan) -> list[str] | None:
+    """Which of ``python``, ``state``, ``run`` the installed unit has otherwise than ``unit`` would (``[]``: the same;
+    ``None``: no unit installed). A unit that cannot be read counts as different in every field."""
+    try:
+        have = unit.unit_path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return ["python", "state", "run"]
+    old, new = unit_fields(unit.kind, have), unit_fields(unit.kind, unit.content)
+    if old is None or new is None:
+        return ["python", "state", "run"]
+    return [k for k in ("python", "state", "run") if old[k] != new[k]]
+
+
+def _in_checkout(path: Path) -> bool:
+    for d in [path, *path.parents]:
+        if d.name == ".worktrees" or (d / ".git").exists():
+            return True
+    return False
+
+
+def dev_source(python: Path, package: Path, roots: Sequence[str] = ()) -> str | None:
+    """Why the interpreter or the ``orch`` package is development code that must not become the service (``None``:
+    it is not): inside a git work tree or a ``.worktrees`` checkout (a ``.venv`` of a checkout included), or inside a
+    registered workspace."""
+    for what, path in (("the interpreter", Path(sys.prefix if python == Path(sys.executable) else python)),
+                       ("the interpreter", Path(python)), ("the orch package", Path(package))):  # fmt: skip
+        try:
+            real = path.resolve()
+        except OSError:
+            continue
+        if _in_checkout(real):
+            return f"{what} ({path}) is in a source checkout"
+        for root in roots:
+            try:
+                if real == Path(root).resolve() or Path(root).resolve() in real.parents:
+                    return f"{what} ({path}) is inside the workspace {root}"
+            except OSError:
+                continue
+    return None
 
 
 class Manager:
@@ -184,11 +274,20 @@ class Manager:
             present = self.plan.unit_path.exists()
         except OSError:
             present = False
+        diff = differences(self.plan)
+        fields = None
+        if present:
+            try:
+                fields = unit_fields(self.plan.kind, self.plan.unit_path.read_bytes())
+            except OSError:
+                fields = None
         return {
             "kind": self.plan.kind,
             "unit": str(self.plan.unit_path),
             "unit_present": present,
             "unit_current": self.installed(),
+            "differs": diff or [],
+            "serves": fields,
             "loaded": self.loaded() if present else False,
             "running": self.active() if present else False,
         }

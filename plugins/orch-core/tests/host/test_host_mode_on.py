@@ -117,10 +117,11 @@ def test_the_unit_per_platform_runs_the_release_on_the_tier_a_run_directory(tmp_
     ]  # fmt: skip
     assert doc["RunAtLoad"] is True and doc["KeepAlive"] is True and doc["Umask"] == 0o077
     assert doc["StandardErrorPath"] == str(state / "host" / "host.log")
+    # the user manager searches ~/.config/systemd/user: the CLI's XDG_CONFIG_HOME is not where it looks
     linux = svc.plan({**env, "XDG_CONFIG_HOME": str(tmp_path / "xdg")}, state, run, release, platform="linux")
-    assert linux.kind == "systemd" and linux.unit_path == tmp_path / "xdg/systemd/user/orch-host.service"
+    assert linux.kind == "systemd" and linux.unit_path == tmp_path / "home/.config/systemd/user/orch-host.service"
     text = linux.content.decode()
-    assert f"--run {run}" in text and "WantedBy=default.target" in text and "User=" not in text
+    assert f'"--run" "{run}"' in text and "WantedBy=default.target" in text and "User=" not in text
     assert svc.plan(env, state, run, release, platform="linux").unit_path == (
         tmp_path / "home/.config/systemd/user/orch-host.service"
     )
@@ -248,7 +249,7 @@ def test_a_fresh_workspace_init_register_then_the_cli_and_the_dashboard_work(wor
     assert rep["host"]["answers"] is False and rep["ok"] is True
 
     # register: no host answers, so the service is installed and started; the UID maps to the init's person
-    code, out = host(["register", str(root)], env)
+    code, out = host(["register", str(root), "--dev"], env)
     res = json.loads(out)
     assert code == 0 and res["ok"] is True, res
     assert res["result"]["data"]["workspace_id"] == wid
@@ -283,7 +284,7 @@ def test_a_fresh_workspace_init_register_then_the_cli_and_the_dashboard_work(wor
     assert code == 0 and doc["key"] == "DEMO-0001", doc
     assert cli(agent, "claim", "1")[0] == 0
     code, doc = cli(agent, "wait", "--timeout", "1")
-    assert code in (0, 3) and doc["ok"] is True, doc
+    assert code == 0 and doc["ok"] is True and doc["data"]["kind"] == "timeout", doc
     code, doc = cli(agent, "show", "1")
     assert code == 0 and doc["key"] == "DEMO-0001"
 
@@ -302,7 +303,7 @@ def test_a_fresh_workspace_init_register_then_the_cli_and_the_dashboard_work(wor
 
     # enable brings it back (the unit is current: a kickstart, no rewrite)
     fake.ran.clear()
-    code, out = host(["enable"], env)
+    code, out = host(["enable", "--dev"], env)
     assert code == 0 and json.loads(out)["result"]["data"]["changed"] is False, out
     assert ["launchctl", "kickstart", f"gui/{UID}/io.orch.host"] in fake.ran or [
         "systemctl", "--user", "start", units.SYSTEMD_NAME
@@ -351,7 +352,7 @@ def test_register_without_a_device_key_here_asks_for_the_mapping(world, tmp_path
 def test_status_names_the_fix_for_a_registered_workspace_without_a_host(world):
     env, root = world["env"], world["root"]
     assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
-    assert host(["register", str(root)], env)[0] == 0
+    assert host(["register", str(root), "--dev"], env)[0] == 0
     world["fake"].stop_host()
     code, text = host(["status"], env)
     assert code == 1
@@ -365,6 +366,140 @@ def test_a_running_host_is_used_as_it_is_and_no_service_is_touched(world):
     assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
     state = Path(env["ORCH_STATE_DIR"])
     with HostThread(state, world["run"], pins=fake.pins):  # a dev host (orch host run --foreground)
-        code, out = host(["register", str(root)], env)
+        code, out = host(["register", str(root), "--dev"], env)
         assert code == 0 and "service" not in json.loads(out)
     assert fake.ran == []
+
+
+# --- the review round (#422) -----------------------------------------------------------------------------------------
+
+
+def test_systemd_exec_start_uses_systemd_quoting_and_refuses_a_newline(tmp_path):
+    """Opus 3: a newline in a path would end the ExecStart line and add a directive of its own; ``%`` and ``$``
+    expand in systemd even inside quotes."""
+    with pytest.raises(ValueError, match="control character"):
+        units.systemd_unit(
+            Path("/py"), Path("/rel"), Path("/s/x\nExecStartPre=/bin/touch /tmp/pwn"), run_dir=Path("/r")
+        )
+    for bad in ("\r", "\x00", "\x1b", "\x7f"):
+        with pytest.raises(ValueError):
+            units.systemd_unit(Path("/py"), Path("/rel"), Path(f"/s{bad}"), run_dir=Path("/r"))
+    text = units.systemd_unit(Path("/p y"), Path('/home/a%h/"q"'), Path("/s/$HOME\\x"), run_dir=Path("/r"))
+    [line] = [x for x in text.splitlines() if x.startswith("ExecStart=")]
+    assert line == (
+        'ExecStart="/p y" "-I" "/home/a%%h/\\"q\\"/bin/orch-host" "run" "--state" "/s/$$HOME\\\\x" "--run" "/r"'
+    )
+    assert sum(x.startswith("Exec") for x in text.splitlines()) == 1
+    assert svc.unit_fields("systemd", text.encode()) == {"python": "/p y", "state": "/s/$HOME\\x", "run": "/r"}
+
+
+def test_enable_refuses_a_control_character_cleanly(tmp_path, monkeypatch, fake):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    env = {"HOME": str(tmp_path / "home"), "ORCH_HOST_RUN_DIR": str(tmp_path / "r\nx")}
+    code, out = host(["enable", "--dev", "--state", str(tmp_path / "s")], env)
+    doc = json.loads(out)
+    assert (code, doc["error"]["code"]) == (5, "invalid.input") and "control character" in doc["error"]["message"]
+    assert fake.ran == [] and not (tmp_path / "home").exists()
+
+
+def test_enable_refuses_a_run_directory_too_long_for_a_socket(tmp_path, fake):
+    env = {"HOME": str(tmp_path / "home"), "ORCH_HOST_RUN_DIR": "/" + "r" * 80}
+    code, out = host(["enable", "--dev", "--state", str(tmp_path / "s")], env)
+    doc = json.loads(out)
+    assert (code, doc["error"]["code"]) == (5, "invalid.input") and "too long" in doc["error"]["message"]
+    assert fake.ran == [] and not (tmp_path / "home").exists()
+
+
+def test_enable_refuses_development_code_as_the_service_unless_dev(tmp_path, fake):
+    """Opus 2: these tests run from a git checkout, which is exactly what must not become the long-running host."""
+    env = {"HOME": str(tmp_path / "home"), "ORCH_HOST_RUN_DIR": "/r"}
+    code, out = host(["enable", "--state", str(tmp_path / "s")], env)
+    doc = json.loads(out)
+    assert (code, doc["error"]["code"]) == (5, "invalid.input") and "--dev" in doc["error"]["message"]
+    assert "checkout" in doc["error"]["message"] and fake.ran == [] and not (tmp_path / "home").exists()
+    venv = tmp_path / "proj" / ".venv" / "bin"
+    venv.mkdir(parents=True)
+    (tmp_path / "proj" / ".git").mkdir()
+    assert "checkout" in svc.dev_source(venv / "python", tmp_path / "pkg")
+    assert "workspace" in svc.dev_source(tmp_path / "ws" / "py", tmp_path / "pkg", [str(tmp_path / "ws")])
+    assert svc.dev_source(tmp_path / "usr" / "bin" / "python", tmp_path / "lib" / "orch") is None
+
+
+def test_a_service_for_another_setup_is_never_replaced_silently(world):
+    """Opus 1: one label per UID. A unit installed for state A is not re-targeted by enable or register from state B;
+    ``enable --replace`` does it on purpose, and status names the fields that differ."""
+    env, root, fake = world["env"], world["root"], world["fake"]
+    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert host(["register", str(root), "--dev"], env)[0] == 0  # the service now serves state A
+    unit = fake.plan
+    assert unit is not None
+    before = unit.unit_path.read_bytes()
+    fake.stop_host()
+    other = {**env, "ORCH_STATE_DIR": env["ORCH_STATE_DIR"] + "-b"}
+    fake.ran.clear()
+    code, out = host(["enable", "--dev"], other)
+    doc = json.loads(out)
+    assert (code, doc["error"]["code"]) == (4, "host.busy") and doc["differs"] == ["state"], doc
+    assert "--replace" in doc["error"]["message"]
+    assert unit.unit_path.read_bytes() == before and not any(a[1] in ("bootout", "bootstrap") for a in fake.ran)
+    code, out = host(["register", str(root), "--dev", "--peer", f"{UID}=person:p_" + "0" * 32], other)
+    assert json.loads(out)["error"]["code"] == "host.busy" and unit.unit_path.read_bytes() == before
+    code, out = host(["status", "--json"], other)
+    rep = json.loads(out)
+    assert rep["service"]["differs"] == ["state"] and any("another setup" in p["what"] for p in rep["problems"])
+    assert not any(p["fix"].startswith("orch host enable") for p in rep["problems"])
+    code, out = host(["enable", "--dev", "--replace"], other)
+    assert code == 0, out
+    assert svc.unit_fields(unit.kind, unit.unit_path.read_bytes())["state"] == other["ORCH_STATE_DIR"]
+
+
+def test_the_peer_default_ignores_a_dead_device_key(world, monkeypatch):
+    """Opus 6: the key on this machine is the evidence for the default; a removed, revoked or expired one is none."""
+    env, root = world["env"], world["root"]
+    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    state = Path(env["ORCH_STATE_DIR"])
+    assert list(host_cli.default_peers(state, root, env)) == [str(UID)]
+    monkeypatch.setattr(host_cli, "_dead_device", lambda device, person, ws: "revoked")
+    with pytest.raises(host_cli.HostError) as e:
+        host_cli.default_peers(state, root, env)
+    assert "revoked" in e.value.message and "--peer" in e.value.message
+
+
+def test_dead_device_reasons():
+    class D:
+        removed = revoked = False
+        expires_ms = None
+        scopes = ("look", "decide")
+
+    class Ws:
+        members = {"p_a": {}}
+
+    def dead(**kw):
+        d = D()
+        for k, v in kw.items():
+            setattr(d, k, v)
+        return host_cli._dead_device(d, kw.pop("person", "p_a"), Ws())
+
+    assert dead() is None
+    assert dead(removed=True) == "removed" and dead(revoked=True) == "revoked"
+    assert dead(expires_ms=1) == "expired" and dead(scopes=("look",)) == "without the decide scope"
+    assert dead(person="p_gone") == "of a person who is no longer a member"
+
+
+def test_status_prints_no_control_character(world, monkeypatch):
+    from orch.host import status
+
+    rep = {
+        "state_dir": "/s\x1b[2J",
+        "service": None,
+        "host": {"answers": False, "control": "/c"},
+        "workspaces": [
+            {"prefix": "D\x1b]0;x\x07", "workspace_id": "w", "state": "ok", "socket_answers": True, "person": None,
+             "click_to_sign": False, "root": "/a\nproblem: forged"}
+        ],
+        "here": None,
+        "problems": [],
+        "ok": True,
+    }  # fmt: skip
+    text = status.render(rep)
+    assert "\x1b" not in text and "\x07" not in text and "\nproblem: forged" not in text

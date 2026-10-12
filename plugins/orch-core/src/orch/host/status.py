@@ -153,8 +153,17 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
                 "fix": fix,
             }
         )
-    if service is not None and service.get("unit_present") and not service.get("unit_current"):
-        problems.append({"what": "the service unit differs from this release's", "fix": "orch host enable"})
+    differs = (service or {}).get("differs") or []
+    if {"state", "run"} & set(differs):
+        serves = service.get("serves") or {}
+        problems.append(
+            {
+                "what": f"the installed service serves another setup ({', '.join(differs)} differ: state "
+                f"{serves.get('state')}, run {serves.get('run')}); workspaces of this state dir are not served by it",
+                "fix": "decide which setup the service runs (orch host enable --help); nothing is changed for you",
+            }
+        )
+    # an interpreter that differs alone is no problem: the service keeps the one it was enabled with (H7 review)
     here = _here(env, state)
     if here is not None and here.get("mode") == "refused":
         problems.append({"what": f"this directory: {here['message']}", "fix": "orch host status in the workspace root"})
@@ -206,7 +215,14 @@ def render(rep: Mapping[str, Any]) -> str:
         lines.append(f"here: {here['root']}: direct mode (not registered)")
     else:
         lines.append(f"here: {here['root']}: refused ({here['error']})")
+    if svc and svc.get("differs"):
+        lines.append(
+            f"service: the installed unit differs in {', '.join(svc['differs'])} from what this orch would install"
+        )
     for p in rep["problems"]:
         lines.append(f"problem: {p['what']} · fix: {p['fix']}")
     lines.append("ok" if rep["ok"] else f"{len(rep['problems'])} problem(s)")
-    return "\n".join(lines) + "\n"
+    from orch.canon.text import clean
+
+    # every value printed comes from files a crafted directory name can reach: no control character reaches the terminal
+    return "\n".join(clean(line).replace("\n", "⟨U+000A⟩") for line in lines) + "\n"

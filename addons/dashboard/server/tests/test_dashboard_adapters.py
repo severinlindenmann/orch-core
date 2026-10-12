@@ -95,7 +95,17 @@ def test_a_task_receipt_keeps_its_attested_by_label():
     receipt = {"exit": 0, "ms": 5, "commit": None, "at": "2026-10-12T10:00:00Z"}
     labelled = _task(base, {"receipt": {**receipt, "attested_by": "agent"}, "leased_by": None}, True)
     assert labelled["receipt"] == {"exit": 0, "ms": 5, "attested_by": "agent"}
-    assert _task(base, {"receipt": receipt}, True)["receipt"] == {"exit": 0, "ms": 5}  # direct-mode receipt: no label
+    # A receipt the host did not label says "unknown"; it is never shown as verified.
+    assert _task(base, {"receipt": receipt}, True)["receipt"] == {"exit": 0, "ms": 5, "attested_by": "unknown"}
+
+
+def test_a_tasks_verify_command_reaches_the_ui_as_text():
+    from orch_dashboard.adapters.tickets import _task, _verify
+
+    base = {"id": "T1", "text": "t", "state": "todo", "proves": []}
+    assert _task({**base, "verify": "make test"}, None, True)["verify"] == {"cmd": "make test"}
+    assert _task(base, None, True)["verify"] is None
+    assert _verify({"cmd": "x"}) == {"cmd": "x"} and _verify("") is None and _verify(7) is None
 
 
 def test_workspace_badge_equals_todays_count_and_leaves_notices_out(stub):

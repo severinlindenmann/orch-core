@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, FileText, ListChecks } from 'lucide-react'
 import { useState } from 'react'
 import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
-import { CodeBlock } from '@/addon-ui/CodeBlock'
+import { Raw } from '@/components/sign/visible'
 import { diffstat } from '@/api/gates'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { agentName, fmtDuration, Mono, Pill, Section, type Jump, type TabProps } from './shared'
@@ -64,7 +64,15 @@ export function ReceiptLine({ t }: { t: TaskStatus }) {
           <span className="text-text">{t.receipt.commit}</span>
         </>
       )}
-      {t.receipt.attested_by && (
+      {t.receipt.attested_by === 'unknown' && (
+        <>
+          {' · '}
+          <span className="text-text-faint" title="The host did not say who ran the command; it does not run it either.">
+            attestation unknown
+          </span>
+        </>
+      )}
+      {t.receipt.attested_by && t.receipt.attested_by !== 'unknown' && (
         <>
           {' · '}
           <span className="text-text-faint" title="The agent ran the command and says so; the host does not run it.">
@@ -77,7 +85,7 @@ export function ReceiptLine({ t }: { t: TaskStatus }) {
 }
 
 /** "How it's verified": the command in a code block and its receipt. Closed until asked for. */
-function HowVerified({ t }: { t: TaskStatus }) {
+export function HowVerified({ t }: { t: TaskStatus }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-1">
@@ -87,7 +95,7 @@ function HowVerified({ t }: { t: TaskStatus }) {
       </button>
       {open && (
         <div className="mt-1 space-y-1 text-[12px]">
-          {t.verify ? <CodeBlock language="shellscript" text={t.verify.cmd} /> : <p className="text-text-faint">Checked by a person, no command.</p>}
+          {t.verify ? <pre className="whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-2 py-1.5"><Raw>{t.verify.cmd}</Raw></pre> : <p className="text-text-faint">Checked by a person, no command.</p>}
           <ReceiptLine t={t} />
         </div>
       )}

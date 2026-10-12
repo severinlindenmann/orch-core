@@ -282,6 +282,12 @@ def _gate(gate: dict[str, Any] | None, ext: bool, decisions_source: list[dict] |
     return out
 
 
+def _verify(v) -> dict | None:
+    """The task's exact `verify` command as the host gives it (a string). Untrusted text."""
+    cmd = v.get("cmd") if isinstance(v, dict) else v
+    return {"cmd": cmd} if isinstance(cmd, str) and cmd else None
+
+
 def _task(t: dict, host: dict | None, ext: bool) -> dict:
     """A task as the UI draws it. "doing" is `leased_by` (v1.4 tasks have no started state)."""
     state = TASK_STATE.get(t["state"], "todo")
@@ -293,7 +299,7 @@ def _task(t: dict, host: dict | None, ext: bool) -> dict:
     return {
         "id": t["id"],
         "text": t["text"],
-        "verify": None,
+        "verify": _verify(t.get("verify")),
         "proves": list(t["proves"]),
         "state": state,
         # The session only: which agent holds it and since when is not served.
@@ -302,8 +308,9 @@ def _task(t: dict, host: dict | None, ext: bool) -> dict:
             "exit": receipt["exit"],
             "ms": receipt["ms"],
             **({"commit": receipt["commit"]} if receipt.get("commit") else {}),
-            # H3b2: a client receipt is labelled; shown as the host stores it, never as host-verified
-            **({"attested_by": receipt["attested_by"]} if receipt.get("attested_by") else {}),
+            # H3b2: a client receipt is labelled; shown as the host stores it, never as host-verified. A receipt
+            # the host did not label (older than H3b2) says so: "unknown", not "verified".
+            "attested_by": receipt.get("attested_by") or "unknown",
         }
         if receipt
         else None,
@@ -415,7 +422,10 @@ def document(
                 "answer": ui_answer,
             }
         )
-    tasks = [{"id": t["id"], "text": t["text"], "verify": None, "proves": list(t["proves"])} for t in doc["tasks"]]
+    tasks = [
+        {"id": t["id"], "text": t["text"], "verify": _verify(t.get("verify")), "proves": list(t["proves"])}
+        for t in doc["tasks"]
+    ]
     acceptance = [{"id": a["id"], "text": a["text"]} for a in doc["acceptance"]]
     if ext and data.get("artifacts") is not None:
         artifacts = [_artifact(a) for a in data["artifacts"]]

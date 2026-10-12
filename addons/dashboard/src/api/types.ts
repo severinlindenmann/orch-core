@@ -224,7 +224,7 @@ export type TaskState = 'todo' | 'doing' | 'done' | 'blocked' | 'skipped'
 export interface TaskStatus extends TaskDef {
   state: TaskState
   lease: { session: string; agent: string; since: string } | null
-  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' } | null
+  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' | 'unknown' } | null
   done_at: string | null
 }
 

@@ -40,6 +40,7 @@ ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Word = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 TTL = 660  # a request lives 10 minutes at most (the signer caps it); the session forgets it a minute later
 REMEMBERED = 64
+RECENT = 300  # seconds a signed action is remembered, so a lost browser answer can read "Signed"
 #: refusals after which a request can no longer be signed: its slot is free again
 ENDED = {"expired", "not_prepared_here", "custody_changed", "human.request_expired", "human.request_state"}
 
@@ -104,9 +105,12 @@ class Clicks:
                 if e != epoch and rid in self.owned.get(tok, {})
             ]
 
-    def adopt(self, token: str, ws: str, request_id: str) -> None:
+    def forget_all(self, request_id: str) -> None:
+        """The request ended: every session lets go of it."""
         with self.lock:
-            self.owned.setdefault(token, {})[request_id] = (ws, self.clock() + TTL)
+            for tok, mine in self.owned.items():
+                mine.pop(request_id, None)
+                self.ops.pop((tok, request_id), None)
 
     def forget(self, token: str, request_id: str) -> None:
         with self.lock:
@@ -233,6 +237,8 @@ def register(app: FastAPI, gateway: Gateway):
         # The hand-off's gate on the host's own record: it must be the action that was asked for (the ticket, the exact
         # events and values), read through OUR link. A host that prepared anything else is refused before it is shown.
         wanted = clicks.body_of(token, rid)
+        if wanted is not None:  # another request of this action is in flight or unsettled: follow that one
+            handoffs.refuse_if_unsettled(ws, binding_of(wanted), exclude=rid)
         try:
             prepared = human(ws, "human.get", {"request_id": rid})
             verify(
@@ -258,6 +264,8 @@ def register(app: FastAPI, gateway: Gateway):
 
     def ended(ws: str, token: str, rid: str) -> None:
         """Nothing more can be signed on this request: cancel it at the host (best effort), free its slot."""
+        if handoffs.is_unsettled(rid):
+            return  # never cancel a signature that may be in flight, unsettled or just signed
         for call in (
             lambda: signer.call("cancel", {"workspace_id": ws, "request_id": rid}),
             lambda: human(ws, "human.cancel", {"request_id": rid}),
@@ -281,11 +289,12 @@ def register(app: FastAPI, gateway: Gateway):
     def state(body: Step, request: Request, ws: str = Depends(workspace)):
         """Where a request stands at the host (read through our own link): the answer to an unknown outcome. An
         unsettled request is answered for any session of this person, and never as `not_found`."""
-        token, rid = request.state.token, body.request_id
+        rid = body.request_id
+        # A tracked request (in flight, unsettled, or just signed) may be read by any session of this person: read-only,
+        # it grants nothing else (no view, no sign, no cancel).
         unsettled = handoffs.is_unsettled(rid) == ws
         if unsettled:
             gateway.enabled(ws)
-            clicks.adopt(token, ws, rid)  # a session that comes back (or another tab) follows it too
         else:
             mine(request, ws, rid)
         try:
@@ -303,34 +312,42 @@ def register(app: FastAPI, gateway: Gateway):
         if got not in STATES:
             return {"id": rid, "state": "unknown"}  # the host sent something this dashboard does not know: say so
         if got not in ("prepared", "bound"):
-            clicks.forget(token, rid)
-            handoffs.settle(token, rid)
+            clicks.forget_all(rid)
+            handoffs.settle_all(rid)  # every session's slot, not only this caller's
             handoffs.settled(rid)
         return {"id": rid, "state": got}
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
         mine(request, ws, body.request_id)
-        token = request.state.token
+        token, rid = request.state.token, body.request_id
+        wanted = clicks.body_of(token, rid)
+        mark = binding_of(wanted) if wanted is not None else None
+        if mark is not None:
+            # Another request of this very action in flight or unsettled (another tab): never a second signature.
+            handoffs.refuse_if_unsettled(ws, mark, exclude=rid)
+            # In flight counts as unsettled from here on, BEFORE the channel is used: a prepare or a hung-signer
+            # replacement cannot slip in between, and the mark is already there if the answer is lost.
+            handoffs.mark_unsettled(ws, mark, rid, handoffs.clock() + TTL + 60)
         args = {"view_digest": body.view_digest}
         if body.word is not None:
             args["word"] = body.word  # exactly as typed
         try:
-            got = signer.call("sign", {"workspace_id": ws, "request_id": body.request_id, **args}, lost=lost_sign())
+            got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
         except HostError as exc:
-            wanted = clicks.body_of(token, body.request_id)
-            if exc.error.get("reason") == "uncertain" and wanted is not None:
-                # The signature may be at the host: this action is unsettled for this person until the host says so.
-                # (Before the sweep, which must spare it.)
-                handoffs.mark_unsettled(ws, binding_of(wanted), body.request_id, handoffs.clock() + TTL + 60)
+            if exc.error.get("reason") != "uncertain" and mark is not None:
+                handoffs.settled(rid)  # a definite refusal: nothing is in flight; an uncertain one keeps its mark
             sweep()
             if (exc.error.get("reason") or exc.error["code"]) in ENDED:
-                clicks.forget(token, body.request_id)
-                handoffs.settle(token, body.request_id)
+                clicks.forget(token, rid)
+                handoffs.settle(token, rid)
             raise  # an uncertain outcome keeps its slot and its request: it settles at the host
-        clicks.forget(token, body.request_id)
-        handoffs.settle(token, body.request_id)
-        handoffs.settled(body.request_id)
+        clicks.forget(token, rid)
+        handoffs.settle(token, rid)
+        handoffs.settled(rid)
+        if mark is not None:
+            # Just signed: a lost browser answer, or a second click on the same action, re-attaches and reads "Signed".
+            handoffs.signed(ws, mark, rid, handoffs.clock() + RECENT)
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
         if isinstance(result.get("key"), str):

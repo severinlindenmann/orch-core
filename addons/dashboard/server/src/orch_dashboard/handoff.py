@@ -461,7 +461,8 @@ class Handoffs:
         self.until: dict[tuple[str, str], float] = {}  # click requests in `active`: their own deadline
         # A signature whose outcome is unknown: (workspace, action binding) -> request. Until the host says the request
         # is terminal (or it has expired), nothing of this person may prepare the same action again, from any session.
-        self.unsettled: dict[tuple[str, str], tuple[str, float]] = {}
+        self.unsettled: dict[tuple[str, str], dict[str, float]] = {}
+        self.recent: dict[tuple[str, str], tuple[str, float]] = {}
         self.pending: dict[str, int] = {}  # slots reserved by a prepare that has not answered yet
         self.by_idem: OrderedDict[tuple[str, str, str], tuple[str, dict | None]] = OrderedDict()  # None: in flight
 
@@ -481,42 +482,80 @@ class Handoffs:
                 self.active.get(token, set()).discard(rid)
         return mine
 
+    # -- signatures whose outcome is unknown (or still in flight), and ones just signed ------------------------------
+    # Per (workspace, action binding): the set of request ids that may be mid-submit or unsettled (a set, so a second
+    # request never overwrites the first), and the request most recently signed (so a lost browser answer can be
+    # re-attached to "Signed" within RECENT seconds). Memory only: a dashboard restart loses it, the host's request
+    # state stays authoritative (HANDOVER "Click-to-sign").
+
     def mark_unsettled(self, ws: str, binding: str, request_id: str, until: float) -> None:
         with self.lock:
-            self.unsettled[(ws, binding)] = (request_id, until)
+            self.unsettled.setdefault((ws, binding), {})[request_id] = until
 
-    def unsettled_for(self, ws: str, binding: str) -> str | None:
+    def _live(self, key, exclude: str | None = None) -> str | None:  # under the lock
+        now = self.clock()
+        live = {r: u for r, u in self.unsettled.get(key, {}).items() if u > now}
+        if live:
+            self.unsettled[key] = live
+        else:
+            self.unsettled.pop(key, None)
+        for rid in live:
+            if rid != exclude:
+                return rid
+        recent = self.recent.get(key)
+        if recent and recent[1] > now:
+            return recent[0] if recent[0] != exclude else None
+        self.recent.pop(key, None)
+        return None
+
+    def unsettled_for(self, ws: str, binding: str, exclude: str | None = None) -> str | None:
+        """Another request of this action that is in flight, unsettled or just signed (never `exclude` itself)."""
         with self.lock:
-            hit = self.unsettled.get((ws, binding))
-            if hit and hit[1] > self.clock():
-                return hit[0]
-            self.unsettled.pop((ws, binding), None)
-            return None
+            return self._live((ws, binding), exclude)
 
     def is_unsettled(self, request_id: str) -> str | None:
-        """The workspace of an unsettled request, else None."""
+        """The workspace of a tracked request (in flight, unsettled or just signed), else None."""
         with self.lock:
             now = self.clock()
-            for (ws, binding), (rid, until) in list(self.unsettled.items()):
-                if until <= now:
-                    del self.unsettled[(ws, binding)]
-                elif rid == request_id:
-                    return ws
+            for key in list(self.unsettled):
+                self._live(key)
+                if self.unsettled.get(key, {}).get(request_id, 0) > now:
+                    return key[0]
+            for key, (rid, until) in list(self.recent.items()):
+                if rid == request_id and until > now:
+                    return key[0]
             return None
 
     def any_unsettled(self) -> bool:
+        """Is a signature in flight or its outcome unknown? (Not: just signed.)"""
         with self.lock:
             now = self.clock()
-            return any(until > now for _, until in self.unsettled.values())
+            return any(u > now for rids in self.unsettled.values() for u in rids.values())
 
     def settled(self, request_id: str) -> None:
         with self.lock:
-            for key, (rid, _) in list(self.unsettled.items()):
-                if rid == request_id:
+            for key, rids in list(self.unsettled.items()):
+                rids.pop(request_id, None)
+                if not rids:
                     del self.unsettled[key]
+            for key, (rid, _) in list(self.recent.items()):
+                if rid == request_id:
+                    del self.recent[key]
 
-    def refuse_if_unsettled(self, ws: str, binding: str) -> None:
-        rid = self.unsettled_for(ws, binding)
+    def signed(self, ws: str, binding: str, request_id: str, until: float) -> None:
+        with self.lock:
+            self.recent[(ws, binding)] = (request_id, until)
+
+    def settle_all(self, request_id: str) -> None:
+        """The request ended: every session's quota slot for it is freed, not only the caller's."""
+        with self.lock:
+            for tok, active in self.active.items():
+                active.discard(request_id)
+            for key in [k for k in self.until if k[1] == request_id]:
+                del self.until[key]
+
+    def refuse_if_unsettled(self, ws: str, binding: str, exclude: str | None = None) -> None:
+        rid = self.unsettled_for(ws, binding, exclude)
         if rid:
             raise HostError(
                 {

@@ -265,7 +265,7 @@ def test_sign_sends_exactly_what_was_typed_and_answers_without_the_hosts_result(
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
     assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "word": "  DEMO~ab  "}
     plain = {"request_id": "hr_" + "0" * 25 + "2", "view_digest": HASH}
-    prepare(client, token, stub, approve(2))
+    prepare(client, token, stub, {**comment(2), "message": "another action"})
     client.post(url(stub, "sign"), json=plain, headers=hdr(token))
     assert "word" not in [c for c in script.clients[0].calls if c[0] == "sign"][1][1]
 
@@ -954,3 +954,146 @@ def test_the_unsettled_error_status_is_a_409_with_the_request_id_only(client, to
     sign_lost(client, token, stub)
     err = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(token)).json()["error"]
     assert set(err) == {"code", "message", "retryable", "request_id"}
+
+
+# -- Opus re-check 2 (N12-N17): two tabs, in-flight signs, adoption, quota, recently signed ----------------------------
+
+
+def test_n12_two_tabs_a_request_prepared_during_an_inflight_sign_cannot_be_signed_after_it_turns_unsettled(
+    client, token, stub, script, auth, rich, host_check
+):
+    prepare(client, token, stub, comment(1))
+    go, entered = threading.Event(), threading.Event()
+
+    def slow(op, args):
+        if op == "sign":
+            entered.set()
+            go.wait(5)
+            raise TimeoutError
+        return script.handler(op, args)
+
+    script.clients[0].handler = slow
+    script.clients[0].proc = Alive()
+    second = other_session(client, auth)
+    out = {}
+    ta = threading.Thread(target=lambda: out.__setitem__("a", sign_lost(client, token, stub)))
+    ta.start()
+    assert entered.wait(5)
+    # (a) the sign in flight already counts as unsettled: the same action cannot be prepared (click or hand-off)
+    during = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(second))
+    assert during.status_code == 409 and during.json()["error"] == {
+        "code": "click.unsettled",
+        "message": during.json()["error"]["message"],
+        "retryable": False,
+        "request_id": REQ,
+    }
+    hand = client.post(f"/api/w/{stub.ws}/handoff", json=comment(3), headers=hdr(second))
+    assert hand.json()["error"]["code"] == "click.unsettled"
+    go.set()
+    ta.join(10)
+    assert out["a"].json()["error"]["reason"] == "uncertain"
+    # (b) a request of the same action prepared EARLIER (tab 2 raced ahead) can neither be viewed nor signed
+    rid_b = f"hr_{2:026d}"
+    script.clients[0].handler = script.handler
+    app = client.app
+    app.state.clicks.add(second, stub.ws, rid_b, "log", app.state.clicks.body_of(token, REQ), 0)
+    for step, body in (("view", {"request_id": rid_b}), ("sign", {"request_id": rid_b, "view_digest": HASH})):
+        res = client.post(url(stub, step), json=body, headers=hdr(second))
+        assert res.status_code == 409 and res.json()["error"]["code"] == "click.unsettled", step
+        assert res.json()["error"]["request_id"] == REQ  # the UI re-attaches to the first one
+    assert [c for c in script.clients[0].calls if c[0] == "sign" and c[1]["request_id"] == rid_b] == []
+
+
+def test_n12_two_uncertain_signs_of_one_action_do_not_overwrite_each_other(client, token, stub, script, auth, rich):
+    handoffs = client.app.state.handoffs
+    handoffs.mark_unsettled(stub.ws, "b" * 64, "hr_a", handoffs.clock() + 100)
+    handoffs.mark_unsettled(stub.ws, "b" * 64, "hr_b", handoffs.clock() + 100)
+    assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") == stub.ws
+    handoffs.settled("hr_b")
+    assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") is None
+
+
+def test_n12_a_definite_refusal_clears_the_in_flight_mark_and_success_clears_it_too(client, token, stub, script, rich):
+    prepare(client, token, stub, comment(1))
+    handoffs = client.app.state.handoffs
+    script.refuse["sign"] = ClickError("human.click_refused", "short", reason="too_soon")
+    assert sign_lost(client, token, stub).json()["error"]["reason"] == "too_soon"
+    assert handoffs.is_unsettled(REQ) is None and not handoffs.any_unsettled()  # retry is allowed
+    script.refuse.clear()
+    assert sign_lost(client, token, stub).status_code == 200
+    assert not handoffs.any_unsettled()
+
+
+def test_n13_state_reads_a_tracked_request_but_grants_no_ownership(client, token, stub, script, auth, host_check, rich):
+    prepare(client, token, stub, comment(1))
+    lose_sign(script)
+    sign_lost(client, token, stub)
+    second = other_session(client, auth)
+    host_check.pending[REQ] = "bound"
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(second)).status_code == 200
+    for step, body in (
+        ("view", {"request_id": REQ}),
+        ("sign", {"request_id": REQ, "view_digest": HASH}),
+        ("cancel", {"request_id": REQ}),
+    ):
+        assert client.post(url(stub, step), json=body, headers=hdr(second)).status_code == 404, step
+    assert host_check.cancelled == [] and [c for c in script.clients[0].calls if c[0] == "cancel"] == []
+
+
+def test_n14_another_session_settling_it_frees_the_preparing_sessions_slot(
+    client, token, stub, script, auth, host_check, rich
+):
+    for n in range(8):
+        assert (
+            client.post(
+                url(stub, "prepare"), json={**comment(7000 + n), "message": f"m{n}"}, headers=hdr(token)
+            ).status_code
+            == 200
+        )
+    assert (
+        client.post(url(stub, "prepare"), json={**comment(7100), "message": "ninth"}, headers=hdr(token)).status_code
+        == 503
+    )
+    lose_sign(script)
+    sign_lost(client, token, stub)  # REQ = request 1, unsettled
+    second = other_session(client, auth)
+    host_check.pending[REQ] = "expired"
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(second)).json()["state"] == "expired"
+    script.clients[0].handler = script.handler
+    assert (
+        client.post(url(stub, "prepare"), json={**comment(7101), "message": "tenth"}, headers=hdr(token)).status_code
+        == 200
+    )
+
+
+def test_n15_after_a_successful_sign_a_re_prepare_of_the_same_action_re_attaches_and_reads_signed(
+    client, token, stub, script, host_check, rich
+):
+    prepare(client, token, stub, comment(1))
+    assert sign_lost(client, token, stub).status_code == 200
+    again = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(token))
+    assert (
+        again.status_code == 409
+        and again.json()["error"]["code"] == "click.unsettled"
+        and again.json()["error"]["request_id"] == REQ
+    )
+    host_check.pending[REQ] = "submitted"
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
+    # Read as Signed, the record is gone: the same action may be prepared again.
+    assert client.post(url(stub, "prepare"), json=comment(3), headers=hdr(token)).status_code == 200
+
+
+def test_n15_the_recently_signed_record_ends_by_itself(client, token, stub, script, rich):
+    prepare(client, token, stub, comment(1))
+    sign_lost(client, token, stub)
+    handoffs = client.app.state.handoffs
+    handoffs.clock = lambda c=handoffs.clock: c() + 400
+    assert client.post(url(stub, "prepare"), json=comment(2), headers=hdr(token)).status_code == 200
+
+
+def test_n17_the_handoff_names_the_unsettled_request_so_the_ui_re_attaches(client, token, stub, script, rich):
+    prepare(client, token, stub, comment(1))
+    lose_sign(script)
+    sign_lost(client, token, stub)
+    err = client.post(f"/api/w/{stub.ws}/handoff", json=comment(2), headers=hdr(token)).json()["error"]
+    assert err["code"] == "click.unsettled" and err["request_id"] == REQ

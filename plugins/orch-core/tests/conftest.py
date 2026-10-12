@@ -92,6 +92,8 @@ def real_home() -> str:
 REAL_SERVICE_FILES = (
     ("Library", "LaunchAgents", "io.orch.host.plist"),
     (".config", "systemd", "user", "orch-host.service"),
+    ("Library", "LaunchAgents", "io.orch.runner.plist"),
+    (".config", "systemd", "user", "orch-runner.service"),
     (".local", "share", "orch", "releases", "current"),
 )
 

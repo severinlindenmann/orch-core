@@ -317,16 +317,11 @@ def test_new_ticket_then_complete_the_details(world, api):
     assert doc["body"]["summary"].startswith("Move invoices")
 
 
-HOST_PERSON_OPS_IDEM = pytest.mark.xfail(
-    strict=True,
-    reason="stream A RH-3: human.prepare with an idem for move/policy.set/settings.set raises KeyError in the host "
-    "(human.py _begin_idem looks the op up in the registry, which lacks the host person ops): 500 internal",
-)
 VERIFY_OWNER = {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}
 
 
 def direct(world, op, args):
-    """Prepare WITHOUT an idem (what the dashboard cannot do, see RH-3), sign with the real signer, wait for the end."""
+    """Prepare directly through the host link (no dashboard route), sign with the real signer, wait for the end."""
     link = world.gateway.link(world.ws.ws_id)
     prepared = link.call("human.prepare", {"op": op, "args": args, "handoff": True})
     world.ws.sign(prepared["request"]["code"])
@@ -338,13 +333,11 @@ def direct(world, op, args):
     raise AssertionError(rows)
 
 
-@HOST_PERSON_OPS_IDEM
 def test_settings_set_through_the_dashboard(world, api):
     _, final = api.handoff({"action": "settings_set", "grant_hours": 12})
     assert final["state"] == "submitted", final
 
 
-@HOST_PERSON_OPS_IDEM
 def test_policy_set_through_the_dashboard(world, api):
     _, final = api.handoff({"action": "policy_set", "gate": "verify", "policy": VERIFY_OWNER})
     assert final["state"] == "submitted", final
@@ -406,12 +399,11 @@ def test_move_is_offered_and_prepares_ticket_moved_on_the_real_host(world, api, 
     ]
     assert "move" in features and "do:move" in features
     key = world.keys["changes"]
-    # prepare (with the dashboard's idem) is refused by the host today: stream A RH-3
+    # core #416 fixed RH-3: a prepare with the dashboard's idem works for move
     res = api.post("/handoff", {"action": "move", "key": key, "to": "backlog", "idem": new_idem()})
-    assert res.status_code in (200, 500), res.text
+    assert res.status_code == 200, res.text
 
 
-@HOST_PERSON_OPS_IDEM
 def test_move_through_the_dashboard(world, api):
     key = world.keys["changes"]
     _, final = api.handoff({"action": "move", "key": key, "to": "backlog"})

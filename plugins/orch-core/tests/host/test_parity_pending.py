@@ -32,6 +32,7 @@ SERVE_DIFF = "#417 (feat/serve-diff): the host serves diff"
 
 def _mask(text: str) -> str:
     text = norm(text)
+    text = re.sub(r"\bp_[0-9a-f]{6}\b", "p_SHORT", text)  # each world draws its own owner key
     text = re.sub(r"\b[0-9a-f]{40}\b", "SHA", text)
     return re.sub(r"\b[0-9a-f]{7,12}\b", "HEX", text)
 

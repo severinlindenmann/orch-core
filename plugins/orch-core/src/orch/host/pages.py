@@ -121,12 +121,17 @@ class Pages:
             while self._snaps and (
                 len(self._snaps) >= MAX_SNAPSHOTS or sum(v.size for v in self._snaps.values()) + size > MAX_BYTES
             ):
-                # the principal holding the most bytes loses its oldest snapshot
-                use: dict[str, int] = {}
+                # the principal using the largest share of the caps (its count against PER_PRINCIPAL plus its bytes
+                # against PRINCIPAL_BYTES, the opener's new snapshot included) loses its oldest: a principal within a
+                # fair share is never evicted while another holds more
+                use: dict[str, float] = {principal: size / PRINCIPAL_BYTES + 1 / PER_PRINCIPAL}
                 for v in self._snaps.values():
-                    use[v.principal] = use.get(v.principal, 0) + v.size
-                top = max(use, key=lambda p: use[p])
-                del self._snaps[next(s for s, v in self._snaps.items() if v.principal == top)]
+                    use[v.principal] = use.get(v.principal, 0.0) + v.size / PRINCIPAL_BYTES + 1 / PER_PRINCIPAL
+                top = max(use, key=lambda p: (use[p], p == principal))
+                victim = next((s for s, v in self._snaps.items() if v.principal == top), None)
+                if victim is None:  # the opener is the heaviest and holds nothing older: nobody else pays for it
+                    break
+                del self._snaps[victim]
             self._snaps[snap.id] = snap
         return snap
 

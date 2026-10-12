@@ -360,6 +360,9 @@ class Journal(Window):
         self._seen_changes = 0
         self._tickets_mtime: int | None = None
         self._walk: _Walk | None = None
+        #: bumped by every :meth:`build` (start, foreign append, restore): a cache of positions keys on it, because a
+        #: foreign writer can shift positions without changing the epoch
+        self.generation = 0
         self._genesis = ""
         self._restore = ""
 
@@ -384,6 +387,8 @@ class Journal(Window):
     def build(self, store: Any) -> Batch:
         """Rebuild from the logs (start, a foreign append, a restore). Returns the whole window as a reset batch."""
         from orch.model.types import Core
+
+        self.generation += 1
 
         with store.locked():
             events = store.merged_events()

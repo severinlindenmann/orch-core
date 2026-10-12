@@ -446,3 +446,52 @@ def test_a_ticket_updated_summary_equals_ticket_gets(w):
     for entry in res["result"]["data"]["log"]:
         assert feed_items[entry["seq"]]["summary"] == entry["summary"]
         assert feed_items[entry["seq"]]["data"] == entry["data"]
+
+
+# --- scan finding: the activity base cache (stale cache / integrity) -------------------------------------------------
+
+
+def _fresh(w, c, args, **kw):
+    """The same feed computed with the base cache dropped first."""
+    w.service.activity_base = None
+    return flat(pages(c, args, **kw))
+
+
+def test_scan_finding_the_cache_is_dropped_by_a_journal_rebuild_after_a_foreign_append(w):
+    uid, key = w.ticket("cached")
+    w.write(key, "one")
+    c = w.client()
+    flat(pages(c, {"limit": 200}))  # warm the cache
+    generation = w.service.journal.generation
+    w.append(lambda store: (store.ticket(uid), w.lab.ws.log(uid, "foreign")))  # another writer: not the host
+    w.check_journals()
+    assert w.service.journal.generation > generation  # rebuilt
+    after = flat(pages(c, {"limit": 200}))
+    assert w.service.activity_base.key[1] == w.service.journal.generation
+    assert [i for i in after if i["data"].get("text") == "foreign"]
+    assert after == _fresh(w, c, {"limit": 200})
+
+
+def test_scan_finding_a_cache_entry_that_no_longer_matches_the_journal_is_rebuilt(w):
+    uid, key = w.ticket("cached")
+    w.write(key, "one")
+    c = w.client()
+    warm = flat(pages(c, {"limit": 200}))
+    cache = w.service.activity_base
+    cache.entries[-1] = reads_feed.Entry("workspace", "member.added", "1970-01-01T00:00:00Z", {}, None, {})
+    assert flat(pages(c, {"limit": 200})) == warm  # the tampered position does not match the journal: rebuilt
+
+
+def test_scan_finding_cached_items_never_carry_another_viewers_view(w):
+    ua, ka, ur, kr = populate(w)
+    c = w.client()
+    owner = flat(pages(c, {"limit": 200}))  # the owner warms the cache
+    g = flat(pages(c, {"limit": 200}, grant=w.grant))
+    assert g == _fresh(w, c, {"limit": 200}, grant=w.grant)
+    w.restrict(ua, [w.quinn.ref])  # a visibility change after the cache was warmed
+    hidden = flat(pages(c, {"limit": 200}))
+    assert ua in uids(owner) and ua not in uids(hidden)
+    assert hidden == _fresh(w, c, {"limit": 200})
+    as_agent_class(w)
+    n = flat(pages(w.client(), {"limit": 200}))
+    assert n == _fresh(w, w.client(), {"limit": 200}) and all(i["log"] != "workspace" for i in n)

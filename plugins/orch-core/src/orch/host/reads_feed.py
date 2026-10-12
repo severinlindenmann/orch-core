@@ -54,11 +54,18 @@ class Entry(NamedTuple):
 
 
 class Base:
-    """Per-workspace cache of :class:`Entry` by jpos, valid for one journal epoch."""
+    """Per-workspace cache of :class:`Entry` by jpos, valid for one journal epoch **and** one journal build: a rebuild
+    (a foreign append, which may shift positions without a new epoch, or a restore) drops it. Entries are
+    viewer-independent; visibility, key and title are applied per request."""
 
     def __init__(self) -> None:
-        self.epoch = ""
+        self.key: tuple[str, int] = ("", -1)
         self.entries: list[Entry] = []
+
+
+def _same(cached: Entry, entry: Any) -> bool:
+    """A cached entry still names the journal's event at its position."""
+    return cached.log == entry.log and cached.typ == entry.type and cached.at == entry.at
 
 
 def _from_journal(entry: Any) -> Entry | None:
@@ -92,9 +99,14 @@ def base_entries(ctx: ReadCtx, upto: int) -> list[Entry]:
     if cache is None:
         cache = service.activity_base = Base()
     journal = service.journal
-    if cache.epoch != ctx.epoch:
-        cache.epoch, cache.entries = ctx.epoch, []
+    key = (ctx.epoch, journal.generation if journal is not None else -1)
+    if cache.key != key:
+        cache.key, cache.entries = key, []
     have = len(cache.entries)
+    if journal is not None and have:  # integrity: the last cached position still holds the same event
+        at = journal.entry_at(min(have, journal.head))
+        if have > journal.head or (at is not None and not _same(cache.entries[at.jpos - 1], at)):
+            cache.entries, have = [], 0
     if have >= upto:
         return cache.entries
     if journal is not None and journal.window and journal.floor <= have + 1:

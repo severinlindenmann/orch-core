@@ -88,8 +88,8 @@ def test_register_killed_after_the_entry_is_committed_and_serves(lab):
         assert retry["data"] == {"workspace_id": wid} and retry["duplicate"] is True
         rows = ok(c.call("host.list"))["data"]["workspaces"]
         assert [(r["workspace_id"], r["state"]) for r in rows] == [(wid, "ok")]
-    code, doc = lab.cli("status")
-    assert (code, doc["error"]["code"]) == (3, "host.required")
+    code, doc = lab.cli("status", run=True)  # the host is down: a host client says so, it never writes directly
+    assert (code, doc["error"]["code"]) == (9, "host.unavailable")
 
 
 @pytest.mark.parametrize("point", ["unregister-before-remove", "unregister-after-remove"])

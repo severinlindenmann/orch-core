@@ -168,7 +168,12 @@ def _body_lines(line: str) -> list[str]:
 
 
 def result_text(op: Operation, res: Result) -> str:
-    head, _, tail = fill(op.output["text"], _fields(res)).partition("\n")
+    try:
+        head, _, tail = fill(op.output["text"], _fields(res)).partition("\n")
+    except TemplateError:
+        if res.head is None:  # a result that names its own first line (a host-mode dry run) needs no template
+            raise
+        head, tail = "", ""
     if res.duplicate:
         head += " duplicate"
     if res.head is not None:

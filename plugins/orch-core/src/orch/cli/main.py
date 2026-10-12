@@ -163,6 +163,24 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     return res
 
 
+def run_hosted(parsed: parser.Parsed, ctx: Context, target: Any) -> Result:
+    """The same call as a request to the host (H4b, :mod:`orch.hostclient`). The checks that need no store stay here
+    (input, who, grant shape), so a bad call fails the same way in both modes and without a round trip; the stop rule,
+    the session dedup and the declared-error check are the host's (it runs :func:`run`)."""
+    from orch import hostclient
+
+    op, args = parsed.op, parsed.args
+    _check_input(op, args, _secrets(ctx.grant))
+    if op.who == "human" and not ctx.human_presence:
+        raise OrchError("human_only", f"{op.cli}: human only")
+    if op.who != "human":
+        if ctx.grant is not None and not _GRANT.fullmatch(ctx.grant):
+            raise OrchError("grant.required", "ORCH_GRANT is malformed")
+        if op.who == "agent" and not ctx.grant:
+            raise OrchError("grant.required", f"{op.cli} needs a grant")
+    return hostclient.execute(parsed, ctx, target)
+
+
 def stop_rule(
     op: Operation,
     args: dict[str, Any],
@@ -260,13 +278,16 @@ def main(
     def emit(text: str, stream: TextIO) -> None:
         stream.write(render.redact(text, secrets) + "\n")
 
+    hosted = False
+
     def fail(e: OrchError, op: Operation | None) -> int:
         envelope = render.error_envelope(e, op)
         if as_json:
             emit(render.dumps(envelope), out)
         else:
             emit(render.error_text(envelope, render.use_color(err, as_json, env)), err)
-        return render.error_exit(e.code)
+        wire = getattr(e, "wire_exit", None)  # a refusal from the host keeps the exit the socket sent (§0.6)
+        return wire if wire is not None else render.error_exit(e.code)
 
     op: Operation | None = None
     parsed: parser.Parsed | None = None
@@ -301,15 +322,22 @@ def main(
             workspace=workspace,
             progress=lambda line: _progress(line, err),
         )
-        res = run(parsed, ctx, records, hooks)
+        from orch import hostclient
+
+        target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
+        if target is not None:
+            hosted = True
+            res = run_hosted(parsed, ctx, target)
+        else:
+            res = run(parsed, ctx, records, hooks)
         if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent
             emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
-        if session and op.is_write and not parsed.dry_run:
+        if session and op.is_write and not parsed.dry_run and not hosted:
             records.succeeded_write(session)
         return res.exit
     except OrchError as e:
         session = env.get("ORCH_SESSION") or None
-        if op is not None and parsed is not None:
+        if op is not None and parsed is not None and not hosted:
             e = stop_rule(op, parsed.args, ctx, session, records, hooks, e, now)
         return fail(e, op)
     except render.TemplateError as e:

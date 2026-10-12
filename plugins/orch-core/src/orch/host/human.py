@@ -219,6 +219,18 @@ def _operate(types: list[str]) -> bool:
 # --- the ops ------------------------------------------------------------------------------------------------------
 
 
+def _person_operation(name: str) -> Any:
+    """The operation ``human.prepare`` runs for ``name``: a registry op, or one of the host person ops
+    (move, policy.set, settings.set), which are not registry (CLI) ops. Prepare and its idem binding share this."""
+    if name in review.HOST_PERSON_OPS:
+        from orch.ops import person_ops
+
+        return person_ops.get(name)
+    import orch.ops as ops
+
+    return ops.get(name)
+
+
 class HumanOps:
     """``human.*`` of one request, on the workspace worker thread (the dispatcher calls :meth:`serve`)."""
 
@@ -298,11 +310,9 @@ class HumanOps:
         """The outcome-store step of ``human.prepare {idem}``: ``(None, intent)`` for a fresh record, or
         ``(view, None)`` for the request the idem names, as it is now. Other arguments are ``idem.conflict``: the
         binding holds the op, the inner args, the signer or hand-off, the session and the file digests."""
-        import orch.ops as ops
-
         service = call.service
         name = args["op"]
-        operation = ops.get(name)
+        operation = _person_operation(name)
         inner = dict(args["args"])
         specs = self._specs(operation, call.frame, inner)
         # a {blob} must be the preparing principal's (F9); a {digest} binds only to an existing record (§0.3)
@@ -339,7 +349,6 @@ class HumanOps:
         return None, begun
 
     def _prepare(self, call: Call, args: dict[str, Any], dry_run: bool, intent: Any) -> dict[str, Any]:
-        import orch.ops as ops
         from orch.ops.errors import OrchError
         from orch.ops.prepare import Capture
         from orch.store import StoreError
@@ -363,12 +372,7 @@ class HumanOps:
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
-        if name in review.HOST_PERSON_OPS:  # move, policy.set, settings.set: not registry (CLI) ops
-            from orch.ops import person_ops
-
-            operation = person_ops.get(name)
-        else:
-            operation = ops.get(name)
+        operation = _person_operation(name)
         inner = dict(args["args"])
         from orch.ops.inputs import check_input
 

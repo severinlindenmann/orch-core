@@ -34,7 +34,11 @@ def test_describe_json_is_the_registry_entry(cli):
     d = env["data"]
     op = ops.get("task.done")
     assert d["name"] == "task.done" and d["emits"] == op.emits and d["pre"] == op.pre
-    assert d["input"] == op.input and d["output"] == op.output
+    # the host-only args (task.done's receipt) are not advertised
+    assert {"receipt", "receipt_output"} <= set(op.input["properties"])
+    assert not {"receipt", "receipt_output"} & set(d["input"]["properties"])
+    assert d["input"]["properties"] == {k: v for k, v in op.input["properties"].items() if not k.startswith("receipt")}
+    assert d["output"] == op.output
     assert [e["code"] for e in d["errors"]] == [e["code"] for e in op.errors]
     assert all({"code", "exit", "retryable", "hint", "fix"} == set(e) for e in d["errors"])
 

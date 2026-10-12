@@ -98,15 +98,14 @@ def test_every_batch_op_is_served_or_refused_by_the_host():
     assert "task.done" in batch  # the alias the review found
 
 
-def test_task_done_is_unreachable_through_apply(served):
+def test_task_done_is_served_at_contract_2_and_a_batch_item_cannot_run_a_command(served):
     g, c = served.grant, served.client()
     uid, key = served.ticket("t")
     ok(c.req("claim", {"ref": key}, grant=g, session=SESSION, idem=True))
     ok(c.req("task.add", {"ref": key, "text": "do it", "verify": "make test"}, grant=g, session=SESSION, idem=True))
-    assert err(c.req("task.done", {"ref": key, "task": "T1"}, grant=g, session=SESSION, idem=True)) == "unknown_command"
-    batch = {"ref": key, "ops": [{"op": "task.done", "task": "T1"}]}
+    batch = {"ref": key, "ops": [{"op": "task.done", "task": "T1", "run": True}]}
     res = c.req("apply", {"file": "b.json"}, grant=g, session=SESSION, idem=True, files={"file": b64(batch)})
-    assert err(res) == "invalid.input" and "not served" in res["error"]["message"]
+    assert err(res) == "invalid.input"  # served, but a batch item has no run
     assert "task.done" not in [e["type"] for e in served.lab.ws.read_events(uid)]
     fine = {"ref": key, "ops": [{"op": "log", "text": "a batch note"}]}
     assert ok(c.req("apply", {"file": "b.json"}, grant=g, session=SESSION, idem=True, files={"file": b64(fine)}))

@@ -197,6 +197,7 @@ def log_data(e):
                 "ms": r.get("duration_ms", r.get("ms")),
                 "repo": r.get("repo"),
                 "commit": r.get("commit"),
+                **({"attested_by": r["attested_by"]} if r.get("attested_by") else {}),
             }
         if e.get("log"):
             out["log"] = e["log"]
@@ -742,6 +743,7 @@ def get(host, store, views, args, person):
                 "ms": r.get("duration_ms", 0),
                 "repo": r.get("repo"),
                 "commit": r.get("commit"),
+                **({"attested_by": r["attested_by"]} if r.get("attested_by") else {}),
                 "log": e.get("log"),
                 "seq": e["seq"],
                 "at": e["at"],

@@ -13,9 +13,12 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     view = c.resolve(args.get("ref"))
     c.shown(view, fields=("tasks",))
     tasks = [{"id": t.id, "text": flat(t.text), "state": t.state} for t in view.tasks]
+    # for a host client that runs a verify command itself (H3b2): the exact command and the repos the ticket links
+    cmds = {x["id"]: x["verify"]["cmd"] for x in view.fields["tasks"] if x["verify"] is not None}
+    rows = [{**t, "verify": cmds[t["id"]]} if t["id"] in cmds else t for t in tasks]
     return c.result(
         view,
-        {"count": len(tasks), "tasks": tasks},
+        {"count": len(rows), "tasks": rows, "repos": list(view.fields["links"]["repos"])},
         hints=[views.next_hint(view, ctx.session)],
         lines=views.fenced_tasks(view, f"tasks of {view.key}", 100) if tasks else ["no tasks"],
     )
@@ -29,7 +32,13 @@ OP = operation(
     props={"ref": S("ticket REF (flag); default: your claim", pattern=REF_PATTERN, **{"x-metavar": "REF"})},
     pre=("ticket_exists", "ticket_visible"),
     text="ok {key} task.list {count}\nnext: {next}",
-    data=obj({"count": INT, "tasks": arr(obj({"id": STR, "text": STR, "state": STR}))}),
+    data=obj(
+        {
+            "count": INT,
+            "tasks": arr(obj({"id": STR, "text": STR, "state": STR, "verify": STR}, optional=("verify",))),
+            "repos": arr(STR),
+        }
+    ),
     errors=(err("not_found"), err("ambiguous_ref")),
     handler=handle,
 )

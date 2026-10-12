@@ -221,7 +221,7 @@ def test_task_list_next_and_artifact_list_need_a_ticket(ws, cli):
         r = cli.j(*argv)
         assert (r.code, r.err_code) == (2, "ambiguous_ref"), argv
     assert cli.j("task", "next", "--ref", "1").data == {"task": "none"}
-    assert cli.j("task", "list", "--ref", "1").data == {"count": 0, "tasks": []}
+    assert cli.j("task", "list", "--ref", "1").data == {"count": 0, "tasks": [], "repos": []}
 
 
 # ---------------------------------------------------------------------------------------------- visibility

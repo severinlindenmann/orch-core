@@ -123,7 +123,10 @@ def _receipt(r: Any) -> dict[str, Any] | None:
     if not isinstance(r, Mapping):
         return None
     ms = r.get("duration_ms", r.get("ms"))
-    return {"cmd": r.get("cmd"), "exit": r.get("exit"), "ms": ms, "repo": r.get("repo"), "commit": r.get("commit")}
+    out = {"cmd": r.get("cmd"), "exit": r.get("exit"), "ms": ms, "repo": r.get("repo"), "commit": r.get("commit")}
+    if r.get("attested_by") is not None:  # H3b2: a client receipt is labelled, never host-verified
+        out["attested_by"] = r["attested_by"]
+    return out
 
 
 def _sources(raw: Any) -> list[dict[str, Any]]:

@@ -6,8 +6,11 @@ version 1, plus ``whoami``, ``host.status``, ``outcome.get``, ``sub.open``, ``su
 else (``unknown_command``). Left out:
 
 * ``init`` and ``import.v1`` (D-P2-9: ``init`` is ``host.wsk_create`` + ``host.bootstrap``; ``import v1`` runs in
-  direct mode before registration);
-* ``task.done``, until H3b2 serves it at contract 2 (client receipts: the host never runs ``verify.cmd``).
+  direct mode before registration).
+
+``task.done`` is served at contract 2 (H3b2): ``run`` is refused (``op.not_allowed``, the host never executes
+``verify.cmd``), a client receipt comes in ``receipt`` and ``receipt_output`` (``files``) and is stored labelled
+``attested_by: "agent"``.
 
 **``wait`` on the bus (H6a).** Its P1 handler sleeps between looks at the log, which would hold the workspace's one
 worker thread. Here each look is one short job on the worker thread (``Context.wait_step``: the handler looks once and
@@ -116,11 +119,13 @@ Phase = Literal["read", "write", "wait"]
 NOT_SERVED: dict[str, str] = {
     "init": "init is host.wsk_create and host.bootstrap (D-P2-9)",
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
-    "task.done": "served at contract 2 from H3b2 (client receipts)",
 }
 PERSON_READS = frozenset({"doctor", "instructions.sync", "instructions.hook"})
 #: arguments the host refuses (``op.not_allowed``) on an op it otherwise serves
 HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
+    "task.done": {
+        "run": "the host never executes verify.cmd: run it yourself and send a receipt (task.done contract 2)"
+    },
     "doctor": {
         "repair": "doctor --repair is a control action of the host's owner, not a workspace op (a control op later)"
     },
@@ -332,7 +337,8 @@ class RegistryBackend:
     #: ``diff/1`` is listed for ``artifact.get`` (H4a2); the H6b read caps; ``sub_ext/1`` while detail is served
     @property
     def caps(self) -> list[str]:
-        return ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
+        base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "human/1"]
+        return [*base, *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
@@ -673,6 +679,9 @@ class RegistryBackend:
         for arg in sorted(marked):
             if args.get(arg) is not None and arg not in specs:
                 raise HostError("blob.invalid", f"{arg} is a file: send its bytes in files.{arg}")
+        names = [str(args[arg]) for arg in specs]
+        if len(set(names)) != len(names):  # two arguments would share one byte string in ctx.files
+            raise HostError("blob.invalid", "two files arguments name the same file: give each its own name")
         inline = sum(decoded_len(spec["b64"]) for spec in specs.values() if isinstance(spec, Mapping) and "b64" in spec)
         if inline > INLINE_MAX:
             raise HostError("blob.invalid", f"inline files are at most {INLINE_MAX} bytes per request: upload a blob")

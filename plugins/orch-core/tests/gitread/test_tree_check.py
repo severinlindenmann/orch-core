@@ -223,6 +223,8 @@ def test_escape_path_rules():
         {"changed": [{"path_b64": "eA==", "cut": False, "why": "modified", "x": 1}], "more": False},
         {"changed": [{"path_b64": "eA==", "cut": False, "why": "modified"}] * 201, "more": True},
         {"changed": [], "more": True},
+        {"changed": [], "more": False, "head": None, "head_ref": "HEAD"},
+        {"changed": [], "more": False, "head": "zz", "head_ref": "refs/heads/main"},
     ],
 )
 def test_a_malformed_child_answer_is_unknown(raw):
@@ -366,7 +368,9 @@ def test_f2_a_booby_trapped_repo_spawns_nothing_in_the_real_child(make_repo, tmp
     reader = HostGitReader(ReaderPool(spawn=spawn), PinStore(), tree_checks=True)
     reader.sync([r.path])
     before = len(spawned)
-    assert reader.tree_check(r.path, "proj", principal="p") == {"changed": [], "more": False}
+    got = reader.tree_check(r.path, "proj", principal="p")
+    assert (got["changed"], got["more"], got["head_ref"]) == ([], False, "refs/heads/main")
+    assert got["head"] == r.sha("HEAD")
     r.write("a.txt", "dirty\n")
     assert reader.tree_check(r.path, "proj", principal="p")["changed"] == [{"path": "a.txt", "why": "modified"}]
     assert len(spawned) - before == 2  # one reader child per check, nothing else
@@ -544,12 +548,8 @@ def test_sparse_checkout_is_dirty_and_a_sparse_index_unknown(make_repo):
 
 def test_a_case_only_rename_on_a_case_insensitive_fs_is_dirty(make_repo):
     r = base(make_repo)
-    probe = r.path / "CaseProbe"
-    probe.write_text("x")
-    insensitive = (r.path / "caseprobe").exists()
-    probe.unlink()
-    if not insensitive:
-        pytest.skip("case-sensitive file system")
+    # on a case-insensitive FS (macOS) the two-step rename is git's own; on Linux it is an ordinary rename, which the
+    # same answer covers, so this runs on CI too
     os.rename(r.path / "a.txt", r.path / "tmp-name")
     os.rename(r.path / "tmp-name", r.path / "A.txt")
     got, _ = changed(r)
@@ -572,3 +572,100 @@ def test_a_submodule_whose_directory_vanished_is_deleted_and_a_staged_gitlink_ch
     second = sub.commit()
     r.git("update-index", "--cacheinfo", f"160000,{second},mod")
     assert changed(r)[0] == {"mod": "modified"}
+
+
+def test_the_result_names_the_head_it_is_relative_to(make_repo):
+    r = base(make_repo)
+    got = local.tree_check(r.path)
+    assert got["head"] == r.sha("HEAD") and got["head_ref"] == "refs/heads/main"
+    r.git("checkout", "-q", "-b", "other")
+    assert local.tree_check(r.path)["head_ref"] == "refs/heads/other"
+    unborn = make_repo("unborn")
+    unborn.write("f", "x\n")
+    got = local.tree_check(unborn.path)
+    assert got["head"] is None and got["changed"] == [{"path": "f", "why": "untracked"}]
+
+
+def test_a_tracked_symlink_replaced_by_a_regular_file_is_a_type_change(make_repo):
+    r = base(make_repo)
+    os.unlink(r.path / "link")
+    (r.path / "link").write_text("a.txt")  # the same bytes as the link target string: still another type
+    assert changed(r)[0] == {"link": "type"}
+
+
+def test_a_sparse_directory_entry_is_unknown(make_repo):
+    """A mode-040000 entry (a sparse index's directory) is refused even without its sdir extension."""
+    import hashlib
+    import struct
+
+    r = base(make_repo)
+    idx = r.gitdir / "index"
+    data = bytearray(idx.read_bytes()[:-20])
+    struct.pack_into(">I", data, 12 + 24, 0o040000)  # the first entry's mode
+    idx.write_bytes(bytes(data) + hashlib.sha1(bytes(data)).digest())
+    with pytest.raises(Unavailable, match="mode 40000"):
+        local.tree_check(r.path)
+
+
+def test_a_repo_name_over_64_characters_is_refused_not_cut(make_repo):
+    from orch.ops.caps import Capabilities
+
+    r = base(make_repo)
+    reader = HostGitReader(ReaderPool(), PinStore(), tree_checks=True)
+    reader.sync([r.path])
+    caps = Capabilities.host((str(r.path),), git=reader).with_principal("p")
+    assert caps.git.tree_check(r.path, "n" * 64) is not None
+    assert caps.git.tree_check(r.path, "n" * 65) is None  # unknown: fails closed
+
+
+@pytest.mark.slow
+def test_a_clean_10k_file_tree_through_the_real_child_within_its_budget(make_repo):
+    """The clean path, all of it: 10 000 tracked files compared (stat shortcut, the index written well after them)
+    and then 1 000 of them modified (hashed), through the real child, well inside the 30 s wall and 10 s CPU."""
+    import time
+
+    r = make_repo()
+    for i in range(100):
+        d = r.path / f"d{i:02}"
+        d.mkdir()
+        for j in range(100):
+            (d / f"f{j:02}").write_bytes(b"x\n")
+    old = time.time() - 10
+    for p in r.path.rglob("f*"):
+        os.utime(p, (old, old))  # outside the racy second of the index written next
+    r.commit()
+    reader = HostGitReader(ReaderPool(), PinStore(), tree_checks=True)
+    reader.sync([r.path])
+    t0 = time.monotonic()
+    got = reader.tree_check(r.path, "big", principal="p")
+    clean_s = time.monotonic() - t0
+    assert got["changed"] == [] and got["more"] is False
+    for i in range(10):
+        for j in range(100):
+            (r.path / f"d{i:02}" / f"f{j:02}").write_bytes(b"y\n")
+    t0 = time.monotonic()
+    got = reader.tree_check(r.path, "big", principal="p")
+    dirty_s = time.monotonic() - t0
+    assert len(got["changed"]) == 200 and got["more"] is True
+    assert clean_s < 10 and dirty_s < 10, (clean_s, dirty_s)
+
+
+def test_pin_store_writes_the_file_before_memory(tmp_path, make_repo):
+    from orch.gitread.pinning import pin_repo
+
+    r = base(make_repo)
+    pins_dir = tmp_path / "state"
+    pins_dir.mkdir()
+    store = PinStore(pins_dir / "git-pins.json")
+    (pins_dir / "git-pins.json.tmp").write_text("leftover")
+    os.chmod(pins_dir / "git-pins.json.tmp", 0o666)
+    store.update({str(r.path): pin_repo(str(r.path), [str(r.path)])}, [])
+    assert oct((pins_dir / "git-pins.json").stat().st_mode & 0o777) == "0o600"
+    assert not (pins_dir / "git-pins.json.tmp").exists()
+    os.chmod(pins_dir, 0o500)  # the file cannot be written: memory does not change either
+    try:
+        with pytest.raises(OSError):
+            store.update({}, [str(r.path)])
+        assert store.get(str(r.path)) is not None
+    finally:
+        os.chmod(pins_dir, 0o700)

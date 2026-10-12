@@ -58,7 +58,6 @@ IGNORE_MAX = 1 << 20
 PATH_BYTES = 4096
 
 _MODES = {0o100644, 0o100755, 0o120000, 0o160000}
-_SPARSE_DIR = 0o040000
 _U32 = 0xFFFFFFFF
 
 
@@ -121,10 +120,10 @@ def _check_name(name: bytes) -> None:
             raise Unavailable("the index names a malformed path")
 
 
-def parse_index(data: bytes, algo: str) -> list[Entry]:
-    """The entries of an index file (v2, v3, v4), its checksum verified. A split index (``link``), a sparse index
-    (``sdir``) or any other required extension is refused; optional ones (``TREE``, ``REUC``, ``UNTR``, ``FSMN``,
-    ``EOIE``, ``IEOT``, ...) are skipped unread."""
+def _header(data: bytes, algo: str) -> tuple[int, int, bytes]:
+    """``(version, entry count, body)`` of an index file, its size, header and trailer checked. The checksum guards
+    against corruption only: the index is agent-writable, and an agent can recompute it (or write git's
+    ``index.skipHash`` zero trailer, which skips it)."""
     rawlen = 20 if algo == "sha1" else 32
     if len(data) > limits.INDEX_MAX:
         raise Unavailable(f"the index is larger than {limits.INDEX_MAX >> 20} MiB")
@@ -136,12 +135,67 @@ def parse_index(data: bytes, algo: str) -> list[Entry]:
     if count > limits.INDEX_ENTRIES:
         raise Unavailable(f"the index has more than {limits.INDEX_ENTRIES} entries")
     body, trailer = memoryview(data)[:-rawlen], data[-rawlen:]
-    if trailer != b"\0" * rawlen:  # index.skipHash writes zeros
+    if trailer != b"\0" * rawlen:
         h = hashlib.sha1() if algo == "sha1" else hashlib.sha256()
         h.update(body)
         if h.digest() != trailer:
             raise Unavailable("the index checksum does not match")
-    body = bytes(body)
+    return version, count, bytes(body)
+
+
+def _name_v4(body: bytes, j: int, prev: bytes) -> tuple[bytes, int]:
+    """Index v4: the previous path minus a varint prefix length, plus a NUL-terminated suffix; no padding."""
+    strip, j = _varint(body, j)
+    if strip > len(prev):
+        raise Unavailable("the index is malformed")
+    nul = body.find(b"\0", j)
+    if nul < 0:
+        raise Unavailable("the index is truncated")
+    return prev[: len(prev) - strip] + body[j:nul], nul + 1
+
+
+def _name_v23(body: bytes, i: int, j: int, flags: int) -> tuple[bytes, int]:
+    """Index v2/v3: the path (its length in the flags, or NUL-terminated at 0xFFF and over), then NUL padding."""
+    nlen = flags & 0xFFF
+    if nlen < 0xFFF:
+        name = body[j : j + nlen]
+        if len(name) != nlen or body[j + nlen : j + nlen + 1] != b"\0":
+            raise Unavailable("the index is malformed")
+    else:
+        nul = body.find(b"\0", j + 0xFFF)
+        if nul < 0:
+            raise Unavailable("the index is truncated")
+        name = body[j:nul]
+    # git's ondisk_cache_entry_size: the entry (from its start i) plus the name and at least one NUL, padded to 8
+    end = i + (((j - i) + len(name) + 8) & ~7)
+    if end > len(body):
+        raise Unavailable("the index is truncated")
+    return name, end
+
+
+def _check_extensions(body: bytes, i: int) -> None:
+    """The extensions after the entries: an upper-case signature is optional and skipped unread (``TREE``, ``REUC``,
+    ``UNTR``, ``FSMN``, ``EOIE``, ``IEOT``, ...); a lower-case one (``link``: split index, ``sdir``: sparse index, or
+    anything newer) is required to understand the index, so the answer is unknown."""
+    n = len(body)
+    while i < n:
+        if i + 8 > n:
+            raise Unavailable("the index is malformed")
+        sig = body[i : i + 4]
+        (size,) = struct.unpack_from(">I", body, i + 4)
+        if i + 8 + size > n:
+            raise Unavailable("the index is truncated")
+        if not 0x41 <= sig[0] <= 0x5A:
+            raise Unavailable(f"the index extension {sig.decode('ascii', 'replace')!r} is not supported")
+        i += 8 + size
+
+
+def parse_index(data: bytes, algo: str) -> list[Entry]:
+    """The entries of an index file (v2, v3, v4), its checksum verified, sorted and well formed. A required
+    extension (split or sparse index) or an entry of another mode than a file, symlink or gitlink (a sparse
+    directory entry) is refused: unknown."""
+    version, count, body = _header(data, algo)
+    rawlen = 20 if algo == "sha1" else 32
     n = len(body)
     fixed = 40 + rawlen + 2
     i = 12
@@ -161,32 +215,10 @@ def parse_index(data: bytes, algo: str) -> list[Entry]:
                 raise Unavailable("the index is malformed")
             (ext,) = struct.unpack_from(">H", body, j)
             j += 2
-        if version == 4:
-            strip, j = _varint(body, j)
-            if strip > len(prev):
-                raise Unavailable("the index is malformed")
-            nul = body.find(b"\0", j)
-            if nul < 0:
-                raise Unavailable("the index is truncated")
-            name = prev[: len(prev) - strip] + body[j:nul]
-            j = nul + 1
-        else:
-            nlen = flags & 0xFFF
-            if nlen < 0xFFF:
-                name = body[j : j + nlen]
-                if len(name) != nlen or body[j + nlen : j + nlen + 1] != b"\0":
-                    raise Unavailable("the index is malformed")
-            else:
-                nul = body.find(b"\0", j + 0xFFF)
-                if nul < 0:
-                    raise Unavailable("the index is truncated")
-                name = body[j:nul]
-            j = i + (((j - i) + len(name) + 8) & ~7)
-            if j > n:
-                raise Unavailable("the index is truncated")
+        name, j = _name_v4(body, j, prev) if version == 4 else _name_v23(body, i, j, flags)
         _check_name(name)
         entry = Entry(name, fields, oid, flags, ext)
-        if entry.mode not in _MODES and not (entry.mode == _SPARSE_DIR and entry.skip_worktree):
+        if entry.mode not in _MODES:
             raise Unavailable(f"the index has an entry of mode {entry.mode:o}")
         key = (name, entry.stage)
         if last is not None and key <= last:
@@ -195,16 +227,7 @@ def parse_index(data: bytes, algo: str) -> list[Entry]:
         prev = name
         out.append(entry)
         i = j
-    while i < n:  # extensions
-        if i + 8 > n:
-            raise Unavailable("the index is malformed")
-        sig = body[i : i + 4]
-        (size,) = struct.unpack_from(">I", body, i + 4)
-        if i + 8 + size > n:
-            raise Unavailable("the index is truncated")
-        if not 0x41 <= sig[0] <= 0x5A:  # lower case: required to understand the index (link, sdir, ...)
-            raise Unavailable(f"the index extension {sig.decode('ascii', 'replace')!r} is not supported")
-        i += 8 + size
+    _check_extensions(body, i)
     return out
 
 
@@ -369,6 +392,17 @@ class _Check:
         self.algo = repo.algo
         self.changed: dict[bytes, str] = {}
         self.walked = 0
+        #: the index file's mtime ``(s, ns)``; ``None``: no index (every entry would be racy)
+        self.index_time: tuple[int, int] | None = None
+        #: ``HEAD``'s branch ref and commit, read in this same child as the tree (no race with another read)
+        self.head_ref: str | None = None
+        self.head: str | None = None
+        #: every index path (any stage), the stage-0 entries compared with the worktree, their parent directories
+        self.tracked: set[bytes] = set()
+        self.files: dict[bytes, Entry] = {}
+        self.dirs: set[bytes] = set()
+        #: tracked paths met by the walk (the others are deleted)
+        self.seen: set[bytes] = set()
 
     def note(self, path: bytes, why: str) -> None:
         if path in self.changed:
@@ -406,11 +440,12 @@ class _Check:
         when = (st.st_mtime_ns // 1_000_000_000, st.st_mtime_ns % 1_000_000_000)
         return parse_index(b"".join(chunks), self.algo), when
 
-    def head_tree(self) -> tuple[str | None, dict[bytes, tuple[int, str]]]:
-        ref = self.repo.head_ref()  # refuses a detached or malformed HEAD
-        sha = self.repo.resolve_commit(ref)
+    def head_tree(self) -> dict[bytes, tuple[int, str]]:
+        """``HEAD``'s paths; sets :attr:`head_ref` and :attr:`head` (``None`` on an unborn branch: the empty tree)."""
+        self.head_ref = ref = self.repo.head_ref()  # refuses a detached or malformed HEAD
+        self.head = sha = self.repo.resolve_commit(ref)
         if sha is None:
-            return None, {}  # an unborn branch: the empty tree
+            return {}
         out: dict[bytes, tuple[int, str]] = {}
         todo = [(b"", self.repo.commit(sha).tree)]
         while todo:
@@ -423,17 +458,12 @@ class _Check:
                     out[p] = (e.mode, e.oid)
                     if len(out) > limits.TREE_ENTRIES_MAX:
                         raise Unavailable("HEAD has too many paths to compare")
-        return sha, out
+        return out
 
     def compare_head(self, entries: list[Entry], head: dict[bytes, tuple[int, str]]) -> None:
         in_index: set[bytes] = set()
-        sparse: list[bytes] = []
         for e in entries:
             in_index.add(e.path)
-            if e.mode == _SPARSE_DIR:
-                sparse.append(e.path + b"/")
-                self.note(e.path, "flag")
-                continue
             if e.stage:
                 self.note(e.path, "modified")  # unmerged
                 continue
@@ -446,7 +476,7 @@ class _Check:
             if h is None or h != (canon_mode(e.mode), e.oid):
                 self.note(e.path, "modified")
         for p in head:
-            if p not in in_index and not any(p.startswith(s) for s in sparse):
+            if p not in in_index:
                 self.note(p, "deleted")
 
     # worktree
@@ -600,47 +630,48 @@ class _Check:
             if pushed:
                 ignores.levels.pop()
 
+    def _index_sets(self, entries: list[Entry]) -> None:
+        self.tracked = {e.path for e in entries}
+        self.files = {e.path: e for e in entries if e.stage == 0 and not (e.skip_worktree or e.assume_valid)}
+        for e in entries:
+            p = e.path
+            while True:
+                cut = p.rfind(b"/")
+                if cut < 0:
+                    break
+                p = p[:cut]
+                if p in self.dirs:
+                    break
+                self.dirs.add(p)
+
+    def _walk_all(self) -> None:
+        ignores = _Ignores()
+        exclude = _read_ignore(self.repo.commondir, "info/exclude")
+        if exclude is not None:
+            ignores.levels.append(parse_ignore(exclude, b""))
+        self.walk(self.worktree, b"", ignores, False, 0)
+        for p in self.files:
+            if p not in self.seen:
+                self.note(p, "deleted")
+
     def run(self) -> dict[str, Any]:
-        head_sha: str | None = None
         more = False
+        entries, self.index_time = self.read_index()
+        head = self.head_tree()  # before any change is noted: a full answer always names its HEAD
         try:
-            entries, self.index_time = self.read_index()
-            head_sha, head = self.head_tree()
             self.compare_head(entries, head)
             del head
-            self.tracked = {e.path for e in entries}
-            self.files = {
-                e.path: e
-                for e in entries
-                if e.stage == 0 and e.mode != _SPARSE_DIR and not (e.skip_worktree or e.assume_valid)
-            }
-            self.dirs: set[bytes] = set()
-            for e in entries:
-                p = e.path
-                while True:
-                    cut = p.rfind(b"/")
-                    if cut < 0:
-                        break
-                    p = p[:cut]
-                    if p in self.dirs:
-                        break
-                    self.dirs.add(p)
-            self.seen: set[bytes] = set()
-            ignores = _Ignores()
-            exclude = _read_ignore(self.repo.commondir, "info/exclude")
-            if exclude is not None:
-                ignores.levels.append(parse_ignore(exclude, b""))
-            self.walk(self.worktree, b"", ignores, False, 0)
-            for p in self.files:
-                if p not in self.seen:
-                    self.note(p, "deleted")
+            self._index_sets(entries)
+            del entries
+            self._walk_all()
         except _Full:
             more = True
         changed = sorted(self.changed.items())
         if len(changed) > MAX_CHANGED:
             changed, more = changed[:MAX_CHANGED], True
         return {
-            "head": head_sha,
+            "head": self.head,
+            "head_ref": self.head_ref,
             "changed": [
                 {"path_b64": base64.b64encode(p[:PATH_BYTES]).decode("ascii"), "cut": len(p) > PATH_BYTES, "why": w}
                 for p, w in changed

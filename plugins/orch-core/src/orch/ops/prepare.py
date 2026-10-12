@@ -49,6 +49,8 @@ class Capture:
     #: ``checks`` of the prepared request (N3): one ``{repo, clean, attested_by, at}`` per working copy the clean-tree
     #: check (``tree.check``) found clean; not signed, not in ``material``
     checks: list[dict[str, Any]] = field(default_factory=list)
+    #: a ``dry_run`` prepare: nothing is stored and no ``tree.check`` job runs (section 0.8.1)
+    dry_run: bool = False
 
     @property
     def actor(self) -> dict[str, Any]:

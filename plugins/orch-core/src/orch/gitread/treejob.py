@@ -8,8 +8,11 @@ The job kind is the one the phase-3 worker will take over unchanged:
   empty environment, the section 0.11 limits, the child's audit hook), answering the raw check of
   :mod:`orch.gitread.treecheck`;
 * :func:`result_of` checks that raw answer for shape and turns it into
-  ``TreeCheckResult = {changed:[{path, why}]{0..200}, more}``, every path escaped with F1 section 11.3's display rules
-  (:func:`escape_path`), so nothing the agent named reaches a person unescaped.
+  ``TreeCheckResult = {changed:[{path, why}]{0..200}, more, head, head_ref}``, every path escaped with F1 section
+  11.3's display rules (:func:`escape_path`), so nothing the agent named reaches a person unescaped. ``head`` (the
+  commit, ``None`` on an unborn branch) and ``head_ref`` (``refs/heads/<branch>``) are what the clean answer is
+  relative to, read in the same child as the tree: callers require them to equal the signed ``source_sha`` entry, so
+  "clean" is always clean **at the commit being signed** (review of #413). They are for the host, not for display.
 
 **Tier A (phase 1)**: there is no worker UID, so the host itself runs :func:`run_child` through its
 :class:`~orch.gitread.client.ReaderPool` (the child still runs the ``worktree`` profile, as the host UID; the host
@@ -33,7 +36,7 @@ from orch import canon
 from .errors import Unavailable
 from .fs import RepoPins
 
-__all__ = ["KIND", "WHY", "check_entry", "escape_path", "job_input", "render", "result_of", "run_child"]
+__all__ = ["KIND", "WHY", "check_entry", "escape_path", "job_input", "pins_of", "render", "result_of", "run_child"]
 
 KIND = "tree.check"
 WHY = ("modified", "untracked", "deleted", "type", "flag")
@@ -103,9 +106,16 @@ def result_of(raw: Any) -> dict[str, Any]:
     :class:`Unavailable` (fail closed), never a partial result."""
     if not isinstance(raw, dict) or not isinstance(raw.get("changed"), list) or type(raw.get("more")) is not bool:
         raise Unavailable("the tree check answered nonsense")
+    from .refs import check_refname
+
     head = raw.get("head")
-    if head is not None and (not isinstance(head, str) or len(head) not in (40, 64)):
+    if head is not None and (
+        not isinstance(head, str) or len(head) not in (40, 64) or any(c not in "0123456789abcdef" for c in head)
+    ):
         raise Unavailable("the tree check answered nonsense")
+    head_ref = raw.get("head_ref")
+    if not isinstance(head_ref, str) or not head_ref.startswith("refs/heads/") or not check_refname(head_ref):
+        raise Unavailable("the tree check answered a malformed HEAD")
     if raw["more"] and not raw["changed"]:
         raise Unavailable("the tree check answered nonsense")  # "more" than nothing: never read as clean
     if len(raw["changed"]) > MAX_CHANGED:
@@ -123,7 +133,7 @@ def result_of(raw: Any) -> dict[str, Any]:
         if not path or len(path) > PATH_MAX:
             raise Unavailable("the tree check answered a malformed path")
         changed.append({"path": escape_path(path, c["cut"]), "why": c["why"]})
-    return {"changed": changed, "more": raw["more"]}
+    return {"changed": changed, "more": raw["more"], "head": head, "head_ref": head_ref}
 
 
 def render(result: dict[str, Any], limit: int = 20) -> str:

@@ -67,7 +67,8 @@ def test_host_observe_through_the_reader_equals_direct(ws, linked):
     s = ws.other()
     try:
         problems: list[str] = []
-        out = host.git.observe(s, ws.uid("1"), problems)  # pins the repo, then reads it in a child
+        host.git.reader.sync([linked])  # pins are the workspace service's job (H10a), never an observe's
+        out = host.git.observe(s, ws.uid("1"), problems)  # reads the pinned repo in a child
         assert problems == [] and len(out) == 1
         assert out[0]["type"] == "branch.pushed" and out[0]["sha"] == ws.git("rev-parse", "feat/x")
         assert out[0]["repo_id"] == "local:proj"

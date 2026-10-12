@@ -146,7 +146,8 @@ def test_a_tree_dirtied_after_prepare_is_refused_at_binding(world):
     world.served.lab.ws.clock[0] += 5
     bound = ok(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))["data"]
     assert bound["request"]["state"] == "bound" and bound["checks"][0]["at"] > prepared["checks"][0]["at"]
-    # bound: every later get with the same signer runs it again
+    # bound: a later get with the same signer runs it again (once the 5 s re-check bound has passed)
+    world.served.lab.ws.clock[0] += 6
     (world.repo / "impl.txt").write_text("late edit\n")
     assert error(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))["code"] == "observe.unavailable"
     (world.repo / "impl.txt").write_text("broken\n")
@@ -220,3 +221,100 @@ def test_binding_requires_a_check_for_every_bound_repo_never_a_cached_one(world,
         return
     assert error(res)["code"] == "observe.unavailable"
     assert state(world, rid) == "prepared"
+
+
+@pytest.mark.parametrize("move", ["other commit", "same commit, other branch"])
+def test_clean_is_tied_to_the_signed_commit_at_binding(world, move):
+    """Opus #413 finding 1: prepare at C on feat/x, switch to a clean branch (at D, or at C under another name), bind:
+    refused, although the tree is clean there."""
+    h = world.human
+    name, args = decision(world)
+    prepared = h.prepare(name, args, handoff=True)
+    rid = prepared["request"]["id"]
+    world.hws.git("checkout", "-q", "-b", "other")
+    if move == "other commit":
+        (world.repo / "impl.txt").write_text("D\n")
+        world.hws.git("commit", "-qam", "D")
+    assert world.hws.git("status", "--porcelain") == ""  # clean there
+    e = error(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))
+    assert e["code"] == "observe.unavailable" and "not at the commit" in e["message"]
+    assert state(world, rid) == "prepared"
+    world.hws.git("checkout", "-q", "feat/x")
+    assert ok(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))["data"]["request"]["state"] == "bound"
+
+
+def test_a_dry_run_runs_no_tree_check(owner_world, monkeypatch):
+    """Section 0.8.1: a dry run stores nothing and runs no tree.check job, so it carries no checks."""
+    world = owner_world
+    reader = world.served.service.capabilities().git.reader
+
+    def boom(*a, **kw):
+        raise AssertionError("a dry run ran tree.check")
+
+    monkeypatch.setattr(reader, "tree_check", boom)
+    (world.repo / "impl.txt").write_text("dirty, but a dry run does not look\n")
+    name, args = decision(world)
+    data = ok(world.human.prepare_res(name, args, dry_run=True))["data"]
+    assert data["request"] is None and "checks" not in data
+
+
+def test_a_bound_request_polled_within_5_seconds_is_not_walked_again(owner_world, monkeypatch):
+    world = owner_world
+    h = world.human
+    prepared = h.prepare(*decision(world), handoff=True)
+    rid = prepared["request"]["id"]
+    ok(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))  # binds: always checked
+    reader = world.served.service.capabilities().git.reader
+    calls = []
+    real = reader.tree_check
+    monkeypatch.setattr(reader, "tree_check", lambda *a, **kw: calls.append(1) or real(*a, **kw))
+    for _ in range(3):
+        ok(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))
+    assert calls == []
+    world.served.lab.ws.clock[0] += 6
+    ok(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))
+    assert calls == [1]
+
+
+def test_pins_are_taken_at_open_under_the_workspace_principal_and_never_replaced(owner_world):
+    world = owner_world
+    service = world.served.service
+    pin_file = world.served.lab.state / "hosts" / world.served.wid / "git-pins.json"
+    pins = json.loads(pin_file.read_text())["repos"]  # pinned at open, before any op read git
+    assert list(pins) == [str(world.repo)]
+    reader = service.capabilities().git.reader
+    assert reader.principal == f"host:{world.served.wid}"
+    before = reader.pins.get(str(world.repo))
+    service._git_declared = None  # as if settings changed: sync again
+    service.submit(service.sync_git).result()
+    assert reader.pins.get(str(world.repo)) is before
+
+
+def test_a_failed_pin_is_retried_after_a_backoff_not_on_every_read(owner_world, monkeypatch):
+    world = owner_world
+    service = world.served.service
+    reader = service.capabilities().git.reader
+    calls = []
+    monkeypatch.setattr(reader, "sync", lambda declared: calls.append(1) or {p: "cannot pin" for p in declared})
+    service._git_declared = None
+    for _ in range(5):
+        service.submit(service.sync_git).result()
+    assert calls == [1] and service._git_backoff == 60.0
+    service._git_retry_at = 0.0  # the backoff has run out
+    service.submit(service.sync_git).result()
+    assert calls == [1, 1] and service._git_backoff == 120.0
+
+
+def test_an_unreadable_pin_file_denies_git(owner_world):
+    """A pin file that cannot be read is never replaced by fresh pins: git is denied, so decisions fail closed."""
+    world = owner_world
+    service = world.served.service
+    pin_file = world.served.lab.state / "hosts" / world.served.wid / "git-pins.json"
+    pin_file.write_text("not json")
+
+    def rebuild():
+        service.caps = None
+        return service.capabilities().git.enabled
+
+    assert service.submit(rebuild).result() is False
+    assert error(world.human.prepare_res(*decision(world)))["code"] == "observe.unavailable"

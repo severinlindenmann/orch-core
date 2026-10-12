@@ -271,19 +271,29 @@ class PinStore:
             return sorted(self._pins)
 
     def update(self, put: dict[str, RepoPins], drop: Iterable[str]) -> None:
+        """Add and drop pins: the file first (a fresh 0600 temporary file, fsynced, renamed over it), then memory, so
+        a pin that could not be written is never held in memory only (it would be taken afresh after a restart).
+        Raises ``OSError`` when the file cannot be written; nothing changes then."""
         with self._mu:
-            for k in drop:
-                self._pins.pop(k, None)
-            self._pins.update(put)
+            pins = {k: v for k, v in self._pins.items() if k not in set(drop)}
+            pins.update(put)
             if self.path is not None:
-                doc = {"v": 1, "repos": {k: v.to_json() for k, v in sorted(self._pins.items())}}
+                doc = {"v": 1, "repos": {k: v.to_json() for k, v in sorted(pins.items())}}
                 tmp = self.path.with_name(self.path.name + ".tmp")
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(json.dumps(doc, sort_keys=True))
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp, self.path)
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp)  # a leftover is never reused (its mode or owner could be another)
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(json.dumps(doc, sort_keys=True))
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp, self.path)
+                except BaseException:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
+                    raise
+            self._pins = pins
 
 
 class HostGitReader:

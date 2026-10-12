@@ -363,7 +363,6 @@ class HumanOps:
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
-        service.sync_git()  # pins a declared repo that first appears (never replaces a pin), for the D58 reads
         if name in review.HOST_PERSON_OPS:  # move, policy.set, settings.set: not registry (CLI) ops
             from orch.ops import person_ops
 
@@ -386,6 +385,7 @@ class HumanOps:
             signer["auth"] if signer else None,
             signer["device"] if signer else probe_device(store, person, now),
         )
+        capture.dry_run = dry_run
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)
@@ -406,7 +406,8 @@ class HumanOps:
         prepared, extras = self._build(call, name, log, capture, store, now)
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
-        require_checks(call, prepared)  # a decision that binds commits is never prepared without its checks
+        if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
+            require_checks(call, prepared)  # a decision that binds commits is never prepared without its checks
         result = result_dict(res)
         template = {"data": result["data"], "key": result["key"], "hints": result["hints"]}
         if dry_run:
@@ -428,6 +429,7 @@ class HumanOps:
             "created": now,
             "expires": now + (GRANT_EXPIRE_SECONDS if name == "grant" else EXPIRE_SECONDS),
             "prepared": prepared,
+            "trees_checked": now if prepared.get("checks") else None,  # human.get's re-check rate bound (N3)
             "extras": extras,
             "result": template,
             "submit": None,
@@ -601,7 +603,8 @@ class HumanOps:
         if state == "bound":
             if record["signer"] != signer:
                 raise HostError("human.request_state", "the request is bound to another device")
-            if record["prepared"].get("checks"):  # N3: tree.check re-run at every binding get
+            fresh = call.service.clock() - float(record.get("trees_checked") or 0) < RECHECK_SECONDS
+            if _binds_commits(record["prepared"]) and not fresh:  # N3: tree.check re-run at binding gets
                 record = recheck_trees(call, record)
                 requests.write(record)
             return self._view(record)
@@ -615,7 +618,8 @@ class HumanOps:
             call.service.clock(),
             operate=_operate([e["type"] for e in events]),
         )
-        record = recheck_trees(call, record)  # N3: a tree dirtied since prepare is refused here, nothing bound
+        if _binds_commits(record["prepared"]):  # N3: a tree dirtied since prepare is refused here, nothing bound
+            record = recheck_trees(call, record)
         for ev in record["prepared"]["events"]:  # the one change binding makes: null -> the signer's device and auth
             ev["actor"]["device"] = signer["device"]
             ev["auth"] = signer["auth"]
@@ -800,7 +804,7 @@ class HumanOps:
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared
             convenience.refuse_reader_op(service, record["op"], history=True)
-            git = service.capabilities().with_principal(call.principal).git
+            git = service.caps_for(call.principal).git
             self._judge(store, record, events, git)
             log = record["prepared"]["log"]
             view = store.ticket(log) if log != "workspace" else None
@@ -842,51 +846,72 @@ class HumanOps:
             state, seq, prev = r, seq + 1, canon.event_head(probe)
 
 
+#: a bound request's later ``human.get`` reuses a binding check younger than this instead of walking the tree again
+#: (a client polling the request must not keep the workspace's worker thread busy); binding itself always checks
+RECHECK_SECONDS = 5.0
+
+
 def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
-    """N3: run ``tree.check`` again for every working copy a prepared request's ``checks`` name, when ``human.get``
-    binds a device (and at every later binding get). A changed tree, or one that cannot be checked (unknown), is
-    ``observe.unavailable`` and nothing is bound; otherwise the record comes back with fresh ``checks`` (only their
-    ``at`` changes; they are not signed)."""
+    """N3: run ``tree.check`` again, now, for every working copy a prepared request's ``checks`` name, when
+    ``human.get`` binds a device and at later binding gets. Each answer must be clean **at the signed commit**: the
+    child's ``head`` and ``head_ref`` (read in the same child as the tree) must equal the ``source_sha`` entry of that
+    repo's identity. Then every repo the request binds must be covered (:func:`require_checks`). A changed tree, another
+    commit or branch, or no answer (unknown) is ``observe.unavailable`` and nothing is bound; otherwise the record
+    comes back with fresh ``checks`` (only their ``at`` changes; they are not signed). The stored checks are never
+    trusted."""
     from orch.gitread.treejob import check_entry
 
-    checks = record["prepared"].get("checks")
-    if not checks:
-        require_checks(call, record["prepared"])  # nothing to re-run is only fine when nothing binds a commit
-        return record
+    prepared = record["prepared"]
+    signed = {e["repo"]: e for ev in prepared["events"] for e in ev.get("source_sha") or []}
     service = call.service
-    service.sync_git()
-    git = service.capabilities().with_principal(call.principal).git
+    git = service.caps_for(call.principal).git
     store = service.store
     repos = store.state.workspace.repos
     fresh = []
-    for c in checks:  # the current working tree, read again now (never the prepare's answer)
+    covered: set[str] = set()
+    for c in prepared.get("checks") or []:
         name = c["repo"]
         path = git.repo_path(store.root, repos, name) if git.enabled and git.reader is not None else None
         got = git.tree_check(path, name) if path is not None else None
         if got is None:
             raise HostError("observe.unavailable", f"{name}: the working tree cannot be checked now; nothing was bound")
+        identity = git.identity(path, name)
+        entry = signed.get(identity)
+        if entry is None or got["head"] != entry["sha"] or got["head_ref"] != entry["ref"]:
+            raise HostError(
+                "observe.unavailable",
+                f"{name}: the working tree is not at the commit the request binds any more; nothing was bound",
+            )
         if got["changed"] or got["more"]:
-            first = got["changed"][0]
+            first = got["changed"][0] if got["changed"] else {"why": "modified", "path": "…"}
             raise HostError(
                 "observe.unavailable",
                 # the path is escaped already (F1 section 11.3, treejob.escape_path)
                 f"{name}: the working tree changed since prepare ({first['why']}: {first['path']})"[:300],
             )
+        covered.add(identity)
         fresh.append(check_entry(name, service.clock()))
-    out = {**record, "prepared": {**record["prepared"], "checks": fresh}}
-    require_checks(call, out["prepared"])
-    return out
+    missing = sorted(set(signed) - covered)
+    if missing:
+        raise HostError(
+            "observe.unavailable", f"{missing[0]}: the working tree of a bound repository was not checked"[:300]
+        )
+    return {**record, "trees_checked": service.clock(), "prepared": {**prepared, "checks": fresh}}
+
+
+def _binds_commits(prepared: dict[str, Any]) -> bool:
+    return any(ev.get("source_sha") for ev in prepared["events"])
 
 
 def require_checks(call: Call, prepared: dict[str, Any]) -> None:
-    """Every repository a prepared event binds (each ``source_sha`` entry, by identity) must have a clean-tree check
-    in ``checks``; otherwise ``observe.unavailable``. The checked repos' identities are read again through the
-    reader, so a check of one repo can never stand in for another."""
+    """At prepare: every repository a prepared event binds (each ``source_sha`` entry, by identity) must have a
+    clean-tree check in ``checks``; otherwise ``observe.unavailable``. The checked repos' identities are read again
+    through the reader, so a check of one repo can never stand in for another."""
     need = {e["repo"] for ev in prepared["events"] for e in ev.get("source_sha") or []}
     if not need:
         return
     service = call.service
-    git = service.capabilities().with_principal(call.principal).git
+    git = service.caps_for(call.principal).git
     store = service.store
     repos = store.state.workspace.repos
     have: set[str] = set()

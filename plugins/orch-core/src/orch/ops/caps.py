@@ -481,7 +481,7 @@ class Git:
             raise CapabilityDenied("git", "git: tree.check is the host's reader job")
         from orch.gitread.errors import Unavailable
 
-        label = (name or path.name or "repo")[:64]
+        label = name if name is not None else path.name  # never cut: job_input refuses over 64 (unknown)
         try:
             return self.reader.tree_check(path, label, principal=self.principal)
         except Unavailable:
@@ -527,9 +527,7 @@ class Git:
             if problems is not None:
                 problems.append("git: a host-mode read needs the caller's principal; nothing was observed")
             return []
-        repos = store.state.workspace.repos
-        declared = [p for n in repos if (p := self.repo_path(store.root, repos, n)) is not None]
-        self.reader.sync(declared)  # pins a repo that first appears; an existing pin is never replaced
+        # pins are taken by the workspace service at open and on a settings.changed (F7), never here
         return observe.observe(store, ref, problems, backend=_ReaderBackend(self.reader, self))
 
     def diff(

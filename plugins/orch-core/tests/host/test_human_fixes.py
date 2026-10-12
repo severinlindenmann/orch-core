@@ -536,14 +536,6 @@ def test_a_refused_submit_leaves_the_request_bound_and_pending_shows_the_code_on
     assert err(human.c.req("human.pending", {"code": "ABCD-EFGH", "request_id": rid})) == "invalid.input"
 
 
-def test_prepare_ignores_opts_idem_and_creates_a_new_request_each_time(human, served):
-    _, key = human.ticket()
-    idem = new_idem()
-    a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
-    b = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
-    assert a["request"]["id"] != b["request"]["id"]
-
-
 def test_a_material_key_outside_the_schema_is_refused(human, served):
     _, key = human.ticket()
     ready(human, key)

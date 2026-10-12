@@ -134,6 +134,7 @@ class WorkspaceService:
         #: human requests (§0.8.1, H5a): ``<state>/hosts/<ws>/requests/``
         self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         self.outcomes.roll_forward = self._roll_forward
+        self.outcomes.prepared = self._prepared
 
     @property
     def workspace_id(self) -> str:
@@ -284,6 +285,11 @@ class WorkspaceService:
         self._snapshot()  # delivery revalidates against this: a revoke or removal it carries counts at once
         if self.publish is not None:
             self.publish(batch)
+
+    def _prepared(self, record: dict[str, Any]) -> dict[str, Any] | str:
+        from .human import outcome_prepared
+
+        return outcome_prepared(self, record)
 
     def _roll_forward(self, record: dict[str, Any]) -> dict[str, Any] | str:
         from .human import outcome_fields

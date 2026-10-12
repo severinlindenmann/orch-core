@@ -274,6 +274,8 @@ class OutcomeStore(IntentStore):
         self.wait_seconds = wait_seconds
         #: ``fn(record) -> fields | "keep"`` for a pending ``human.submit`` record some of whose events landed (H5a)
         self.roll_forward: Callable[[dict[str, Any]], dict[str, Any] | str] | None = None
+        #: the same for a pending ``human.prepare`` record that names its request (``request_id``)
+        self.prepared: Callable[[dict[str, Any]], dict[str, Any] | str] | None = None
         #: key -> (principal, step, done_at); every mutation holds ``_lock``
         self._idx: dict[str, _Entry] = {}
         self._counts: dict[str, int] = {}
@@ -488,6 +490,16 @@ class OutcomeStore(IntentStore):
             self._write(intent.key, record)
             intent.record = record
 
+    def note(self, intent: Intent, **fields: Any) -> None:
+        """Add fields to a running ``pending`` record (fsynced), e.g. the id of the request a prepare is about to
+        store."""
+        record = {**intent.record, **fields}
+        with self._lock:
+            if self._running.get(intent.key) is None:
+                raise HostError("internal", "the outcome record is no longer running")
+            self._write(intent.key, record)
+            intent.record = record
+
     def commit(self, intent: Intent, result: dict[str, Any]) -> dict[str, Any]:
         """The change landed: store the (redacted) ``result``; the record is ``committed``."""
         return self._finish(intent, {"step": "committed", "result": result, "exit": 0})
@@ -614,6 +626,8 @@ class OutcomeStore(IntentStore):
 
     def _fields(self, record: dict[str, Any], found: list[dict[str, Any] | None]) -> dict[str, Any] | str:
         """The terminal fields the log's answer gives, ``"none"`` (nothing landed) or ``"keep"`` (stay pending)."""
+        if record["op"] == "human.prepare" and record.get("request_id"):
+            return self.prepared(record) if self.prepared is not None else "keep"
         landed = [e for e in found if e is not None]
         if found and len(landed) == len(found):
             try:

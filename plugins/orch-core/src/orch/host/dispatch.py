@@ -412,6 +412,8 @@ class RegistryBackend:
                 data = await asyncio.wait_for(asyncio.shield(future), git_diff.BUDGET_S + 5)
             except TimeoutError:
                 raise HostError("observe.unavailable", f"the diff took longer than {git_diff.BUDGET_S:g} s") from None
+            # visibility again before the answer: a ticket restricted while the reader ran is not_found (F6, F8)
+            await asyncio.wrap_future(call.service.submit(git_diff.recheck, call))
             return redactor.obj(ok_result(data))
         except HostError as exc:
             raise redactor.error(exc) from None

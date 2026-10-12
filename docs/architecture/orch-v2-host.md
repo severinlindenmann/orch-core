@@ -1005,8 +1005,9 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
   the signing path never takes a base from the agent's side.
 - **Served** on the workspace socket since the H3b1 follow-up (`orch.host.diff`, after H10a wired the reader): the
   ticket through the viewer's visibility, `repo` through the ticket's `links.repos`, then the reader under the caller's
-  principal, off the workspace's worker thread: one `diff` in flight per principal (else `quota.host`), 30 s for all
-  repos of one request. A reader's reason (it may name a host path) reaches only a person-class owner or maintainer;
+  principal, off the workspace's worker thread: one `diff` in flight per principal and two host-wide, so two reader
+  children stay free for `show`, observe and the tree checks (else `quota.host`), 30 s for all repos of one request,
+  and the ticket's visibility checked again before the answer. A reader's reason (it may name a host path) reaches only a person-class owner or maintainer;
   everyone else gets `repo <name>: not readable`. Until `since` lands it is an unknown key there (`invalid.input`,
   §0.3).
 - **Too large to diff.** A file whose side is over 8 MiB or 200 000 lines, or that would take the request past
@@ -3211,9 +3212,9 @@ UID. P2 adds no keychain.**
     repo in the ticket's `links.repos`, and the branch comes from `links.branches`. Both are writable by anyone who may
     `set` the ticket's links, including an agent on its own visible ticket. So such a caller can `diff` any declared
     repo and any branch of it through that ticket, including a branch that belongs to a restricted ticket. The check
-    scopes a request; it does not hide repositories. The reader's refusals also show whether a branch exists. Only the
-    host paths in them are withheld: a caller who is not a person-class owner or maintainer gets
-    `repo <name>: not readable`, and the reason goes to the host log.
+    scopes a request; it does not hide repositories. A person-class owner or maintainer gets the reader's reasons, which
+    show whether a branch exists. Any other caller gets `repo <name>: not readable` (the reason goes to the host log),
+    so it learns only whether the diff succeeded.
   - **N's configuration exception.** `no-person` sees the three durations and the four default gate policies, which come
     from the workspace log, and the names and default branches of repos linked by tickets it can see.
   - **Refusal records are host-attested and incomplete.** They are unsigned, not in any log, dropped past the ingestion

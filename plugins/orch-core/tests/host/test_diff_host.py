@@ -18,8 +18,9 @@ from orch.gitread.errors import Busy, Unavailable
 from orch.host.dispatch import served_ops
 from orch.ops.caps import Capabilities
 from orch.ops.diff_core import diff_result
-from tests.host.dispatch_helpers import SESSION, Served, err, ok
+from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.lifecycle_helpers import Lab
+from tests.host.live_helpers import World
 from tests.host.test_dispatch_matrix import as_agent_class
 
 pytestmark = pytest.mark.slow  # a host and git reader children
@@ -46,7 +47,7 @@ def world(tmp_path):
         ws.store.close()
         ws.store = None
     try:
-        served = Served(lab)
+        served = World(lab)  # a Served workspace that can issue the owner further grants (more principals)
     except OSError as exc:  # pragma: no cover
         lab.close()
         if exc.errno == errno.EPERM:
@@ -145,7 +146,7 @@ def test_a_restricted_ticket_is_not_found_exactly_like_a_missing_one(world, colu
     if column == "N":
         as_agent_class(served)  # an agent-class peer without a grant: no-person
     else:  # the grant's person is the owner: drop them from the list
-        served.restrict(tickets["secret"][0], [served.lab.add_member().ref])
+        served.restrict(tickets["secret"][0], [served.quinn.ref])
         grant = served.grant
     hidden = diff(served, {"ref": key}, grant=grant)
     missing = diff(served, {"ref": "DEMO-9999"}, grant=grant)
@@ -329,6 +330,69 @@ def test_a_slow_diff_does_not_hold_the_workspace(world, monkeypatch):
     ok(diff(served, {"ref": key}, grant=served.grant))  # the slot is free again
 
 
+def test_diffs_hold_at_most_two_reader_children_host_wide(world, monkeypatch):
+    """Two of the pool's four children stay free for everything else: with diffs of four principals held slow in
+    their reader children, two run and the other two are ``quota.host`` at once (retryable), and the owner's ``show``
+    (which observes the linked repo through a reader child) stays fast."""
+    from orch.host import diff as host_diff
+
+    served, _, tickets = world
+    key = tickets["open"][1]
+    assert host_diff.MAX_DIFFS == 2
+    pool = served.service.git_pool
+    real, release, running = pool._run, threading.Event(), threading.Semaphore(0)
+
+    def run(hello, req, deadline=None):
+        if req.get("op") == "diff":
+            running.release()
+            release.wait(20)
+        return real(hello, req, deadline)
+
+    monkeypatch.setattr(pool, "_run", run)
+    grants = [served.grant] + [grant_value(served.owner_grant()) for _ in range(2)]
+    out = {}
+    held = [
+        threading.Thread(target=lambda g=g: out.setdefault(g, diff(served, {"ref": key}, grant=g))) for g in grants[:2]
+    ]
+    try:
+        for t in held:
+            t.start()
+        assert running.acquire(timeout=10) and running.acquire(timeout=10)  # two diffs are in their children
+        for grant in (grants[2], None):  # a third grant, and the owner (P): two more principals
+            res = diff(served, {"ref": key}, grant=grant)
+            assert err(res) == "quota.host" and res["error"]["retryable"] is True
+        t0 = time.monotonic()
+        ok(served.client().req("show", {"ref": key}))
+        assert time.monotonic() - t0 < 2.0
+        assert pool.peak <= 3  # the two diffs and show's observe
+    finally:
+        release.set()
+        for t in held:
+            t.join(30)
+    assert all(ok(out[g])["data"]["sources"] for g in grants[:2])
+    ok(diff(served, {"ref": key}, grant=grants[2]))  # served once the others are done
+
+
+def test_a_ticket_restricted_while_its_diff_runs_is_not_found(world, monkeypatch):
+    """Visibility is checked again on the worker before the answer: restricted during the reader phase, the diff is
+    ``not_found``, byte-identical to a ticket that does not exist."""
+    served, _, tickets = world
+    uid, key = tickets["open"]
+    started = slow_reader(served, monkeypatch, 2.0)
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("res", diff(served, {"ref": key}, grant=served.grant)))
+    t.start()
+    try:
+        assert started.wait(10)
+        served.restrict(uid, [served.quinn.ref])  # the grant's person (the owner) is not on the list
+    finally:
+        t.join(30)
+    monkeypatch.undo()
+    missing = diff(served, {"ref": "DEMO-9999"}, grant=served.grant)
+    assert err(out["res"]) == "not_found"
+    assert _norm(out["res"], key) == _norm(missing, "DEMO-9999")
+
+
 def test_one_request_has_one_budget_for_all_its_repos(world, monkeypatch):
     """The reader call gets the request's remaining budget as its deadline (not the pool's own 30 s), and a
     request over budget is ``observe.unavailable`` without its reason (G is not a manager)."""
@@ -358,3 +422,11 @@ def test_an_unpinnable_or_missing_working_copy_is_observe_unavailable(world):
 
     shutil.rmtree(proj / ".git")
     assert err(diff(served, {"ref": tickets["open"][1]})) == "observe.unavailable"
+
+
+def grant_value(gid):
+    """The ``auth.grant`` value of a grant ``World.owner_grant`` issued."""
+    from orch import crypto
+    from tests.store.helpers import GRANT_SECRET
+
+    return f"{gid}.{crypto.b64u(GRANT_SECRET)}"

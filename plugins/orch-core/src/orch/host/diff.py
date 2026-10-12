@@ -11,9 +11,12 @@ viewer may see, read by the host's git reader under the caller's principal.
    (:meth:`WorkspaceService.caps_for`: pins are the service's own business, git reads run under the caller). Nothing
    is read from git here.
 2. **Off the worker thread** (:func:`run`, on :data:`EXECUTOR`): the reader children, so a slow diff never holds the
-   workspace's one worker (D-P2-1) and other principals' requests go on. At most one ``diff`` per principal is in
-   flight host-wide (:class:`InFlight`, else ``quota.host``), and one request has :data:`BUDGET_S` seconds for all
-   its repos together (each reader call gets what is left).
+   workspace's one worker (D-P2-1) and other principals' requests go on. At most one ``diff`` per principal and
+   :data:`MAX_DIFFS` host-wide are in flight (:class:`InFlight`, else ``quota.host``), and one request has
+   :data:`BUDGET_S` seconds for all its repos together (each reader call gets what is left).
+3. **Back on the worker thread** (:func:`recheck`): the column and the ticket's visibility again, from the refreshed
+   store, before the answer is sent: a ticket restricted while its diff ran is ``not_found``, as one that does not
+   exist.
 
 **Errors** (§0.6, §0.8): ``observe.unavailable``, ``repo.remote_mismatch`` (F7), ``quota.host`` (retryable). A
 reader's reason can name a host path (``/Users/…/proj/.git does not exist``); §0.5 and §0.8.5 show a repo's path only
@@ -34,13 +37,26 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from orch.gitread import limits
+
 from .errors import HostError
 from .visibility import Viewer
 
 if TYPE_CHECKING:
     from .workspace import Call
 
-__all__ = ["BUDGET_S", "EXECUTOR", "IN_FLIGHT", "SCHEMA", "VALIDATOR", "Pending", "prepare", "run"]
+__all__ = [
+    "BUDGET_S",
+    "EXECUTOR",
+    "IN_FLIGHT",
+    "MAX_DIFFS",
+    "SCHEMA",
+    "VALIDATOR",
+    "Pending",
+    "prepare",
+    "recheck",
+    "run",
+]
 
 LOG = logging.getLogger(__name__)
 #: one request's time for every repo it diffs, reader queueing included (§0.11's 30 s wall, per request)
@@ -62,8 +78,14 @@ SCHEMA = {
 VALIDATOR = Draft202012Validator(SCHEMA)
 
 
+#: diffs in flight host-wide: two of the reader pool's children stay free for ``show``/observe and the approval
+#: tree checks, whatever the diffs do
+MAX_DIFFS = limits.MAX_CHILDREN - 2
+
+
 class InFlight:
-    """At most one ``diff`` in flight per principal, host-wide: a second one is ``quota.host`` at once."""
+    """At most one ``diff`` in flight per principal and :data:`MAX_DIFFS` host-wide; past either, ``quota.host`` at
+    once (retryable)."""
 
     def __init__(self) -> None:
         self._mu = threading.Lock()
@@ -73,6 +95,8 @@ class InFlight:
         with self._mu:
             if principal in self._held:
                 raise HostError("quota.host", "a diff of this caller is still running; retry when it is done")
+            if len(self._held) >= MAX_DIFFS:
+                raise HostError("quota.host", "the host is running as many diffs as it allows; retry shortly")
             self._held.add(principal)
 
     def give(self, principal: str) -> None:
@@ -128,3 +152,10 @@ def run(pending: Pending) -> dict[str, Any]:
             raise HostError(e.code, e.message) from None
         LOG.info("diff: %s: %s (%s)", e.repo, e.reason, pending.principal)
         raise HostError(e.code, f"repo {e.repo}: not readable") from None
+
+
+def recheck(call: Call) -> None:
+    """Phase 3, on the worker thread: the caller may still see the ticket (F8: the column and the viewer from the
+    refreshed store), else ``not_found`` exactly as in :func:`prepare`."""
+    call.authorize()
+    Viewer.of(call).ticket(call.service.store, call.frame["args"]["ref"])

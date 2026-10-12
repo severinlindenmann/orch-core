@@ -135,7 +135,7 @@ def test_the_read_shape_carries_the_label_and_never_a_host_claim(served):
 def test_a_receipt_with_an_unlinked_repo_is_refused(served):
     c, key, uid = started(served)
     res = done(c, served, key, receipt(repo="nope", commit="a" * 40))
-    assert res["ok"] is False and res["error"]["code"] == "invalid.input" and "not linked" in res["error"]["message"]
+    assert res["ok"] is False and res["error"]["code"] == "invalid.input" and "links no repo" in res["error"]["message"]
     assert "task.done" not in types(served, uid)
 
 
@@ -161,3 +161,81 @@ def test_no_receipt_or_output_leaks_for_a_restricted_ticket(served):
     res = n.req("task.done", {"task": f"{key}/T1", "receipt": receipt(), "receipt_output": "-"}, idem=True,
                 files={"receipt_output": b64(OUT)})  # fmt: skip
     assert res["ok"] is False and key not in json.dumps(res).replace(f"{key}/T1", "")
+
+
+# --- review round (Opus F1, F2, F5; Sonnet test gaps) ---
+
+LINKS = 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}'
+COMMIT = "a" * 40
+
+
+def linked(served: Served, verify: str | None = CMD):
+    """Like :func:`started`, on a ticket that links the registered repo ``proj``."""
+    uid, key = served.ticket("receipts")
+    c, g = served.client(), served.grant
+    served.append(lambda store: served.lab.ws.repo("proj"))
+    ok(c.req("claim", {"ref": key}, grant=g, session=SESSION, idem=True))
+    ok(c.req("set", {"ref": key, "pairs": [LINKS]}, grant=g, session=SESSION, idem=True))
+    ok(c.req("task.add", {"ref": key, "text": "do it", "verify": verify}, grant=g, session=SESSION, idem=True))
+    ok(c.req("task.start", {"task": f"{key}/T1"}, grant=g, session=SESSION, idem=True))
+    return c, key, uid
+
+
+def test_f1_a_null_repo_is_refused_on_a_ticket_that_links_a_repo(served):
+    c, key, uid = linked(served)
+    for bad in (receipt(), receipt(commit=COMMIT), receipt(repo="proj"), receipt(repo="other", commit=COMMIT)):
+        assert err(done(c, served, key, bad)) == "invalid.input"
+    assert "task.done" not in types(served, uid)
+
+
+def test_f1_a_receipt_names_a_linked_repo_and_its_commit_and_is_stored_as_sent(served):
+    c, key, uid = linked(served)
+    ok(done(c, served, key, receipt(repo="proj", commit=COMMIT)))
+    ev = next(e for e in served.lab.ws.read_events(uid) if e["type"] == "task.done")
+    assert ev["receipt"]["repo"] == "proj" and ev["receipt"]["commit"] == COMMIT
+    shown = ok(c.req("ticket.get", {"ref": key}))["data"]["tasks"][0]["receipt"]
+    assert (shown["repo"], shown["commit"], shown["attested_by"]) == ("proj", COMMIT, "agent")
+    assert shown["evidence"] is False  # not the source sha: a client receipt follows the source
+
+
+def test_f5_a_commit_without_a_repo_is_refused_on_a_ticket_that_links_none(served):
+    c, key, uid = started(served)
+    assert err(done(c, served, key, receipt(commit=COMMIT))) == "invalid.input"
+    assert "task.done" not in types(served, uid)
+
+
+def test_f2_two_file_arguments_with_one_name_are_refused(served):
+    c, key, uid = started(served)
+    args = {"task": f"{key}/T1", "receipt": receipt(), "receipt_output": "x.log", "artifact": "x.log"}
+    files = {"receipt_output": b64(b"RECEIPT"), "artifact": b64(b"EVIDENCE")}
+    res = c.req("task.done", args, grant=served.grant, session=SESSION, idem=True, files=files)
+    assert err(res) == "blob.invalid"
+    assert "task.done" not in types(served, uid)
+
+
+def test_a_receipt_output_over_one_mib_is_refused_and_exactly_one_mib_is_taken(served):
+    from tests.host.test_blobs import upload
+
+    c, key, uid = started(served)
+    big = upload(c, b"x" * ((1 << 20) + 1), grant=served.grant)
+    args = {"task": f"{key}/T1", "receipt": receipt(), "receipt_output": "-"}
+    res = c.req(
+        "task.done", args, grant=served.grant, session=SESSION, idem=True, files={"receipt_output": {"blob": big}}
+    )
+    assert err(res) == "invalid.input"
+    assert "task.done" not in types(served, uid)
+    exact = upload(c, b"x" * (1 << 20), grant=served.grant)
+    res = c.req(
+        "task.done", args, grant=served.grant, session=SESSION, idem=True, files={"receipt_output": {"blob": exact}}
+    )
+    assert ok(res)
+
+
+def test_a_dry_run_with_a_receipt_appends_nothing(served):
+    c, key, uid = started(served)
+    args = {"task": f"{key}/T1", "receipt": receipt(), "receipt_output": "-"}
+    res = c.req(
+        "task.done", args, grant=served.grant, session=SESSION, dry_run=True, files={"receipt_output": b64(OUT)}
+    )
+    assert res["ok"] is True
+    assert "task.done" not in types(served, uid)

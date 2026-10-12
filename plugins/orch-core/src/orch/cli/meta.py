@@ -13,6 +13,20 @@ from orch.ops.workflows import WORKFLOWS
 __all__ = ["describe", "help", "op_help", "overview"]
 
 
+def _public_input(schema: dict[str, Any]) -> dict[str, Any]:
+    """The input schema without the ``x-host`` properties: arguments only a host client sends (``task.done``'s
+    receipt) are not advertised to the person or agent typing the command."""
+    props = schema.get("properties") or {}
+    hidden = {n for n, p in props.items() if isinstance(p, dict) and p.get("x-host") is True}
+    if not hidden:
+        return schema
+    return {
+        **schema,
+        "properties": {n: p for n, p in props.items() if n not in hidden},
+        "required": [n for n in schema.get("required", []) if n not in hidden],
+    }
+
+
 def _arg_lines(op: Operation) -> list[str]:
     lines = []
     for a in arg_specs(op):
@@ -105,7 +119,7 @@ def describe(ctx: Context, args: dict[str, Any]) -> Result:
         "usage": usage(op),
         "pre": op.pre,
         "emits": op.emits,
-        "input": op.input,
+        "input": _public_input(op.input),
         "output": op.output,
         "errors": errors,
     }

@@ -388,3 +388,27 @@ def test_activity_hides_a_ticket_that_became_invisible_between_pages(rich, stub)
     assert "DEMO-0002" not in [i["key"] for i in rest]
     with pytest.raises(HostError, match="not_found"):
         viewer.call("activity.list", {"ticket": "DEMO-0002"})
+
+
+def test_a_receipt_label_is_passed_through_ticket_get_and_the_log(rich, stub):
+    env, ids = rich
+    first = ids["First"]
+    env.tick()
+    env.update(
+        first,
+        {
+            "ticket.tasks": [
+                {"id": "T1", "text": "Write the export", "verify": {"cmd": "make test"}, "proves": ["AC1"]},
+                {"id": "T2", "text": "Document it", "verify": None, "proves": []},
+            ]
+        },
+    )
+    env.tick()
+    env.store.append({"type": "claim.taken", "actor": env.agent}, log=first)
+    env.tick()
+    receipt = {"cmd": "make test", "exit": 0, "ms": 5, "repo": None, "commit": None, "attested_by": "agent"}
+    env.store.append({"type": "task.done", "actor": env.agent, "task": "T1", "receipt": receipt}, log=first)
+    got = stub.call("ticket.get", {"ref": "DEMO-0001"})["data"]
+    assert got["tasks"][0]["receipt"]["attested_by"] == "agent"
+    item = next(i for i in got["log"] if i["type"] == "task.done")
+    assert item["data"]["receipt"]["attested_by"] == "agent"

@@ -387,6 +387,85 @@ def _auth(ctx: Any) -> dict[str, str] | None:
     return auth or None
 
 
+def _task_ref(task: str) -> tuple[str | None, str]:
+    ref, _, tid = task.rpartition("/")
+    return (ref or None), tid
+
+
+def _local_repo(ctx: Any, linked: list[str]) -> tuple[str | None, Path | None]:
+    """The linked repository a verify command runs in (F1 section 6): the only linked one; with several, the one whose
+    working copy the shell is in, found by its directory name. ``(None, None)`` when the ticket links none."""
+    from orch.store import observe
+
+    if not linked:
+        return None, None
+    here = Path(ctx.caps.files.getcwd())
+    top = observe.git(here, "rev-parse", "--show-toplevel")
+    if top is None:
+        raise OrchError(
+            "invalid.input",
+            f"run this in the working copy of a linked repo ({', '.join(linked)}): the host takes a receipt for a "
+            "linked repo only with its commit",
+        )
+    path = Path(top).resolve()
+    if len(linked) == 1:
+        return linked[0], path
+    named = [n for n in linked if n == path.name]
+    if len(named) != 1:
+        raise OrchError(
+            "invalid.input",
+            f"this ticket links several repos ({', '.join(linked)}): run it in a working copy whose directory is named "
+            "after one of them",
+        )
+    return named[0], path
+
+
+def _client_receipt(
+    op: Operation, args: dict[str, Any], ctx: Any, target: Target, auth: dict[str, str] | None
+) -> tuple[dict[str, Any], bytes, list[str]]:
+    """``task done --run`` against a host (H3b2, contract 2): the host never runs ``verify.cmd``. Read the task's exact
+    command and the linked repos, run the command here (the same runner as direct mode: allow-listed environment,
+    timeout, output capped at 1 MiB), and return the ``receipt``, its output and the notes. Nothing is sent when the
+    command fails."""
+    from orch.ops import runner
+
+    ref, tid = _task_ref(str(args["task"]))
+    doc = _request(target, "task.list", {"ref": ref} if ref else {}, auth=auth)
+    data = doc.get("data") or {}
+    task = next((t for t in data.get("tasks") or [] if t.get("id") == tid), None)
+    if task is None:
+        raise OrchError("not_found", f"no task {tid} on this ticket")
+    cmd = task.get("verify")
+    if not isinstance(cmd, str):
+        raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
+    repo, path = _local_repo(ctx, list(data.get("repos") or []))
+    if path is not None:
+        from orch.store import observe
+
+        if observe.dirty(path):
+            raise OrchError(
+                "verify.failed",
+                f"the working tree of {repo} is not clean: commit first, the receipt must name the commit it ran at",
+            )
+    env = ctx.caps.exec.child_env(ctx.env)
+    secret = (ctx.grant or "").partition(".")[2]
+    ran = runner.run_verify(
+        cmd,
+        repo=repo,
+        path=path,
+        cwd=path if path is not None else Path(ctx.caps.files.getcwd()),
+        env=env,
+        caps=ctx.caps,
+        grant_secret=secret,
+    )
+    r = ran.receipt
+    if repo is not None and r["commit"] is None:
+        raise OrchError("verify.failed", f"{repo} has no clean commit to name: commit first, then run it again")
+    receipt = {"cmd": cmd, "exit": r["exit"], "duration_ms": r["ms"], "commit": r["commit"], "repo": repo}
+    notes = [*ran.notes, "note: attested by you (the agent): this ran on your machine, the host does not verify it"]
+    return receipt, ran.output[: runner.OUTPUT_LIMIT], notes
+
+
 def execute(parsed: Any, ctx: Any, target: Target) -> Result:
     """Send ``parsed`` to the host and return its result. Raises :class:`~orch.ops.errors.OrchError` on a refusal."""
     from orch.host.dispatch import NOT_SERVED
@@ -401,8 +480,21 @@ def execute(parsed: Any, ctx: Any, target: Target) -> Result:
         )
     if op.who == "human":
         return _human(op, args, ctx, target, parsed.dry_run)
-    files = read_files(op, args, ctx)
     auth = _auth(ctx)
+    notes: list[str] = []
+    receipt_output: bytes | None = None
+    if op.name == "task.done" and args.get("run"):
+        args.pop("run")  # never forwarded: the host refuses it
+        if parsed.dry_run:
+            notes.append("dry-run: would run the task's verify command here and send its receipt")
+        else:
+            args["receipt"], receipt_output, notes = _client_receipt(op, args, ctx, target, auth)
+            args["receipt_output"] = "-"
+    files = (
+        read_files(op, args, ctx) if receipt_output is None else read_files(op, {**args, "receipt_output": None}, ctx)
+    )
+    if receipt_output is not None:
+        files["receipt_output"] = receipt_output
     idem = None
     if op.is_write and not parsed.dry_run:
         from orch.host.control_client import new_idem
@@ -422,7 +514,10 @@ def execute(parsed: Any, ctx: Any, target: Target) -> Result:
         dry_run=parsed.dry_run,
         timeout=timeout,
     )
-    return result_from(doc)
+    res = result_from(doc)
+    if notes:
+        res.lines[:0] = notes
+    return res
 
 
 def _durable(target: Target, link: list[Any], idem: str) -> Callable[..., Any]:

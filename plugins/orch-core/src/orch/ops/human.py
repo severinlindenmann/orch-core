@@ -319,7 +319,9 @@ class Human:
         for tid, r in (inp.get("receipts") or {}).items():
             body += [
                 f"receipt {tid}:",
-                *self._data([f"exit {r.get('exit')} at {r.get('commit')} repo {r.get('repo')}"]),
+                *self._data(
+                    [f"exit {r.get('exit')} at {r.get('commit')} repo {r.get('repo')} (attested by the agent)"]
+                ),
             ]
         summary = ", ".join([*counts, f"{len(acceptance)} criteria", f"{len(tasks)} tasks"])
         out += [f"summary: {summary}", "", *body]

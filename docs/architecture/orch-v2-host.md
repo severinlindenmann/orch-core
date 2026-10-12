@@ -598,7 +598,16 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   argument `receipt_output` (a `files` key is an `ArgName`, so it cannot be nested; its value is `"-"`). Both are host-mode
   only: the CLI has no flag for them. The host refuses `run` with `op.not_allowed`, a `cmd` other than the task's
   `verify.cmd` (exact string) or a non-zero `exit` with `invalid.input` / `verify.failed`, and stores the output as a
-  `receipt` artifact `<task>-receipt.log` named by `log`. A direct-mode receipt (`--run`) carries no `attested_by`.
+  `receipt` artifact `<task>-receipt.log` named by `log`. A ticket that links repos takes a receipt only with
+  `repo` one of the linked repos and a 40/64-hex `commit` (F1 §6: evidence follows the source `sha`); a ticket that links
+  none takes `repo: null` and `commit: null` only. Two `files` arguments with the same logical name are `blob.invalid`.
+  A direct-mode receipt (`--run`) carries `attested_by: "agent"` too: the agent's environment ran it, not orch. The
+  verify-gate review (terminal text and the dashboard dialog) says "attested by the agent".
+  `task.list` data gives each task's exact `verify` command (when it has one) and the ticket's linked `repos`, so a
+  client can run it. The thin CLI (`orch task done T --run`) reads them, runs the command with the P1 runner (allow-listed
+  environment, timeout, output capped at 1 MiB), refuses a dirty working tree of a linked repo (the receipt must name its
+  commit), picks the only linked repo or, with several, the one whose directory name matches the working copy it is in,
+  and sends nothing when the command fails. `orch describe` does not list the `x-host` arguments.
 - `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
   `host.wsk_create` + `host.bootstrap` composite.
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.
@@ -1466,7 +1475,8 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    registered workspace whose host is down answers `host.unavailable` (exit 9, retryable, the catalog entry that already
    existed for `init`), never a direct write. `help`, `describe`, `init` and `import v1` are always local (the host does
    not serve them; the direct-mode guard still answers `host.required` for the last two on a registered workspace).
-   `task done` (not served until H3b2) is refused with `not_implemented` naming H3b2, not forwarded.
+   `task done --run` in host mode runs `verify.cmd` on the client (see §0.8, `task.done`) and sends a receipt; it never
+   forwards `run`.
    A socket whose owner or welcome does not match the pin is `host.untrusted` (exit 3, in the catalog, never retried).
 2. **Rendering.** A registry op is sent with its parsed arguments; `result` is rebuilt as `orch.ops.Result` and rendered
    by the unchanged renderer, so text and `--json` are byte-identical to direct mode for every non-human op, `wait`

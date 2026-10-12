@@ -53,7 +53,7 @@ function proofOf(ticket: TicketDocument, ac: AcceptanceStatus): Proof {
   return ac.evidence.some((ev) => evidenceVerified(ticket, ev)) ? 'proven' : 'asserted'
 }
 
-function ReceiptLine({ t }: { t: TaskStatus }) {
+export function ReceiptLine({ t }: { t: TaskStatus }) {
   if (!t.receipt) return <span className="text-text-faint">No receipt yet.</span>
   return (
     <span className="font-mono text-text-muted">

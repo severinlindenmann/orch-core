@@ -678,6 +678,9 @@ class RegistryBackend:
         for arg in sorted(marked):
             if args.get(arg) is not None and arg not in specs:
                 raise HostError("blob.invalid", f"{arg} is a file: send its bytes in files.{arg}")
+        names = [str(args[arg]) for arg in specs]
+        if len(set(names)) != len(names):  # two arguments would share one byte string in ctx.files
+            raise HostError("blob.invalid", "two files arguments name the same file: give each its own name")
         inline = sum(decoded_len(spec["b64"]) for spec in specs.values() if isinstance(spec, Mapping) and "b64" in spec)
         if inline > INLINE_MAX:
             raise HostError("blob.invalid", f"inline files are at most {INLINE_MAX} bytes per request: upload a blob")

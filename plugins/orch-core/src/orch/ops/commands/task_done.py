@@ -44,7 +44,9 @@ def _run(c: Call, view: Any, cmd: str) -> runner.Ran:
     )
 
 
-def _client_receipt(c: Call, ctx: Context, tid: str, task: dict[str, Any], args: dict[str, Any]) -> tuple[Any, Any]:
+def _client_receipt(
+    c: Call, ctx: Context, view: Any, tid: str, task: dict[str, Any], args: dict[str, Any]
+) -> tuple[Any, Any]:
     """Host mode, contract 2 (H3b2, §0.8): the client ran ``verify.cmd`` itself and sends ``receipt`` plus its output
     through ``files``. The host never runs anything: it checks the claim against the ticket and labels it
     ``attested_by: "agent"``. ``(None, None)`` when no receipt was sent."""
@@ -62,6 +64,17 @@ def _client_receipt(c: Call, ctx: Context, tid: str, task: dict[str, Any], args:
         raise OrchError("invalid.input", "receipt.cmd must equal the task's verify.cmd")
     if rc["exit"] != 0:
         raise OrchError("verify.failed", "the receipt's exit code was not 0, nothing was appended")
+    repo, commit = rc.get("repo"), rc.get("commit")
+    linked = list(view.fields["links"]["repos"])
+    if linked:  # F1 section 6: evidence follows the source sha, so the receipt names a linked repo and its commit
+        if repo is None or repo not in linked:
+            raise OrchError("invalid.input", f"receipt.repo must be one of the repos this ticket links: {linked}")
+        if commit is None:
+            raise OrchError(
+                "invalid.input", "receipt.commit is required for a linked repo (the commit the command ran at)"
+            )
+    elif repo is not None or commit is not None:
+        raise OrchError("invalid.input", "receipt.repo and receipt.commit are null: this ticket links no repo")
     output = c.read_artifact(name)
     if len(output) > runner.OUTPUT_LIMIT:
         raise OrchError("invalid.input", f"the receipt output is at most {runner.OUTPUT_LIMIT} bytes")
@@ -114,9 +127,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if args.get("ac") and not args.get("artifact"):
         raise OrchError("invalid.input", "--ac names what --artifact is evidence for")
     notes: list[str] = []
-    if args.get("run") and ctx.hosted:  # the host never executes verify.cmd (HOST_REFUSED_ARGS answers first)
-        raise OrchError("invalid.input", "the host does not run verify.cmd: run it and send a receipt")
-    receipt, receipt_log = _client_receipt(c, ctx, tid, task, args)
+    receipt, receipt_log = _client_receipt(c, ctx, view, tid, task, args)
     if args.get("run"):
         if task["verify"] is None:
             raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
@@ -124,7 +135,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             notes.append(f"dry-run: would run: {views.short(task['verify']['cmd'], 100)}")
         else:  # the command runs before the lock is taken: it may take minutes
             ran = _run(c, view, task["verify"]["cmd"])
-            receipt, receipt_log, notes = ran.receipt, ran.output, list(ran.notes)
+            # the agent's environment ran it, not orch and not a host: say so in the record (F1 section 10.7)
+            receipt, receipt_log, notes = {**ran.receipt, "attested_by": "agent"}, ran.output, list(ran.notes)
     evidence = c.read_artifact(args["artifact"]) if args.get("artifact") else None
     with c.locked():
         view = c.resolve(ref or None)

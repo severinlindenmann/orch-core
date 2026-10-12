@@ -235,11 +235,15 @@ class Human:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")
             elif on != ref:
                 out.append(f"{name}: the working tree is on {on or 'a detached commit'}, the decision binds {ref}")
-            dirty = git.dirty(path)
+            dirty = git.dirty(path, name)
             if dirty is None:
                 out.append(f"{name}: git cannot be asked about the working tree")
             elif dirty:
                 out.append(f"{name}: the working tree has uncommitted changes; the decision binds a commit")
+            elif self.ctx.prepare is not None:  # human.prepare (host mode): the unsigned checks of N3
+                from orch.gitread.treejob import check_entry
+
+                self.ctx.prepare.checks.append(check_entry(name, self.ctx.caps.clock()))
         return out
 
     def observe(self, view: Any) -> Any:

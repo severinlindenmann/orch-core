@@ -1390,8 +1390,9 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 11. **D58 at submit.** Prepare appends nothing (no `branch.pushed` either). At submit, under the store lock, for every
     event that signs a `source_sha`, the host reads each linked repo's head again through its git reader (under the
     caller's principal) and refuses with `gate.stale` when it differs from the signed source list, or with
-    `observe.unavailable` when the reader cannot answer (fail closed). The working tree's cleanliness is the worker's
-    `tree.check` (H10); until then `verdict` and `approve code` answer `observe.unavailable` at prepare in host mode.
+    `observe.unavailable` when the reader cannot answer (fail closed). The working tree's cleanliness is
+    `tree.check` at prepare and at binding (N3); in tier A the host runs it itself (H10a, below D-P2-19), in tier B
+    `verdict` and `approve code` answer `observe.unavailable` until the worker (H10) takes the job over.
 12. **Gate texts.** Gate material carries `texts` for every section in `input.sections` (next to `material.policy`);
     the signer checks each against `input.sections` and shows them with the criteria, tasks, links and policy, as P1's
     review did. `gate_gen` and `source_sha` are shown labelled as host attestations; the policy hash is recomputed from
@@ -2661,6 +2662,28 @@ UID. P2 adds no keychain.**
   - Any other file type (FIFO, socket, device) at a tracked path counts as changed (`why: "type"`).
   - The child runs the `worktree` profile.
   - Paths in `changed` are escaped and rendered with F1 §11.3's rules wherever they are shown.
+
+  **As built in H10a (phase 1, tier A, no containment).**
+  - There is no worker UID in tier A, so the host runs the `tree.check` job itself: `TreeCheckInput` from the repo's
+    pins, one `python -I -m orch.gitread` child through the launcher (fixed argv, empty environment, the §0.11 limits,
+    the child's audit hook) under the `worktree` profile, and the child's raw answer checked and escaped into
+    `TreeCheckResult` by the host (`orch.gitread.treecheck`, `orch.gitread.treejob`). The phase-3 worker takes over
+    the same job kind and input; only the caller of the child changes. A tier-B workspace has no check until then
+    (fail closed).
+  - It also compares the index with `HEAD`'s tree, so a staged change, an unmerged entry or an `intent-to-add` entry
+    is a change (`why:"modified"`; a path of `HEAD` missing from the index: `"deleted"`).
+  - Unknown, never clean: a split or sparse index (or any required index extension), a bad checksum, a populated
+    submodule (its own `HEAD` is not checked), a detached `HEAD`, a walk deeper than 32 directories, and the §0.11
+    bounds (`INDEX_MAX`, `INDEX_ENTRIES`, `WALK_ENTRIES`) all answer `observe.unavailable`. `core.excludesFile` is
+    config and is not read, so a file only it ignores counts as untracked. The `FSMN` and `UNTR` index extensions are
+    skipped unread.
+  - `human.prepare` returns `checks` for each linked repo found clean; `human.get` with `signer` runs the check again
+    at binding and at every later binding get, refuses a changed or unknown tree with `observe.unavailable` (nothing
+    is bound) and refreshes `checks[].at`. `attested_by` stays `"worker"`: in tier A the host's reader child plays the
+    worker's part. A dry run runs the check too (it is read-only and fails closed).
+  - The served workspace gets H3b1's reader (`Capabilities.host(git=...)`, pins in `<state>/hosts/<ws>/git-pins.json`,
+    one `ReaderPool` per host); repos in `settings.repos` are pinned when first seen (an existing pin is never
+    replaced).
 - **`task done --run`:** the client runs `verify.cmd` and sends the receipt (§0.8). The host checks that `cmd` equals
   the approved `verify.cmd`; H3b2 (client receipts) adds `attested_by: "agent"`, absent from the current receipt.
   - This proves an authenticated agent **claimed** this result. It does not prove the command ran, its exit code, its

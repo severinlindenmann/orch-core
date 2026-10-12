@@ -46,6 +46,9 @@ class Capture:
     events: list[Captured] = field(default_factory=list)
     #: ``before`` of a ``payload`` material: prior values of the paths a set, section.set or settings.set changes
     before: dict[str, Any] = field(default_factory=dict)
+    #: ``checks`` of the prepared request (N3): one ``{repo, clean, attested_by, at}`` per working copy the clean-tree
+    #: check (``tree.check``) found clean; not signed, not in ``material``
+    checks: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def actor(self) -> dict[str, Any]:

@@ -287,12 +287,19 @@ class PinStore:
 
 
 class HostGitReader:
-    """The host-mode backend of ``Capabilities.git``: every read is a fresh child under the ``gitdir`` profile."""
+    """The host-mode backend of ``Capabilities.git``: every read is a fresh child under the ``gitdir`` profile.
 
-    def __init__(self, pool: ReaderPool, pins: PinStore | None = None, *, principal: str = "host") -> None:
+    ``tree_checks``: whether :meth:`tree_check` runs here. Tier A (phase 1, same UID, no worker): ``True``, the host
+    runs the ``tree.check`` job in a ``worktree``-profile child itself (:mod:`orch.gitread.treejob`). Tier B: ``False``
+    until the phase-3 worker takes the job over, so the check is unknown and its callers fail closed."""
+
+    def __init__(
+        self, pool: ReaderPool, pins: PinStore | None = None, *, principal: str = "host", tree_checks: bool = False
+    ) -> None:
         self.pool = pool
         self.pins = pins if pins is not None else PinStore()
         self.principal = principal
+        self.tree_checks = tree_checks
 
     # -- pins
     def sync(self, declared: Iterable[str | os.PathLike[str]]) -> dict[str, str | None]:
@@ -364,6 +371,16 @@ class HostGitReader:
     ) -> dict[str, Any]:
         args = {"branch": branch, "default_branch": default_branch, "context": context, "max_bytes": max_bytes}
         return _check_diff(self._call(path, "diff", args, principal), max_bytes)
+
+    def tree_check(self, path: str | os.PathLike[str], name: str, principal: str | None = None) -> dict[str, Any]:
+        """``TreeCheckResult`` for the declared working copy at ``path`` (repo ``name``). Raises
+        :class:`Unavailable` when no clean answer can be established (callers fail closed)."""
+        from . import treejob
+
+        if not self.tree_checks:
+            raise Unavailable("the clean-tree check needs the worker, which this workspace does not have yet")
+        job = treejob.job_input(name, self._pins(path))
+        return treejob.run_child(self.pool, principal or self.principal, job)
 
 
 def _id(pin: Any) -> tuple[int, int]:

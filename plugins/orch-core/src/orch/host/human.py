@@ -360,6 +360,7 @@ class HumanOps:
         store.refresh()
         if signer is not None:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
+        service.sync_git()  # pins a declared repo that first appears (never replaces a pin), for the D58 reads
         if name in review.HOST_PERSON_OPS:  # move, policy.set, settings.set: not registry (CLI) ops
             from orch.ops import person_ops
 
@@ -400,6 +401,8 @@ class HumanOps:
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
         prepared, extras = self._build(call, name, log, capture, store, now)
+        if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
+            prepared["checks"] = capture.checks
         result = result_dict(res)
         template = {"data": result["data"], "key": result["key"], "hints": result["hints"]}
         if dry_run:
@@ -590,6 +593,9 @@ class HumanOps:
         if state == "bound":
             if record["signer"] != signer:
                 raise HostError("human.request_state", "the request is bound to another device")
+            if record["prepared"].get("checks"):  # N3: tree.check re-run at every binding get
+                record = recheck_trees(call, record)
+                requests.write(record)
             return self._view(record)
         store = call.service.store
         store.refresh()
@@ -601,7 +607,8 @@ class HumanOps:
             call.service.clock(),
             operate=_operate([e["type"] for e in events]),
         )
-        for ev in events:  # the one change binding makes: null -> the signer's device and auth
+        record = recheck_trees(call, record)  # N3: a tree dirtied since prepare is refused here, nothing bound
+        for ev in record["prepared"]["events"]:  # the one change binding makes: null -> the signer's device and auth
             ev["actor"]["device"] = signer["device"]
             ev["auth"] = signer["auth"]
         record = {**record, "state": "bound", "signer": signer}
@@ -821,11 +828,44 @@ class HumanOps:
             state, seq, prev = r, seq + 1, canon.event_head(probe)
 
 
+def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
+    """N3: run ``tree.check`` again for every working copy a prepared request's ``checks`` name, when ``human.get``
+    binds a device (and at every later binding get). A changed tree, or one that cannot be checked (unknown), is
+    ``observe.unavailable`` and nothing is bound; otherwise the record comes back with fresh ``checks`` (only their
+    ``at`` changes; they are not signed)."""
+    from orch.gitread.treejob import check_entry
+
+    checks = record["prepared"].get("checks")
+    if not checks:
+        return record
+    service = call.service
+    service.sync_git()
+    git = service.capabilities().with_principal(call.principal).git
+    store = service.store
+    repos = store.state.workspace.repos
+    fresh = []
+    for c in checks:
+        name = c["repo"]
+        path = git.repo_path(store.root, repos, name) if git.enabled and git.reader is not None else None
+        got = git.tree_check(path, name) if path is not None else None
+        if got is None:
+            raise HostError("observe.unavailable", f"{name}: the working tree cannot be checked now; nothing was bound")
+        if got["changed"]:
+            first = got["changed"][0]
+            raise HostError(
+                "observe.unavailable",
+                # the path is escaped already (F1 section 11.3, treejob.escape_path)
+                f"{name}: the working tree changed since prepare ({first['why']}: {first['path']})"[:300],
+            )
+        fresh.append(check_entry(name, service.clock()))
+    return {**record, "prepared": {**record["prepared"], "checks": fresh}}
+
+
 def recheck_sources(git: Any, store: Any, view: Any, signed: list[dict[str, Any]]) -> None:
     """D58 at submit, under the store lock: each linked repo's head, read again through the host's git reader (under
     the caller's principal), must be the commit the decision signs, on the bound branch: ``gate.stale`` otherwise. A
-    reader that cannot answer fails closed (``observe.unavailable``). The working tree's cleanliness is the worker's
-    ``tree.check`` (H10), not checked here."""
+    reader that cannot answer fails closed (``observe.unavailable``). The working tree's cleanliness is ``tree.check``
+    at prepare and binding (:func:`recheck_trees`, N3), not checked here (H0 amends F1 section 10.8)."""
     from orch.ops.caps import CapabilityDenied
 
     links = view.fields["links"]

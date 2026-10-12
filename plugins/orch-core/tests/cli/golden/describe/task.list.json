@@ -49,6 +49,9 @@
                 },
                 "state": {
                   "type": "string"
+                },
+                "verify": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -58,11 +61,18 @@
               ],
               "additionalProperties": false
             }
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
           "count",
-          "tasks"
+          "tasks",
+          "repos"
         ],
         "additionalProperties": false
       }

@@ -297,14 +297,113 @@ def test_import_stays_local_and_the_person_registry_guard_answers_host_required(
         served.close()
 
 
-def test_task_done_is_refused_clearly_until_the_host_serves_it(lab):
+def _done_events(lab, key):
+    return [e for e in lab.ws.events(key) if e["type"] == "task.done"]
+
+
+def test_task_done_run_runs_the_command_here_and_sends_a_labelled_receipt(lab):
     served = hosted(lab)
     try:
         c = hcli(lab)
         c("new", "A")
         c("claim", "1")
-        r = c.j("task", "done", "T1")
-        assert (r.code, r.err_code) == (1, "not_implemented") and "H3b2" in r.doc["error"]["message"], r.out
+        c("task", "add", "do it", "--verify", "echo hello-from-verify")
+        c("task", "start", "T1")
+        r = c.j("task", "done", "T1", "--run")
+        assert r.code == 0, r.out
+        (done,) = _done_events(lab, "1")
+        assert done["receipt"]["cmd"] == "echo hello-from-verify" and done["receipt"]["exit"] == 0
+        assert done["receipt"]["attested_by"] == "agent" and done["receipt"]["repo"] is None
+        events = lab.ws.events("1")
+        art = next(e for e in events if e["type"] == "artifact.added" and e["kind"] == "receipt")
+        assert art["name"] == done["log"]
+        shown = c.j("task", "list").doc
+        assert shown["data"]["tasks"][0]["verify"] == "echo hello-from-verify"
+    finally:
+        served.close()
+
+
+def test_task_done_run_text_says_who_attests_and_a_failing_command_sends_nothing(lab):
+    served = hosted(lab)
+    try:
+        c = hcli(lab)
+        c("new", "A")
+        c("claim", "1")
+        c("task", "add", "fails", "--verify", "false")
+        c("task", "start", "T1")
+        r = c.j("task", "done", "T1", "--run")
+        assert (r.code, r.err_code) == (5, "verify.failed"), r.out
+        assert _done_events(lab, "1") == []
+        c("task", "add", "passes", "--verify", "true")
+        c("task", "start", "T2")
+        text = c("task", "done", "T2", "--run")
+        assert text.code == 0 and "attested by you" in text.out, text.out
+    finally:
+        served.close()
+
+
+def test_task_done_never_forwards_run_and_dry_run_runs_nothing(lab):
+    served = hosted(lab)
+    try:
+        c = hcli(lab)
+        c("new", "A")
+        c("claim", "1")
+        c("task", "add", "x", "--verify", "true")
+        c("task", "start", "T1")
+        r = c("task", "done", "T1", "--run", "--dry-run")
+        assert r.code == 0 and "would run" in r.out, r.out
+        assert _done_events(lab, "1") == []
+        sent = []
+        orig = hostclient._request
+
+        def spy(target, op, args, **kw):
+            sent.append((op, dict(args)))
+            return orig(target, op, args, **kw)
+
+        import pytest as _pt
+
+        mp = _pt.MonkeyPatch()
+        mp.setattr(hostclient, "_request", spy)
+        try:
+            assert c("task", "done", "T1", "--run").code == 0
+        finally:
+            mp.undo()
+        done_args = next(a for o, a in sent if o == "task.done")
+        assert "run" not in done_args and done_args["receipt_output"] == "-" and done_args["receipt"]["cmd"] == "true"
+    finally:
+        served.close()
+
+
+def test_task_done_run_on_a_ticket_with_a_linked_repo_names_the_repo_and_its_commit(lab, monkeypatch):
+    store = lab.ws.other()
+    lab.ws.store = store
+    try:
+        path = lab.ws.repo("proj")
+    finally:
+        store.close()
+        lab.ws.store = None
+    commit = lab.ws.git("rev-parse", "HEAD")
+    served = hosted(lab)
+    try:
+        c = hcli(lab)
+        c("new", "A")
+        c("claim", "1")
+        c("set", "1", 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}')
+        c("task", "add", "x", "--verify", "true")
+        c("task", "start", "T1")
+        monkeypatch.chdir(lab.ws.tmp)  # not inside the linked repo: refused, nothing sent
+        r = c.j("task", "done", "T1", "--run")
+        assert (r.code, r.err_code) == (5, "invalid.input"), r.out
+        assert _done_events(lab, "1") == []
+        monkeypatch.chdir(path)
+        (path / "dirty.txt").write_text("x")
+        r = c.j("task", "done", "T1", "--run")
+        assert (r.code, r.err_code) == (5, "verify.failed") and "not clean" in r.out, r.out
+        (path / "dirty.txt").unlink()
+        r = c.j("task", "done", "T1", "--run")
+        assert r.code == 0, r.out
+        (done,) = _done_events(lab, "1")
+        assert done["receipt"]["repo"] == "proj" and done["receipt"]["commit"] == commit
     finally:
         served.close()
 
@@ -430,3 +529,93 @@ def test_a_blob_retry_names_the_digest_and_a_fresh_upload_drops_the_unused_blob(
     n = len(calls)
     build(Conn(), "fresh")
     assert ("blob.drop", "b_" + "A" * 26) in calls[n:]
+
+
+def _lying_host(lab, monkeypatch, tasklist):
+    """Replace the task.list answer; returns the list of commands the runner is asked to run."""
+    from orch.ops import runner
+
+    ran = []
+    monkeypatch.setattr(runner, "run_verify", lambda cmd, **kw: ran.append(cmd) or (_ for _ in ()).throw(RuntimeError))
+    orig = hostclient._request
+
+    def fake(target, op, args, **kw):
+        if op == "task.list":
+            return tasklist
+        return orig(target, op, args, **kw)
+
+    monkeypatch.setattr(hostclient, "_request", fake)
+    return ran
+
+
+def _setup(lab):
+    c = hcli(lab)
+    c("new", "A")
+    c("claim", "1")
+    c("task", "add", "x", "--verify", "true")
+    c("task", "start", "T1")
+    return c
+
+
+def test_a_malformed_or_missing_verify_from_the_host_is_never_run(lab, monkeypatch):
+    served = hosted(lab)
+    try:
+        c = _setup(lab)
+        bad = [None, "", "   ", 5, ["true"], {"cmd": "true"}, "true\x00", "x" * 5000]
+        for value in bad:
+            task = {"id": "T1", "text": "x", "state": "open", **({} if value is None else {"verify": value})}
+            doc = {"key": "DEMO-0001", "data": {"tasks": [task], "repos": []}}
+            ran = _lying_host(lab, monkeypatch, doc)
+            r = c.j("task", "done", "T1", "--run")
+            assert (r.code, r.err_code) == (5, "invalid.input"), (value, r.out)
+            assert ran == [] and _done_events(lab, "1") == []
+    finally:
+        served.close()
+
+
+def test_a_host_answer_for_another_task_or_ticket_runs_nothing(lab, monkeypatch):
+    served = hosted(lab)
+    try:
+        c = _setup(lab)
+        other_task = {
+            "key": "DEMO-0001",
+            "data": {"tasks": [{"id": "T2", "text": "x", "state": "open", "verify": "id"}]},
+        }
+        other_key = {
+            "key": "DEMO-0002",
+            "data": {"tasks": [{"id": "T1", "text": "x", "state": "open", "verify": "id"}]},
+        }
+        no_key = {"data": {"tasks": [{"id": "T1", "text": "x", "state": "open", "verify": "id"}]}}
+        for doc, argv in ((other_task, ("T1",)), (other_key, ("DEMO-0001/T1",)), (no_key, ("T1",))):
+            ran = _lying_host(lab, monkeypatch, doc)
+            r = c.j("task", "done", *argv, "--run")
+            assert r.code != 0, r.out
+            assert ran == [] and _done_events(lab, "1") == []
+    finally:
+        served.close()
+
+
+def test_the_task_done_goes_to_the_ticket_the_command_was_read_from(lab, monkeypatch):
+    served = hosted(lab)
+    try:
+        c = _setup(lab)
+        sent = []
+        orig = hostclient._request
+
+        def spy(target, op, args, **kw):
+            sent.append((op, dict(args)))
+            return orig(target, op, args, **kw)
+
+        monkeypatch.setattr(hostclient, "_request", spy)
+        assert c("task", "done", "T1", "--run").code == 0
+        assert [a["task"] for o, a in sent if o == "task.done"] == ["DEMO-0001/T1"]
+    finally:
+        served.close()
+
+
+def test_the_ticket_key_is_compared_canonically():
+    for ref in ("DEMO-1", "demo-0001", "DEMO-0001", "1", "0001"):
+        assert hostclient._bound_key("DEMO-0001", ref) == "DEMO-0001"
+    for ref in ("DEMO-2", "OTHER-1", "2"):
+        with pytest.raises(Exception, match="another ticket"):
+            hostclient._bound_key("DEMO-0001", ref)

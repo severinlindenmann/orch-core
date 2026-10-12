@@ -18,9 +18,11 @@ export type Named<W> = { found: W } | { ambiguous: W[] } | { missing: true }
 export function workspaceByAddress<W extends Pick<Workspace, 'id' | 'prefix'>>(workspaces: readonly W[], prefix: string, hint?: string | null): Named<W> {
   const same = workspaces.filter((w) => w.prefix.toUpperCase() === prefix.toUpperCase())
   if (same.length === 0) return { missing: true }
-  if (same.length === 1) return { found: same[0] }
   const hinted = hint ? same.filter((w) => uuid8(w.id) === hint.toLowerCase()) : []
-  return hinted.length === 1 ? { found: hinted[0] } : { ambiguous: same }
+  if (hinted.length === 1) return { found: hinted[0] }
+  // A hint that names no workspace here is not guessed away: with one candidate it is a link to something that is gone.
+  if (same.length === 1) return hint ? { missing: true } : { found: same[0] }
+  return { ambiguous: same }
 }
 
 /** The address hint for a workspace: its `uuid8` when another workspace shares its prefix, else nothing. */

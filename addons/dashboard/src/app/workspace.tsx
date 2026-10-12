@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { addressHint, isRunning, preferWorkspace, uuid8, workspaceByAddress, workspaceOfTicket } from '@/api/workspaces'
 import type { Workspace } from '@/api/types'
-import { isWorkspacePath, setLinkWorkspace, splitWorkspacePath, ticketKeyOf, toPublicPath, type UrlState } from './urls'
+import { isWorkspacePath, prefixOfKey, setLinkWorkspace, splitWorkspacePath, ticketKeyOf, toPublicPath, type UrlState } from './urls'
 import { queries } from '@/api/queries'
 
 interface SwitchOptions {
@@ -109,14 +109,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // `?ws=<first 8 hex of the UUID>` tells two workspaces with one prefix apart (design 5).
   const urlHint = ownsUrl && urlPrefix !== undefined ? new URL(publicHref, 'http://x').searchParams.get('ws') : null
   // Prefixes match regardless of case (`/w/demo/board`); the address is then corrected to the real one.
-  const named = scoped && urlPrefix !== undefined ? workspaceByAddress(data, urlPrefix, urlHint) : undefined
+  // A ticket address is the ticket key's workspace; it takes `?ws=` only where the key's prefix is shared (or a hint is given).
+  const ticketKey = ticketKeyOf(inAppPath)
+  const ticketPrefix = ticketKey === undefined ? undefined : prefixOfKey(ticketKey)
+  const sharedKey = ticketPrefix !== undefined && data.filter((w) => w.prefix.toUpperCase() === ticketPrefix.toUpperCase()).length > 1
+  const addressed = scoped ? urlPrefix : ownsUrl && urlPrefix !== undefined && (sharedKey || urlHint) ? ticketPrefix : undefined
+  const named = addressed !== undefined ? workspaceByAddress(data, addressed, urlHint) : undefined
   const fromUrl = named && 'found' in named ? named.found : undefined
-  const ambiguous = named && 'ambiguous' in named ? named.ambiguous : undefined
-  const stopped = !fromUrl && scoped && urlHint ? unavailable.find((w) => uuid8(w.id) === urlHint.toLowerCase()) : undefined
-  const missingPrefix = scoped && urlPrefix !== undefined && isSuccess && !fromUrl && !ambiguous && !stopped ? urlPrefix : undefined
+  // An address that names (by `?ws=`) a workspace whose host is not running says so; nothing else is shown instead.
+  const stopped = !fromUrl && addressed !== undefined && urlHint ? unavailable.find((w) => uuid8(w.id) === urlHint.toLowerCase()) : undefined
+  const ambiguous = named && 'ambiguous' in named && !stopped ? named.ambiguous : undefined
+  const missingPrefix = addressed !== undefined && isSuccess && named && 'missing' in named && !stopped ? addressed : undefined
   /** A `/w/<PREFIX>` address whose workspace is not known yet: the page waits instead of showing another workspace. */
   const pendingPrefix = ownsUrl && scoped && urlPrefix !== undefined && !isSuccess
-  const workspace = fromUrl ?? data.find((w) => w.id === id) ?? data[0]
+  // While the address does not name one workspace (it asks which, or names a stopped host) none is current: nothing of
+  // another workspace is read or drawn in its place.
+  const workspace = ambiguous || stopped ? undefined : (fromUrl ?? data.find((w) => w.id === id) ?? data[0])
   // In-app links point into this workspace (the router's rewrite reads it when it builds an address).
   const linkPrefix = workspace?.prefix ?? null
   const linkHint = workspace ? addressHint(workspace, data) : null
@@ -135,7 +143,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   // Old and short addresses (`/board`, `/`) get the workspace; a ticket address gets (or is corrected to) the workspace
   // its key names (`/ticket/K`, `/w/OTHER/ticket/K` -> `/w/<K's workspace>/ticket/K`).
-  const ticketKey = ticketKeyOf(inAppPath)
   const keyHome = ticketKey === undefined ? undefined : workspaceOfTicket(ticketKey, data)
   useEffect(() => {
     if (!workspace || missingPrefix || ambiguous || stopped) return
@@ -171,7 +178,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       // Links and the navigation that may follow point into the new workspace right away.
       if (target && router && urls !== NO_URLS) setLinkWorkspace(router, urls, target.prefix, hint)
       const l = router?.latestLocation
-      if (router && l && urls !== NO_URLS && target && opts.url !== 'none' && isWorkspacePath(l.pathname)) {
+      // A ticket page is left by the switch (a ticket lives in one workspace); only a choice at an ambiguous address stays on it.
+      const here = isWorkspacePath(l?.pathname ?? '/') || (opts.url === 'replace' && ticketKeyOf(l?.pathname ?? '') !== undefined)
+      if (router && l && urls !== NO_URLS && target && opts.url !== 'none' && here) {
         // The switch guards (useSwitchGuard) have already asked about unsaved work.
         const search = new URLSearchParams(l.searchStr)
         if (hint) search.set('ws', hint)

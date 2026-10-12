@@ -65,6 +65,8 @@ export interface UrlState {
   prefix: string | null
   /** The `?ws=` of the workspace the links point into; null when its prefix is not shared. */
   hint?: string | null
+  /** The `?ws=` of a ticket address (`/w/DEMO/ticket/DEMO-0001?ws=…`): the ticket's workspace when its key's prefix is shared. */
+  ticketHint?: { prefix: string; hint: string } | null
   /** Set when an incoming address changed `prefix` behind the router's back: its cached link addresses are stale. */
   stale?: boolean
   /** The last address the rewrite read. */
@@ -84,6 +86,7 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
       // `?ws=` belongs to the address, not to a page: the pages never see it.
       const hint = prefix === undefined ? null : url.searchParams.get('ws')
       if (hint !== null) url.searchParams.delete('ws')
+      if (fresh) state.ticketHint = hint !== null && prefix !== undefined && ticketKeyOf(path) !== undefined ? { prefix, hint } : null
       // A ticket's key names its workspace: its address never moves the links' workspace.
       if (fresh && prefix !== undefined && ticketKeyOf(path) === undefined && (prefix !== state.prefix || (hint ?? null) !== (state.hint ?? null))) {
         state.prefix = prefix
@@ -96,8 +99,9 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
     output: ({ url }) => {
       url.pathname = toPublicPath(url.pathname, state.prefix)
       // Links into the workspace the person is in carry its hint, so a shared prefix still names one workspace.
-      const own = splitWorkspacePath(url.pathname).prefix
-      if (state.hint && state.prefix && own !== undefined && own.toUpperCase() === state.prefix.toUpperCase()) url.searchParams.set('ws', state.hint)
+      const own = splitWorkspacePath(url.pathname).prefix?.toUpperCase()
+      const hint = own === undefined ? null : state.hint && state.prefix?.toUpperCase() === own ? state.hint : state.ticketHint?.prefix.toUpperCase() === own ? state.ticketHint.hint : null
+      if (hint) url.searchParams.set('ws', hint)
       return url
     },
   }

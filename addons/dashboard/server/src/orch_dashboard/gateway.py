@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from . import adapters
+from .click_signer import Signer
 from .errors import fail
 from .hostlink import HostLink
 from .text import hidden
@@ -49,8 +50,10 @@ WRITE_OPS = ("move", "settings.set", "policy.set", "member.add", "member.role", 
 
 
 class Gateway:
-    def __init__(self, state=None):
+    def __init__(self, state=None, click=None):
         self.state = state or state_dir()
+        # The one signer child of this server (started on first use, so a dev server with no host starts none).
+        self.click = click or Signer(self.state)
         self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run")))
         self.links = {}
         self.control = None
@@ -144,6 +147,7 @@ class Gateway:
         result = []
         from .errors import HostError
 
+        signer = self.click.status()  # custody, enabled, available, problem per workspace; empty without a signer
         for row in rows:
             ws = row["workspace_id"]
             if ws not in pins or row.get("person") != pins[ws]["peers"][str(os.getuid())]["person"]:
@@ -153,6 +157,9 @@ class Gateway:
                 show = link.call("workspace.show")
                 roster = adapters.members(link.call("member.list"))
                 features = self.features(ws)
+                card = signer.get(ws)
+                if card and "actions" in features and card.get("enabled") and card.get("available"):
+                    features.append("click")  # the sign panel is offered (the signer has a key and the flag is on)
                 who = link.welcome["peer"]["person"]
                 role = next((m.role for m in roster if m.person == who), "viewer")
                 count = adapters.actionable_count(link.call("needs")["items"], role) if "today" in features else None
@@ -172,6 +179,7 @@ class Gateway:
                         members=roster,
                         needs_you=count,
                         features=features,
+                        click=adapters.click_card(card),
                     )
                 )
             except HostError as exc:
@@ -183,6 +191,7 @@ class Gateway:
         return self.enabled(ws).call(op, args)
 
     def close(self):
+        self.click.close()
         for link in [self.control, *self.links.values()]:
             if link:
                 link.close()

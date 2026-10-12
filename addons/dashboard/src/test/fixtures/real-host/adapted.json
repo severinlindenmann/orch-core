@@ -733,7 +733,9 @@
       "AC1"
      ],
      "text": "Theme tokens",
-     "verify": null
+     "verify": {
+      "cmd": "echo tokens"
+     }
     },
     {
      "id": "T2",
@@ -741,7 +743,9 @@
       "AC2"
      ],
      "text": "Persist the choice",
-     "verify": null
+     "verify": {
+      "cmd": "echo saved"
+     }
     }
    ],
    "tasks_state": [
@@ -753,12 +757,15 @@
       "AC1"
      ],
      "receipt": {
+      "attested_by": "unknown",
       "exit": 0,
       "ms": 7
      },
      "state": "done",
      "text": "Theme tokens",
-     "verify": null
+     "verify": {
+      "cmd": "echo tokens"
+     }
     },
     {
      "done_at": null,
@@ -770,7 +777,9 @@
      "receipt": null,
      "state": "todo",
      "text": "Persist the choice",
-     "verify": null
+     "verify": {
+      "cmd": "echo saved"
+     }
     }
    ],
    "title": "Dark mode for the settings page",
@@ -1146,7 +1155,9 @@
       "AC1"
      ],
      "text": "Write the exporter",
-     "verify": null
+     "verify": {
+      "cmd": "echo exported"
+     }
     }
    ],
    "tasks_state": [
@@ -1158,12 +1169,15 @@
       "AC1"
      ],
      "receipt": {
+      "attested_by": "unknown",
       "exit": 0,
       "ms": 5
      },
      "state": "done",
      "text": "Write the exporter",
-     "verify": null
+     "verify": {
+      "cmd": "echo exported"
+     }
     }
    ],
    "title": "Export billing CSV",

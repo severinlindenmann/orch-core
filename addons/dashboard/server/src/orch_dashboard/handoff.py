@@ -38,11 +38,11 @@ Gate = Literal["requirements", "plan", "code"]
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
-def host_idem(token: str, ws: str, idem: str) -> str:
+def host_idem(token: str, ws: str, idem: str, kind: str = "idem") -> str:
     """The key the host sees: the browser's key bound to this session and workspace, in the host's shape. Another
     session sending the same key gets another request (it is never handed this session's), and a retry from this
     session, with the same key, gets the same one back."""
-    digest = hashlib.sha256(f"orch-dashboard/idem\0{token}\0{ws}\0{idem}".encode()).digest()
+    digest = hashlib.sha256(f"orch-dashboard/{kind}\0{token}\0{ws}\0{idem}".encode()).digest()
     n = int.from_bytes(digest[:17], "big")
     chars = [CROCKFORD[(n >> (5 * i)) & 31] for i in range(26)]
     chars[0] = CROCKFORD[(n >> 125) & 7]

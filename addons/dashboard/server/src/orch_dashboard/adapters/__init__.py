@@ -2,7 +2,7 @@
 
 from . import handoff, settings
 from .changes import changes
-from .shell import Me, Member, Workspace, me, members
+from .shell import Me, Member, Workspace, click_card, me, members
 from .tickets import UI_STATUSES, board_statuses, document, events, host_status, page, summary
 from .today import actionable_count, today
 
@@ -15,6 +15,7 @@ __all__ = [
     "Workspace",
     "board_statuses",
     "changes",
+    "click_card",
     "document",
     "events",
     "host_status",

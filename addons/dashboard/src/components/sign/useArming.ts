@@ -1,4 +1,4 @@
-// Sign is enabled only after the View has been on screen, visible, for ARM_MS. The timer restarts when the window
+// Sign is enabled only after the View has been on screen, visible, for ARM_MS (1 s). The timer restarts when the window
 // loses focus or the page is not visible (host contract section 0.8.6 item 7). A new View (new `key`) starts over.
 // It reduces accidental activation; it proves neither review nor presence and does not constrain a compromised client.
 import { useEffect, useRef, useState } from 'react'
@@ -9,7 +9,8 @@ export function useArming(key: string, ms = ARM_MS): boolean {
   useEffect(() => {
     setArmed(false)
     let timer: ReturnType<typeof setTimeout> | undefined
-    let focused = typeof document.hasFocus === 'function' ? document.hasFocus() || document.activeElement === document.body : true
+    // Focused means the window has focus: no shortcut for "nothing is focused" (that is the blurred case too).
+    let focused = typeof document.hasFocus === 'function' ? document.hasFocus() : true
     const stop = () => {
       clearTimeout(timer)
       timer = undefined

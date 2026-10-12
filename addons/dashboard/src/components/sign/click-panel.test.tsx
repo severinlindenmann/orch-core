@@ -119,6 +119,21 @@ describe('Sign is armed by presentation', () => {
     expect(sign()).toBeEnabled()
   })
 
+  it('does not arm while the window has no focus, even when nothing in it is focused', () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    mount()
+    act(() => void vi.advanceTimersByTime(ARM_MS * 4))
+    expect(sign()).toBeDisabled()
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    act(() => void window.dispatchEvent(new Event('focus')))
+    act(() => void vi.advanceTimersByTime(ARM_MS + 10))
+    expect(sign()).toBeEnabled()
+  })
+
+  it('arms after one second, the signer’s own dwell', () => {
+    expect(ARM_MS).toBe(1000)
+  })
+
   it('does not arm in a page that is not visible', () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
     mount()

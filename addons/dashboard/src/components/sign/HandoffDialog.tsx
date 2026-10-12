@@ -122,7 +122,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [click.switched])
 
-  const clickLive = ['preparing', 'viewing', 'ready', 'signing'].includes(click.phase)
+  const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
   const open = phase === 'preparing' || phase === 'waiting' || clickLive
   useEffect(() => {
     p.onPending?.(open)
@@ -146,8 +146,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     if (p.action) void run.prepare(p.action)
   }
   const prepareClickAgain = () => {
-    click.reset()
-    if (p.action) void click.start(p.action)
+    if (p.action) void click.again(p.action) // cancels an open request first: no leaked slot
   }
   const again = () => {
     if (!p.action) return
@@ -213,6 +212,16 @@ export function HandoffDialog(p: HandoffDialogProps) {
             onTerminal={() => void terminal()}
             waitUntil={waitUntil}
           />
+        )}
+
+        {click.phase === 'settling' && (
+          <div role="status" data-testid="click-settling" className="flex items-start gap-2 rounded-md border border-warning/40 px-3 py-2 text-[13px]">
+            <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" aria-hidden />
+            <div>
+              <p className="font-medium text-text">The outcome is not certain yet</p>
+              <p className="text-text-muted">The signature may already be at the host. It settles by itself; this updates when it does. Do not sign again.</p>
+            </div>
+          </div>
         )}
 
         {click.phase === 'failed' && click.problem && (
@@ -294,6 +303,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
                   {canClick ? 'Sign' : (p.confirmLabel ?? p.title)}
                 </Button>
               </>
+            )}
+            {click.phase === 'settling' && (
+              <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
+                Close
+              </Button>
             )}
             {click.phase === 'failed' && click.problem && (
               <>

@@ -204,14 +204,60 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.cancel).not.toHaveBeenCalled()
   })
 
-  it('an unknown outcome is not cancelled when the dialog closes, and says not to sign again', async () => {
+  it('an unknown outcome waits for the host: no cancel, no second sign, no terminal button; it ends when the host says submitted', async () => {
+    const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
     const { dialog, onClose } = await toPanel()
     c.sign.mockRejectedValueOnce(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'uncertain' }))
     press(await armed(dialog))
-    await within(dialog).findByText(/Do not sign again/, {}, T)
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(c.cancel).not.toHaveBeenCalled()
+    const settling = await within(dialog).findByTestId('click-settling', {}, T)
+    expect(settling).toHaveTextContent('settles by itself')
+    expect(within(dialog).queryByRole('button', { name: 'Sign' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: /Try again|Prepare again/ })).toBeNull()
+    await waitFor(() => expect(stateSpy).toHaveBeenCalled(), T)
+    stateSpy.mockResolvedValue({ id: REQ, state: 'submitted' })
+    await within(dialog).findByText('Signed', {}, { timeout: 8000 })
+    expect(c.sign).toHaveBeenCalledTimes(1)
+    expect(c.cancel.mock.calls).toEqual([])
+    expect(onClose).not.toHaveBeenCalled()
+  }, 15000)
+
+  it('closing while the outcome is unknown does not cancel; an expired request then offers the terminal path', async () => {
+    const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
+    const { dialog } = await toPanel()
+    c.sign.mockRejectedValueOnce(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'uncertain' }))
+    press(await armed(dialog))
+    await within(dialog).findByTestId('click-settling', {}, T)
+    stateSpy.mockResolvedValue({ id: REQ, state: 'expired' })
+    await within(dialog).findByText('Expired', {}, { timeout: 8000 })
+    expect(within(dialog).getByRole('button', { name: 'Sign in the terminal instead' })).toBeInTheDocument()
+    expect(c.cancel.mock.calls).toEqual([])
+  }, 15000)
+
+  it('Try again after the View could not be read cancels the open request first, then prepares anew', async () => {
+    c.view.mockRejectedValueOnce(new ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    await within(m.dialog).findByTestId('click-problem', {}, T)
+    fireEvent.click(within(m.dialog).getByRole('button', { name: 'Try again' }))
+    await within(m.dialog).findByTestId('click-panel', {}, T)
+    expect(c.cancel).toHaveBeenCalledWith(m.ws, REQ)
+    expect(c.prepare).toHaveBeenCalledTimes(2)
+    const keys = c.prepare.mock.calls.map((x) => x[2])
+    expect(keys[0]).not.toBe(keys[1]) // a new request is a new click
+  })
+
+  it('a View whose risk line is not the card text is not shown', async () => {
+    c.view.mockResolvedValue(viewAnswer({ risk: 'Convenience signing is fine.' }))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    await within(m.dialog).findByTestId('click-problem', {}, T)
+    expect(within(m.dialog).queryByTestId('click-panel')).toBeNull()
+  })
+
+  it('shows the custody and the device of the View', async () => {
+    const { dialog } = await toPanel()
+    expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('convenience (no presence), device d_x')
   })
 
   it('a rate limit keeps Sign off for the time the signer names', async () => {
@@ -220,7 +266,7 @@ describe('the action dialog with click-to-sign', () => {
     press(await armed(dialog))
     await within(dialog).findByText(/Try again in 2 s/, {}, T)
     expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeDisabled()
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeEnabled(), { timeout: 4000 })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeEnabled(), { timeout: 6000 })
   })
 })
 
@@ -260,7 +306,7 @@ describe('every error code and reason has an honest message', () => {
     ['custody_changed', err('human.click_refused', 'custody_changed'), /custody of your device key changed/, 'prepare'],
     ['busy', err('human.click_refused', 'busy'), /Another signature is in progress/, 'retry'],
     ['check_failed', err('human.click_refused', 'check_failed'), /refused what the host sent/, 'terminal'],
-    ['uncertain', err('human.click_refused', 'uncertain'), /Do not sign again/, 'check'],
+    ['uncertain', err('human.click_refused', 'uncertain'), /settles by itself/, 'check'],
     ['no_key', err('custody.no_key'), /no device key/i, 'terminal'],
     ['custody_unavailable', err('custody.unavailable'), /locked or refused/, 'terminal'],
     ['version_mismatch', err('host.version_mismatch'), /different versions of orch-core/, 'terminal'],

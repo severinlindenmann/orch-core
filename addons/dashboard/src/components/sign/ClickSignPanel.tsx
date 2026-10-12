@@ -1,6 +1,6 @@
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
 // own preview, the host's fingerprint or a cached ticket. The risk line comes first. `lines` are core's terminal
-// review, already escaped, and are text here, never HTML. Sign is armed after 500 ms of visible presentation.
+// review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 import { Loader2, ShieldAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
@@ -82,6 +82,10 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, onTermina
         <dt className="text-text-muted">Fingerprint</dt>
         <dd className="font-mono" data-testid="click-fingerprint">
           {view.fingerprint}
+        </dd>
+        <dt className="text-text-muted">Signed with</dt>
+        <dd data-testid="click-custody">
+          {view.auth === 'convenience' ? 'convenience (no presence)' : <Raw>{view.auth}</Raw>}, device <Raw>{view.device}</Raw>
         </dd>
         <dt className="text-text-muted">Expires</dt>
         <dd>

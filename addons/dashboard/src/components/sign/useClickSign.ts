@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { getToken } from '@/api/bootstrap'
-import { clickProblem, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
+import { CLICK_RISK, clickProblem, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { newIdem, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 
@@ -17,6 +17,8 @@ export type ClickPhase =
   /** The View is on screen: the person may sign (after the arming time) or cancel. */
   | 'ready'
   | 'signing'
+  /** The outcome of a sign is unknown: the host settles it by itself. Nothing is offered but waiting (no cancel, no second sign). */
+  | 'settling'
   | 'done'
   | 'cancelled'
   /** Something ended the attempt or needs the person: `problem` says what, and `problem.next` the one thing to do. */
@@ -33,8 +35,13 @@ export interface ClickRun {
   review: () => Promise<void>
   sign: (word?: string) => Promise<void>
   cancel: () => Promise<void>
+  /**
+   * "Try again" / "Prepare again": a request that is still open is cancelled first (no leaked slot); with none open and
+   * the same action, the same key is reused so a lost prepare answer returns the same request.
+   */
+  again: (action: HandoffAction) => Promise<void>
   /** Back to the start (the request must already be settled or cancelled). */
-  reset: () => void
+  reset: (keepKey?: boolean) => void
   /** The person switched workspace with a request open: it was cancelled. */
   switched: boolean
 }
@@ -87,6 +94,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       setPhase('viewing')
       const got = await api.viewClick(where, id)
       if (!mounted.current) return
+      // Fail closed: the owner-mandated risk line must be exactly what the card says, or nothing is shown.
+      if (got.view.risk !== CLICK_RISK) throw new ApiError(409, { code: 'human.click_refused', message: 'The review lacks the risk line.', retryable: false, reason: 'check_failed' })
       setView(got)
       setProblem(null)
       setPhase('ready')
@@ -159,7 +168,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         const as = settledAs(open, got)
         settled.current?.('done', as.state, as.request)
       } catch (e) {
-        if (mounted.current) fail(e, 'ready') // refusals never cancel: the request stays open
+        if (mounted.current) {
+          fail(e, 'ready') // refusals never cancel: the request stays open
+          // An unknown outcome is waited out, never retried: the signature may already be at the host.
+          if (clickProblem(e).next === 'check') setPhase('settling')
+        }
         refetch()
       } finally {
         busy.current = false
@@ -168,9 +181,57 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     [view, setPhase, refetch, fail],
   )
 
+  // An unknown outcome: ask the server where the request stands (it reads the host through its own link) until it settles.
+  useEffect(() => {
+    if (phase !== 'settling' || !prepared || !live.current.ws) return
+    const where = live.current.ws
+    let stopped = false
+    const deadline = (Date.parse(prepared.expires_at) || Date.now() + 600_000) + 30_000
+    const check = async () => {
+      try {
+        const got = await api.stateClick(where, prepared.request_id)
+        if (stopped) return
+        if (got.state === 'submitted') {
+          stopped = true
+          setSigned({ state: 'submitted', duplicate: false })
+          setPhase('done')
+          refetch()
+          const as = settledAs(prepared, { state: 'submitted', duplicate: false })
+          settled.current?.('done', as.state, as.request)
+        } else if (got.state === 'cancelled' || got.state === 'expired') {
+          stopped = true
+          setProblem({ title: got.state === 'expired' ? 'Expired' : 'Cancelled', body: 'The host says it was not signed. You can sign in the terminal instead, or prepare it again.', next: 'terminal' })
+          setPhase('failed')
+          refetch()
+        }
+      } catch (e) {
+        // The server no longer knows it (the request settled and was forgotten): the host's log is the truth.
+        if (e instanceof ApiError && e.code === 'not_found' && !stopped) {
+          stopped = true
+          setProblem({ title: 'Settled', body: 'The page shows the current state of the ticket. Check it before signing again.', next: 'terminal' })
+          setPhase('failed')
+          refetch()
+        }
+      }
+    }
+    const timer = setInterval(() => {
+      if (Date.now() > deadline) {
+        stopped = true
+        clearInterval(timer)
+        return
+      }
+      void check()
+    }, 2000)
+    void check()
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [phase, prepared, setPhase, refetch])
+
   const cancel = useCallback(async () => {
     const { prepared: open, ws: where, phase: last } = live.current
-    if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle') return
+    if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle' || last === 'settling') return // never cancel while a signature may be in flight
     try {
       await api.cancelClick(where, open.request_id)
     } catch {
@@ -190,8 +251,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     setPhase('cancelled')
   }, [ws, setPhase])
 
-  const reset = useCallback(() => {
-    attempt.current = null // a new request is a new click: a new key
+  const reset = useCallback((keepKey = false) => {
+    if (!keepKey) attempt.current = null // a new request is a new click: a new key
     live.current.prepared = null
     setSwitched(false)
     setPrepared(null)
@@ -200,6 +261,22 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     setSigned(null)
     setPhase('idle')
   }, [setPhase])
+
+  const again = useCallback(
+    async (action: HandoffAction) => {
+      const open = live.current.prepared
+      if (open && live.current.phase !== 'done' && live.current.phase !== 'settling') {
+        await cancel() // the old request must not keep its quota slot
+        reset()
+      } else if (!open) {
+        reset(true) // nothing was prepared yet: the same key, so a lost answer returns the same request
+      } else {
+        reset()
+      }
+      await start(action)
+    },
+    [cancel, reset, start],
+  )
 
   // Leaving the screen with a request open cancels it. Deferred one tick so React StrictMode's simulated unmount does not.
   useEffect(() => {
@@ -215,5 +292,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { phase, prepared, view, problem, signed, start, review, sign, cancel, reset, switched }
+  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched }
 }

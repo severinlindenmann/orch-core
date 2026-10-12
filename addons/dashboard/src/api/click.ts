@@ -8,8 +8,8 @@ import type { HandoffAction } from './handoff'
 /** Verbatim (owner decision, 12 Oct 2026). Also the first line of every sign panel. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
 
-/** The panel's Sign button is off until the View has been on screen, visible, for this long. */
-export const ARM_MS = 500
+/** The panel's Sign button is off until the View has been on screen, visible and focused, for this long (the signer's own dwell is 1 s). */
+export const ARM_MS = 1000
 
 export interface ClickPrepared {
   request_id: string
@@ -37,6 +37,9 @@ export interface ClickViewAnswer {
   view: ClickView
   view_digest: string
 }
+
+/** Where a request stands at the host (read by the server through its own link). */
+export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired'
 
 export interface ClickSigned {
   state: 'submitted'
@@ -96,7 +99,7 @@ const REFUSED: Record<string, ClickProblem> = {
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
   check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed. You can sign in the terminal instead.', next: 'terminal' },
-  uncertain: { title: 'The outcome is not known', body: 'The signature may or may not have reached the host. Do not sign again: look at the ticket or the log first.', next: 'check' },
+  uncertain: { title: 'The outcome is not certain yet', body: 'The signature may or may not have reached the host. It settles by itself; do not sign again until this says it is settled.', next: 'check' },
 }
 
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */

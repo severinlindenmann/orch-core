@@ -119,3 +119,10 @@ it('offers a workspace the click card only when the server lists the click featu
   vi.stubGlobal('fetch', vi.fn(async () => Response.json([row(['actions'])])))
   expect((await api.getWorkspaces())[0].click).toEqual({ custody: 'convenience', enabled: true, available: false })
 })
+
+it('asks the server where a click request stands (the answer to an unknown outcome)', async () => {
+  const answers = vi.fn(async (_url: string) => Response.json({ id: 'hr_1', state: 'bound' }))
+  vi.stubGlobal('fetch', answers)
+  expect(await api.stateClick(ws, 'hr_1')).toEqual({ id: 'hr_1', state: 'bound' })
+  expect(String(answers.mock.calls[0][0])).toBe(`/api/w/${ws}/click/state`)
+})

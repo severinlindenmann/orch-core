@@ -67,3 +67,23 @@ describe('identity per workspace', () => {
     expect((await api.getMe()).person).toBe('p_sev')
   })
 })
+
+describe('settings pages', () => {
+  it('useViewerRole reads the identity of the workspace it is given', async () => {
+    const { useViewerRole } = await import('./pages/settings/host/useViewerRole')
+    resetMockStoreForTests()
+    mockStore.setViewer('p_sev')
+    vi.spyOn(api, 'getMe').mockImplementation(async (ws?: string) => identity[ws ?? DEMO])
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    function Role({ id }: { id: string }) {
+      const { workspaces } = useWorkspace()
+      const w = workspaces.find((x) => x.id === id)
+      const role = useViewerRole(w ?? ({ id, members: [] } as never))
+      return <p>{id === INT ? 'INT' : 'DEMO'} role {role ?? 'none'}</p>
+    }
+    const root = createRootRoute({ component: () => (<QueryClientProvider client={client}><WorkspaceProvider><Role id={INT} /><Role id={DEMO} /></WorkspaceProvider></QueryClientProvider>) })
+    render(<RouterProvider router={createRouter({ routeTree: root, history: createMemoryHistory({ initialEntries: ['/'] }) })} />)
+    await waitFor(() => expect(screen.getByText('INT role maintainer')).toBeInTheDocument())
+    expect(screen.getByText('DEMO role viewer')).toBeInTheDocument()
+  })
+})

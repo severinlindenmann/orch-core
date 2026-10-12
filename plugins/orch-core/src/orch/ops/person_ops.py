@@ -11,7 +11,8 @@ exactly as it judges a signed one (``lifecycle.moved``, ``lifecycle.policy_chang
 * ``move {ref, to: backlog|open, reason?}`` -> ``ticket.moved {from, to, reason?}``: a workspace owner or maintainer;
   from ``backlog``, ``open`` or ``in_progress`` with no live claim; never into any other status.
 * ``policy.set {ref?, gates}`` -> ``policy.changed {gates}``, on the ticket log with ``ref``, else the workspace log;
-  workspace owners only.
+  a ticket override: whoever ``claims.may_manage`` (the ticket owner who is not a viewer, owners, maintainers; F1
+  5.4.2); the workspace default: workspace owners only.
 * ``settings.set {set}`` -> ``settings.changed {set}``: workspace owners only.
 
 :func:`get` is what ``human.prepare`` calls for a name in :data:`orch.host.review.HOST_PERSON_OPS`.
@@ -22,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from orch.canon import HashError, canonical_policy
+from orch.model import claims
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -129,15 +131,20 @@ def handle_move(ctx: Context, args: dict[str, Any]) -> Result:
 
 def handle_policy(ctx: Context, args: dict[str, Any]) -> Result:
     h = _Human(ctx, "policy.set")
-    _owner(h, "policy.set")
+    view = h.ticket(args["ref"]) if args.get("ref") else None
+    if view is None:
+        _owner(h, "policy.set")
+    else:
+        core = h.store.state._core
+        if not claims.may_manage(core.ws, core.tickets[view.uid], h.person):
+            raise OrchError("role.denied", "a ticket policy is for the ticket owner, owners and maintainers")
     try:  # F1 5.7: the event carries each policy in canonical form (sorted, de-duplicated lists)
         gates = {gate: canonical_policy(policy) for gate, policy in args["gates"].items()}
     except HashError as exc:
         raise OrchError("invalid.input", f"policy.set: {exc}"[:200]) from None
     event: dict[str, Any] = {"type": "policy.changed", "gates": gates}
     names = sorted(gates)
-    if args.get("ref"):
-        view = h.ticket(args["ref"])
+    if view is not None:
         done = h.run(event, view.uid, f"set the {', '.join(names)} policy of {view.key}", review=h.header(view))
         return h.ticket_result(view, done, {"gates": names}, "orch show")
     done = h.run(event, "workspace", f"set the default {', '.join(names)} policy", review=[])

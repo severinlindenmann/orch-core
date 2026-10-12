@@ -65,6 +65,7 @@ __all__ = [
     "WINDOW",
     "Batch",
     "Entry",
+    "grant_person_of",
     "Journal",
     "Vis",
     "Cursors",
@@ -338,6 +339,18 @@ class _Walk:
             self.since.pop(uid, None)
 
 
+def grant_person_of(typ: str, e: Mapping[str, Any], grants: Any) -> str | None:
+    """The person of the grant a ``grant.*`` event names: a ``grant.issued``'s signer, a ``grant.revoked``'s grant
+    (looked up in ``grants``). The one derivation used by the journal's ``Entry`` and by ``activity.list``."""
+    if typ == "grant.issued":
+        a = e.get("actor") if isinstance(e.get("actor"), Mapping) else {}
+        return a.get("id") if isinstance(a.get("id"), str) else None
+    if typ == "grant.revoked":
+        g = grants.get(e.get("grant"))
+        return getattr(g, "person", None) if g is not None else None
+    return None
+
+
 class Journal(Window):
     def __init__(self, workspace_id: str, root: str | os.PathLike[str], cursors: Cursors) -> None:
         super().__init__()
@@ -471,12 +484,7 @@ class Journal(Window):
         typ = str(e.get("type"))
         self.head += 1
         if log == "workspace":
-            grant_person = None
-            if typ == "grant.issued":
-                grant_person = actor_id
-            elif typ == "grant.revoked":
-                g = core.ws.grants.get(e.get("grant"))
-                grant_person = g.person if g is not None else None
+            grant_person = grant_person_of(typ, e, core.ws.grants)
             apply_event(core, log, e, walk.ctx, commit=True)
             if typ == "workspace.created":
                 self._genesis = core.ws.genesis or canon.event_head(e)

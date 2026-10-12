@@ -156,6 +156,7 @@ def test_gone_needs_and_visibility_changed_items_under_detail(w):
     gone = [i for i in items if i.get("gone")]
     assert gone and set(gone[0]) == {"id", "jpos", "uid", "gone"}
     assert not [i for i in items if i["id"] == gone[0]["id"].replace(".g", ".e")]
+    # (the item keeps its own type; a re-typing is for the v1.4 item only, see the test below)
     (back,) = [i for i in items if i.get("type") == "visibility.changed"]
     assert back["title"] == "hide me" and "data" in back and back["data"] == {"restricted": True}
     assert canon(back) == canon(feed_by_id(listing)[back["id"]])
@@ -259,3 +260,67 @@ def test_a_detail_subscription_overflows_at_1_mib_and_a_plain_one_at_256_kib(w):
             break
     assert ends.get(detail["sub"]) == "overflow"  # ~14 KB of detail items > 12 000
     assert plain["sub"] not in ends  # ~2.5 KB of plain items < 4 000
+
+
+# --- H6b fix round: one derivation, the item of a ticket that just became visible ---
+
+
+def test_the_journal_detail_equals_the_activity_item_for_every_event_of_a_mixed_log(w):
+    """``Entry.detail`` (journal ``_step``) and ``reads_feed.derive`` (cold) are the same item, event by event."""
+    from types import SimpleNamespace
+
+    from orch.host import reads_feed
+
+    uid, key = w.ticket("mixed")
+    several_events(w, key)
+    other, other_key = w.ticket("closing")
+    w.write(other_key, "last words")
+    w.person_event("ticket.closed", other, resolution="other")
+    w.person_event("grant.revoked", grant=w.lab.ws.grant_id)
+    w.person_event("ticket.reopened", other)
+    w.restrict(uid, [w.quinn.ref, w.lab.owner])
+    w.grant_for(w.quinn)
+
+    def derive_all():
+        store = w.service.store
+        store.load_all()
+        return reads_feed.derive(SimpleNamespace(workspace=store.state.workspace, store=store), 0)
+
+    total, cold = w.h.run(w.service.call(derive_all))
+    window = list(w.service.journal.window)
+    assert total == len(cold) == len(window) > 15
+    types_seen = {e.type for e in window}
+    assert {"grant.issued", "grant.revoked", "ticket.updated", "ticket.closed"} <= types_seen
+    for entry, derived in zip(window, cold, strict=True):
+        assert reads_feed._from_journal(entry) == derived, (entry.jpos, entry.type)
+    assert any(e.grant_person for e in window if e.type == "grant.revoked")
+
+
+def test_a_detail_item_of_a_ticket_that_became_visible_is_the_activity_item_of_the_same_id(w):
+    """Review finding 6: the retype to ``visibility.changed`` is for the v1.4 item only; the detail item keeps its own
+    type and data, exactly the ``activity.list`` item."""
+    from types import SimpleNamespace
+
+    from orch.host.bus import Bus, Feed
+    from orch.host.journal import Entry
+
+    detail = {
+        "id": "7.e", "jpos": 7, "log": "t1", "key": "WS-1", "uid": "t1", "title": None, "seq": 3, "ws_seq": 7,
+        "type": "people.changed", "at": "2026-01-01T00:00:00Z", "actor": {"kind": "human", "id": "p"},
+        "summary": "owner added", "data": {"role": "owner", "add": ["p"], "remove": []},
+    }  # fmt: skip
+    entry = Entry(
+        7, "t1", "WS-1", 3, 7, "people.changed", "2026-01-01T00:00:00Z", "human", "p",
+        before=frozenset({"someone"}), after="workspace", detail=detail,
+    )  # fmt: skip
+    feed = Feed("ws")
+    feed.vis, feed.titles = {"t1": "workspace"}, {"t1": "now"}
+    bus = Bus.__new__(Bus)
+    for is_detail in (True, False):
+        sub = SimpleNamespace(detail=is_detail, person="p", topics=frozenset({"tickets"}), tickets=frozenset())
+        (item,) = bus.items(sub, feed, entry, False)
+        if is_detail:
+            assert item["type"] == "people.changed" and item["data"] == detail["data"] and item["title"] == "now"
+            assert item["data"] is not detail["data"] and item["actor"] is not detail["actor"]  # copies
+        else:
+            assert item["type"] == "visibility.changed" and set(item) == set(entry.item())  # v1.4 keeps H6a's retyping

@@ -306,7 +306,7 @@ def test_paging_stays_consistent_under_appends_no_repeat_no_gap(w):
     for page in (second, third):  # the snapshot's values repeat on every page
         assert (page["sub_cursor"], page["as_of"], page["total"]) == (first["sub_cursor"], first["as_of"], 7)
     rows = {r["key"]: r for r in first["rows"] + second["rows"] + third["rows"]}
-    assert rows[made[5]]["head_seq"] == 1  # rows are the snapshot's: the later event is not in them
+    assert rows[made[5]]["head_seq"] == 2  # §0.8: membership and order are the snapshot's, row contents are now
     again = query(w, args)
     assert again["total"] == 8 and again["sub_cursor"] != first["sub_cursor"]  # a new first page is a new snapshot
 
@@ -638,3 +638,65 @@ def test_validation(w):
     for bad in ({"limit": 0}, {"limit": 201}, {"status": []}, {"status": ["nope"]}, {"sort": "x"}, {"zzz": 1},
                 {"assignee": "quinn"}, {"updated_since": "yesterday"}, {"needs_me": "yes"}):  # fmt: skip
         assert err(c.req("ticket.query", bad)) == "invalid.input", bad
+
+
+# --- H6b fix round: compact snapshots, rows read now ---------------------------------------------------------------
+
+
+def snapshots(w: World) -> list[Any]:
+    return list(w.service.pages._snaps.values())
+
+
+@pytest.mark.slow
+def test_review_repro_large_rows_still_page_and_the_snapshot_holds_uids_only(w):
+    """Review finding 1: 45 tickets with 6 000 labels of 31 characters (about 200 KB a row) used to make the first
+    page fail with quota.host (every row was stored). The snapshot is now a uid list."""
+    mk(w, "page one")
+    labels = [f"l{n:030d}" for n in range(6_000)]
+    big = [mk(w, f"big {i}", label=labels)[1] for i in range(12)]  # (the review used 45: same effect, 4x slower)
+    args = {"limit": 1, "sort": "key", "order": "asc"}
+    c = w.client()
+    first = ok(c.req("ticket.query", args))["data"]  # not quota.host
+    assert first["total"] == 13 and first["next_page"]
+    (snap,) = snapshots(w)
+    assert set(snap.data) == {"uids", "sub_cursor", "as_of"} and len(snap.data["uids"]) == 13
+    assert snap.size < 3_000  # 13 uids, not 46 rows of 200 KB
+    second = ok(c.req("ticket.query", {**args, "page": first["next_page"]}))["data"]
+    assert keys(second) == big[:1] and len(second["rows"][0]["labels"]) == 6_000
+    assert second["total"] == 13 and second["next_page"]
+
+
+def test_a_15000_ticket_closed_list_stays_far_under_the_snapshot_cap(w):
+    """Review finding 1 (13.6k rows reached the cap): the snapshot of a ``status:["closed"]``-sized list is the uids."""
+    from orch.host import pages as pages_mod
+
+    uid, _ = mk(w, "sample")
+    uids = [f"{n:0{len(uid)}d}" for n in range(15_000)]  # as long as a real uid
+    pages = pages_mod.Pages("ws_big")
+    snap = pages.open("ticket.query", "uid:1", "e", None, {"uids": uids, "sub_cursor": "c" * 120, "as_of": "x" * 40})
+    assert snap.size < pages_mod.PRINCIPAL_BYTES // 8
+    assert snap.size < 15_000 * (len(uid) + 4) + 400
+
+
+def test_a_later_page_reads_its_rows_from_the_current_state(w):
+    made = [mk(w, f"t{n}")[1] for n in range(4)]
+    args = {"limit": 2, "sort": "key", "order": "asc"}
+    first = query(w, args)
+    w.write(made[3], "touched later")
+    agent(w, "set", {"ref": made[2], "pairs": ["title=Renamed later"]})
+    second = query(w, {**args, "page": first["next_page"]})
+    assert keys(second) == made[2:] and second["rows"][0]["title"] == "Renamed later"
+    assert second["rows"][1]["head_seq"] == 2
+    assert [r["title"] for r in first["rows"]] == ["t0", "t1"]
+
+
+def test_a_returned_row_is_not_shared_with_a_later_response(w):
+    made = [mk(w, f"t{n}", label=["x"])[1] for n in range(3)]
+    args = {"limit": 1, "sort": "key", "order": "asc"}
+    first = query(w, args)
+    token = first["next_page"]
+    a = query(w, {**args, "page": token})
+    a["rows"][0]["labels"].append("MUTATED")
+    a["rows"][0]["title"] = "MUTATED"
+    b = query(w, {**args, "page": token})
+    assert keys(b) == made[1:2] and b["rows"][0]["labels"] == ["x"] and b["rows"][0]["title"] == "t1"

@@ -179,6 +179,33 @@ def test_grant_list_a_grant_that_ended_otherwise_has_no_revoked(w):
     assert grant_id(qgrant) not in {g["id"] for g in ok(c.req("grant.list"))["grants"]}
 
 
+def test_grant_list_revoked_at_is_never_before_issued_at_after_a_remove_and_re_add(w):
+    """A person removed, re-added and then issued a grant: the earlier removal does not end the new grant."""
+    q = w.quinn
+    w.lab.ws.tick()
+    w.person_event("member.removed", person=q.ref)
+    w.lab.ws.tick(5)
+    q.dk_sig, q.dk_kx = crypto.generate_private_key(), crypto.generate_private_key()  # a removed device id is final
+    q.sig_pub, q.kx_pub = crypto.public_bytes(q.dk_sig), crypto.public_bytes(q.dk_kx)
+    cert = q.cert(created=w.lab.ws.clock[0] * 1000)
+    w.person_event(
+        "member.added", person=q.ref, name="quinn", role="member", pk_pub=crypto.b64u(q.pk_pub), device_cert=cert
+    )
+    w.lab.ws.tick(5)
+    gid = grant_id(w.grant_for(q))
+    c = w.client()
+
+    def entry():
+        return {g["id"]: g for g in ok(c.req("grant.list", {"active": False}))["grants"]}[gid]
+
+    assert entry()["revoked_at"] is None and gid in {g["id"] for g in ok(c.req("grant.list"))["grants"]}
+    w.lab.ws.tick(5)
+    second = w.person_event("member.removed", person=q.ref)
+    got = entry()
+    assert got["revoked_at"] == second["at"] and got["revoked_at"] >= got["issued_at"]
+    assert "revoked" not in got
+
+
 def test_grant_list_active_means_not_revoked_and_not_expired(w):
     short = w.grant_for(w.quinn, hours=1)
     c = w.client()

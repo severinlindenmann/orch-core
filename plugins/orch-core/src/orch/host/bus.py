@@ -36,6 +36,7 @@ on the worker thread. Nothing sleeps on a worker thread.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import secrets
@@ -494,7 +495,8 @@ class Bus:
             before, after = sees(person, entry.before), sees(person, entry.after)
             if after and sees(person, feed.vis.get(entry.log)):
                 item = self._event_item(sub, feed, entry)
-                if not before and entry.before is not None:
+                if not before and entry.before is not None and not sub.detail:
+                    # the v1.4 item says why it appears; a detail item is the ActivityItem of the same id, unchanged
                     item["type"] = "visibility.changed"
                 out.append(item)
             elif before and not after:  # hidden at this jpos: only the uid the viewer knew, never the event
@@ -509,7 +511,7 @@ class Bus:
         the ticket's title now (§0.9)."""
         if not sub.detail or entry.detail is None:
             return entry.item()
-        item = dict(entry.detail)
+        item = copy.deepcopy(dict(entry.detail))  # the journal's entry is shared by every subscription
         if entry.log != "workspace":
             item["title"] = feed.titles.get(entry.log)
         return item

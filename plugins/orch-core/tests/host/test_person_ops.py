@@ -11,7 +11,9 @@ from orch.ops import person_ops
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, UID
 from tests.host.human_helpers import Human, err, ok
+from tests.host.live_helpers import ok as ok_
 from tests.host.live_helpers import world
+from tests.host.test_reads_query import on_store
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
@@ -195,16 +197,49 @@ def test_policy_set_checks_its_input_and_the_code_gate_rule(human):
     human.prepare("policy.set", {"gates": {"code": code_policy()}})
 
 
-def test_policy_set_and_settings_set_are_for_owners_only(maint):
+def test_policy_set_default_and_settings_set_are_for_owners_only(maint):
     w, quinn = maint
     w.person_event("role.changed", person=w.quinn.ref, role="maintainer")
-    uid, key = w.ticket()
-    assert err(quinn.prepare_res("policy.set", {"gates": {"plan": policy()}})) == "role.denied"
-    assert err(quinn.prepare_res("policy.set", {"ref": key, "gates": {"plan": policy()}})) == "role.denied"
+    assert err(quinn.prepare_res("policy.set", {"gates": {"plan": policy()}})) == "role.denied"  # the default
     assert err(quinn.prepare_res("settings.set", {"set": {"grant_hours": 4}})) == "role.denied"
     w.person_event("role.changed", person=w.quinn.ref, role="owner")
     quinn.run("settings.set", {"set": {"grant_hours": 4}})
     quinn.run("policy.set", {"gates": {"plan": policy()}})
+
+
+def test_policy_set_with_a_ref_is_for_the_ticket_owner_owners_and_maintainers(maint):
+    """§0.8 / F1 5.4.2: ``claims.may_manage`` for a ticket override (not for the workspace default)."""
+    w, quinn = maint
+    uid, key = w.ticket()
+    args = {"ref": key, "gates": {"plan": policy()}}
+    assert err(quinn.prepare_res("policy.set", args)) == "role.denied"  # a member who does not own the ticket
+    w.person_event("people.changed", uid, role="owner", add=[w.quinn.ref], remove=[])
+    quinn.run("policy.set", args)  # now the ticket owner (a plain member)
+    assert len(events_of(w, uid, "policy.changed")) == 1
+    w.person_event("people.changed", uid, role="owner", add=[w.lab.owner], remove=[])
+    assert err(quinn.prepare_res("policy.set", args)) == "role.denied"
+    w.person_event("role.changed", person=w.quinn.ref, role="maintainer")
+    quinn.run("policy.set", args)  # a maintainer
+    assert len(events_of(w, uid, "policy.changed")) == 2
+    assert err(quinn.prepare_res("policy.set", {"gates": {"plan": policy()}})) == "role.denied"  # default: owner only
+    w.person_event("people.changed", uid, role="owner", add=[w.quinn.ref], remove=[])
+    w.person_event("role.changed", person=w.quinn.ref, role="viewer")
+    assert err(quinn.prepare_res("policy.set", args)) == "role.denied"  # a viewer owning the ticket
+
+
+def test_a_ticket_owner_fixes_a_no_eligible_gate_with_policy_set(maint):
+    w, quinn = maint
+    uid, key = w.ticket()
+    w.person_event("people.changed", uid, role="owner", add=[w.quinn.ref], remove=[])
+    on_store(w, lambda ws: ws.fill(uid))  # the gates wait
+    w.person_event("policy.changed", gates={"requirements": policy(approvers=["maintainer", "owner"])})
+    w.person_event("policy.changed", uid, gates={"requirements": policy(approvers=["maintainer"])})
+    w.person_event("policy.changed", gates={"requirements": policy(approvers=["owner"])})  # nobody holds a token now
+    needs = ok_(w.client().req("needs", {}))["data"]["items"]
+    assert [i["kind"] for i in needs] == ["no_eligible"] and needs[0]["ref"] == "requirements"
+    quinn.run("policy.set", {"ref": key, "gates": {"requirements": policy(approvers=["owner"])}})
+    after = ok(w.client().req("needs", {}))["data"]["items"]
+    assert not [i for i in after if i["kind"] == "no_eligible"]
 
 
 # --- settings.set ----------------------------------------------------------------------------------------------------

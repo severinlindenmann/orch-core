@@ -495,3 +495,106 @@ def test_scan_finding_cached_items_never_carry_another_viewers_view(w):
     as_agent_class(w)
     n = flat(pages(w.client(), {"limit": 200}))
     assert n == _fresh(w, w.client(), {"limit": 200}) and all(i["log"] != "workspace" for i in n)
+
+
+# --- H6b fix round: compact snapshot visibility, capped base cache, no shared state ---
+
+
+def test_the_snapshot_holds_the_smaller_visibility_list_and_unpacks_exactly():
+    allu = [f"t{n:026d}" for n in range(200_000)]
+    for seen in (allu, allu[:1000], allu[::2], []):
+        packed = reads_feed.pack_vis(allu, seen)
+        assert len(next(iter(packed.values()))) <= len(allu) // 2
+        test = reads_feed.unpack_vis(packed)
+        want = set(seen)
+        assert all(test(u) == (u in want) for u in allu[:5000] + allu[-5000:])
+        assert len(json.dumps(packed)) < 200_000 // 2 * 32  # worst case half the tickets: far under 8 MiB
+    from orch.host import pages as pages_mod
+
+    worst = reads_feed.pack_vis(allu, allu[::2])
+    assert len(json.dumps(worst)) < pages_mod.PRINCIPAL_BYTES // 2
+
+
+def test_the_activity_snapshot_stores_hidden_uids_only_not_a_vis_map(w):
+    ua, ka, ur, kr = populate(w)
+    c = w.client()
+    page = feed(c, {"limit": 2})
+    assert page["next_page"]
+    snap = [s for s in w.service.pages._snaps.values() if s.op == "activity.list"][-1]  # the newest
+    assert snap.data["vis"] == {"hidden": [ur]} or snap.data["vis"] == {"shown": [ua]}
+    assert flat(pages(c, {"limit": 2})) == flat(pages(c, {"limit": 200}))
+
+
+@pytest.fixture
+def small_cache(monkeypatch):
+    monkeypatch.setattr(reads_feed, "MAX_ENTRIES", 8)
+    monkeypatch.setattr(reads_feed, "SCAN_BUDGET", 6)
+
+
+def _cold_all(w, c, args, monkeypatch, **kw):
+    """The feed computed with the real caps and an empty cache (the oracle)."""
+    with monkeypatch.context() as m:
+        m.setattr(reads_feed, "MAX_ENTRIES", 50_000)
+        m.setattr(reads_feed, "SCAN_BUDGET", 10_000)
+        w.service.activity_base = None
+        return flat(pages(c, args, **kw))
+
+
+@pytest.mark.parametrize("order", ["desc", "asc"])
+def test_the_base_cache_never_exceeds_its_cap_and_results_equal_a_cold_computation(w, monkeypatch, order, small_cache):
+    ua, ka, ur, kr = populate(w)
+    for n in range(12):
+        w.write(ka, f"more {n}")
+    c = w.client()
+    args = {"limit": 3, "order": order}
+    got = flat(pages(c, args))
+    cache = w.service.activity_base
+    assert len(cache.entries) <= 8 and cache.first + len(cache.entries) - 1 == w.service.journal.head
+    assert got == _cold_all(w, c, args, monkeypatch)
+    assert len(got) > 8  # older positions than the cache held were served too (cold range reads)
+    w.write(ka, "after the cache was built")  # the journal extends it, the oldest go
+    cache = w.service.activity_base
+    again = flat(pages(c, args))
+    cache = w.service.activity_base
+    assert len(cache.entries) <= 8 + reads_feed.MAX_ENTRIES // 16 and again[-1 if order == "asc" else 0]["seq"] >= 1
+    assert again == _cold_all(w, c, args, monkeypatch)
+
+
+def test_the_base_cache_byte_cap_holds(w, monkeypatch):
+    ua, ka, ur, kr = populate(w)
+    for n in range(10):
+        w.write(ka, "x" * 100 + str(n))
+    c = w.client()
+    probe = flat(pages(c, {"limit": 200}))
+    one = w.service.activity_base.entries[-1].size
+    monkeypatch.setattr(reads_feed, "MAX_BYTES", one * 3)
+    w.service.activity_base = None
+    got = flat(pages(c, {"limit": 4}))
+    assert w.service.activity_base.bytes <= one * 3 + 400 and len(w.service.activity_base.entries) < len(probe)
+    assert got == probe
+
+
+def test_an_idle_base_cache_is_dropped_and_rebuilt_equal(w):
+    ua, ka, ur, kr = populate(w)
+    c = w.client()
+    warm = flat(pages(c, {"limit": 200}))
+    cache = w.service.activity_base
+    assert cache.entries and reads_feed.sweep(cache.used + 1) == 0  # in use
+    assert reads_feed.sweep(cache.used + reads_feed.IDLE_SECONDS + 1) >= 1
+    assert cache.entries == [] and cache.bytes == 0
+    assert flat(pages(c, {"limit": 200})) == warm
+
+
+def test_a_mutated_response_item_never_changes_a_later_response(w):
+    ua, ka, ur, kr = populate(w)
+    c = w.client()
+    first = feed(c, {"limit": 200})
+    snapshot = json.dumps(first, sort_keys=True)
+    for item in first["items"]:
+        item["data"]["MUTATED"] = True
+        item["actor"]["id"] = "MUTATED"
+        item["summary"] = "MUTATED"
+        for v in item["data"].values():
+            if isinstance(v, (dict, list)):
+                v.clear()
+    assert json.dumps(feed(c, {"limit": 200}), sort_keys=True) == snapshot

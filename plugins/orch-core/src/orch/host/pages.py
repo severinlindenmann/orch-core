@@ -20,9 +20,9 @@ to serve its later pages at the first page's state (rows, a position bound, the 
 workspace (the size is ``len(json.dumps(data))``). Over a limit the oldest snapshot is dropped first, and its tokens
 answer ``page.expired``: a principal over its own share loses its own oldest, and over the workspace limit the
 principal holding the most loses its oldest, so one principal cannot push out the snapshots of others beyond its
-own share. A single snapshot larger than a share is kept alone (it evicts only its principal's others).
-A host restart drops them all (and the key), which
-is the same ``page.expired``.
+own share (ties go to the holder with the most recent opening, normally the opener). A single snapshot larger than
+one principal's byte share is refused with ``quota.host`` (the op narrows the query).
+A host restart drops them all (and the key), which is the same ``page.expired``.
 
 Every page is still **filtered for the viewer of its own request** by the op (§0.8): a snapshot never widens what the
 current viewer may see.
@@ -150,10 +150,16 @@ class SnapshotStore:
                     if len(inside) <= max_count and sum(v.size for v in inside) <= max_bytes:
                         break
                     use: dict[str, float] = {}
-                    for v in inside:  # each holder's share of this scope's caps
+                    last: dict[str, int] = {}
+                    for n, v in enumerate(inside):  # each holder's share of this scope's caps, newest opening
                         use[holder(v)] = use.get(holder(v), 0.0) + v.size / max_bytes + 1 / max_count
-                    top = max(use, key=lambda h: use[h])  # ties: the holder of the oldest snapshot (dict order)
-                    victim = next(v for v in inside if holder(v) == top)  # its oldest (insertion order)
+                        last[holder(v)] = n
+                    # ties: the holder with the most recent opening (not the oldest), so equal holders never push
+                    # out an earlier one
+                    # (the snapshot being admitted is never its own victim while another can go)
+                    old = [v for v in inside if v.id != snap.id] or inside
+                    top = max({holder(v) for v in old}, key=lambda h: (round(use[h], 9), last[h]))
+                    victim = next(v for v in old if holder(v) == top)  # its oldest (insertion order)
                     del self.snaps[victim.id]
             if snap.id not in self.snaps:
                 raise HostError("quota.host", "the host holds too many page snapshots now: retry shortly")

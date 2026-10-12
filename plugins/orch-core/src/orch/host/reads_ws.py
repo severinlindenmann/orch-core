@@ -210,14 +210,17 @@ def _grant_history(
     return issued, revoked, enders
 
 
-def _revoked_at(gid: str, grant: Any, revoked: dict[str, dict[str, Any]], enders: list[dict[str, Any]]) -> str | None:
+def _revoked_at(
+    gid: str, grant: Any, issued: dict[str, str], revoked: dict[str, dict[str, Any]], enders: list[dict[str, Any]]
+) -> str | None:
     """When the grant was revoked: its ``grant.revoked``, else the member removal that ended it, else ``None`` (it is
     not revoked, or the cause is not a workspace-log event naming it)."""
     if gid in revoked:
         return revoked[gid]["at"]
     if not grant.revoked:
         return None
-    return next((e["at"] for e in enders if e.get("person") == grant.person), None)
+    since = issued.get(gid, "")  # the first removal of the person at or after the grant was issued (never before it)
+    return next((e["at"] for e in enders if e.get("person") == grant.person and e["at"] >= since), None)
 
 
 @handler("grant.list")
@@ -241,7 +244,7 @@ def grant_list(ctx: ReadCtx) -> dict[str, Any]:
             "verbs": grant.verbs if isinstance(grant.verbs, str) else list(grant.verbs),
             "issued_at": issued.get(gid),
             "expires_at": grant.expires_at,
-            "revoked_at": _revoked_at(gid, grant, revoked, enders),
+            "revoked_at": _revoked_at(gid, grant, issued, revoked, enders),
             "sessions": len(recs),
             "session_ids": [r.session for r in recs[:SESSION_IDS]],
         }

@@ -137,3 +137,26 @@ def test_scan_finding_another_workspaces_token_never_resumes_here():
     with pytest.raises(HostError) as exc:
         b.resume("ticket.query", token, "uid:1", "e", None, {})
     assert exc.value.code == "page.expired"
+
+
+def test_scan_finding_ties_go_to_the_most_recent_opening_the_victim_keeps_its_share():
+    """Review repro (finding 4): uid:501 holds 10; six grants on the same UID each open 10. Every holder ties at 10,
+    and the tie-break evicts the holder that opened last, so the earlier victim keeps all of its snapshots."""
+    store = pages_mod.SnapshotStore()
+    pages = pages_mod.Pages("ws_x", store=store)
+    victim = [pages.open("ticket.query", "uid:501", "e", "p_v", {"x": 1}) for _ in range(10)]
+    for g in range(6):
+        for _ in range(10):
+            pages.open("ticket.query", f"g:gr{g}@501", "e", "p_a", {"x": 1})
+    assert sum(s.id in store.snaps for s in victim) == 10
+    assert sum(1 for v in store.snaps.values() if pages_mod.uid_of(v.principal) == "501") <= pages_mod.PER_UID
+
+
+def test_the_snapshot_being_opened_is_not_its_own_victim_while_another_can_go(monkeypatch):
+    monkeypatch.setattr(pages_mod, "PER_UID", 2)
+    store = pages_mod.SnapshotStore()
+    pages = pages_mod.Pages("ws_x", store=store)
+    first = pages.open("ticket.query", "g:a@7", "e", None, {"x": 1})
+    second = pages.open("ticket.query", "g:b@7", "e", None, {"x": 1})
+    third = pages.open("ticket.query", "g:c@7", "e", None, {"x": 1})  # all tie at one: the latest earlier opener goes
+    assert third.id in store.snaps and first.id in store.snaps and second.id not in store.snaps

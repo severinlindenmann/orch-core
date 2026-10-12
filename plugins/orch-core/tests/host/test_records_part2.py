@@ -549,3 +549,23 @@ def test_direct_mode_audit_names_who_acted(direct):
 
     doc = host_records.read_record(ws.host_state, wid, os.getuid())
     assert doc["exports"][-1]["by"] == f"direct:{os.getuid()}"
+
+
+def test_the_served_marker_holds_no_path_or_uid(w):  # noqa: F811
+    from orch.host.service import SERVED_MARKER
+
+    marker = Path(w.lab.root) / ".state" / SERVED_MARKER
+    assert json.loads(marker.read_text()) == {"v": 1} and marker.stat().st_mode & 0o777 == 0o600
+    assert not [p for p in marker.parent.iterdir() if p.name.startswith(f".{SERVED_MARKER}.")]
+
+
+def test_a_failed_auto_on_restores_the_previous_entry(r):
+    r.tips.set_auto(r.w.wid, {"on": True, "every_min": 30, "push": False, "last_run": 123})
+
+    class Broken(FakeTimer):
+        def start(self, *, changed: bool) -> None:
+            raise RecordsError("records.timer_failed", "launchctl bootstrap failed (5)")
+
+    code, out = run_cli(r, "auto", "on", "--every", "10", "--push", timer=Broken())
+    assert code == 1 and out["code"] == "records.timer_failed"
+    assert r.tips.auto(r.w.wid) == {"on": True, "every_min": 30, "push": False, "last_run": 123}

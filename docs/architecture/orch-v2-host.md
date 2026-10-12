@@ -4663,7 +4663,8 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
   units under the real home and checks the real unit paths are unchanged.
 - **Direct mode** (D-P2-38). A workspace not in the person's registry: the tool opens the store read-only under
   `DirectGuard` and runs the same ops on the same files (`host.required` once a host serves it). The host writes
-  `<root>/.state/host-served` when it starts serving a workspace and removes it at unregister; direct mode refuses
+  `<root>/.state/host-served` (content `{"v":1}`, created exclusively) when it starts serving a workspace and
+  removes it at unregister; direct mode refuses
   while it exists, whatever state directory the tool was given. POSIX only. No role check in direct mode (the person
   owns the files; audit entries name `direct:<uid>`); the export check still applies.
 - **Person log.** `<state>/person/records.jsonl` (0600, rotated at 1 MiB, 4 files): `start`, the command's result

@@ -82,6 +82,7 @@ def served_marker(root: str, on: bool, state_dir: Path) -> None:
     marker is a second fence next to the registry, never a reason to stop serving)."""
     import json as _json
 
+    del state_dir  # kept in the signature for the callers; never written into the workspace
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         dfd = os.open(Path(root) / ".state", flags)
@@ -89,14 +90,19 @@ def served_marker(root: str, on: bool, state_dir: Path) -> None:
         return
     try:
         if on:
-            data = _json.dumps({"state_dir": str(state_dir), "uid": os.getuid()}).encode()
-            tmp = f".{SERVED_MARKER}.{os.getpid()}"
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=dfd)
+            data = _json.dumps({"v": 1}).encode()  # presence is the signal; no path or UID in a workspace file
+            tmp = f".{SERVED_MARKER}.{secrets.token_hex(8)}"
+            excl = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(tmp, excl, 0o600, dir_fd=dfd)
             try:
                 os.write(fd, data)
             finally:
                 os.close(fd)
-            os.replace(tmp, SERVED_MARKER, src_dir_fd=dfd, dst_dir_fd=dfd)
+            try:
+                os.replace(tmp, SERVED_MARKER, src_dir_fd=dfd, dst_dir_fd=dfd)
+            except OSError:
+                os.unlink(tmp, dir_fd=dfd)
+                raise
         else:
             os.unlink(SERVED_MARKER, dir_fd=dfd)
     except OSError:

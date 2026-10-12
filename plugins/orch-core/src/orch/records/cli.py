@@ -315,6 +315,7 @@ def _do_auto_switch(run: _Run, r: Any) -> dict[str, Any]:
         )
         if not run.confirm(text):
             raise RecordsError("records.unconfirmed", "not confirmed; auto mode is terminal only")
+        previous = r.tips.auto(r.workspace_id)  # restored on rollback (an existing entry is never lost)
         entry: dict[str, Any] = {"on": True, "every_min": a.every, "push": bool(a.push)}
         if getattr(r, "mode", "") == "direct":
             entry["root"] = str(r.root)
@@ -325,7 +326,7 @@ def _do_auto_switch(run: _Run, r: Any) -> dict[str, Any]:
             manager.start(changed=manager.install(replace=bool(a.replace)))
             r.link("records.note", {"pushed": False, "auto": _auto_entry(r.tips, r.workspace_id)})
         except BaseException:
-            r.tips.set_auto(r.workspace_id, None)  # never report success when any step failed (Sonnet #433)
+            r.tips.set_auto(r.workspace_id, previous)  # never report success when any step failed (Sonnet #433)
             if manager is not None and not r.tips.autos():
                 try:
                     manager.remove()

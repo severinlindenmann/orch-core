@@ -28,7 +28,14 @@ def timed(fn):
     return out, (time.perf_counter() - t) * 1000
 
 
-def test_read_costs_at_1000_tickets(tmp_path, capsys):
+def test_read_costs_at_1000_tickets(tmp_path, capsys, monkeypatch):
+    from orch.host.control_client import ControlClient
+    from tests.host import lifecycle_helpers
+
+    # registering 1000 tickets builds the journal: on a slow runner that takes longer than the 5 s control default
+    monkeypatch.setattr(
+        lifecycle_helpers.HostThread, "client", lambda self: ControlClient(self.host.control_path, timeout=180)
+    )
     lab = Lab(tmp_path)
     store = lab.ws.other()  # the tickets are made before the host starts (making them through it takes minutes)
     lab.ws.store = store

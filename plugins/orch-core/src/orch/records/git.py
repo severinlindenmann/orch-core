@@ -73,9 +73,13 @@ def redact(text: str) -> str:
 
 
 def has_credentials(url: str) -> bool:
-    """A URL carrying a password (``scheme://user:secret@host``): refused, it would reach the host's audit list."""
-    m = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://([^/@]*)@", url)
-    return bool(m and ":" in m.group(1))
+    """A URL that may carry a credential: any userinfo on http(s) (``https://token@host``, ``https://u:p@host``), or
+    a ``user:secret@`` on any scheme. ssh's plain ``git@host`` user stays allowed. Refused: such a URL would reach the
+    output, the host's mark and its audit list."""
+    m = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)@", url)
+    if not m:
+        return False
+    return m.group(1).lower() in ("http", "https") or ":" in m.group(2)
 
 
 def _split_key(key: str) -> tuple[str, str | None, str]:

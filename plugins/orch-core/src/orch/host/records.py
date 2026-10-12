@@ -96,6 +96,12 @@ def _validate(op: str, args: Any) -> None:
         value = args.get(name)
         if isinstance(value, str) and any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
             raise HostError("invalid.input", f"{op}: {name} is not valid")
+    url = args.get("url")
+    if isinstance(url, str):
+        from orch.records.git import has_credentials
+
+        if has_credentials(url):  # never stored, never echoed: the mark and the audit hold no secret
+            raise HostError("invalid.input", f"{op}: url carries credentials; use a credential helper")
     if op == "records.remote_private" and args["on"] and "url" not in args:
         raise HostError("invalid.input", "records.remote_private: url is required to set the mark")
 

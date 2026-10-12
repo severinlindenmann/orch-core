@@ -5,6 +5,7 @@ index is untouched; a tree with an extra file is refused; a non-fast-forward is 
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -623,3 +624,43 @@ def test_finding4_file_count_and_gitfile_reads_are_bounded(r, w, monkeypatch, tm
     with pytest.raises(RecordsError) as e:
         git_dir_of(d)
     assert e.value.code == "records.not_dedicated"
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://ghp_TOKEN1234567890@example.org/r.git", "https://me:ghp_TOKEN1234567890@example.org/r.git",
+     "ssh://me:ghp_TOKEN1234567890@example.org/r.git"],
+)  # fmt: skip
+def test_finding5_a_token_bearing_url_appears_nowhere(r, url):
+    r.init()
+    r.commit()
+    git(r.root, "remote", "add", "origin", url)
+    _convenience(r)
+    outputs = [r.cli("push", "--initial")[1], r.cli("remote-private", "--yes")[1]]
+    for out in outputs:
+        assert out["error"]["code"] == "records.remote_invalid"
+    # the host refuses it too, without echoing it
+    for op, args in (
+        ("records.remote_private", {"url": url, "on": True}),
+        ("records.export_check", {"sha": "a" * 40, "url": url, "ref": "refs/heads/main"}),
+    ):
+        res = r.client.req(op, args)
+        assert res["ok"] is False and res["error"]["code"] == "invalid.input"
+        outputs.append(res)
+    assert not any(op in ("records.export_check", "records.remote_private") for op, _ in r.calls)
+    blob = json.dumps(outputs)
+    for path in (r.w.lab.state, r.tmp / "state"):
+        for dirpath, _dirs, files in os.walk(path):
+            for name in files:
+                with contextlib.suppress(OSError):
+                    blob += open(os.path.join(dirpath, name), "rb").read().decode(errors="replace")
+    blob += git(r.root, "log", "--all", "--format=%B")
+    assert "TOKEN1234567890" not in blob
+
+
+def test_finding5_redaction_covers_token_only_userinfo():
+    from orch.records.git import has_credentials, redact
+
+    assert "TOK" not in redact("fatal: could not read from https://TOK@example.org/r.git")
+    assert has_credentials("https://TOK@example.org/r.git") and has_credentials("ssh://a:b@h/r")
+    assert not has_credentials("ssh://git@example.org/r.git") and not has_credentials("git@example.org:r.git")

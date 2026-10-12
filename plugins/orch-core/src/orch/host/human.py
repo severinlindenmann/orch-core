@@ -44,7 +44,7 @@ from jsonschema import Draft202012Validator
 
 from orch import canon
 
-from . import review
+from . import convenience, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -83,7 +83,7 @@ _CODE = {"type": "string", "pattern": r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z
 _DEVICE = {"type": "string", "pattern": r"^d_[0-9a-f]{32}$"}
 _SIGNER = {
     "type": "object",
-    "properties": {"device": _DEVICE, "auth": {"enum": ["passphrase", "secure-enclave"]}},
+    "properties": {"device": _DEVICE, "auth": {"enum": ["passphrase", "secure-enclave", "convenience"]}},
     "required": ["device", "auth"],
     "additionalProperties": False,
 }
@@ -367,6 +367,9 @@ class HumanOps:
         assert person is not None  # column P only
         now = service.clock()
         store.refresh()
+        convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
+        if signer is not None and signer["auth"] == "convenience":
+            convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
         operation = _person_operation(name)
@@ -591,6 +594,10 @@ class HumanOps:
             raise HostError("human.request_expired", _expired(record))
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
+        call.service.store.refresh()
+        convenience.refuse_reader_op(call.service, record["op"], history=True)  # §0.8.6: fails early, before binding
+        if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
+            convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":
             if record["signer"] != signer:
                 raise HostError("human.request_state", "the request is bound to another device")
@@ -783,6 +790,12 @@ class HumanOps:
             record = requests.expire(record)  # expiry is checked again at append, under the lock
             if record["state"] == "expired":
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
+            store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
+            if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
+                convenience.check(service, record["person"], events[0]["actor"]["device"])
+            # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
+            # however long ago the request was prepared
+            convenience.refuse_reader_op(service, record["op"], history=True)
             git = service.capabilities().with_principal(call.principal).git
             self._judge(store, record, events, git)
             log = record["prepared"]["log"]

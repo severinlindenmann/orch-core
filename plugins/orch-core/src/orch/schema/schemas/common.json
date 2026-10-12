@@ -295,6 +295,7 @@
         "passphrase",
         "secure-enclave",
         "secure-enclave-unlocked",
+        "convenience",
         "webauthn",
         "tpm",
         "windows-hello"

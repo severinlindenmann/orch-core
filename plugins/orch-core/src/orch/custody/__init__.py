@@ -73,4 +73,6 @@ def get_backend(name: str, directory: str | Path) -> Backend:
         return FileBackend(directory)
     if name in PLANNED:
         return UnavailableBackend(name)  # type: ignore[return-value]
+    if name == "convenience":  # per workspace and device, never by directory: orch.custody.select opens it
+        raise CustodyError("the convenience backend is opened with orch.custody.select.device_backend")
     raise CustodyError(f"unknown custody backend {name!r}")

@@ -2638,6 +2638,9 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     frame on the workspace socket: the click signer is a client like `orch sign`. New host codes
     `sign.convenience_unavailable` (with a reason) and `sign.convenience_readers` (§0.6). `human.click_refused` is a
     client-side code of the click signer, never sent by the host.
+12. **Fixes (RH-1, RH-3):** `welcome.caps` lists `human/1` (it was in §0.4's table but missing from the welcome), and
+    `human.prepare {idem}` also works for the host person ops `move`, `policy.set` and `settings.set` (same binding
+    and `idem.conflict` rules as for registry ops).
 
 ---
 

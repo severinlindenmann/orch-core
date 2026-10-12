@@ -12,3 +12,19 @@ def _fresh_snapshot_store(monkeypatch):
     from orch.host import pages
 
     monkeypatch.setattr(pages, "STORE", pages.SnapshotStore())
+
+
+@pytest.fixture(autouse=True)
+def _no_real_service_manager(monkeypatch):
+    """No host test ever reaches launchctl or systemctl (H7): ``orch host enable`` and a ``register`` that finds no host
+    get a service manager whose every command fails. A test that wants a service installs its own fake
+    (``tests/host/test_host_mode_on.py``)."""
+    import subprocess
+
+    from orch.host import cli
+    from orch.host.enable import Manager
+
+    def refuse(argv):
+        return subprocess.CompletedProcess(list(argv), 1, "", "service managers are off in tests")
+
+    monkeypatch.setattr(cli, "SERVICE_MANAGER", lambda unit: Manager(unit, run=refuse))

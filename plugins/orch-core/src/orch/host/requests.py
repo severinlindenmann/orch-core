@@ -14,7 +14,7 @@ a host restart. Its record holds everything the later steps need and nothing the
 
 States: ``prepared``, ``bound``, ``submitted``, ``cancelled``, ``expired`` (the table of §0.8.1). A request that is
 neither submitted nor cancelled is ``expired`` 10 minutes after prepare. At most 20 are pending per person. Terminal
-states are kept 24 h. Hand-off codes (H5b) are ``null`` here; the record keeps the field for them.
+states are kept 24 h. A hand-off request carries its code (H5b, :func:`orch.host.human.new_code`); others ``null``.
 """
 
 from __future__ import annotations

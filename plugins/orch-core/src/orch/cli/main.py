@@ -235,6 +235,10 @@ def main(
         from orch.host.cli import main as host_main
 
         return host_main(args[1:], env=env, out=out)
+    if args[:1] == ["sign"]:  # a hand-off signed at the person's terminal (H5b): a host client, not a registry op
+        from orch.host.handoff import main as sign_main
+
+        return sign_main(args[1:], env=env, out=out, err=err)
     from orch.ops.caps import Files
     from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
 

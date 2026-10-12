@@ -36,6 +36,7 @@ on the worker thread. Nothing sleeps on a worker thread.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import secrets
@@ -97,12 +98,21 @@ WAKE_WORKSPACE = frozenset(
 
 MAX_ITEMS = 256
 MAX_BYTES = 256 * 1024
+#: a ``detail`` subscription's queue limit (§0.9, v1.5): its items carry ``summary`` and ``data``
+MAX_DETAIL_BYTES = 1024 * 1024
+#: what the items of one ``evt`` may add up to: the §0.2 frame limit less the envelope (``sub``, ``cursor``)
+FRAME_BUDGET = frames.MAX_FRAME - 8192
 MAX_LAG_SECONDS = 30.0
 EVT_ITEMS = 64
 PER_CONNECTION = 8
 PER_UID = 64
 TICK_SECONDS = 0.1
 REFRESH_SECONDS = 1.0
+
+
+def _size(item: dict[str, Any]) -> int:
+    """The bytes an item takes in an ``evt`` frame (plus its separator)."""
+    return len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
 
 
 class Feed(Window):
@@ -114,6 +124,8 @@ class Feed(Window):
         self.epoch = ""
         #: each ticket's visibility now (as of the last batch)
         self.vis: dict[str, Vis] = {}
+        #: each ticket's title now (as of the last batch): ``title`` of a ``detail`` item is the title at delivery
+        self.titles: dict[str, str] = {}
 
 
 @dataclass(eq=False)
@@ -132,6 +144,8 @@ class Subscription:
     uid: int
     pos: int  # the last jpos delivered or passed
     blocked_since: float | None = None
+    #: ``sub.open {detail:true}`` (v1.5): event items are ``ActivityItem``s
+    detail: bool = False
     #: the backlog counted so far while blocked: entries up to ``counted`` yield ``count`` items of ``size`` bytes
     counted: int = 0
     count: int = 0
@@ -179,6 +193,7 @@ class Bus:
         self.subs: dict[str, Subscription] = {}
         self.watches: dict[str, set[Watch]] = {}
         self.max_items, self.max_bytes, self.max_lag = MAX_ITEMS, MAX_BYTES, MAX_LAG_SECONDS
+        self.max_detail_bytes = MAX_DETAIL_BYTES
         #: test seam: while set, nothing is delivered (items queue; revalidation and overflow still apply)
         self.hold = False
         self._kicked = False
@@ -262,8 +277,10 @@ class Bus:
             feed = Feed(wid)
             self.feeds[wid] = feed
             feed.vis = dict(batch.vis)
+            feed.titles = dict(batch.titles)
         else:
             feed.vis.update(batch.vis)
+            feed.titles.update(batch.titles)
         feed.window.extend(batch.entries)
         feed.epoch, feed.head = batch.epoch, batch.head
         for watch in self.watches.get(wid, ()):
@@ -306,6 +323,7 @@ class Bus:
         grant: str | None,
         grant_id: str | None,
         pos: int,
+        detail: bool = False,
     ) -> Subscription:
         """Register a subscription whose live boundary the worker fixed at ``pos`` (§0.11 quotas apply)."""
         if self.host.draining:
@@ -326,7 +344,7 @@ class Bus:
                 break
         sub = Subscription(
             sid, session, request, workspace_id, topics, tickets, principal, column, person, grant, grant_id,
-            session.peer.uid, pos, counted=pos,
+            session.peer.uid, pos, counted=pos, detail=detail,
         )  # fmt: skip
         self.subs[sid] = sub
         session.subscriptions += 1
@@ -472,12 +490,13 @@ class Bus:
         person = sub.person
         if entry.log == "workspace":
             if "workspace" in sub.topics and self._workspace_visible(sub, entry, owner):
-                out.append(entry.item())
+                out.append(self._event_item(sub, feed, entry))
         elif "tickets" in sub.topics or entry.log in sub.tickets:
             before, after = sees(person, entry.before), sees(person, entry.after)
             if after and sees(person, feed.vis.get(entry.log)):
-                item = entry.item()
-                if not before and entry.before is not None:
+                item = self._event_item(sub, feed, entry)
+                if not before and entry.before is not None and not sub.detail:
+                    # the v1.4 item says why it appears; a detail item is the ActivityItem of the same id, unchanged
                     item["type"] = "visibility.changed"
                 out.append(item)
             elif before and not after:  # hidden at this jpos: only the uid the viewer knew, never the event
@@ -485,6 +504,17 @@ class Bus:
         if entry.needs and "needs" in sub.topics:
             out.append({"id": f"{entry.jpos}.n", "jpos": entry.jpos, "type": "needs.changed"})
         return out
+
+    @staticmethod
+    def _event_item(sub: Subscription, feed: Feed, entry: Entry) -> dict[str, Any]:
+        """The event item: the v1.4 ``Item``, or with ``detail`` the ``ActivityItem`` of the same event, its ``title``
+        the ticket's title now (§0.9)."""
+        if not sub.detail or entry.detail is None:
+            return entry.item()
+        item = copy.deepcopy(dict(entry.detail))  # the journal's entry is shared by every subscription
+        if entry.log != "workspace":
+            item["title"] = feed.titles.get(entry.log)
+        return item
 
     @staticmethod
     def _workspace_visible(sub: Subscription, entry: Entry, owner: bool) -> bool:
@@ -508,20 +538,23 @@ class Bus:
                 continue
             sub.count += len(items)
             sub.size += sum(len(json.dumps(item, separators=(",", ":"))) for item in items)
-            if sub.count > self.max_items or sub.size > self.max_bytes:
+            if sub.count > self.max_items or sub.size > (self.max_detail_bytes if sub.detail else self.max_bytes):
                 return True
         return False
 
     def _deliver(self, sub: Subscription, feed: Feed, pending: list[Entry], owner: bool) -> None:
         batch: list[dict[str, Any]] = []
+        size = 0  # the bytes of ``batch`` (counted for detail items only: the v1.4 ones are tiny)
         upto = sub.pos
         for entry in pending:
             items = self.items(sub, feed, entry, owner)
-            if batch and len(batch) + len(items) > EVT_ITEMS:
+            cost = sum(_size(i) for i in items) if sub.detail else 0
+            if batch and (len(batch) + len(items) > EVT_ITEMS or size + cost > FRAME_BUDGET):
                 if not self._send(sub, feed, batch, upto):
                     return
-                batch = []
+                batch, size = [], 0
             batch.extend(items)
+            size += cost
             upto = entry.jpos
         if batch:
             self._send(sub, feed, batch, upto)

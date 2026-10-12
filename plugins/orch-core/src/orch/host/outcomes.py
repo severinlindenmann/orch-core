@@ -91,6 +91,7 @@ _READS = frozenset(
         "host.list", "host.status", "host.restart", "whoami",
         "ticket.query", "ticket.get", "needs", "diff", "artifact.get",
         "workspace.show", "member.list", "session.list", "grant.list",
+        "activity.list", "workspace.settings", "ticket.text",
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a)
@@ -106,6 +107,10 @@ def classify(op: str) -> Category:
     if op in CONTROL_WRITES:
         return "control"
     if op in _HUMAN_WRITES:
+        return "log"
+    from .review import HOST_PERSON_OPS
+
+    if op in HOST_PERSON_OPS:  # move, policy.set, settings.set: person log writes, served through human.* only
         return "log"
     if op == "job.done":
         return "job"

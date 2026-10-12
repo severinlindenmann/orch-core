@@ -203,7 +203,10 @@ class WorkspaceService:
                 self.blobs.open()
                 if self.requests is not None:  # the stored requests' file bytes count again (F9)
                     for rid, principal, size in self.requests.held():
-                        uid = int(principal.rpartition("@")[2] if "@" in principal else principal.partition(":")[2])
+                        uid = principal_uid(principal)
+                        if uid is None:  # never the whole workspace: this one record is not charged
+                            LOG.error("request %s: unparseable principal; its file bytes are not charged", rid)
+                            continue
                         self.blobs.hold_request(rid, principal, uid, size, force=True)
                 self.outcomes.reconcile_all()  # a crash between an append and its record (§0.7)
                 self.outcomes.sweep()
@@ -434,6 +437,14 @@ class OpBackend(Protocol):
     def kind(self, op: str) -> tuple[OpKind, Phase] | None: ...
 
     async def run(self, call: Call) -> dict[str, Any]: ...
+
+
+def principal_uid(value: str) -> int | None:
+    """The UID of a principal (``uid:<n>`` or ``g:<grant id>@<n>``), or ``None`` for anything else."""
+    import re
+
+    m = re.fullmatch(r"(?:uid:|g:[^@\s]+@)([0-9]{1,10})", value) if isinstance(value, str) else None
+    return int(m.group(1)) if m else None
 
 
 def principal(uid: int, verified: Verified) -> str:

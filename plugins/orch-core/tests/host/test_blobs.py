@@ -580,3 +580,23 @@ def test_closing_a_workspace_removes_its_blob_files(served):
     assert len(os.listdir(served.service.blobs.dir)) == 2
     on_worker(served, served.service.blobs.close)
     assert os.listdir(served.service.blobs.dir) == [] and quota(served)[2].get(UID, 0) == 0
+
+
+def test_a_stored_request_with_an_unparseable_principal_is_skipped_at_open(served, caplog):
+    from orch.host.workspace import principal_uid
+
+    assert principal_uid(f"uid:{UID}") == UID and principal_uid(f"g:gr_X@{UID}") == UID
+    assert principal_uid("bogus") is None and principal_uid("uid:x") is None
+    human = Human(served)
+    _, key = served.ticket()
+    good = human.prepare("artifact.add", {"ref": key, "path": "g.bin"}, files={"path": {"b64": b64(b"g" * 3000)}})
+    bad = human.prepare("artifact.add", {"ref": key, "path": "b.bin"}, files={"path": {"b64": b64(b"b" * 5000)}})
+    path = served.service.requests.dir / bad["request"]["id"]
+    record = json.loads(path.read_text())
+    on_worker(served, served.service.requests.write, {**record, "principal": "not a principal"})
+    with caplog.at_level("ERROR"):
+        on_worker(served, served.service.open)
+    assert served.service.state == "ok"
+    assert quota(served)[2] == {UID: 3000}  # the good request is charged again; the bad one is skipped
+    assert any(bad["request"]["id"] in r.getMessage() for r in caplog.records)
+    assert good["request"]["id"]

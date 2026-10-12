@@ -2,8 +2,9 @@
 
 Read traffic never rotates it away. This is the first writer (H4a2: ``artifact.mismatch``, a file changed or swapped
 behind the log); the other entries the §0.11 table names (``human.*``, writes, ``peer.denied``, control ops) and the
-rotation of ``audit.jsonl`` belong to a later group. A line is appended with ``O_APPEND`` to a 0600 file that is opened
-without following a symlink, in the host-owned 0700 directory. Writing it never changes an op's answer.
+rotation of ``audit.jsonl`` belong to a later group. A line is appended with ``O_APPEND`` to a file opened without
+following a symlink and checked like the host's other private files (a regular file of the host UID with one link
+and no group or other bits), in the host-owned 0700 directory. Writing it never changes an op's answer.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import threading
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,9 @@ def record(state_dir: Path, host_uid: int, at: float, event: str, **fields: Any)
         with _LOCK:
             fd = os.open(directory / NAME, flags, 0o600)
             try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode) or st.st_uid != host_uid or st.st_nlink != 1 or st.st_mode & 0o077:
+                    raise OSError(f"{NAME} is not a private regular file of the host")
                 os.write(fd, line.encode() + b"\n")
             finally:
                 os.close(fd)

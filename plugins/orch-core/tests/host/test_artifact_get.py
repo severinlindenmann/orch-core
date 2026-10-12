@@ -99,6 +99,18 @@ def test_a_file_changed_or_swapped_behind_the_log_is_not_served(served):
     assert line["event"] == "artifact.mismatch" and line["ticket"] == uid and line["name"] == "e.log"
     assert line["expected"] == sha(b"original bytes\n") and line["workspace"] == served.wid
     assert audit.stat().st_mode & 0o777 == 0o600
+    # the same version again: not_found without hashing it again, and no second audit line (no log growth)
+    import orch.host.artifacts as artifacts
+
+    hashed = []
+    real = artifacts._hash
+    artifacts._hash = lambda fd, size: hashed.append(size) or real(fd, size)
+    try:
+        for _ in range(20):
+            assert err(get(c, key, "e.log")) == "not_found"
+    finally:
+        artifacts._hash = real
+    assert hashed == [] and len(audit.read_text().splitlines()) == 1
     path.unlink()
     target = served.lab.ws.root / "elsewhere.log"
     target.write_bytes(b"original bytes\n")
@@ -142,3 +154,26 @@ def test_a_ticket_restricted_to_someone_else_is_not_found_for_p_and_g(served):
         hidden, missing = get(c, key, "t.log", grant=grant), get(c, "DEMO-9999", "t.log", grant=grant)
         assert err(hidden) == "not_found" and norm(hidden, key) == norm(missing, "DEMO-9999"), grant
     assert hashlib.sha256(b"theirs\n").hexdigest() not in str(get(c, key, "t.log"))
+
+
+def test_the_audit_file_is_written_only_as_a_private_regular_file_of_the_host(tmp_path):
+    from orch.host import securitylog
+
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    securitylog.record(state, os.getuid(), 1.0, "artifact.mismatch", name="a")
+    audit = state / "host" / securitylog.NAME
+    assert json.loads(audit.read_text())["name"] == "a"
+    other = tmp_path / "elsewhere"
+    other.write_text("")
+    for plant in ("symlink", "hardlink", "mode"):
+        audit.unlink()
+        if plant == "symlink":
+            audit.symlink_to(other)
+        elif plant == "hardlink":
+            os.link(other, audit)
+        else:
+            audit.write_text("")
+            audit.chmod(0o644)
+        securitylog.record(state, os.getuid(), 2.0, "artifact.mismatch", name="b")
+        assert other.read_text() == "" and "b" not in (audit.read_text() if plant == "mode" else ""), plant

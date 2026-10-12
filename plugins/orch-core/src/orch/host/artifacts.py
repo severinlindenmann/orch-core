@@ -10,8 +10,9 @@
   through the workspace's host-mode ``Files`` (fd walk, ``O_NOFOLLOW``, a regular file with one link). Its bytes must
   hash to the manifest's digest; a file that does not (edited or replaced behind the log) is ``not_found``: the bytes
   the log names are not there, and an ``artifact.mismatch`` line goes to ``audit-security.jsonl``
-  (:mod:`orch.host.securitylog`). The whole file is hashed once per version of it (device, inode, size, mtime, ctime),
-  not once per chunk, and the version is checked again after the chunk is read.
+  (:mod:`orch.host.securitylog`) once per version of the file. The whole file is hashed once per version of it
+  (device, inode, size, mtime, ctime), not once per chunk, and the version is checked again after the chunk is read;
+  a mismatched version is remembered too, and answered without hashing it again.
 * ``offset`` = ``size`` answers an empty ``b64`` with ``last:true``; ``offset`` > ``size`` is ``invalid.input``.
   ``length`` is 1..786432 (768 KiB), its default the maximum. ``digest`` is the manifest's, the value ``ticket.get``
   shows as the evidence digest (H6b checks one against the other).
@@ -54,8 +55,9 @@ SCHEMA = {
     "additionalProperties": False,
 }
 VALIDATOR = Draft202012Validator(SCHEMA)
-#: (workspace, uid, name, digest, version) of files whose bytes were hashed and matched; a small LRU
-_VERIFIED: OrderedDict[tuple[Any, ...], None] = OrderedDict()
+#: (workspace, uid, name, digest, version) -> whether the file's bytes matched; a small LRU. A mismatched version is
+#: remembered too: it is audited once and then answered ``not_found`` without hashing it again
+_VERIFIED: OrderedDict[tuple[Any, ...], bool] = OrderedDict()
 _VERIFIED_MAX = 256
 _LOCK = threading.Lock()  # every workspace's worker thread reads through it
 
@@ -66,6 +68,10 @@ def _version(st: os.stat_result) -> tuple[int, ...]:
 
 def _missing() -> HostError:
     return HostError("not_found", "no such artifact on this ticket")
+
+
+def _mismatch() -> HostError:
+    return HostError("not_found", "the artifact's file does not match the digest the ticket records")
 
 
 def _hash(fd: int, size: int) -> str:
@@ -100,11 +106,18 @@ def artifact_get(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             raise _missing()
         key = (service.workspace_id, view.uid, art.name, art.digest, _version(st))
         with _LOCK:
-            known = key in _VERIFIED
-            if known:
+            known = _VERIFIED.get(key)
+            if known is not None:
                 _VERIFIED.move_to_end(key)
-        if not known:
-            if _hash(fd, st.st_size) != art.digest:
+        if known is False:
+            raise _mismatch()
+        if known is None:
+            matched = _hash(fd, st.st_size) == art.digest
+            with _LOCK:
+                _VERIFIED[key] = matched
+                while len(_VERIFIED) > _VERIFIED_MAX:
+                    _VERIFIED.popitem(last=False)
+            if not matched:
                 securitylog.record(  # a file changed or swapped behind the log: a tamper signal (§0.11)
                     service.state_dir,
                     service.host_uid,
@@ -116,11 +129,7 @@ def artifact_get(call: Call, args: dict[str, Any]) -> dict[str, Any]:
                     expected=art.digest,
                     size=st.st_size,
                 )
-                raise HostError("not_found", "the artifact's file does not match the digest the ticket records")
-            with _LOCK:
-                _VERIFIED[key] = None
-                while len(_VERIFIED) > _VERIFIED_MAX:
-                    _VERIFIED.popitem(last=False)
+                raise _mismatch()
         if offset > st.st_size:
             raise HostError("invalid.input", f"offset is past the end of the file ({st.st_size} bytes)")
         data = pread_all(fd, length, offset)

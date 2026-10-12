@@ -23,8 +23,9 @@ __all__ = ["Column", "GrantState", "OpKind", "refusal", "resolve"]
 GrantState = Literal["absent", "verified", "malformed", "unverified"]
 PeerClass = Literal["person", "agent", "worker", "control"]
 #: read: registry read ops (and the §0.8 reads); person_read: doctor, instructions.sync, instructions.hook;
-#: agent / unattended / human: the registry ``who``; human_api: ``human.*``; job, control: their sockets' ops.
-OpKind = Literal["read", "person_read", "agent", "unattended", "human", "human_api", "job", "control"]
+#: agent / unattended / human: the registry ``who``; human_api: ``human.*``; job, control: their sockets' ops;
+#: pg_read: ``session.list`` and ``grant.list`` (P and G only, H6b).
+OpKind = Literal["read", "person_read", "pg_read", "agent", "unattended", "human", "human_api", "job", "control"]
 
 
 @dataclass(frozen=True)
@@ -61,8 +62,8 @@ def resolve(peer: PeerClass, grant: GrantState, mapping_valid: bool) -> Column:
 
 # The permission matrix (§0.5) for each column.
 _MATRIX: dict[str, set[str]] = {
-    "P": {"read", "person_read", "unattended", "human_api"},
-    "G": {"read", "agent", "unattended"},
+    "P": {"read", "person_read", "pg_read", "unattended", "human_api"},
+    "G": {"read", "pg_read", "agent", "unattended"},
     "N": {"read", "unattended"},
     "W": {"job"},
     "C": {"control"},

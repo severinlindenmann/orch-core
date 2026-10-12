@@ -1,0 +1,107 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "quick.list",
+    "name": "quick.list",
+    "cli": "orch quick list",
+    "summary": "List quick tasks (tickets labelled quick) with their commit and file counts; the limits are display only.",
+    "who": "read",
+    "usage": "orch quick list [--status A,B] [--limit N] [--page TOKEN] [--max-commits N] [--max-files N]",
+    "pre": [
+      "workspace_exists"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "List quick tasks (tickets labelled quick) with their commit and file counts; the limits are display only.",
+      "properties": {
+        "status": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "backlog",
+              "open",
+              "in_progress",
+              "waiting",
+              "testing",
+              "done",
+              "closed"
+            ]
+          },
+          "description": "only these statuses, comma separated (default: all but closed)",
+          "x-metavar": "A,B",
+          "x-split": ","
+        },
+        "limit": {
+          "type": "integer",
+          "description": "at most this many rows",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 100,
+          "x-metavar": "N"
+        },
+        "page": {
+          "type": "string",
+          "description": "the next_page of the previous answer",
+          "minLength": 1,
+          "maxLength": 512,
+          "x-metavar": "TOKEN"
+        },
+        "max_commits": {
+          "type": "integer",
+          "description": "a row is over with more commits than this",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 1,
+          "x-metavar": "N"
+        },
+        "max_files": {
+          "type": "integer",
+          "description": "a row is over with more changed files than this",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 3,
+          "x-metavar": "N"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok quick.list {total}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "next_page": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "rows",
+          "next_page",
+          "total"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": []
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

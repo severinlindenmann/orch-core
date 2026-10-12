@@ -938,9 +938,9 @@ running as you, or anything that takes over this dashboard, could sign."
   Never run the dashboard with a `PYTHONPATH` pointing at another core: the child runs `python -I -m orch.click` from the dashboard
   venv's own orch-core, and orch-core is a runtime dependency (`orch-core>=2.0.0.dev0`, editable path source).
 - `server/src/orch_dashboard/click.py`: the closed routes `POST /api/w/{ws}/click/{prepare,view,sign,cancel}` and `GET .../click/status`.
-  `prepare` takes the same typed actions as the hand-off (`PrepareBody`); the op is chosen server-side (`host_call`), one idem per click
-  (bound to the session and workspace, reused on retry), files for `member_add`. `view`, `sign` and `cancel` work only on requests THIS
-  session prepared (otherwise `not_found`). `view` passes the signer's View through unchanged (the server only checks that it names the
+  `prepare` takes the same typed actions as the hand-off (`PrepareBody`); the op is chosen server-side (`host_call`), the idem is the
+  action intent's (see "The invariant" below), files for `member_add`. `view`, `sign` and `cancel` work on requests the PERSON prepared in this
+  workspace, from any of their sessions (otherwise `not_found`). `view` passes the signer's View through unchanged (the server only checks that it names the
   op it prepared). `sign` answers `{state, duplicate, key?, seq?}`, never the host's result. The open-request quota is one per session,
   shared with the hand-off (reserve, commit, release under one lock). Views, words and credentials are never logged.
   Only these handlers call the signer (a test greps for it); no addon path reaches `prepare`.
@@ -966,13 +966,23 @@ convenience store is the login keychain, so `tests/click_child.py` swaps core's 
 for the 0600 file store of the disposable state; the keychain is never opened. The key is moved with the real
 `orch keys custody convenience` in a pty. Frontend: `components/sign/click-*.test.tsx`, `production/click.test.tsx`.
 
-**Unknown outcome (re-check rounds).** A sign whose answer is lost counts as unsettled: while it is in flight, and after an `uncertain`,
-the server refuses a new click or hand-off prepare, and a view or sign of another request, for the equal action (`click.unsettled` with
-the `request_id`; the UI re-attaches in a waiting state that polls `POST /click/state`, which reads the host through the server's own
-link). A signed action is remembered for 5 minutes so a lost browser answer reads "Signed" instead of preparing again. Logout, cancel
-and the restart sweep never touch an unsettled request. **This record is in memory only**: a dashboard restart loses it (and every
-session), and the host's request state stays authoritative (a request stays `bound` there for up to about 10 minutes; the signer child
-dies with the server and cannot re-submit; the ticket's activity shows a submit that landed).
+**The invariant: one action intent -> at most one request -> at most one signature.** It is held by the HOST, not by this process:
+the host's `human.prepare` idem record (keyed by principal and idem, bound to op, args, signer, handoff, person, files and session) returns
+the same request, or its terminal state for 24 h, to every caller of the same idem; the signer child forwards the idem and signs a request
+once (its own `approval.result`/`signed` record, and the host refuses a second submit). The idem is derived in `server/src/orch_dashboard/intent.py`
+from the action (`person`, `workspace_id`, `op`, `args` exactly as sent, `base` = gate gen/hash or ticket revision or member role) and is the
+same for every tab, session and retry; the browser sends no key, only `retry`, which an explicit "Do it again" / "Start again" advances
+(`handoff.py` `plan()` and `send_prepare()`, used by both `click.py` and the hand-off route). Consequences, all tested: two tabs prepare one
+request; a lost answer or logout/login returns the same request; a landed action answers `intent.done` ("Already done"); cancelled/expired
+answers `intent.ended`; `idem.conflict` (other path or a session from before a restart) becomes `intent.open` and prepares nothing;
+`idem.expired` moves to the next epoch. Requests belong to the (person, workspace) (`Handoffs.owned`); any session of the person may view,
+sign, poll and cancel. **What stays in memory is convenience only:** which ids this dashboard prepared (ownership, lost on restart), the
+op/body a View is checked against, the per-session quota, and an `unsettled` set (a sign in flight or with an unknown outcome) that only
+stops this process from cancelling the request or replacing the signer under it and drives the "settling" UI (`POST /click/state` reads
+the host through our link). A sign whose answer is lost is retried through the signer (identical events, never a new signature);
+`already_signed` (signed with another View) and `record_unavailable` (the signer's record is unreadable, fail closed: use the terminal path)
+are mapped. A dashboard restart loses the in-memory parts and the session binding of the host's idem: a repeat prepare is then `intent.open`
+until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed.
 
 **Open points.** The rate limit (30 per minute) is mapped and unit tested, not provoked on the real signer. The server cannot show the
 prepared events of a click request (the signer holds them and validates them), so the hand-off's `expected()` event check is replaced by the

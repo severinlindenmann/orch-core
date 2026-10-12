@@ -1419,3 +1419,11 @@ HTTP process against passive disclosure, while the accepted risk (same-UID agent
 
 **Revert:** Switch the flag off per workspace (`orch host convenience off --workspace W`), or `ORCH_DASHBOARD_CLICK=off` for the server; remove
 `click.py`, `click_signer.py`, `HandoffDialog`'s click branch and `ClickSignPanel`. The terminal hand-off is unchanged underneath.
+
+## 2026-10-12 — M5 structural fix: one action intent, held by the host idem
+
+**Decision:** (1) The host idem of every prepare (click and hand-off) is derived from the action intent, `sha256(cj({person, workspace_id, op, args, base}))` in the host's `a_[0-7]`+25 Crockford shape, never from a click, tab or session; the browser sends no key, only an explicit `retry` counter. (2) A terminal result for the intent is "Already done" with an explicit "Do it again" (cancelled/expired: "Start again"), both advance `retry`. (3) A request obtained through an intent belongs to the person in that workspace; any session of that person may view/sign/poll/cancel it (approved by orch-d6, stream A orch-52). (4) `idem.conflict` across paths or after a dashboard restart is reported as an open attempt and prepares nothing; the terminal fallback after a click request is a deliberate other intent. (5) The in-memory unsettled/recently-signed records of rounds 1-3 are reduced to UI convenience; the 5-minute "recently signed" block is gone.
+
+**Why:** Three Opus rounds each found another way to obtain a second, different request for one action (another tab, a reopened dialog, a lost answer, logout, a race between prepare and sign). Patching paths in this process cannot close the class; the host's idem record can, once every path sends the same idem.
+
+**Revert:** Derive the idem from a browser key again (`host_idem` of the earlier commits); the per-path blocks (`refuse_if_unsettled`, `recent`) return with it.

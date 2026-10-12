@@ -217,22 +217,32 @@ The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signe
 10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
 person. The dashboard adds:
 
-- **A request belongs to the session that prepared it, and a lost answer is retried with the same idem.** `human.prepare`
-  honours `opts.idem` (host contract 0.7, stream A #402): the same principal, idem and arguments return the SAME request
-  (same id and code) in its current state while it is `prepared` or `bound`; other arguments are `idem.conflict`; once it
-  ended the same idem answers it in its terminal state while the record is kept (24 h), afterwards, or if the request is
-  gone, `idem.expired`; a failed commit or a host restart never produces a second request. So one click is one idem
-  (client-made, reused on a retry, new for the next click; the namespace is shared with `human.submit`, which the signer
-  fills with its own). The server sends the host a key derived from the session, the workspace and that idem, so another
-  session's identical key is another request and never hands over this session's (M1 ownership holds). After
-  `outcome.unknown` the next click retries with the same idem and **adopts** the request the host returns: it is provably
-  ours, because the host binds the idem to the principal and the arguments. There is no `outcome.get` for a prepare; a
-  prepared request is read with `human.pending {request_id}`. The panel shows what the retry returns: open (the command),
-  or already signed, cancelled or expired. `idem.conflict` is an honest error (a new key on the next click);
-  `idem.expired` says "This attempt is too old" and starts again only on the person's click, with a fresh idem. "Complete
-  details" after a `new` targets only the ticket of the `new` request this dialog prepared and watched (same request id,
-  op `new`). Requests expire after 10 minutes (4 for a grant); more than 20 pending per person is `quota.host`. Two tabs
-  are two requests.
+- **One action intent -> at most one request -> at most one signature, held by the host.** `human.prepare` honours
+  `opts.idem` (host contract 0.7, stream A #402): the same principal, idem and arguments return the SAME request (same id
+  and code) in its current state while `prepared` or `bound`, and its terminal state for 24 h after it was prepared; other
+  arguments are `idem.conflict`; afterwards `idem.expired`. The dashboard therefore derives the idem from the *action*,
+  never from a click, tab or session: `a_` + 128 bits of `sha256(cj({person, workspace_id, op, args, base}))` in the
+  host's shape (`a_[0-7]` + 25 Crockford characters; `orch_dashboard/intent.py`). `op` and `args` are exactly what is
+  sent to the host (the typed models' `host_call`, never the browser's body); `person` is the workspace's own person;
+  `base` is the state the action stands on, read right before prepare: the gate's generation and hash for a gate
+  decision, a hash of the ticket document and gates for another ticket action (the host serves no head sequence on
+  `ticket.get`), the member's role for a role change, none for the rest. When the base moves the action is legitimately
+  a new one. Two tabs, two sessions, a reopened dialog after a lost answer, and logout/login then retry all send the same
+  idem with the same arguments and get the same request. The browser sends no key; it sends only `retry` (0 normally),
+  which only an explicit click advances. A request obtained this way belongs to the PERSON in that workspace: any session
+  of that person may view, poll, sign and cancel it; an id nobody here prepared looks like one that never existed. The
+  per-session quota counts a shared request once. This process remembers nothing the invariant depends on.
+  What the person sees: a request that is `submitted` is **"Already done"** with an explicit **"Do it again"** (retry + 1,
+  so a second identical comment is possible, but only by that click); a `cancelled` or `expired` one offers **"Start
+  again"** (also retry + 1); a lost answer is retried with the same `retry` and returns the same request. `idem.conflict`
+  means the host holds an attempt of this intent bound to something else (the other path, the signer, or a session from
+  before a dashboard restart) - safe, because it is not a second request - and is shown as "An attempt for this is
+  already open ... it settles or expires by itself" with nothing offered that prepares again; "Sign in the terminal
+  instead" after a click request is the one deliberate exception: it is another intent (retry above the click's). On
+  `idem.expired` (the host forgot the idem) the server moves to the next deterministic epoch of the same intent, so
+  every tab converges on the same fresh request. There is no `outcome.get` for a prepare; a request is read with
+  `human.pending {request_id}`. "Complete details" after a `new` targets only the ticket of the `new` request this dialog
+  prepared and watched. Requests expire after 10 minutes (4 for a grant); more than 20 pending per person is `quota.host`.
 - **A refused submit stays open.** A refusal before any append (`gate.stale`, `members.stale`, `question.stale`,
   `sig.invalid`, `human.request_mismatch`) leaves the request `bound` until it expires, and `human.pending` shows
   `error:{code}`; the panel says "Refused: <text>. The request stays open until <time>". A failure after an event

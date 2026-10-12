@@ -51,6 +51,55 @@
           "description": "free text",
           "x-short": "m",
           "x-metavar": "TEXT"
+        },
+        "receipt": {
+          "type": "object",
+          "description": "the client's run of verify.cmd (host mode)",
+          "properties": {
+            "cmd": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "exit": {
+              "type": "integer",
+              "minimum": -255,
+              "maximum": 255
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 86400000
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$"
+            },
+            "repo": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "cmd",
+            "exit",
+            "duration_ms"
+          ],
+          "additionalProperties": false,
+          "x-host": true
+        },
+        "receipt_output": {
+          "type": "string",
+          "description": "output file of the receipt's run (host mode)",
+          "x-file": true,
+          "x-host": true
         }
       },
       "x-positional": [

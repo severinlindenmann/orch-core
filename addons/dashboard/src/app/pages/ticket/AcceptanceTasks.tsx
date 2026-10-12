@@ -64,6 +64,14 @@ function ReceiptLine({ t }: { t: TaskStatus }) {
           <span className="text-text">{t.receipt.commit}</span>
         </>
       )}
+      {t.receipt.attested_by && (
+        <>
+          {' · '}
+          <span className="text-text-faint" title="The agent ran the command and says so; the host does not run it.">
+            attested by {t.receipt.attested_by}
+          </span>
+        </>
+      )}
     </span>
   )
 }

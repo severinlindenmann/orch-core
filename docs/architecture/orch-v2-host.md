@@ -594,7 +594,11 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   ```
 
   `output` comes through `files`, at most 1 MiB. H3b2 (client receipts) adds `attested_by: "agent"` to the stored
-  receipt (D-P2-19); the current receipt has no such field.
+  receipt (D-P2-19). As built, the receipt is the `receipt` argument and the output file is the separate `x-file`
+  argument `receipt_output` (a `files` key is an `ArgName`, so it cannot be nested; its value is `"-"`). Both are host-mode
+  only: the CLI has no flag for them. The host refuses `run` with `op.not_allowed`, a `cmd` other than the task's
+  `verify.cmd` (exact string) or a non-zero `exit` with `invalid.input` / `verify.failed`, and stores the output as a
+  `receipt` artifact `<task>-receipt.log` named by `log`. A direct-mode receipt (`--run`) carries no `attested_by`.
 - `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
   `host.wsk_create` + `host.bootstrap` composite.
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.
@@ -743,7 +747,7 @@ SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"exter
   | `claim.released` | `{session, reason}` |
   | `task.started` | `{task}` |
   | `task.reopened` | `{task, reason?}` |
-  | `task.done` | `{task, receipt?:{cmd, exit, ms, repo, commit}, log?, text?:Snip}` |
+  | `task.done` | `{task, receipt?:{cmd, exit, ms, repo, commit, attested_by?:"agent"}, log?, text?:Snip}` |
   | `task.skipped`, `task.blocked` | `{task, reason}` |
   | `log.added` | `{text:Snip}` |
   | `question.asked` | `{question, blocking, to}` |

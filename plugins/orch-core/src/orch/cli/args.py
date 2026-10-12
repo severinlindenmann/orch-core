@@ -50,6 +50,8 @@ def arg_specs(op: Operation) -> list[Arg]:
     ordered = positional + [n for n in props if n not in positional]
     out: list[Arg] = []
     for name in ordered:
+        if name in props and props[name].get("x-host") is True:
+            continue  # sent by a host client only (task.done's receipt), never a CLI flag
         if name not in props:
             raise ValueError(f"{op.name}: x-positional names {name!r}, which is not a property")
         p = props[name]

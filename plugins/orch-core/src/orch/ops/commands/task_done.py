@@ -44,6 +44,38 @@ def _run(c: Call, view: Any, cmd: str) -> runner.Ran:
     )
 
 
+def _client_receipt(c: Call, ctx: Context, tid: str, task: dict[str, Any], args: dict[str, Any]) -> tuple[Any, Any]:
+    """Host mode, contract 2 (H3b2, §0.8): the client ran ``verify.cmd`` itself and sends ``receipt`` plus its output
+    through ``files``. The host never runs anything: it checks the claim against the ticket and labels it
+    ``attested_by: "agent"``. ``(None, None)`` when no receipt was sent."""
+    rc, name = args.get("receipt"), args.get("receipt_output")
+    if rc is None and name is None:
+        return None, None
+    if not ctx.hosted:
+        raise OrchError("invalid.input", "a client receipt is sent to a host: direct mode runs the command with --run")
+    if rc is None or name is None:
+        raise OrchError("invalid.input", "receipt and receipt_output (the command's output, in files) go together")
+    verify = task["verify"]
+    if verify is None:
+        raise OrchError("invalid.input", f"{tid} has no verify command; a receipt proves that command")
+    if rc["cmd"] != verify["cmd"]:
+        raise OrchError("invalid.input", "receipt.cmd must equal the task's verify.cmd")
+    if rc["exit"] != 0:
+        raise OrchError("verify.failed", "the receipt's exit code was not 0, nothing was appended")
+    output = c.read_artifact(name)
+    if len(output) > runner.OUTPUT_LIMIT:
+        raise OrchError("invalid.input", f"the receipt output is at most {runner.OUTPUT_LIMIT} bytes")
+    receipt = {
+        "cmd": rc["cmd"],
+        "exit": rc["exit"],
+        "ms": rc["duration_ms"],
+        "repo": rc.get("repo"),
+        "commit": rc.get("commit"),
+        "attested_by": "agent",
+    }
+    return receipt, output
+
+
 def _free_name(view: Any, base: str) -> str:
     taken = {a.name for a in view.artifacts}
     name, n = base, 1
@@ -81,9 +113,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         raise plans.unknown_task(view, tid)
     if args.get("ac") and not args.get("artifact"):
         raise OrchError("invalid.input", "--ac names what --artifact is evidence for")
-    receipt: dict[str, Any] | None = None
-    receipt_log: bytes | None = None
     notes: list[str] = []
+    if args.get("run") and ctx.hosted:  # the host never executes verify.cmd (HOST_REFUSED_ARGS answers first)
+        raise OrchError("invalid.input", "the host does not run verify.cmd: run it and send a receipt")
+    receipt, receipt_log = _client_receipt(c, ctx, tid, task, args)
     if args.get("run"):
         if task["verify"] is None:
             raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
@@ -135,6 +168,22 @@ OP = operation(
         "artifact": S("evidence file to store", **{"x-metavar": "PATH", "x-file": True}),
         "ac": S("criterion the evidence is for", pattern=r"^AC[1-9][0-9]*$", **{"x-metavar": "AC"}),
         "message": MSG,
+        # host mode only (contract 2, H3b2): the client's own run of verify.cmd; not a CLI flag
+        "receipt": {
+            "type": "object",
+            "description": "the client's run of verify.cmd (host mode)",
+            "properties": {
+                "cmd": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "exit": {"type": "integer", "minimum": -255, "maximum": 255},
+                "duration_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+                "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$"},
+                "repo": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
+            },
+            "required": ["cmd", "exit", "duration_ms"],
+            "additionalProperties": False,
+            "x-host": True,
+        },
+        "receipt_output": S("output file of the receipt's run (host mode)", **{"x-file": True, "x-host": True}),
     },
     required=("task",),
     positional=("task",),

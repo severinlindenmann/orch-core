@@ -302,6 +302,8 @@ def _task(t: dict, host: dict | None, ext: bool) -> dict:
             "exit": receipt["exit"],
             "ms": receipt["ms"],
             **({"commit": receipt["commit"]} if receipt.get("commit") else {}),
+            # H3b2: a client receipt is labelled; shown as the host stores it, never as host-verified
+            **({"attested_by": receipt["attested_by"]} if receipt.get("attested_by") else {}),
         }
         if receipt
         else None,

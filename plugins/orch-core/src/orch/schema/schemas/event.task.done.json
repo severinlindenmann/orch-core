@@ -253,6 +253,9 @@
               "type": "null"
             }
           ]
+        },
+        "attested_by": {
+          "const": "agent"
         }
       },
       "additionalProperties": false,

@@ -86,3 +86,13 @@ def test_an_approvals_auth_is_shown_as_it_is_never_relabelled_as_a_password():
     assert presence("hardware-key") == "hardware-key"
     assert presence("Pass‮word") == "unknown"
     assert presence({"not": "a string"}) == "unknown"
+
+
+def test_a_task_receipt_keeps_its_attested_by_label():
+    from orch_dashboard.adapters.tickets import _task
+
+    base = {"id": "T1", "text": "t", "state": "done", "proves": []}
+    receipt = {"exit": 0, "ms": 5, "commit": None, "at": "2026-10-12T10:00:00Z"}
+    labelled = _task(base, {"receipt": {**receipt, "attested_by": "agent"}, "leased_by": None}, True)
+    assert labelled["receipt"] == {"exit": 0, "ms": 5, "attested_by": "agent"}
+    assert _task(base, {"receipt": receipt}, True)["receipt"] == {"exit": 0, "ms": 5}  # direct-mode receipt: no label

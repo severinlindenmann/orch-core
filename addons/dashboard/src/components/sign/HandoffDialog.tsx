@@ -25,7 +25,7 @@ interface Words {
 }
 
 /** What each end state says, in core's words. */
-function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false, code?: string): Words | null {
+function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false): Words | null {
   switch (phase) {
     case 'done':
       return { title: 'Signed', body: `${title} is in the ${ofWorkspace ? "workspace's" : "ticket's"} log.`, tone: 'ok' }
@@ -34,14 +34,13 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'expired':
       return { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again to get a new code.', tone: 'warn' }
     case 'already':
-      return { title: 'Already done', body: 'The host says this is already in place, so there is nothing to sign. The page shows the current state.' }
+      return { title: 'Already done', body: 'The host says this is already in place, so there is nothing to sign. The page shows the current state. If you meant to do it again, say so.' }
     case 'changed':
-      if (code === 'idem.conflict') return { title: 'Changed since your first try', body: 'The page the request is built from changed since your first try, so the host will not match the earlier key. Nothing was signed. Start again to prepare what is there now.', tone: 'warn' }
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
-    case 'stale':
-      return { title: 'This attempt is too old', body: 'The host no longer keeps this attempt, so it cannot say what became of it. Check the page for the current state. Start again to make a new request with a new key.', tone: 'warn' }
+    case 'attempt_open':
+      return { title: 'An attempt for this is already open', body: error ?? 'The host holds an earlier attempt of this action (in the terminal, or from before this dashboard restarted). It settles or expires by itself; nothing new was prepared.', tone: 'warn' }
     case 'invalid':
       return { title: 'Not shown', body: 'The host sent a request whose fingerprint does not match its content, so it is not shown and was cancelled. Nothing was signed.', tone: 'warn' }
     case 'error':
@@ -129,15 +128,6 @@ export function HandoffDialog(p: HandoffDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [click.leftUnsettled])
 
-  // The terminal hand-off was refused because a signature of this action is unsettled: follow that request here.
-  useEffect(() => {
-    if (run.phase !== 'error' || run.error?.code !== 'click.unsettled' || !run.error.request_id) return
-    const id = run.error.request_id
-    run.reset(false)
-    click.attach(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.phase, run.error])
-
   const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
   const open = phase === 'preparing' || phase === 'waiting' || clickLive
   useEffect(() => {
@@ -159,7 +149,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const terminal = async () => {
     if (click.prepared && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
     click.reset()
-    if (p.action) void run.prepare(p.action)
+    if (p.action) void run.prepare(p.action, click.retryOf())
   }
   const prepareClickAgain = () => {
     if (p.action) void click.again(p.action) // cancels an open request first: no leaked slot
@@ -169,7 +159,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
-  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
+  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
@@ -280,11 +270,6 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
               </p>
             )}
-            {run.earlierOpen && (
-              <p role="status" data-testid="earlier-open" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
-                You signed in again after an answer was lost, so an earlier attempt may still be open; it expires by itself within 10 minutes (4 for a grant). Sign only the code shown here.
-              </p>
-            )}
             <HandoffPanel request={run.request} workspace={here ?? null} />
           </>
         )}
@@ -329,7 +314,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {click.phase === 'failed' && click.problem && (
               <>
                 {click.problem.next === 'review' && <Button onClick={() => void click.review()}>Read the review again</Button>}
-                {click.problem.next === 'prepare' && p.action && <Button onClick={prepareClickAgain}>Prepare again</Button>}
+                {click.problem.next === 'prepare' && p.action && <Button onClick={prepareClickAgain}>Start again</Button>}
+                {click.problem.next === 'again' && p.action && <Button onClick={prepareClickAgain}>Do it again</Button>}
                 {click.problem.next === 'retry' && p.action && <Button onClick={prepareClickAgain}>Try again</Button>}
                 {(click.problem.next === 'terminal' || click.problem.next === 'retry') && p.action && (
                   <Button variant="outline" onClick={() => void terminal()}>
@@ -356,9 +342,10 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Cancel
               </Button>
             )}
-            {(phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'stale' || phase === 'error') && p.action && (
-              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'stale' || run.error?.code === 'idem.conflict' ? 'Start again' : 'Prepare again'}</Button>
+            {(phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
+              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'expired' ? 'Start again' : 'Prepare again'}</Button>
             )}
+            {phase === 'already' && run.request?.state === 'submitted' && p.action && <Button onClick={again}>Do it again</Button>}
             {end && (
               <Button ref={cancelRef} variant={phase === 'done' ? 'default' : 'ghost'} onClick={() => void close()}>
                 Close

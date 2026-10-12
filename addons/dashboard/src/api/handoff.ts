@@ -211,24 +211,17 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
 
 export const signCommand = (code: string): string => `orch sign ${code}`
 
-const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-
-/** `opts.idem` for one click: `a_` and 26 Crockford characters (a ULID shape; the first is 0..7). Reused on a retry. */
-export function newIdem(random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
-  const bytes = random(26)
-  return 'a_' + [...bytes].map((b, i) => CROCKFORD[i === 0 ? b & 7 : b & 31]).join('')
-}
-
-export const IDEM = /^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/
-
 /** Codes of a refusal that mean the work is already done (design 4.3): no signature is needed. */
 export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused'])
 /**
- * Codes of the host about the KEY of a prepare (host contract 0.7): the same key with other arguments, and a key whose record
- * is gone (kept 24 h after the request ended). Neither is retried: the person starts again, with a new key, on their click.
+ * The server derives the host's idem from the action itself (one action intent -> at most one request), so the browser sends
+ * no key. These are its answers about the intent: it is already done (a request of it was signed), its request ended
+ * (cancelled or expired), or the host holds an attempt that cannot be reached from here (the terminal, or from before a restart).
+ * The first two are left only by an explicit click ("Do it again", "Start again"), which advances `retry`.
  */
-export const KEY_REUSED = 'idem.conflict'
-export const KEY_TOO_OLD = 'idem.expired'
+export const INTENT_DONE = 'intent.done'
+export const INTENT_ENDED = 'intent.ended'
+export const INTENT_OPEN = 'intent.open'
 
 /** Codes that mean the state moved between prepare and submit: refetch, then offer to prepare again. */
 export const CHANGED = new Set(['gate.stale', 'members.stale', 'question.stale', 'artifact.mismatch', 'observe.unavailable', 'source.missing', 'conflict.field', 'conflict.section'])

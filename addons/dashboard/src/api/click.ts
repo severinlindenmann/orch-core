@@ -72,6 +72,10 @@ export type ClickNext =
   | 'terminal'
   /** The outcome is unknown: look at the ticket before anything else. */
   | 'check'
+  /** Already done: nothing to sign; "Do it again" is an explicit new attempt. */
+  | 'again'
+  /** The host holds an attempt of this action that cannot be reached from here: nothing is offered until it settles. */
+  | 'open'
 
 export interface ClickProblem {
   title: string
@@ -118,8 +122,12 @@ export function clickProblem(e: unknown): ClickProblem {
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable':
       return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'} Sign in the terminal instead.`, next: 'terminal' }
-    case 'click.unsettled':
-      return { title: 'The last signature of this is not settled', body: 'It settles by itself. This shows its state until it does.', next: 'check' }
+    case 'intent.done':
+      return { title: 'Already done', body: 'A request for exactly this was already signed, so there is nothing to sign now. Do it again only if you mean to make it happen a second time.', next: 'again' }
+    case 'intent.ended':
+      return { title: 'The earlier attempt ended', body: `${e.message} Nothing was signed. Start again to make a new request.`, next: 'prepare' }
+    case 'intent.open':
+      return { title: 'An attempt for this is already open', body: 'The host holds an earlier attempt of this action (in the terminal, or from before this dashboard restarted). It settles or expires by itself; nothing new was prepared.', next: 'open' }
     case 'sign.convenience_readers':
       return { title: 'This would add a reader', body: e.message, next: 'terminal' }
     case 'rate.limited':

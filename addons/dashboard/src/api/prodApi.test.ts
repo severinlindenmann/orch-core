@@ -99,17 +99,19 @@ it('speaks the four click routes with POST bodies and keeps reason and wait on a
   })
   vi.stubGlobal('fetch', answers)
   const action = { action: 'approve', key: 'DEMO-0001', gate: 'plan' } as const
-  await api.prepareClick(ws, action, 'a_idem')
+  await api.prepareClick(ws, action)
+  await api.prepareClick(ws, action, 2)
   await api.viewClick(ws, 'hr_1')
   await api.cancelClick(ws, 'hr_1')
   const calls = answers.mock.calls.map((c) => [String(c[0]), (c[1] as RequestInit).method, JSON.parse(String((c[1] as RequestInit).body))])
   expect(calls).toEqual([
-    [`/api/w/${ws}/click/prepare`, 'POST', { action: 'approve', key: 'DEMO-0001', gate: 'plan', idem: 'a_idem' }],
+    [`/api/w/${ws}/click/prepare`, 'POST', { action: 'approve', key: 'DEMO-0001', gate: 'plan' }],
+    [`/api/w/${ws}/click/prepare`, 'POST', { action: 'approve', key: 'DEMO-0001', gate: 'plan', retry: 2 }],
     [`/api/w/${ws}/click/view`, 'POST', { request_id: 'hr_1' }],
     [`/api/w/${ws}/click/cancel`, 'POST', { request_id: 'hr_1' }],
   ])
   await expect(api.signClick(ws, 'hr_1', 'sha256:' + 'a'.repeat(64), '  word ')).rejects.toMatchObject({ code: 'rate.limited', retry_after_ms: 4200, reason: 'x' })
-  expect(JSON.parse(String((answers.mock.calls[3][1] as RequestInit).body))).toEqual({ request_id: 'hr_1', view_digest: 'sha256:' + 'a'.repeat(64), word: '  word ' })
+  expect(JSON.parse(String((answers.mock.calls[4][1] as RequestInit).body))).toEqual({ request_id: 'hr_1', view_digest: 'sha256:' + 'a'.repeat(64), word: '  word ' })
 })
 
 it('offers a workspace the click card only when the server lists the click feature', async () => {

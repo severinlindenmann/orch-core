@@ -211,7 +211,7 @@ const empty = {
  * the whole write surface of the dashboard; none of them signs, and nothing here ever submits a signature.
  */
 const handoff = {
-  prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, idem }),
+  prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
   getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
   cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
@@ -221,7 +221,7 @@ const handoff = {
  * the key is in core's signer process and never here.
  */
 const click = {
-  prepareClick: (ws: string, action: HandoffAction, idem: string) => call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, idem }),
+  prepareClick: (ws: string, action: HandoffAction, retry = 0) => call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
   signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
     call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),

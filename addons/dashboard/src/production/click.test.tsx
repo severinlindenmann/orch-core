@@ -55,7 +55,7 @@ it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Sign
   expect(panel.firstElementChild).toHaveTextContent(CLICK_RISK)
   expect(panel).toHaveTextContent('FROM-THE-SIGNER settings.set')
   expect(panel).not.toHaveTextContent(/HOST-BEFORE-VALUE|Preview|orch sign/)
-  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'settings_set', grant_hours: 12, idem: expect.stringMatching(/^a_/) })
+  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'settings_set', grant_hours: 12 })
   const sign = within(dialog).getByRole('button', { name: 'Sign' })
   expect(sign).toBeDisabled()
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })

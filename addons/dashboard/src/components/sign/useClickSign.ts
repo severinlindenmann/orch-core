@@ -1,13 +1,12 @@
 // One click-to-sign request from "Sign" to the signed event (host contract section 0.8.6 item 7): prepare with the
-// signer, read its View, show it, sign with the View's digest, or cancel. It prepares once per click (one idem, reused
-// on a retry) and never signs by itself. A refusal never cancels: only `cancel()` does.
+// signer, read its View, show it, sign with the View's digest, or cancel. It prepares an action intent (the server derives the host's idem from
+// the action, so a second tab or a retry reaches the same request) and never signs by itself. A refusal never cancels: only `cancel()` does.
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { getToken } from '@/api/bootstrap'
 import { CLICK_RISK, clickProblem, unknownOutcome, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
-import { newIdem, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 
 export type ClickPhase =
   | 'idle'
@@ -31,15 +30,14 @@ export interface ClickRun {
   problem: ClickProblem | null
   signed: ClickSigned | null
   start: (action: HandoffAction) => Promise<void>
-  /** Re-attach to a request the server says is unsettled (also from the terminal hand-off's refusal). */
-  attach: (requestId: string) => void
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   sign: (word?: string) => Promise<void>
   cancel: () => Promise<void>
   /**
-   * "Try again" / "Prepare again": a request that is still open is cancelled first (no leaked slot); with none open and
-   * the same action, the same key is reused so a lost prepare answer returns the same request.
+   * "Try again" / "Prepare again" / "Do it again": a request that is still open is cancelled first (no leaked slot) and
+   * the retry counter advances (an explicit new attempt); with none prepared yet, the same intent is repeated so a lost
+   * prepare answer returns the same request.
    */
   again: (action: HandoffAction) => Promise<void>
   /** Back to the start (the request must already be settled or cancelled). */
@@ -50,6 +48,8 @@ export interface ClickRun {
   leftUnsettled: boolean
   /** While settling: what is known about the wait (set when it can no longer be followed). */
   settleNote: string | null
+  /** The retry counter of the current action (the terminal fallback starts one above it: another path, another intent). */
+  retryOf: () => number
 }
 
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
@@ -72,7 +72,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const [leftUnsettled, setLeftUnsettled] = useState(false)
   const [settleNote, setSettleNote] = useState<string | null>(null)
   const live = useRef({ phase: 'idle' as ClickPhase, prepared: null as ClickPrepared | null, ws: undefined as string | undefined })
-  const attempt = useRef<{ sig: string; idem: string; token: string | null } | null>(null)
+  const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -111,20 +111,6 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     [setPhase],
   )
 
-  /** Follow a signature the server holds for this very action (in flight, unsettled or just signed): start nothing new. */
-  const attach = useCallback(
-    (requestId: string, why?: ApiError) => {
-      if (!ws) return
-      const open: ClickPrepared = { request_id: requestId, expires_at: '', op: '', confirm: 'click' }
-      live.current.prepared = open
-      live.current.ws = ws
-      setPrepared(open)
-      if (why) setProblem(clickProblem(why))
-      setPhase('settling')
-    },
-    [ws, setPhase],
-  )
-
   const start = useCallback(
     async (action: HandoffAction) => {
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
@@ -132,12 +118,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       setProblem(null)
       setPhase('preparing')
       const sig = JSON.stringify(action)
-      const token = getToken()
-      if (attempt.current && attempt.current.token !== token) attempt.current = null
-      const idem = attempt.current?.sig === sig ? attempt.current.idem : newIdem()
-      attempt.current = { sig, idem, token }
+      if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
+      const { retry } = attempt.current
+      attempt.current.lost = false
       try {
-        const got = await api.prepareClick(ws, action, idem)
+        const got = await api.prepareClick(ws, action, retry)
         if (!mounted.current || wsNow.current !== ws) {
           void api.cancelClick(ws, got.request_id).catch(() => {}) // nobody will see this request
           if (mounted.current) {
@@ -152,18 +137,15 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         await read(ws, got.request_id)
       } catch (e) {
         if (!mounted.current) return
-        // A retry of the same click keeps its key only while the failure may be a lost answer.
-        if (!(e instanceof ApiError && e.retryable)) attempt.current = null
-        if (e instanceof ApiError && e.code === 'click.unsettled' && e.request_id) {
-          attach(e.request_id, e)
-          return
-        }
+        // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the
+        // action is done, its attempt ended) moves on only by an explicit click, which advances the counter.
+        if (attempt.current) attempt.current.lost = !(e instanceof ApiError) || e.retryable
         fail(e)
       } finally {
         busy.current = false
       }
     },
-    [ws, setPhase, read, fail, attach],
+    [ws, setPhase, read, fail],
   )
 
   const review = useCallback(async () => {
@@ -294,7 +276,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   }, [ws, setPhase])
 
   const reset = useCallback((keepKey = false) => {
-    if (!keepKey) attempt.current = null // a new request is a new click: a new key
+    // Not keeping the attempt is an explicit "Do it again" / "Start again": the next prepare is another intent.
+    if (!keepKey && attempt.current) attempt.current = { ...attempt.current, retry: attempt.current.retry + 1 }
     live.current.prepared = null
     setSwitched(false)
     setLeftUnsettled(false)
@@ -313,7 +296,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         await cancel() // the old request must not keep its quota slot
         reset()
       } else if (!open) {
-        reset(true) // nothing was prepared yet: the same key, so a lost answer returns the same request
+        reset(attempt.current?.lost ?? false) // nothing was prepared: the same intent after a lost answer, else an explicit new one
       } else {
         reset()
       }
@@ -336,5 +319,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { phase, prepared, view, problem, signed, start, attach, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote }
+  const retryOf = useCallback(() => attempt.current?.retry ?? 0, [])
+
+  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, retryOf }
 }

@@ -25,7 +25,7 @@ describe('the hand-off dialog (real host)', () => {
     const dialog = await screen.findByRole('dialog', {}, T)
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare).toHaveBeenCalledTimes(1)
-    expect(s.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, expect.stringMatching(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/))
+    expect(s.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 0)
     expect(within(dialog).getByRole('heading', { name: 'Approve plan' })).toBeInTheDocument()
     expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent(`orch sign ${CODE}`)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toHaveTextContent(request.fingerprint)
@@ -124,48 +124,40 @@ describe('the hand-off dialog (real host)', () => {
     expect(s.prepare).toHaveBeenCalledTimes(2)
   })
 
-  it('idem.expired says the attempt is too old, and starts again only on the click, with a new key', async () => {
-    const request = fakeRequest()
-    s.prepare.mockRejectedValueOnce(refusal('idem.expired', 409)).mockResolvedValue(request)
-    s.get.mockResolvedValue(state(request))
+  it('idem.conflict at the host is an attempt that is already open: nothing is offered that prepares again', async () => {
+    s.prepare.mockRejectedValue(refusal('intent.open', 409))
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    expect(await within(dialog).findByText('An attempt for this is already open', {}, T)).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /again|Try/ })).toBeNull()
+    expect(s.prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('a request that is already signed is "Already done", and Do it again is an explicit new intent', async () => {
+    const done = { ...fakeRequest({ code: null }), state: 'submitted' as const }
+    const fresh = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '2', code: 'AAAA-BBBB' })
+    s.prepare.mockResolvedValueOnce(done).mockResolvedValueOnce(fresh)
+    s.get.mockResolvedValue(state(fresh))
     const { user } = await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
-    expect(await within(dialog).findByText('This attempt is too old', {}, T)).toBeInTheDocument()
+    expect(await within(dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(within(dialog).queryByText('Signed')).toBeNull()
     expect(s.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
-    await user.click(within(dialog).getByRole('button', { name: 'Start again' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Do it again' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(s.prepare.mock.calls[1][2]).not.toBe(s.prepare.mock.calls[0][2])
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1])
   })
 
-  it('idem.conflict says the page changed since the first try, and the next click draws a new key', async () => {
-    const request = fakeRequest()
-    s.prepare.mockRejectedValueOnce(refusal('idem.conflict', 409)).mockResolvedValue(request)
-    s.get.mockResolvedValue(state(request))
-    const { user } = await mount(PLAN)
-    const dialog = await screen.findByRole('dialog', {}, T)
-    expect(await within(dialog).findByText('Changed since your first try', {}, T)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Start again' }))
-    await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(s.prepare.mock.calls[1][2]).not.toBe(s.prepare.mock.calls[0][2])
-  })
-
-  it('a new session drops the kept key after a lost answer and says the earlier attempt may still be open', async () => {
-    const { bootstrap } = await import('@/api/bootstrap')
-    sessionStorage.setItem('orch-session', 'demo-not-a-real-token-one')
-    await bootstrap()
+  it('a lost answer is retried as the same intent (the same retry), also after signing in again', async () => {
     const request = fakeRequest()
     s.prepare.mockRejectedValueOnce(refusal('outcome.unknown', 503)).mockResolvedValue(request)
     s.get.mockResolvedValue(state(request))
     const { user } = await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
     await within(dialog).findByText('Unknown outcome', {}, T)
-    sessionStorage.setItem('orch-session', 'demo-not-a-real-token-two') // signed in again
-    await bootstrap()
     await user.click(within(dialog).getByRole('button', { name: 'Try again' }))
-    expect(await within(dialog).findByTestId('earlier-open', {}, T)).toHaveTextContent('an earlier attempt may still be open')
-    expect(s.prepare.mock.calls[1][2]).not.toBe(s.prepare.mock.calls[0][2]) // not the old key: the host would not match it
-    sessionStorage.removeItem('orch-session')
-    await bootstrap()
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 0]) // the server derives the same idem; no browser key
   })
 
   it('cancel asks the host to cancel and closes', async () => {
@@ -190,7 +182,7 @@ describe('the hand-off dialog (real host)', () => {
     expect(s.prepare).toHaveBeenCalledTimes(1)
   }, 15000)
 
-  it('shows Expired with Prepare again, and prepares again only when the person asks', async () => {
+  it('shows Expired with Start again, and prepares again only when the person asks', async () => {
     const first = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '1' })
     const second = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '2', code: 'AAAA-BBBB' })
     s.prepare.mockResolvedValueOnce(first).mockResolvedValueOnce(second)
@@ -198,10 +190,10 @@ describe('the hand-off dialog (real host)', () => {
     const { user } = await mount(PLAN)
     expect(await screen.findByText('Expired', {}, { timeout: 9000 })).toBeInTheDocument()
     expect(s.prepare).toHaveBeenCalledTimes(1)
-    await user.click(screen.getByRole('button', { name: 'Prepare again' }))
+    await user.click(screen.getByRole('button', { name: 'Start again' }))
     expect(await screen.findByTestId('handoff-command', {}, T)).toHaveTextContent('orch sign AAAA-BBBB')
     expect(s.prepare).toHaveBeenCalledTimes(2)
-    expect(s.prepare.mock.calls[0][2]).not.toBe(s.prepare.mock.calls[1][2]) // a new click is a new idem
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1]) // the explicit click advances the retry counter
   }, 20000)
 
   it.each(['gate.already_approved', 'transition.refused'])('%s is "Already done": nothing to sign, nothing prepared again', async (code) => {
@@ -225,7 +217,7 @@ describe('the hand-off dialog (real host)', () => {
     expect(s.prepare).toHaveBeenCalledTimes(2)
   })
 
-  it('a lost answer is retried with the same idem, a definitive refusal is not', async () => {
+  it('a transient failure is retried as the same intent', async () => {
     const lost = refusal('host.unavailable', 503, true)
     s.prepare.mockRejectedValueOnce(lost).mockResolvedValue(fakeRequest())
     s.get.mockResolvedValue(state(fakeRequest()))
@@ -233,7 +225,7 @@ describe('the hand-off dialog (real host)', () => {
     await user.click(await screen.findByRole('button', { name: 'Try again' }, T))
     await screen.findByTestId('handoff-command', {}, T)
     expect(s.prepare).toHaveBeenCalledTimes(2)
-    expect(s.prepare.mock.calls[1][2]).toBe(s.prepare.mock.calls[0][2])
+    expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 0])
   })
 
   it('a host answer whose fingerprint does not recompute is not shown, and is cancelled', async () => {
@@ -330,7 +322,7 @@ describe('forms keep core words and prepare only on the verb', () => {
     await user.type(within(dialog).getByRole('textbox'), 'Split T2')
     await user.click(verb)
     await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(s.prepare).toHaveBeenCalledWith(expect.any(String), { action: 'request_changes', key: ticket.key, gate: 'plan', message: 'Split T2' }, expect.any(String))
+    expect(s.prepare).toHaveBeenCalledWith(expect.any(String), { action: 'request_changes', key: ticket.key, gate: 'plan', message: 'Split T2' }, 0)
   })
 
   it('a verdict names Pass or Send back and shows no cached commit facts before the request exists', async () => {
@@ -346,7 +338,7 @@ describe('forms keep core words and prepare only on the verb', () => {
     await user.type(within(dialog).getByRole('textbox'), 'Add a receipt')
     await user.click(within(dialog).getByRole('button', { name: 'Send back' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(s.prepare).toHaveBeenCalledWith(expect.any(String), { action: 'verdict', key: ticket.key, outcome: 'fail', message: 'Add a receipt' }, expect.any(String))
+    expect(s.prepare).toHaveBeenCalledWith(expect.any(String), { action: 'verdict', key: ticket.key, outcome: 'fail', message: 'Add a receipt' }, 0)
   })
 
   it('an answer is prepared with exactly the option and text the person chose', async () => {
@@ -357,7 +349,7 @@ describe('forms keep core words and prepare only on the verb', () => {
     const dialog = await screen.findByRole('dialog', {}, T)
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(s.prepare).toHaveBeenCalledWith(expect.any(String), { action: 'answer', key: ticket.key, question: 'Q2', option: 'date', message: 'local midnight' }, expect.any(String))
+    expect(s.prepare).toHaveBeenCalledWith(expect.any(String), { action: 'answer', key: ticket.key, question: 'Q2', option: 'date', message: 'local midnight' }, 0)
   })
 
   it('a double click is one request', async () => {

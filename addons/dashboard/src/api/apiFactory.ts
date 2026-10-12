@@ -122,10 +122,10 @@ export function createApi(transport: Transport) {
      * The terminal hand-off (M3, real host only): `idem` is one id per click, reused on a retry. The server prepares the
      * sign request; the person signs in a terminal. Nothing here signs.
      */
-    prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, idem }),
+    prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, ...(retry ? { retry } : {}) }),
     getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     /** Click-to-sign (H5c, real host only; the mock never offers it): the signer's View is shown as it is. */
-    prepareClick: (ws: string, action: HandoffAction, idem: string) => call<ClickPrepared>('POST', `/api/w/${ws}/click/prepare`, { ...action, idem }),
+    prepareClick: (ws: string, action: HandoffAction, retry = 0) => call<ClickPrepared>('POST', `/api/w/${ws}/click/prepare`, { ...action, ...(retry ? { retry } : {}) }),
     viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
     signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),

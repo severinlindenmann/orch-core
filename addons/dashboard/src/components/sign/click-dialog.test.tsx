@@ -118,7 +118,7 @@ describe('the action dialog with click-to-sign', () => {
   it('Sign prepares once with one idem, reads the View and shows only it', async () => {
     const { ws, ticket, dialog } = await toPanel()
     expect(c.prepare).toHaveBeenCalledTimes(1)
-    expect(c.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, expect.stringMatching(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/))
+    expect(c.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 0)
     expect(c.view).toHaveBeenCalledWith(ws, REQ)
     const panel = within(dialog).getByTestId('click-panel')
     expect(panel.firstElementChild).toHaveTextContent(CLICK_RISK)
@@ -147,7 +147,7 @@ describe('the action dialog with click-to-sign', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in the terminal instead' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(c.cancel).toHaveBeenCalledWith(ws, REQ)
-    expect(s.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, expect.stringMatching(/^a_/))
+    expect(s.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 1) // the terminal path is another intent: the host binds an idem to its path
   })
 
   it('Cancel cancels the request; closing it by Escape does too', async () => {
@@ -293,18 +293,35 @@ describe('an unknown outcome never leads to a second signature', () => {
     await waitFor(() => expect(stateSpy).toHaveBeenCalled(), T)
   }, 20000)
 
-  it('closing and reopening the same action re-attaches to the unsettled request instead of preparing a new one', async () => {
-    const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
-    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'click.unsettled', message: 'x', retryable: false, request_id: REQ }))
+  it('an action that already landed is "Already done"; Do it again is an explicit click with the next retry', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.done', message: 'This is already done.', retryable: false, state: 'submitted' } as never, 5))
     const m = await open()
     fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
-    await within(m.dialog).findByTestId('click-settling', {}, T)
-    await waitFor(() => expect(stateSpy).toHaveBeenCalledWith(m.ws, REQ), T)
-    expect(c.view).not.toHaveBeenCalled()
-    expect(within(m.dialog).queryByRole('button', { name: /Sign in the terminal instead|^Sign$/ })).toBeNull()
-    stateSpy.mockResolvedValue({ id: REQ, state: 'submitted' })
-    await within(m.dialog).findByText('Signed', {}, { timeout: 8000 })
-  }, 20000)
+    expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(c.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
+    expect(within(m.dialog).queryByRole('button', { name: /^Sign$|Sign in the terminal instead/ })).toBeNull()
+    fireEvent.click(within(m.dialog).getByRole('button', { name: 'Do it again' }))
+    await within(m.dialog).findByTestId('click-panel', {}, T).catch(() => undefined)
+    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('a cancelled or expired earlier attempt offers Start again (retry 1); an open attempt elsewhere offers nothing', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.ended', message: 'The earlier attempt is cancelled.', retryable: false }, 5))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Start again' }, T))
+    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('an attempt that is open at the host (terminal, or before a restart) is named and nothing prepares again', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.open', message: 'x', retryable: false }, 5))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    expect(await within(m.dialog).findByText('An attempt for this is already open', {}, T)).toBeInTheDocument()
+    expect(within(m.dialog).queryByRole('button', { name: /Start again|Do it again|Try again|^Sign$|terminal instead/ })).toBeNull()
+  })
 
   it('after the polling deadline it says so honestly and still offers nothing', async () => {
     c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() - 120_000).toISOString(), op: 'approve', confirm: 'click' })
@@ -375,20 +392,20 @@ describe('every error code and reason has an honest message', () => {
   it('a rate limit names how long to wait', () => {
     expect(clickProblem(err('rate.limited', undefined, { retry_after_ms: 4200 })).waitMs).toBe(4200)
   })
+  it('already_signed is "Already signed from another window" and waits on the request; record_unavailable is the terminal', () => {
+    const signed = clickProblem(err('human.click_refused', 'already_signed'))
+    expect(signed.title).toBe('Already signed from another window')
+    expect(signed.next).toBe('check') // never Sign again: it re-attaches to the request's state
+    const record = clickProblem(err('human.click_refused', 'record_unavailable'))
+    expect(record.next).toBe('terminal')
+    expect(record.body).toMatch(/orch sign CODE/)
+  })
+  it('intent answers: done offers Do it again, ended offers Start again, open offers nothing', () => {
+    expect(clickProblem(err('intent.done')).next).toBe('again')
+    expect(clickProblem(err('intent.ended')).next).toBe('prepare')
+    expect(clickProblem(err('intent.open')).next).toBe('open')
+  })
   it('a network failure is a retry, not a crash', () => {
     expect(clickProblem(new Error('boom')).next).toBe('retry')
   })
-})
-
-describe('the terminal hand-off follows an unsettled request too', () => {
-  it('a hand-off refused with click.unsettled re-attaches to that request (settling), not a plain error', async () => {
-    const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
-    flag(false) // click is not offered here: the dialog starts the hand-off by itself
-    s.prepare.mockRejectedValue(new ApiError(409, { code: 'click.unsettled', message: 'x', retryable: false, request_id: REQ }, 9))
-    const m = await mount(PLAN)
-    const dialog = await screen.findByRole('dialog', {}, T)
-    await within(dialog).findByTestId('click-settling', {}, T)
-    await waitFor(() => expect(stateSpy).toHaveBeenCalledWith(m.ws, REQ), T)
-    expect(within(dialog).queryByRole('button', { name: /Try again|Sign in the terminal instead/ })).toBeNull()
-  }, 20000)
 })

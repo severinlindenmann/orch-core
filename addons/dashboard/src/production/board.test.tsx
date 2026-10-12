@@ -21,7 +21,7 @@ it('a move on a real host is a hand-off for backlog or open, and nothing moves u
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Move DEMO-0001 to Backlog')
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'move', key: 'DEMO-0001', to: 'backlog', idem: expect.any(String) }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'move', key: 'DEMO-0001', to: 'backlog' }])
 })
 
 it('a host that does not serve move offers no move at all', async () => {

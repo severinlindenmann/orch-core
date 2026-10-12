@@ -195,6 +195,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `refusals/1` | `session.refusals` (1) (v1.5, later than H6b) | workspace |
 | `activity/1` | `activity.list` (1) | workspace |
 | `diff/1` | `diff`, `artifact.get` (1) | workspace |
+| `quick/1` | `quick.list` (1) (H11f) | workspace |
 | `human/1` | `human.prepare`, `human.get`, `human.submit`, `human.pending`, `human.cancel` (1) | workspace |
 | `sub/1` | `sub.open`, `sub.close` (1) | workspace |
 | `blob/1` | `blob.put`, `blob.drop` (1) | workspace |
@@ -205,7 +206,6 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` (1) (v1.6, §12.8) | workspace |
-| `quick/1` | `quick.list` (1) (v1.6, §12.9) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
 
 
@@ -517,6 +517,7 @@ state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`),
 | `activity.list` | `page.expired`, `not_found` (`ticket`), `invalid.input` (a `page` token used with other arguments than the first page's; `ticket` with `scope:"workspace"`; `since` after `until`) |
 | `diff` | `not_found`, `observe.unavailable`, `repo.remote_mismatch` |
 | `artifact.get` | `not_found` |
+| `quick.list` (H11f) | `page.expired` (a `page` token that is not a live token of this caller: the same as `ticket.query`), `invalid.input` (a valid token with other arguments than the first page's, any other key, `dry_run`), `blob.invalid` (`files`), `quota.host` (one `diff` or `quick.list` in flight per caller, and the host-wide diff cap, shared with `diff`), `observe.unavailable` (only when the reader phase hangs past its budget plus 5 s); a count the reader cannot give is `null`, not an error |
 | `workspace.settings` (v1.5) | `page.expired`, `invalid.input` (a `page` token with other arguments) |
 | `ticket.text` (v1.5) | `not_found` (ref, `seq`, a field the event does not have, or an `event_id` that is not the event at `seq`), `ambiguous_ref`, `invalid.input` (`offset` past the text or not on a scalar-value boundary; `offset > 0` without `event_id`) |
 | `artifact.query` (v1.5) | `page.expired`, `not_found` (`ticket`), `invalid.input` (a `page` token with other arguments, including `counts`) |
@@ -1636,6 +1637,51 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    `<state>/run`. It says only where to look and is not a trust input: the registry or the pin and the handshake decide
    whom the socket may belong to.
 
+**As built in H11f** (quick tasks, addon #308, D-P2-35; additive, cap `quick/1`, no new event type and no new store):
+
+1. **A quick task is a ticket** with `type: chore` and the label `quick`. Nothing records "quick" except that label, so
+   claims, grants, evidence, visibility, approval gates and the log work unchanged, and a task that outgrows the idea is
+   made an ordinary ticket by removing the label (`orch set KEY labels=…`).
+2. **`quick.list`** (read; columns P, G and N, like `ticket.query`: N sees `workspace` tickets only; registry op in the
+   CLI, so `orch describe quick.list` documents it) takes `{status?:[Status], limit?:int 1..200 = 100, page?:str,
+   max_commits?:int 1..100 = 1, max_files?:int 1..1000 = 3}` and answers `{rows, next_page, total}`. The limits are
+   flat arguments instead of the draft's `limits{}` object so the CLI can spell them (`--max-commits`, `--max-files`).
+   - On the host the rows are `ticket.query {label:["quick"], sort:"key", order:"desc"}` for the same viewer (one
+     code path: restricted tickets are never listed or counted, a later page rebuilds from the current state, closed
+     tickets only when `status` asks) and each carries `quick: {commits, files, over}`. Direct mode returns the same
+     fields minus the ones only the host's `ticket.query` rows have (`gates`, `needs`, `claim`, ...); its `page` token
+     is an offset (`o:<n>`), the host's is the opaque `ticket.query` token. Text and `--json` of the CLI are the same
+     in both modes except for the token and those extra row fields.
+   - `commits` and `files` come from the ticket's linked branches (the `diff` plan and reader, `context 0`: every
+     commit of `base..head` per linked repo including `commits_more`, and the changed files). `null` for all three
+     (`over` too) when the ticket links no repo, has no branch or working copy, or the reader fails or is out of time:
+     the numbers are a display and never an error. `over` is `commits > max_commits or files > max_files`; **the limits
+     are display only**, nothing refuses a quick task that is over them.
+   - The host answers in the three phases of `diff` (worker thread: rows and plans; reader executor: at most 20 s for
+     all rows together, one in flight per principal shared with `diff` and counted in the host-wide diff cap, so
+     `quota.host` when a diff or list of the same caller is running; worker thread again: column and visibility
+     re-checked, a row hidden meanwhile is dropped from the page and `total` is reduced by the rows dropped **on this
+     page only**: a ticket on another page hidden during the read stays counted until the next call). Direct mode has
+     the same 20 s total budget for its reader calls, and answers a bad `page` token `invalid.input`. `welcome.ops` lists `quick.list` at 1 and `welcome.caps` lists `quick/1`.
+3. **`orch quick add "TITLE"`** is a CLI composite, not an operation: `new TITLE --type chore`, then `set KEY
+   labels=quick`, each an ordinary call in direct or host mode (one title, one line, 1 to 120 characters, else
+   `invalid.input`). It prints `ok KEY quick.add created|labelled seq=N` (or the `--json` envelope with `{key, title,
+   type, labels, created}`). The draft's single-request person click flow (host spec §9 Q8) stays open: the dashboard
+   signs `new` and then `set`.
+4. **A failure between the two steps** leaves an ordinary chore ticket and answers the new catalog code
+   **`quick.unlabelled`** (exit 9, retryable; the message names the key, the step's own code and the manual fix
+   `orch set KEY labels=quick`). Running the same `quick add` again labels that ticket instead of creating a second
+   one. It adopts a ticket only when **all** hold: it is among the 50 newest, an exact title match, a `chore` with no
+   label, no claim and exactly one event (`ticket.created`); that event's actor is the caller's own (an agent with the
+   same grant id and the same session as the call, read from `show KEY --log --json`, whose `ticket.created` object
+   now carries `{at, actor:{kind, for, grant, session}}`); and it was created within the last 10 minutes. Anything else
+   (another person's or another grant's or session's chore, an older one) is never taken: a new ticket is made. Within
+   the CLI's own 15-minute dedup window an identical `new` in the same session is answered from its record, so a retry
+   of the whole command may also come back through that path with the same key. `quick.unlabelled` is raised by the
+   CLI only (no operation declares it).
+5. **Not built:** the quick-tasks addon manifest and its owner `needs` rule (manifest-only addons are D-P2-36 and
+   belong to the addon runner work) and the dashboard UI.
+
 **As built in H7** (host mode on by default for registered workspaces, phase 1, tier A):
 
 1. **The per-user service (`orch.host.enable`).** `orch host enable` installs the release (D-P2-4), writes the unit and
@@ -2251,7 +2297,7 @@ envelope.
   sends one request and returns its `result` or raises `ClickError(code, message, reason, retry_after_ms)`;
   `ClickClient.close()` closes the parent's end, which makes the child exit (EOF), waits up to 2 s and then kills that
   child's own PID (never anything else). The child also exits when its parent PID changes. One child per dashboard
-  server; restart it on exit (the registry is lost: open approvals become terminal-only, which is safe).
+  server; restart it on exit (the registry is lost: open approvals that were not signed become terminal-only, which is safe; signed ones keep their durable sign record, so a retried `sign` resends the identical events).
 - **Packaging and versions (normative).** The dashboard depends on orch-core at **runtime** (`orch-core>=2.0.0.dev0`
   in `[project].dependencies`, from the repo path source while it is a dev version; once published, at least the first
   release with `orch/click/`). No extra is needed: `orch.click.spawn` and `orch.click.client` import only the standard
@@ -2316,6 +2362,8 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   | `busy` | another `sign` is in flight |
   | `check_failed` | a §0.8.1 signer check refused the host's answer (the message names the check) |
   | `uncertain` | a submit's outcome is unknown and could not be recovered; `human.pending` shows the request |
+  | `already_signed` | `sign` names another `view_digest` than the one this request was signed for (the durable sign record, below): a request is signed at most once, also after a restart |
+  | `record_unavailable` | the durable sign record of the request cannot be written (nothing is submitted, the signatures are dropped) or exists but cannot be read or validated (fail closed: this signer does not sign that request again; `orch sign` cannot either, the request is bound to `convenience`, so prepare a new one) |
 
 - **`prepare`** is the only way a request becomes click-eligible. The signer forwards it on its **own** host
   connection as `human.prepare {op, args, signer:{device, auth:"convenience"}}` with the dashboard's idem (#402: a
@@ -2347,11 +2395,41 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   View from that answer and requires its digest to equal the one shown (a changed substantive check or registry name is
   `view_changed`); it signs
   **the stored immutable inputs** (neither the View nor the 12-hex fingerprint substitutes for this comparison).
-  **Retries:** before the first submit the signer retains the exact signed event array and a submit idem. An uncertain
-  submit (a lost answer, a broken connection) is retried with those identical events and idem, without fetching a new
-  binding or signing again. Completed responses are cached for duplicate local `sign` calls. On `idem.conflict`, a lost
-  registry (signer restart) or any other uncertainty the signer reads `human.pending {request_id}` and reports the
-  request's state instead of signing again.
+  **Retries:** before the first submit the signer writes the exact signed event array and a submit idem to the
+  **durable sign record** (below) and syncs it. An uncertain submit (a lost answer, a broken connection, a signer crash
+  or restart) is retried with those identical events and idem, without fetching a new binding or signing again.
+  Completed responses are recorded for duplicate `sign` calls. On `idem.conflict` or any other uncertainty the signer
+  reads `human.pending {request_id}` and reports the request's state instead of signing again.
+- **Durable sign records (H5c follow-up, normative).** `sign` signs a request at most once per
+  `(request_id, view_digest)`, across signer crashes and restarts:
+  - **Where.** `<person state>/person/click/<workspace_id>/<request_id>.json`: person-owned directories 0700 and files
+    0600, walked descriptor-relative with `O_NOFOLLOW` (`secure_dir`), each file a regular single-link file checked on
+    its own descriptor. One window has two links: a crash between linking the record into place and unlinking its
+    temporary file. A read that finds exactly that (the second link is the record's own `.<name>.tmp*` sibling with
+    the same inode) removes the temporary file and reads again; any other second link fails closed. Under `<state>/person/`, so the host's audit hook refuses it like the rest of person custody.
+  - **What.** `{"v":1, workspace_id, request_id, view_digest, op, idem, events, expires_at, signed_at, result}`:
+    `events` is the exact signed event array (its signatures are what the workspace log shows anyway), `idem` the submit
+    idem, `result` null until `human.submit` answered, then its result. **Never** a key, a factor, keychain material
+    or a grant secret (`grant` is terminal-only and refused before signing).
+  - **When.** After signing and **before the signature leaves the signer** (before `human.submit`), the record is
+    written exclusively (a temporary file opened `O_CREAT|O_EXCL|O_NOFOLLOW`, written, `fsync`ed, linked into place,
+    then the directory `fsync`ed). If that fails, nothing is submitted and the signatures are dropped
+    (`record_unavailable`). A record already in place (another signer process of the same person won the race) wins:
+    its events are used, never the new ones. After the commit the record is replaced (temporary file, `fsync`,
+    rename, directory `fsync`) by one that holds the result; failing that only costs a resubmit under the same idem.
+  - **Every `sign` reads the record first**, before the in-memory registry, and **the in-memory guard stays as
+    well**: a request this process signed answers its cached result or resends the identical events and idem from
+    memory (and writes the record again, best effort) even when the record was lost. With the record: the same `view_digest` answers the recorded
+    result (`duplicate: true`) or resends the recorded events under the recorded idem (also when the registry was lost
+    in a restart: no `prepare` or `view` is needed, and nothing is signed); another `view_digest` is
+    `human.click_refused`/`already_signed`. A record that exists but is not a private regular file of the person, does
+    not parse or does not validate (shape, identifiers, its own request) fails closed with `record_unavailable`.
+  - **Retention.** A record is pruned once its request's `expires_at` plus the host's request retention
+    (`orch.host.requests.KEEP_SECONDS`, 24 h) has passed (an unreadable file: its modification time plus the 10-minute
+    request lifetime plus the retention); pruning runs at signer start and at `prepare` (never on the `sign` path), at most once a
+    minute, and never stops a signature; temporary files a crash left behind (`.<request_id>.json.tmp*`) are removed
+    after 10 minutes. By then the host has no request to accept a submit for. `cancel` keeps the record: a cancelled
+    request is still never signed again.
 - **Refusals do not cancel.** A click-path eligibility, availability, size or rate refusal does not cancel the host
   request; it invalidates the local approval. Explicit `cancel` cancels it: `cancel` is serialized with signing and
   invalidates the local approval before further signing can start; it reports already-signed or submitted state
@@ -2452,6 +2530,20 @@ member, policy or addon operations.
 | Backup or sync | File custody may be backed up. Traditional login-keychain custody may also be backed up. Data-protection non-migration claims apply only to a correctly implemented and tested data-protection backend. |
 | A reader that does not know `convenience` | The per-workspace flag, the readers condition (`sign.convenience_unavailable`) and the block on adding readers (`sign.convenience_readers`). |
 | A same-UID process pre-claims a click idem | `idem.conflict`; the signer reports the request state and signs nothing again. A denial of service by an already accepted attacker. |
+| Signer crash or restart mid-sign; a dashboard retry or a second View after it | The durable sign record is synced before the signature leaves: a retry resends the identical events and idem, another View is `already_signed`. A same-UID process can delete or corrupt the record (accepted: it can sign anyway); corruption fails closed. A record can also be lost without an attacker (a cleanup of the state directory, a backup restore, a wall-clock jump of more than 24 h before a prune, file-system loss): the live signer's in-memory guard still never signs again; only after the signer has also restarted can a lost record allow one fresh signature, and the host still commits a request once. |
+
+**As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
+
+1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as
+   `python -I -m orch.click --fd N`; the dashboard imports only `spawn`, `client` and `protocol`.
+2. **Durable sign records (H5c follow-up, changelog item 18)** are `orch.click.records.Records`, as item 5 specifies:
+   `create` (exclusive, before `human.submit`), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
+   (the result, after the commit) and `prune`. They reuse the custody helpers `secure_dir`, `read_private` and
+   `write_private` (`orch.custody.convenience`). A record is at most 8 MiB. Two `human.click_refused` reasons are new:
+   `already_signed` and `record_unavailable`; the log gains `adopted` (another signer process's record was used) and
+   `record_failed` (a record could not be written again or settled after the commit; never escapes). Tests (`tests/host/test_click_records.py`) kill a real signer process
+   with `SIGKILL` after the record and before the submit, and after the host committed but before the reply, restart
+   it and get the identical events and idem on retry; a second View of the same request after a restart is refused.
 
 
 ### 0.9 Subscriptions
@@ -2886,7 +2978,6 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     `hello.ops`); a committed person request's `Result` keeps the inner op's `lines`.
     **Release note:** an older CLI (H4b, before H7) does not list `task.done` in its hello, so this host refuses its
     `orch task done` with `op.unsupported` ("served at version 2, not 1"); update the CLI. Every other op still works.
-
 15. **H6c (additive, `diff` only):** `diff` serves `since:"my_approval"` and, under `diff_ext/1` (now listed in
     `welcome.caps`), `head` and `base`; `sources[].base_source` may be `host_pinned`, `approved` and `pushed`. No new
     error code: an unusable approval or an unauthorized `head`/`base` is `not_found`. See "As built in H6c" in §0.8.
@@ -2898,6 +2989,14 @@ existing op changes its version.
     socket and `runner/1` on the new runner socket (peer class `runner`); `whoami` carries
     `runner` info; the click signer's deposit-only grant (amends §0.8.6 item 6); D-P2-32 amends D-P2-19 and H10a (a
     registered worktree is the ticket's working copy for D58 and `tree.check`); new codes in §0.6 and limits in §0.11.
+17. **H11f (additive):** cap `quick/1` and op `quick.list` (read, columns P, G and N); no new event type, no new store
+    (see "As built in H11f"). Catalog code `quick.unlabelled` (CLI only).
+18. **Durable click-sign records (H5c follow-up, additive, client-side only):** the click signer writes and syncs a
+    per-request record of the signed events and submit idem before a signature leaves it, so it signs at most once per
+    `(request_id, view_digest)` across crashes and restarts (§0.8.6 item 5, "Durable sign records"). New
+    `human.click_refused` reasons `already_signed` (another `view_digest` for a signed request) and
+    `record_unavailable` (the record cannot be written, or exists but cannot be read: fail closed). A repeated `sign`
+    after a signer restart needs no new `prepare` or `view`. No host change and no wire change on the workspace socket.
 
 ---
 
@@ -4470,6 +4569,8 @@ records.note     {manifest:Hash, commit:Sha, pushed:bool, url?:str} → {}
   contents or credentials. #309's hook installer never touches the records repo.
 
 ### 12.9 Quick tasks (#308)
+
+**Built in H11f (#429):** "As built in H11f" (§0.8) is authoritative where it differs from the design text below.
 
 `quick.list {status?:[Status], limits?:{commits:int 1..100, files:int 1..1000}, limit?:int 1..200 = 100, page?:str}` →
 `{rows:[Row & {quick:{commits:int | null, files:int | null, over:bool | null}}], next_page, total}`: exactly

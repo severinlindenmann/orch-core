@@ -53,6 +53,7 @@ parse.text 6 retry:false
 wait.timeout 7 retry:true
 conflict.section 8 retry:true
 conflict.field 8 retry:true
+quick.unlabelled 9 retry:true
 retry.later 9 retry:true
 quota.unattended 9 retry:true
 members.stale 9 retry:true

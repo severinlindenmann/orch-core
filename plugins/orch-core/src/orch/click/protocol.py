@@ -34,6 +34,8 @@ REFUSALS = (
     "busy",
     "check_failed",
     "uncertain",
+    "already_signed",
+    "record_unavailable",
 )
 FRAME_ID = re.compile(r"[A-Za-z0-9_-]{1,32}")
 WS_ID = re.compile(r"[0-9a-f]{32}")

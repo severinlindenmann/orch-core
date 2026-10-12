@@ -608,6 +608,15 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   environment, timeout, output capped at 1 MiB), refuses a dirty working tree of a linked repo (the receipt must name its
   commit), picks the only linked repo or, with several, the one whose directory name matches the working copy it is in,
   and sends nothing when the command fails. `orch describe` does not list the `x-host` arguments.
+  **Trust of the command (host mode).** The command the CLI runs is the `verify` of the one task asked for, from the
+  host's `task.list` answer, which is the host's view of the signed ticket. The CLI runs it only if the answer names the
+  ticket asked for (the key, or the number given) and a task with exactly that id, and `verify` is a non-empty string of
+  at most 4096 bytes without NUL; otherwise nothing runs. No other host field, error text or argument is ever executed.
+  It then runs through the same runner as direct mode (same argv splitting without a shell, allow-listed environment,
+  timeout, output cap, working copy as cwd) and the `task.done` goes to the key it was read from. This equals direct
+  mode's trust: the person approved `verify.cmd` in the plan, and a host that lied could only make the client run a
+  command of its own choosing, as any program the user's own host-side state could already name. The host re-checks
+  that the receipt's `cmd` equals the signed `verify.cmd` byte for byte.
 - `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
   `host.wsk_create` + `host.bootstrap` composite.
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.

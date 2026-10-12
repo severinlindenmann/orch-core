@@ -392,6 +392,32 @@ def _task_ref(task: str) -> tuple[str | None, str]:
     return (ref or None), tid
 
 
+_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-[0-9]{1,9}")
+_TASK = re.compile(r"T[1-9][0-9]*")
+VERIFY_MAX = 4096  # F1: verify.cmd is a plain string; the receipt's cmd is at most this long
+
+
+def _bound_key(key: Any, ref: str | None) -> str:
+    """The ticket key the host answered with, which must be the ticket asked for (a key or its number)."""
+    if not isinstance(key, str) or not _KEY.fullmatch(key):
+        raise OrchError("invalid.input", "the host's answer names no ticket: nothing was run")
+    if ref is not None:
+        number = key.rpartition("-")[2]
+        if ref != key and not (ref.isdigit() and int(ref) == int(number)):
+            raise OrchError("invalid.input", "the host answered for another ticket than the one asked: nothing was run")
+    return key
+
+
+def _checked_cmd(cmd: Any, tid: str) -> str:
+    """``verify.cmd`` as the host's view of the signed ticket gives it, in the shape F1 allows (a non-empty string of
+    at most 4096 UTF-8 bytes) and without a NUL, which no argv holds. Anything else: nothing is run."""
+    if cmd is None:
+        raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
+    if not isinstance(cmd, str) or not cmd.strip() or "\x00" in cmd or len(cmd.encode("utf-8", "replace")) > VERIFY_MAX:
+        raise OrchError("invalid.input", f"the host sent a verify command for {tid} that is not valid: nothing was run")
+    return cmd
+
+
 def _local_repo(ctx: Any, linked: list[str]) -> tuple[str | None, Path | None]:
     """The linked repository a verify command runs in (F1 section 6): the only linked one; with several, the one whose
     working copy the shell is in, found by its directory name. ``(None, None)`` when the ticket links none."""
@@ -431,13 +457,13 @@ def _client_receipt(
 
     ref, tid = _task_ref(str(args["task"]))
     doc = _request(target, "task.list", {"ref": ref} if ref else {}, auth=auth)
+    key = _bound_key(doc.get("key"), ref)
     data = doc.get("data") or {}
-    task = next((t for t in data.get("tasks") or [] if t.get("id") == tid), None)
+    # only the entry of the task asked for, by its exact id: nothing else the host sent is read as a command
+    task = next((t for t in data.get("tasks") or [] if isinstance(t, dict) and t.get("id") == tid), None)
     if task is None:
         raise OrchError("not_found", f"no task {tid} on this ticket")
-    cmd = task.get("verify")
-    if not isinstance(cmd, str):
-        raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
+    cmd = _checked_cmd(task.get("verify"), tid)
     repo, path = _local_repo(ctx, list(data.get("repos") or []))
     if path is not None:
         from orch.store import observe
@@ -461,6 +487,7 @@ def _client_receipt(
     r = ran.receipt
     if repo is not None and r["commit"] is None:
         raise OrchError("verify.failed", f"{repo} has no clean commit to name: commit first, then run it again")
+    args["task"] = f"{key}/{tid}"  # the task.done goes to the ticket the command was read from, not to a later claim
     receipt = {"cmd": cmd, "exit": r["exit"], "duration_ms": r["ms"], "commit": r["commit"], "repo": repo}
     notes = [*ran.notes, "note: attested by you (the agent): this ran on your machine, the host does not verify it"]
     return receipt, ran.output[: runner.OUTPUT_LIMIT], notes

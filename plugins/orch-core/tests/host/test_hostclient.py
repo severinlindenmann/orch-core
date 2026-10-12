@@ -529,3 +529,85 @@ def test_a_blob_retry_names_the_digest_and_a_fresh_upload_drops_the_unused_blob(
     n = len(calls)
     build(Conn(), "fresh")
     assert ("blob.drop", "b_" + "A" * 26) in calls[n:]
+
+
+def _lying_host(lab, monkeypatch, tasklist):
+    """A hosted workspace whose ``task.list`` answer is replaced; returns the list of commands the runner is asked to run."""
+    from orch.ops import runner
+
+    ran = []
+    monkeypatch.setattr(runner, "run_verify", lambda cmd, **kw: ran.append(cmd) or (_ for _ in ()).throw(RuntimeError))
+    orig = hostclient._request
+
+    def fake(target, op, args, **kw):
+        if op == "task.list":
+            return tasklist
+        return orig(target, op, args, **kw)
+
+    monkeypatch.setattr(hostclient, "_request", fake)
+    return ran
+
+
+def _setup(lab):
+    c = hcli(lab)
+    c("new", "A")
+    c("claim", "1")
+    c("task", "add", "x", "--verify", "true")
+    c("task", "start", "T1")
+    return c
+
+
+def test_a_malformed_or_missing_verify_from_the_host_is_never_run(lab, monkeypatch):
+    served = hosted(lab)
+    try:
+        c = _setup(lab)
+        bad = [None, "", "   ", 5, ["true"], {"cmd": "true"}, "true\x00", "x" * 5000]
+        for value in bad:
+            task = {"id": "T1", "text": "x", "state": "open", **({} if value is None else {"verify": value})}
+            doc = {"key": "DEMO-0001", "data": {"tasks": [task], "repos": []}}
+            ran = _lying_host(lab, monkeypatch, doc)
+            r = c.j("task", "done", "T1", "--run")
+            assert (r.code, r.err_code) == (5, "invalid.input"), (value, r.out)
+            assert ran == [] and _done_events(lab, "1") == []
+    finally:
+        served.close()
+
+
+def test_a_host_answer_for_another_task_or_ticket_runs_nothing(lab, monkeypatch):
+    served = hosted(lab)
+    try:
+        c = _setup(lab)
+        other_task = {
+            "key": "DEMO-0001",
+            "data": {"tasks": [{"id": "T2", "text": "x", "state": "open", "verify": "id"}]},
+        }
+        other_key = {
+            "key": "DEMO-0002",
+            "data": {"tasks": [{"id": "T1", "text": "x", "state": "open", "verify": "id"}]},
+        }
+        no_key = {"data": {"tasks": [{"id": "T1", "text": "x", "state": "open", "verify": "id"}]}}
+        for doc, argv in ((other_task, ("T1",)), (other_key, ("DEMO-0001/T1",)), (no_key, ("T1",))):
+            ran = _lying_host(lab, monkeypatch, doc)
+            r = c.j("task", "done", *argv, "--run")
+            assert r.code != 0, r.out
+            assert ran == [] and _done_events(lab, "1") == []
+    finally:
+        served.close()
+
+
+def test_the_task_done_goes_to_the_ticket_the_command_was_read_from(lab, monkeypatch):
+    served = hosted(lab)
+    try:
+        c = _setup(lab)
+        sent = []
+        orig = hostclient._request
+
+        def spy(target, op, args, **kw):
+            sent.append((op, dict(args)))
+            return orig(target, op, args, **kw)
+
+        monkeypatch.setattr(hostclient, "_request", spy)
+        assert c("task", "done", "T1", "--run").code == 0
+        assert [a["task"] for o, a in sent if o == "task.done"] == ["DEMO-0001/T1"]
+    finally:
+        served.close()

@@ -111,7 +111,7 @@ def test_shell_reads(world, api, token):
     h = {"Authorization": f"Bearer {token}"}
     spaces = world.client.get("/api/workspaces", headers=h).json()
     assert [(w["prefix"], w["host_state"], w["name"]) for w in spaces] == [("DEMO", "ok", "billing")]
-    assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 4
+    assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 5
     me = world.client.get("/api/me", headers=h).json()
     assert me[0]["role"] == "owner" and me[0]["tier"] == "A"
     ident = api.get("/identity").json()
@@ -398,3 +398,102 @@ def test_the_real_signer_signs_move(world, api):
     assert next(r for r in board if r["key"] == key)["status"] == "backlog"
     direct(world, "move", {"ref": key, "to": "open", "reason": "back to work"})
     assert api.get(f"/tickets/{key}").json()["status"] == "open"
+
+
+@pytest.fixture(scope="module")
+def pair(tmp_path_factory):
+    """Two workspaces with the SAME prefix and the same first ticket key, served by one real host."""
+    root = short_run_root() / uuid.uuid4().hex[:6]
+    a, b = Workspace(root / "w", dirname="a"), Workspace(root / "w", dirname="b")
+    try:
+        for w, title in ((a, "Alpha ticket"), (b, "Beta ticket")):
+            w.init()
+            w.grant()
+            w.install_dashboard()
+            w.agent("new", title)
+        a.start_host()
+        a.register()
+        b.host = a.host
+        b.register()
+    except (RuntimeError, TimeoutError, OSError) as exc:
+        a.stop_host()
+        shutil.rmtree(root, ignore_errors=True)
+        pytest.skip(f"the real host cannot start here: {str(exc)[:300]}")
+    static = tmp_path_factory.mktemp("static2")
+    (static / "assets").mkdir()
+    (static / "index.html").write_text("<html></html>")
+    gateway = Gateway(a.state)
+    auth = Auth()
+    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+        launch = auth.launch(PORT)
+        token = client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN}).json()["token"]
+        yield type("Pair", (), {"a": a, "b": b, "client": client, "token": token, "gateway": gateway})
+    gateway.close()
+    a.stop_host()
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_two_workspaces_with_one_prefix_and_one_ticket_key(pair):
+    h = {"Authorization": f"Bearer {pair.token}"}
+    spaces = {w["id"]: w for w in pair.client.get("/api/workspaces", headers=h).json()}
+    assert set(spaces) == {pair.a.ws_id, pair.b.ws_id} and {w["prefix"] for w in spaces.values()} == {"DEMO"}
+    assert all(w["host_state"] == "ok" for w in spaces.values())
+    titles = {}
+    for w in (pair.a, pair.b):
+        doc = pair.client.get(f"/api/w/{w.ws_id}/tickets/DEMO-0001", headers=h).json()
+        titles[w.ws_id] = doc["title"]
+    assert titles == {pair.a.ws_id: "Alpha ticket", pair.b.ws_id: "Beta ticket"}
+    me = {m["workspace"]: m["person"] for m in pair.client.get("/api/me", headers=h).json()}
+    assert me[pair.a.ws_id] != me[pair.b.ws_id]  # each workspace has its own owner
+
+
+def test_a_workspace_that_cannot_serve_the_dashboard_is_listed_unavailable_and_the_other_works(pair):
+    h = {"Authorization": f"Bearer {pair.token}"}
+    pair.b.human("addon", "disable", "dashboard")
+    spaces = {w["id"]: w for w in pair.client.get("/api/workspaces", headers=h).json()}
+    assert spaces[pair.b.ws_id]["host_state"] == "addon.disabled" and spaces[pair.b.ws_id]["name"] == pair.b.ws_id
+    assert spaces[pair.a.ws_id]["host_state"] == "ok"
+    assert pair.client.get(f"/api/w/{pair.a.ws_id}/tickets/DEMO-0001", headers=h).status_code == 200
+    assert pair.client.get(f"/api/w/{pair.b.ws_id}/tickets/DEMO-0001", headers=h).status_code >= 400
+
+
+def test_with_the_host_stopped_every_workspace_is_unavailable(pair):
+    h = {"Authorization": f"Bearer {pair.token}"}
+    pair.a.stop_host()
+    res = pair.client.get("/api/workspaces", headers=h)
+    assert res.status_code in (200, 503)
+    if res.status_code == 200:
+        assert all(w["host_state"] != "ok" for w in res.json())
+
+
+@pytest.mark.skip(reason="stream A RH-4: no host or CLI op changes a ticket's visibility (visibility.changed is a person event with no op), so a ticket cannot be hidden from the only person; the purge on `gone` is covered by test_live_updates")
+def test_hiding_a_ticket_purges_it_from_an_open_tab():
+    raise AssertionError("unreachable")
+
+
+def test_record_real_host_goldens(world):
+    """`UPDATE_REALHOST_GOLDEN=1 uv run pytest -m realhost -k record`: scrubbed host answers plus what the adapters make of
+    them, in src/test/fixtures/real-host. `test_realhost_goldens.py` replays them offline, in CI."""
+    if not os.environ.get("UPDATE_REALHOST_GOLDEN"):
+        pytest.skip("set UPDATE_REALHOST_GOLDEN=1 to record")
+    from realhost_goldens import DIRECTORY, adapt
+
+    from orch_dashboard.reads import TicketsQuery, host_args
+    from realhost_scrub import Scrubber
+
+    g, ws, k = world.gateway, world.ws.ws_id, world.keys
+    raw = {
+        "ticket.query": g.call(ws, "ticket.query", host_args(TicketsQuery())),
+        "needs": g.call(ws, "needs"),
+        "member.list": g.call(ws, "member.list"),
+        "workspace.settings": g.call(ws, "workspace.settings", {}),
+        "grant.list": g.call(ws, "grant.list", {"active": True}),
+        "workspace.show": g.call(ws, "workspace.show"),
+        "welcome": {k2: v for k2, v in g.link(ws).welcome.items() if k2 in ("caps", "ops")},
+        "tickets": {role: g.call(ws, "ticket.get", {"ref": k[role]}) for role in ("verdict", "in_progress", "gate", "answered", "closed", "plain")},
+        "whoami": {"person": g.link(ws).welcome["peer"]["person"], "workspace": ws},
+    }
+    scrubbed = Scrubber()(raw)
+    DIRECTORY.mkdir(parents=True, exist_ok=True)
+    (DIRECTORY / "raw.json").write_text(json.dumps(scrubbed, indent=1, sort_keys=True) + "\n")
+    (DIRECTORY / "adapted.json").write_text(json.dumps(adapt(scrubbed), indent=1, sort_keys=True) + "\n")

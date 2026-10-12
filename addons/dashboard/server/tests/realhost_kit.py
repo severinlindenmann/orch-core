@@ -117,7 +117,7 @@ def confirm_rules(passphrase: str = PASSPHRASE) -> list[tuple[str, Callable]]:
 
 
 class Workspace:
-    def __init__(self, base: Path, prefix: str = "DEMO", dirname: str = "billing", owner: str = "Severin"):
+    def __init__(self, base: Path, prefix: str = "DEMO", dirname: str = "billing", owner: str = "Demo Owner"):
         self.base, self.prefix, self.dirname, self.owner = Path(base), prefix, dirname, owner
         self.state, self.home = self.base / "state", self.base / "home"
         self.run = self.state / "run"

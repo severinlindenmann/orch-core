@@ -128,6 +128,16 @@
         ]
       },
       {
+        "code": "sign.convenience_readers",
+        "exit": 3,
+        "retryable": false,
+        "hint": "update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
         "code": "lock.busy",
         "exit": 4,
         "retryable": true,

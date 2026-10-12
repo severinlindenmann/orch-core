@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "sign.convenience_readers",
+    "message": "this workspace's history has convenience signatures",
+    "hint": "update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

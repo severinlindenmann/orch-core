@@ -15,6 +15,7 @@ errors:
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
   role.denied (exit 3): ask an owner or maintainer | fix: orch status
+  sign.convenience_readers (exit 3): update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first | fix: orch help
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.json (exit 6): orch describe member.add
   parse.text (exit 6): orch describe member.add

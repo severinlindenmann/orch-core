@@ -145,6 +145,17 @@ _SPECS = [
         "The passphrase did not unlock the device key; nothing was signed and nothing was written.",
     ),
     _e(
+        "sign.convenience_readers",
+        3,
+        False,
+        "this workspace's history has convenience signatures",
+        "update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first",
+        ["orch", "help"],
+        "Adding a reader (a member, a relay pairing, a device) to a workspace whose history has auth convenience "
+        "events is refused until the new readers understand them; switching back to terminal signing does not help "
+        "(orch-v2-host 0.8.6).",
+    ),
+    _e(
         "custody.no_batch",
         3,
         False,

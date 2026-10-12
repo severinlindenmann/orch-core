@@ -7,7 +7,7 @@ host interface (§11), and finally after the Opus diff check (M1, L1–L3) and t
 API contract §0 is **v1.5 (provisional draft)**: v1.4 added the dashboard's read fields, the activity feed and the
 closed-ticket rules (amendment of 11 Oct 2026), and v1.5 answers §9 item 8 (settings read, full texts, bound hashes,
 grant and session fields, the live-tail payload with its workspace-topic filter fix, artifact and commit listings;
-§0.8.5). Changes go through the coordination log.
+§0.8.5). §0.8.6 adds click-to-sign (H5c, D-P2-23, owner decisions of 12 Oct 2026; built, off by default per workspace). Changes go through the coordination log.
 
 Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
@@ -411,6 +411,8 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
+| `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
+| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -1107,7 +1109,7 @@ Prepared = {request:{id:ReqHr, code:Code | null, expires_at:Time, state:State} |
             checks?:[{repo:str, clean:true, attested_by:"worker", at:Time}]}               // not signed, not in material
 State    = "prepared"|"bound"|"submitted"|"cancelled"|"expired"
 ReqHr    = str/hr_[0-7][0-9A-HJKMNP-TV-Z]{25}/          Code = str/[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/
-Signer   = {device:Device, auth:"passphrase"|"secure-enclave"}
+Signer   = {device:Device, auth:"passphrase"|"secure-enclave"|"convenience"}   // convenience: §0.8.6 (H5c)
 Material = {kind:"gate", gate:Gate, input:<orch.model.gates.gate_input>, ticket:{key:Key, uid:Uid}, review:[Review]{1..16},
             policy:Policy,                      // v1.5: the canonical effective policy (§0.8.1 "Bound hashes"); always
                                                 // present, because a blocked gate has no policy hash and gets no prompt
@@ -1858,6 +1860,371 @@ process of the UID connects in tier A), and it would expose activity timing to e
 **Not in v1.5** (outside §9 item 8, still unserved): search snippets, per-status counts on `ticket.query`, `url` and
 `preview` for link and inline artifacts, `last_seen`, and charter or mandate decisions (above).
 
+#### 0.8.6 Click-to-sign (convenience custody, H5c, D-P2-23)
+
+**Status: built in H5c, off by default** (12 Oct 2026; design challenged by Codex and Opus, amendments adopted by
+orch-52). Owner decisions of 12 Oct 2026 (coordination log "OWNER RE-PLAN P2" and "D65 amendment", #264 comment
+6121460551, and the orch-d6 decisions on the card text and the per-workspace condition): in phase 1 the dashboard signs
+with one click. The person's device key sits in a store that needs no user presence (the `convenience` backend), and a
+separate **person-class signer process** next to the dashboard holds it. The host still holds no device key and never
+prompts (D-P2-15); the prepare → check and recompute → sign → submit contract of §0.8.1, the review, `review_digest`
+and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available. **Accepted risk, shown on the workspace
+card, on every sign panel and in the docs: "Convenience signing: agents running as you, or anything that takes over
+this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1; H9 (Touch ID) and tier B bring
+isolation back in phase 3, and only after migration, UID separation and removal of the old convenience devices.
+
+**0. The trust boundary (read this first).** The signer constructs and validates the review data and binds signing to
+the corresponding immutable signing bytes. **The dashboard HTTP process and its browser application are trusted to
+display that review and request signing only after confirmation.** The signer cannot verify display or human
+confirmation. Control of the dashboard's authenticated signing workflow (an XSS, a stolen bearer token, a compromised
+HTTP process) can obtain signatures without showing a review, without reading the key or executing code in the signer.
+Code execution in the HTTP process runs as the person, in the same interpreter the keychain ACL trusts, and can read the
+key itself. **Process separation protects the key against passive disclosure** (a log, a crash or memory dump of the
+HTTP process, a dependency bug that reads files or bodies); **it does not isolate signing authority from the
+dashboard.** This is a separate exposure from the same-UID agent risk, which is why the card text names both.
+
+**1. The per-workspace flag and the readers condition (owner decision).**
+
+- Click-to-sign is enabled per workspace by the host-state file `<state>/host/convenience.json` (0600, host UID, in
+  the D-P2-17 custody list): `{"v":1, "workspaces":{"<ws id>":{"enabled":true, "at":Time}}}`, written by
+  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op). **It is off for every
+  workspace until switched on**: the compatibility gate (item 6) is met first.
+- **The condition.** Convenience signing is allowed only while every reader of the workspace's log is local and
+  updated: no relay pairing, no phone device, no other member's devices or cores, and a model that knows the value. The
+  host checks it wherever `auth: "convenience"` enters a request: `human.prepare` with that signer, `human.get` binding
+  with it, and `human.submit` of such events. It refuses with **`sign.convenience_unavailable`** (exit 3, not
+  retryable) and a reason, first match wins:
+
+  | Reason | When |
+  |---|---|
+  | `disabled` | the flag is off for the workspace |
+  | `relay_paired` | the workspace has a relay pairing (P3: the host's bridge configuration; none exists in phase 1, so the check is a hook the P3 pairing must fill) |
+  | `other_member` | the member list holds a person other than the signer's person |
+  | `phone_device` | the signer's person has a valid device other than the signing device (the host cannot tell a phone from a second machine, so every other device counts as an outside reader) |
+  | `reader_version` | the host's own model does not accept `auth: "convenience"` (an old install behind a new client) |
+
+  `orch sign CODE` with a passphrase key stays available whatever the reason.
+- **Adding a reader to a workspace that has convenience events is blocked** (owner decision): `member.add` (and, when
+  they exist, relay pairing and any op that adds a device: one list, `orch.ops.readers.READER_OPS`) is refused with
+  **`sign.convenience_readers`** (exit 3, not retryable) and a fix text, in host and direct mode alike, while any event
+  in the workspace's history carries `auth: "convenience"`, until the corresponding readers understand the value. The
+  host also refuses these ops **while the flag is on**, even before any convenience event exists. Both checks run at
+  prepare, again at every `human.get` binding, and again at `human.submit` under the store lock, so a request prepared
+  earlier cannot add a reader after convenience events landed. **Switching back to terminal signing
+  does not make it safe**: the history already contains convenience events and the new reader must parse them. A
+  workspace with convenience enabled but no convenience events yet may switch convenience off first and then add the
+  reader. The check scans the merged history (`Store.merged_events`); it runs only for these rare ops.
+
+**2. The `convenience` custody backend** (`orch.custody.convenience`, next to `passphrase` and `secure-enclave`; never
+imported by `orch.custody`'s package init, the host or the dashboard's HTTP process).
+
+- **What it is.** A person-capable backend (`auth = "convenience"`) that holds only device keys (`dk_sig`, the device
+  role) and signs without a factor: any process of the person's UID that calls it gets a signature. It never holds a
+  person key (`PK` stays derived from the recovery code, C8), never the `workspace` role, and keeps the label check of
+  every backend (`label_allowed`: person events and device requests only). Every load checks the key's public key
+  against the device the selection names. It is not the `file` tier (host keys, never a person event).
+- **macOS: the traditional login keychain** (`orch.custody.keychain`, ctypes). Phase 1 uses the traditional file-based
+  login keychain. It explicitly selects the intended keychain (`~/Library/Keychains/login.keychain-db`, opened by path)
+  for creation, lookup and deletion, rather than relying on the default keychain or the search list. One
+  generic-password item per (workspace, device): service `io.orch.device-key`, account `<workspace_id>/<device_id>`,
+  label `orch device key <prefix> <device_id>`, description "orch convenience signing key (no presence)", not
+  synchronizable. The item uses the application ACL the keychain gives the interpreter that created it (the CLI's), with
+  no per-signature presence requirement. This implementation does not claim `AfterFirstUnlockThisDeviceOnly`
+  semantics, backup exclusion or non-migration: the data-protection keychain needs entitlements an unsigned interpreter
+  lacks. The item is encrypted at rest and avoids plaintext key files in the orch state directory; copies of the
+  keychain may exist in Time Machine backups and migrations. Keychain locking, ACL denial or an interpreter change may
+  require separate user repair; the click path disables user interaction and returns `custody.unavailable` when
+  noninteractive access is unavailable. It does not promise that every interpreter upgrade causes exactly one repair
+  prompt. **The ctypes wrapper** declares all argument and return types, obtains exported CF constants correctly,
+  manages CF ownership, checks every OSStatus, validates returned types and lengths, and the backend verifies the loaded
+  P-256 public key against the selected device. Duplicate items and ambiguous matches fail closed. Real integration
+  tests use a throwaway file keychain (never the login keychain); they do not establish data-protection behaviour. No
+  secret bytes enter subprocess arguments, logs or error messages.
+- **Linux and other Unix platforms: a file.** Device keys are regular files owned by the person, mode 0600, at
+  `<person state>/person/<workspace_id>/devices/<device_id>.key`, beneath person-owned 0700 private directories.
+  Creation and access validate ownership, file type, mode and symlink-free traversal, using descriptor-relative
+  operations (`O_NOFOLLOW`, `fstat` on the opened descriptor) to preserve validation through use. Ancestors may be
+  root-owned as allowed by `check_tree`. Paths and device identifiers come from validated person-side configuration.
+  `<person state>` is the signer's own state directory (`ORCH_STATE_DIR`, else `$XDG_CONFIG_HOME/orch`, else
+  `~/.config/orch`), never `<state>/hosts/<ws>/`. A file in `~/.config` is in the person's backups.
+- **Windows:** convenience custody is unsupported in phase 1 (Windows stays in direct mode, D63). It needs a specified
+  and tested restrictive DACL implementation; POSIX mode bits alone are not its security contract.
+- **The selection.** `<person state>/person/<workspace_id>/custody.json` (0600):
+  `{"v":1, "custody":"convenience"|"passphrase", "device":"d_…", "pub":"<b64u>", "gen":int, "transition":null|{…}}`.
+  No file means the P1 default: the passphrase key at `<state>/hosts/<ws>/person/dk.key.json` (H5b's location, kept so
+  existing keys and `orch sign` keep working). One resolver (`orch.custody.select.device_backend(state, ws)`) is used by
+  `orch sign` (reconciling H5b's lookup), the click signer and `orch keys`. `gen` increases at every transition.
+- **The host boundary.** Host and HTTP code do not intentionally access person keys; import and audit tests enforce
+  this implementation invariant: in host mode the H3a audit hook refuses an open or path event of a path with a
+  `person/<ws>/devices/` or `hosts/<ws>/person/` component (the latter is H5b's passphrase device key) or under
+  `<state>/person/`, a relative name that is a person-custody file (`d_….key`, `custody.json`, `click.jsonl`,
+  `dk.key.json`; a `dir_fd` walk cannot be resolved from the audit event), a working directory inside those places, a
+  `ctypes.dlopen` of `Security.framework`, and an import of `orch.click`, `orch.custody.convenience`,
+  `orch.custody.keychain`, `orch.custody.select` or `orch.custody.cli`. In tier A this is not an OS security
+  boundary. In tier B, permissions separate the host UID from person custody.
+
+**3. Lifecycle** (`orch keys`, terminal CLI only). Creation and custody changes are terminal CLI workflows and are not
+exposed through dashboard or host APIs. `ORCH_GRANT` refuses every `orch keys` subcommand but `status`, and the changing
+ones (`custody convenience|passphrase`, `forget`) also need the person's terminal (`/dev/tty`, `custody.no_prompt`
+otherwise). These checks prevent accidental use through supported agent workflows; they do not authenticate human
+presence against a same-UID process. `orch keys` and `orch host convenience` report errors in the CLI's catalog
+envelope.
+
+- `orch keys custody convenience --workspace W` converts the existing passphrase key: one passphrase prompt on
+  `/dev/tty`, then the destination is written durably, read back, its public key and a test signature are verified,
+  the selection is updated recoverably (`transition` records the step), and only then the passphrase file is removed.
+  The device id and certificate do not change (custody is per event, F1 O1). It refuses unless the workspace's flag is
+  on; the host checks the readers condition at every convenience signature. Creating a convenience key at `orch init`/`join`/pairing is not offered in phase 1:
+  a workspace is registered (and its flag set) after `init`.
+- `orch keys custody passphrase --workspace W --in-place` moves the same key back under a new passphrase (14+
+  characters, the strength check). It warns: "Later signatures will say passphrase, but anyone who copied the key can
+  still sign with any label; use --rotate for a clean break." Without `--in-place` it refuses and names `--rotate`.
+- Direct-mode human ops (an unregistered workspace, P1's CLI) keep signing with the passphrase key only: a registered
+  workspace answers `host.required` to them anyway (D-P2-18), and a converted key is used through the host.
+- Interrupted transitions report their state (`orch keys custody status`) and are resumable by running the command
+  again. Click signers re-read the selection before every `view` and `sign` and refuse when `gen` changed, so pending
+  approvals are invalidated before a transition can be used.
+- Moving to passphrase in place restricts future access to the managed copy only. Deletion is best effort and does not
+  erase backups, snapshots or exported copies (copy-on-write file systems and the keychain file in Time Machine keep
+  old copies). `orch keys forget --workspace W` removes local custody; it is not device revocation.
+- **`--rotate`** (designed, not built in H5c: no op adds a device yet). Rotation creates and durably verifies a new key,
+  obtains its certificate, registers it, and commits removal of the old device in every affected workspace. It reports
+  per-workspace completion and supports retry after interruption. The clean break applies only to workspaces whose
+  authoritative history includes the old device's removal; previous signatures and their effects remain. The command
+  does not report complete revocation while any workspace remains outstanding.
+
+**4. `auth: "convenience"` and F1** (amended in H5c, F1 §5.3, §11.4, T16, §13).
+
+- `auth` is a signed declaration of custody by the signing implementation, not verifier-proven user presence or device
+  attestation. Conforming convenience clients emit `auth: "convenience"`. Possession of an exportable device key permits
+  signing another supported `auth` value. Rotation retires that key's authority where revocation is enforced; it does
+  not make custody labels independently verifiable. One value covers keychain and file: it names the custody class.
+- Every person event records declared custody in `auth`. `convenience` requires no human factor. Other person-capable
+  backends follow their documented factor and interaction requirements. The `file` tier is not person-capable.
+- The signed bytes and `contract` 1 are unchanged. **Compatibility:** this is a reader-compatibility change despite
+  retaining contract 1 and the signing-byte construction. Before a workspace emits convenience events, every supported
+  reader and writer must support the new value, or older versions must be explicitly excluded from that workspace.
+  Host-local schema support is necessary but does not prove reader compatibility. The readers, all of which must be
+  released (and the relay deployed) before the flag is switched on for a workspace that has them:
+  - orch-core: `schemas/common.json`, `orch.custody.AUTH_VALUES`, the `Signer` schema in `host/human.py` (H5c);
+  - orch-relay: `AUTH_KINDS` in `src/orch_relay/checkpoints.py` and `ref/checkpoints.py`, and its F1 vectors;
+  - the dashboard: `server/src/orch_dashboard/adapters/tickets.py` must show `convenience` as "no presence" and never
+    map an unknown value to "password"; `devhost/humanops.py`;
+  - other members' cores in a shared workspace (excluded by the readers condition in phase 1);
+  - later the mobile Core package.
+  Rollout includes replay fixtures, refusal behaviour for old readers (an old core refuses the event on schema:
+  `auth.invalid_event` on replay), and an explicit supported-version cutover. The per-workspace flag and the readers
+  condition of item 1 are how phase 1 meets this.
+- **The socket API** (§0.8.1): `Signer.auth` becomes `"passphrase"|"secure-enclave"|"convenience"` (additive,
+  changelog item 11).
+
+**5. The click signer process** (`python -I -m orch.click`, core package `orch.click`).
+
+- **One process per dashboard server**, started by the dashboard server as its child under the same UID
+  (`orch.click.spawn.start()`), with a **`socketpair`** as its only channel: created with `SOCK_CLOEXEC`, the signer's
+  end passed only to the signer (`pass_fds`) and closed in the parent after spawn. Only the designated signer and
+  dashboard endpoints retain the socketpair descriptors; all unrelated descriptors are closed and the endpoints are not
+  inherited by later children. The signer terminates on channel loss or verified parent-lifetime loss (it records
+  `getppid()` at start and exits when it changes). Core-dump and debugger restrictions (`RLIMIT_CORE` 0,
+  `PT_DENY_ATTACH`/`PR_SET_DUMPABLE`) are defence in depth, not a same-UID isolation guarantee. Phase 2 note: an addon
+  page or any addon-driven path must not be able to make the dashboard call the signer's `prepare`.
+- **It alone holds the custody handle**; the key never crosses the socketpair or the workspace socket. It talks to the
+  host itself, as the person, with its own pinned `orch.host.client.Connection` per workspace (H5b's client), and reads
+  the person's own registry for the header, as `orch sign` does.
+- **Starting and stopping (normative).** The dashboard server calls `orch.click.spawn.start(env=None) -> ClickClient`.
+  It creates `socket.socketpair(AF_UNIX, SOCK_STREAM)` (both ends close-on-exec), spawns
+  `[sys.executable, "-I", "-m", "orch.click", "--fd", "<n>"]` with `pass_fds=(n,)` for the child's end only,
+  `close_fds=True`, `stdin`/`stdout` to `/dev/null` and stderr inherited, then closes the child's end in the parent. The
+  child inherits the environment (the person's state directory is resolved from `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`
+  or `HOME`, as every orch client does) and is ready when it answers `status`. `ClickClient.call(op, args, timeout=…)`
+  sends one request and returns its `result` or raises `ClickError(code, message, reason, retry_after_ms)`;
+  `ClickClient.close()` closes the parent's end, which makes the child exit (EOF), waits up to 2 s and then kills that
+  child's own PID (never anything else). The child also exits when its parent PID changes. One child per dashboard
+  server; restart it on exit (the registry is lost: open approvals become terminal-only, which is safe).
+- **Packaging and versions (normative).** The dashboard depends on orch-core at **runtime** (`orch-core>=2.0.0.dev0`
+  in `[project].dependencies`, from the repo path source while it is a dev version; once published, at least the first
+  release with `orch/click/`). No extra is needed: `orch.click.spawn` and `orch.click.client` import only the standard
+  library and `orch.host.frames`; the signer needs `cryptography` (a core dependency) and, on macOS, only ctypes.
+  `spawn.start()` runs `sys.executable`, so the child uses the dashboard venv's own orch-core; `-I` ignores
+  `PYTHONPATH` and the user site, so nothing outside the venv can shadow `orch`. On each workspace connection the
+  signer requires `welcome.proto` to hold 1, `welcome.ops` to name `human.prepare`, `human.get`, `human.submit`,
+  `human.pending` and `human.cancel` at version 1, and `welcome.registry` to equal its own registry digest
+  (`sha256(cj(sorted served_ops()))`); a mismatch refuses that workspace with `host.version_mismatch` ("the signer's
+  orch-core differs from the host's") and `status` shows `available:false, problem:"version_mismatch"`. Algorithm
+  drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
+  answers `core` (the orch-core version) and `contract: 1`; the dashboard refuses a signer with another contract.
+- **Frames (normative)** on the socketpair: §0.2's codec (`orch.host.frames.encode` and `Decoder`: a 4-byte big-endian
+  length, then strict JSON, at most 2 MiB; parsing and nesting limits before any validation), one request at a time:
+  - request: `{"t":"req", "id":str/[A-Za-z0-9_-]{1,32}/, "op":"prepare"|"view"|"sign"|"cancel"|"status", "args":{…}}`;
+  - answer: `{"t":"res", "id":<same>, "ok":true, "result":{…}}` or
+    `{"t":"res", "id":<same>, "ok":false, "error":{"code":str, "message":str, "retryable":bool, "reason"?:str,
+    "retry_after_ms"?:int}}`. `message` is display text; clients branch on `code` and `reason` only.
+  - A malformed frame, an unknown `op` or bad `args` answers `invalid.input` (a framing error closes the channel).
+
+```
+prepare {workspace_id:WsId, op:OpName, args:object, idem:Idem, files?:{name: {b64:str}}}
+  → {request_id:ReqHr, expires_at:Time, op:OpName, confirm:"click"|"word"}
+view    {workspace_id:WsId, request_id:ReqHr} → {view:View, view_digest:Hash}
+sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, word?:str{1..128}}
+  → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool}      // never a secret
+cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
+status  {} → {core:str, contract:1, workspaces:[{workspace_id:WsId, prefix:str,
+                           custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
+                           available:bool, problem?:str}]}
+View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
+        op:OpName, workspace:{id:WsId, name:str, prefix:str}, fingerprint:str/[0-9a-f]{12}/,
+        lines:[str],                                       // the terminal review of orch sign, line for line, escaped
+        checks:[{repo:str, clean:true, attested_by:"worker", at:Time}],   // shown; `at` is not in view_digest
+        confirm:{kind:"click"} | {kind:"word", word:str}, expires_at:Time, auth:"convenience", device:Device,
+        artifacts:"checked"|"unseen"|null}
+view_digest = "sha256:" + hex(sha256(cj(View with every checks[].at removed)))
+Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, one per click, reused on retry
+```
+
+  **Error codes on the channel.** `invalid.input`; `custody.no_key` (no device key for the workspace on this machine);
+  `custody.unavailable` (keychain locked, access denied, an unsupported platform); `sign.convenience_unavailable`
+  with `reason` `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (from the host);
+  `sign.convenience_readers` (from the host, on `prepare` of a reader-adding op); `rate.limited` with
+  `retry_after_ms` (the event-signature budget); `human.request_state`, `human.request_expired`, `not_found` and other
+  host codes passed through; `host.unavailable` (the workspace socket cannot be reached); and
+  **`human.click_refused`** with `reason`:
+
+  | `reason` | When |
+  |---|---|
+  | `terminal_only` | `grant`, an op outside the allowlist, or a request too large for the View (more than 16 events or 1 MiB): use the terminal |
+  | `not_prepared_here` | `view`/`sign`/`cancel` of a request this signer did not prepare |
+  | `expired` | the approval's deadline passed |
+  | `view_changed` | `view_digest` differs from the stored View, or the host's answer differs from the approval record |
+  | `too_soon` | `sign` less than 1 s after the View was built |
+  | `word` | the word is missing or wrong |
+  | `custody_changed` | the custody selection changed since `view` (`gen`) |
+  | `busy` | another `sign` is in flight |
+  | `check_failed` | a §0.8.1 signer check refused the host's answer (the message names the check) |
+  | `uncertain` | a submit's outcome is unknown and could not be recovered; `human.pending` shows the request |
+
+- **`prepare`** is the only way a request becomes click-eligible. The signer forwards it on its **own** host
+  connection as `human.prepare {op, args, signer:{device, auth:"convenience"}}` with the dashboard's idem (#402: a
+  retry returns the same request), so the host checks the flag and the readers condition there; it validates the
+  answer (all §0.8.1 checks, below, and that the host prepared the op it was asked for) and records the request id, workspace and immutable binding in its local registry.
+  **`view` and `sign` refuse anything not in that set** (`human.click_refused`). Requests prepared elsewhere (the CLI,
+  an agent, an older dashboard session) stay terminal-only: `orch sign CODE` for a hand-off request. `origin.uid` and
+  `origin.pid` are host-attested provenance for display and diagnostics, not authorization evidence. This prevents
+  accidental adoption of old or foreign requests; it does not protect against a compromised dashboard invoking
+  `prepare` itself.
+- **Approval records** are keyed by `(workspace_id, request_id)` and contain immutable canonical signing inputs for
+  every event, the validated material and binding fields (`op`, `workspace_id`, `log`, `material`, `review_digest`,
+  `fingerprint`, `origin`, the signer tuple), the View digest, the custody `gen`, and a local expiry deadline (the
+  request's).
+- **`view`** = `human.get {request_id, signer}` (the request is already bound to this signer at prepare, so nothing is
+  bound here), then `orch.click.view.build(prepared)`, which runs **every signer check of §0.8.1** before rendering (N4
+  shape, formats, the "Bound hashes" recomputations, `Review` per event, `review_digest`, `fingerprint`, `before`, the
+  op's touches, artifact uploads when the dashboard passed the bytes) and the op rules of item 6, then compares the
+  answer byte for byte with the approval record and renders the View: `lines` is exactly the terminal review of
+  `orch.host.signer.render` (same escaping, refusing control characters). The approval projection distinguishes
+  invariant reviewed content from freshness metadata: worker rechecks must succeed (`clean: true`), a changed
+  substantive attestation (another repo set, `clean`, `attested_by`) requires a new review, and a timestamp-only update
+  of `checks[].at` does not change the digest. The UI shows the time of the displayed attestation.
+- **`sign`**: the request must be in the registry and its approval unexpired (the local deadline is the host's
+  `expires_at`, capped at 10 minutes); `view_digest` must equal the stored one;
+  at least 1 s must have passed since the signer built that View (a misclick guard, not security); the custody `gen` is
+  unchanged; `word` is checked when the View asks for one. The signer then calls `human.get` again, revalidates the host
+  answer and compares the full signing inputs and invariant fields byte for byte with the approval record, rebuilds the
+  View from that answer and requires its digest to equal the one shown (a changed substantive check or registry name is
+  `view_changed`); it signs
+  **the stored immutable inputs** (neither the View nor the 12-hex fingerprint substitutes for this comparison).
+  **Retries:** before the first submit the signer retains the exact signed event array and a submit idem. An uncertain
+  submit (a lost answer, a broken connection) is retried with those identical events and idem, without fetching a new
+  binding or signing again. Completed responses are cached for duplicate local `sign` calls. On `idem.conflict`, a lost
+  registry (signer restart) or any other uncertainty the signer reads `human.pending {request_id}` and reports the
+  request's state instead of signing again.
+- **Refusals do not cancel.** A click-path eligibility, availability, size or rate refusal does not cancel the host
+  request; it invalidates the local approval. Explicit `cancel` cancels it: `cancel` is serialized with signing and
+  invalidates the local approval before further signing can start; it reports already-signed or submitted state
+  honestly and cannot retract a produced signature. Validation failures are reported as refusals and are never described
+  as safe to bypass.
+- **Binding** selects both device and auth. A click request is bound to `{device, auth:"convenience"}` at prepare; it
+  has no hand-off code. The terminal path is a separate hand-off request (`human.prepare {handoff:true}`, shown as
+  `orch sign XXXX-XXXX`), which `orch sign` binds with the custody the selection names (with a convenience selection,
+  `orch sign` binds `convenience` and the readers condition applies).
+- **`status`** reads custody metadata (the selection and the flag) for validated registry workspaces without loading a
+  private key, prompting or connecting, and distinguishes unavailable custody from absent custody: `problem` is an
+  unfinished transition, `not_convenience`, `disabled`, or the last problem this signer met on that workspace
+  (`version_mismatch` at a connection, `custody_unavailable` when the keychain was locked or denied access). A problem
+  not met yet surfaces at the next `prepare`.
+- **Limits.** Limits reduce accidental repetition and abuse through one honest signer instance. They do not prevent
+  unauthorized signing or bound a same-UID adversary. Budgets count actual event signatures: 30 per minute and 600 per
+  hour **per signer instance** (they reset with the process; several dashboards have several budgets), reserved for the
+  whole request before signing, on monotonic time; exact submit retries consume nothing. At most one `sign` in flight,
+  16 approval records, a View of at most 1 MiB canonical and 16 events (larger requests: `human.click_refused`, "use the
+  terminal").
+- **The log.** `<person state>/person/click.jsonl` (0600, rotated at 1 MiB, 4 files, symlink targets refused, rotation
+  keeps the mode). The bounded private log distinguishes review generation, signature production, submit attempt,
+  confirmed commit, refusal and uncertain outcome. It contains validated identifiers and static error codes only. It is
+  diagnostic evidence, not proof of human approval or a tamper-resistant audit trail against the person's UID.
+- **Errors** reuse the catalog (`custody.no_key`, `custody.unavailable`, `rate.limited`, `human.request_state`,
+  `human.request_expired`, `sign.convenience_unavailable`) plus `human.click_refused` (exit 3, not retryable,
+  client-side only: the host never sends it).
+
+**6. Which ops are click-signed.** The signer enforces an explicit operation allowlist and the complete emitted-event
+checks. Unknown operations and future additions fail closed (terminal-only). `grant` and any operation returning a
+bearer secret are refused before signing, irrespective of the secret field's initial value.
+
+| Class | Ops |
+|---|---|
+| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
+| **Click + typed word** | `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
+| **Terminal only** | `grant` and every op not listed above |
+
+Daily operations use click confirmation as a phase-1 usability decision. A later event may supersede their recorded
+state but may not reverse external effects. Typed words on member, addon-grant/purge, policy and repo-settings
+operations reduce accidental confirmation; they are neither authentication factors nor protection against
+script-driven signing (the word is in the View). Framing defences address clickjacking separately. Terminal-only
+`grant` keeps the grant secret off the HTTP path (F1, D-P2-16); it does not prevent every authority escalation through
+the allowed member, policy or addon operations.
+
+**7. What the dashboard does** (dashboard stream; not in this core PR).
+
+- **Flow.** Click on an action → the signer's `prepare` (one idem per click, reused on retry) → `view` → the sign panel
+  shows the View → the person clicks **Sign** (or types the word) → `sign` → the result. "Sign in the terminal instead"
+  prepares a separate hand-off request.
+- **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk line; the checks with
+  their time). It does not show its own preview, the host's `fingerprint`, its cached ticket view or `ticket.get` hashes
+  as "what you sign".
+- **Workspace card**: when `status` reports `custody:"convenience"`, the card shows "Convenience signing: agents running
+  as you, or anything that takes over this dashboard, could sign." The same line opens every sign panel.
+- **HTTP.** Bind only the intended loopback listener and validate the exact Host on every route. Require the bearer on
+  every authenticated API and never accept it through cookies or URLs; keep it in tab memory or `sessionStorage`, never
+  `localStorage`. Apply exact Origin validation, reject null or missing Origin, enforce Fetch Metadata when present, and
+  require bounded JSON bodies on every browser mutation endpoint, including prepare, view, sign, cancel and session
+  establishment as applicable. Do not enable CORS. Launch codes are short-lived, single-use and unguessable. Session and
+  launch responses use `Cache-Control: no-store`; token-bearing URLs are not used for ongoing sessions. Views and
+  credential-bearing responses are not logged. Serve only trusted application code as same-origin executable content.
+  Untrusted artifacts are downloads or use an isolated origin. Send `Content-Security-Policy: default-src 'self';
+  script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`. No URL or query
+  parameter opens a sign panel or prepares a request. Each new View resets confirmation state. Sign is enabled only
+  after 500 ms of visible presentation (the timer restarts on blur or when `visibilityState` is not `visible`), and
+  activation begun before presentation is ignored for pointer and keyboard input. This reduces accidental activation;
+  it proves neither review nor human presence and does not constrain a compromised client.
+
+**8. Threats.**
+
+| Threat | Answer |
+|---|---|
+| Same-UID agent | Accepted: can acquire or use convenience signing authority. H9/tier B improve isolation only after migration, applicable UID separation and revocation of old convenience devices. |
+| Host | Honest host code never handles person keys. A compromised tier-A host has the accepted same-UID access. A separate-UID host cannot directly read person custody, but its reported origin and attestations remain untrusted. Signer checks establish specified consistency properties, not truth of every host assertion. |
+| Another local user | Cannot directly read correctly protected person custody under ordinary OS permissions. Can reach loopback HTTP; signing additionally depends on bearer and session security. A stolen bearer crosses this boundary. |
+| Remote web page | Without credentials, same-origin execution or another vulnerability, browser requests are constrained by bearer, Host/Origin validation, CORS and framing controls. A page gaining same-origin script execution can drive signing. |
+| HTTP bug or compromise | A passive disclosure of HTTP memory does not directly disclose signer-resident keys. Disclosure of a bearer can disclose signing authority. Active control of the HTTP workflow can obtain unseen signatures through the signer API. Code execution in it can read the key. |
+| Stolen bearer | Can request unseen signatures for click-eligible operations while valid. Typed words do not prevent this. Terminal-only secret issuance remains unavailable through the click API. |
+| Agent-prepared request | Signer-local preparation registration excludes foreign or historical pending requests from click eligibility. Host-reported PID equality alone does not. |
+| Host lies in material | Signer recomputation rejects mismatches between supplied material and signing inputs. It does not prove the truth of mutually consistent fabricated input or fields explicitly classified as host attestations. |
+| View swap | Full signing-input binding rejects changes to an approved record. It does not detect the dashboard displaying one record while requesting a signature for another. |
+| Backup or sync | File custody may be backed up. Traditional login-keychain custody may also be backed up. Data-protection non-migration claims apply only to a correctly implemented and tested data-protection backend. |
+| A reader that does not know `convenience` | The per-workspace flag, the readers condition (`sign.convenience_unavailable`) and the block on adding readers (`sign.convenience_readers`). |
+| A same-UID process pre-claims a click idem | `idem.conflict`; the signer reports the request state and signs nothing again. A denial of service by an already accepted attacker. |
+
+
 ### 0.9 Subscriptions
 
 ```
@@ -2267,6 +2634,10 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     `human.prepare` from "side-effect free, idem ignored" to "optional idem": a retry returns the same request, other
     arguments are `idem.conflict`, a terminal request answers as for other idems, no idem is unchanged and `dry_run`
     never stores (§0.8.1 item 8a).
+11. **Click-to-sign (H5c, additive):** `Signer.auth` gains `"convenience"` (§0.8.6, D-P2-23). No new op and no new
+    frame on the workspace socket: the click signer is a client like `orch sign`. New host codes
+    `sign.convenience_unavailable` (with a reason) and `sign.convenience_readers` (§0.6). `human.click_refused` is a
+    client-side code of the click signer, never sent by the host.
 
 ---
 
@@ -2514,6 +2885,28 @@ the grant send the secret in `auth.grant`.
 header and the shared fingerprint. A host bug must not be able to make the person sign content they did not see.
 
 **D-P2-22 (manager ruling, orch-89). The Touch ID signer H9 is in P2 and must land before the cutover (D44).**
+*Re-planned by the owner on 12 Oct 2026: H9 moves to phase 3; phase 1 signs with D-P2-23.*
+
+**D-P2-23 (owner decisions, 12 Oct 2026; coordination log "OWNER RE-PLAN P2" and "D65 amendment", #264 comment
+6121460551, and the orch-d6 decisions). Phase 1 signs from the dashboard with one click** (§0.8.6, group H5c): the
+device key is held by the `convenience` custody backend (the traditional login keychain on macOS, a 0600 file in the
+person's own state dir on other Unix platforms, unsupported on Windows), with no user presence, by a separate
+person-class signer process beside the dashboard (`python -I -m orch.click`, a child of the dashboard server over a
+socketpair). The signer prepares click requests itself, runs every §0.8.1 check, renders the View the dashboard shows,
+and signs the stored immutable signing inputs of requests it prepared; events carry `auth: "convenience"` (F1
+amended). The host still never prompts and holds no device key. **The dashboard (its HTTP process and browser app) is
+trusted with signing authority**: the separation protects the key against passive disclosure, not against an active
+compromise, an XSS or a stolen bearer driving prepare, view and sign, and code execution in the HTTP process can read
+the key. **Accepted risk, on the workspace card and in the docs: "Convenience signing: agents running as you, or anything
+that takes over this dashboard, could sign."** The flag is **per workspace** and off until switched on; the host allows
+`auth: "convenience"` only while every reader of the workspace is local and updated (no relay pairing, no other
+device, no other member, a model that knows the value: `sign.convenience_unavailable`), and refuses adding a reader to
+a workspace whose history has convenience events (`sign.convenience_readers`), because switching back to terminal
+signing would not help: the new reader must still parse the old events. `orch sign CODE` stays available, and `grant`
+stays terminal-only. Supersedes D41's per-signature presence for phase 1 and amends the dashboard's D65 rule ("the
+browser never handles a factor" stays true; "signing only in the terminal or H9" does not). Reason: the owner wants
+phase 1 usable every day in tier A, where an agent of the same UID can already read a passphrase typed into a terminal
+it can see (D65's stated limit); presence returns with H9 and tier B in phase 3.
 
 - **Order:**
   1. the `human.prepare` → sign → `human.submit` contract (H5a);
@@ -2528,6 +2921,7 @@ header and the shared fingerprint. A host bug must not be able to make the perso
 |---|---|---|---|
 | CLI (`orch approve`) | `human.prepare` with `signer` | `/dev/tty`: header, then review from `material`, confirmation word, `tcflush` (C7) | passphrase, fields from the signing bytes |
 | CLI (`orch sign CODE`) | `human.pending` + `human.get` (binds the device) | the same | the same |
+| H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click; a typed word for member, addon-grant/purge, policy and repo-settings ops; none on the key |
 | H9 `orch-signer` (macOS, Swift, Secure Enclave P-256, auth `secure-enclave`) | `human.get` (binds the device) | its own native window: header, then review from `material` after recomputing the hashes | Touch ID; the LocalAuthentication reason is built from the signing bytes; non-person labels refused |
 
 WebAuthn (D64) needs a new signature contract and is deferred past P2 (H0 records this).
@@ -2598,6 +2992,7 @@ UID. P2 adds no keychain.**
 | A direct CLI with another state directory (H2a) | Ownership lives in `<state>/hosts/<ws>`, so a direct-mode CLI with a different `ORCH_STATE_DIR` or `XDG_CONFIG_HOME` does not see the registration and can write to a served workspace (trusting its genesis on first use in that directory). Known limit of D-P2-18 in tier A. Tier B closes it, because only the host can write the store files. A follow-up may have the host hold a lock inside the workspace while it serves. |
 | A job takes over the worker role | Worker connections are accepted only from the service manager's main PID (N1). |
 | A worktree that blocks or misleads the check | `O_NONBLOCK`, regular files only, symlinks by target, escaped names (N3). |
+| Click-to-sign (phase 1, D-P2-23) | §0.8.6 item 8. Accepted: a same-UID agent, and anything that takes over the dashboard (XSS, stolen bearer, code execution in the HTTP process), can sign (shown on the card). The signer signs only requests it prepared itself, binds the full signing inputs, and keeps the key out of the HTTP process against passive disclosure. Readers that do not know `convenience` are excluded per workspace. |
 | A prepared request that smuggles an extra event | The signer checks every event against `EMITS_V1[op]`, one log, one `based_on` and its own person, and lists every event (N4). The fingerprint covers the events (N2). |
 
 
@@ -2754,12 +3149,18 @@ dispatch is turned on.
 | **H6b Dashboard reads** | `ticket.query`, `ticket.get`, `needs`, `activity.list`, `workspace.show`, `member.list`, `session.list`, `grant.list`, `move`, `policy.set`, `settings.set`; v1.5: `workspace.settings`, `ticket.text`, `sub.open {detail}`, the `read_ext/2` fields | paging stays consistent under appends (no repeat, no gap); restricted rows hidden; `needs` equals `model.needs`; `ticket.get` evidence digests match the manifest; `grant.list` hides `secret_hash`; `move` allowed and refused per its rules; **v1.4:** `restricted`, the task and criteria counts, `blocking_questions`, `claim` and `closed` on rows are absent or never counted for a restricted ticket the viewer cannot see (`total` unchanged by it); `restricted` is `true` exactly for non-`workspace` rows the viewer may see; the new `needs` fields for `question`, `approve`, `no_eligible`, `acknowledge` and `addon` equal `model.needs` (with `who` limited as above) and the question or rule text, and `since` follows the table in §0.8; every new `ticket.get` field equals the model view (a question's options and answer, a receipt's `evidence`, gate `approved_by` and `decisions`, `verdict.current`, the manifest against `artifact.get` digests, `claim.live`, `source` against the latest `branch.pushed`), and `LogItem.data` holds only the fields in its type table (no `sig`, `host_sig`, secret or text beyond `Snip`); `sections` holds hashes only; a closed ticket: `ticket.get`, `diff`, `artifact.get` and `sub.open {ticket}` succeed for a viewer who may see it and give `not_found` for one who may not, `ticket.query` leaves it out without a `status` and returns it with `["closed"]`, `needs` has no `approve` for it, and a reopened ticket loses `closed`; `activity.list`: every item filtered on its own (an agent grant or `no-person` never gets a restricted ticket's events; `no-person` gets no workspace-log event; G gets its own person's `grant.*` and the person-type events per the op text; a non-owner gets only their own `grant.*` events and none of another person's), `next_page` and page fullness without holes, no `total`, a token with other arguments is `invalid.input`, an expired token is `page.expired`, a ticket that becomes visible between pages adds nothing to the snapshot, and one that becomes invisible is dropped from later pages; a revoked grant or a removed person on page 2 is filtered as the new viewer (H6b: answered `page.expired`, a change of the principal's viewer); a forged, altered or other-principal `page` token (also for `ticket.query`) is `page.expired`, and a token with other arguments is `invalid.input`; workspace-log `data` holds only the fields of its table; a `viewer`-role person gets member, role, device, policy and settings items with the table's fields only, and no `grant.*` item; `needs {person: X}` by an owner who is not on a restricted ticket's list returns none of X's items on it; `who` and `eligible` never name a person who cannot see the ticket, and a gate whose approver tokens no visible person holds is `no_eligible` with `cause:"no_visible_person"`, a gate with no token has `cause:"no_token"`, and `blocked` stays F1's token test; `duplicate_of` naming a ticket the viewer cannot see is returned as the key only, in `closed`, `LogItem.data` and the feed, and `ticket.get` on it is `not_found`; the `_more` flags and `_cut` siblings are set exactly when something was cut, the first page's `sub_cursor` joined to `sub.open` loses and repeats nothing, `settings.changed` shows key names only; `read_ext/1` and `activity/1` listed in `welcome.caps`; **v1.5:** `workspace.settings` gives N no `path`, `remote`, `settings_at` or `policy_at`, and marks defaults; `ticket.text` returns the exact stored text in chunks that never split a scalar value, `not_found` for a restricted ticket, a field the event lacks, or a workspace-log event; the `read_ext/2` hashes equal the model's (`hash12` is a prefix of `GateView.hash`) and `Decision.hash` equals the signed event; `grant.list` `revoked.by` is the `grant.revoked` signer and `session_ids` follow the `grant.list` rule; a `detail` subscription item equals the `activity.list` item of the same event for the same viewer; `settings/1`, `text/1`, `read_ext/2` and `sub_ext/1` appear in `welcome.caps`, and `read_ext/2` also lists `read_ext/1`; `detail` without `sub_ext/1` answers `invalid.input`; `workspace.settings` pages 32 repos per page on a stable snapshot, with `page.expired` and `invalid.input` for a token with other arguments; `path` and `remote` only for a person-class owner or maintainer (not for G acting for one), and an unparseable `remote` is omitted; N's `repos` hold only repos linked by a visible ticket, with `default_branch` only; `ticket.text` gives `not_found` for an `event_id` that is not the event at `seq` (a restore-abandoned event), byte offsets with nonempty progress at `length` 4 on 4-byte scalars, `invalid.input` for an offset inside a scalar value and for `offset > 0` without `event_id`; `Closed.seq`/`event_id`, `ClaimFull.idle_until`, `Question.qid`/`hash`/`answer.auth` and `sessions_more` match the model | Codex, Opus (visibility of the new fields) |
 | **H6c v1.5 listings** (v1.5) | `session.refusals` and the dispatcher's refusal records, `artifact.query`, `diff {head, base}`, `commit.list` | refusal records hold no args, message, hint or secret, only for column G with a session, and follow the `grant.list` person rule (an N caller gets `op.not_allowed`, a non-owner none of another person's), with a restricted ticket's refusal left out; `artifact.query` rows equal the union of visible manifests (`total` unchanged by a restricted ticket); `diff` and `commit.list` refuse with `not_found` a `head` or `base` outside the authorized ranges; **a repo identity change** (an old push with another `repo_id`, a `before` with another identity or ref) authorizes nothing; **merged history** (a visible ticket that merged another ticket's branch) discloses only what the documented boundary says; a caller-chosen endpoint never enlarges a range; **bounded continuation**: a range over 10 000 commits either resumes from host state or ends with `walk_cut:true` and `next_page:null`, never rescanning a prefix; `parents_more` and `pushed_more` set exactly when cut; subjects and author names cleaned; refusal records: complete ticket association or none, static catalog hint only, ingestion budget never blocks dispatch; `session.refusals`: `not_found` for a `session` or `ticket` the viewer may not see, epoch-bound tokens (`page.expired` after a restore), no `total`; `artifact.query` `counts` sum to `total`, appear on the first page only, and `counts:true` with a `page` token is `invalid.input`; `diff {head, base}`: `since` with either is `invalid.input`, and `repo` is required; `commit.list`: the author is the name only (no email), and `base_source:"pushed"` for a pushed base | Opus |
 | **H7 Turn host mode on** | the default for registered workspaces; full parity; cross-version fixtures (an older client against a newer host) | full golden parity including human ops and `wait`; T2 in both modes. Needs H10 for `verdict` and `approve code` parity (clean-tree check). | Opus |
+| **H5c Click-to-sign custody** (D-P2-23, phase 1) | F1 amendment (`auth: "convenience"`), the `Signer` schema, the per-workspace flag (`orch host convenience`) and the readers condition (`sign.convenience_unavailable`, `sign.convenience_readers`), `orch.custody.convenience` (keychain store via ctypes, file store, a fake store for tests, the selection), `orch keys custody` and `orch keys forget`, `orch.click` (signer process: `prepare`/`view`/`sign`/`cancel`/`status`, approval records, limits, log), the audit-hook rules; the dashboard's sign panel, card line and HTTP headers are the dashboard stream's | the flag off refuses; each readers reason refuses at prepare, at binding and at submit; `member.add` refused with convenience events in the history, allowed after switching off when there are none; the HTTP-side client never imports custody or the keychain (import graph); the host audit hook refuses person-key opens, `Security.framework` and the signer imports; tests use a throwaway keychain or a fake store, never the login keychain; a View's `lines` equal the terminal review; `view`/`sign` refuse a request the signer did not prepare; `sign` refuses another `view_digest`, a changed host answer, an expired approval, a missing word, a changed custody `gen`, and a click within 1 s; a `checks[].at` change keeps the digest; a lost submit answer is retried with the identical events and idem, and a repeated `sign` returns the cached result; refusals do not cancel, `cancel` does; `grant` and unknown ops refused; event-signature budgets; conversion keeps the device id and public key and resumes after an interruption; downgrade needs `--in-place`; `auth: "convenience"` round-trips through the model and an old schema refuses it; no key byte in any log, frame or error | Opus |
 | **H9 Touch ID signer** (D-P2-22) | Swift helper, `secure-enclave` backend, native header and review, dashboard integration | recomputes hashes; refuses non-person labels; F1 vector interop; cancellation (window closed or Touch ID refused) submits nothing and leaves the request `prepared`; same fingerprint as the dashboard | Opus |
 | **H10 Worker and jobs** | `orch worker`, `job.*`, leases, containment, addon runner, `tree.check` | the addon cannot read the WSK; a double-forked escapee dies within 30 s while a sibling job completes; a reparented child in a live job's group survives the sweep (F14); a repo with `filter.*.clean`, `core.fsmonitor` or `core.hooksPath` spawns no process in `tree.check` (F2); a second process under the worker UID is refused while the worker is connected, and a `job.done` with another connection's lease is refused (F3); lease expiry and retry at most twice; cancellation through heartbeat; a job that kills the worker and connects as worker class during the restart throttle is refused, and the restarted worker gets the role (N1); `job.done` replayed after a worker reconnect and after a host restart answers `{}` when lease and canonical digest match the stored completion, and `worker.lease` otherwise (including a different error message); a `void` lease is refused; a worker-UID connection to a workspace socket is refused; jobs of two workspaces are served round-robin over the one worker connection; a FIFO at a tracked path counts as changed without blocking, and a symlink is compared by its target (N3); a tree dirtied between prepare and `human.get` is refused at `human.get` (N3) | Opus |
 
 - **Order:** H0, then H1a → H1b → H2a → H2b → H3a → H3b1 → H3b2 → H3b3 → H3c → H4a1 → H4a2 → H4b → H5a → H5b ∥
   H6a → H6b → H7. H6c (v1.5 listings) follows H6b and is not on the cutover path. H9 follows H5b. H10 runs in parallel from H4a1.
-- **Cutover gate (D44):** H7, H9 and H10.
+- **Owner re-plan, 12 Oct 2026** (phases: orch-v2.md §13 note): phase 1 = core + dashboard in tier A, with H5c
+  (click-to-sign) right after H6b and H4a2, then H4b, H3b2, H10's `tree.check`, H7. H9 and tier B (H3c's agent users)
+  move to phase 3. orch-52 records the new group order and cutover gate.
+- **Cutover gate (D44):** H7, H9 and H10. **Phase-1 gate (owner re-plan, 12 Oct 2026; replaces this gate for phase 1):**
+  H4b, H5c, H3b2, H10's `tree.check` and H7, with click-to-sign on only for workspaces that meet §0.8.6 item 1 and
+  only after the item 4 readers are released (the relay deployed). H9 and H3c join the gate again in phase 3.
 - **Stream B** uses a stub of §0 now and the real host from H4a1, with `orch host run --foreground` on a demo
   workspace.
 
@@ -2889,6 +3290,37 @@ Two items wait for their groups (§9 Q6: H10, Q7: H5a).
   caller only. The approval prompt shows the base, its source and the commit list. D58 is unchanged: the signature binds
   the head; the base is display. P3 replaces first observation with a base pinned when the ticket is claimed.
 
+
+**7. Click-to-sign custody (D-P2-23, H5c, 12 Oct 2026).** The owner decided the goal (one-click signing in phase 1, no
+presence, the risk shown, a per-workspace flag with a readers condition). The design challenge (Codex: adopt with
+amendments; Opus: pass with required changes R1–R13) was adopted in full by orch-52; the choices, each with its
+alternative:
+
+- **Signer process, not a library in the HTTP server.** A `python -I -m orch.click` child over a socketpair holds the
+  key. *Alternative:* the dashboard server calls the custody library itself. Rejected for the owner's "factor stays out
+  of the dashboard server". *Stated honestly (Codex 1, Opus R1):* this protects against passive disclosure only; the
+  dashboard is trusted with signing authority, which the card text now says.
+- **Eligibility by a signer-local prepare registry** (Codex 8). *Alternative (the first draft):* the host-reported
+  `origin.pid` equals the signer's parent. Rejected: a PID does not identify a process lifetime, and the host reports it.
+- **Bind the full signing inputs, sign the stored ones** (Codex 6). *Alternative:* re-derive the View and compare its
+  digest. Kept only for the click itself; freshness (`checks[].at`) is outside the digest (Opus R3).
+- **Bound at prepare, no hand-off code on a click request.** *Alternative:* a hand-off request bound at `view`. Rejected:
+  the owner's condition is checked at prepare with the signer's auth, and a `view` that binds before its checks changes
+  the custody label of a foreign request (Opus R4). The terminal path is a separate hand-off request.
+- **Retries resend the identical signed events and idem** (Codex 7, Opus R7). *Alternative:* a deterministic idem and a
+  re-sign. Rejected: ECDSA signatures are randomized, so a re-sign is an `idem.conflict`.
+- **The traditional login keychain on macOS** (Codex 3, Opus R2), with no data-protection claims. *Alternative:* the
+  data-protection keychain with `ThisDeviceOnly`. Needs a signed helper with entitlements; phase 3's H9 is that helper.
+- **One `auth` value `convenience`** for keychain and file. *Alternatives:* `keychain` and `file` (store names, not
+  guarantees; `file` collides with the file tier), or reusing `passphrase` (would hide the missing factor).
+- **Same device on conversion; downgrade in place only with `--in-place`** (Codex 4, Opus R10). *Alternative:* a new
+  device for every custody change. That is `--rotate`, designed for when device ops exist.
+- **Click for daily ops; a typed word for member, addon-grant/purge, policy and repo-settings ops; `grant` and unknown
+  ops terminal-only** (Codex 10, Opus R8). *Alternatives:* click for everything (the grant secret would cross the HTTP
+  process); a word for every op (the owner wants it easy).
+- **Per-workspace readers condition and blocking new readers** (owner, orch-d6). *Alternative:* allow adding a reader
+  after switching back to terminal signing. Rejected by the owner: the history already holds convenience events, which
+  the new reader must parse.
 
 ## 11. P3: the host↔relay bridge (input from orch-relay §9)
 

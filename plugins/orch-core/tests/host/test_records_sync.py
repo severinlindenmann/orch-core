@@ -70,7 +70,7 @@ class Env:
 
     def link(self, op, args):
         self.calls.append((op, dict(args)))
-        res = self.client.req(op, args, idem=op == "records.remote_private" or None)
+        res = self.client.req(op, args, idem=op in ("records.remote_private", "records.note") or None)
         if not res["ok"]:
             raise RecordsError(res["error"]["code"], res["error"]["message"], exit_=res["exit"])
         return res["result"]["data"]

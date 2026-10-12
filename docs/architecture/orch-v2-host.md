@@ -1555,7 +1555,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    `lines` (a grant's "the secret was shown" line), a grant prepared through the host carries the direct-mode hint, the
    CLI orders a person op's `data` by the op's output schema (the record is stored as canonical JSON), and a dry-run
    `human.prepare` returns `result` (above). Parity that needs a group not merged yet is `xfail(strict)` with its PR
-   (`tests/host/test_parity_pending.py`: `diff` needs #417; `verdict`/`show` on a linked repo, which needed #413, passes).
+   (`tests/host/test_parity_pending.py`: `verdict`/`show` on a linked repo and `diff`, which waited for #413 and #417, pass).
 5. **Op versions on the wire.** `welcome.ops` lists `task.done` at 2, as §0.4 says (it said 1 until H7), and the thin
    CLI's hello sends `ops: {"task.done": 2}`. A client that does not list it (the v1.4 CLI) gets `op.unsupported` for
    `task.done`, never a contract-1 run: see the fixtures (D-P2-14).
@@ -3322,7 +3322,8 @@ dispatch is turned on.
     person ops, `wait`) and the cross-version fixtures (this group's PR).
   - [x] H10's `tree.check` (#413): merged; `verdict` and `show` on a linked repo match direct mode in host mode
     (`tests/host/test_parity_pending.py`, its xfail removed).
-  - [ ] The host serves `diff` (#417, stacked on #413): the dashboard's Changes tab on a real host.
+  - [x] The host serves `diff` (#417): merged; `diff` on a registered workspace equals git
+    (`tests/host/test_parity_pending.py`, its xfail removed).
   - [ ] Click-to-sign switched on for a workspace only once the §0.8.6 item 4 readers are released (the relay is not
     deployed yet); the flag stays off by default.
   - [ ] T2 in both modes: the golden suites run in both modes in every full run; the orch-dev-kit e2e scenarios

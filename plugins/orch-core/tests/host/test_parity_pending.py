@@ -1,11 +1,11 @@
-"""H7 parity of the parts other groups serve. A test whose group is not merged yet is ``xfail(strict=True)``: it fails
-for the reason named, and the day the group lands the strict mark turns its pass into a failure (XPASS) and must go.
+"""H7 parity of the parts other groups serve. Both waited as ``xfail(strict=True)`` for their group and lost the mark
+when it merged.
 
 * (#413, merged) ``verdict`` and ``show`` on a ticket with a linked repo need git in the served workspace and the
   clean-tree check (H10a ``tree.check``). ``approve code`` binds the same source list through the same check; its gate
   must be independent (D59), so it needs a second person, and in tier A one UID maps to one person: its parity is
   the H10a host tests' (a clean tree allows it, a dirty one refuses it) rather than a two-mode script here.
-* the ``diff`` op the dashboard's Changes tab reads is served by feat/serve-diff (#417, stacked on #413).
+* (#417, merged) the ``diff`` op the dashboard's Changes tab reads, served and equal to git.
 """
 
 from __future__ import annotations
@@ -26,8 +26,6 @@ from tests.ops.humans import HumanWs, make_ticket, to_testing
 from tests.ops.test_golden import _direct, norm
 
 LINKS = 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}'
-TREE_CHECK = "#413 (H10a tree.check): git and the clean-tree check in the served workspace"
-SERVE_DIFF = "#417 (feat/serve-diff): the host serves diff"
 
 
 def _mask(text: str) -> str:
@@ -80,7 +78,6 @@ def lab(tmp_path):
     value.close()
 
 
-@pytest.mark.xfail(strict=True, reason=SERVE_DIFF)
 def test_diff_is_served_for_a_registered_workspace_and_equals_git(lab):
     ws = lab.ws
     ws.store = ws.other()

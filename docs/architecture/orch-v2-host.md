@@ -186,7 +186,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `text/1` | `ticket.text` (1) (v1.5) | workspace |
 | `sub_ext/1` | no ops of its own (v1.5): `sub.open` accepts `detail` (§0.9) | workspace |
 | `artifact_query/1` | `artifact.query` (1) (v1.5, later than H6b) | workspace |
-| `diff_ext/1` | `commit.list` (1); `diff` accepts `head` and `base` (v1.5, later than H6b) | workspace |
+| `diff_ext/1` | `commit.list` (1); `diff` accepts `since`, `head` and `base` (v1.5, later than H6b). H6c lists the cap and serves the `diff` arguments only: a client checks `welcome.ops` for `commit.list` | workspace |
 | `refusals/1` | `session.refusals` (1) (v1.5, later than H6b) | workspace |
 | `activity/1` | `activity.list` (1) | workspace |
 | `diff/1` | `diff`, `artifact.get` (1) | workspace |
@@ -1028,10 +1028,11 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
   §0.3). Since H6c `since`, `head` and `base` are served as well.
 - **As built in H6c** (`diff` only; additive, the result shape is unchanged; `commit.list`, `session.refusals` and
   `artifact.query` of the H6c row are separate work):
-  1. **`host_pinned`.** The host keeps `{ticket uid: {repo identity: sha}}` in `hosts/<workspace>/diff-bases.json`
+  1. **`host_pinned`.** Only a call of column P (a person) records a pin; G and N never do. The host keeps `{ticket uid: {repo identity: sha}}` in `hosts/<workspace>/diff-bases.json`
      (0600, atomic replace, at most 20 000 entries). A served `diff` records the local merge base of the observed head
      the first time it sees a (ticket, identity); a recorded base is never replaced. While it is an ancestor of the head
-     it is the base (`base_source:"host_pinned"`), and `base_moved` is the number of commits between it and the current
+     **and of the current tip of the default branch** (else it is ignored: an agent that moved the default branch, got a
+     pin recorded and moved it back must not hide its commits) it is the base (`base_source:"host_pinned"`), and `base_moved` is the number of commits between it and the current
      local merge base (0 when there is none). A pin that is gone from the repo or is no ancestor is ignored (the
      rules fall through to `local_ref`). Because the first diff pins the then-current merge base, a later diff of a host
      answers `host_pinned` where direct mode, which keeps no host state, answers `local_ref`. P3 replaces first

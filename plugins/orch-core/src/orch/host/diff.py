@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -128,7 +129,22 @@ BASES_MAX = 20_000
 class BaseStore:
     """The ``host_pinned`` bases (§0.8, §9 Q9): ``{ticket uid: {repo identity: sha}}`` in a 0600 file of the host's
     state directory. The first merge base seen for a (ticket, identity) is kept and never replaced; an unreadable
-    file reads as no pins (the diff then shows the local base, labelled so) and is not overwritten."""
+    file reads as no pins (the diff then shows the local base, labelled so) and is not overwritten.
+
+    One instance per file path (:meth:`at`), so every request of a workspace shares one lock: two recorders of different
+    tickets never overwrite each other's entry with a stale copy."""
+
+    _registry: dict[str, BaseStore] = {}
+    _registry_mu = threading.Lock()
+
+    @classmethod
+    def at(cls, path: Path) -> BaseStore:
+        key = os.path.realpath(path)
+        with cls._registry_mu:
+            got = cls._registry.get(key)
+            if got is None:
+                got = cls._registry[key] = cls(Path(key))
+            return got
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -153,6 +169,15 @@ class BaseStore:
         with self._mu:
             return dict((self._read() or {}).get(uid, {}))
 
+    @staticmethod
+    def _same(a: str, b: str) -> bool:
+        from orch import canon
+
+        try:
+            return canon.same_repo_identity(a, b)
+        except Exception:  # noqa: BLE001 - an identity that does not parse names no repo
+            return False
+
     def record(self, uid: str, identity: str, sha: str) -> None:
         """Keep ``sha`` as the base of (``uid``, ``identity``) unless one is kept already."""
         with self._mu:
@@ -160,17 +185,26 @@ class BaseStore:
             if doc is None or sum(map(len, doc.values())) >= BASES_MAX:
                 return
             mine = doc.setdefault(uid, {})
-            if any(r.lower() == identity.lower() for r in mine):
+            if any(self._same(r, identity) for r in mine):
                 return
             mine[identity] = sha
-            tmp = self.path.with_name(self.path.name + ".tmp")
+            tmp = None
             try:
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                fd, tmp = tempfile.mkstemp(prefix=".diff-bases.", suffix=".tmp", dir=self.path.parent)  # 0600, O_EXCL
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(json.dumps(doc, sort_keys=True))
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(tmp, self.path)
+                tmp = None
             except OSError:
                 LOG.warning("diff: the host-pinned bases could not be written")
+            finally:
+                if tmp is not None:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
 
 
 @dataclass(frozen=True)
@@ -208,7 +242,7 @@ def prepare(call: Call, args: dict[str, Any]) -> Pending:
         raise HostError("invalid.input", "diff: since cannot be combined with head or base")
     if (head is not None or base is not None) and args.get("repo") is None:
         raise HostError("invalid.input", "diff: head and base need repo")
-    bases = BaseStore(service.state_dir / "hosts" / service.workspace_id / "diff-bases.json")
+    bases = BaseStore.at(service.state_dir / "hosts" / service.workspace_id / "diff-bases.json")
     try:
         jobs = diff_plan(
             store,
@@ -223,7 +257,19 @@ def prepare(call: Call, args: dict[str, Any]) -> Pending:
     except OrchError as e:  # no branch, no working copy: path-free messages
         raise HostError(e.code, e.message) from None
     context, max_bytes = args.get("context", 3), args.get("max_bytes", 262144)
-    return Pending(call.principal, caps, jobs, context, max_bytes, viewer.manager, since, head, base, bases, view.uid)
+    return Pending(
+        call.principal,
+        caps,
+        jobs,
+        context,
+        max_bytes,
+        viewer.manager,
+        since,
+        head,
+        base,
+        bases if call.column.name == "P" else None,  # only a person's call may pin a base
+        view.uid,
+    )
 
 
 def run(pending: Pending) -> dict[str, Any]:
@@ -262,5 +308,10 @@ def recheck(call: Call, pending: Pending | None = None) -> None:
         from orch.ops.diff_core import approvals_of
 
         now = list(approvals_of(call.service.store, view, viewer.person))
-        if any(list(job.approvals) != now for job in pending.jobs):
+        for job in pending.jobs:
+            before = list(job.approvals)
+            if before == now:
+                continue
+            if all(a in now for a in before):  # one was added while the diff ran
+                raise HostError("not_found", "your approvals changed while the diff ran; ask again")
             raise HostError("not_found", "no approval of yours covers this repo's history")

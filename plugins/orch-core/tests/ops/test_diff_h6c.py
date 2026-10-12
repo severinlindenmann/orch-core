@@ -87,8 +87,8 @@ def test_head_and_base_in_direct_mode(hws, scene):
         with pytest.raises(OrchError) as e:
             diff(hws, repo="proj", **bad)
         assert e.value.code == "not_found"
-    unknown = diff(hws, repo="proj", head=s["c3"], base=s["c2"])
-    assert unknown["sources"][0]["repo"] == "proj"
+    got = diff(hws, repo="proj", head=s["c3"], base=s["c2"])
+    assert got["sources"][0]["repo"] == "proj"
 
 
 @pytest.mark.parametrize(
@@ -110,8 +110,8 @@ def test_bad_arguments_are_invalid_input(hws, scene, kw):
 
 
 def test_a_revoked_approver_device_or_removed_member_leaves_no_approval(hws, scene):
-    """Fail closed: the approval of a device that was revoked (or of a person no longer a member) is not a base, and an
-    older approval of the same person never replaces it."""
+    """Fail closed: the approval of a device that was revoked is no base for its person, and an older approval of the
+    same person never replaces it (the walk stops at the newest failing one)."""
     s, rita = scene
     assert diff(hws, since="my_approval", person=rita.ref)["sources"][0]["base_sha"] == s["c2"]
     hws.revoke_device(rita.device, rita)

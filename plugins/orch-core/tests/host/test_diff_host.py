@@ -566,3 +566,61 @@ def test_the_h6c_arguments_keep_the_limits(world, monkeypatch, extra):
 def test_diff_ext_is_listed(world):
     served, _, _ = world
     assert "diff_ext/1" in served.client().welcome["caps"]
+
+
+def test_an_agent_cannot_pin_a_base_that_hides_its_commits(world):
+    """Opus's repro: M - C1 - E(evil.txt) - N on the branch; main is moved to E, a diff pins E, main is moved back. A
+    grant (G) records no pin at all, a person's pin is used only while the default branch still contains it, and the
+    owner's diff shows evil.txt."""
+    served, proj, tickets = world
+    uid, key = tickets["open"]
+    git = served.lab.ws.git
+    m = git("rev-parse", "main")
+    (proj / "evil.txt").write_text("evil\n")
+    git("add", "evil.txt")
+    git("commit", "-qm", "evil")
+    evil = git("rev-parse", "HEAD")
+    (proj / "n.txt").write_text("n\n")
+    git("add", "n.txt")
+    git("commit", "-qm", "n")
+    git("branch", "-f", "main", evil)
+    path = served.lab.state / "hosts" / served.wid / "diff-bases.json"
+    by_grant = ok(diff(served, {"ref": key}, grant=served.grant))["data"]["sources"][0]
+    assert by_grant["base_sha"] == evil and not path.exists()  # column G pins nothing
+    ok(diff(served, {"ref": key}))  # the owner (column P) pins the then-current merge base: evil
+    assert json.loads(path.read_text()) == {uid: {"local:proj": evil}}
+    git("branch", "-f", "main", m)
+    got = ok(diff(served, {"ref": key}))["data"]
+    assert got["sources"][0]["base_sha"] == m and got["sources"][0]["base_source"] == "local_ref"
+    assert "evil.txt" in {f["path"] for f in got["files"]} and "+evil" in got["unified"]
+
+
+def test_a_wrong_length_head_is_the_same_not_found_as_any_unknown_one(world):
+    served, _, tickets = world
+    key = tickets["open"][1]
+    a = diff(served, {"ref": key, "repo": "proj", "head": "a" * 64})  # a sha256 id in a sha1 repository
+    b = diff(served, {"ref": key, "repo": "proj", "head": "a" * 40})
+    assert err(a) == "not_found" and a["error"]["message"] == b["error"]["message"]
+
+
+def test_two_recorders_of_different_tickets_keep_both_pins(tmp_path):
+    import threading
+
+    from orch.host.diff import BaseStore
+
+    path = tmp_path / "diff-bases.json"
+    assert BaseStore.at(path) is BaseStore.at(tmp_path / "." / "diff-bases.json")
+    barrier = threading.Barrier(8)
+
+    def rec(i):
+        store = BaseStore.at(path)
+        barrier.wait()
+        store.record(f"t{i}", "https://github.com/acme/app", f"{i:040x}")
+
+    threads = [threading.Thread(target=rec, args=(i,)) for i in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert json.loads(path.read_text()) == {f"t{i}": {"https://github.com/acme/app": f"{i:040x}"} for i in range(8)}
+    assert oct(path.stat().st_mode & 0o777) == "0o600" and [p.name for p in tmp_path.iterdir()] == [path.name]
+    BaseStore.at(path).record("t0", "https://github.com/ACME/App", "f" * 40)  # same identity, other case: kept as is
+    assert json.loads(path.read_text())["t0"] == {"https://github.com/acme/app": f"{0:040x}"}

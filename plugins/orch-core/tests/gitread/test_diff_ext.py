@@ -48,19 +48,35 @@ def test_no_ext_and_a_bare_name_change_nothing(scene):
     assert got["observed_base"] == s["m1"]  # what the host may pin
 
 
-def test_host_pinned_wins_while_an_ancestor_and_counts_how_far_main_moved(scene):
+def test_host_pinned_wins_while_below_the_head_and_the_default_tip_and_counts_how_far_main_moved(scene):
     r, s = scene
-    got = d(r, pins=[{"repo": ID, "sha": s["c2"]}])
-    assert (got["base_sha"], got["base_source"], got["base_moved"]) == (s["c2"], "host_pinned", 0)
-    # the pin below the merge base: the branch's commits between the two are counted
-    r.git("checkout", "-q", "main")
-    r.git("merge", "-q", "--no-edit", "feat~3")  # main now contains c2? feat~3 = c2
     got = d(r, pins=[{"repo": ID, "sha": s["m1"]}])
+    assert (got["base_sha"], got["base_source"], got["base_moved"]) == (s["m1"], "host_pinned", 0)
+    # a pin the default branch does not contain (an agent moved main there, got it pinned, moved main back) is ignored
+    assert d(r, pins=[{"repo": ID, "sha": s["c2"]}])["base_source"] == "local_ref"
+    # main takes the branch's first commit: the pin stays below it, and the commits it hides are counted
+    r.git("checkout", "-q", "main")
+    r.git("merge", "-q", "--no-edit", "feat~3")  # feat~3 = c2
+    pin = [{"repo": ID, "sha": s["m1"]}]
+    got = d(r, pins=pin)
     assert got["base_source"] == "host_pinned" and got["base_sha"] == s["m1"] and got["base_moved"] == 1
-    # a pin for another identity, or one that is no ancestor of the head, is not used
-    assert d(r, pins=[{"repo": "local:other", "sha": s["c2"]}])["base_source"] == "local_ref"
+    # an explicit base equal to the pinned base reports the same, not a bare 0
+    got = d(r, pins=pin, base=s["m1"])
+    assert (got["base_source"], got["base_moved"]) == ("host_pinned", 1)
+    # a pin for another identity, one that is no ancestor of the head, or a missing object is not used
+    assert d(r, pins=[{"repo": "local:other", "sha": s["m1"]}])["base_source"] == "local_ref"
     assert d(r, pins=[{"repo": ID, "sha": s["m2"]}])["base_source"] in ("local_ref", "first_parent")
     assert d(r, pins=[{"repo": ID, "sha": "0" * 40}])["base_source"] == "local_ref"
+
+
+def test_a_head_or_base_of_the_wrong_length_is_the_same_not_found(scene):
+    r, s = scene
+    texts = set()
+    for bad in ({"head": "a" * 64}, {"base": "a" * 64}, {"head": "a" * 40}, {"base": "a" * 39}):
+        with pytest.raises(NotFound) as e:
+            d(r, **bad)
+        texts.add(e.value.reason)
+    assert texts == {"not found for this ticket"}
 
 
 def test_since_takes_the_newest_approval_that_names_this_repo_and_is_an_ancestor(scene):

@@ -82,7 +82,8 @@ def test_a_revoked_approver_device_leaves_no_approval_for_her(rita_world):
 
 
 def test_an_approval_revoked_while_the_diff_runs_is_refused(rita_world, monkeypatch):
-    """The approval resolved before the read is resolved again after it, on success and on error."""
+    """The approval resolved before the read is resolved again after it, on the success path (the failing path
+    has its own test)."""
     import threading
     import time
 

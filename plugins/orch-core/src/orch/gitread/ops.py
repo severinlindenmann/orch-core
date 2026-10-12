@@ -154,10 +154,12 @@ def _same(a: str, b: str) -> bool:
 
 def _default_base(repo: Repo, head: str, tip: str | None, pinned: str | None) -> tuple[str, str, int, str | None]:
     """Section 0.8's base choice for ``head``: ``(base, base_source, base_moved, local merge base)``. The host-pinned
-    base while it is an ancestor of ``head``; else the merge base with the default branch's tip; else the first
-    parent."""
+    base while it is an ancestor of ``head`` and of the default branch's tip; else the merge base with that tip; else
+    the first parent."""
     mb = repo.merge_base(head, tip) if tip is not None else None
-    if pinned is not None and pinned in repo.ancestors(head):
+    # a pin counts only while it lies below both the head and the CURRENT default-branch tip: an agent that moved
+    # the default branch forward, got a pin recorded and moved it back must not hide its commits behind that pin
+    if pinned is not None and tip is not None and pinned in repo.ancestors(head) and pinned in repo.ancestors(tip):
         moved = 0
         if mb is not None and mb != pinned and pinned in repo.ancestors(mb):
             moved = len(repo.range_commits(pinned, mb))
@@ -185,11 +187,10 @@ def _authorize(
     when the section 0.8 rule picks it. Anything outside the ranges the host derives itself is ``NotFound``."""
     head = ext.get("head")
     base = ext.get("base")
-    if head is not None:
-        head = _sha_arg(head, repo, "head")
-    if base is not None:
-        base = _sha_arg(base, repo, "base")
     nope = NotFound("not found for this ticket")
+    for v in (head, base):  # a wrong length or alphabet for this repo's object format reads as any other unknown id
+        if v is not None and (not isinstance(v, str) or len(v) != repo.hexlen or not set(v) <= _HEXDIGITS):
+            raise nope
     pushes = ext.get("pushes") or []
     if not isinstance(pushes, list) or len(pushes) > 128:
         raise Unavailable("bad request: pushes")
@@ -215,28 +216,28 @@ def _authorize(
     for sha in pushed_heads:
         if sha not in roots and len(roots) < ROOTS_MAX and _usable(repo, sha):
             roots.append(sha)
-    ranges: list[tuple[str, str, str, set[str]]] = []  # (root, its default base, that base's source, range members)
+    ranges: list[tuple[str, str, str, int, set[str]]] = []  # (root, default base, its source, its moved, members)
     total = 0
     for r in roots:
         try:
-            rb, rsrc, _, _ = _default_base(repo, r, tip, pinned)
+            rb, rsrc, rmoved, _ = _default_base(repo, r, tip, pinned)
         except Unavailable:
             continue  # a root without a derivable base authorizes nothing
         members = {c.oid for c in repo.range_commits(rb, r)} | {r}
         total += len(members)
         if total > RANGE_COMMITS_MAX:
             raise nope  # a membership that cannot be established within the budget is refused
-        ranges.append((r, rb, rsrc, members))
+        ranges.append((r, rb, rsrc, rmoved, members))
     chosen = head if head is not None else head0
-    if head is not None and not any(chosen in members for *_, members in ranges):
+    if head is not None and not any(chosen in rng[-1] for rng in ranges):
         raise nope
     if base is None:
         return chosen, None, None, 0
     if base not in repo.ancestors(chosen):
         raise nope
-    for _, rb, rsrc, members in ranges:
+    for _, rb, rsrc, rmoved, members in ranges:
         if chosen in members and base == rb:
-            return chosen, base, rsrc, 0
+            return chosen, base, rsrc, rmoved
     if base in repo.commit(chosen).parents[:1]:
         return chosen, base, "first_parent", 0
     if base in pushed_bases:
@@ -261,9 +262,9 @@ def diff(
             tip = repo.resolve_commit(_branch_ref(name))
             if tip is not None:
                 break
-    ext = ext or {}
-    if not isinstance(ext, dict):
+    if ext is not None and not isinstance(ext, dict):
         raise Unavailable("bad request: ext")
+    ext = ext or {}
     ident = None
     if ext:
         name_ = _str(ext, "name")

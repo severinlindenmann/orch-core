@@ -153,7 +153,11 @@ class Gateway:
                 show = link.call("workspace.show")
                 roster = adapters.members(link.call("member.list"))
                 features = self.features(ws)
-                count = len(link.call("needs")["items"]) if "today" in features else None
+                who = link.welcome["peer"]["person"]
+                role = next((m.role for m in roster if m.person == who), "viewer")
+                count = (
+                    adapters.actionable_count(link.call("needs")["items"], role) if "today" in features else None
+                )
                 if (
                     not isinstance(show.get("name"), str)
                     or not isinstance(show.get("prefix"), str)

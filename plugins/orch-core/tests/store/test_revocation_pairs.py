@@ -1,13 +1,14 @@
 """Host durable revocation evidence per (device, person) pair (F1 §5.10, row-151 fix): another person's evidence for
-a device id never blocks the owner's restore, the genuine pair does, and forwarded evidence is capped without ever
-evicting a member's evidence for a flood of throwaway persons."""
+a device id never blocks the owner's restore, the genuine pair does, chain evidence is sticky per pair, and forwarded
+evidence is capped without a flood of throwaway persons ever evicting a member's evidence."""
 
 import pytest
 
 from orch import crypto
 from orch.identity import certs
 from orch.store import StoreError
-from orch.store.pins import MAX_FORWARDED_PER_DEVICE, HostPins, pair
+from orch.store import pins as pins_mod
+from orch.store.pins import MAX_FORWARDED_PER_DEVICE, MAX_FORWARDED_PER_PERSON, HostPins, is_forwarded, pair
 from tests.identity.helpers import Person
 from tests.store.helpers import WS, Env
 
@@ -32,11 +33,25 @@ def _evidence(person: Person, device_sig_pub: bytes, reason: str = "lost", at_ms
     return rev, cert
 
 
-def _note(pins: HostPins, person: Person, sig_pub: bytes, *, at: str, reason="lost", chain=False, member=False):
+def _pid(person: Person) -> str:
+    return "p_" + crypto.person_id(person.pk_pub).hex()
+
+
+def _note(pins: HostPins, person: Person, sig_pub: bytes, *, at: str, reason="lost", chain=False, members=()):
     rev, cert = _evidence(person, sig_pub, reason)
+    member_ids = {_pid(m) for m in members}
     return pins.note_revocation(
-        certs.device_ref(sig_pub), reason, rev, at, cert, crypto.b64u(person.pk_pub), chain=chain, member=member
-    )
+        certs.device_ref(sig_pub), reason, rev, at, cert, crypto.b64u(person.pk_pub), chain=chain,
+        is_member=None if chain else member_ids.__contains__,
+    )  # fmt: skip
+
+
+def _at(i: int) -> str:
+    return f"2026-10-11T{10 + i // 3600:02d}:{i // 60 % 60:02d}:{i % 60:02d}Z"
+
+
+def _key() -> bytes:
+    return crypto.public_bytes(crypto.generate_private_key())
 
 
 def test_another_persons_forwarded_evidence_never_blocks_the_owners_restore(tmp_path):
@@ -44,7 +59,7 @@ def test_another_persons_forwarded_evidence_never_blocks_the_owners_restore(tmp_
     store = env.bootstrap()
     bob = Person()
     # Bob certifies the owner's device key under his own PK and revokes it; the host holds it as forwarded evidence.
-    assert _note(store._pins, bob, env.owner.sig_pub, at="2026-10-11T10:00:00Z")
+    assert _note(store._pins, bob, env.owner.sig_pub, at=_at(0))
     facts = store.restore_facts("workspace")
     assert facts["revocations"] == []  # pending: the device's live association names the owner, not Bob
     result = store.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
@@ -56,43 +71,144 @@ def test_the_genuine_pair_in_forwarded_evidence_refuses_the_signer(tmp_path):
     env = Env(tmp_path)
     store = env.bootstrap()
     bob = Person()
-    assert _note(store._pins, bob, env.owner.sig_pub, at="2026-10-11T10:00:00Z")  # the poison first
-    assert _note(
-        store._pins, env.owner, env.owner.sig_pub, at="2026-10-11T10:00:01Z", reason="compromised", member=True
-    )
-    held = {pair(r) for r in store._pins.revocations()}
+    assert _note(store._pins, bob, env.owner.sig_pub, at=_at(0))  # the poison first
+    assert _note(store._pins, env.owner, env.owner.sig_pub, at=_at(1), reason="compromised", members=[env.owner])
     device = certs.device_ref(env.owner.sig_pub)
-    assert held == {
-        (device, "p_" + crypto.person_id(bob.pk_pub).hex()),
-        (device, "p_" + crypto.person_id(env.owner.pk_pub).hex()),
-    }
+    assert {pair(r) for r in store._pins.revocations()} == {(device, _pid(bob)), (device, _pid(env.owner))}
     facts = store.restore_facts("workspace")
     with pytest.raises(StoreError) as exc:
         store.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
     assert exc.value.code == "device.invalid"
 
 
+def test_forwarded_evidence_for_a_tombstone_only_device_is_never_carried(tmp_path):
+    """S1: a tombstone is not a workspace association; a stranger's pair for it stays pending at the host."""
+    env = Env(tmp_path)
+    store = env.bootstrap()
+    gone = Person()
+    tomb_rev, tomb_cert = _evidence(gone, gone.sig_pub)
+    facts = store.restore_facts("workspace")
+    facts["revocations"] = [{"revocation": tomb_rev, "device_cert": tomb_cert, "pk_pub": crypto.b64u(gone.pk_pub)}]
+    store.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
+    device = certs.device_ref(gone.sig_pub)
+    assert (device, _pid(gone)) in store.state.revocation_evidence()  # the tombstone
+    assert _note(store._pins, Person(), gone.sig_pub, at=_at(0))  # a stranger's pair for the tombstoned device
+    carried = {
+        (r["revocation"]["o"]["device_id"], r["revocation"]["o"]["person_id"])
+        for r in store.restore_facts("workspace")["revocations"]
+    }
+    assert carried == {(device[2:], _pid(gone)[2:])}
+
+
+# --- chain evidence is sticky per pair (Sonnet #397 finding 1) -------------------------------------------------------
+
+
+def test_chain_evidence_promotes_a_forwarded_record_of_the_pair(tmp_path):
+    pins = HostPins(tmp_path, WS)
+    alice, laptop = Person(), _key()
+    assert _note(pins, alice, laptop, at=_at(0), members=[alice])  # forwarded lost first
+    (rec,) = pins.revocations()
+    assert is_forwarded(rec)
+    assert _note(pins, alice, laptop, at=_at(1), chain=True)  # the same lost now occurs in the log
+    (rec,) = pins.revocations()
+    assert not is_forwarded(rec) and rec["at"] == _at(1) and "upgrade" not in rec
+
+
+def test_a_stronger_forwarded_record_survives_promotion_as_upgrade(tmp_path):
+    pins = HostPins(tmp_path, WS)
+    alice, laptop = Person(), _key()
+    assert _note(pins, alice, laptop, at=_at(0), reason="compromised", members=[alice])
+    assert _note(pins, alice, laptop, at=_at(1), chain=True)  # a weaker lost occurs in the log
+    (rec,) = pins.revocations()
+    assert not is_forwarded(rec) and rec["reason"] == "lost" and rec["upgrade"]["reason"] == "compromised"
+
+
+def test_a_forwarded_upgrade_never_replaces_or_demotes_a_chain_record(tmp_path):
+    pins = HostPins(tmp_path, WS)
+    alice, laptop = Person(), _key()
+    assert _note(pins, alice, laptop, at=_at(0), chain=True)  # chain lost
+    assert _note(pins, alice, laptop, at=_at(1), reason="compromised", members=[alice])  # forwarded compromised
+    (rec,) = pins.revocations()
+    assert not is_forwarded(rec) and rec["reason"] == "lost" and rec["at"] == _at(0)
+    assert rec["upgrade"]["reason"] == "compromised"
+    assert _note(pins, alice, laptop, at=_at(2), reason="compromised", chain=True)  # the upgrade occurs in the log
+    (rec,) = pins.revocations()
+    assert not is_forwarded(rec) and rec["reason"] == "compromised" and "upgrade" not in rec
+
+
+# --- caps and eviction (S2, S4, D3; Sonnet finding 2) ----------------------------------------------------------------
+
+
 def test_a_flood_of_throwaway_persons_never_evicts_a_members_evidence(tmp_path):
     pins = HostPins(tmp_path, WS)
-    alice = Person()
-    laptop = crypto.public_bytes(crypto.generate_private_key())  # Alice's laptop, unknown to the workspace
-    assert _note(pins, alice, laptop, at="2026-10-11T10:00:00Z", reason="compromised", member=True)
-    for i in range(3 * MAX_FORWARDED_PER_DEVICE):
-        _note(pins, Person(), laptop, at=f"2026-10-11T10:{1 + i // 60:02d}:{i % 60:02d}Z")
-    records = pins.revocations()
+    alice, laptop = Person(), _key()  # Alice's laptop, unknown to the workspace
+    assert _note(pins, alice, laptop, at=_at(0), reason="compromised", members=[alice])
+    flood = [Person() for _ in range(3 * MAX_FORWARDED_PER_DEVICE)]
+    kept = [_note(pins, p, laptop, at=_at(1 + i), members=[alice]) for i, p in enumerate(flood)]
+    # a non-member never evicts: the first ones fill the device's room, every later one is dropped
+    room = MAX_FORWARDED_PER_DEVICE - 1
+    assert kept == [True] * room + [False] * (len(flood) - room)
     device = certs.device_ref(laptop)
-    mine = [r for r in records if r["device"] == device]
-    assert len(mine) <= MAX_FORWARDED_PER_DEVICE  # bounded per device
-    alice_pair = (device, "p_" + crypto.person_id(alice.pk_pub).hex())
-    assert alice_pair in {pair(r) for r in mine}  # the member's genuine evidence survives the flood
-    assert max(r["at"] for r in mine if pair(r) != alice_pair) == "2026-10-11T10:01:23Z"  # oldest non-member out
+    assert {pair(r) for r in pins.revocations()} == {(device, _pid(alice))} | {(device, _pid(p)) for p in flood[:room]}
 
 
-def test_a_member_is_kept_over_the_cap_and_a_non_member_is_dropped_when_nothing_is_evictable(tmp_path):
+def test_a_members_record_evicts_the_oldest_non_member_record(tmp_path):
     pins = HostPins(tmp_path, WS)
-    laptop = crypto.public_bytes(crypto.generate_private_key())
-    for i in range(MAX_FORWARDED_PER_DEVICE):
-        assert _note(pins, Person(), laptop, at=f"2026-10-11T10:00:{i:02d}Z", member=True)
-    assert not _note(pins, Person(), laptop, at="2026-10-11T11:00:00Z")  # non-member: nothing evictable, dropped
-    assert _note(pins, Person(), laptop, at="2026-10-11T11:00:01Z", member=True)  # a member is never refused
-    assert len(pins.revocations()) == MAX_FORWARDED_PER_DEVICE + 1
+    alice, laptop = Person(), _key()
+    strangers = [Person() for _ in range(MAX_FORWARDED_PER_DEVICE)]
+    for i, p in enumerate(strangers):
+        assert _note(pins, p, laptop, at=_at(i))
+    assert _note(pins, alice, laptop, at=_at(100), reason="compromised", members=[alice])
+    held = {pair(r)[1] for r in pins.revocations()}
+    assert held == {_pid(alice)} | {_pid(p) for p in strangers[1:]}  # exactly the oldest non-member went
+
+
+def test_membership_is_evaluated_at_eviction_time(tmp_path):
+    """S4: a person noted as a non-member who has since joined is not evicted for a member's record."""
+    pins = HostPins(tmp_path, WS)
+    laptop = _key()
+    people = [Person() for _ in range(MAX_FORWARDED_PER_DEVICE)]
+    for i, p in enumerate(people):
+        assert _note(pins, p, laptop, at=_at(i))  # all noted while non-members
+    newcomer = Person()
+    assert _note(pins, newcomer, laptop, at=_at(100), members=[*people, newcomer])  # by now all are members
+    assert len(pins.revocations()) == MAX_FORWARDED_PER_DEVICE + 1  # nothing evicted: no current non-member
+
+
+def test_the_total_cap_evicts_non_members_oldest_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(pins_mod, "MAX_FORWARDED_TOTAL", 3)
+    pins = HostPins(tmp_path, WS)
+    strangers = [Person() for _ in range(3)]
+    for i, p in enumerate(strangers):  # three devices, one record each: the total cap is full
+        assert _note(pins, p, _key(), at=_at(i))
+    assert not _note(pins, Person(), _key(), at=_at(10))  # a non-member never evicts: dropped
+    alice = Person()
+    assert _note(pins, alice, _key(), at=_at(11), members=[alice])
+    held = {pair(r)[1] for r in pins.revocations()}
+    assert held == {_pid(alice), _pid(strangers[1]), _pid(strangers[2])}  # strangers[0], the oldest, went
+
+
+def test_chain_evidence_is_never_evicted(tmp_path, monkeypatch):
+    monkeypatch.setattr(pins_mod, "MAX_FORWARDED_TOTAL", 2)
+    pins = HostPins(tmp_path, WS)
+    bob, chain_dev = Person(), _key()
+    assert _note(pins, bob, chain_dev, at=_at(0), chain=True)  # a non-member's pair that occurred in the log
+    alice = Person()
+    for i in range(4):
+        assert _note(pins, alice, _key(), at=_at(1 + i), members=[alice])
+    assert (certs.device_ref(chain_dev), _pid(bob)) in {pair(r) for r in pins.revocations()}
+
+
+def test_a_member_is_bounded_per_person(tmp_path):
+    """S2: a member's forwarded evidence is never evicted for a non-member's, but it is capped per person."""
+    pins = HostPins(tmp_path, WS)
+    mallory = Person()
+    results = [_note(pins, mallory, _key(), at=_at(i), members=[mallory]) for i in range(MAX_FORWARDED_PER_PERSON + 3)]
+    assert results == [True] * MAX_FORWARDED_PER_PERSON + [False] * 3
+    assert len(pins.revocations()) == MAX_FORWARDED_PER_PERSON
+
+
+def test_forwarded_evidence_needs_the_current_roster(tmp_path):
+    with pytest.raises(TypeError):
+        HostPins(tmp_path, WS).note_revocation("d_" + "ab" * 32, "lost", *_evidence(Person(), _key())[:1],
+                                               _at(0), {}, "x", chain=False)  # fmt: skip

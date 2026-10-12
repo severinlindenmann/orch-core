@@ -60,6 +60,16 @@ class State:
             for person, entry in by_person.items()
         }
 
+    def device_person(self, device: str) -> str | None:
+        """The ``p_`` person a live (known, not tombstone-only) device is associated with, or None."""
+        dev = self._core.ws.devices.get(device)
+        return dev.person if dev is not None else None
+
+    def is_member(self, person: str) -> bool:
+        """Whether ``person`` (``p_`` id) is a current or past member of the workspace."""
+        ws = self._core.ws
+        return person in ws.members or person in ws.former
+
     def device_evidence(self, device: str) -> dict[str, Any]:
         ws = self._core.ws
         dev = ws.devices[device]

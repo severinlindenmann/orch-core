@@ -31,7 +31,7 @@ from orch.store import render as store_render
 from orch.store.checkpoints import verify_object
 from orch.store.fsio import read_or_none
 from orch.store.paths import ULID
-from orch.store.pins import HostPins, pair
+from orch.store.pins import HostPins, is_forwarded, pair
 from orch.store.store import MISSING_CHECKPOINT_RECOVERY
 
 __all__ = ["Finding", "InspectStore", "check_staged", "inspect", "repair"]
@@ -364,7 +364,7 @@ def _pins(s: Store, state_dir: Path | None, wid: str) -> list[Finding]:
         return out
     accepted = s.state.revocation_evidence()
     for r in pins.revocations():
-        if r.get("chain", True) is False:
+        if is_forwarded(r):
             continue  # forwarded evidence, not claimed by the log
         entry = accepted.get(pair(r))
         if entry is None or entry["revocation"] != r["revocation"]:

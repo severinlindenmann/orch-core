@@ -761,7 +761,7 @@ def checkpoint_vector() -> dict[str, Any]:
         "delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and "
         "optional pk_pub: a workspace association, which binds carried entries' identity but never drops or suppresses "
         "held evidence), `known_revocations` (chain-learned: held when judging and authenticated in this workspace's "
-        "accepted history; signer refusal, evidence identity of carried entries and per-pair completeness; entries may "
+        "accepted history; signer refusal and per-pair completeness, no identity constraint on carried entries; entries may "
         "carry `pk_pub`), `local_revocations` (out of band: held when judging, not chain-learned; signer refusal only, "
         "no identity constraint on carried entries, never completeness; never filtered) and `learned_later_in_walk` "
         "(learned only from a higher-n bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise "
@@ -1583,12 +1583,12 @@ def transition_vectors() -> list[dict[str, Any]]:
         key=lambda x: (x["revocation"]["o"]["device_id"], x["revocation"]["o"]["person_id"]),
     )
     variant(
-        "carried_entry_must_match_a_chain_learned_identity",
-        "chain.diverged",
+        "carried_other_person_pair_beside_a_chain_learned_pair_accepted",
+        "ok",
         over={"revocations": lena_and_mara},
         known_revocations=held_rev("lena", "lena1", "lost"),
-        note="lena1's only authenticated identity is the chain-learned (lena1, lena): mara's carried entry for it is "
-        "refused, although lena's own obligation is carried",
+        note="carried-entry identity is checked against known_devices only: a chain-learned (lena1, lena) does not "
+        "bind lena1, so mara's extra carried pair is harmless (lena's obligation is carried)",
     )
     variant(
         "carried_other_person_entry_allowed_without_authenticated_identity",
@@ -1614,6 +1614,38 @@ def transition_vectors() -> list[dict[str, Any]]:
         "chain.diverged",
         over={"revocations": [rev_entry("lena", "lena1", "lost")]},
         known_revocations=both_lena1,
+    )
+
+    # Restore 5 after restore 4 (restore.json other_person_evidence_for_a_tombstone_is_a_new_pair): restore 4 carried
+    # (zed1, zed) for an unknown device, so a receiver chain-learned it; restore 5 adds mara's pair for zed1.
+    variant(
+        "tombstone_other_person_pair_in_a_later_restore_accepted",
+        "ok",
+        over={
+            "revocations": sorted(
+                [rev_entry("zed", "zed1", "lost"), rev_entry("mara", "zed1", "compromised")],
+                key=lambda x: (x["revocation"]["o"]["device_id"], x["revocation"]["o"]["person_id"]),
+            )
+        },
+        known_revocations=held_rev("zed", "zed1", "lost"),
+    )
+    # The verified person key is part of a pair's identity where the receiver holds it.
+    variant(
+        "same_pair_other_key_completeness_diverged",
+        "chain.diverged",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        known_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_mara").pub_b64u}
+        ],
+    )
+    variant(
+        "same_pair_other_key_still_unpublished",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        local_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_mara").pub_b64u}
+        ],
+        unpublished_pairs=[[lena, pid("lena")]],
     )
 
     # --- ticket-log restores: the same workspace checkpoint, ws_seq <= T's workspace seq, revocations [] -------

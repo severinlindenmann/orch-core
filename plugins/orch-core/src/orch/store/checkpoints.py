@@ -107,9 +107,8 @@ class ReceiverView:
     - ``known_devices``: the workspace associations the receiver established through authenticated history (device
       id, hex without ``d_``, active or revoked, mapped to ``{"person_id", "pk_pub"?}``). An association is not proof
       of key ownership: an association never removes, suppresses or reattributes another person's held revocation,
-      nor disables signer refusal or alarms. Evidence identity: a carried entry for a device with authenticated
-      identities (these associations and the chain-learned pairs below) must match one of them, person and key where
-      given; out-of-band evidence never constrains carried entries.
+      nor disables signer refusal or alarms. Evidence identity: a carried entry for such a device must be of its
+      person and key. Held revocations (chain-learned or out of band) never constrain carried entries.
     - ``known_revocations``: the chain-learned revocations held when judging (before the sync, or from lower-``n``
       bundles already accepted in the walk), whose occurrence (a ``device.revoked`` event or an accepted restore's
       ``revocations`` entry) the receiver authenticated against this workspace's accepted history. Entries may carry
@@ -162,7 +161,9 @@ class Verdict(NamedTuple):
     leaving out the signer's device and devices whose known association names another person; ``unpublished`` are
     their sorted, de-duplicated ``d_`` ids, hints only (not evidence identities or publication acknowledgements);
     ``unpublished_evidence`` is, per reported pair in the same order, the caller's held entry (its strongest, the
-    first on a tie), so the runtime can queue and forward the evidence itself.
+    first on a tie). Reporting is not eligibility: before queueing or forwarding, the runtime filters the reported
+    evidence by its own workspace state (devices unknown to the workspace, or known only by tombstones, stay pending
+    locally; a pair whose device the workspace associates with another person is not forwarded).
     ``known_devices`` keys are bare hex."""
 
     code: str
@@ -260,8 +261,9 @@ def _same_evidence(entry: Mapping[str, Any], person_id: str, pk_pub: str | None)
     return entry["revocation"]["o"]["person_id"] == person_id and (pk_pub is None or entry["pk_pub"] == pk_pub)
 
 
-def _pair(entry: Mapping[str, Any]) -> tuple[str, str]:
-    """The ``(device_id, person_id)`` key of a held or carried revocation entry (hex, no prefixes)."""
+def _hex_pair(entry: Mapping[str, Any]) -> tuple[str, str]:
+    """The ``(device_id, person_id)`` key of a held or carried revocation entry, bare hex: unlike ``pins.pair`` and
+    :attr:`Verdict.unpublished_pairs`, which carry the ``d_``/``p_`` prefixes."""
     o = entry["revocation"]["o"]
     return o["device_id"], o["person_id"]
 
@@ -288,11 +290,11 @@ def _judge_restore(
     try:
         ev, log, c = restore["event"], restore["log"], restore["C"]
         target = restore["T"]
+        if len(canon.event_line(ev)) > schema.MAX_EVENT_LINE_BYTES:
+            return diverged  # bounded before any signature check (T's included): nothing is harvested from it
         if target["o"] != offered or wsk_pub is None or not verify_object(wsk_pub, target):
             return diverged
         schema.validate("event", ev, log="workspace" if log == WORKSPACE else "ticket")
-        if len(canon.event_line(ev)) > schema.MAX_EVENT_LINE_BYTES:
-            return diverged  # bounded before any signature check: carried evidence is never harvested from it
         if ev["type"] != "restore" or ev["id"] in applied or ev["source"] != reference(c):
             return diverged
         if (held is None) != (c is None) or (held is not None and c["o"] != held):
@@ -335,31 +337,25 @@ def _judge_restore(
         for entry in ev["revocations"]:
             if not verifier.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
                 return diverged
-            carried[_pair(entry)] = entry
+            carried[_hex_pair(entry)] = entry
         signer = ev["actor"]["device"][2:]
         if any(device == signer for device, _person in carried):
             return diverged  # the bundle revokes its own signer's device id: a log-free receiver cannot place it
-        # Evidence identity, against authenticated history only: known_devices associations and chain-learned pairs.
-        # A carried entry for a device with such identities must match one of them (person, and key where given);
-        # out-of-band evidence imposes no constraint. Two chain-learned persons for one device can both be carried.
-        authenticated: dict[str, list[tuple[str, str | None]]] = {}
-        for device, mine in view.known_devices.items():
-            authenticated.setdefault(device, []).append((mine["person_id"], mine.get("pk_pub")))
-        for known in view.known_revocations:
-            device, person = _pair(known)
-            authenticated.setdefault(device, []).append((person, known.get("pk_pub")))
+        # Evidence identity against the known_devices associations only: a carried entry for such a device must be of
+        # its person and key. Held revocations (chain-learned or out of band) impose no identity constraint: an extra
+        # carried pair is harmless, since signer refusal, completeness and reporting are all per pair (§5.10).
         for (device, _person), got in carried.items():
-            ids = authenticated.get(device)
-            if ids and not any(_same_evidence(got, person, pk_pub) for person, pk_pub in ids):
+            mine = view.known_devices.get(device)
+            if mine is not None and not _same_evidence(got, mine["person_id"], mine.get("pk_pub")):
                 return diverged
         signer_pair = (signer, cert["person_id"])  # the restore certificate's person: the delegation owner
-        if any(_pair(k) == signer_pair for k in (*view.known_revocations, *view.local_revocations)):
+        if any(_hex_pair(k) == signer_pair for k in (*view.known_revocations, *view.local_revocations)):
             # held when judged, either collection, any reason, any host-chosen position, whatever known_devices says
             # (C3). Another person's "revocation" of this device id is not a revocation of this signing pair.
             return diverged
         if log == WORKSPACE:  # completeness: every chain-learned obligation, per pair, same person key, as strong
             for known in view.known_revocations:
-                got = carried.get(_pair(known))
+                got = carried.get(_hex_pair(known))
                 if (
                     got is None
                     or ("pk_pub" in known and got["pk_pub"] != known["pk_pub"])
@@ -409,7 +405,7 @@ def _judge_restore(
         unpublished: dict[tuple[str, str], Mapping[str, Any]] = {}
         if log == WORKSPACE:  # out-of-band evidence the accepted restore does not carry, per pair, at its strength
             for local in view.local_revocations:
-                device, person = _pair(local)
+                device, person = _hex_pair(local)
                 mine = view.known_devices.get(device)
                 if device == signer or (mine is not None and mine["person_id"] != person):
                     # not reported (still retained and enforced by the caller): the signer's device, whose binding

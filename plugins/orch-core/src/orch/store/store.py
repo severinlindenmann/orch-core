@@ -66,7 +66,7 @@ from .index import Index
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
-from .pins import HostPins, pair
+from .pins import HostPins, is_forwarded, pair
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
 
@@ -2347,19 +2347,15 @@ class Store:
         }
 
     def _carries(self, rec: dict[str, Any]) -> bool:
-        """Whether a restore carries this held pair: all chain evidence; forwarded evidence only for a device the
-        workspace knows (live or tombstone) without a conflicting live association. Other forwarded evidence stays
-        pending (§5.10): it still refuses its signer pair."""
-        if rec.get("chain", True) is not False:
+        """Whether a restore carries this held pair: all chain evidence; forwarded evidence only for a live device
+        the workspace associates with the same person. Forwarded evidence for an unknown or tombstone-only device, or
+        one associated with another person, stays pending (§5.10): it still refuses its signer pair."""
+        if not is_forwarded(rec):
             return True
-        ws = self._state._core.ws if self._state is not None else None
-        if ws is None:
+        if self._state is None:
             return False
         device, person = pair(rec)
-        dev = ws.devices.get(device)
-        if dev is not None:
-            return dev.person == person
-        return device in ws.revocations
+        return self._state.device_person(device) == person
 
     def abandon_tail(self, log: str, from_seq: int) -> int:
         """Cut ``log`` back to ``from_seq`` on disk, keeping the cut lines in ``.state/abandoned/`` (never deleted).
@@ -2390,7 +2386,7 @@ class Store:
             return
         accepted = self._state.revocation_evidence()
         for rec in self._pins.revocations():
-            if rec.get("chain", True) is False:
+            if is_forwarded(rec):
                 continue  # forwarded evidence: enforced as signer refusal, never claimed by accepted history
             entry = accepted.get(pair(rec))
             if entry is None or entry["revocation"] != rec["revocation"]:

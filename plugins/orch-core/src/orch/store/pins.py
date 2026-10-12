@@ -3,9 +3,9 @@
 * ``genesis``: the head of ``workspace.created`` (the trust root pin), one line. Written once; a different value is
   ``trust.genesis_mismatch``.
 * ``revocations.jsonl``: effective PK-signed revocations and verification evidence per ``(device, person)`` pair,
-  retained across restores. Evidence from accepted history (``chain``) is never evicted. Other (forwarded) evidence
-  is capped per device and in total; evidence of a person who is not a current or past member goes first, and a
-  member's evidence is never evicted by a non-member's (§5.10).
+  retained across restores. A pair is either chain evidence (it occurred in accepted history; sticky, never evicted)
+  or forwarded evidence (``"chain": false``; capped per person, per device and in total, see :meth:`note_revocation`).
+  A stronger forwarded reason for a chain pair is kept beside it under ``upgrade``, never replacing it (§5.10).
 * ``checkpoint.json``: last accepted workspace checkpoint.
 * ``heads.sqlite``: durable ancestry, indexed by head.
 * ``pending-transitions/``: recovery work; ``transitions/``: completed publication records.
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -27,15 +27,30 @@ from orch import canon
 from .errors import StoreError
 from .fsio import loads, read_or_none, write_atomic
 
-__all__ = ["MAX_FORWARDED_PER_DEVICE", "MAX_FORWARDED_TOTAL", "HostPins", "pair"]
+__all__ = [
+    "MAX_FORWARDED_PER_DEVICE",
+    "MAX_FORWARDED_PER_PERSON",
+    "MAX_FORWARDED_TOTAL",
+    "HostPins",
+    "is_forwarded",
+    "pair",
+]
 
 MAX_FORWARDED_PER_DEVICE = 8  # forwarded (not chain) evidence records per device id
+MAX_FORWARDED_PER_PERSON = 64  # forwarded evidence records per revoking person, members included
 MAX_FORWARDED_TOTAL = 4096  # forwarded evidence records in total
+_STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}  # compromised > lost = retired (§5.10)
 
 
 def pair(rec: dict[str, Any]) -> tuple[str, str]:
-    """The ``(d_device, p_person)`` key of a noted revocation record."""
+    """The ``(d_device, p_person)`` key of a noted revocation record: prefixed, unlike ``checkpoints._hex_pair``."""
     return rec["device"], "p_" + rec["revocation"]["o"]["person_id"]
+
+
+def is_forwarded(rec: dict[str, Any]) -> bool:
+    """A record held as forwarded evidence, without an occurrence in accepted history (P3): capped, never claimed by
+    the log, carried by a restore only where the workspace associates its device with its person."""
+    return rec.get("chain", True) is False
 
 
 class HostPins:
@@ -125,20 +140,22 @@ class HostPins:
         pk_pub: str,
         *,
         chain: bool = True,
-        member: bool = True,
+        is_member: Callable[[str], bool] | None = None,
     ) -> bool:
-        """Durably retain the earliest evidence of the highest reason per ``(device, person)``, including upgrades.
+        """Durably retain the earliest evidence of the highest reason per ``(device, person)`` pair. Returns whether
+        this evidence is held afterwards (as the record, or as a chain pair's ``upgrade``).
 
-        ``chain`` evidence (from accepted history) is always kept. Forwarded evidence (``chain=False``) is capped at
-        :data:`MAX_FORWARDED_PER_DEVICE` per device and :data:`MAX_FORWARDED_TOTAL` in total: over a cap the oldest
-        forwarded non-member record goes first; a member's evidence (``member``: the person is a current or past
-        member) is never evicted for a non-member's, and a non-member record that finds nothing to evict is dropped.
-        Returns whether the evidence is held afterwards."""
+        Chain evidence (``chain``: it occurred in accepted history) is sticky per pair: it promotes a forwarded record
+        of the pair (a stronger forwarded reason moves to ``upgrade``) and is never evicted. Forwarded evidence never
+        replaces or demotes a chain record: a stronger forwarded reason is kept under the record's ``upgrade``.
+        A new forwarded record needs ``is_member(p_person)`` (the current roster, current or past members), evaluated
+        at eviction time for every candidate. Caps: :data:`MAX_FORWARDED_PER_PERSON` per person (members included; a
+        new record over it is dropped), then :data:`MAX_FORWARDED_PER_DEVICE` per device and
+        :data:`MAX_FORWARDED_TOTAL` in total: a new non-member record never evicts anything (dropped when full); a
+        member's record evicts the oldest non-member record, or is kept over the cap when there is none."""
         key = (device, "p_" + revocation["o"]["person_id"])
         records = self.revocations()
         old = next((r for r in records if pair(r) == key), None)
-        if old and (old["reason"] == "compromised" or reason != "compromised"):
-            return True
         new = {
             "at": at,
             "device": device,
@@ -147,45 +164,62 @@ class HostPins:
             "device_cert": device_cert,
             "pk_pub": pk_pub,
         }
-        if not chain:
-            new["chain"], new["member"] = False, member
-        records = [r for r in records if pair(r) != key]  # an upgrade replaces the pair's weaker record
-        if not chain:
-            records = self._make_room(records, device, member)
-            if records is None:
-                return False
+        stronger = old is None or _STRENGTH[reason] > _STRENGTH[old["reason"]]
+        if chain:
+            if old is not None and not is_forwarded(old) and not stronger:
+                return True  # same or weaker chain evidence: the earliest of the highest reason stays
+            if old is not None:
+                carry = old.get("upgrade") if not is_forwarded(old) else old
+                if carry is not None and _STRENGTH[carry["reason"]] > _STRENGTH[reason]:
+                    new["upgrade"] = {k: carry[k] for k in ("at", "reason", "revocation", "device_cert", "pk_pub")}
+        else:
+            if old is not None and not is_forwarded(old):
+                held = old.get("upgrade", old)
+                if _STRENGTH[reason] > _STRENGTH[held["reason"]]:
+                    old["upgrade"] = new  # kept beside the chain record, never replacing it
+                    self._write(records)
+                return True
+            if old is not None and not stronger:
+                return True
+            new["chain"] = False
+            if old is None:
+                if is_member is None:
+                    raise TypeError("forwarded evidence needs is_member (the current roster)")
+                room = self._make_room(records, device, key[1], is_member)
+                if room is None:
+                    return False
+                records = room
+        records = [r for r in records if pair(r) != key]
         records.append(new)
-        self.dir.mkdir(parents=True, exist_ok=True)
-        write_atomic(self._revocations, b"".join(canon.cj_checked(r) + b"\n" for r in records), mode=0o600)
+        self._write(records)
         return True
 
+    def _write(self, records: list[dict[str, Any]]) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        write_atomic(self._revocations, b"".join(canon.cj_checked(r) + b"\n" for r in records), mode=0o600)
+
     @staticmethod
-    def _make_room(records: list[dict[str, Any]], device: str, member: bool) -> list[dict[str, Any]] | None:
-        """``records`` with room for one more forwarded record of ``device``, or None when it must be dropped."""
-
-        def forwarded(r: dict[str, Any]) -> bool:
-            return r.get("chain", True) is False
-
-        def evict(scope: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
-            victims = [r for r in scope if forwarded(r) and not r.get("member", True)]
-            if not victims and member:
-                return records  # a member's evidence is kept even over the cap; never evict another member's
-            if not victims:
-                return None
-            gone = min(victims, key=lambda r: r["at"])
-            return [r for r in records if r is not gone]
-
-        mine = [r for r in records if r["device"] == device and forwarded(r)]
-        if len(mine) >= MAX_FORWARDED_PER_DEVICE:
-            got = evict(mine)
-            if got is None:
-                return None
-            records = got
-        if sum(forwarded(r) for r in records) >= MAX_FORWARDED_TOTAL:
-            got = evict(records)
-            if got is None:
-                return None
-            records = got
+    def _make_room(
+        records: list[dict[str, Any]], device: str, person: str, is_member: Callable[[str], bool]
+    ) -> list[dict[str, Any]] | None:
+        """``records`` with room for one more forwarded record of ``(device, person)``, or None to drop it."""
+        forwarded = [r for r in records if is_forwarded(r)]
+        if sum(pair(r)[1] == person for r in forwarded) >= MAX_FORWARDED_PER_PERSON:
+            return None
+        member = is_member(person)
+        for scope, cap in (
+            ([r for r in forwarded if r["device"] == device], MAX_FORWARDED_PER_DEVICE),
+            (forwarded, MAX_FORWARDED_TOTAL),
+        ):
+            if len(scope) < cap:
+                continue
+            if not member:
+                return None  # a non-member never evicts: the new record is dropped
+            victims = [r for r in scope if not is_member(pair(r)[1])]
+            if victims:  # the oldest non-member record goes; members stay (bounded per person)
+                gone = min(victims, key=lambda r: r["at"])
+                records = [r for r in records if r is not gone]
+                forwarded = [r for r in forwarded if r is not gone]
         return records
 
     def held(self) -> dict[str, Any] | None:

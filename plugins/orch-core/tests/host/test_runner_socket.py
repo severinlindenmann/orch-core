@@ -850,5 +850,10 @@ def test_evicted_runs_publish_gone(w, monkeypatch):
     items = []
     while not any(i["t"] == "gone" for i in items):
         items += c.evt(sub["sub"])["items"]
-    assert {"t": "gone", "run": first} == {k: v for k, v in items[-1].items() if k != "id"}
+    gone = next(i for i in items if i["t"] == "gone")
+    assert {"t": "gone", "run": first} == {k: v for k, v in gone.items() if k != "id"}
     assert first not in w.h.host.runners.store.records
+    # a fresh rev: higher than the evicted record's last one and than sub's start, below the record that evicted it
+    assert int(gone["id"].split(".")[0]) > sub["rev"]
+    newest = max(int(r.get("rev") or 0) for r in w.h.host.runners.store.records.values())
+    assert int(gone["id"].split(".")[0]) < newest == w.h.host.runners.store.rev

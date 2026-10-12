@@ -379,18 +379,24 @@ class RunnerHub:
 
     async def _save(self, rec: dict[str, Any], *, publish: bool = True) -> dict[str, Any]:
         async with self._save_lock:
-            self.store.rev += 1
-            rec["rev"] = self.store.rev
             if rec.get("state") not in LIVE and "ended_ts" not in rec:
                 rec["ended_ts"] = time.time()
             self.store.records[rec["run"]] = rec
-            await asyncio.to_thread(self.store.save, dict(rec))
-            evicted = self._evict()
+            # an evicted record's ``gone`` takes a fresh rev (a client keeps the higher rev per run, so the record's
+            # old rev would be ignored); the saved record takes the next one, so the persisted maximum covers both
+            gones = []
+            for old in self._evict():
+                self.store.rev += 1
+                gones.append({**old, "rev": self.store.rev, "_gone": True})
+            self.store.rev += 1
+            rec["rev"] = self.store.rev
+            if rec["run"] in self.store.records:  # never write back a record its own save just evicted
+                await asyncio.to_thread(self.store.save, dict(rec))
+        for gone in gones:
+            await asyncio.to_thread(self.store.remove, gone)
+            self.publish(gone)
         if publish:
             self.publish(rec)
-        for old in evicted:
-            await asyncio.to_thread(self.store.remove, old)
-            self.publish({**old, "_gone": True})
         return rec
 
     def _evict(self) -> list[dict[str, Any]]:

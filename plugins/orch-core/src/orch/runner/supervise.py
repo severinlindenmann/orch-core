@@ -202,7 +202,9 @@ class Live:
 
     @property
     def session_ok(self) -> bool:
-        return not self.reaped
+        """The leader's session and group id still name this run: it was neither reaped by us nor by ``Popen``
+        (``returncode`` set by a ``poll``/``wait`` elsewhere means it was reaped and its PID may be reused)."""
+        return not self.reaped and self.proc.returncode is None
 
 
 def peek_exit(proc: subprocess.Popen[bytes]) -> int | None:

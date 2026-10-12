@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import base64
 import errno
+import json
 import re
+import threading
+import time
 
 import pytest
 
@@ -142,7 +145,10 @@ def test_paging_filters_and_the_dashboard_arguments(world):
     assert len(second["rows"]) == 1 and second["next_page"] is None
     assert {r["key"] for r in first["rows"] + second["rows"]} == {r["key"] for r in query(served)["rows"]}
     assert ok(quick_list(served, {"status": ["done"]}))["data"]["rows"] == []
-    assert err(quick_list(served, {"page": "bogus"})) in {"page.expired", "invalid.input"}
+    assert (
+        err(quick_list(served, {"page": "bogus"})) == "page.expired"
+    )  # not a token of this host (direct mode: invalid.input)
+    assert err(quick_list(served, {"limit": 2, "page": first["next_page"], "status": ["open"]})) == "invalid.input"
     for bad in ({"limit": 0}, {"limit": 201}, {"status": []}, {"status": ["nope"]}, {"label": ["x"]}, {"sort": "key"}):
         assert err(quick_list(served, bad)) == "invalid.input", bad
     c = served.client()
@@ -238,3 +244,114 @@ def test_quick_commands_render_identically_in_direct_and_host_mode(tmp_path_fact
         else:  # the page token is opaque and differs by mode
             tok = re.compile(r"--page \S+")
             assert (g[0], tok.sub("--page T", g[1]), g[2]) == (w[0], tok.sub("--page T", w[1]), w[2]), argv
+
+
+def _slow_reader(monkeypatch, served, started, release, delay=None):
+    reader = served.service.capabilities().git.reader
+    real = type(reader).diff
+
+    def slow(self, *a, **k):
+        started.set()
+        if delay is None:
+            release.wait(20)
+        else:
+            time.sleep(delay)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(reader), "diff", slow)
+
+
+def _in_thread(fn):
+    box = {}
+
+    def go():
+        box["res"] = fn()
+
+    t = threading.Thread(target=go)
+    t.start()
+    return t, box
+
+
+def test_a_row_restricted_while_the_reader_runs_is_dropped_and_total_adjusts(world, monkeypatch):
+    served, tickets = world
+    started, release = threading.Event(), threading.Event()
+    _slow_reader(monkeypatch, served, started, release)
+    t, box = _in_thread(lambda: quick_list(served, grant=served.grant))
+    try:
+        assert started.wait(10)
+        served.restrict(tickets["linked"][0], [served.quinn.ref])  # hidden from the grant's person meanwhile
+    finally:
+        release.set()
+        t.join(30)
+    got = ok(box["res"])["data"]
+    assert tickets["linked"][1] not in {r["key"] for r in got["rows"]}
+    assert (
+        got["total"] == 2 and len(got["rows"]) == 2
+    )  # three were read, this one dropped (the owner is on the secret's list)
+    assert "linked ticket" not in str(box["res"])
+
+
+def test_quick_list_shares_the_in_flight_slot_with_diff_and_counts_toward_the_host_cap(world, monkeypatch):
+    import orch.host.diff as git_diff
+
+    served, tickets = world
+    started, release = threading.Event(), threading.Event()
+    _slow_reader(monkeypatch, served, started, release)
+    t, box = _in_thread(lambda: quick_list(served, grant=served.grant))
+    try:
+        assert started.wait(10)
+        # the same caller's diff while its list runs: quota.host, retryable
+        res = served.client().req("diff", {"ref": tickets["linked"][1]}, grant=served.grant, session=SESSION)
+        assert err(res) == "quota.host" and res["error"]["retryable"] is True
+        # another caller's diff: refused once the host-wide cap (MAX_CHILDREN - 2) is used up, the list holds one
+        monkeypatch.setattr(git_diff, "MAX_DIFFS", 1)
+        res = served.client().req("diff", {"ref": tickets["linked"][1]})
+        assert err(res) == "quota.host"
+    finally:
+        release.set()
+        t.join(30)
+    ok(box["res"])
+    ok(served.client().req("diff", {"ref": tickets["linked"][1]}))  # the slot is given back
+
+
+def test_the_budget_gives_null_counts_to_the_rows_that_do_not_get_their_turn(world, monkeypatch):
+    import orch.host.quick as host_quick
+
+    served, tickets = world
+    c = served.client()
+    ok(c.req("set", {"ref": tickets["bare"][1], "pairs": [LINKS]}, grant=served.grant, session=SESSION, idem=True))
+    monkeypatch.setattr(host_quick, "BUDGET_S", 0.3)
+    _slow_reader(monkeypatch, served, threading.Event(), threading.Event(), delay=0.6)
+    rows = ok(quick_list(served))["data"]["rows"]
+    linked = [r for r in rows if r["key"] in (tickets["bare"][1], tickets["linked"][1])]
+    assert [r["quick"]["commits"] is None for r in linked] == [
+        False,
+        True,
+    ]  # the first read ran, the second had no time
+
+
+def test_quick_add_never_labels_another_persons_chore_in_host_mode(tmp_path):
+    """Quinn's untouched chore with the same title is not the owner's to label, and the owner's is not Quinn's."""
+    from tests.host.test_hostclient import hcli
+    from tests.ops.helpers import Cli
+
+    lab = Lab(tmp_path.resolve())
+    served = None
+    try:
+        served = World(lab)
+        quinn_grant = served.grant_for(served.quinn)
+        mine = hcli(lab)
+        theirs = Cli(lab.ws, ORCH_HOST_RUN_DIR=str(lab.run), ORCH_GRANT=quinn_grant)
+        assert theirs("new", "same", "--type", "chore").code == 0
+        doc = json.loads(mine("quick", "add", "same", "--json").out)
+        assert doc["data"]["created"] is True and doc["data"]["key"] == "DEMO-0002"
+        assert mine("show", "1", "--json").out.count('"labels":[]') == 1  # quinn's ticket stays unlabelled
+        assert theirs("new", "other", "--type", "chore").code == 0
+        doc = json.loads(theirs("quick", "add", "other", "--json").out)  # theirs, retried by them: adopted
+        assert doc["data"]["created"] is False and doc["data"]["key"] == "DEMO-0003"
+        doc = json.loads(mine("quick", "add", "other", "--json").out)  # and not by the owner
+        assert doc["data"]["created"] is True
+    finally:
+        if served is not None:
+            served.close()
+        lab.close()

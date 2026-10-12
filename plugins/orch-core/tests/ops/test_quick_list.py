@@ -128,3 +128,60 @@ def test_the_retry_never_takes_a_ticket_that_is_not_an_untouched_chore(ws, cli):
     assert cli("new", "same", "--type", "chore", "--label", "other").code == 0  # labelled already
     doc = json.loads(cli("quick", "add", "same", "--json").out)
     assert doc["data"]["key"] == "DEMO-0004" and doc["data"]["created"] is True
+
+
+def test_the_retry_adopts_only_the_callers_own_recent_ticket(ws, cli, monkeypatch):
+    """Another session's or another grant's untouched chore with the same title is never labelled, in both directions,
+    and neither is the caller's own once it is older than ten minutes."""
+    import orch.cli.quick as q
+    from tests.ops.helpers import OTHER, Cli
+
+    other_session = Cli(ws, ORCH_SESSION=OTHER)
+    other_grant = Cli(ws, ORCH_GRANT=ws.narrow_grant(["new", "set", "show", "list"]))
+    # their untouched chores are not mine
+    assert other_session("new", "same", "--type", "chore").code == 0
+    assert other_grant("new", "same", "--type", "chore").code == 0
+    doc = json.loads(cli("quick", "add", "same", "--json").out)
+    assert doc["data"] == {"key": "DEMO-0003", "title": "same", "type": "chore", "labels": ["quick"], "created": True}
+    for key in ("DEMO-0001", "DEMO-0002"):
+        assert list(ws.view(key).fields["labels"]) == []
+    # and the other direction: my untouched chore is not theirs
+    real = q._step
+    monkeypatch.setattr(
+        q,
+        "_step",
+        lambda argv, run: (
+            (9, {"ok": False, "error": {"code": "lock.busy", "message": "m"}}) if argv[0] == "set" else real(argv, run)
+        ),
+    )
+    r = cli("quick", "add", "mine")
+    assert r.code == 9 and "orch set DEMO-0004 labels=quick" in r.err
+    monkeypatch.setattr(q, "_step", real)
+    doc = json.loads(other_session("quick", "add", "mine", "--json").out)
+    assert doc["data"]["key"] == "DEMO-0005" and doc["data"]["created"] is True
+    assert list(ws.view("DEMO-0004").fields["labels"]) == []
+    # my own, but older than ten minutes: not adopted either
+    ws.clock[0] += 16 * 60  # past the ten minutes and past the CLI's own 15-minute dedup of an identical call
+    doc = json.loads(cli("quick", "add", "mine", "--json").out)
+    assert doc["data"]["key"] == "DEMO-0006" and doc["data"]["created"] is True
+    assert list(ws.view("DEMO-0004").fields["labels"]) == []
+
+
+def test_direct_mode_has_the_same_total_budget_for_the_reader(ws, cli, monkeypatch):
+    from types import SimpleNamespace
+
+    ws.repo()
+    ws.git("branch", "main", "HEAD")
+    for i in range(2):
+        assert cli("new", f"q{i}", "--label", "quick").code == 0
+        assert cli("set", str(i + 1), LINKS).code == 0
+    import orch.ops.commands.quick_list as ql
+    import orch.ops.quick as core
+
+    clock = iter(
+        [0.0, 0.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+    )  # the deadline is set at 0; the second row finds it passed
+    monkeypatch.setattr(ql, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    monkeypatch.setattr(core, "BUDGET_S", 20.0)
+    got = rows(cli)["rows"]
+    assert [r["quick"]["commits"] is not None for r in got] == [True, False]

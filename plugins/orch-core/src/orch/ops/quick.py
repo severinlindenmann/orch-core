@@ -13,6 +13,7 @@ from typing import Any
 __all__ = [
     "DEFAULT_MAX_COMMITS",
     "DEFAULT_MAX_FILES",
+    "BUDGET_S",
     "LABEL",
     "TITLE_MAX",
     "counts",
@@ -24,6 +25,8 @@ LABEL = "quick"
 TITLE_MAX = 120  # a quick task's title: one line, at most this many characters
 DEFAULT_MAX_COMMITS = 1
 DEFAULT_MAX_FILES = 3
+#: seconds for the reader calls of all rows of one list together (both modes); later rows have unknown counts
+BUDGET_S = 20.0
 
 
 def counts(diff: dict[str, Any]) -> tuple[int, int]:

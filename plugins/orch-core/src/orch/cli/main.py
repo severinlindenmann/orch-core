@@ -268,7 +268,7 @@ def main(
 
         from orch.cli.quick import main as quick_main
 
-        return quick_main(args[1:], env=env, out=out, err=err, run=step)
+        return quick_main(args[1:], env=env, out=out, err=err, run=step, now=now)
     from orch.ops.caps import Files
     from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
 

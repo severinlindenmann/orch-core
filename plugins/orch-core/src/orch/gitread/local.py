@@ -40,10 +40,11 @@ def diff(
     context: int = 3,
     max_bytes: int = 262144,
     roots: list[str] | None = None,
+    ext: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     real, rs = _roots(path, roots)
     with Repo(pin_repo(real, rs)) as repo:
-        return ops.diff(repo, branch, default_branch, context, max_bytes)
+        return ops.diff(repo, branch, default_branch, context, max_bytes, ext)
 
 
 def tree_check(path: str | os.PathLike[str], roots: list[str] | None = None) -> dict[str, Any]:

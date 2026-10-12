@@ -345,11 +345,12 @@ class ScopedRecords:
 class RegistryBackend:
     """The :class:`~orch.host.workspace.OpBackend` of every workspace socket."""
 
-    #: ``diff/1``: ``artifact.get`` (H4a2) and ``diff`` (H3b1 follow-up); the H6b read caps; ``sub_ext/1`` while
+    #: ``diff/1``: ``artifact.get`` (H4a2) and ``diff`` (H3b1 follow-up); ``diff_ext/1``: ``diff {head, base}`` (H6c;
+    #: ``commit.list`` is not served yet, a client checks ``welcome.ops``); the H6b read caps; ``sub_ext/1`` while
     #: detail is served
     @property
     def caps(self) -> list[str]:
-        base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "quick/1", "human/1"]
+        base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [*base, *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -435,14 +436,14 @@ class RegistryBackend:
                     raise failure from None
                 done = await asyncio.wrap_future(call.service.submit(quick_list.finish, call, data))
                 return redactor.obj({**ok_result(done["data"]), "lines": done["lines"], "hints": done["hints"]})
-            await asyncio.wrap_future(call.service.submit(git_diff.recheck, call))
+            await asyncio.wrap_future(call.service.submit(git_diff.recheck, call, pending))
             if failure is not None:
                 raise failure from None
             return redactor.obj(ok_result(data))
         except HostError as exc:
             raise redactor.error(exc) from None
         except Exception:  # the transport answers internal without a cause: keep it in the host's log, redacted
-            LOG.error("diff failed: %s", redactor.text(traceback.format_exc()))
+            LOG.error("%s failed: %s", call.frame.get("op"), redactor.text(traceback.format_exc()))
             raise
 
     def _register(self, call: Call, checked: dict[str, Any]) -> dict[str, Any]:

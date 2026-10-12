@@ -42,7 +42,7 @@ __all__ = ["BUDGET_S", "SCHEMA", "VALIDATOR", "Pending", "finish", "prepare", "r
 
 LOG = logging.getLogger(__name__)
 #: all rows' reader calls together; a row that does not get its turn within it has unknown counts
-BUDGET_S = 20.0
+BUDGET_S = core.BUDGET_S
 _STATUS = {"enum": ["backlog", "open", "in_progress", "waiting", "testing", "done", "closed"]}
 SCHEMA = {
     "type": "object",

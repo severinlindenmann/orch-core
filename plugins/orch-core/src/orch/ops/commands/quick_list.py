@@ -1,5 +1,6 @@
 """orch quick list: the quick tasks (tickets with the label quick) and how big each has grown"""
 
+import time
 from typing import Any
 
 from orch.ops import quick, views
@@ -21,16 +22,16 @@ def _page_start(token: str | None) -> int:
     return int(n)
 
 
-def _counts(ctx: Context, c: Call, view: Any) -> tuple[int | None, int | None]:
+def _counts(ctx: Context, c: Call, view: Any, left: float) -> tuple[int | None, int | None]:
     """Commits and files of the ticket's branches through the reader; unknown (``None``) when it links no repo or
     branch or the reader cannot read it (never an error: the limits are display only)."""
     from orch.ops.diff_core import RepoReadError, diff_plan, diff_run
 
-    if not view.fields["links"]["repos"]:
+    if left <= 0 or not view.fields["links"]["repos"]:
         return None, None
     try:
         jobs = diff_plan(c.store, view, ctx.caps)
-        return quick.counts(diff_run(ctx.caps, jobs, context=0, max_bytes=1024))
+        return quick.counts(diff_run(ctx.caps, jobs, context=0, max_bytes=1024, budget=left))
     except (OrchError, RepoReadError):
         return None, None
 
@@ -57,9 +58,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         if quick.LABEL in v.fields["labels"] and v.status in statuses
     ]
     matches.sort(key=lambda v: views.key_number(v.key), reverse=True)
+    deadline = time.monotonic() + quick.BUDGET_S  # all rows together, as the host's reader phase
     rows = []
     for v in matches[start : start + limit]:
-        commits, files = _counts(ctx, c, v)
+        commits, files = _counts(ctx, c, v, deadline - time.monotonic())
         rows.append(
             {
                 "key": v.key,

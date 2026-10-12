@@ -240,6 +240,10 @@ class Repo:
         out.sort(key=lambda c: (-c.time, c.oid))
         return out
 
+    def ancestors(self, oid: str) -> set[str]:
+        """``oid`` and every commit reachable from it."""
+        return self._ancestors([oid])
+
     def _ancestors(self, starts: list[str]) -> set[str]:
         seen = set(starts)
         todo = list(starts)

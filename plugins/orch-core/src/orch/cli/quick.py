@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
@@ -48,12 +49,39 @@ def _failure(code: int, doc: dict[str, Any], key: str | None) -> OrchError:
         return OrchError(e["code"], e["message"], hint=e.get("hint"))
     return OrchError(
         "quick.unlabelled",
-        f"{key} was created but not labelled: {e['code']} {render.clean_line(e['message'])[:120]}",
+        f"{key} was created but not labelled: {e['code']} {render.clean_line(e['message'])[:120]}; "
+        f"run the same quick add again, or label it yourself: orch set {key} labels=quick",
     )
 
 
-def _earlier(title: str, run: Callable[..., int]) -> str | None:
-    """The key of a ticket an earlier ``quick add`` of this title created and did not get to label, if there is one."""
+ADOPT_WITHIN_S = 600  # an earlier attempt's ticket is adopted only within this many seconds of its creation
+
+
+def _mine(created: dict[str, Any] | None, env: Mapping[str, str], now: float) -> bool:
+    """Was the ticket created by this caller (the same grant and, when the call has one, the same session) within the
+    last :data:`ADOPT_WITHIN_S` seconds? Anything else is somebody else's ticket (or an old one) and is never taken."""
+    import calendar
+    import time
+
+    grant = (env.get("ORCH_GRANT") or "").partition(".")[0]
+    if not created or not grant:
+        return False
+    actor = created.get("actor") or {}
+    if actor.get("kind") != "agent" or actor.get("grant") != grant:
+        return False
+    if actor.get("session") != (env.get("ORCH_SESSION") or None):
+        return False
+    try:
+        at = calendar.timegm(time.strptime(created["at"], "%Y-%m-%dT%H:%M:%SZ"))
+    except (KeyError, ValueError, TypeError):
+        return False
+    return 0 <= now - at <= ADOPT_WITHIN_S
+
+
+def _earlier(title: str, run: Callable[..., int], env: Mapping[str, str], now: float) -> str | None:
+    """The key of a ticket an earlier ``quick add`` of this caller created in the last 10 minutes and did not get to
+    label, if there is one: an untouched chore (exact title, no label, no claim, one event) of the caller's own grant
+    and session."""
     code, doc = _step(["list", "--limit", str(CANDIDATES)], run)
     if code != 0:
         return None
@@ -63,13 +91,25 @@ def _earlier(title: str, run: Callable[..., int]) -> str | None:
         if code != 0:
             continue
         t = doc["data"]["ticket"]
-        untouched = doc.get("seq") == 1 and len(t["events"]) == 1
-        if t["type"] == "chore" and t["labels"] == [] and t["claim"] is None and untouched:
+        if not (t["type"] == "chore" and t["labels"] == [] and t["claim"] is None):
+            continue
+        if doc.get("seq") != 1 or len(t["events"]) != 1:
+            continue
+        code, log = _step(["show", key, "--log", "--since", "0"], run)
+        if code == 0 and _mine(log["data"]["ticket"].get("created"), env, now):
             return key
     return None
 
 
-def main(argv: list[str], *, env: Mapping[str, str], out: TextIO, err: TextIO, run: Callable[..., int]) -> int:
+def main(
+    argv: list[str],
+    *,
+    env: Mapping[str, str],
+    out: TextIO,
+    err: TextIO,
+    run: Callable[..., int],
+    now: Callable[[], float] = time.time,
+) -> int:
     """``run(argv, out, err)`` runs one ordinary ``orch`` call; the caller binds the mode, records and clock."""
     as_json = "--json" in argv or env.get("ORCH_OUTPUT") == "json"
     rest = [a for a in argv if a != "--json"]
@@ -88,7 +128,7 @@ def main(argv: list[str], *, env: Mapping[str, str], out: TextIO, err: TextIO, r
     title = rest[1]
     if "\n" in title or "\r" in title or not 1 <= len(title.strip()) <= core.TITLE_MAX:
         return fail(OrchError("invalid.input", f"a quick task's title is one line of 1 to {core.TITLE_MAX} characters"))
-    key = _earlier(title, run)
+    key = _earlier(title, run, env, now())
     created = key is None
     if created:
         code, doc = _step(["new", title, "--type", "chore"], run)

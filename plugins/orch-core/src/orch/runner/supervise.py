@@ -77,9 +77,11 @@ Cleanup = Literal["complete", "incomplete", "unknown"]
 
 
 class SpawnError(Exception):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, cleanup: str = "complete") -> None:
         super().__init__(message)
         self.code, self.message = code, message
+        #: what became of a process forked for the failed spawn: ``complete`` (none left), else it stays tracked
+        self.cleanup = cleanup
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,8 @@ class Live:
     pty_closed: bool = False
     stopping: bool = False
     cleanup: str | None = None
+    #: processes of the run were still there after the last kill: retried every scan, never pruned
+    lingering: bool = False
     done: threading.Event = field(default_factory=threading.Event)
     ended_at: float = 0.0
     stop_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -253,22 +257,25 @@ class Supervisor:
             )
             try:
                 live = self._start(spec)
-            except SpawnError as exc:
-                self.table.update(
-                    spec.run,
-                    state="exited",
-                    cleanup="complete",
-                    exit={"code": None, "signal": None, "at": now_iso(), "reason": "spawn_failed", "error": exc.code},
-                )
-                raise
             except BaseException as exc:
+                err = (
+                    exc
+                    if isinstance(exc, SpawnError)
+                    else SpawnError(
+                        "run.spawn_failed", f"the run could not be started: {type(exc).__name__}", "unknown"
+                    )
+                )
+                # a process left by the failed spawn keeps its record (pid, birth): the crash sweep and
+                # cleanup_retry go on stopping it; the run is never dropped from the table
                 self.table.update(
                     spec.run,
                     state="exited",
-                    cleanup="unknown",
-                    exit={"code": None, "signal": None, "at": now_iso(), "reason": "spawn_failed"},
+                    cleanup=err.cleanup,
+                    exit={"code": None, "signal": None, "at": now_iso(), "reason": "spawn_failed", "error": err.code},
                 )
-                raise SpawnError("run.spawn_failed", f"the run could not be started: {type(exc).__name__}") from None
+                if err is exc:
+                    raise
+                raise err from None
             with self.lock:
                 self.live[spec.run] = live
                 self._sel.register(live.master, selectors.EVENT_READ, live)
@@ -309,24 +316,35 @@ class Supervisor:
                 os.close(status_w)
                 os.close(slave)
                 slave = -1
+            # recorded before anything else can fail: no forked process is ever without a run-table entry
+            first = procs.info(proc.pid)
+            self.table.update(
+                spec.run, pid=proc.pid, birth=first.birth if first else None, pgid=proc.pid, sid=proc.pid,
+                cgroup=str(cg) if cg is not None else None,
+            )  # fmt: skip
             try:
                 try:
-                    with os.fdopen(spec_w, "wb") as f:
-                        f.write(json.dumps(payload).encode())
-                except BrokenPipeError:
-                    pass
-                status = self._read_status(status_r)
-            finally:
-                os.close(status_r)
-            if status is not None:
-                proc.wait()
-                if cg is not None:
-                    self.cgroups.remove(cg)  # type: ignore[union-attr]
-                raise _spawn_error(status)
-            found = procs.info(proc.pid)
-            if found is None:
-                proc.wait()
-                raise SpawnError("run.spawn_failed", "the run ended before it was recorded")
+                    try:
+                        with os.fdopen(spec_w, "wb") as f:
+                            f.write(json.dumps(payload).encode())
+                    except BrokenPipeError:
+                        pass
+                    status = self._read_status(status_r)
+                finally:
+                    os.close(status_r)
+                if status is not None:
+                    raise _spawn_error(status)
+                found = procs.info(proc.pid)
+                if found is None:
+                    raise SpawnError("run.spawn_failed", "the run ended before it was recorded")
+            except BaseException as exc:
+                cleanup = self._abort(spec.run, proc, cg)
+                if isinstance(exc, SpawnError):
+                    exc.cleanup = cleanup
+                    raise
+                raise SpawnError(
+                    "run.spawn_failed", f"the run could not be started: {type(exc).__name__}", cleanup
+                ) from None
             os.set_blocking(master, False)
             live = Live(spec.run, proc, master, Ring(self.ring_bytes), proc.pid, found.birth, found.pgid, found.sid, cg)
             self.table.update(
@@ -347,6 +365,24 @@ class Supervisor:
                 os.close(slave)
             os.close(master)
             raise
+
+    def _abort(self, run: str, proc: subprocess.Popen[bytes], cg: Path | None) -> str:
+        """A spawn failed after the fork: wait briefly for the trampoline's own exit (a failed step exits 127), kill
+        it if it hangs, sweep its session, and say honestly what is left."""
+        try:
+            proc.wait(timeout=KILL_WAIT)
+        except subprocess.TimeoutExpired:
+            proc.kill()  # our unreaped child: its PID cannot have been reused
+            try:
+                proc.wait(timeout=KILL_WAIT)
+            except subprocess.TimeoutExpired:
+                return "incomplete"
+        rec = self.table.get(run) or {}
+        if self._members(rec, {}):
+            return self._terminate(rec, {}, 0.5)
+        if cg is not None:
+            self.cgroups.remove(cg)  # type: ignore[union-attr]
+        return "complete"
 
     def _read_status(self, fd: int) -> dict[str, Any] | None:
         """``None`` once the trampoline exec'd (EOF without bytes); otherwise its failure record."""
@@ -481,9 +517,41 @@ class Supervisor:
                 raise SpawnError("not_found", "no such run")
             return {"state": rec.get("state"), "cleanup": rec.get("cleanup") or "unknown"}
         live.stopping = True
-        self._finish(live, grace)
+        if live.cleanup == "incomplete":
+            self._retry(live)
+        else:
+            self._finish(live, grace)
         rec = self.table.get(run) or {}
         return {"state": rec.get("state"), "cleanup": live.cleanup or "unknown"}
+
+    def _retry(self, live: Live) -> None:
+        """A run whose cleanup was incomplete: ``SIGKILL`` to what is still there (by birth identity), reap the
+        leader if it finally died. ``complete`` only when nothing is left and nothing ever escaped."""
+        with live.stop_lock:
+            if live.cleanup != "incomplete":
+                return
+            rec = self._rec(live)
+            members = self._members(rec, live.tracked)
+            if live.cgroup is not None and self.cgroups is not None:
+                self.cgroups.kill(live.cgroup)
+            for p, b in members.items():
+                procs.signal_verified(p, b, signal.SIGKILL)
+            time.sleep(0.05)
+            if live.proc.poll() is not None and live.exit is None:
+                self._leader_exit(live)
+            left = self._members(rec, live.tracked)
+            live.lingering = bool(left) or live.proc.poll() is None
+            if not live.lingering and not live.escaped and live.exit is not None:
+                live.cleanup = "complete"
+                self.table.update(live.run, cleanup="complete")
+                live.ended_at = time.monotonic()
+                live.done.set()
+                self._emit("cleanup", live.run, {"cleanup": "complete"})
+
+    @staticmethod
+    def _rec(live: Live) -> dict[str, Any]:
+        return {"pid": live.pid, "birth": live.birth, "pgid": live.pgid, "sid": live.sid,
+                "cgroup": str(live.cgroup) if live.cgroup else None}  # fmt: skip
 
     def _finish(self, live: Live, grace: float) -> None:
         with live.stop_lock:
@@ -506,15 +574,21 @@ class Supervisor:
             )
             try:
                 live.proc.wait(timeout=KILL_WAIT)
+                reaped = True
             except subprocess.TimeoutExpired:
-                cleanup = "incomplete"
-            self._leader_exit(live)
+                reaped, cleanup = False, "incomplete"
+            if reaped:
+                self._leader_exit(live)  # the run ended; a leader still alive is never reported as exited
             if live.cgroup is not None and cleanup == "complete":
                 self.cgroups.remove(live.cgroup)  # type: ignore[union-attr]
             live.cleanup = cleanup
+            live.lingering = cleanup == "incomplete" and (
+                not reaped or bool(self._members(self._rec(live), live.tracked))
+            )
             self.table.update(live.run, cleanup=cleanup)
-            live.ended_at = time.monotonic()
-            live.done.set()
+            if cleanup != "incomplete" or not live.lingering:
+                live.ended_at = time.monotonic()
+                live.done.set()
         self._emit("cleanup", live.run, {"cleanup": cleanup})
 
     def _terminate(
@@ -558,7 +632,18 @@ class Supervisor:
         """After a runner crash: every run still recorded live becomes ``lost`` with ``cleanup: "unknown"``; the
         recorded processes that still match their birth identity get the stop sequence. Returns what was found."""
         found = []
-        for run, rec in self.table.live():
+        for run, rec in self.table.all():
+            if rec.get("state") not in ("spawning", "running"):
+                if rec.get("cleanup") not in (None, "incomplete") or not isinstance(rec.get("pid"), int):
+                    continue
+                pairs = rec.get("escapees") or []
+                tracked = {p: b for p, b in pairs if isinstance(p, int) and isinstance(b, int)}
+                members = self._members(rec, tracked)
+                if members:  # left over by an incomplete cleanup or a failed spawn: stop it, still not "complete"
+                    self._terminate(rec, tracked, grace)
+                    self.table.update(run, cleanup="unknown", swept=len(members))
+                    found.append({"run": run, "workspace_id": rec.get("workspace_id"), "swept": len(members)})
+                continue
             pairs = rec.get("escapees") or []
             tracked = {p: b for p, b in pairs if isinstance(p, int) and isinstance(b, int)}
             members = self._members(rec, tracked)
@@ -604,6 +689,12 @@ class Supervisor:
             self._prune(now)
             if now >= next_scan:
                 next_scan = now + self.scan_interval
+                for live in lives:
+                    if live.lingering and live.cleanup == "incomplete":
+                        try:
+                            self._retry(live)
+                        except Exception:  # noqa: BLE001 - retried at the next scan
+                            LOG.exception("cleanup retry failed")
                 try:
                     self.scan()
                 except Exception:  # noqa: BLE001 - the scan is best effort; it never stops the I/O
@@ -611,7 +702,11 @@ class Supervisor:
 
     def _prune(self, now: float) -> None:
         with self.lock:
-            ended = sorted((lv.ended_at, run) for run, lv in self.live.items() if lv.done.is_set() and lv.pty_closed)
+            ended = sorted(
+                (lv.ended_at, run)
+                for run, lv in self.live.items()
+                if lv.done.is_set() and lv.pty_closed and not lv.lingering
+            )
             drop = [run for at, run in ended if now - at > KEEP_RING_SECONDS]
             drop += [run for _, run in ended[: max(0, len(ended) - KEEP_RINGS)] if run not in drop]
             for run in drop:

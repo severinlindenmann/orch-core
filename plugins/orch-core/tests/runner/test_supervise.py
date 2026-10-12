@@ -238,3 +238,81 @@ def test_ended_rings_are_dropped_after_their_time(sup, tmp_path, monkeypatch):
     monkeypatch.setattr(supervise, "KEEP_RING_SECONDS", 0.0)
     wait_for(lambda: s.run not in sup.live)
     assert sup.get(s.run)["state"] == "exited" and sup.ring(s.run) is None  # the record stays, the ring goes
+
+
+# -- security scan follow-up: no fail-open on timeouts, no unsupervised process ---------------------------------------
+
+
+def test_hanging_trampoline_is_killed_and_stays_recorded(state, tmp_path, monkeypatch):
+    """A spawn that times out after the fork: the process was recorded (pid, birth) before anything could fail, is
+    killed, and the run is kept in the table as a failed spawn, never dropped."""
+    from orch.runner import supervise
+
+    hang = tmp_path / "hang.sh"
+    hang.write_text("#!/bin/sh\nexec sleep 60\n")
+    hang.chmod(0o755)
+    monkeypatch.setattr(supervise, "SPAWN_TIMEOUT", 0.3)
+    sup = Supervisor(state, cgroups=None, scan_interval=0.1, python=str(hang))
+    sup.open()
+    try:
+        s = spec(tmp_path, ["/bin/sh", "-c", "exit 0"])
+        with pytest.raises(SpawnError) as err:
+            sup.spawn(s)
+        assert err.value.code == "run.spawn_failed" and "timeout" in err.value.message
+        rec = sup.table.get(s.run)
+        assert isinstance(rec["pid"], int) and isinstance(rec["birth"], int)
+        assert not procs.alive(rec["pid"], rec["birth"])
+        assert rec["state"] == "exited" and rec["exit"]["reason"] == "spawn_failed" and rec["cleanup"] == "complete"
+    finally:
+        sup.close()
+
+
+def test_leader_ignoring_term_is_killed(sup, tmp_path):
+    s = spec(tmp_path, ["/bin/sh", "-c", "trap '' TERM HUP; exec sleep 60"])
+    res = sup.spawn(s)
+    time.sleep(0.2)
+    assert sup.stop(s.run, grace=0.3) == {"state": "exited", "cleanup": "complete"}
+    assert not procs.alive(res["pid"], res["birth"])
+
+
+def test_a_survivor_keeps_the_run_running_incomplete_and_supervised(sup, tmp_path, monkeypatch):
+    """If even SIGKILL does not end the leader, the stop answers ``incomplete``, the run stays ``running`` in the
+    table and the runner keeps killing it; it is never reported ended or dropped."""
+    from orch.runner import supervise
+
+    real = procs.signal_verified
+
+    def no_kill(pid, birth, sig):
+        return False if sig == signal.SIGKILL else real(pid, birth, sig)
+
+    s = spec(tmp_path, ["/bin/sh", "-c", "trap '' TERM HUP; exec sleep 60"])
+    res = sup.spawn(s)
+    time.sleep(0.2)
+    monkeypatch.setattr(supervise.procs, "signal_verified", no_kill)
+    monkeypatch.setattr(supervise, "KILL_WAIT", 0.3)
+    out = sup.stop(s.run, grace=0.2)
+    assert out == {"state": "running", "cleanup": "incomplete"}
+    assert procs.alive(res["pid"], res["birth"])
+    assert sup.live[s.run].lingering and s.run in sup.live
+    monkeypatch.setattr(supervise.procs, "signal_verified", real)  # the retry loop now gets through
+    wait_for(lambda: sup.get(s.run)["cleanup"] == "complete", timeout=10)
+    assert sup.get(s.run)["state"] == "exited" and not procs.alive(res["pid"], res["birth"])
+
+
+def test_crash_sweep_also_stops_leftovers_of_ended_runs(state, sleeper):
+    """An ended run whose cleanup was incomplete still has its process recorded: a restarted runner sweeps it."""
+    other = sleeper()  # stands in for a leftover of the run (its own session, recorded by birth identity)
+    info = procs.info(other.pid)
+    table = RunTable(state / "runner", os.getuid())
+    table.load()
+    run = run_id()
+    rec = {"workspace_id": "0" * 32, "kind": "agent", "state": "exited", "cleanup": "incomplete", "cgroup": None}
+    table.put(run, {**rec, "pid": other.pid, "birth": info.birth, "pgid": other.pid, "sid": other.pid})
+    sup = Supervisor(state, cgroups=None, scan_interval=0.1)
+    try:
+        swept = sup.open()
+        assert swept == [{"run": run, "workspace_id": "0" * 32, "swept": 1}]
+        other.wait(timeout=5)
+        assert sup.get(run)["cleanup"] == "unknown" and sup.get(run)["state"] == "exited"
+    finally:
+        sup.close()

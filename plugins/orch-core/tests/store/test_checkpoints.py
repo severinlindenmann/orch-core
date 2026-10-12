@@ -271,7 +271,7 @@ def test_a_revocation_for_a_device_the_restored_chain_never_had_is_a_tombstone(e
     facts = s.restore_facts("workspace")
     s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
     assert env.read_events("workspace")[-1]["type"] == "restore"
-    assert d2 in s.state.revocation_evidence()
+    assert d2 in {device for device, _person in s.state.revocation_evidence()}
 
 
 @pytest.mark.parametrize("host", [True, False])

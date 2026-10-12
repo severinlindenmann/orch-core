@@ -430,15 +430,17 @@ def _clean(value: Any) -> str:
 
 def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None] | None = None) -> str:
     """The word the person types: the ticket key for decisions and ticket ops (``move`` and a ticket ``policy.set``
-    included), ``GRANT`` for grants, the person id for member ops, the addon name for addon ops, ``<PREFIX>/POLICY``
-    for a workspace ``policy.set`` and ``<PREFIX>/SETTINGS`` for ``settings.set`` (the prefix from the signer's **own**
-    registry, ``workspace``), else the op name."""
+    included), ``GRANT`` for grants, the person id for member ops, the addon name for addon ops,
+    ``<PREFIX>~<WS8>/POLICY`` for a workspace ``policy.set`` and ``<PREFIX>~<WS8>/SETTINGS`` for ``settings.set`` (the
+    prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
     if op in ("policy.set", "settings.set") and ticket is None:
-        known = workspace(prepared["workspace_id"]) if workspace is not None else None
+        wid = prepared["workspace_id"]
+        known = workspace(wid) if workspace is not None else None
         if known is None:
             _refuse("this workspace is not in your own registry")
-        return f"{_clean(known[1])}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"  # type: ignore[index]
+        # the last 8 of the id the registry knows it by: two workspaces with one prefix never share a word
+        return f"{_clean(known[1])}~{_clean(wid)[-8:]}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"  # type: ignore[index]
     if op == "grant":
         return "GRANT"
     if op in _MEMBER_OPS:

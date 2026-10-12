@@ -1251,9 +1251,10 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
      lists **every event, one block each**. For `payload` material the blocks are the events' review fields, which are
      their signing bytes. `checks` are shown as **attested by the worker, best effort**.
   3. Get the op-specific confirmation word: the ticket key for decisions, `GRANT` for grants, the person id for member
-     ops; for the host person ops (H6b) `KEY/FRAG` for `move` and a ticket `policy.set`, `<PREFIX>/POLICY` for a
-     workspace `policy.set` and `<PREFIX>/SETTINGS` for `settings.set`, `PREFIX` being the workspace prefix from the
-     signer's **own** registry (a workspace not in it is refused). The signer also checks what each of these ops may
+     ops; for the host person ops (H6b) `KEY/FRAG` for `move` and a ticket `policy.set`, `<PREFIX>~<WS8>/POLICY` for a
+     workspace `policy.set` and `<PREFIX>~<WS8>/SETTINGS` for `settings.set`, `PREFIX` being the workspace prefix and
+     `WS8` the last eight characters of the workspace id, both from the signer's **own** registry (a workspace not in it
+     is refused), so two workspaces with one prefix never share a word; the header still shows the full id. The signer also checks what each of these ops may
      change: `move` one `ticket.moved` to `backlog` or `open` on a ticket log; `policy.set` one `policy.changed` naming
      1 to 4 gates, on the ticket log with a ticket and the workspace log without; `settings.set` one `settings.changed`
      on the workspace log whose `set` names only `grant_hours`, `claim_ttl_min`, `lease_ttl_min` and `repos`.

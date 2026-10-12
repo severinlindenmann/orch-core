@@ -30,13 +30,14 @@ import re
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import RecordsError
 
-__all__ = ["ALLOWED_PROTOCOLS", "EMPTY_TREE", "Git", "check_local", "open_repo", "redact", "url_problem"]
+__all__ = ["ALLOWED_PROTOCOLS", "HARDEN", "EMPTY_TREE", "Git", "check_local", "open_repo", "redact", "url_problem"]
 
 ALLOWED_PROTOCOLS = "https:ssh"
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -54,6 +55,7 @@ _HARDEN = (
 )  # fmt: skip
 #: the only sections of the person's frozen configuration a network call keeps: authentication and transport
 #: settings. Never ``url.*`` or ``remote.*`` (they would redirect the literal URL, Opus #430 finding 1).
+HARDEN = _HARDEN
 _NETWORK_SECTIONS = frozenset({"credential", "http", "ssh"})
 _NETWORK_KEYS = frozenset({"core.sshcommand"})
 #: sections the repo's own configuration may not set at all (#254 rounds 3 and 4, D-P2-33)
@@ -159,6 +161,17 @@ class Git:
     local: list[tuple[str, str, str]] = field(default_factory=list)
     #: a throwaway transport repo (:meth:`transport`): bare, no work tree, no config of the records repo
     bare: bool = False
+    #: the run's deadline (``time.monotonic``): every call gets at most what is left (60 s per run, D-P2-33)
+    deadline: float | None = None
+
+    def remaining(self, cap: float) -> float:
+        """At most ``cap`` seconds, and never past the run's deadline (``records.budget`` once it is spent)."""
+        if self.deadline is None:
+            return cap
+        left = self.deadline - time.monotonic()
+        if left <= 0.05:
+            raise RecordsError("records.budget", "the records run used its 60 s budget; try again")
+        return min(cap, left)
 
     @contextlib.contextmanager
     def transport(self) -> Iterator[Git]:
@@ -186,7 +199,7 @@ class Git:
             frozen = [
                 (k, v) for k, v in self.frozen if _split_key(k)[0] in _NETWORK_SECTIONS or k.lower() in _NETWORK_KEYS
             ]
-            yield Git(net, net, self.protocols, dict(self.base_env), frozen, bare=True)
+            yield Git(net, net, self.protocols, dict(self.base_env), frozen, bare=True, deadline=self.deadline)
 
     # -- running
     def env(self, *, network: bool = False, index: Path | None = None) -> dict[str, str]:
@@ -229,10 +242,12 @@ class Git:
                 capture_output=True,
                 env=self.env(network=network, index=index),
                 cwd=self.git_dir if self.bare else self.root,
-                timeout=timeout or (NETWORK_TIMEOUT if network else LOCAL_TIMEOUT),
+                timeout=self.remaining(timeout or (NETWORK_TIMEOUT if network else LOCAL_TIMEOUT)),
                 check=False,
             )
         except subprocess.TimeoutExpired:
+            if self.deadline is not None and time.monotonic() >= self.deadline - 0.1:
+                raise RecordsError("records.budget", "the records run used its 60 s budget; try again") from None
             raise RecordsError("records.git_failed", f"git {args[0]} timed out") from None
         if check and res.returncode != 0:
             err = res.stderr.decode(errors="replace").strip().splitlines()
@@ -356,13 +371,18 @@ def git_dir_of(root: Path) -> Path:
 
 
 def open_repo(
-    root: Path, *, env: Mapping[str, str] | None = None, protocols: str = ALLOWED_PROTOCOLS, remote: str | None = None
+    root: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    protocols: str = ALLOWED_PROTOCOLS,
+    remote: str | None = None,
+    deadline: float | None = None,
 ) -> Git:
     """The dedicated records repo at ``root`` with its configuration frozen and checked."""
     root = pinned_root(root)
     git_dir = git_dir_of(root)
     base = _base_env(os.environ if env is None else env, protocols)
-    repo = Git(root, git_dir, protocols, base, [])
+    repo = Git(root, git_dir, protocols, base, [], deadline=deadline)
     repo.local, repo.local_digest = repo.read_local()  # the repo's own config first, without following includes
     check_local(repo.local, remote)
     probe = subprocess.run(  # the person's real configuration, read once

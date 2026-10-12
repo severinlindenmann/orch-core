@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,32 +30,63 @@ class Resolved:
     root: Path
     link: Link
     tips: ValidatedTips
+    state: Path
+    mode: str  # "host" | "direct"
+    close: Callable[[], None] = lambda: None
 
 
-def resolve(env: Mapping[str, str], workspace: str | None) -> Resolved:
+def _find_here(env: Mapping[str, str]) -> tuple[str | None, Path | None]:
+    from orch.ops.caps import Files
+    from orch.ops.runtime import _config, find_workspace
+
+    files = Files.direct()
+    here = find_workspace(env, os.getcwd(), files)
+    cfg = _config(here, files) if here is not None else None
+    wid = ((cfg or {}).get("workspace") or {}).get("id")
+    return (wid if isinstance(wid, str) else None), here
+
+
+def resolve(
+    env: Mapping[str, str],
+    workspace: str | None,
+    *,
+    state: Path | None = None,
+    root: Path | None = None,
+    deadline: float | None = None,
+) -> Resolved:
+    """Host mode when the person's own registry names the workspace (requests on its pinned socket, column P),
+    else direct mode (D-P2-38) on the workspace found here, or at ``root`` (the auto entry of a direct workspace)."""
     from orch import hostclient
     from orch.host.custody import read_json
     from orch.host.registry import registry_path
-    from orch.ops.runtime import _config, find_workspace, state_dir
+    from orch.ops.runtime import _config, state_dir
 
-    state = state_dir(env)
-    wid = workspace
+    state = Path(state) if state is not None else state_dir(env)
+    wid, here = workspace, None
     if wid is None:
-        from orch.ops.caps import Files
-
-        files = Files.direct()
-        here = find_workspace(env, os.getcwd(), files)
-        cfg = _config(here, files) if here is not None else None
-        wid = ((cfg or {}).get("workspace") or {}).get("id")
+        wid, here = _find_here(env)
     if not isinstance(wid, str) or not _WS.fullmatch(wid):
         raise RecordsError("records.unsupported", "no workspace: pass --workspace ID or run it in the workspace")
+    tips = ValidatedTips(state / "records.json")
     doc = read_json(registry_path(state), os.getuid()) or {"workspaces": []}
     entry = next((e for e in doc.get("workspaces") or [] if e.get("workspace_id") == wid), None)
-    if entry is None:
-        raise RecordsError(
-            "records.unsupported",
-            "the host does not serve this workspace; direct-mode records are a later item (D-P2-38)",
-        )
+    if entry is None:  # direct mode: the workspace here (or the auto entry's root) must be this one
+        from orch.ops.caps import Files
+
+        from .direct import DirectLink
+
+        if root is None:
+            found_wid, here = _find_here(env) if here is None else (wid, here)
+            root = here if found_wid == wid else None
+        if root is None:
+            raise RecordsError(
+                "records.unsupported", "no host serves this workspace and it is not the one here: run it there"
+            )
+        cfg = _config(Path(root), Files.direct())
+        if ((cfg or {}).get("workspace") or {}).get("id") != wid:
+            raise RecordsError("records.unsupported", "the directory is not this workspace")
+        direct = DirectLink(Path(root), wid, state)
+        return Resolved(wid, Path(root), direct, tips, state, "direct", direct.close)
     host_uid = entry.get("host_uid")
     if type(host_uid) is not int:
         raise RecordsError("records.unsupported", "the host registry entry has no host UID")
@@ -64,9 +95,21 @@ def resolve(env: Mapping[str, str], workspace: str | None) -> Resolved:
     )
 
     def link(op: str, args: dict[str, Any]) -> dict[str, Any]:
+        import time
+
         from orch.host.control_client import new_idem
 
-        idem = new_idem() if op == "records.remote_private" else None  # the mark is a write (an outcome record)
-        return hostclient._request(target, op, args, auth=None, idem=idem)["data"]  # noqa: SLF001 - one request path
+        from .tool import WRITE_OPS
 
-    return Resolved(wid, Path(str(entry.get("root"))), link, ValidatedTips(state / "records.json"))
+        idem = new_idem() if op in WRITE_OPS else None  # the mark and the note are writes (an outcome record)
+        timeout = None
+        if deadline is not None:
+            timeout = deadline - time.monotonic()
+            if timeout <= 0.05:
+                raise RecordsError("records.budget", "the records run used its 60 s budget; try again")
+        try:
+            return hostclient._request(target, op, args, auth=None, idem=idem, timeout=timeout)["data"]  # noqa: SLF001
+        except hostclient.HostFailure as exc:
+            raise RecordsError(exc.code, str(exc.message), hint=exc.hint, exit_=exc.wire_exit) from None
+
+    return Resolved(wid, Path(str(entry.get("root"))), link, tips, state, "host")

@@ -48,6 +48,8 @@ TOTAL_MAX = 1024 * 1024 * 1024
 FILES_MAX = 200_000
 #: files per ``records.snapshot`` page
 PAGE_FILES = 2000
+#: one run of the tool, git and host calls together (D-P2-33: 60 s per run)
+RUN_BUDGET = 60.0
 #: a manifest is served this long after it was taken
 TTL_SECONDS = 600
 
@@ -89,6 +91,11 @@ class RecordsError(Exception):
         "records.remote_missing": 3,
         "records.git_failed": 3,
         "records.unsupported": 3,
+        "records.busy": 9,
+        "records.budget": 9,
+        "records.unconfirmed": 3,
+        "records.invalid": 5,
+        "records.timer_failed": 1,
     }
 
     def __init__(self, code: str, message: str, *, hint: str | None = None, exit_: int | None = None) -> None:

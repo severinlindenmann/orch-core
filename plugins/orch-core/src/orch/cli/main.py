@@ -257,6 +257,10 @@ def main(
         from orch.custody.cli import main as keys_main
 
         return keys_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["records"]:  # records commit and push (H11e): the person-side tool, not a registry op
+        from orch.records.cli import main as records_main
+
+        return records_main(args[1:], env=env, out=out)
     if args[:1] == ["sign"]:  # a hand-off signed at the person's terminal (H5b): a host client, not a registry op
         from orch.host.handoff import main as sign_main
 

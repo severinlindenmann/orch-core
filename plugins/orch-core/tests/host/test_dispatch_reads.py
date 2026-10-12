@@ -94,6 +94,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"ref": ref, "timeout": 1}
     if op in DASHBOARD_READS:  # H6b: not registry ops, so no registry schema to read the arguments from
         return DASHBOARD_READS[op](ref)
+    if op == "diff":  # through Viewer.ticket, then Viewer.linked_repo
+        return {"ref": ref}
     if op == "artifact.get":  # H4a2: through Viewer.ticket, then Viewer.artifact
         return {"ref": ref, "name": "proof.txt", "offset": 0}
     if op == "blob.put":  # H4a2: blobs are per principal and name no ticket

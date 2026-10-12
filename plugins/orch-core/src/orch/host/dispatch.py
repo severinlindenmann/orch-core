@@ -2,8 +2,8 @@
 
 **The closed op list** (§0.4, §0.5). The host serves every registry op of :mod:`orch.ops` under its name at contract
 version 1, plus ``whoami``, ``host.status``, ``outcome.get``, ``sub.open``, ``sub.close`` and the files ops
-(``blob.put``, ``blob.drop``, ``artifact.get``: H4a2, :mod:`orch.host.blobs`, :mod:`orch.host.artifacts`), and nothing
-else (``unknown_command``). Left out:
+(``blob.put``, ``blob.drop``, ``artifact.get``: H4a2, :mod:`orch.host.blobs`, :mod:`orch.host.artifacts`), ``diff``
+(the H3b1 follow-up, :mod:`orch.host.diff`), and nothing else (``unknown_command``). Left out:
 
 * ``init`` and ``import.v1`` (D-P2-9: ``init`` is ``host.wsk_create`` + ``host.bootstrap``; ``import v1`` runs in
   direct mode before registration).
@@ -88,6 +88,8 @@ from .blobs import INLINE_MAX, decoded_len
 from .blobs import VALIDATORS as BLOB_VALIDATORS
 from .bus import Subscription
 from .columns import OpKind
+from .diff import VALIDATOR as DIFF_VALIDATOR
+from .diff import diff as git_diff
 from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
@@ -133,6 +135,8 @@ HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
 HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1, "sub.open": 1, "sub.close": 1}
 #: the files ops (H4a2, §0.10, §0.8): side-effect-free, columns P, G and N
 FILE_OPS: dict[str, int] = {"blob.put": 1, "blob.drop": 1, "artifact.get": 1}
+#: the git reads (§0.8, H3b1 follow-up): ``diff`` v1 (v1.4), columns P, G and N, through the host's reader
+GIT_OPS: dict[str, int] = {"diff": 1}
 #: registry ops served in the ``wait`` phase (parked on the bus, answered ``host.restarting`` by a drain)
 WAIT_OPS = frozenset({"wait"})
 _TOPIC = r"^(?:workspace|tickets|needs|ticket:(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}|[0-7][0-9A-HJKMNP-TV-Z]{25}))$"
@@ -189,6 +193,7 @@ def served_ops() -> dict[str, int]:
     out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
     out.update(FILE_OPS)
+    out.update(GIT_OPS)
     out.update(HUMAN_OPS)
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
@@ -209,7 +214,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     from .reads import PERSON_GRANT_READS, READ_OPS
     from .review import HOST_PERSON_OPS
 
-    if name in HOST_OPS or name in FILE_OPS:
+    if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
@@ -334,7 +339,8 @@ class ScopedRecords:
 class RegistryBackend:
     """The :class:`~orch.host.workspace.OpBackend` of every workspace socket."""
 
-    #: ``diff/1`` is listed for ``artifact.get`` (H4a2); the H6b read caps; ``sub_ext/1`` while detail is served
+    #: ``diff/1``: ``artifact.get`` (H4a2) and ``diff`` (H3b1 follow-up); the H6b read caps; ``sub_ext/1`` while
+    #: detail is served
     @property
     def caps(self) -> list[str]:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "human/1"]
@@ -454,7 +460,7 @@ class RegistryBackend:
                 result = self._host_op(call)
             elif op in READ_OPS:
                 result = reads.serve(call)
-            elif op in FILE_OPS:
+            elif op in FILE_OPS or op in GIT_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:
                 result = self.human.serve(call, redactor)
@@ -502,11 +508,13 @@ class RegistryBackend:
         return ok_result(call.service.outcomes.lookup(call.principal, args["idem"]))
 
     def _file_op(self, call: Call) -> dict[str, Any]:
-        """``blob.put``, ``blob.drop`` (§0.10) and ``artifact.get`` (§0.8): schema, no ``dry_run``, no ``files``, the
-        workspace state, then the op."""
+        """``blob.put``, ``blob.drop`` (§0.10), ``artifact.get`` and ``diff`` (§0.8): schema, no ``dry_run``, no
+        ``files``, the workspace state, then the op."""
         op, frame = call.frame["op"], call.frame
         args = frame["args"]
-        validator = ARTIFACT_VALIDATOR if op == "artifact.get" else BLOB_VALIDATORS[op]
+        validator = (
+            ARTIFACT_VALIDATOR if op == "artifact.get" else DIFF_VALIDATOR if op == "diff" else BLOB_VALIDATORS[op]
+        )
         errors = sorted(validator.iter_errors(args), key=lambda e: list(map(str, e.path)))
         if errors:
             where = ".".join(map(str, errors[0].absolute_path))
@@ -518,6 +526,8 @@ class RegistryBackend:
         self._state(service, False)
         if op == "artifact.get":
             return ok_result(artifact_get(call, args))
+        if op == "diff":
+            return ok_result(git_diff(call, args))
         if op == "blob.drop":
             service.blobs.drop(call.principal, args["blob"])
             return ok_result({})

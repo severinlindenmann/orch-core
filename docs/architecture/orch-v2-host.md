@@ -1003,6 +1003,9 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
   and `since:"my_approval"` are follow-ups (§9 Q9). A base the caller chose (`declared`, a later option) is never the
   approval screen's default: the approving client shows it with its sha and whether it is an ancestor of head, and
   the signing path never takes a base from the agent's side.
+- **Served** on the workspace socket since the H3b1 follow-up (`orch.host.diff`, after H10a wired the reader): the
+  ticket through the viewer's visibility, `repo` through the ticket's `links.repos`, then the reader under the caller's
+  principal. Until `since` lands it is an unknown key there (`invalid.input`, §0.3).
 - **Too large to diff.** A file whose side is over 8 MiB or 200 000 lines, or that would take the request past
   1 000 000 diffed lines (both sides of every file), is not diffed as text: its `files` entry has `too_large:true`,
   `binary:true`, `add` and `del` 0, and `unified` carries `diff --git a/<p> b/<p>` followed by
@@ -3309,7 +3312,7 @@ dispatch is turned on.
      identity) in its state dir (0600, never moved forward automatically) and reports `base_moved`. P3 replaces
      first observation with a base pinned at claim.
    - **`since:"my_approval"`** (holes 1, 2): only the caller's own code-gate approve decisions, in the dispatcher
-     when `diff` is registered (H6b); the default view stays the full change.
+     of the served `diff` (`orch.host.diff`, registered without it); the default view stays the full change.
    - **A `declared` base is never the approval screen's default** (hole 5): a client rule, noted in §0.8.
    - **SHA-1 collision detection:** the reader checks SHA-1 ids with plain SHA-1, not git's SHA-1DC, so a
      SHAttered-style colliding object would be accepted. Accepted risk at today's cost; sha256 repos are unaffected.

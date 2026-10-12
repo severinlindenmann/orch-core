@@ -7,12 +7,15 @@ receipt) is replaced by a name."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import shutil
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,11 +25,19 @@ GOLDEN = Path(__file__).parent / "golden"
 SEQ = {}
 
 
-def build(tmp: Path) -> Ws:
+def build(tmp: Path, mode: Any = None) -> Ws:
+    """The base workspace. ``mode`` (H7) builds it through a host, as a workspace used in host mode from the start: the
+    session notes are then the host's (keyed by principal and session, F4), as the cases run on it expect."""
     ws = Ws(tmp)
     ws.bootstrap()
-    cli = Cli(ws)
-    other = Cli(ws, session=OTHER)
+    with (mode or _direct)(ws) as extra:
+        _fill(ws, extra)
+    return ws
+
+
+def _fill(ws: Ws, extra: dict[str, str]) -> None:
+    cli = Cli(ws, **extra)
+    other = Cli(ws, session=OTHER, **extra)
     must = lambda r: (r.code == 0, r.err)[0] or pytest.fail(r.err)  # noqa: E731
     for argv in (
         [
@@ -67,17 +78,21 @@ def build(tmp: Path) -> Ws:
     ev.write_text("112 passed\n")
     must(cli("artifact", "add", str(ev), "--ac", "AC1", "--label", "test run"))
     must(other("claim", "DEMO-0003"))
-    return ws
+
+
+def make_base(mode: Any = None) -> Iterator[Path]:
+    root = Path(os.path.realpath(tempfile.mkdtemp(prefix="orch-golden-")))
+    ws = build(root, mode)
+    (root / "grant.txt").write_text(ws.grant)
+    (root / "owner.ref").write_text(ws.owner.ref)  # the host-mode run maps the UID to it (H7)
+    ws.store.close()
+    yield root
+    shutil.rmtree(root, ignore_errors=True)
 
 
 @pytest.fixture(scope="module")
 def base():
-    root = Path(tempfile.mkdtemp(prefix="orch-golden-"))
-    ws = build(root)
-    (root / "grant.txt").write_text(ws.grant)
-    ws.store.close()
-    yield root
-    shutil.rmtree(root, ignore_errors=True)
+    yield from make_base()
 
 
 class Fork(Ws):
@@ -166,20 +181,32 @@ CASES = {
 }
 
 
-def run(base: Path, name: str, as_json: bool) -> str:
+def run(base: Path, name: str, as_json: bool, mode: Any = None) -> str:
+    """One case on a fresh fork. ``mode`` (H7) is a context manager factory that serves the fork through a host and
+    yields the extra CLI environment (``tests/host/test_golden_host.py``); ``None`` is direct mode."""
     argv, stdin = CASES[name]
-    tmp = Path(tempfile.mkdtemp(prefix="orch-golden-run-"))
+    tmp = Path(os.path.realpath(tempfile.mkdtemp(prefix="orch-golden-run-")))  # the host refuses a symlinked ancestor
     try:
         ws = Fork(base, tmp / "w")
-        ev = str(ws.tmp / "evidence.log")
-        cli = Cli(ws)
-        r = cli(*[a.replace("{evidence}", ev) for a in argv], *(["--json"] if as_json else []), stdin=stdin)
-        if as_json:
-            doc = json.loads(r.out)
-            return norm(json.dumps(doc, indent=2, ensure_ascii=False)) + f"\n# exit {r.code}\n"
-        return norm(f"exit {r.code}\n--- stdout\n{r.out}--- stderr\n{r.err}")
+        with (mode or _direct)(ws) as extra:
+            return _case(ws, argv, stdin, as_json, extra)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def _direct(ws: Ws) -> Iterator[dict[str, str]]:
+    yield {}
+
+
+def _case(ws: Ws, argv: list[str], stdin: str | None, as_json: bool, extra: dict[str, str]) -> str:
+    ev = str(ws.tmp / "evidence.log")
+    cli = Cli(ws, **extra)
+    r = cli(*[a.replace("{evidence}", ev) for a in argv], *(["--json"] if as_json else []), stdin=stdin)
+    if as_json:
+        doc = json.loads(r.out)
+        return norm(json.dumps(doc, indent=2, ensure_ascii=False)) + f"\n# exit {r.code}\n"
+    return norm(f"exit {r.code}\n--- stdout\n{r.out}--- stderr\n{r.err}")
 
 
 @pytest.mark.parametrize("name", sorted(CASES))

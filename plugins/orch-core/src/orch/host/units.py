@@ -31,10 +31,13 @@ def program_arguments(python: Path, release: Path, state_dir: Path, run_dir: Pat
     return args
 
 
-def launchd_plist(python: Path, release: Path, state_dir: Path, *, log_dir: Path | None = None) -> bytes:
+def launchd_plist(
+    python: Path, release: Path, state_dir: Path, *, log_dir: Path | None = None, run_dir: Path | None = None
+) -> bytes:
+    """``run_dir``: the tier-A run directory (``<state>/run``, H7); without it the host uses the tier-B default."""
     doc: dict[str, object] = {
         "Label": LAUNCHD_LABEL,
-        "ProgramArguments": program_arguments(python, release, state_dir),
+        "ProgramArguments": program_arguments(python, release, state_dir, run_dir),
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Background",
@@ -55,13 +58,16 @@ def systemd_unit(
     user: str | None = None,
     group: str | None = None,
     host_uid: int | None = None,
+    run_dir: Path | None = None,
 ) -> str:
-    """A user unit (``systemctl --user``), or a system unit that runs as ``user`` (required with ``system``)."""
+    """A user unit (``systemctl --user``), or a system unit that runs as ``user`` (required with ``system``).
+    ``run_dir`` names the run directory (tier A: ``<state>/run``, H7); a system unit defaults to ``/run/orch/<uid>``."""
     if system and (not user or host_uid is None):
         raise ValueError("a system unit needs the host user and UID")
     if user == "root" or host_uid == 0:
         raise ValueError("the host never runs as root")
-    run_dir = Path("/run/orch") / str(host_uid) if host_uid is not None else None
+    if run_dir is None and host_uid is not None:
+        run_dir = Path("/run/orch") / str(host_uid)
     exec_start = " ".join(shlex.quote(a) for a in program_arguments(python, release, state_dir, run_dir))
     lines = [
         "[Unit]",

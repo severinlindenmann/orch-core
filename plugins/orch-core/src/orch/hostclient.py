@@ -370,13 +370,28 @@ def result_from(doc: Mapping[str, Any]) -> Result:
 
 def dry_text(op: Operation, prepared: Mapping[str, Any]) -> Result:
     """A person op under ``--dry-run`` in host mode: the host judged it (``human.prepare`` with ``dry_run``) and signs
-    nothing. The prepared request is not the op's result, so this names what would be signed."""
+    nothing. A host since H7 sends the inner op's would-be ``result``, rendered as direct mode renders its dry run; an
+    older host sends only the prepared request, so this names what would be signed."""
+    would = prepared.get("result")
+    if isinstance(would, Mapping):
+        return in_schema_order(op, result_from(would))
     types = [str(e.get("type")) for e in prepared.get("events") or []]
     return Result(
         data={"dry_run": True, "op": op.name, "events": types, "fingerprint": prepared.get("fingerprint")},
         lines=["dry-run: nothing was written", "would sign: " + ", ".join(types)],
         head=f"ok {op.name} dry-run",
     )
+
+
+def in_schema_order(op: Operation, res: Result) -> Result:
+    """``data``'s keys in the order of the op's output schema, as the direct-mode handler builds them. A person op's
+    result comes back from the request record the host stored as canonical JSON (sorted keys); the text and JSON
+    renderers keep key order, so this is what makes the two modes byte-identical (H7)."""
+    props = ((op.declaration.get("output") or {}).get("json") or {}).get("properties")
+    if isinstance(res.data, dict) and isinstance(props, Mapping):
+        first = {k: res.data[k] for k in props if k in res.data}
+        res.data = {**first, **{k: v for k, v in res.data.items() if k not in first}}
+    return res
 
 
 # --- the call ------------------------------------------------------------------------------------------------------
@@ -647,7 +662,7 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
             idem=idem,
             files=wire,
         )
-        return result_from(res)
+        return in_schema_order(op, result_from(res))
     except OrchError:
         raise
     except signer.SignerRefused as exc:

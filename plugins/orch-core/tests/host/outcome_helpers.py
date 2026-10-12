@@ -148,11 +148,11 @@ class WsClient:
     """A blocking client of one workspace socket (hello, req, cancel)."""
 
     def __init__(self, path: Any, wid: str, uid: int) -> None:
-        from orch.host.client import Pin, handshake_pinned
+        from orch.host.client import CLIENT_OPS, Pin, handshake_pinned
 
         self.sock, self.welcome = handshake_pinned(
-            Pin(uid, wid, path), {"t": "hello", "proto": [1], "client": "test", "caps": []}
-        )
+            Pin(uid, wid, path), {"t": "hello", "proto": [1], "client": "test", "caps": [], "ops": dict(CLIENT_OPS)}
+        )  # a current client: task.done at contract 2 (H7: the host refuses an unlisted version, §0.4)
         self.decoder = frames.Decoder()
         self.pending: list[Any] = []
 

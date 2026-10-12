@@ -46,6 +46,8 @@ class Capture:
     events: list[Captured] = field(default_factory=list)
     #: ``before`` of a ``payload`` material: prior values of the paths a set, section.set or settings.set changes
     before: dict[str, Any] = field(default_factory=dict)
+    #: ``human.prepare`` with ``opts.dry_run`` (H7): the handler answers what its direct ``--dry-run`` would answer
+    dry_run: bool = False
 
     @property
     def actor(self) -> dict[str, Any]:

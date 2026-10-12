@@ -30,7 +30,7 @@ from orch.store.render import section_entry, thaw
 
 from orch_dashboard.errors import HostError, fail
 
-from . import review
+from . import review, settingsops
 
 TTL = 600
 MAX_PENDING = 20
@@ -47,6 +47,13 @@ RESOLUTIONS = ("wont_do", "duplicate", "obsolete", "other")
 SETTABLE = {"labels", "priority", "size", "title", "parent"}
 MAX_SECTION = 65536
 MAX_TEXT = 4096
+WORKSPACE_BUILDERS = {
+    "settings.set": "settings_set",
+    "policy.set": "policy_set",
+    "member.role": "member_role",
+    "member.remove": "member_remove",
+    "grant.revoke": "grant_revoke",
+}
 
 
 def stamp(epoch: float) -> str:
@@ -144,7 +151,9 @@ class Requests:
         }
 
     # -- ops ---------------------------------------------------------------------------------------------------------
-    def prepare(self, store, views, args: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
+    def prepare(
+        self, store, views, args: dict[str, Any], opts: dict[str, Any], files: dict[str, bytes] | None = None
+    ) -> dict[str, Any]:
         if set(args) - {"op", "args", "signer", "handoff"} or not {"op", "args"} <= set(args):
             raise invalid("human.prepare takes op, args, signer? and handoff?")
         op, op_args = args["op"], args["args"]
@@ -170,7 +179,15 @@ class Requests:
         if member is None:
             raise fail("peer.denied", exit=3)
         device = self.any_device(store, person)
-        events, log, material = Builder(store, views, person, device).build(op, op_args)
+        if files and op != "member.add":
+            raise fail("blob.invalid", f"{op[:40]} takes no files", exit=5)
+        # As the host does: `files.<arg>` names an argument that carries the file's logical name (`-`).
+        named = {}
+        for arg, data in (files or {}).items():
+            if not isinstance(op_args.get(arg), str):
+                raise fail("blob.invalid", f"files.{arg[:40]} names no file argument of {op[:40]}", exit=5)
+            named[op_args[arg]] = data
+        events, log, material = Builder(store, views, person, device).build(op, op_args, named)
         for event in events:
             judge(store, with_probe_device(event, device), log)
         if signer is not None:
@@ -474,7 +491,11 @@ class Builder:
         return material
 
     # -- operations --------------------------------------------------------------------------------------------------
-    def build(self, op: str, args: dict[str, Any]):
+    def build(self, op: str, args: dict[str, Any], files: dict[str, bytes] | None = None):
+        if op == "member.add":
+            return settingsops.member_add(self, args, files or {})
+        if op in WORKSPACE_BUILDERS:
+            return getattr(settingsops, WORKSPACE_BUILDERS[op])(self, args)
         return getattr(self, "op_" + op.replace(".", "_"))(args)
 
     def op_approve(self, args):

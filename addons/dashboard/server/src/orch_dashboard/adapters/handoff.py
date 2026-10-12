@@ -88,7 +88,13 @@ def review_matches(material: dict, events: list) -> bool:
     return True
 
 
-def request(prepared: dict, ws: str, expect_op: str | None = None, expect_key: str | None = None) -> dict:
+def request(
+    prepared: dict,
+    ws: str,
+    expect_op: str | None = None,
+    expect_key: str | None = None,
+    expect_events=None,
+) -> dict:
     """A `Prepared` as the dashboard's `HandoffRequest`. Raises `internal` if the host's answer is not the request that
     was asked for, or its hashes or its review do not recompute (fail closed)."""
     try:
@@ -104,6 +110,7 @@ def request(prepared: dict, ws: str, expect_op: str | None = None, expect_key: s
             or not isinstance(material, dict)
             or not material_keys_ok(material)
             or not review_matches(material, events)
+            or (expect_events is not None and not expect_events(events))
         ):
             raise inconsistent()
         if (

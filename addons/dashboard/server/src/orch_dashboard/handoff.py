@@ -9,7 +9,9 @@ never names an op, a path or a raw event. `opts.idem` comes from a client-genera
 retry); a retry with the same key answers from this process's record instead of preparing a second request.
 """
 
+import base64
 import hashlib
+import json
 import os
 import threading
 import time
@@ -24,6 +26,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from . import adapters
 from .errors import HostError, fail
 from .gateway import Gateway
+from .hostlink import _pairs, _valid
 from .reads import Key, workspace
 
 Idem = Annotated[str, StringConstraints(pattern=r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
@@ -194,6 +197,134 @@ class WriteSection(Action):
     text: SectionText
 
 
+# ---- Workspace settings, members and grants (M4, #306) -------------------------------------------------------------
+# Closed and typed like the ticket actions above. `repos` is not an argument of `settings_set`: the Repos addon owns
+# repo editing, and `extra="forbid"` refuses it. `grant` (issuing) is not an action: the signer draws the secret.
+
+Person = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
+GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+Role = Literal["owner", "maintainer", "member", "viewer"]
+OneLine = r"^[^\x00-\x1f\x7f\u2028\u2029]+$"
+Token = Literal["owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers"]
+PolicyGate = Literal["requirements", "plan", "verify", "code"]
+TicketType = Literal["feature", "bug", "chore", "spike", "epic"]
+MAX_PK = 87  # base64url of a 65-byte public key, no padding
+MAX_CERT_BYTES = 16384  # a device certificate is a few hundred bytes; anything near this is not one
+PK_BYTES = 65
+
+
+class SettingsSet(Action):
+    """`settings.set {set:{grant_hours?, claim_ttl_min?, lease_ttl_min?}}`; `repos` is refused (the Repos addon)."""
+
+    action: Literal["settings_set"]
+    grant_hours: Annotated[int, Field(ge=1, le=24)] | None = None
+    claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
+    lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
+
+    @model_validator(mode="after")
+    def something(self):
+        if self.grant_hours is None and self.claim_ttl_min is None and self.lease_ttl_min is None:
+            raise ValueError("change at least one duration")
+        return self
+
+
+class PolicyBody(BaseModel):
+    """F1 5.7 `Policy`, exactly: five keys, tokens from the closed list."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    approvers: Annotated[list[Token], Field(min_length=1, max_length=8)]
+    count: Annotated[int, Field(ge=1, le=9)]
+    not_: Annotated[list[Token], Field(max_length=8, alias="not")]
+    applies: Literal["all", "off"] | Annotated[list[TicketType], Field(min_length=1, max_length=16)]
+    independent: bool
+
+    def canonical(self) -> dict:
+        """Stored in canonical form (F1 5.7): lists sorted and de-duplicated; a non-canonical policy is refused."""
+        return {
+            "approvers": sorted(set(self.approvers)),
+            "count": self.count,
+            "not": sorted(set(self.not_)),
+            "applies": self.applies if isinstance(self.applies, str) else sorted(set(self.applies)),
+            "independent": self.independent,
+        }
+
+
+class PolicySet(Action):
+    """`policy.set {gates:{Gate: Policy}}` for the workspace default of one gate (a ticket override is not offered)."""
+
+    action: Literal["policy_set"]
+    gate: PolicyGate
+    policy: PolicyBody
+
+    @model_validator(mode="after")
+    def code_rules(self):
+        # For `code`, `not` always includes `assignees` and `independent` is true (D59); the host refuses less.
+        if self.gate == "code" and ("assignees" not in self.policy.not_ or not self.policy.independent):
+            raise ValueError("the code review is never approved by the assignees and is always independent")
+        return self
+
+
+def _strict_json_object(text: str) -> dict:
+    """Strict JSON: an object, no duplicate keys, bounded depth and size, integers only (the host's `loads_strict`)."""
+    try:
+        value = json.loads(text, object_pairs_hook=_pairs, parse_float=_no_float, parse_constant=_no_float)
+        _valid(value)
+    except (ValueError, RecursionError):
+        raise ValueError("the certificate is not strict JSON") from None
+    if not isinstance(value, dict):
+        raise ValueError("the certificate is a JSON object")
+    return value
+
+
+def _no_float(_text):
+    raise ValueError("numbers in a certificate are integers")
+
+
+class MemberAdd(Action):
+    """`member.add`: the invitee made their own key and first device certificate; the owner signs the roster change.
+
+    The public key and the certificate are the invitee's own files, uploaded by the person (host contract R9: the
+    certificate goes through `human.prepare`'s `files`, the key is an argument). Nothing is read from a path."""
+
+    action: Literal["member_add"]
+    name: Annotated[str, StringConstraints(min_length=1, max_length=64, pattern=OneLine)]
+    role: Role
+    pk: Annotated[str, StringConstraints(min_length=MAX_PK, max_length=MAX_PK, pattern=r"^[A-Za-z0-9_-]+$")]
+    cert: Annotated[str, StringConstraints(min_length=2, max_length=MAX_CERT_BYTES)]
+
+    @model_validator(mode="after")
+    def check_files(self):
+        if self.name != self.name.strip():
+            raise ValueError("the name has spaces at its ends")
+        try:
+            raw = base64.urlsafe_b64decode(self.pk + "=")
+        except ValueError:
+            raise ValueError("the public key is not base64url") from None
+        if len(raw) != PK_BYTES or base64.urlsafe_b64encode(raw).rstrip(b"=").decode() != self.pk:
+            raise ValueError("the public key is 65 bytes, base64url")
+        if len(self.cert.encode("utf-8", "strict")) > MAX_CERT_BYTES:
+            raise ValueError("the certificate is too large")
+        _strict_json_object(self.cert)
+        return self
+
+
+class MemberRole(Action):
+    action: Literal["member_role"]
+    person: Person
+    role: Role
+
+
+class MemberRemove(Action):
+    action: Literal["member_remove"]
+    person: Person
+
+
+class GrantRevoke(Action):
+    action: Literal["grant_revoke"]
+    grant: GrantId
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=OneLine)] | None = None
+
+
 PrepareBody = Annotated[
     Approve
     | RequestChanges
@@ -205,7 +336,13 @@ PrepareBody = Annotated[
     | Reopen
     | NewTicket
     | Details
-    | WriteSection,
+    | WriteSection
+    | SettingsSet
+    | PolicySet
+    | MemberAdd
+    | MemberRole
+    | MemberRemove
+    | GrantRevoke,
     Field(discriminator="action"),
 ]
 
@@ -246,7 +383,63 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "set", {"ref": action.key, "pairs": pairs}
         case WriteSection():
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
+        case SettingsSet():
+            return "settings.set", {"set": action.model_dump(include=set(DURATIONS), exclude_none=True)}
+        case PolicySet():
+            return "policy.set", {"gates": {action.gate: action.policy.canonical()}}
+        case MemberAdd():
+            # `cert` names the file (`-`); its bytes travel in `files` (host_files). `pk` is a plain argument.
+            return "member.add", {"name": action.name, "role": action.role, "pk": action.pk, "cert": "-"}
+        case MemberRole():
+            return "member.role", {"person": action.person, "role": action.role}
+        case MemberRemove():
+            return "member.remove", {"person": action.person}
+        case GrantRevoke():
+            return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
     raise AssertionError("closed allowlist")  # pragma: no cover
+
+
+DURATIONS = ("grant_hours", "claim_ttl_min", "lease_ttl_min")
+WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+
+
+def host_files(action: Action) -> dict | None:
+    """The inner op's files for `human.prepare` (R9): only a member's certificate, inline as `b64`."""
+    if isinstance(action, MemberAdd):
+        return {"cert": {"b64": base64.b64encode(action.cert.encode()).decode()}}
+    return None
+
+
+def expected(action: Action):
+    """What the host's prepared events must be, for the actions that are not about a ticket. A host that prepares
+    anything else (another type, another person, other values) is refused before the person sees it."""
+
+    def one(events: list, type_: str, **fields) -> bool:
+        if len(events) != 1 or events[0].get("type") != type_:
+            return False
+        return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
+
+    match action:
+        case SettingsSet():
+            _, args = host_call(action)
+            return lambda ev: one(ev, "settings.changed", set=args["set"])
+        case PolicySet():
+            _, args = host_call(action)
+            return lambda ev: one(ev, "policy.changed", gates=args["gates"]) and "ref" not in ev[0]
+        case MemberRole():
+            return lambda ev: one(ev, "role.changed", person=action.person, role=action.role)
+        case MemberRemove():
+            return lambda ev: one(ev, "member.removed", person=action.person)
+        case GrantRevoke():
+            return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
+        case MemberAdd():
+            cert = _strict_json_object(action.cert)
+            return lambda ev: (
+                one(ev, "member.added", name=action.name, role=action.role, pk_pub=action.pk, device_cert=cert)
+                and isinstance(ev[0].get("person"), str)
+                and ev[0]["person"].startswith("p_")
+            )
+    return None
 
 
 class Handoffs:
@@ -331,11 +524,13 @@ class Handoffs:
 def register(app: FastAPI, gateway: Gateway):
     handoffs = app.state.handoffs = Handoffs()
 
-    def human(ws: str, op: str, args: dict, idem: str | None = None, dry_run: bool | None = None):
+    def human(
+        ws: str, op: str, args: dict, idem: str | None = None, dry_run: bool | None = None, files: dict | None = None
+    ):
         if op not in HUMAN_OPS:
             raise AssertionError("the dashboard calls prepare, get, pending and cancel only")  # never human.submit
         link = gateway.enabled(ws)
-        return link.call(op, args, write=idem is not None, idem=idem, dry_run=dry_run)
+        return link.call(op, args, write=idem is not None, idem=idem, dry_run=dry_run, files=files)
 
     app.state.human = human
 
@@ -409,11 +604,18 @@ def register(app: FastAPI, gateway: Gateway):
                 else None
             )
             op, args = host_call(body, labels)
+            if op in WORKSPACE_OPS and gateway.link(ws).welcome.get("ops", {}).get(op) != 1:
+                # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
+                raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
             left = recover(ws, op, me.key, lost, me.id) if lost is not None else None
             called = True
-            prepared = human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem)
+            prepared = human(
+                ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem, files=host_files(body)
+            )
             answered = True  # a request may exist from here on, whatever happens to the answer
-            response = adapters.handoff.request(prepared, ws, expect_op=op, expect_key=me.key)
+            response = adapters.handoff.request(
+                prepared, ws, expect_op=op, expect_key=me.key, expect_events=expected(body)
+            )
             if lost is not None:
                 response["earlier_open"] = {"expires_at": max(left) if left else None}
         except BaseException as exc:

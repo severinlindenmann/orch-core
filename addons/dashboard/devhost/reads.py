@@ -29,7 +29,9 @@ SOURCE_ARGS = {"status", "type", "label", "assignee", "owner", "parent", "epic",
 QUERY_ARGS = SOURCE_ARGS | {"sort", "order", "limit", "page"}
 KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$")
 PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")
-TAKES_ARGS = frozenset({"ticket.query", "ticket.get", "needs", "diff", "artifact.get", "activity.list"})
+TAKES_ARGS = frozenset(
+    {"ticket.query", "ticket.get", "needs", "diff", "artifact.get", "activity.list", "workspace.settings", "grant.list"}
+)
 
 
 def bad(message="invalid input"):

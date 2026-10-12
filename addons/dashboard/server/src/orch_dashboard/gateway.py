@@ -43,6 +43,10 @@ def read_pins(path):
         os.close(fd)
 
 
+# The inner ops of the settings hand-offs (M4). `grant` (issuing) is not here: the signer draws the secret.
+WRITE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+
+
 class Gateway:
     def __init__(self, state=None):
         self.state = state or state_dir()
@@ -105,12 +109,27 @@ class Gateway:
                 ("human.cancel", "human/1"),
                 ("ticket.get", "query/1"),
             ],
+            # Reduced workspace settings (M4). `settings` is the page: the roster is `query/1`, so it is there on
+            # every host that serves reads; each section then says what this host cannot show. `settings_read` is
+            # `workspace.settings` (cap `settings/1`): without it durations, policies and repos are unknown.
+            "settings": [("member.list", "query/1"), ("workspace.show", "query/1")],
+            "members": [("member.list", "query/1")],
+            "settings_read": [("workspace.settings", "settings/1")],
+            "grant_list": [("grant.list", "query/1")],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):
                 features.append(feature)
         if link.has("read_ext/1"):
             features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
+        if link.has("read_ext/2"):
+            features.append("read_ext2")  # grant revoked{by,at,seq}, session_ids: absent is unknown
+        if "actions" in features:
+            # The member, grant and settings writes go through `human.prepare` as the inner op. The host lists every
+            # op it serves in `welcome.ops`; one it does not list (policy.set and settings.set wait for F1 events,
+            # R5) is not offered. Hiding a control is a courtesy: the host stays the authority.
+            served = link.welcome.get("ops", {})
+            features += [f"do:{op}" for op in WRITE_OPS if served.get(op) == 1]
         return features
 
     def workspaces(self):

@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -18,9 +19,9 @@ from orch.ops.views import verified
 from orch_dashboard.errors import HostError, fail
 from orch_dashboard.hostlink import check_uid, encode, receive
 
-from . import reads
+from . import reads, settingsops
 from .humanops import Requests
-from .reserved import HUMAN_OPS, OPS
+from .reserved import HUMAN_OPS, OPS, WRITE_OPS
 
 # Registry reads that do not accept filesystem paths or need a P1 agent grant.
 READS = ("addon.list", "list")
@@ -70,7 +71,12 @@ class StubHost:
         self.lock = threading.RLock()
         # Person is an explicit local UID mapping, never inferred from a key.
         self.env = {"ORCH_WORKSPACE": str(root), "ORCH_STATE_DIR": str(state)}
-        self.versions = {name: 1 for name in (*OPS, *READS, *HUMAN_OPS)}
+        # Which M4 surfaces this host serves (tests and `ORCH_DEV_SETTINGS=0` turn them off to see a host without them).
+        self.settings_cap = os.environ.get("ORCH_DEV_SETTINGS", "1") != "0"
+        self.write_ops = set(WRITE_OPS)
+        self.versions = {name: 1 for name in (*OPS, *READS, *HUMAN_OPS, *WRITE_OPS)}
+        if not self.settings_cap:
+            self.versions.pop("workspace.settings")
         self.requests = Requests(self)
         self.cursor = secrets.token_urlsafe(24)
 
@@ -174,9 +180,10 @@ class StubHost:
                 "sub/1",
                 "human/1",
                 "diff/1",
-                *(["read_ext/1", "activity/1"] if self.ext else []),
+                *(["read_ext/1", "read_ext/2", "activity/1"] if self.ext else []),
+                *(["settings/1"] if self.settings_cap else []),
             ],
-            "ops": self.versions,
+            "ops": {k: v for k, v in self.versions.items() if k not in WRITE_OPS or k in self.write_ops},
             "registry": "sha256:" + hashlib.sha256(json.dumps(self.versions, sort_keys=True).encode()).hexdigest(),
             "tier": "A",
             "limits": {
@@ -188,7 +195,7 @@ class StubHost:
             },
         }
 
-    def call(self, op, args, opts=None, lookups=None):
+    def call(self, op, args, opts=None, lookups=None, files=None):
         with self.lock:
             # Direct-mode files (core #375): a same-user dev process. Files.host belongs to the real host.
             runtime = HostWorkspace(self.env, files=Files.direct())
@@ -215,8 +222,8 @@ class StubHost:
                         raise fail("invalid.input", exit=5) from None
                     return asdict(decl.handler(ctx, args))
                 if op in HUMAN_OPS:
-                    return asdict(self.human(op, store, views, args, opts or {}, lookups))
-                if op not in OPS:
+                    return asdict(self.human(op, store, views, args, opts or {}, lookups, files))
+                if op not in OPS or (op == "workspace.settings" and not self.settings_cap):
                     raise fail("unknown_command", exit=2)
                 if args and op not in reads.TAKES_ARGS:
                     raise fail("invalid.input", exit=5)
@@ -266,21 +273,11 @@ class StubHost:
                         "state": "ok",
                     }
                 elif op == "member.list":
-                    data = {
-                        "members": [
-                            {
-                                "person": m.person,
-                                "name": m.name,
-                                "role": m.role,
-                                "devices": [
-                                    {"id": d.id, "auth": "not available"}
-                                    for d in ws.devices.values()
-                                    if d.person == m.person and not d.removed and not d.revoked
-                                ],
-                            }
-                            for m in ws.members.values()
-                        ]
-                    }
+                    data = settingsops.members(ws)
+                elif op == "workspace.settings":
+                    data = settingsops.settings(self, store, ws, self.person, args)
+                elif op == "grant.list":
+                    data = settingsops.grants(store, ws, self.person, args, self.ext)
                 elif op == "needs":
                     data = reads.needs(self, store, views, ws, self.person, args)
                 elif op == "ticket.query":
@@ -300,12 +297,12 @@ class StubHost:
                 if runtime._store:
                     runtime.store.close()
 
-    def human(self, op, store, views, args, opts, lookups=None):
+    def human(self, op, store, views, args, opts, lookups=None, files=None):
         """`human.*` (v1.4 section 0.8.1): the stub plays the host and holds no key, so a signer submits."""
         if op != "human.prepare" and opts.get("dry_run") is not None:
             raise fail("invalid.input", exit=5)
         if op == "human.prepare":
-            return Result(data=self.requests.prepare(store, views, args, opts))
+            return Result(data=self.requests.prepare(store, views, args, opts, files))
         if op == "human.get":
             return Result(data=self.requests.get(store, views, args))
         if op == "human.pending":
@@ -314,6 +311,32 @@ class StubHost:
             return Result(data=self.requests.cancel(args))
         done = self.requests.submit(store, args, opts)
         return Result(data=done["data"], key=done["key"], seq=done["seq"], duplicate=done["duplicate"])
+
+    @staticmethod
+    def inline_files(files, op):
+        """`files` of a request (host contract 0.3): only `human.prepare` takes them, inline as `{b64}`."""
+        if files is None:
+            return None
+        if op != "human.prepare":
+            raise fail("blob.invalid", f"{str(op)[:40]} takes no files", exit=5)
+        if not isinstance(files, dict) or len(files) > 16:
+            raise fail("blob.invalid", "files is up to 16 named files", exit=5)
+        out = {}
+        for name, spec in files.items():
+            if (
+                not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", name)
+                or not isinstance(spec, dict)
+                or set(spec) != {"b64"}
+                or not isinstance(spec["b64"], str)
+            ):
+                raise fail("blob.invalid", "human.prepare takes each file inline as {b64}", exit=5)
+            try:
+                out[name] = base64.b64decode(spec["b64"], validate=True)
+            except ValueError:
+                raise fail("blob.invalid", "a file is not valid base64", exit=5) from None
+            if len(out[name]) > 262144:
+                raise fail("blob.invalid", "a file is larger than the inline limit", exit=5)
+        return out
 
     def serve_connection(self, sock, control=False):
         subscriptions = {}
@@ -388,7 +411,7 @@ class StubHost:
                 rid, op, args = req["id"], req.get("op"), req.get("args", {})
                 try:
                     if (
-                        set(req) - {"t", "id", "op", "args", "opts"}
+                        set(req) - {"t", "id", "op", "args", "opts", "files"}
                         or not {"t", "id", "op", "args"} <= req.keys()
                         or not isinstance(args, dict)
                         or not isinstance(op, str)
@@ -396,6 +419,7 @@ class StubHost:
                     ):
                         raise fail("req.invalid", exit=6)
                     opts = req.get("opts", {})
+                    files = self.inline_files(req.get("files"), op)
                     if (
                         set(opts) - {"idem", "dry_run", "timeout_ms"}
                         or ("dry_run" in opts and type(opts["dry_run"]) is not bool)
@@ -440,7 +464,7 @@ class StubHost:
                         subscriptions.pop(args["sub"], None)
                         result = asdict(Result(data={}))
                     else:
-                        result = self.call(op, args, opts, lookups)
+                        result = self.call(op, args, opts, lookups, files)
                     sock.sendall(encode({"t": "res", "id": rid, "ok": True, "result": result}))
                     if op == "sub.close":
                         sock.sendall(

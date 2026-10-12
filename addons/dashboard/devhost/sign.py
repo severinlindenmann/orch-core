@@ -41,7 +41,15 @@ OP_WORDS = {
     "set": "change fields of",
     "section.set": "write a section of",
     "new": "create the ticket",
+    "settings.set": "change the workspace settings",
+    "policy.set": "change the default policy of a gate",
+    "member.add": "add a member to the workspace",
+    "member.role": "change the role of a member",
+    "member.remove": "remove a member from the workspace",
+    "grant.revoke": "revoke a grant",
 }
+WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+MEMBER_OPS = ("member.add", "member.role", "member.remove")
 WARNING = "only sign a code you created yourself"
 
 
@@ -103,7 +111,12 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
             qid = canon.question_id(workspace_id, ticket["uid"], q["id"])
             if e.get("hash") != canon.question_hash(qid, ticket["uid"], q["text"], q.get("options") or []):
                 raise Refused("the question hash is not the hash of the question shown")
-        if prepared.get("log") != ticket.get("uid"):
+        if op in WORKSPACE_OPS:
+            if prepared.get("log") != "workspace" or material.get("ticket") is not None:
+                raise Refused("a workspace operation is signed in the workspace log, with no ticket")
+            if op in MEMBER_OPS and not canon_person(e.get("person")):
+                raise Refused("the member is not a person id")
+        elif prepared.get("log") != ticket.get("uid"):
             raise Refused("the log is not the ticket shown")  # one log per request: the ticket's own
         if "source_sha" in e and (material.get("input") or {}).get("source_sha") not in (None, e["source_sha"]):
             raise Refused("source_sha is not the one the material shows")
@@ -142,6 +155,19 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
         raise Refused("review_digest differs from the one recomputed")
     if prepared.get("fingerprint") != review.fingerprint(digest, events, op):
         raise Refused("the fingerprint differs from the one recomputed")
+
+
+def canon_person(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 34 and value.startswith("p_")
+
+
+def confirm_word(prepared: dict[str, Any], key_word: str | None, person: str) -> str:
+    """Ticket ops: KEY/FRAG. Member ops: the member's person id. Other workspace ops: the op name in capitals."""
+    if key_word:
+        return key_word
+    if prepared["op"] in MEMBER_OPS:
+        return clean(prepared["events"][0].get("person"))
+    return prepared["op"].upper() if prepared["op"] in WORKSPACE_OPS else person
 
 
 def render(prepared: dict[str, Any], *, workspace: dict[str, Any], person: str) -> tuple[str, str]:
@@ -186,7 +212,7 @@ def render(prepared: dict[str, Any], *, workspace: dict[str, Any], person: str) 
         out += [f"  {clean(k)}: {clean(v)}" for k, v in sorted(material["before"].items())]
     if material.get("kind") == "gate":
         out += ["", f"gate: {clean(material['gate'])}", f"gate hash {events[0].get('hash', '')[7:19]}"]
-    return "\n".join(out) + "\n", f"{key}/{frag}" if key else person
+    return "\n".join(out) + "\n", confirm_word(prepared, f"{key}/{frag}" if key else None, person)
 
 
 def run(

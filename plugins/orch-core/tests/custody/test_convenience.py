@@ -282,3 +282,24 @@ def test_the_suite_guard_refuses_the_login_keychain():
 
     with pytest.raises(AssertionError, match="login keychain"):
         KeychainAdapter()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS keychain")
+def test_the_real_keychains_are_unreachable_by_explicit_path_too():
+    from orch.custody import keychain
+    from orch.custody.convenience import KeychainAdapter
+    from tests.conftest import real_keychains
+
+    login = os.path.join(real_keychains(), "login.keychain-db")
+    for call in (
+        lambda: KeychainAdapter(login),
+        lambda: keychain.KeychainStore(login),
+        lambda: keychain.unlock_keychain(login, "x"),
+        lambda: keychain.lock_keychain(login),
+        lambda: keychain.delete_keychain(login),
+        lambda: keychain.create_throwaway_keychain(os.path.join(real_keychains(), "new.keychain-db"), "x"),
+    ):
+        with pytest.raises((AssertionError, CustodyError)):
+            call()
+    with pytest.raises(CustodyError):  # the module itself refuses too, guard or not
+        keychain._refuse_real_keychains(login)

@@ -4,6 +4,9 @@ import json
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
+
+from tests.conftest import child_env
 
 PRELUDE = textwrap.dedent(
     """
@@ -129,6 +132,7 @@ def _run(script, root, outside, cwd):
         cwd=cwd,
         timeout=120,
         check=False,
+        env=child_env(Path(root).parent),  # HOME is a temporary directory, never the owner's
     )
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])

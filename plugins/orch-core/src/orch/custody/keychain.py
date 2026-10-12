@@ -445,8 +445,20 @@ class KeychainStore:
 # --- test helpers (used only by tests) -------------------------------------------------------------------------
 
 
+def _refuse_real_keychains(path: str | os.PathLike[str]) -> None:
+    """The test helpers never create, unlock, lock or delete a keychain of the user's own: any path under the account's
+    real ``~/Library/Keychains`` (from the password database, not ``$HOME``) is refused."""
+    import pwd
+
+    real = os.path.realpath(os.path.join(pwd.getpwuid(os.getuid()).pw_dir, "Library", "Keychains"))
+    target = os.path.realpath(os.fspath(path))
+    if target == real or target.startswith(real + os.sep):
+        raise CustodyError("test helpers never touch the user's own keychains")
+
+
 def create_throwaway_keychain(path: str | os.PathLike[str], password: str) -> None:
     """TEST HELPER: create a new keychain file at ``path``. Does not touch the search list or the default keychain."""
+    _refuse_real_keychains(path)
     cf, sec = _load()
     pw = password.encode("utf-8")
     ref = c_void_p()
@@ -467,6 +479,7 @@ def _with_open(path: str | os.PathLike[str]) -> Iterator[int]:
 
 def unlock_keychain(path: str | os.PathLike[str], password: str) -> None:
     """TEST HELPER: unlock the keychain at ``path`` with ``password``."""
+    _refuse_real_keychains(path)
     _, sec = _load()
     pw = password.encode("utf-8")
     for ref in _with_open(path):
@@ -475,6 +488,7 @@ def unlock_keychain(path: str | os.PathLike[str], password: str) -> None:
 
 def lock_keychain(path: str | os.PathLike[str]) -> None:
     """TEST HELPER: lock the keychain at ``path``."""
+    _refuse_real_keychains(path)
     _, sec = _load()
     for ref in _with_open(path):
         _raise_status(sec.SecKeychainLock(ref))
@@ -482,6 +496,7 @@ def lock_keychain(path: str | os.PathLike[str]) -> None:
 
 def delete_keychain(path: str | os.PathLike[str]) -> None:
     """TEST HELPER: delete the keychain file at ``path``."""
+    _refuse_real_keychains(path)
     _, sec = _load()
     for ref in _with_open(path):
         _raise_status(sec.SecKeychainDelete(ref))

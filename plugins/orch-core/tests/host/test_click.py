@@ -21,6 +21,7 @@ from orch.custody.select import Selection
 from orch.host import convenience
 from orch.host.client import Connection, Pin
 from orch.host.control_client import new_idem
+from tests.conftest import child_env
 from tests.host import human_helpers
 from tests.host.human_helpers import err, ok
 from tests.host.lifecycle_helpers import UID
@@ -408,7 +409,7 @@ def test_a_host_with_another_op_contract_is_refused(click, served, human, monkey
 # --- the process boundary -----------------------------------------------------------------------------------------
 
 
-def test_the_dashboard_side_never_imports_custody_code():
+def test_the_dashboard_side_never_imports_custody_code(tmp_path):
     code = textwrap.dedent(
         """
         import sys
@@ -417,14 +418,16 @@ def test_the_dashboard_side_never_imports_custody_code():
         print(bad)
         """
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, env=child_env(tmp_path)
+    )
     assert out.stdout.strip() == "[]", out.stdout
 
 
 def test_the_real_child_answers_status_and_exits_when_the_channel_closes(tmp_path):
     from orch.click import spawn
 
-    env = {"ORCH_STATE_DIR": str(tmp_path / "state"), "HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    env = child_env(tmp_path, ORCH_STATE_DIR=str(tmp_path / "state"))
     client = spawn.start(env)
     try:
         out = client.call("status", {}, timeout=60)
@@ -438,12 +441,11 @@ def test_the_real_child_answers_status_and_exits_when_the_channel_closes(tmp_pat
 
 
 def test_an_agent_cannot_start_the_signer(tmp_path):
-    import os
     import socket
 
     a, b = socket.socketpair()
     try:
-        env = {**os.environ, "ORCH_GRANT": "x", "ORCH_STATE_DIR": str(tmp_path)}
+        env = child_env(tmp_path, ORCH_GRANT="x", ORCH_STATE_DIR=str(tmp_path))
         n = b.fileno()
         p = subprocess.run(
             [sys.executable, "-I", "-m", "orch.click", "--fd", str(n)], pass_fds=(n,), env=env, capture_output=True
@@ -698,11 +700,10 @@ def test_the_unavailable_reason_is_one_of_the_known_five(click, served, human):
 
 
 def _spawn_raw(tmp_path):
-    import os
     import socket
 
     a, b = socket.socketpair()
-    env = {"ORCH_STATE_DIR": str(tmp_path / "state"), "HOME": str(tmp_path), "PATH": os.environ.get("PATH", "")}
+    env = child_env(tmp_path, ORCH_STATE_DIR=str(tmp_path / "state"))
     p = subprocess.Popen(
         [sys.executable, "-I", "-m", "orch.click", "--fd", str(b.fileno())], pass_fds=(b.fileno(),), env=env
     )
@@ -744,7 +745,7 @@ def test_the_signer_exits_when_its_parent_goes(tmp_path):
         sys.stdin.readline()   # stay the parent until the test says so
         """
     )
-    env = {"ORCH_STATE_DIR": str(tmp_path / "state"), "HOME": str(tmp_path), "PATH": os.environ.get("PATH", "")}
+    env = child_env(tmp_path, ORCH_STATE_DIR=str(tmp_path / "state"))
     mid = subprocess.Popen(
         [sys.executable, "-c", middle], pass_fds=(n,), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     )

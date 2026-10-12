@@ -777,8 +777,8 @@ class HumanOps:
             record = requests.expire(record)  # expiry is checked again at append, under the lock
             if record["state"] == "expired":
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
+            store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
-                store.refresh()
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared

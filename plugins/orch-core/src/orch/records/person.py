@@ -101,6 +101,15 @@ class PersonState:
     def autos(self) -> dict[str, dict[str, Any]]:
         return {w: dict(e) for w, e in self._doc()["auto"].items() if isinstance(e, dict) and e.get("on") is True}
 
+    def ran(self, workspace_id: str, at: float) -> None:
+        """The timer's own clock (Opus #433 finding 1): when it last committed this workspace. The host's notes are
+        never read for this decision."""
+        doc = self._doc()
+        entry = doc["auto"].get(workspace_id)
+        if isinstance(entry, dict):
+            entry["last_run"] = int(at)
+            self._save(doc)
+
     def set_auto(self, workspace_id: str, entry: dict[str, Any] | None) -> None:
         doc = self._doc()
         if entry is None:
@@ -113,6 +122,20 @@ class PersonState:
         self._save(doc)
 
 
+def rotate(path: Path, limit: int | None = None) -> None:
+    """Shift ``path`` to ``path.1`` … (keeping :data:`LOG_FILES` files); with ``limit``, only when it is bigger."""
+    if limit is not None:
+        try:
+            if os.lstat(path).st_size <= limit:
+                return
+        except FileNotFoundError:
+            return
+    for i in range(LOG_FILES - 1, 0, -1):
+        src = path if i == 1 else path.with_name(f"{path.name}.{i - 1}")
+        with contextlib.suppress(FileNotFoundError):
+            os.replace(src, path.with_name(f"{path.name}.{i}"))
+
+
 class RunLog:
     """``<state>/person/records.jsonl``: append-only, rotated at :data:`LOG_MAX`, :data:`LOG_FILES` files."""
 
@@ -121,10 +144,7 @@ class RunLog:
         self.clock = clock
 
     def _rotate(self) -> None:
-        for i in range(LOG_FILES - 1, 0, -1):
-            src = self.path if i == 1 else self.path.with_name(f"{self.path.name}.{i - 1}")
-            with contextlib.suppress(FileNotFoundError):
-                os.replace(src, self.path.with_name(f"{self.path.name}.{i}"))
+        rotate(self.path)
 
     def write(self, workspace_id: str, event: str, **fields: Any) -> None:
         """One line; never raises (the log is a record of the run, never a reason for it to fail)."""
@@ -149,6 +169,11 @@ class RunLog:
                 pass
             fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | _NOFOLLOW, 0o600)
             try:
+                st = os.fstat(fd)
+                if st.st_uid != os.getuid():
+                    return
+                if st.st_mode & 0o077:  # an existing log with a wider mode is tightened before it is written
+                    os.fchmod(fd, 0o600)
                 os.write(fd, line)
             finally:
                 os.close(fd)

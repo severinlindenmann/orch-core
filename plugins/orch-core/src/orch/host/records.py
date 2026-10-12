@@ -70,6 +70,8 @@ RECORDS_OPS: dict[str, int] = {
 WRITE_OPS = frozenset({"records.remote_private", "records.note"})
 #: the writes only an owner makes (the mark relaxes an owner rule)
 OWNER_OPS = frozenset({"records.remote_private"})
+#: persons whose last note is kept
+MAX_PERSONS = 64
 #: visible tickets listed in ``records.status`` ``pending.tickets``
 STATUS_TICKETS = 200
 #: mark changes kept in the audit list
@@ -223,6 +225,11 @@ class Ctx:
     sees: Callable[[Any], bool]
     #: where the manifests and the hash cache live (the workspace service; a plain object in direct mode)
     holder: Any = field(default=None)
+
+    @property
+    def actor(self) -> str:
+        """Who acted, for the audit and the per-person note: the person, else the principal (direct mode)."""
+        return self.person or self.principal
 
 
 def ctx_of(call: Call, viewer: Viewer) -> Ctx:
@@ -417,7 +424,7 @@ def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     policy = "none"
     if conv:
         if not marked:
-            entry = {**args, "policy": "refused", "at": _stamp(now), "by": ctx.person}
+            entry = {**args, "policy": "refused", "at": _stamp(now), "by": ctx.actor}
             doc["exports"] = [*doc["exports"], entry][-MAX_EXPORTS:]
             _write_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid, doc)
             why = (
@@ -433,7 +440,7 @@ def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
         policy = "private_remote"
     body = {"workspace": ctx.workspace_id, **args, "policy": policy, "convenience": conv}
     check = "x_" + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    doc["exports"] = [*doc["exports"], {**args, "policy": policy, "at": _stamp(now), "by": ctx.person}][-MAX_EXPORTS:]
+    doc["exports"] = [*doc["exports"], {**args, "policy": policy, "at": _stamp(now), "by": ctx.actor}][-MAX_EXPORTS:]
     _write_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid, doc)
     return {**body, "check": check}
 
@@ -444,10 +451,10 @@ def _remote_private(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     now = float(ctx.clock())
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
     if args["on"]:
-        doc["private_remote"] = {"url": args["url"], "at": _stamp(now), "by": ctx.person}
+        doc["private_remote"] = {"url": args["url"], "at": _stamp(now), "by": ctx.actor}
     else:
         doc["private_remote"] = None
-    entry = {"action": "set" if args["on"] else "clear", "at": _stamp(now), "by": ctx.person}
+    entry = {"action": "set" if args["on"] else "clear", "at": _stamp(now), "by": ctx.actor}
     if args.get("url"):
         entry["url"] = redact(args["url"])
     doc["marks"] = [*(doc.get("marks") or []), entry][-MAX_MARKS:]
@@ -459,18 +466,21 @@ def _remote_private(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _note(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
-    """What the tool committed or pushed, its repo state, the URL git resolves and the auto setting: an unsigned host
-    record in ``records.json`` (``last``). A manifest must be one this caller took and the host still holds (its
-    per-log sequence numbers make ``pending`` exact). A manual git commit makes it stale: status is a display."""
+    """What the tool committed or pushed, its repo state, the URL git resolved and the auto setting: an unsigned host
+    record in ``records.json``, **kept per person** (``lasts[<person>]``; Opus #433 finding 1): one manager's note
+    never changes what another person's ``records.status`` reports for them, and the tool's auto mode never reads it
+    (it keeps its own clock in the person's state file). ``last_noted`` says who noted last, workspace-wide. A
+    manifest must be one this caller took and the host still holds (its per-log sequence numbers make ``pending``
+    exact). A manual git commit makes it stale: status is a display, never a decision."""
     now = float(ctx.clock())
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
-    last = dict(doc.get("last") or {})
+    lasts = dict(doc.get("lasts") or {})
+    last = dict(lasts.get(ctx.actor) or {})
     if "manifest" in args:
         manifest = _held(ctx, args["manifest"])["manifest"]
         last.update(
             commit=args["commit"],
             at=_stamp(now),
-            by=ctx.person,
             ws_seq=manifest["ws_seq"],
             seqs=dict(manifest["seqs"]),
         )
@@ -481,16 +491,21 @@ def _note(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
             last[name] = args[name]
     if "auto" in args:
         last["auto"] = args["auto"]
-    doc["last"] = last
+    lasts[ctx.actor] = last
+    doc["lasts"] = dict(sorted(lasts.items())[-MAX_PERSONS:]) if len(lasts) > MAX_PERSONS else lasts
+    doc["last_noted"] = {"by": ctx.actor, "at": _stamp(now)}
     _write_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid, doc)
     return {}
 
 
 def _status(ctx: Ctx) -> dict[str, Any]:
+    """The caller's own last note (commit, push, repo state, URL, auto) and the pending counts since that commit, plus
+    who noted last workspace-wide. ``remote.url`` is **display only**: it is what the caller's tool reported, and a
+    client must never pass it to ``records.remote_private`` (the tool resolves the URL to mark from git itself)."""
     from orch.model import WORKSPACE
 
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
-    last = doc.get("last") or {}
+    last = (doc.get("lasts") or {}).get(ctx.actor) or {}  # the caller's own notes only (Opus #433 finding 1)
     seqs = last.get("seqs") or {}
     store = ctx.store
     tickets: list[dict[str, Any]] = []
@@ -521,7 +536,7 @@ def _status(ctx: Ctx) -> dict[str, Any]:
         out_last = {
             "commit": last["commit"],
             "at": last.get("at"),
-            "by": last.get("by"),
+            "by": ctx.actor,
             "ws_seq": last.get("ws_seq"),
             "pushed_at": last.get("pushed_at") if last.get("pushed_commit") == last["commit"] else None,
         }
@@ -532,4 +547,5 @@ def _status(ctx: Ctx) -> dict[str, Any]:
         "last": out_last,
         "auto": last.get("auto"),
         "remote": remote,
+        "last_noted": doc.get("last_noted"),
     }

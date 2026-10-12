@@ -37,15 +37,16 @@ class FakeTimer:
         self.calls.append(f"plan:{state}")
         return self
 
-    def install(self) -> bool:
+    def install(self, *, replace: bool = False) -> bool:
         self.calls.append("install")
         return True
 
     def start(self, *, changed: bool) -> None:
         self.calls.append(f"start:{changed}")
 
-    def remove(self) -> None:
+    def remove(self) -> str:
         self.calls.append("remove")
+        return "removed"
 
 
 def run_cli(r, *argv, confirm=True, timer=None, clock=None, link=None):
@@ -82,7 +83,7 @@ def test_commit_push_is_one_child_run_and_status_follows(r):
 
 def test_status_reports_a_missing_or_foreign_repo_and_a_differing_index(r):
     code, out = run_cli(r, "status")
-    assert code == 0 and out["detail"]["status"]["repo"] == {"state": "missing"}
+    assert code == 0 and out["detail"]["status"]["local"]["repo"] == {"state": "missing"}
     r.init()
     r.commit()
     staged = subprocess.run(
@@ -90,12 +91,12 @@ def test_status_reports_a_missing_or_foreign_repo_and_a_differing_index(r):
         env={"HOME": str(r.home), "PATH": os.environ["PATH"]},
     ).stdout.decode().strip()  # fmt: skip
     git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
-    assert run_cli(r, "status")[1]["detail"]["status"]["repo"] == {"state": "index_differs"}
+    assert run_cli(r, "status")[1]["detail"]["status"]["local"]["repo"] == {"state": "index_differs"}
     code, out = run_cli(r, "sync-index")
     assert code == 0 and out["detail"]["index"] == "synced"
-    assert run_cli(r, "status")[1]["detail"]["status"]["repo"] == {"state": "ok"}
+    assert run_cli(r, "status")[1]["detail"]["status"]["local"]["repo"] == {"state": "ok"}
     git(r.root, "config", "--local", "credential.helper", "!evil")
-    state = run_cli(r, "status")[1]["detail"]["status"]["repo"]
+    state = run_cli(r, "status")[1]["detail"]["status"]["local"]["repo"]
     assert state["state"] == "unsafe" and "credential" in state["problem"]
 
 
@@ -143,32 +144,85 @@ def test_a_failing_timer_leaves_auto_off(r):
     assert code == 1 and out["code"] == "records.timer_failed" and r.tips.autos() == {}
 
 
-def test_the_auto_run_commits_when_pending_and_due_and_pushes(r):
+def _auto(r, now, link=None):
+    out = io.StringIO()
+    code = rcli.main(
+        ["auto", "--json"], r.env, out, link=link or r.link, root=r.root, workspace_id=r.w.wid, tips=r.tips,
+        protocols=WS_FILES, state=r.tips.path.parent, clock=lambda: now[0],
+    )  # fmt: skip
+    doc = json.loads(out.getvalue())
+    return code, doc, doc["detail"]["runs"]
+
+
+def test_the_auto_run_keeps_its_own_clock_and_commits_and_pushes(r):
     r.init()
     url = r.bare()
     git(r.root, "remote", "add", "origin", url)
-    run_cli(r, "commit")  # with its note: the host knows the last commit
+    run_cli(r, "commit")
     r.push(initial=True)
     r.tips.set_auto(r.w.wid, {"on": True, "every_min": 5, "push": True})
-    now = [r.w.lab.ws.clock[0]]
-
-    def auto():
-        out = io.StringIO()
-        code = rcli.main(
-            ["auto", "--json"], r.env, out, link=r.link, root=r.root, workspace_id=r.w.wid, tips=r.tips,
-            protocols=WS_FILES, state=r.tips.path.parent, clock=lambda: now[0],
-        )  # fmt: skip
-        return code, json.loads(out.getvalue())["detail"]["runs"]
-
-    code, runs = auto()
-    assert code == 0 and runs == [{"workspace": r.w.wid, "skipped": "nothing pending"}]
+    now = [1_000_000.0]
+    code, doc, runs = _auto(r, now)  # never ran: due; nothing changed, so the commit is a no-op
+    assert code == 0 and doc["ok"] and runs[0]["changed"] is False and runs[0]["pushed"] is False
     r.w.ticket("one")
-    code, runs = auto()
-    assert runs[0].get("skipped") == "not due"
+    code, doc, runs = _auto(r, now)
+    assert runs == [{"workspace": r.w.wid, "skipped": "not due"}]
     now[0] += 6 * 60
-    code, runs = auto()
-    assert code == 0 and runs[0]["pushed"] is True and runs[0]["url"] == url
+    code, doc, runs = _auto(r, now)
+    assert code == 0 and runs[0]["changed"] is True and runs[0]["pushed"] is True and runs[0]["url"] == url
     assert git(r.tmp, "--git-dir", url[len("file://") :], "rev-parse", "refs/heads/main") == runs[0]["commit"]
+    assert r.tips.auto(r.w.wid)["last_run"] == int(now[0])
+
+
+def test_opus1_a_maintainers_note_never_steers_the_owners_timer_or_status(r, monkeypatch):
+    """Opus's probe: a maintainer notes a fake commit and push to an evil URL. The owner's status keeps the owner's
+    own record, and the owner's timer still commits and pushes."""
+    import dataclasses
+
+    from orch.host import records as host_records
+
+    r.init()
+    url = r.bare()
+    git(r.root, "remote", "add", "origin", url)
+    code, out = run_cli(r, "commit")
+    real_commit = out["commit"]
+    r.push(initial=True)
+    r.tips.set_auto(r.w.wid, {"on": True, "every_min": 5, "push": True})
+    real = host_records.Viewer.of
+    monkeypatch.setattr(
+        host_records.Viewer, "of",
+        lambda call: dataclasses.replace(real(call), person=r.w.quinn.ref, role="maintainer"),
+    )  # fmt: skip
+    snap = r.link("records.snapshot", {})
+    r.link("records.note", {"manifest": snap["manifest"], "commit": "b" * 40, "pushed": True,
+                            "url": "https://evil.example/x.git"})  # fmt: skip
+    monkeypatch.setattr(host_records.Viewer, "of", real)
+    r.w.ticket("one")
+    status = run_cli(r, "status")[1]["detail"]["status"]
+    assert status["last"]["commit"] == real_commit and status["pending"]["events"] > 0
+    assert status["remote"] is None or status["remote"]["url"] == url
+    assert status["last_noted"]["by"] == r.w.quinn.ref
+    now = [2_000_000.0]
+    code, doc, runs = _auto(r, now)
+    assert code == 0 and runs[0]["changed"] is True and runs[0]["pushed"] is True
+    assert git(r.tmp, "--git-dir", url[len("file://") :], "rev-parse", "refs/heads/main") == runs[0]["commit"]
+
+
+def test_one_failing_workspace_never_stops_the_others(r):
+    r.init()
+    r.tips.set_auto(r.w.wid, {"on": True, "every_min": 5, "push": False})
+    r.tips.set_auto("f" * 32, {"on": True, "every_min": 5, "push": False})  # not served by the seam: refused
+    code, doc, runs = _auto(r, [3_000_000.0])
+    assert code == 3 and doc["ok"] is False and doc["code"] == "records.unsupported"
+    by = {i["workspace"]: i for i in runs}
+    assert by[r.w.wid]["commit"] and by["f" * 32]["code"] == "records.unsupported"
+
+    def boom(op, args):
+        raise RuntimeError("unexpected")
+
+    r.tips.set_auto("f" * 32, None)
+    code, doc, runs = _auto(r, [4_000_000.0], link=boom)
+    assert code == 1 and doc["code"] == "internal" and runs[0]["code"] == "internal"
 
 
 # --- the timer units and their fences ------------------------------------------------------------------------------
@@ -346,3 +400,152 @@ def test_direct_mode_is_posix_only(monkeypatch, tmp_path):
     with pytest.raises(RecordsError) as e:
         DirectLink(tmp_path, "0" * 32, tmp_path)
     assert e.value.code == "records.unsupported"
+
+
+# --- review round (#433) ---------------------------------------------------------------------------------------------
+
+
+def _unit(tmp_path, state, python="/usr/bin/python3"):
+    return rtimer.plan({"HOME": str(tmp_path)}, state, platform="darwin", python=Path(python), dev=True)
+
+
+def _ok_runner(argv):
+    return subprocess.CompletedProcess(list(argv), 0, "", "")
+
+
+def test_opus2_a_differing_timer_is_never_replaced_silently(tmp_path):
+    a = rtimer.TimerManager(_unit(tmp_path, tmp_path / "state-a"), run=_ok_runner)
+    b = rtimer.TimerManager(_unit(tmp_path, tmp_path / "state-b"), run=_ok_runner)
+    c = rtimer.TimerManager(_unit(tmp_path, tmp_path / "state-a", "/opt/other/python3"), run=_ok_runner)
+    assert a.install() is True
+    with pytest.raises(RecordsError) as e:
+        b.install()
+    assert e.value.code == "records.timer_conflict" and "state" in e.value.message
+    with pytest.raises(RecordsError) as e:
+        c.install()
+    assert "interpreter" in e.value.message and "state" not in e.value.message
+    path = a.plan.files[0][0]
+    assert plistlib.loads(path.read_bytes())["ProgramArguments"][6] == str(tmp_path / "state-a")
+    assert b.install(replace=True) is True
+    assert plistlib.loads(path.read_bytes())["ProgramArguments"][6] == str(tmp_path / "state-b")
+
+
+def test_opus2_remove_deletes_only_this_state_dirs_timer(tmp_path):
+    a = rtimer.TimerManager(_unit(tmp_path, tmp_path / "state-a"), run=_ok_runner)
+    b = rtimer.TimerManager(_unit(tmp_path, tmp_path / "state-b"), run=_ok_runner)
+    b.install()
+    assert a.remove() == "kept" and b.plan.files[0][0].exists()
+    assert b.remove() == "removed" and not b.plan.files[0][0].exists()
+
+
+def test_auto_on_replace_and_a_conflict_through_the_cli(r):
+    class Conflict(FakeTimer):
+        def install(self, *, replace: bool = False) -> bool:
+            self.calls.append(f"install:{replace}")
+            if not replace:
+                raise RecordsError("records.timer_conflict", "a records timer is installed with another state")
+            return True
+
+    t = Conflict()
+    code, out = run_cli(r, "auto", "on", timer=t)
+    assert code == 3 and out["code"] == "records.timer_conflict" and r.tips.autos() == {}
+    code, out = run_cli(r, "auto", "on", "--replace", timer=t)
+    assert code == 0 and "install:True" in t.calls
+
+
+def test_opus3_state_is_the_timers_own_option(r, tmp_path):
+    out = io.StringIO()
+    code = rcli.main(["commit", "--state", str(tmp_path / "empty"), "--json"], r.env, out)
+    assert code == 5 and json.loads(out.getvalue())["code"] == "records.invalid"
+
+
+def test_opus3_a_served_workspace_refuses_direct_mode_whatever_the_state_dir(w, tmp_path):  # noqa: F811
+    from orch.host.service import SERVED_MARKER
+
+    assert (Path(w.lab.root) / ".state" / SERVED_MARKER).is_file()
+    other = tmp_path / "empty-state"
+    other.mkdir()
+    link = DirectLink(Path(w.lab.root), w.wid, other)
+    try:
+        with pytest.raises(RecordsError) as e:
+            link("records.snapshot", {})
+        assert e.value.code == "host.required"
+    finally:
+        link.close()
+
+
+def test_sonnet_b_a_confirmation_restarts_the_budget(r, monkeypatch):
+    import orch.records as records_pkg
+
+    r.init()
+    git(r.root, "remote", "add", "origin", r.bare())
+    run_cli(r, "commit")
+    clock = [100.0]
+    monkeypatch.setattr(records_pkg, "MONOTONIC", lambda: clock[0])
+
+    def slow_human(text):
+        clock[0] += 3600  # an hour at the prompt
+        return True
+
+    out = io.StringIO()
+    code = rcli.main(
+        ["push", "--initial", "--json"], r.env, out, link=r.link, root=r.root, workspace_id=r.w.wid, tips=r.tips,
+        protocols=WS_FILES, confirm=slow_human, state=r.tips.path.parent,
+    )  # fmt: skip
+    assert code == 0 and json.loads(out.getvalue())["pushed"] is True
+
+
+def test_the_child_line_keeps_the_commit_when_the_push_fails(r):
+    r.init()
+    code, out = run_cli(r, "commit", "--push")  # no remote
+    jsonschema.validate(out, rcli.CHILD_SCHEMA)
+    assert code == 3 and out["code"] == "records.remote_missing" and out["commit"] == git(r.root, "rev-parse", "HEAD")
+
+
+def test_auto_on_fails_when_the_note_fails(r):
+    fake = FakeTimer()
+
+    def link(op, args):
+        if op == "records.note":
+            raise RecordsError("workspace.unavailable", "the host is gone", exit_=1)
+        return r.link(op, args)
+
+    code, out = run_cli(r, "auto", "on", timer=fake, link=link)
+    assert code == 1 and out["code"] == "workspace.unavailable" and r.tips.autos() == {}
+    assert fake.calls[-1] == "remove"
+
+
+def test_status_writes_nothing(r):
+    r.init()
+    run_cli(r, "commit")
+    from orch.host import records as host_records
+
+    path = host_records.record_path(r.w.lab.state, r.w.wid)
+    before = path.read_bytes()
+    run_cli(r, "status")
+    assert path.read_bytes() == before
+
+
+def test_redaction_strips_local_paths():
+    from orch.records.git import redact
+
+    text = redact("fatal: '/Users/me/secret/repo' does not appear to be a git repository (https://h/a/b)")
+    assert "/Users" not in text and "<path>" in text and "https://h/a/b" in text
+
+
+def test_the_log_tightens_an_existing_file(tmp_path):
+    path = tmp_path / "person" / "records.jsonl"
+    path.parent.mkdir(mode=0o700)
+    path.write_text("")
+    os.chmod(path, 0o644)
+    rperson.RunLog(path).write("w" * 32, "start")
+    assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+def test_direct_mode_audit_names_who_acted(direct):
+    ws, link, wid = direct
+    link("records.export_check", {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main"})
+    from orch.host import records as host_records
+
+    doc = host_records.read_record(ws.host_state, wid, os.getuid())
+    assert doc["exports"][-1]["by"] == f"direct:{os.getuid()}"

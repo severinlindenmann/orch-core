@@ -52,7 +52,7 @@ def resolve(
     *,
     state: Path | None = None,
     root: Path | None = None,
-    deadline: float | None = None,
+    deadline: Callable[[], float] | None = None,
 ) -> Resolved:
     """Host mode when the person's own registry names the workspace (requests on its pinned socket, column P),
     else direct mode (D-P2-38) on the workspace found here, or at ``root`` (the auto entry of a direct workspace)."""
@@ -95,16 +95,16 @@ def resolve(
     )
 
     def link(op: str, args: dict[str, Any]) -> dict[str, Any]:
-        import time
-
         from orch.host.control_client import new_idem
 
         from .tool import WRITE_OPS
 
         idem = new_idem() if op in WRITE_OPS else None  # the mark and the note are writes (an outcome record)
+        from orch import records
+
         timeout = None
-        if deadline is not None:
-            timeout = deadline - time.monotonic()
+        if deadline is not None:  # read at each call: a human confirmation restarts the run's budget
+            timeout = deadline() - records.MONOTONIC()
             if timeout <= 0.05:
                 raise RecordsError("records.budget", "the records run used its 60 s budget; try again")
         try:

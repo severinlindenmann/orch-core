@@ -172,12 +172,20 @@ def _no_real_service_manager(tmp_path_factory):
     if timer is not None:
         real_timer_install = timer.TimerManager.install
 
-        def timer_install(self):
+        def timer_install(self, **kw):
             for path, _content in self.plan.files:
                 refuse_real_home(path, "a records timer unit")
-            return real_timer_install(self)
+            return real_timer_install(self, **kw)
 
         monkeypatch.setattr(timer.TimerManager, "install", timer_install)
+        real_timer_remove = timer.TimerManager.remove
+
+        def timer_remove(self):
+            for path, _content in self.plan.files:
+                refuse_real_home(path, "a records timer unit (removal)")
+            return real_timer_remove(self)
+
+        monkeypatch.setattr(timer.TimerManager, "remove", timer_remove)
         monkeypatch.setattr(timer, "_default_run", refuse)
     monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(tmp_path_factory.getbasetemp() / "no-host-run"))
     monkeypatch.setenv("ORCH_NO_SERVICE_MANAGER", "1")  # every child process inherits it (subprocess, Popen)

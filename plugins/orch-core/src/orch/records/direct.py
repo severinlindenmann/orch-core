@@ -7,7 +7,8 @@ private-remote mark, the note and the status in ``<state>/hosts/<ws>/records.jso
 
 * The store is opened read-only (no workspace key) with :class:`~orch.host.ownership.DirectGuard`: every store
   transaction holds the ownership lock shared and answers ``host.required`` once a host serves the workspace, so the
-  tool never works underneath a host.
+  tool never works underneath a host. The host's ``<root>/.state/host-served`` marker is checked too, so another
+  state directory does not hide a serving host.
 * POSIX only: on Windows the tool refuses (``records.unsupported``) until reparse-point-safe resolution exists.
 * No role check: in direct mode the tool runs as the person who owns these files and could copy them by hand; the
   export check still applies.
@@ -39,7 +40,21 @@ class DirectLink:
         self._store: Any = None
         self._holder = _Holder()
 
+    def served(self) -> bool:
+        """A host serves this workspace: its marker under the root (written by the host whatever state directory this
+        tool was given; Opus #433 finding 3), or the registration in this state directory (the guard)."""
+        from orch.host.service import SERVED_MARKER
+
+        return os.path.lexists(self.root / ".state" / SERVED_MARKER)
+
     def _open(self) -> Any:
+        if self.served():
+            raise RecordsError(
+                "host.required",
+                "a host serves this workspace; direct-mode records are off",
+                hint="run orch records with the state directory of that host (the default), or orch host unregister",
+                exit_=3,
+            )
         if self._store is None:
             from orch.host.ownership import DirectGuard
             from orch.ops.errors import OrchError

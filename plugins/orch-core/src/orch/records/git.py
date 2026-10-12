@@ -30,7 +30,6 @@ import re
 import stat
 import subprocess
 import tempfile
-import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,9 +80,21 @@ _STATE_FILES = ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", 
 _USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]*@")
 
 
+#: an absolute local path in a message (not the path part of a URL: that follows a host name or ``//``)
+_LOCAL_PATH = re.compile(r"(?<![\w:/.~-])/[^\s'\"]+")
+
+
+def _clock() -> float:
+    from orch import records
+
+    return records.MONOTONIC()
+
+
 def redact(text: str) -> str:
-    """Text for an error or the output: no ``user:password@`` of a URL, no control characters."""
+    """Text for an error, the output, the log or the host's audit: no ``user:password@`` of a URL, no local absolute
+    path (``<path>``), no control characters."""
     text = _USERINFO.sub(r"\1***@", text)
+    text = _LOCAL_PATH.sub("<path>", text)
     return "".join(ch if ch.isprintable() else "?" for ch in text)
 
 
@@ -168,7 +179,7 @@ class Git:
         """At most ``cap`` seconds, and never past the run's deadline (``records.budget`` once it is spent)."""
         if self.deadline is None:
             return cap
-        left = self.deadline - time.monotonic()
+        left = self.deadline - _clock()
         if left <= 0.05:
             raise RecordsError("records.budget", "the records run used its 60 s budget; try again")
         return min(cap, left)
@@ -246,7 +257,7 @@ class Git:
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            if self.deadline is not None and time.monotonic() >= self.deadline - 0.1:
+            if self.deadline is not None and _clock() >= self.deadline - 0.1:
                 raise RecordsError("records.budget", "the records run used its 60 s budget; try again") from None
             raise RecordsError("records.git_failed", f"git {args[0]} timed out") from None
         if check and res.returncode != 0:

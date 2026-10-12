@@ -75,6 +75,7 @@ CHILD_SCHEMA: dict[str, Any] = {
                 "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"},
                 "message": {"type": "string", "maxLength": 400},
                 "hint": {"type": "string", "maxLength": 400},
+                "commit": _SHA,
             },
             "required": ["ok", "code", "message"],
             "additionalProperties": False,
@@ -109,6 +110,7 @@ def _parser() -> argparse.ArgumentParser:
             s.add_argument("--push", action="store_true", help="also push (auto on)")
             s.add_argument("--every", type=int, default=15, help="minutes between commits, 5 to 1440 (auto on)")
             s.add_argument("--dev", action="store_true", help="allow a source checkout as the timer's program")
+            s.add_argument("--replace", action="store_true", help="replace a timer installed for another setup")
     return p
 
 
@@ -134,7 +136,8 @@ def _flat(res: dict[str, Any]) -> dict[str, Any]:
 
 
 class _Seam:
-    """The test seam's resolved workspace (an in-process host connection or a direct link, a given root)."""
+    """**Test seam only:** the resolved workspace a test hands to :func:`main` (an in-process host connection or a
+    direct link, a given root). Production always goes through :func:`orch.records.host_link.resolve`."""
 
     mode = "seam"
 
@@ -152,9 +155,19 @@ class _Run:
 
     def __init__(self, args: argparse.Namespace, env: Mapping[str, str], seams: dict[str, Any]) -> None:
         self.args, self.env, self.seams = args, env, seams
-        self.deadline = time.monotonic() + RUN_BUDGET
+        self.deadline = _monotonic() + RUN_BUDGET
         self.protocols = seams.get("protocols")
-        self.confirm: Confirm = seams.get("confirm") or _tty_confirm
+        self._confirm: Confirm = seams.get("confirm") or _tty_confirm
+        self.repos: list[Any] = []
+
+    def confirm(self, text: str) -> bool:
+        """Ask the person; the time spent answering never counts against the run (Sonnet #433 B): the budget
+        restarts after the answer, for the host link and for every repo of this run."""
+        answer = self._confirm(text)
+        self.deadline = _monotonic() + RUN_BUDGET
+        for repo in self.repos:
+            repo.deadline = self.deadline
+        return answer
 
     def open(self, workspace: str | None, root: Path | None = None) -> Any:
         s = self.seams
@@ -163,14 +176,22 @@ class _Run:
                 raise RecordsError("records.unsupported", "this test seam serves one workspace")
             return _Seam(s)
         state = Path(self.args.state) if self.args.state else None
-        return resolve(self.env, workspace, state=state, root=root, deadline=self.deadline)
+        return resolve(self.env, workspace, state=state, root=root, deadline=lambda: self.deadline)
 
     def repo(self, root: Path, remote: str | None = None) -> Any:
         from .git import ALLOWED_PROTOCOLS, open_repo
 
-        return open_repo(
+        repo = open_repo(
             root, env=self.env, protocols=self.protocols or ALLOWED_PROTOCOLS, remote=remote, deadline=self.deadline
         )
+        self.repos.append(repo)
+        return repo
+
+
+def _monotonic() -> float:
+    from orch import records
+
+    return records.MONOTONIC()
 
 
 def _note(link: Link, args: dict[str, Any]) -> str | None:
@@ -198,7 +219,11 @@ def _do_commit(run: _Run, r: Any, *, push_after: bool, fresh: bool, remote: str)
         res["note"] = failed
     res["pushed"] = False
     if push_after:
-        pres = push(repo, r.link, r.workspace_id, r.tips, remote=remote)
+        try:
+            pres = push(repo, r.link, r.workspace_id, r.tips, remote=remote)
+        except RecordsError as exc:
+            exc.commit = res["commit"]  # type: ignore[attr-defined]  # the commit landed: the child line says so
+            raise
         res["pushed"] = bool(pres.get("pushed"))
         res["url"] = pres["url"]
         res["push"] = {k: v for k, v in pres.items() if k not in ("commit", "url", "pushed")}
@@ -221,29 +246,30 @@ def _do_push(run: _Run, r: Any) -> dict[str, Any]:
 
 
 def _do_status(run: _Run, r: Any) -> dict[str, Any]:
+    """The host's ``records.status`` (the caller's own last note) plus what this tool sees locally now (``local``:
+    the repo state and the URL git resolves). It writes nothing: a status read never moves the host's record."""
     from .tool import EMPTY_TREE, _index_tree, _read_index
 
-    note: dict[str, Any] = {"pushed": False, "auto": _auto_entry(r.tips, r.workspace_id)}
-    repo_state: dict[str, Any]
+    local: dict[str, Any] = {}
     if not os.path.lexists(Path(r.root) / ".git"):
-        repo_state = {"state": "missing"}
+        local["repo"] = {"state": "missing"}
     else:
         try:
             repo = run.repo(r.root, run.args.remote)
             head = repo.resolve("HEAD")
             head_tree = repo.out("rev-parse", f"{head}^{{tree}}") if head else EMPTY_TREE
             same = _index_tree(repo, _read_index(repo)) == head_tree
-            repo_state = {"state": "ok" if same else "index_differs"}
+            local["repo"] = {"state": "ok" if same else "index_differs"}
             try:
-                note["url"] = push_url(repo, run.args.remote)
+                local["url"] = push_url(repo, run.args.remote)
             except RecordsError:
                 pass
         except RecordsError as exc:
             kind = "not_dedicated" if exc.code == "records.not_dedicated" else "unsafe"
-            repo_state = {"state": kind, "problem": exc.message[:300]}
-    note["repo"] = repo_state
-    _note(r.link, note)
-    return dict(r.link("records.status", {}))
+            local["repo"] = {"state": kind, "problem": exc.message[:300]}
+    status = dict(r.link("records.status", {}))
+    status["local"] = local
+    return status
 
 
 def _do_sync_index(run: _Run, r: Any) -> dict[str, Any]:
@@ -293,77 +319,79 @@ def _do_auto_switch(run: _Run, r: Any) -> dict[str, Any]:
         if getattr(r, "mode", "") == "direct":
             entry["root"] = str(r.root)
         r.tips.set_auto(r.workspace_id, entry)  # validates --every before the timer is touched
+        manager = None
         try:
             manager = _timer(run, Path(r.state))
-            manager.start(changed=manager.install())
+            manager.start(changed=manager.install(replace=bool(a.replace)))
+            r.link("records.note", {"pushed": False, "auto": _auto_entry(r.tips, r.workspace_id)})
         except BaseException:
-            r.tips.set_auto(r.workspace_id, None)
+            r.tips.set_auto(r.workspace_id, None)  # never report success when any step failed (Sonnet #433)
+            if manager is not None and not r.tips.autos():
+                try:
+                    manager.remove()
+                except Exception:  # noqa: BLE001 - the original refusal is the one to report
+                    pass
             raise
-        _note(r.link, {"pushed": False, "auto": _auto_entry(r.tips, r.workspace_id)})
         return {"auto": {"on": True, "every_min": a.every, "push": bool(a.push)}}
     r.tips.set_auto(r.workspace_id, None)
     timer = "kept"
     if not r.tips.autos():
         try:
-            _timer(run, Path(r.state)).remove()
-            timer = "removed"
+            timer = _timer(run, Path(r.state)).remove()
         except RecordsError as exc:
             timer = exc.code
     _note(r.link, {"pushed": False, "auto": None})
     return {"auto": None, "timer": timer}
 
 
-def _due(status: dict[str, Any], every_min: int, now: float) -> bool:
-    import calendar
-
-    last = status.get("last") or {}
-    at = last.get("at")
-    if not at:
-        return True
-    try:
-        t = calendar.timegm(time.strptime(at, "%Y-%m-%dT%H:%M:%SZ"))
-    except (TypeError, ValueError):
-        return True
-    return now - t >= every_min * 60
+def _due(entry: dict[str, Any], now: float) -> bool:
+    """The timer's own clock (Opus #433 finding 1): ``last_run`` in the person's state file, never the host's notes."""
+    last = entry.get("last_run")
+    return not isinstance(last, int) or now - last >= int(entry["every_min"]) * 60
 
 
 def _run_auto_all(args: argparse.Namespace, env: Mapping[str, str], seams: dict[str, Any]) -> tuple[int, dict]:
-    """The timer's run: every workspace with auto on, one after the other, each in its own lock and budget. Commits
-    when events are pending and the last commit is older than ``every_min``; pushes when ``push`` is on."""
+    """The timer's run: every workspace with auto on, one after the other, each in its own lock and budget. A due
+    workspace is committed (a no-op when nothing changed) and pushed when ``push`` is on; the decision uses only the
+    person's own state file. Any failure of one workspace is recorded and the next one still runs."""
     from orch.ops.runtime import state_dir
 
-    from .person import PersonState
+    from .person import PersonState, rotate
 
     state = Path(args.state) if args.state else Path(seams["state"]) if seams.get("state") else state_dir(env)
     tips = seams.get("tips") or PersonState(state / "records.json")
     clock = seams.get("clock") or time.time
     log = RunLog(state / "person" / "records.jsonl", clock)
+    rotate(state / "person" / "records-timer.log", limit=1024 * 1024)  # the timer's stdout (launchd)
     runs: list[dict[str, Any]] = []
     worst = 0
     for wid, entry in sorted(tips.autos().items()):
-        run = _Run(args, env, seams)
         item: dict[str, Any] = {"workspace": wid}
+        now = clock()
+        if not _due(entry, now):
+            item["skipped"] = "not due"
+            runs.append(item)
+            continue
         try:
+            run = _Run(args, env, seams)
             r = run.open(wid, Path(entry["root"]) if entry.get("root") else None)
             try:
                 with run_lock(Path(r.state), wid):
                     log.write(wid, "start", cmd="auto")
-                    status = r.link("records.status", {})
-                    pending = int((status.get("pending") or {}).get("events") or 0)
-                    if pending == 0:
-                        item["skipped"] = "nothing pending"
-                    elif not _due(status, int(entry["every_min"]), clock()):
-                        item["skipped"] = "not due"
-                    else:
-                        res = _do_commit(run, r, push_after=bool(entry.get("push")), fresh=False, remote="origin")
-                        item.update(commit=res["commit"], pushed=res["pushed"], url=res.get("url"))
-                        log.write(wid, "auto", commit=res["commit"], pushed=res["pushed"], url=res.get("url"))
+                    res = _do_commit(run, r, push_after=bool(entry.get("push")), fresh=False, remote="origin")
+                    tips.ran(wid, now)
+                    item.update(commit=res["commit"], changed=res["changed"], pushed=res["pushed"], url=res.get("url"))
+                    log.write(wid, "auto", commit=res["commit"], pushed=res["pushed"], url=res.get("url"))
             finally:
                 r.close()
         except RecordsError as exc:
             item.update(code=exc.code, message=exc.message)
             log.write(wid, "refused", cmd="auto", code=exc.code)
             worst = worst or exc.exit
+        except Exception as exc:  # noqa: BLE001 - one workspace never stops the others
+            item.update(code="internal", message=type(exc).__name__)
+            log.write(wid, "refused", cmd="auto", code="internal")
+            worst = worst or 1
         runs.append(item)
     return worst, {"runs": runs}
 
@@ -400,6 +428,8 @@ def main(
         doc = {"ok": False, "code": exc.code, "message": exc.message[:400]}
         if exc.hint:
             doc["hint"] = exc.hint[:400]
+        if isinstance(getattr(exc, "commit", None), str):
+            doc["commit"] = exc.commit  # type: ignore[attr-defined]
         emit(doc, f"{exc.code}: {exc.message}" + (f"\n  {exc.hint}" if exc.hint else ""))
         return exc.exit
 
@@ -408,9 +438,17 @@ def main(
             raise RecordsError("records.unsupported", "the records tool does not run on Windows yet (D-P2-38)")
         if env.get("ORCH_GRANT"):
             raise RecordsError("op.not_allowed", "agents do not commit or push records through orch", exit_=3)
+        if args.state and not (args.cmd == "auto" and args.switch is None):
+            raise RecordsError("records.invalid", "--state is the timer's own option (orch records auto)")
         if args.cmd == "auto" and args.switch is None:
             worst, detail = _run_auto_all(args, env, seams)
-            emit({"ok": True, "detail": detail}, json.dumps(detail, sort_keys=True))
+            failed = [i for i in detail["runs"] if "code" in i]
+            if failed:
+                doc = {"ok": False, "code": failed[0]["code"], "message": f"{len(failed)} workspace(s) failed",
+                       "detail": detail}  # fmt: skip
+            else:
+                doc = {"ok": True, "detail": detail}
+            emit(doc, json.dumps(detail, sort_keys=True))
             return worst
         run = _Run(args, env, seams)
         r = run.open(args.workspace)

@@ -177,8 +177,12 @@ def stream_blobs(repo: Git, manifest: Manifest) -> dict[str, str] | None:
     """Read each manifest file once (exactly ``size`` bytes, beneath the record root fd, ``O_NOFOLLOW``), check its
     SHA-256 and stream those same bytes into one ``git fast-import`` as they are read: at most one file (64 MiB) is
     in memory, never the whole snapshot. ``None`` when a file no longer matches the manifest (replaced after the cut;
-    the blobs already sent are unreferenced and harmless). Returns path -> blob id, every id checked in the repo."""
+    the blobs already sent are unreferenced and harmless). Returns path -> blob id, every id checked in the repo.
+
+    A watchdog kills ``fast-import`` when the run's budget is spent, so a blocked write cannot outlive it; its stderr
+    goes nowhere (only the exit code is reported), so nothing can fill a pipe nobody reads."""
     import subprocess
+    import threading
 
     from .git import HARDEN
 
@@ -188,10 +192,13 @@ def stream_blobs(repo: Git, manifest: Manifest) -> dict[str, str] | None:
         ["git", *HARDEN, "fast-import", "--quiet"],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         env=repo.env(),
         cwd=repo.root,
     )
+    watchdog = threading.Timer(repo.remaining(60.0), proc.kill)
+    watchdog.daemon = True
+    watchdog.start()
     ok = False
     try:
         root_fd = open_root(repo.root)
@@ -213,21 +220,27 @@ def stream_blobs(repo: Git, manifest: Manifest) -> dict[str, str] | None:
         assert proc.stdin is not None
         proc.stdin.write(b"done\n")
         proc.stdin.close()
-        try:
-            proc.wait(timeout=repo.remaining(60.0))
-        except subprocess.TimeoutExpired:
-            raise RecordsError("records.budget", "storing the blobs used the run's budget; try again") from None
+        proc.wait()
         if proc.returncode != 0:
-            raise RecordsError("records.git_failed", "git fast-import failed")
+            if not watchdog.is_alive():
+                raise RecordsError("records.budget", "storing the blobs used the run's budget; try again")
+            raise RecordsError("records.git_failed", f"git fast-import failed ({proc.returncode})")
         ok = True
-    except BrokenPipeError:
+    except (BrokenPipeError, ValueError):
+        if not watchdog.is_alive():
+            raise RecordsError("records.budget", "storing the blobs used the run's budget; try again") from None
         raise RecordsError("records.git_failed", "git fast-import stopped early") from None
     finally:
+        watchdog.cancel()
+        if proc.stdin is not None and not proc.stdin.closed:
+            try:
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
         if not ok and proc.poll() is None:
             proc.kill()
+        if proc.poll() is None or not ok:
             proc.wait()
-        if proc.stderr is not None:
-            proc.stderr.close()
     if _have(repo, sorted(sent)) != sent:
         raise RecordsError("records.git_failed", "git did not store every blob")
     return ids

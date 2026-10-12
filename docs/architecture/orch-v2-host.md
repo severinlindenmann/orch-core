@@ -4583,9 +4583,13 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
     convenience, check}` or `sign.convenience_readers`; it takes no `manifest` (the push may be of an older commit).
   - `records.remote_private {url?, on}` → `{private_remote:{url, at, by} | null, text}`.
   - `records.note {manifest?, commit?, pushed, url?, repo?:{state, problem?}, auto?}` → `{}`; a `manifest` must be
-    one this caller took and the host still holds (`page.expired` otherwise).
-  - `records.status {}` → as in the block above, with `repo` and `remote.url` taken from the tool's last note (the host
-    runs no git, D-P2-19: the URL is the one git resolved at the last `status`, commit or push).
+    one this caller took and the host still holds (`page.expired` otherwise). Notes are kept **per person**
+    (`lasts[<person>]`, at most 64), with `last_noted {by, at}` workspace-wide (#433 review, Opus finding 1).
+  - `records.status {}` → as in the block above, for **the caller's own** last note (another manager's note never
+    changes it), plus `last_noted`. `repo` and `remote.url` come from the caller's last commit or push note (the host
+    runs no git, D-P2-19). `remote.url` is **display only**: a client never passes it to `records.remote_private`
+    (the tool resolves the URL to mark from git itself). The tool's `status` adds `local {repo, url}` as it sees them
+    now and writes nothing.
 - **Limits.** 64 MiB per file, 1 GiB and 200 000 files per snapshot (`records.too_large`); pages of 2 000 files bound
   to the manifest and the caller's principal for 10 min, at most 4 manifests per workspace; 50 export and 50 mark
   audit entries; `pending.tickets` at most 200. Hash cache by (path, size, inode, mtime, ctime).
@@ -4595,7 +4599,8 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
 - **Two state files.** The host's `<state>/hosts/<ws>/records.json` (0600): `private_remote` (the one mark),
   `marks` (audit: action, redacted URL, person, time), `exports` (audit of every export check), `last` (the note).
   The person's `<state>/records.json` (0600): `validated` (per workspace and branch, the last validated tip) and
-  `auto` (per workspace `{on, every_min, push, root?}`; `root` only for a direct-mode workspace). In tier A both live
+  `auto` (per workspace `{on, every_min, push, root?, last_run?}`; `root` only for a direct-mode workspace,
+  `last_run` the timer's own clock). In tier A both live
   in the same state directory. The mark is in the host file, not in the person's (`private_remotes:[url]` above is
   not built): one exact URL per workspace, set through a P op.
 - **Tool flow** (`python -I -m orch.records`, also `orch records`). Resolve the workspace (host mode when the person's
@@ -4624,7 +4629,7 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
   helpers, DNS) decide how it is reached.**
 - **Codes and exits** (`orch.records.RecordsError`; the host op passes the same code and exit):
   `records.snapshot_changed` 9 (retryable), `records.busy` 9, `records.budget` 9, `records.snapshot_invalid` 5,
-  `records.invalid` 5, `records.timer_failed` 1, and 3 for `records.not_dedicated`, `records.git_state`,
+  `records.invalid` 5, `records.timer_failed` 1, and 3 for `records.timer_conflict`, `records.not_dedicated`, `records.git_state`,
   `records.unsafe_config`, `records.not_records_only`, `records.history_invalid`, `records.tree_mismatch`,
   `records.too_large`, `records.unsafe_tree`, `records.push_rejected`, `records.remote_invalid`,
   `records.remote_missing`, `records.git_failed`, `records.unsupported` (Windows and other unsupported setups; the
@@ -4636,21 +4641,31 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
                [--workspace ID] [--remote NAME] [--json]
   ```
   Terminal only (asked on `/dev/tty`): `auto on`, `push --initial` and `remote-private` (the last two skip the
-  question with `--yes`). Agents (`ORCH_GRANT`) get `op.not_allowed`.
+  question with `--yes`: the boundary is the host op, an owner-only write; the question is UX). The time spent at a
+  question does not count against the 60 s budget (it restarts after the answer). `--state` is the timer's own
+  option (`auto` without a switch); anywhere else it is `records.invalid`. Agents (`ORCH_GRANT`) get
+  `op.not_allowed`.
 - **Dashboard child.** `python -I -m orch.records commit [--push] --workspace <id> --json` and `… auto off
   --workspace <id> --json` print exactly one JSON line valid against `orch.records.cli.CHILD_SCHEMA`:
-  `{ok:true, commit?, pushed?, url?, detail?}` or `{ok:false, code, message, hint?}`; exit 0 or the code's exit.
+  `{ok:true, commit?, pushed?, url?, detail?}` or `{ok:false, code, message, hint?, commit?}` (`commit` when a push
+  failed after the commit landed); exit 0 or the code's exit. The dashboard's argv stays exactly these two.
 - **Auto mode and timer.** `auto on` asks on the terminal, writes the person's `auto` entry and installs a per-user
   timer: LaunchAgent `io.orch.records` (`StartInterval` 300) or systemd user units `orch-records.service`
   (`Type=oneshot`) and `orch-records.timer` (every 5 min), running `python -I -m orch.records auto --state <state>
   --json`. A source checkout is refused as the timer's program unless `--dev`. `auto off` removes the entry and,
-  when no workspace is left, the timer. The timer's run commits a workspace whose `records.status` has pending events
-  and whose last commit is older than `every_min`, and pushes when `push` is on. Same fences as H7: the default
+  when no workspace is left, the timer, and only a timer installed for this state dir. An installed timer that
+  differs (state dir, interpreter, dev versus release) is never replaced silently: `records.timer_conflict` names
+  the fields, `auto on --replace` overrides (H7 parity). The timer's run decides on its own clock only (`last_run`
+  in the person's file, never a host note): a due workspace is committed (a no-op when nothing changed) and pushed
+  when `push` is on; one failing workspace never stops the others, and the run answers `ok:false` with the first
+  code when any failed. It rotates `records-timer.log` (launchd's stdout) like the person log. Same fences as H7: the default
   runner refuses `launchctl`/`systemctl` under pytest or `ORCH_NO_SERVICE_MANAGER=1`, the test session guard refuses
   units under the real home and checks the real unit paths are unchanged.
 - **Direct mode** (D-P2-38). A workspace not in the person's registry: the tool opens the store read-only under
-  `DirectGuard` and runs the same ops on the same files (`host.required` once a host serves it). POSIX only. No role
-  check in direct mode (the person owns the files); the export check still applies.
+  `DirectGuard` and runs the same ops on the same files (`host.required` once a host serves it). The host writes
+  `<root>/.state/host-served` when it starts serving a workspace and removes it at unregister; direct mode refuses
+  while it exists, whatever state directory the tool was given. POSIX only. No role check in direct mode (the person
+  owns the files; audit entries name `direct:<uid>`); the export check still applies.
 - **Person log.** `<state>/person/records.jsonl` (0600, rotated at 1 MiB, 4 files): `start`, the command's result
   (commit, pushed, redacted URL), `refused` with the code; never file contents or credentials.
 - **Not built.** Hashing outside the store lock (the cache bounds re-hashing; a first snapshot of a large workspace

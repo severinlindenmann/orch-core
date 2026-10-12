@@ -1,9 +1,14 @@
 from .errors import response
 
+# §0.8.6 item 7: the required directives (default-src, script-src, object-src, base-uri, frame-ancestors, form-action)
+# plus the narrow extras this app needs (its own styles, connections and inline-free images).
 CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; "
-    "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+    "form-action 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:"
 )
+# Bodies of the sign routes are tiny (ids, a hash, a typed word); everything else keeps the general bound.
+CLICK_BODY_LIMIT = 16_384
+CLICK_STEP = ("/view", "/sign", "/cancel")
 
 
 class Security:
@@ -31,6 +36,7 @@ class Security:
                 hs += [
                     (b"content-security-policy", CSP.encode()),
                     (b"x-content-type-options", b"nosniff"),
+                    (b"x-frame-options", b"DENY"),
                     (b"referrer-policy", b"no-referrer"),
                 ]
                 if path.startswith(("/api", "/auth")):
@@ -58,12 +64,18 @@ class Security:
         if method not in ("GET", "HEAD", "OPTIONS"):
             if origins != [origin]:
                 return await reject("origin.bad", 403)
-            sites = values(b"sec-fetch-site")
-            if sites and sites != ["same-origin"]:
-                return await reject("origin.bad", 403)
-        if path == "/auth/session" and values(b"content-type") != ["application/json"]:
-            return await reject("invalid.input", 400)
-        limit = 1024 if path == "/auth/session" else 1_048_576
+        sites = values(b"sec-fetch-site")
+        if sites and sites != ["same-origin"] and (method not in ("GET", "HEAD", "OPTIONS") or api):
+            # Fetch Metadata when present: an API call (read or write) from another site is refused.
+            return await reject("origin.bad", 403)
+        if (
+            method in ("POST", "PUT", "PATCH")
+            and path != "/auth/logout"
+            and values(b"content-type") != ["application/json"]
+        ):
+            return await reject("invalid.input", 400)  # every browser mutation is bounded JSON
+        click_step = path.startswith("/api/w/") and "/click/" in path and path.endswith(CLICK_STEP)
+        limit = 1024 if path == "/auth/session" else CLICK_BODY_LIMIT if click_step else 1_048_576
         body = bytearray()
         while True:
             event = await receive()

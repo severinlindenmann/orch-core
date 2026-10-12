@@ -17,11 +17,13 @@ The host never runs git (D-P2-19). It names the bytes and decides the export pol
 * ``records.remote_private {url, on}`` sets or clears the workspace's one private-remote mark (owner decision 12 Oct
   2026): "only I read this remote". orch trusts the owner's word; it is not proof of the remote's ACLs. The mark is
   one exact URL: a changed ``pushurl``, ``insteadOf`` rewrite or remote URL resolves to another string and is not
-  marked.
+  marked. It relaxes an owner rule, so only an **owner** sets or clears it, and it is a **write** (Opus #430 finding
+  4): ``opts.idem`` is required, the answer is an outcome record (a retry replays it), and every change is audited
+  (``marks``: action, redacted URL, person, time). A URL with credentials, a query string or a fragment is refused.
 
-All three are column P only (``person_read``: G and N get ``op.not_allowed``) and only for a person who is an owner or
-maintainer now (a push exports every ticket, restricted ones included). This is a policy orch enforces on its own
-export paths, not information-flow control: manual git can still push.
+All three are column P only (``person_read``, and ``person_write`` for the mark: G and N get ``op.not_allowed``);
+the two reads are for an owner or maintainer now (a push exports every ticket, restricted ones included). This is a
+policy orch enforces on its own export paths, not information-flow control: manual git can still push.
 """
 
 from __future__ import annotations
@@ -51,6 +53,10 @@ __all__ = ["CAPS", "RECORDS_OPS", "TRUST_TEXT", "serve"]
 
 CAPS = ["records/1"]
 RECORDS_OPS: dict[str, int] = {"records.snapshot": 1, "records.export_check": 1, "records.remote_private": 1}
+#: the writes among them (an idem, an outcome record, an audit entry; owners only)
+WRITE_OPS = frozenset({"records.remote_private"})
+#: mark changes kept in the audit list
+MAX_MARKS = 50
 #: manifests kept per workspace (the oldest goes first)
 MAX_MANIFESTS = 4
 #: export answers kept in the audit list
@@ -98,10 +104,11 @@ def _validate(op: str, args: Any) -> None:
             raise HostError("invalid.input", f"{op}: {name} is not valid")
     url = args.get("url")
     if isinstance(url, str):
-        from orch.records.git import has_credentials
+        from orch.records.git import url_problem
 
-        if has_credentials(url):  # never stored, never echoed: the mark and the audit hold no secret
-            raise HostError("invalid.input", f"{op}: url carries credentials; use a credential helper")
+        problem = url_problem(url)
+        if problem is not None:  # never stored, never echoed: the mark and the audit hold no secret
+            raise HostError("invalid.input", f"{op}: url is refused: {problem}")
     if op == "records.remote_private" and args["on"] and "url" not in args:
         raise HostError("invalid.input", "records.remote_private: url is required to set the mark")
 
@@ -149,7 +156,7 @@ def serve(call: Call) -> dict[str, Any]:
     op = call.frame["op"]
     args = dict(call.frame["args"])
     _validate(op, args)
-    request_idem(op, call.frame.get("opts"))  # dry_run is invalid.input here; idem is ignored
+    idem = request_idem(op, call.frame.get("opts"))  # reads: dry_run is invalid.input, idem ignored; the mark: required
     if call.frame.get("files"):
         raise HostError("blob.invalid", f"{op} takes no files")
     service = call.service
@@ -158,12 +165,14 @@ def serve(call: Call) -> dict[str, Any]:
     viewer = Viewer.of(call)
     if not viewer.manager:
         raise HostError("op.not_allowed", f"{op} is for a workspace owner or maintainer at the terminal or dashboard")
+    if op in WRITE_OPS and viewer.role != "owner":
+        raise HostError("op.not_allowed", f"{op} relaxes an owner rule: only a workspace owner sets or clears the mark")
     try:
         if op == "records.snapshot":
             return ok_result(_snapshot(call, args))
         if op == "records.export_check":
             return ok_result(_export_check(call, viewer, args))
-        return ok_result(_remote_private(call, viewer, args))
+        return _mark_write(call, viewer, args, str(idem))
     except rec.RecordsError as exc:
         raise _host_error(exc) from None
 
@@ -289,7 +298,30 @@ def _export_check(call: Call, viewer: Viewer, args: dict[str, Any]) -> dict[str,
     return {**body, "check": check}
 
 
+def _mark_write(call: Call, viewer: Viewer, args: dict[str, Any], idem: str) -> dict[str, Any]:
+    """``records.remote_private`` as a write: an outcome record under the caller's idem (a retry replays the stored
+    answer), then the mark and an audit entry (redacted URL, actor, time)."""
+    from .auth import Redactor
+    from .workspace import ok_result
+
+    def apply(_intent: Any) -> dict[str, Any]:
+        return ok_result(_remote_private(call, viewer, args))
+
+    return call.service.outcomes.execute(
+        call.principal,
+        idem,
+        call.frame["op"],
+        dict(args),
+        apply,
+        planned=None,
+        session=(call.frame.get("auth") or {}).get("session"),
+        redactor=Redactor((call.frame.get("auth") or {}).get("grant")),
+    )
+
+
 def _remote_private(call: Call, viewer: Viewer, args: dict[str, Any]) -> dict[str, Any]:
+    from orch.records.git import redact
+
     service = call.service
     now = float(service.clock())
     doc = read_record(service.state_dir, service.workspace_id, service.host_uid)
@@ -297,5 +329,9 @@ def _remote_private(call: Call, viewer: Viewer, args: dict[str, Any]) -> dict[st
         doc["private_remote"] = {"url": args["url"], "at": _stamp(now), "by": viewer.person}
     else:
         doc["private_remote"] = None
+    entry = {"action": "set" if args["on"] else "clear", "at": _stamp(now), "by": viewer.person}
+    if args.get("url"):
+        entry["url"] = redact(args["url"])
+    doc["marks"] = [*(doc.get("marks") or []), entry][-MAX_MARKS:]
     _write_record(service.state_dir, service.workspace_id, service.host_uid, doc)
     return {"private_remote": doc["private_remote"], "text": TRUST_TEXT}

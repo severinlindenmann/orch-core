@@ -34,8 +34,19 @@ def w(tmp_path):
         s.lab.close()
 
 
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """A private HOME for this test's own git calls (never the owner's), restored by the fixture."""
+    path = tmp_path / "home"
+    path.mkdir()
+    (path / ".gitconfig").write_text("[user]\n\tname = t\n\temail = t@example.invalid\n")
+    monkeypatch.setenv("ORCH_RECORDS_TEST_HOME", str(path))
+    return path
+
+
 def git(cwd, *args, env=None, check=True) -> str:
-    e = {"HOME": env_home(cwd), "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1", "LANG": "C"}
+    e = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"}
+    e["LANG"] = "C"
     e.update(env or {})
     res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, env=e, check=False)
     if check and res.returncode != 0:
@@ -43,23 +54,13 @@ def git(cwd, *args, env=None, check=True) -> str:
     return res.stdout.decode().strip()
 
 
-_HOME: dict[str, str] = {}
-
-
-def env_home(_cwd) -> str:
-    return _HOME["home"]
-
-
 class Env:
     """One test's records world: the served workspace, a private HOME, local bare remotes and the host link."""
 
-    def __init__(self, w, tmp_path: Path) -> None:
+    def __init__(self, w, tmp_path: Path, home: Path) -> None:
         self.w = w
         self.root = Path(w.lab.root)
-        self.home = tmp_path / "home"
-        self.home.mkdir()
-        _HOME["home"] = str(self.home)
-        (self.home / ".gitconfig").write_text("[user]\n\tname = t\n\temail = t@example.invalid\n")
+        self.home = home
         self.env = {"HOME": str(self.home), "PATH": os.environ["PATH"]}
         self.tips = rtool.ValidatedTips(tmp_path / "state" / "records.json")
         self.client = w.client()
@@ -68,7 +69,7 @@ class Env:
 
     def link(self, op, args):
         self.calls.append((op, dict(args)))
-        res = self.client.req(op, args)
+        res = self.client.req(op, args, idem=op == "records.remote_private" or None)
         if not res["ok"]:
             raise RecordsError(res["error"]["code"], res["error"]["message"], exit_=res["exit"])
         return res["result"]["data"]
@@ -100,8 +101,13 @@ class Env:
 
 
 @pytest.fixture
-def r(w, tmp_path):
-    return Env(w, tmp_path)
+def r(w, tmp_path, home):
+    return Env(w, tmp_path, home)
+
+
+def records_message(wid: str, ws_seq: int = 1) -> str:
+    """A commit message of exactly the records shape (``git commit -m`` keeps it, final newline included)."""
+    return f"orch: records ws_seq {ws_seq}\n\nOrch-Manifest: m_{'0' * 64}\nOrch-Records: {wid}"
 
 
 def tree_paths(root: Path, rev: str) -> list[str]:
@@ -274,9 +280,9 @@ def test_a_historical_state_file_blocks_the_push_and_a_fresh_history_unblocks(r)
     r.init()
     (r.root / ".state" / "secret").write_text("private\n")
     git(r.root, "add", "-f", ".state/secret")
-    git(r.root, "commit", "-qm", f"by hand\n\nOrch-Records: {r.w.wid}")  # even with the trailer
+    git(r.root, "commit", "-qm", records_message(r.w.wid))  # even with the exact records message
     git(r.root, "rm", "-q", "--cached", ".state/secret")
-    git(r.root, "commit", "-qm", f"gone again\n\nOrch-Records: {r.w.wid}")
+    git(r.root, "commit", "-qm", records_message(r.w.wid, 2))
     r.commit()  # HEAD's tree is clean, the history is not
     url = r.bare()
     git(r.root, "remote", "add", "origin", url)
@@ -498,7 +504,7 @@ def test_transport_allow_list(url, ok):
     assert url_allowed(url, ALLOWED_PROTOCOLS) is ok
 
 
-# --- security scan findings (H11e commit scan) ---------------------------------------------------------------------
+# --- security scan findings (H11e commit scan) ------------------------------------------------------------------------
 
 
 def test_finding1_caller_git_config_env_never_reaches_git(r):
@@ -664,3 +670,166 @@ def test_finding5_redaction_covers_token_only_userinfo():
     assert "TOK" not in redact("fatal: could not read from https://TOK@example.org/r.git")
     assert has_credentials("https://TOK@example.org/r.git") and has_credentials("ssh://a:b@h/r")
     assert not has_credentials("ssh://git@example.org/r.git") and not has_credentials("git@example.org:r.git")
+
+
+# --- Opus #430 review round -------------------------------------------------------------------------------------------
+
+
+def test_opus1_a_remote_named_after_the_marked_url_never_redirects_the_push(r):
+    """Opus's repro: ``remote."<marked URL>".pushurl = B`` in the repo's config. Refused, and B receives nothing."""
+    r.init()
+    r.commit()
+    url_a, url_b = r.bare("a"), r.bare("b")
+    git(r.root, "remote", "add", "origin", url_a)
+    _convenience(r)
+    assert r.cli("remote-private", "--yes")[0] == 0
+    git(r.root, "config", "--local", f"remote.{url_a}.pushurl", url_b)
+    code, out = r.cli("push", "--initial")
+    assert code == 3 and out["error"]["code"] == "records.unsafe_config"
+    for url in (url_a, url_b):
+        assert git(r.tmp, "--git-dir", url[len("file://") :], "for-each-ref") == ""
+
+
+def test_opus1_a_global_remote_entry_for_the_url_never_reaches_the_network_calls(r):
+    """The same through the person's frozen global config: the transport repo keeps no ``remote.*``, so the push
+    goes to the checked URL A and B receives nothing."""
+    r.init()
+    r.commit()
+    url_a, url_b = r.bare("a"), r.bare("b")
+    git(r.root, "remote", "add", "origin", url_a)
+    _convenience(r)
+    assert r.cli("remote-private", "--yes")[0] == 0
+    with open(r.home / ".gitconfig", "a") as fh:
+        fh.write(f'[remote "{url_a}"]\n\tpushurl = {url_b}\n\treceivepack = touch /nonexistent/pwned\n')
+    code, out = r.cli("push", "--initial")
+    assert code == 0 and out["pushed"] and out["url"] == url_a
+    assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
+    assert git(r.tmp, "--git-dir", url_a[len("file://") :], "rev-parse", "refs/heads/main") == out["commit"]
+
+
+def test_opus1_any_other_remote_section_in_the_repo_config_is_refused(r):
+    r.init()
+    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.root, "remote", "add", "backup", r.bare("backup"))
+    with pytest.raises(RecordsError) as e:
+        r.repo("origin")
+    assert e.value.code == "records.unsafe_config" and "remote.backup" in e.value.message
+    r.repo(None)  # a commit does not push: other remotes do not matter there
+
+
+def _forge_commit_graph(repo_root: Path, child: str, fake_parent: str) -> None:
+    """Write a commit-graph (generation v1) and patch ``child``'s first parent to ``fake_parent`` (Opus's repro)."""
+    commits = git(repo_root, "rev-list", "--all", child, fake_parent).split()
+    subprocess.run(
+        ["git", "-c", "commitGraph.generationVersion=1", "commit-graph", "write", "--stdin-commits"],
+        cwd=repo_root, input="\n".join(commits).encode(), capture_output=True, check=True,
+        env={"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"},
+    )  # fmt: skip
+    path = repo_root / ".git" / "objects" / "info" / "commit-graph"
+    data = bytearray(path.read_bytes())
+    assert data[:4] == b"CGPH"
+    nchunks = data[6]
+    chunks = {}
+    for i in range(nchunks + 1):
+        off = 8 + 12 * i
+        chunks[bytes(data[off : off + 4])] = int.from_bytes(data[off + 4 : off + 12], "big")
+    oidl, cdat = chunks[b"OIDL"], chunks[b"CDAT"]
+    n = (cdat - oidl) // 20
+    oids = [bytes(data[oidl + 20 * i : oidl + 20 * (i + 1)]).hex() for i in range(n)]
+    ci, pi = oids.index(child), oids.index(fake_parent)
+    rec_c, rec_p = cdat + 36 * ci, cdat + 36 * pi
+    data[rec_c + 20 : rec_c + 24] = pi.to_bytes(4, "big")
+    gen_p = int.from_bytes(data[rec_p + 28 : rec_p + 32], "big") >> 2
+    word = int.from_bytes(data[rec_c + 28 : rec_c + 32], "big")
+    data[rec_c + 28 : rec_c + 32] = (((gen_p + 1) << 2) | (word & 3)).to_bytes(4, "big")
+    os.chmod(path, 0o644)
+    path.write_bytes(bytes(data))
+
+
+def test_opus2_a_forged_commit_graph_never_lets_a_non_fast_forward_through(r):
+    r.init()
+    root_commit = r.commit()["commit"]  # R
+    url = r.bare()
+    bare = url[len("file://") :]
+    git(r.root, "remote", "add", "origin", url)
+    r.push(initial=True)
+    r.w.ticket("one")
+    t = r.commit()["commit"]  # T, child of R
+    r.push()
+    git(r.root, "update-ref", "refs/heads/main", root_commit, t)  # back to R, then a sibling S of T
+    git(r.root, "read-tree", root_commit)
+    r.w.ticket("two")
+    s = r.commit()["commit"]
+    assert git(r.root, "rev-parse", f"{s}^") == root_commit
+    _forge_commit_graph(r.root, s, t)
+    # the forgery works on plain git: with the graph, T looks like an ancestor of S
+    plain = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", t, s], cwd=r.root, capture_output=True, check=False,
+        env={"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"},
+    )  # fmt: skip
+    assert plain.returncode == 0
+    with pytest.raises(RecordsError) as e:
+        r.push()
+    assert e.value.code == "records.push_rejected" and "never a non-fast-forward" in e.value.message
+    assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main") == t
+
+
+def test_opus5_extra_headers_or_another_message_are_not_records_commits(r):
+    r.init()
+    r.commit()
+    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.root, "-c", "i18n.commitEncoding=ISO-8859-1", "commit", "-q", "--allow-empty", "-m",
+        records_message(r.w.wid, 5))  # fmt: skip
+    with pytest.raises(RecordsError) as e:
+        r.push(initial=True)
+    assert e.value.code == "records.not_records_only" and "headers" in e.value.message
+    git(r.root, "reset", "-q", "--soft", "HEAD^")
+    git(r.root, "commit", "-q", "--allow-empty", "-m", records_message(r.w.wid, 5) + "\n\nexported note")
+    with pytest.raises(RecordsError) as e:
+        r.push(initial=True)
+    assert e.value.code == "records.not_records_only"
+
+
+def test_opus6_a_push_url_with_a_query_or_fragment_is_refused(r):
+    r.init()
+    r.commit()
+    git(r.root, "remote", "add", "origin", "https://example.org/r.git?token=SECRET123")
+    code, out = r.cli("push", "--initial")
+    assert out["error"]["code"] == "records.remote_invalid" and "SECRET123" not in json.dumps(out)
+
+
+def test_opus6_open_root_errors_carry_no_path(tmp_path):
+    from orch.records import open_root
+
+    with pytest.raises(RecordsError) as e:
+        open_root(tmp_path / "nowhere-secret-name")
+    assert "nowhere-secret-name" not in e.value.message and str(tmp_path) not in e.value.message
+
+
+# --- Sonnet #430 nits -------------------------------------------------------------------------------------------------
+
+
+def test_a_corrupt_state_file_is_unsafe_config(r):
+    r.tips.path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(r.tips.path, os.O_WRONLY | os.O_CREAT, 0o600)
+    os.write(fd, b"{not json")
+    os.close(fd)
+    with pytest.raises(RecordsError) as e:
+        r.tips.get(r.w.wid, "main")
+    assert e.value.code == "records.unsafe_config"
+
+
+def test_a_malformed_or_endless_host_reply_is_snapshot_invalid(r):
+    for reply in ({"manifest": 1}, {"nothing": True}, None, {"manifest": "m", "heads": [], "ws_seq": 1}):
+        with pytest.raises(RecordsError) as e:
+            rtool.fetch_manifest(lambda op, args, reply=reply: reply, r.w.wid)
+        assert e.value.code == "records.snapshot_invalid"
+    endless = {"manifest": "m_x", "heads": {}, "ws_seq": 1, "workspace": r.w.wid, "files": [], "next_page": "p"}
+    with pytest.raises(RecordsError) as e:
+        rtool.fetch_manifest(lambda op, args: endless, r.w.wid)
+    assert e.value.code == "records.snapshot_invalid" and "pages" in e.value.message
+
+
+def test_integrity_refusals_exit_3():
+    for code in ("records.tree_mismatch", "records.git_failed", "records.history_invalid", "records.push_rejected"):
+        assert RecordsError(code, "x").exit == 3

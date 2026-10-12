@@ -120,7 +120,7 @@ ROWS = {
     "N agent, unverified grant": ("agent", "unverified", False),
 }
 ALLOWED = {
-    "P": {"read", "person_read", "pg_read", "unattended"},
+    "P": {"read", "person_read", "pg_read", "person_write", "unattended"},
     "G": {"read", "pg_read", "agent", "unattended"},
     "N": {"read", "unattended"},
 }
@@ -158,7 +158,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
         elif op in RECORDS_OPS:
-            assert kind == ("person_read", "read")
+            assert kind == (("person_write", "write") if op == "records.remote_private" else ("person_read", "read"))
         else:
             who = ops.get(op).who
             assert kind[0] == ("person_read" if op in PERSON_READS else who)
@@ -166,7 +166,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
             seen.add((kind[0], expected(row, kind[0])))
-    assert {"read", "person_read", "pg_read", "agent", "unattended", "human", "human_api"} == {k for k, _ in seen}
+    kinds = {"read", "person_read", "pg_read", "person_write", "agent", "unattended", "human", "human_api"}
+    assert kinds == {k for k, _ in seen}
     for op in NOT_SERVED:
         assert op_kind(op) is None
 

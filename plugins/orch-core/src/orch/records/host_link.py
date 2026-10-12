@@ -64,6 +64,9 @@ def resolve(env: Mapping[str, str], workspace: str | None) -> Resolved:
     )
 
     def link(op: str, args: dict[str, Any]) -> dict[str, Any]:
-        return hostclient._request(target, op, args, auth=None)["data"]  # noqa: SLF001 - the CLI's one request path
+        from orch.host.control_client import new_idem
+
+        idem = new_idem() if op == "records.remote_private" else None  # the mark is a write (an outcome record)
+        return hostclient._request(target, op, args, auth=None, idem=idem)["data"]  # noqa: SLF001 - one request path
 
     return Resolved(wid, Path(str(entry.get("root"))), link, ValidatedTips(state / "records.json"))

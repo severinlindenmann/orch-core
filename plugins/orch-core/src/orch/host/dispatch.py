@@ -224,8 +224,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
-    if name in records_ops.RECORDS_OPS:  # H11e: column P only, owner or maintainer (checked by the op)
-        return ("person_read", "read")
+    if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
+        return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only

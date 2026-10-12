@@ -9,8 +9,12 @@ push.
 
 **One destination.** The effective push URL is resolved once by git itself (``git remote get-url --push`` under the
 frozen configuration: ``pushurl``, ``insteadOf`` and ``pushInsteadOf`` applied) and must be exactly one URL. The
-network calls (``ls-remote`` and ``push``) then run with that literal URL and with every ``url.*`` entry removed from
-the frozen configuration, so nothing rewrites it again: the export check, ``ls-remote`` and ``push`` see one string.
+network calls (``ls-remote`` and ``push``) then run with that literal URL from a throwaway, config-free bare repo
+(:meth:`Git.transport`, the records repo's objects as alternates) that keeps only authentication and transport
+settings of the frozen configuration: no ``url.*``, no ``remote.*``, no ``.git/config`` of the records repo is read
+by them, so nothing rewrites the URL again and the push does not re-read the checked config (Opus #430 findings 1,
+3). The export check, ``ls-remote`` and ``push`` see one string. ``core.commitGraph`` is off everywhere, the
+alternates included (finding 2).
 
 Every call: argv only, no shell, stdin closed unless input is given, ``LANG=C``, ``GIT_TERMINAL_PROMPT=0``,
 ``GIT_NO_REPLACE_OBJECTS=1``, ``GIT_ALLOW_PROTOCOL`` (https and ssh), hooks off (``core.hooksPath=/dev/null``),
@@ -19,20 +23,23 @@ Every call: argv only, no shell, stdin closed unless input is given, ``LANG=C``,
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
 import stat
 import subprocess
-from collections.abc import Mapping, Sequence
+import tempfile
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import RecordsError
 
-__all__ = ["ALLOWED_PROTOCOLS", "EMPTY_TREE", "Git", "check_local", "open_repo", "redact"]
+__all__ = ["ALLOWED_PROTOCOLS", "EMPTY_TREE", "Git", "check_local", "open_repo", "redact", "url_problem"]
 
 ALLOWED_PROTOCOLS = "https:ssh"
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 LOCAL_TIMEOUT = 10.0
 NETWORK_TIMEOUT = 20.0
@@ -42,7 +49,13 @@ _HARDEN = (
     "-c", "core.quotePath=false",
     "-c", "gc.auto=0",
     "-c", "maintenance.auto=false",
+    "-c", "core.commitGraph=false",  # a forged commit-graph could lie about ancestry (Opus #430 finding 2)
+    "-c", "fetch.writeCommitGraph=false",
 )  # fmt: skip
+#: the only sections of the person's frozen configuration a network call keeps: authentication and transport
+#: settings. Never ``url.*`` or ``remote.*`` (they would redirect the literal URL, Opus #430 finding 1).
+_NETWORK_SECTIONS = frozenset({"credential", "http", "ssh"})
+_NETWORK_KEYS = frozenset({"core.sshcommand"})
 #: sections the repo's own configuration may not set at all (#254 rounds 3 and 4, D-P2-33)
 _DENY_SECTIONS = frozenset({"url", "http", "credential", "protocol", "filter", "include", "includeif", "lfs"})
 _DENY_KEYS = frozenset(
@@ -70,6 +83,18 @@ def redact(text: str) -> str:
     """Text for an error or the output: no ``user:password@`` of a URL, no control characters."""
     text = _USERINFO.sub(r"\1***@", text)
     return "".join(ch if ch.isprintable() else "?" for ch in text)
+
+
+def url_problem(url: str) -> str | None:
+    """Why a URL may not be a records destination (stored in the mark and the audit, printed): credentials, or a
+    query string or fragment (a token can hide there), or a control character. ``None`` when it may."""
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        return "it has a control character"
+    if has_credentials(url):
+        return "it carries credentials; use a credential helper"
+    if "?" in url or "#" in url:
+        return "it has a query string or fragment"
+    return None
 
 
 def has_credentials(url: str) -> bool:
@@ -100,6 +125,9 @@ def check_local(entries: Sequence[tuple[str, str, str]], remote: str | None) -> 
             raise RecordsError("records.unsafe_config", f"the records repo's own config sets {key}: push by hand")
         if section == "core" and name == "bare" and value.strip().lower() not in ("false", "no", "off", "0"):
             raise RecordsError("records.unsafe_config", f"the records repo's own config sets {key}")
+        if section == "remote" and remote is not None and sub != remote:
+            # git applies remote."<url>".* even to a push to a literal URL: only the remote in use may be configured
+            raise RecordsError("records.unsafe_config", f"the records repo's own config sets {key}: push by hand")
         if section == "remote" and remote is not None and sub == remote and name not in _REMOTE_OK:
             raise RecordsError("records.unsafe_config", f"the records repo's own config sets {key}: push by hand")
 
@@ -129,18 +157,51 @@ class Git:
     frozen: list[tuple[str, str]] = field(default_factory=list)
     local_digest: str = ""
     local: list[tuple[str, str, str]] = field(default_factory=list)
+    #: a throwaway transport repo (:meth:`transport`): bare, no work tree, no config of the records repo
+    bare: bool = False
+
+    @contextlib.contextmanager
+    def transport(self) -> Iterator[Git]:
+        """A throwaway, config-free bare repo for the network calls (``ls-remote``, ``push``): a private 0700 temp
+        dir whose ``objects/info/alternates`` names the records repo's objects. No config of the records repo (no
+        ``remote.*``, no ``branches/`` or ``remotes/``) reaches the network calls, and of the person's frozen
+        configuration only authentication and transport settings (``credential.*``, ``http.*``, ``ssh.*``,
+        ``core.sshCommand``) do: the URL checked is the URL pushed to."""
+        with tempfile.TemporaryDirectory(prefix="orch-records-net-") as d:
+            os.chmod(d, 0o700)
+            net = Path(d) / "t.git"
+            subprocess.run(
+                ["git", "init", "-q", "--bare", "--template=", str(net)],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                env={**self.base_env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+                timeout=LOCAL_TIMEOUT,
+                check=True,
+            )
+            info = net / "objects" / "info"
+            info.mkdir(parents=True, exist_ok=True)
+            fd = os.open(info / "alternates", os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(os.path.realpath(self.git_dir / "objects") + "\n")
+            frozen = [
+                (k, v) for k, v in self.frozen if _split_key(k)[0] in _NETWORK_SECTIONS or k.lower() in _NETWORK_KEYS
+            ]
+            yield Git(net, net, self.protocols, dict(self.base_env), frozen, bare=True)
 
     # -- running
-    def env(self, *, network: bool = False, index: Path | None = None, rewrites: bool = True) -> dict[str, str]:
-        entries = [(k, v) for k, v in self.frozen if rewrites or _split_key(k)[0] != "url"]
+    def env(self, *, network: bool = False, index: Path | None = None) -> dict[str, str]:
+        if network and not self.bare:
+            raise RecordsError("internal", "a network call runs only in the transport repo")
+        entries = list(self.frozen)
         env = dict(self.base_env)
         env.update(
             GIT_DIR=str(self.git_dir),
-            GIT_WORK_TREE=str(self.root),
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=os.devnull,
             GIT_CONFIG_COUNT=str(len(entries)),
         )
+        if not self.bare:
+            env["GIT_WORK_TREE"] = str(self.root)
         for i, (k, v) in enumerate(entries):
             env[f"GIT_CONFIG_KEY_{i}"] = k
             env[f"GIT_CONFIG_VALUE_{i}"] = v
@@ -156,7 +217,6 @@ class Git:
         input: bytes | None = None,
         network: bool = False,
         index: Path | None = None,
-        rewrites: bool = True,
         check: bool = True,
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
@@ -167,8 +227,8 @@ class Git:
                 input=input,
                 stdin=None if input is not None else subprocess.DEVNULL,
                 capture_output=True,
-                env=self.env(network=network, index=index, rewrites=rewrites),
-                cwd=self.root,
+                env=self.env(network=network, index=index),
+                cwd=self.git_dir if self.bare else self.root,
                 timeout=timeout or (NETWORK_TIMEOUT if network else LOCAL_TIMEOUT),
                 check=False,
             )

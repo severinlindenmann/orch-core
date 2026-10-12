@@ -36,6 +36,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
@@ -43,7 +44,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import FILE_MAX, FILES_MAX, TOTAL_MAX, Entry, RecordsError, is_record_path, manifest_id, open_root, read_exact
+from . import (
+    FILE_MAX,
+    FILES_MAX,
+    PAGE_FILES,
+    TOTAL_MAX,
+    Entry,
+    RecordsError,
+    is_record_path,
+    manifest_id,
+    open_root,
+    read_exact,
+)
 from .git import EMPTY_TREE, Git
 
 __all__ = [
@@ -78,17 +90,31 @@ class Manifest:
 
 def fetch_manifest(link: Link, workspace_id: str) -> Manifest:
     """Every page of one ``records.snapshot``, checked: one manifest id, recomputed; record paths only, no
-    duplicates; the byte limits."""
+    duplicates; the byte and file limits; a bounded number of pages. A reply of the wrong shape is
+    ``records.snapshot_invalid``."""
+    try:
+        return _fetch_manifest(link, workspace_id)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise RecordsError("records.snapshot_invalid", "the host's snapshot reply has an unexpected shape") from None
+
+
+def _fetch_manifest(link: Link, workspace_id: str) -> Manifest:
     data = link("records.snapshot", {})
     mid, heads, ws_seq = data["manifest"], data["heads"], data["ws_seq"]
+    if type(mid) is not str or not isinstance(heads, dict) or type(ws_seq) is not int:
+        raise RecordsError("records.snapshot_invalid", "the host's snapshot reply has an unexpected shape")
     if data.get("workspace") != workspace_id:
         raise RecordsError("records.snapshot_invalid", "the snapshot names another workspace")
     files = list(data["files"])
+    pages = 1
     while data.get("next_page"):
+        pages += 1
+        if pages > FILES_MAX // PAGE_FILES + 2:
+            raise RecordsError("records.snapshot_invalid", "the snapshot has more pages than files allow")
         data = link("records.snapshot", {"page": data["next_page"]})
         if data["manifest"] != mid:
             raise RecordsError("records.snapshot_invalid", "a snapshot page belongs to another manifest")
-        files += data["files"]
+        files += list(data["files"])
         if len(files) > FILES_MAX:
             raise RecordsError("records.too_large", f"the manifest names more than {FILES_MAX} files")
     entries, seen, total = [], set(), 0
@@ -98,7 +124,7 @@ def fetch_manifest(link: Link, workspace_id: str) -> Manifest:
             raise RecordsError("records.snapshot_invalid", f"the manifest names {path!r}")
         if type(size) is not int or not 0 <= size <= FILE_MAX:
             raise RecordsError("records.too_large", f"{path}: {size} bytes")
-        if type(digest) is not str or len(digest) != 64:
+        if type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise RecordsError("records.snapshot_invalid", f"{path}: no sha256")
         total += size
         if total > TOTAL_MAX:
@@ -277,7 +303,9 @@ def _refresh_index(repo: Git, compared: bytes | None, new_commit: str) -> bool:
         try:
             if _read_at(gfd, "index") != compared:
                 return False
-            os.write(fd, data)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
             os.fsync(fd)
             os.close(fd)
             fd = -1
@@ -311,7 +339,7 @@ def commit(repo: Git, link: Link, workspace_id: str, *, fresh: bool = False) -> 
     old_tree = repo.out("rev-parse", f"{old}^{{tree}}") if old else EMPTY_TREE
     if old is not None and old_tree == tree and not fresh:
         return {"commit": old, "tree": tree, "manifest": manifest.id, "ws_seq": manifest.ws_seq, "changed": False,
-                "branch": branch, "index": "unchanged"}  # fmt: skip
+                "branch": branch, "index": "unchanged", "fresh": False}  # fmt: skip
     args = ["commit-tree", "--no-gpg-sign", tree]
     if old is not None and not fresh:
         args += ["-p", old]
@@ -336,10 +364,13 @@ def _commits(repo: Git, tip: str, since: str | None) -> list[str]:
     return repo.out(*args).split()
 
 
-def _cat_commits(repo: Git, ids: list[str]) -> dict[str, tuple[int, str]]:
-    """id -> (parent count, message)."""
+_ALLOWED_HEADERS = ("tree", "parent", "author", "committer")
+
+
+def _cat_commits(repo: Git, ids: list[str]) -> dict[str, tuple[list[str], bytes]]:
+    """id -> (header names in order, raw message)."""
     raw = repo.run("cat-file", "--batch", input="\n".join(ids).encode() + b"\n").stdout
-    out: dict[str, tuple[int, str]] = {}
+    out: dict[str, tuple[list[str], bytes]] = {}
     pos = 0
     for oid in ids:
         nl = raw.index(b"\n", pos)
@@ -350,16 +381,28 @@ def _cat_commits(repo: Git, ids: list[str]) -> dict[str, tuple[int, str]]:
         body = raw[nl + 1 : nl + 1 + size]
         pos = nl + 1 + size + 1
         head, _, message = body.partition(b"\n\n")
-        parents = sum(1 for line in head.split(b"\n") if line.startswith(b"parent "))
-        out[oid] = (parents, message.decode(errors="replace"))
+        names = [line.split(b" ", 1)[0].decode(errors="replace") for line in head.split(b"\n")]
+        out[oid] = (names, message)
     return out
 
 
-def _has_trailer(message: str, workspace_id: str) -> bool:
-    paragraphs = [p for p in message.strip().split("\n\n") if p.strip()]
-    if not paragraphs:
+def _message_ok(message: bytes, workspace_id: str) -> bool:
+    """Exactly the shape :func:`_message` writes, nothing else exported in a message."""
+    pattern = (
+        rb"orch: records ws_seq (?:0|[1-9][0-9]{0,15})\n\nOrch-Manifest: m_[0-9a-f]{64}\n"
+        + TRAILER.encode()
+        + rb": "
+        + re.escape(workspace_id.encode())
+        + rb"\n"
+    )
+    return re.fullmatch(pattern, message) is not None
+
+
+def _headers_ok(names: list[str]) -> bool:
+    """Only tree, parent, author and committer headers, in git's order (no gpgsig, mergetag, encoding, extras)."""
+    if any(n not in _ALLOWED_HEADERS for n in names):
         return False
-    return f"{TRAILER}: {workspace_id}" in [line.strip() for line in paragraphs[-1].splitlines()]
+    return names[:1] == ["tree"] and names[-2:] == ["author", "committer"] and names.count("author") == 1
 
 
 def validate_history(repo: Git, workspace_id: str, tip: str, since: str | None = None) -> int:
@@ -374,10 +417,16 @@ def validate_history(repo: Git, workspace_id: str, tip: str, since: str | None =
         return 0
     meta = _cat_commits(repo, ids)
     for oid in ids:
-        parents, message = meta[oid]
-        if parents > 1:
+        names, message = meta[oid]
+        if names.count("parent") > 1:
             raise RecordsError("records.history_invalid", f"{oid[:12]} is a merge: records history is linear")
-        if not _has_trailer(message, workspace_id):
+        if not _headers_ok(names):
+            raise RecordsError(
+                "records.not_records_only",
+                f"{oid[:12]} has commit headers a records commit never has (signature, encoding, extras)",
+                hint="push by hand, or start a fresh history: orch records commit --fresh-history",
+            )
+        if not _message_ok(message, workspace_id):
             raise RecordsError(
                 "records.not_records_only",
                 f"{oid[:12]} is not a records commit of this workspace",
@@ -434,9 +483,12 @@ class ValidatedTips:
             st = os.fstat(fh.fileno())
             if st.st_uid != os.getuid() or st.st_mode & 0o077:
                 raise RecordsError("records.unsafe_config", "the records state file is not private to you")
-            doc = json.loads(fh.read(1 << 20) or b"{}")
+            try:
+                doc = json.loads(fh.read(1 << 20) or b"{}")
+            except ValueError:
+                raise RecordsError("records.unsafe_config", "the records state file is corrupt") from None
         if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("validated"), dict):
-            return {"v": 1, "validated": {}}
+            raise RecordsError("records.unsafe_config", "the records state file is corrupt")
         return doc
 
     def get(self, workspace_id: str, branch: str) -> str | None:
@@ -449,23 +501,27 @@ class ValidatedTips:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if os.path.islink(self.path.parent):
             raise RecordsError("records.unsafe_config", "the records state directory is a symlink")
-        tmp = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
-        with os.fdopen(fd, "w") as fh:
-            json.dump(doc, fh, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, self.path)
+        fd, tmp = tempfile.mkstemp(prefix=".records.", suffix=".tmp", dir=self.path.parent)  # 0600, O_EXCL
+        try:
+            with os.fdopen(fd, "w") as fh:
+                json.dump(doc, fh, sort_keys=True)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.path)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
+            raise
 
 
 # --- push ------------------------------------------------------------------------------------------------------------
 
 
-def push_url(repo: Git, remote: str) -> str:
+def push_url(repo: Git, remote: str, net: Git | None = None) -> str:
     """The one effective push URL of ``remote`` as git resolves it under the frozen configuration (``pushurl``, else
     ``url``; ``insteadOf``/``pushInsteadOf`` applied). Not exactly one URL, or a transport outside the allow-list, is
     refused."""
-    from .git import check_local, has_credentials, redact, url_allowed
+    from .git import check_local, redact, url_allowed, url_problem
 
     check_local(repo.local, remote)
     res = repo.run("remote", "get-url", "--push", "--all", remote, check=False)
@@ -476,19 +532,25 @@ def push_url(repo: Git, remote: str) -> str:
         n = len(urls)
         raise RecordsError("records.remote_invalid", f"remote {remote!r} has {n} push URLs; exactly one is needed")
     url = urls[0]
-    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url) or not url_allowed(url, repo.protocols):
+    problem = url_problem(url)
+    if problem is not None:
+        raise RecordsError("records.remote_invalid", f"the push URL of remote {remote!r} is refused: {problem}")
+    if not url_allowed(url, repo.protocols):
         raise RecordsError("records.remote_invalid", f"remote {remote!r}: transport not allowed ({redact(url[:80])})")
-    if has_credentials(url):
-        raise RecordsError("records.remote_invalid", "the push URL carries a password: use a credential helper")
-    # the literal URL as git itself resolves it for the network calls (every url.* rewrite removed): the same string
-    seen = repo.out("ls-remote", "--get-url", url, rewrites=False)
+    # the literal URL as git itself resolves it in the transport repo (no url.*, no remote.*): the same string
+    if net is None:
+        with repo.transport() as fresh:
+            seen = fresh.out("ls-remote", "--get-url", url)
+    else:
+        seen = net.out("ls-remote", "--get-url", url)
     if seen != url:
         raise RecordsError("records.remote_invalid", "git would rewrite the push URL again; refusing")
     return url
 
 
-def remote_tip(repo: Git, url: str, ref: str) -> str | None:
-    res = repo.run("ls-remote", "--refs", url, ref, network=True, rewrites=False)
+def remote_tip(net: Git, url: str, ref: str) -> str | None:
+    """T from ``ls-remote`` of the literal URL, run in the transport repo."""
+    res = net.run("ls-remote", "--refs", url, ref, network=True)
     tips = [line.split("\t") for line in res.stdout.decode().splitlines() if "\t" in line]
     exact = [sha for sha, name in tips if name == ref]
     if len(exact) > 1:
@@ -511,8 +573,16 @@ def push(
     source = repo.resolve(ref)  # S, resolved once
     if source is None:
         raise RecordsError("records.git_state", f"{branch} has no commit yet: orch records commit first")
-    url = push_url(repo, remote)
-    target = remote_tip(repo, url, ref)  # T
+    with repo.transport() as net:
+        return _push(repo, net, link, workspace_id, tips, remote, initial, branch, ref, source)
+
+
+def _push(
+    repo: Git, net: Git, link: Link, workspace_id: str, tips: ValidatedTips, remote: str, initial: bool,
+    branch: str, ref: str, source: str,
+) -> dict[str, Any]:  # fmt: skip
+    url = push_url(repo, remote, net)
+    target = remote_tip(net, url, ref)  # T
     if target is None and not initial:
         raise RecordsError(
             "records.push_rejected",
@@ -539,14 +609,14 @@ def push(
     if check.get("sha") != source or check.get("url") != url or check.get("ref") != ref:
         raise RecordsError("records.push_rejected", "the export check answered for another push")
     repo.recheck_local()
-    if push_url(repo, remote) != url:  # the destination is the one checked, right before the push
+    if push_url(repo, remote, net) != url:  # the destination is the one checked, right before the push
         raise RecordsError("records.push_rejected", "the push destination changed during this run")
     lease = f"--force-with-lease={ref}:{target or ''}"
-    res = repo.run(
+    res = net.run(
         "-c", "push.followTags=false", "-c", "push.gpgSign=false", "-c", "push.recurseSubmodules=no",
         "push", "--no-verify", "--porcelain", "--no-recurse-submodules", "--no-follow-tags", lease,
         url, f"{source}:{ref}",
-        network=True, rewrites=False, check=False,
+        network=True, check=False,
     )  # fmt: skip
     if res.returncode != 0:
         from .git import redact

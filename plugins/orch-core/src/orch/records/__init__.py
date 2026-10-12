@@ -68,7 +68,10 @@ _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 
 
 class RecordsError(Exception):
-    """A refusal of the records tool or the host op: ``code`` from the §6 catalog, ``exit`` the CLI exit code."""
+    """A refusal of the records tool (or of a records host op, which maps it to a host error with the same code and
+    exit): ``code`` is one of :attr:`EXITS` (the records codes; a few callers pass a host code such as
+    ``op.not_allowed`` with an explicit exit), ``exit`` the CLI exit code. Integrity and policy refusals exit 3,
+    ``records.snapshot_invalid`` (a malformed host reply) 5, a retryable ``records.snapshot_changed`` 9."""
 
     EXITS = {
         "records.not_dedicated": 3,
@@ -78,13 +81,13 @@ class RecordsError(Exception):
         "records.history_invalid": 3,
         "records.snapshot_changed": 9,
         "records.snapshot_invalid": 5,
-        "records.tree_mismatch": 1,
+        "records.tree_mismatch": 3,
         "records.too_large": 3,
         "records.unsafe_tree": 3,
         "records.push_rejected": 3,
         "records.remote_invalid": 3,
         "records.remote_missing": 3,
-        "records.git_failed": 1,
+        "records.git_failed": 3,
         "records.unsupported": 3,
     }
 
@@ -149,7 +152,9 @@ def open_record(root_fd: int, rel: str) -> int:
             fds.append(cur)
         fd = os.open(parts[-1], os.O_RDONLY | _NOFOLLOW | _CLOEXEC, dir_fd=cur)
     except OSError as exc:
-        raise RecordsError("records.unsafe_tree", f"{rel}: cannot open safely ({exc.strerror or exc})") from None
+        raise RecordsError(
+            "records.unsafe_tree", f"{rel}: cannot open safely ({exc.strerror or type(exc).__name__})"
+        ) from None
     finally:
         for d in fds:
             os.close(d)
@@ -184,7 +189,7 @@ def open_root(root: Path) -> int:
         return os.open(root, os.O_RDONLY | _DIRECTORY | _NOFOLLOW | _CLOEXEC)
     except OSError as exc:
         raise RecordsError(
-            "records.unsafe_tree", f"{root}: cannot open the record root ({exc.strerror or exc})"
+            "records.unsafe_tree", f"cannot open the record root ({exc.strerror or type(exc).__name__})"
         ) from None
 
 
@@ -220,7 +225,7 @@ def list_records(root_fd: int) -> list[str]:
     except FileNotFoundError:
         events = None
     except OSError as exc:
-        raise RecordsError("records.unsafe_tree", f"events: {exc.strerror or exc}") from None
+        raise RecordsError("records.unsafe_tree", f"events: {exc.strerror or type(exc).__name__}") from None
     if events is not None:
         try:
             if regular(events, "workspace.jsonl", "events/workspace.jsonl"):
@@ -232,7 +237,7 @@ def list_records(root_fd: int) -> list[str]:
     except FileNotFoundError:
         return sorted(out)
     except OSError as exc:
-        raise RecordsError("records.unsafe_tree", f"tickets: {exc.strerror or exc}") from None
+        raise RecordsError("records.unsafe_tree", f"tickets: {exc.strerror or type(exc).__name__}") from None
     try:
         for uid in sorted(os.listdir(tickets)):
             if not _ULID_RE.fullmatch(uid):

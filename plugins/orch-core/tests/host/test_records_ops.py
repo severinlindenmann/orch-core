@@ -3,6 +3,7 @@ convenience-readers rule for a push, ``records.remote_private`` is the owner's o
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -124,9 +125,9 @@ def test_records_ops_are_p_only_and_manager_only(w, wq):
         ("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}),
         ("records.remote_private", {"url": URL_A, "on": True}),
     ):
-        assert err(w.client().req(op, args)) == "op.not_allowed"
-        assert err(w.client().req(op, args, grant=w.grant)) == "op.not_allowed"
-        assert err(wq.client().req(op, args)) == "op.not_allowed"  # quinn is a plain member
+        assert err(w.client().req(op, args, idem=True)) == "op.not_allowed"
+        assert err(w.client().req(op, args, grant=w.grant, idem=True)) == "op.not_allowed"
+        assert err(wq.client().req(op, args, idem=True)) == "op.not_allowed"  # quinn is a plain member
 
 
 def test_export_check_without_convenience_is_allowed_and_audited(w):
@@ -142,14 +143,14 @@ def test_export_check_with_convenience_needs_the_exact_private_url(w):
     c = w.client()
     args = {"sha": SHA, "url": URL_A, "ref": REF}
     assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
-    marked = ok(c.req("records.remote_private", {"url": URL_A, "on": True}))
+    marked = ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
     assert marked["private_remote"]["url"] == URL_A and "trusts your word" in marked["text"]
     assert ok(c.req("records.export_check", args))["policy"] == "private_remote"
     # the mark for URL A does not allow URL B (a changed pushurl, insteadOf or remote URL resolves to another string)
     res = c.req("records.export_check", {**args, "url": URL_B})
     assert err(res) == "sign.convenience_readers" and "changed" in res["error"]["message"]
     assert err(c.req("records.export_check", {**args, "url": URL_A + "/"})) == "sign.convenience_readers"
-    ok(c.req("records.remote_private", {"on": False}))
+    ok(c.req("records.remote_private", {"on": False}, idem=True))
     assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
     doc = host_records.read_record(w.lab.state, w.wid, os.getuid())
     assert [e["policy"] for e in doc["exports"]] == ["refused", "private_remote", "refused", "refused", "refused"]
@@ -170,3 +171,55 @@ def test_export_check_refuses_bad_input(w):
     ):
         assert err(c.req("records.export_check", bad)) == "invalid.input"
     assert err(c.req("records.remote_private", {"on": True})) == "invalid.input"
+
+
+# --- the mark is an owner-only write (Opus #430 finding 4) and refuses URLs that can hide a secret (finding 6) ------
+
+
+def test_the_mark_needs_an_idem_and_replays_its_outcome(w):
+    c = w.client()
+    assert err(c.req("records.remote_private", {"url": URL_A, "on": True})) == "idem.required"
+    assert err(c.req("records.remote_private", {"url": URL_A, "on": True}, dry_run=True)) == "invalid.input"
+    first = ok_(c.req("records.remote_private", {"url": URL_A, "on": True}, idem="a_01J9ZP0000000000000000000C"))
+    again = ok_(c.req("records.remote_private", {"url": URL_A, "on": True}, idem="a_01J9ZP0000000000000000000C"))
+    assert again["duplicate"] is True and again["data"] == first["data"]
+    other = c.req("records.remote_private", {"url": URL_B, "on": True}, idem="a_01J9ZP0000000000000000000C")
+    assert err(other) == "idem.conflict"
+    doc = host_records.read_record(w.lab.state, w.wid, os.getuid())
+    assert doc["private_remote"]["url"] == URL_A
+    assert [(m["action"], m["url"], m["by"]) for m in doc["marks"]] == [("set", URL_A, w.lab.owner)]
+    ok(c.req("records.remote_private", {"on": False}, idem=True))
+    doc = host_records.read_record(w.lab.state, w.wid, os.getuid())
+    assert doc["private_remote"] is None and doc["marks"][-1]["action"] == "clear"
+
+
+def test_a_maintainer_reads_and_checks_but_never_sets_the_mark(w, monkeypatch):
+    import dataclasses
+
+    real = host_records.Viewer.of
+    monkeypatch.setattr(host_records.Viewer, "of", lambda call: dataclasses.replace(real(call), role="maintainer"))
+    c = w.client()
+    ok(c.req("records.snapshot", {}))
+    ok(c.req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}))
+    assert err(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True)) == "op.not_allowed"
+    assert err(c.req("records.remote_private", {"on": False}, idem=True)) == "op.not_allowed"
+    assert host_records.read_record(w.lab.state, w.wid, os.getuid())["private_remote"] is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.org/r.git?token=SECRET123",
+        "https://example.org/r.git#SECRET123",
+        "https://SECRET123@example.org/r.git",
+    ],
+)
+def test_urls_that_can_hide_a_secret_are_refused_and_never_stored(w, url):
+    c = w.client()
+    for res in (
+        c.req("records.remote_private", {"url": url, "on": True}, idem=True),
+        c.req("records.export_check", {"sha": SHA, "url": url, "ref": REF}),
+    ):
+        assert err(res) == "invalid.input" and "SECRET123" not in json.dumps(res)
+    path = host_records.record_path(w.lab.state, w.wid)
+    assert not path.exists() or "SECRET123" not in path.read_text()

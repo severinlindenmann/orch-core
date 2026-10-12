@@ -40,6 +40,7 @@ from typing import Any
 from orch import canon
 
 from . import frames
+from .blobs import BLOB_MAX, Quota
 from .bus import Bus
 from .control import CONTROL_OPS, ControlGate, ControlOps
 from .custody import check_tree, ensure_private_dir, root_key
@@ -108,6 +109,8 @@ class Host:
         self.bus = Bus(self)
         #: cursor authentication (§0.9): its key is read from the state directory at start (cursors survive a restart)
         self.cursors: Cursors = Cursors(secrets.token_bytes(32))
+        #: the blob quotas every workspace shares (§0.10, F9)
+        self.blob_quota = Quota(clock=self.clock)
         self.subscriptions_end: Callable[[str], None] = self.bus.end_all
         self.loop: asyncio.AbstractEventLoop | None = None
         self._lock_fd: int | None = None
@@ -137,7 +140,7 @@ class Host:
             "frame": frames.MAX_FRAME,
             "inflight": frames.MAX_INFLIGHT,
             "timeout_ms": 30_000,
-            "blob_bytes": 0,
+            "blob_bytes": BLOB_MAX,
             "inline_bytes": 524_288,
         }
 
@@ -258,6 +261,7 @@ class Host:
         service = WorkspaceService(entry, self.state_dir, self.host_uid, clock=self.clock)
         service.bus, service.publish = self.bus, self.bus.publisher(entry.workspace_id)
         service.cursors = self.cursors
+        service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
         await service.call(service.open)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         try:
@@ -373,6 +377,7 @@ class Host:
                     await service.call(service.outcomes.sweep)
                     if service.requests is not None:
                         await service.call(service.requests.sweep)
+                    await service.call(service.blobs.sweep)
                 except Exception:  # noqa: BLE001
                     LOG.exception("outcome sweep failed")
 

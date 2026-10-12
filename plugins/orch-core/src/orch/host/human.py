@@ -296,11 +296,8 @@ class HumanOps:
         name = args["op"]
         operation = ops.get(name)
         inner = dict(args["args"])
-        specs = self.backend._file_specs(operation, call.frame, inner)
-        for arg, spec in specs.items():
-            if set(spec) != {"b64"}:
-                raise HostError("blob.invalid", f"files.{arg}: human.prepare takes the bytes inline (b64)")
-        digests, _ = service.outcomes.bind_files(call.principal, None, specs)
+        specs = self._specs(operation, call.frame, inner)
+        digests, _ = self.backend.bind_files(call, None, specs)  # a {blob} must be the preparing principal's (F9)
         # the inner args as given (not normalised: a REF and its uid are two bindings, which only ever errs towards
         # idem.conflict), the person and the signer or hand-off; the session and file digests are added by binding_of
         bound = {
@@ -354,11 +351,9 @@ class HumanOps:
             check_input(operation, inner)
         except OrchError as e:
             raise host_error(e, operation) from None
-        specs = self.backend._file_specs(operation, call.frame, inner)
-        for arg, spec in specs.items():
-            if set(spec) != {"b64"}:
-                raise HostError("blob.invalid", f"files.{arg}: human.prepare takes the bytes inline (b64)")
-        files = self.backend._file_bytes(specs, inner)
+        specs = self._specs(operation, call.frame, inner)
+        self.backend.bind_files(call, None, specs)  # a {blob} must be a complete blob of the preparing principal (F9)
+        files = self.backend._file_bytes(call, specs, inner)
         capture = Capture(
             person,
             signer["device"] if signer else None,
@@ -410,10 +405,21 @@ class HumanOps:
             "outcome": None,
         }
         requests.write(record)
+        # the blobs the inner op used are held with the request: they live (and count against this UID) as long as it
+        service.blobs.hold(call.principal, _blob_ids(specs), rid, record["expires"])
         view = self._view(record)
         if intent is not None:
             service.outcomes.commit(intent, view)
         return view
+
+    def _specs(self, operation: Any, frame: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
+        """The inner op's ``files``: inline ``{b64}`` or a ``{blob}``; a ``{digest}`` names no bytes, and a prepare
+        has no earlier record to bind it to, so it is ``blob.invalid``."""
+        specs = self.backend._file_specs(operation, frame, inner)
+        for arg, spec in specs.items():
+            if set(spec) not in ({"b64"}, {"blob"}):
+                raise HostError("blob.invalid", f"files.{arg}: human.prepare takes the bytes (b64) or a blob")
+        return specs
 
     @staticmethod
     def _new_code(requests: RequestStore) -> str:
@@ -659,6 +665,7 @@ class HumanOps:
         if record["state"] in PENDING:
             record = {**record, "state": "cancelled", "done_at": call.service.clock()}
             requests.write(record)
+            call.service.blobs.release(record["id"])  # the blobs it held go with it
         # an expired request can never be submitted either: it answers cancelled (§0.8.1 lists two answers)
         return {"state": "submitted" if record["state"] == "submitted" else "cancelled"}
 
@@ -694,6 +701,7 @@ class HumanOps:
         except BaseException:
             outcomes.release(begun)  # the log and the request say what landed; start-up recovery finishes it
             raise
+        service.blobs.release(args["request_id"])  # submitted: the blobs it held are consumed
         return outcomes.commit(begun, result)["result"]
 
     def _note_refusal(self, call: Call, request_id: str, code: str) -> None:
@@ -869,6 +877,10 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     outcome = {"state": "committed", "result": result, "exit": 0}
     requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})
     return result
+
+
+def _blob_ids(specs: dict[str, Any]) -> list[str]:
+    return [spec["blob"] for spec in specs.values() if "blob" in spec]
 
 
 def roll_forward(service: WorkspaceService, requests: RequestStore, record: dict[str, Any]) -> dict[str, Any]:

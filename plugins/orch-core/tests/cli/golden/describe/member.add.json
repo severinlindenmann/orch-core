@@ -45,7 +45,8 @@
         "cert": {
           "type": "string",
           "description": "their device certificate: PATH or - for stdin",
-          "x-metavar": "PATH"
+          "x-metavar": "PATH",
+          "x-file": true
         }
       },
       "required": [

@@ -20,7 +20,7 @@ OP = operation(
     ),
     who="unattended",
     props={
-        "path": S("file to store", **{"x-metavar": "PATH"}),
+        "path": S("file to store", **{"x-metavar": "PATH", "x-file": True}),
         "ref": S("ticket REF (flag); default: your claim", pattern=REF_PATTERN, **{"x-metavar": "REF"}),
         "kind": E(
             "what it is",

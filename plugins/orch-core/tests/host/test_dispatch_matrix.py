@@ -13,7 +13,7 @@ import pytest
 import orch.ops as ops
 from orch.host import frames
 from orch.host.columns import refusal, resolve
-from orch.host.dispatch import HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
+from orch.host.dispatch import FILE_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
 from orch.ops.errors import ERRORS
@@ -66,12 +66,13 @@ def as_agent_class(served: Served) -> None:
 def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     welcome = served.client().welcome
     registry = {op.name for op in ops.all()}
-    assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | set(HOST_OPS) | set(HUMAN_OPS)
+    assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | set(HOST_OPS) | set(FILE_OPS) | set(HUMAN_OPS)
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1", "task.done"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
     assert all(v == 1 for v in welcome["ops"].values())
-    assert {"ops/1", "outcome/1", "sub/1"} <= set(welcome["caps"])
+    assert {"ops/1", "outcome/1", "sub/1", "blob/1", "diff/1"} <= set(welcome["caps"])
+    assert set(FILE_OPS) == {"blob.put", "blob.drop", "artifact.get"}
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
 
 
@@ -134,7 +135,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
     for op in served_ops():
         kind = op_kind(op)
         assert kind is not None
-        if op in HOST_OPS:
+        if op in HOST_OPS or op in FILE_OPS:
             assert kind == ("read", "read")
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")

@@ -70,7 +70,8 @@ def TASK(desc: str = "task id (T3 or DEMO-0043/T3)") -> dict[str, Any]:
 
 
 MSG = S("free text", **{"x-short": "m", "x-metavar": "TEXT"})
-FILE = S("read the text from PATH, or - for stdin", **{"x-metavar": "PATH"})
+#: a file argument (``x-file``): on the host socket its bytes come only through ``files`` (§0.3)
+FILE = S("read the text from PATH, or - for stdin", **{"x-metavar": "PATH", "x-file": True})
 
 # Output (data) building blocks.
 STR = {"type": "string"}

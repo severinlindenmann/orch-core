@@ -18,7 +18,7 @@ OP = operation(
     who="agent",
     props={
         "name": S("artifact name", **{"x-metavar": "NAME"}),
-        "path": S("the new file", **{"x-metavar": "PATH"}),
+        "path": S("the new file", **{"x-metavar": "PATH", "x-file": True}),
         "ref": S("ticket REF (flag); default: your claim", pattern=REF_PATTERN, **{"x-metavar": "REF"}),
     },
     required=("name", "path"),

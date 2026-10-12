@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from . import frames
 from .auth import AuthView, Verified, build_auth, secret_in_request
+from .blobs import BlobStore
 from .columns import Column, OpKind, refusal, resolve
 from .custody import check_tree, check_workspace_files
 from .errors import HostError
@@ -135,6 +136,8 @@ class WorkspaceService:
         self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         self.outcomes.roll_forward = self._roll_forward
         self.outcomes.prepared = self._prepared
+        #: blobs (§0.10, H4a2): ``<state>/hosts/<ws>/blobs/``; the host shares one quota among its workspaces
+        self.blobs = BlobStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
 
     @property
     def workspace_id(self) -> str:
@@ -195,6 +198,7 @@ class WorkspaceService:
 
                     self.requests.open()
                     recover(self)  # a crash between two appends of a human submission rolls forward (§0.8.1)
+                self.blobs.open()
                 self.outcomes.reconcile_all()  # a crash between an append and its record (§0.7)
                 self.outcomes.sweep()
             except (HostError, OSError, ValueError) as exc:
@@ -372,6 +376,7 @@ class WorkspaceService:
             if self.store is not None:
                 self.store.close()
                 self.store = None
+            self.blobs.close()
             if self.caps is not None:
                 self.caps.close()
                 self.caps = None

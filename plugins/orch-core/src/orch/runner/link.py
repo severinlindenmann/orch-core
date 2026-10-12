@@ -1,0 +1,368 @@
+"""The runner's connection to the host (D-P2-24, D-P2-25, D-P2-39).
+
+The runner is a client of the host's runner socket ``<run>/runner/host.sock``. Before it sends a byte it checks the
+socket's peer UID against the host UID it was configured with (:func:`orch.host.client.connect_pinned`), so it never
+takes commands or grants from a process of another UID; then the handshake, then ``runner.hello {version, gen, pid,
+term_socket, runs, grants}`` (§12.3.3) with every run of its table (the host reconciles; it treats the report as
+evidence only about runs it knows). The answer opens the command stream: ``evt`` items ``{cmd, cid, args}``, each
+answered with ``runner.report``.
+
+**Service generation.** Every runner start draws a new ``gen`` (32 hex digits), so the host can tell a reconnect of
+the same runner from a restarted one (runs lost then are ``runner_restarted``); the term socket's hello carries it
+too.
+
+**Authorization epochs.** Losing the host ends every attachment and refuses new tickets
+(:meth:`orch.runner.term.TermListener.host_lost`); only the next hello's answer re-opens them. Spawns stay
+idempotent by run id across reconnects (:meth:`orch.runner.supervise.Supervisor.spawn`).
+
+Environment of a spawn (defence in depth; the host computes it, H11c adds ``pass_env``): the variables named in
+``env_names`` must be on the runner's allow-list and are copied from the runner's own environment; ``env_fixed`` may
+only hold host-chosen values (``ORCH_TICKET``, ``ORCH_WORKTREE``, ``ORCH_WORKTREES``, ``ORCH_HARNESS``); ``TERM``
+and ``COLORTERM`` are fixed. Nothing else passes; the host never sends a secret in a spawn.
+"""
+
+from __future__ import annotations
+
+import concurrent.futures
+import contextlib
+import logging
+import os
+import secrets
+import threading
+import time
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+from orch.host import frames
+from orch.host._socket import recv
+from orch.host.client import Pin, handshake_pinned
+
+from .supervise import SpawnError, SpawnSpec, Supervisor
+from .table import now_iso
+from .term import TermListener, TicketError
+
+__all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_gen"]
+
+LOG = logging.getLogger(__name__)
+
+#: §2.4: what a run may get from the runner's own environment (values never reach the host)
+ENV_FROM_RUNNER = frozenset(
+    {
+        "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "SSH_AUTH_SOCK",
+        "ORCH_STATE_DIR", "XDG_CONFIG_HOME", "ORCH_HOST_RUN_DIR",
+    }
+)  # fmt: skip
+ENV_FIXED_NAMES = frozenset({"ORCH_TICKET", "ORCH_WORKTREE", "ORCH_WORKTREES", "ORCH_HARNESS"})
+FIXED = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
+VERSION = "orch-runner/1"
+
+
+def build_env(args: Mapping[str, Any], own: Mapping[str, str]) -> dict[str, str]:
+    names = args.get("env_names") or []
+    fixed = args.get("env_fixed") or {}
+    if not isinstance(names, list) or not isinstance(fixed, dict):
+        raise SpawnError("invalid.input", "spawn: invalid environment")
+    bad = [n for n in names if n not in ENV_FROM_RUNNER] + [k for k in fixed if k not in ENV_FIXED_NAMES]
+    if bad:
+        raise SpawnError("invalid.input", f"spawn: environment name not allowed: {str(bad[0])[:40]}")
+    env = {n: own[n] for n in names if n in own}
+    for k, v in fixed.items():
+        if not isinstance(v, str) or "\0" in v:
+            raise SpawnError("invalid.input", "spawn: invalid environment value")
+        env[k] = v
+    env.update(FIXED)
+    return env
+
+
+def new_gen() -> str:
+    """The runner generation (§12.3.2 ``Gen``): 32 hex digits drawn at every runner start."""
+    return secrets.token_hex(16)
+
+
+class HostLink:
+    """One thread that keeps the runner connected to its host and serves the command stream."""
+
+    def __init__(
+        self,
+        sup: Supervisor,
+        socket_path: Path,
+        *,
+        host_uid: int,
+        gen: str,
+        term: TermListener | None = None,
+        env: Mapping[str, str] | None = None,
+        backoff: tuple[float, float] = (0.5, 10.0),
+    ) -> None:
+        self.sup = sup
+        self.socket_path = Path(socket_path)
+        self.host_uid = host_uid
+        self.gen = gen
+        self.term = term
+        self.env = dict(os.environ if env is None else env)
+        self.backoff = backoff
+        self.sock: Any = None
+        self.epoch: str | None = None
+        self.ready = threading.Event()
+        self._write = threading.Lock()
+        self._n = 0
+        #: the connection number: bumped at every (re)connect, before the hello snapshot; every command is tagged
+        #: with the number it arrived on and never runs under another (F1: a stale spawn never runs after a reconnect)
+        self._conn = 0
+        self._held: list[tuple[dict[str, Any], int]] = []  # commands that arrived before the hello's answer
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._pool = concurrent.futures.ThreadPoolExecutor(4, thread_name_prefix="orch-runner-cmd")
+        self._answers: dict[str, dict[str, Any]] = {}
+        self._waiting: dict[str, threading.Event] = {}
+        #: tests: drop the report of these commands (a lost ack)
+        self.drop_reports: set[str] = set()
+        sup.on_event = self._on_event
+
+    # -- life cycle
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._loop, name="orch-runner-link", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self.disconnect()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def disconnect(self) -> None:
+        sock, self.sock = self.sock, None
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.shutdown(2)
+            sock.close()
+
+    def _loop(self) -> None:
+        delay = self.backoff[0]
+        while not self._stop.is_set():
+            try:
+                self._session()
+            except Exception as exc:  # noqa: BLE001 - any failure: reconnect later
+                LOG.info("runner link: %s", exc)
+            finally:
+                if self.ready.is_set():
+                    delay = self.backoff[0]  # it was connected: the next attempt starts from the short delay
+                self.ready.clear()
+                self.epoch = None
+                with self.sup._spawn_lock:
+                    self._conn += 1  # every command of the lost connection is stale from here on
+                    self._held.clear()
+                if self.term is not None:
+                    self.term.host_lost("host.restarting")
+                self.disconnect()
+            self._stop.wait(delay)
+            delay = min(delay * 2, self.backoff[1])
+
+    def _session(self) -> None:
+        hello = {"t": "hello", "proto": [1], "client": "orch-runner", "caps": ["runner/1"], "ops": {}}
+        sock, welcome = handshake_pinned(Pin(self.host_uid, None, self.socket_path), hello)  # peer UID first
+        if (welcome.get("peer") or {}).get("class") != "runner":
+            sock.close()
+            raise ConnectionError("the host did not accept this process as the runner")
+        sock.settimeout(None)
+        self.sock = sock
+        decoder = frames.Decoder()
+        term_socket = str(self.term.path) if self.term is not None else ""
+        with self.sup._spawn_lock:  # no spawn half-done while the table is reported
+            self._conn += 1
+            conn = self._conn
+            runs = self._runs()
+        reported_running = {r["run"] for r in runs if r["state"] == "running"}
+        hello_args = {"version": VERSION, "gen": self.gen, "pid": os.getpid(), "term_socket": term_socket,
+                      "runs": runs, "grants": []}  # grants: H11c  # fmt: skip
+        rid = self._send_req("runner.hello", hello_args)
+        while not self._stop.is_set():
+            data = recv(sock)
+            if not data:
+                raise ConnectionError("the host closed the connection")
+            for frame in decoder.feed(data):
+                if isinstance(frame, frames.FrameError):
+                    raise frame
+                kind = frame.get("t")
+                if kind == "res":
+                    if frame.get("id") == rid:
+                        if not frame.get("ok"):
+                            raise ConnectionError(f"runner.hello refused: {frame.get('error')}")
+                        data_ = frame["result"]["data"]
+                        self.epoch = str(data_.get("epoch"))
+                        if self.term is not None:
+                            self.term.host_ready(conn)
+                        with self.sup._spawn_lock:
+                            self.ready.set()
+                            held, self._held = self._held, []
+                        for item, tag in held:
+                            self._pool.submit(self._command, item, tag)
+                        self._resend_exits(reported_running)
+                    else:
+                        event = self._waiting.pop(frame.get("id"), None)
+                        if event is not None:  # only answers someone waits for are kept
+                            self._answers[frame.get("id")] = frame
+                            event.set()
+                elif kind == "evt":
+                    for item in frame.get("items") or []:
+                        if "op" in item and "cmd" in item:
+                            with self.sup._spawn_lock:
+                                if not self.ready.is_set():  # held until the hello's answer
+                                    self._held.append((item, conn))
+                                    continue
+                            self._pool.submit(self._command, item, conn)
+                elif kind == "fatal":
+                    raise ConnectionError(f"the host closed the connection: {frame.get('error')}")
+
+    def _runs(self) -> list[dict[str, Any]]:
+        """§12.3.3 ``runs``: every running run first, then the newest ended ones, at most 256 in all; a half-started
+        spawn reads as lost."""
+        out = []
+        every = sorted(self.sup.runs(), key=lambda x: str(x.get("started_at") or ""), reverse=True)
+        running = [r for r in every if r.get("state") == "running"]
+        ended = [r for r in every if r.get("state") != "running"]
+        for r in (running + ended)[:256]:
+            state = r.get("state") if r.get("state") in ("running", "exited", "lost") else "lost"
+            exit_ = r.get("exit")
+            if isinstance(exit_, dict):
+                exit_ = {k: exit_.get(k) for k in ("code", "signal", "at")} | {
+                    "reason": exit_.get("reason"), "cleanup": r.get("cleanup"),
+                }  # fmt: skip
+                if exit_["reason"] not in ("exited", "stopped", "spawn_failed", "lost", "runner_restarted"):
+                    del exit_["reason"]
+            rec = self.sup.table.get(r["run"]) or {}
+            out.append(
+                {
+                    "run": r["run"],
+                    "workspace_id": r.get("workspace_id") or "0" * 32,
+                    "pid": r.get("pid"),
+                    "birth": r.get("birth"),
+                    "pgid": r.get("pgid"),
+                    "sid": r.get("sid"),
+                    "cgroup": rec.get("cgroup"),
+                    "started_at": r.get("started_at"),
+                    "state": state,
+                    "out": int(r.get("out") or rec.get("out") or 0),
+                    "exit": exit_,
+                }  # fmt: skip
+            )
+        return out
+
+    # -- frames
+    def _send_req(self, op: str, args: dict[str, Any], event: threading.Event | None = None) -> str:
+        sock = self.sock
+        if sock is None:
+            raise ConnectionError("not connected")
+        with self._write:
+            self._n += 1
+            rid = f"r{self._n}"
+            if event is not None:
+                self._waiting[rid] = event
+            sock.sendall(frames.encode({"t": "req", "id": rid, "op": op, "args": args}))
+        return rid
+
+    def call(self, op: str, args: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
+        """A request whose answer the caller needs (tests; the runner itself only fires reports)."""
+        event = threading.Event()
+        rid = self._send_req(op, args, event)
+        if not event.wait(timeout):
+            self._waiting.pop(rid, None)
+            raise TimeoutError(op)
+        return self._answers.pop(rid)
+
+    def _report(self, cmd: str, outcome: str, payload: dict[str, Any]) -> None:
+        args: dict[str, Any] = {"cmd": cmd, "outcome": outcome}
+        args["result" if outcome == "ok" else "error"] = payload
+        try:
+            self._send_req("runner.report", args)
+        except (OSError, ConnectionError):
+            pass  # the host reconciles at the next hello
+
+    def _resend_exits(self, reported_running: set[str]) -> None:
+        """Runs reported running in the hello that ended before its answer: their exit goes out now."""
+        for run in reported_running:
+            rec = self.sup.table.get(run) or {}
+            if rec.get("state") != "running" and rec.get("cleanup"):
+                self._on_event("cleanup", run, {"cleanup": rec["cleanup"]})
+
+    # -- commands
+    def _current(self, tag: int) -> bool:
+        return tag == self._conn and self.ready.is_set()
+
+    def _command(self, item: dict[str, Any], tag: int) -> None:
+        cmd, cid, args = item.get("op"), str(item.get("cmd")), item.get("args") or {}
+        if not self._current(tag):
+            LOG.info("dropped a %s command of a lost host connection", str(cmd)[:32])
+            return  # never runs, never reported: the host already reconciled it at the new hello
+        try:
+            result = self._run(str(cmd), args, tag)
+        except _Stale:
+            return
+        except SpawnError as exc:
+            outcome, payload = "error", {"code": exc.code, "message": exc.message}
+        except TicketError as exc:
+            outcome, payload = "error", {"code": "invalid.input", "message": str(exc)}
+        except Exception as exc:  # noqa: BLE001 - never a traceback to the host
+            LOG.exception("runner command %s failed", cmd)
+            outcome, payload = "error", {"code": "run.spawn_failed", "message": type(exc).__name__}
+        else:
+            outcome, payload = "ok", result
+        if cmd in self.drop_reports:
+            return
+        self._report(cid, outcome, payload)
+
+    def _run(self, cmd: str, args: dict[str, Any], tag: int) -> dict[str, Any]:
+        if cmd == "spawn":
+            spec = SpawnSpec(
+                str(args.get("run")), str(args.get("workspace_id")), str(args.get("kind")),
+                list(args.get("argv") or []), build_env(args, self.env), dict(args.get("cwd") or {}),
+                int(args.get("cols") or 120), int(args.get("rows") or 40),
+            )  # fmt: skip
+            with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot
+                if not self._current(tag):
+                    raise _Stale()
+                res = self.sup.spawn(spec)
+            return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
+        if cmd == "stop":
+            return self.sup.stop(str(args.get("run")), grace=max(0, int(args.get("grace_ms", 10_000))) / 1000)
+        if cmd == "attach.allow":
+            if self.term is None:
+                raise TicketError("no terminal socket")
+            self.term.allow(args, epoch=tag)  # the epoch it arrived in, not the one current when it runs (F4)
+            return {}
+        if cmd == "attach.end":
+            if self.term is not None:
+                self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))
+            return {}
+        raise SpawnError("invalid.input", f"unknown command {cmd[:32]}")
+
+    # -- supervisor events
+    def _on_event(self, kind: str, run: str, payload: dict[str, Any]) -> None:
+        if not self.ready.is_set() or kind != "cleanup":
+            return  # the next hello carries the state; runner.exit is sent once the clean-up has a result
+        rec = self.sup.table.get(run) or {}
+        exit_ = rec.get("exit") or {}
+        if not exit_:
+            return  # a leader still alive (incomplete stop): no exit to report yet
+        args: dict[str, Any] = {
+            "run": run,
+            "code": exit_.get("code"),
+            "signal": exit_.get("signal"),
+            "at": exit_.get("at") or now_iso(),
+            "cleanup": payload.get("cleanup") or "unknown",
+        }
+        with contextlib.suppress(OSError, ConnectionError):
+            self._send_req("runner.exit", args)
+
+
+class _Stale(Exception):
+    """A command of a lost host connection."""
+
+
+def wait_ready(link: HostLink, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if link.ready.wait(0.05):
+            return True
+    return False

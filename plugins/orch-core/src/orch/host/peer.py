@@ -11,5 +11,5 @@ __all__ = ["Peer"]
 @dataclass(frozen=True)
 class Peer:
     uid: int
-    kind: Literal["person", "agent", "worker", "control"]
+    kind: Literal["person", "agent", "worker", "control", "runner"]
     person: str | None = None

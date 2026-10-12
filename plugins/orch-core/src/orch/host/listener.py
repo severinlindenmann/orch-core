@@ -17,7 +17,7 @@ from typing import Literal
 
 from ._unix import CheckedDirectory, UnsafePath, check_acl
 
-SocketKind = Literal["workspace", "control", "worker"]
+SocketKind = Literal["workspace", "control", "worker", "runner"]
 
 
 #: the longest socket path in UTF-8 bytes (``sun_path`` is 104 bytes on macOS, with room for the NUL)
@@ -41,7 +41,7 @@ class Listener:
     """Own the locked, pinned directory and bound socket until close()."""
 
     def __init__(self, run: Path, name: str, *, host_uid: int, gid: int, kind: SocketKind = "workspace"):
-        if kind not in {"workspace", "control", "worker"}:
+        if kind not in {"workspace", "control", "worker", "runner"}:
             raise ValueError("Unknown socket kind")
         if (kind == "workspace" and not re.fullmatch("[0-9a-f]{32}", name)) or (kind != "workspace" and name != kind):
             raise ValueError("Invalid listener directory name")
@@ -57,7 +57,7 @@ class Listener:
         try:
             self.run = CheckedDirectory(Path(run), host_uid, mode=0o711)
             self.directory = CheckedDirectory(
-                self.path.parent, host_uid, mode=0o700 if kind == "control" else 0o750, gid=gid
+                self.path.parent, host_uid, mode=0o700 if kind in ("control", "runner") else 0o750, gid=gid
             )
             self.run.recheck()
             self.lock_fd = os.open(

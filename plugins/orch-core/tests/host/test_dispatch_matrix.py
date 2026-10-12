@@ -19,6 +19,7 @@ from orch.host.human import HUMAN_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
+from orch.host.runners import RUN_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
 from tests.host.lifecycle_helpers import REPO, Lab
@@ -71,6 +72,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     registry = {op.name for op in ops.all()}
     host = set(HOST_OPS) | set(FILE_OPS) | set(GIT_OPS) | set(HUMAN_OPS) | set(READ_OPS) | set(HOST_PERSON_OPS)
     host |= set(RECORDS_OPS)
+    host |= set(RUN_OPS)  # H11a
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
@@ -160,6 +162,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in RECORDS_OPS:
             write = op in {"records.remote_private", "records.note"}
             assert kind == (("person_write", "write") if write else ("person_read", "read"))
+        elif op in RUN_OPS:  # H11a: P and G only
+            assert kind == ("pg_read", "read")
         else:
             who = ops.get(op).who
             assert kind[0] == ("person_read" if op in PERSON_READS else who)

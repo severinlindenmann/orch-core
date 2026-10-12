@@ -399,7 +399,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `conn.overloaded` | 9 | yes | close | slow reader write deadline (10 s), write queue over 64 frames or 4 MiB, or connection byte budget exhausted | — |
 | `internal` | 1 | no | stays for a request whose handler failed or ended without an answer; close (as `fatal`, no request id) when the session itself failed outside any request | an unexpected host error | — |
 | `handshake.invalid` | 6 | no | close | missing, late or second `hello` | — |
-| `peer.denied` | 3 | no | close | unmapped UID; second worker connection | — |
+| `peer.denied` | 3 | no | close | unmapped UID; second worker connection; a runner that is not the runner unit's main PID, or a second runner connection (H11a) | — |
 | `host.version_mismatch` | 1 | no | close | no shared `proto` | — |
 | `req.invalid` | 6 | no | stays | malformed `req` envelope with a readable id | — |
 | `unknown_command` | 2 | no | stays | op not served (any op) | — |
@@ -432,6 +432,11 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
 | `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
+| `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
+| `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
+| `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
+| `harness.not_found` | 3 | no | stays | the program of a run does not exist (D-P2-28) | — |
+| `run.spawn_failed` | 1 | no | stays | the runner's trampoline failed; the message names the step, never an environment value | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -441,16 +446,11 @@ drops. The host never sends it.
 
 | Code | Exit | Retryable | Fate | When | `retry_after_ms` |
 |---|---|---|---|---|---|
-| `runner.unavailable` | 9 | yes | stays | no runner connected, or it is reconnecting after a host restart (§12) | yes |
-| `runner.disabled` | 3 | no | stays | the addon is not granted, or this machine has not enabled dashboard execution (or terminals) for the workspace; `detail.missing` is `addon`, `machine` or `terminals` | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
 | `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
 | `launch.invalid` | 5 | no | stays | a harness, mode, model or subagent model not allowed; the message names the field (exit 5 like `invalid.input`: the client sent a value the registry refuses) | — |
 | `launch.changed` | 5 | no | stays | `agent.start`'s recomputed `spec` differs from the preview's (exit 5 like `idem.conflict`: the request no longer matches what was shown; preview again) | — |
-| `launch.cwd_changed` | 3 | no | stays | the pinned cwd no longer matches at spawn | — |
-| `harness.not_found` | 3 | no | stays | the program is not found by the login shell (or the configured absolute path) | — |
 | `harness.shell_unsupported` | 3 | no | stays | `$SHELL` is not POSIX-compatible and `login_shell` is on | — |
-| `run.spawn_failed` | 1 | no | stays | the trampoline failed; the message names the step, never an env value | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
 | `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
 | `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
@@ -4163,6 +4163,50 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - One runner connection per runner UID, accepted only from the runner unit's main PID (`launchctl print
   gui/<uid>/io.orch.runner`, systemd `MainPID`); a second one is `peer.denied`. The host records `gen` and `pid`; they
   bind the term socket (§12.6.1).
+
+**As built in H11a** (#428, #432). Where the code differs from the text above, the code is this:
+
+- **Commands and reports.** A command item is `{id:"<n>.c", cmd:ULID, op, args}`: `op` names the command, `cmd` is
+  its id, and `runner.report {cmd}` names that id. The stop command is **`stop {run, grace_ms}`**, not `signal {run,
+  sig, sweep}`: the runner runs the whole §12.5 sequence itself (it holds the birth identities) and answers `{state,
+  cleanup}`; `state` stays `running` when even `SIGKILL` did not end the leader (then `cleanup:"incomplete"`, the run
+  stays supervised and is killed again on every scan; it is never reported ended or dropped).
+- **`runner.exit`** is sent once the clean-up has a result, and again when an `incomplete` clean-up completes; the host
+  sets `exit.reason` (`stopped` after a `run.stop`, else `exited`).
+- **`runner.hello`** answers `{sub, epoch}`; `gen` is drawn at every runner start (not persisted). The runner tags every
+  command with the connection it arrived on and drops, unrun and unreported, any command of a lost connection (a
+  stale `spawn` never starts after the reconnect's hello; the check and the spawn are one step against the hello's
+  snapshot). Commands that arrive before the hello's answer are held until it. The hello lists every running run
+  first, then the newest ended ones, 256 in all. A runner of another `gen` can report an older generation's run only
+  as ended (`runner_restarted`), never `running`. A successful command result is validated before it is stored.
+- **`run.sub`** answers `{sub, rev}`: it is registered first, then the visible runs are taken, so no change falls
+  between them. `rev` is one counter for the whole host (persisted, so monotonic per workspace too). Every delivery
+  revalidates the principal on a fresh authentication snapshot. Evicted records (7 days, 1 000 ended) publish `gone`. `grants` is accepted by the
+  schema and ignored until H11c. A spawn that is half-done while the hello is built cannot happen (the runner holds its
+  spawn lock); a spawn that failed after the fork is in the table with its pid and birth time.
+- **Trampoline.** The runner starts `python -I <release>/orch/runner/exec.py SPEC_FD STATUS_FD`, not `-m`: under `-I`
+  a release's `orch` is not importable, and `-I` implies `-P`, so the file imports only the standard library. The status
+  pipe is close-on-exec: EOF means `execve` happened; otherwise it names the failed step.
+- **Machine switch.** `orch runner enable` records the switch in `<state>/host/dashboard-execution.json` (0600), with
+  the time and the exact text shown; a corrupt file reads as off.
+- **macOS `cleanup:"complete"`** means: nothing of the run's group or session and no tracked descendant is left, and no
+  descendant was ever seen outside the session. The escape scan runs every 2 s and right before a stop; a descendant
+  that calls `setsid()` and whose parent exits between two scans cannot be seen. That is the stated best effort.
+- **Signals per member, never to a group.** The stop sequence signals each member by `(pid, birth)` (Linux through a
+  pidfd), never `kill(-pgid)`. Members are found over every UID; only the runner's UID is signalled, and a member of
+  another UID (`sudo`, a setuid helper) makes the clean-up `incomplete`. A session or group is matched only for a run
+  live in this runner's lifetime; an ended or crash-swept record matches exact identities only (the leader, the
+  escapees and the member set saved at each scan), and only on the boot it was recorded on (`boot_id`,
+  `kern.boottime`). With a cgroup, `complete` means nothing is left in the run's cgroup and nothing was seen leaving it.
+- **umask.** The units set none; runs start with the person's umask, captured by `orch runner enable` in
+  `<state>/runner/settings.json` (default 022). The runner's own files are written 0600 in 0700 directories.
+- **Logs.** The service manager writes the runner's output to `<state>/runner/runner.out` without rotation (the
+  rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
+  controlled stop: every managed run is stopped and verified before the runner exits.
+- **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
+  ticket must be exactly 43 characters; at most 32 term-socket connections are handled at once; the lockout is per
+  runner, so one client replaying seen tickets locks every attachment out for 60 s.
+  The byte path after `ready` (`out`, `in`, `ack`, `gap`, `throttle`) is H11b.
 
 ### 12.4 Start an agent (#307)
 

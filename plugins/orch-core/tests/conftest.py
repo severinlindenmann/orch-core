@@ -120,13 +120,14 @@ def pytest_sessionfinish(session, exitstatus):
         raise AssertionError(f"the test run changed the owner's service files: {before} -> {_service_snapshot()}")
 
 
-@pytest.fixture(autouse=True)
-def _no_real_service_manager(monkeypatch, tmp_path_factory):
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_service_manager(tmp_path_factory):
     """No test reaches launchctl or systemctl, and none writes a unit or a release under the real home (H7). The
     service manager's commands all fail unless a test installs its own fake (``tests/host/test_host_mode_on.py``);
     ``Manager.install`` and ``install_release`` refuse a target under the account's real home whatever ``HOME`` says;
     ``ORCH_HOST_RUN_DIR`` always names a test directory, so no test talks to a real host's sockets. The production
-    runner refuses on its own as well while ``PYTEST_CURRENT_TEST`` is set."""
+    runner refuses on its own as well while ``PYTEST_CURRENT_TEST`` is set. Session scope with its own MonkeyPatch, as
+    the keychain guard: it must not share the tests' ``monkeypatch`` (that would reorder their teardown)."""
     import subprocess
 
     try:
@@ -137,6 +138,8 @@ def _no_real_service_manager(monkeypatch, tmp_path_factory):
 
     def refuse(argv):
         return subprocess.CompletedProcess(list(argv), 1, "", "service managers are off in tests")
+
+    monkeypatch = pytest.MonkeyPatch()
 
     monkeypatch.setattr(cli, "SERVICE_MANAGER", lambda unit: enable.Manager(unit, run=refuse))
     real_install = enable.Manager.install
@@ -154,4 +157,7 @@ def _no_real_service_manager(monkeypatch, tmp_path_factory):
 
     monkeypatch.setattr(release, "install_release", install_release)
     monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(tmp_path_factory.getbasetemp() / "no-host-run"))
-    yield
+    try:
+        yield
+    finally:
+        monkeypatch.undo()

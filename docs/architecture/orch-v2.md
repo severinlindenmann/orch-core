@@ -225,14 +225,14 @@ a custody backend named in every signed event's `auth` (D64, D66; F1 §5.3):
 | Backend (`auth`) | Where the key lives | Factor per signature | Status |
 |---|---|---|---|
 | `passphrase` | scrypt-encrypted key file in the person's state dir | the passphrase, typed on `/dev/tty` | P1 default (D65) |
-| `convenience` | macOS: a login-keychain generic-password item (service `io.orch.device-key`, account `<workspace_id>/<device_id>`, `AfterFirstUnlockThisDeviceOnly`, not synchronizable, **no access-control flag**); elsewhere: an unencrypted 0600 file in 0700 directories under the person's own state dir (`person/<ws>/devices/`), never in the host state dir | **none**: any process running as the person can sign | phase 1, click-to-sign from the dashboard through a signer process beside it (host §0.8.6, D-P2-23). **Accepted risk: "Convenience signing: agents running as you could sign."** |
+| `convenience` | macOS: an item in the traditional login keychain (service `io.orch.device-key`, account `<workspace_id>/<device_id>`, not synchronizable, the creating interpreter's ACL, no presence flag; encrypted at rest, may be in Time Machine backups and migrations); other Unix: a 0600 file in 0700 directories under the person's own state dir (`person/<ws>/devices/`), never in the host state dir; Windows: not supported in phase 1 | **none**: any process running as the person, and anything that takes over the dashboard, can sign | phase 1, click-to-sign from the dashboard through a signer process beside it, per workspace and only while every reader is local and updated (host §0.8.6, D-P2-23). **Accepted risk: "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."** |
 | `secure-enclave` | Secure Enclave P-256 key on the Mac | Touch ID per signature (D41) | phase 3 (H9) |
 | `secure-enclave-unlocked` | Secure Enclave on the iPhone | the phone is unlocked (D49) | P4 mobile |
 
-A key is created in the backend at `orch init`, `orch join` or pairing (`--custody`), or converted from `passphrase`
-with one passphrase prompt (`orch keys custody convenience`); `orch keys custody passphrase` moves it back (in place,
-with a warning that it was exposed) and `--rotate` replaces the device for a clean break. `convenience` needs the F1
-amendment of host §0.8.6 item 2 (the `auth` value list, T16 and §5.3).
+In phase 1 a convenience key is converted from the `passphrase` key with one passphrase prompt
+(`orch keys custody convenience`, once the workspace's flag is on); `orch keys custody passphrase --in-place` moves it
+back, with a warning that it was exposed, and `--rotate` (designed, built with device ops) replaces the device for a
+clean break. F1 records the value (§5.3, §11.4, T16).
 
 **The socket.**
 
@@ -541,8 +541,9 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 **Owner re-plan, 12 Oct 2026** (coordination log "OWNER RE-PLAN P2"; host D-P2-23). The frontend work is cut into three
 phases. **Phase 1:** core + dashboard running for real in direct mode and tier A (the host as the person's UID), with
 **click-to-sign** from the dashboard (host §0.8.6, group H5c: the `convenience` custody backend and a signer process
-beside the dashboard; `orch sign CODE` as the fallback; the accepted risk "Convenience signing: agents running as you
-could sign" on the workspace card). **Phase 2:** the addons (#307–#310) and mobile. **Phase 3:** Touch ID (H9) and
+beside the dashboard; `orch sign CODE` as the fallback; per workspace, only while every reader is local and updated;
+the accepted risk "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign"
+on the workspace card). The phase-1 gate replaces the cutover gate's H9 (host §8). **Phase 2:** the addons (#307–#310) and mobile. **Phase 3:** Touch ID (H9) and
 tier B (agents under their own OS users; Linux VPS and macOS local); Windows stays in direct mode. D41's
 per-signature presence applies again from phase 3.
 

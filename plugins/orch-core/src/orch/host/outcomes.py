@@ -82,6 +82,9 @@ LOG = logging.getLogger(__name__)
 CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap"})
 #: ops that are log writes though no registry operation carries them
 _HUMAN_WRITES = frozenset({"human.submit"})
+#: host-side writes with an idem and an outcome record but no log event (H11e: the private-remote mark); a record
+#: with nothing planned is removed by reconciliation, and the op is idempotent, so a retry after a crash runs again
+HOST_WRITES = frozenset({"records.remote_private"})
 #: every other host op (§0.7 table): reads and side-effect-free ops, whose ``opts.idem`` is ignored
 _READS = frozenset(
     {
@@ -92,6 +95,7 @@ _READS = frozenset(
         "ticket.query", "ticket.get", "needs", "diff", "artifact.get",
         "workspace.show", "member.list", "session.list", "grant.list",
         "activity.list", "workspace.settings", "ticket.text",
+        "records.snapshot", "records.export_check",
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a)
@@ -106,7 +110,7 @@ def classify(op: str) -> Category:
     """The write category of ``op`` (§0.7). An op nobody serves is ``unknown_command``."""
     if op in CONTROL_WRITES:
         return "control"
-    if op in _HUMAN_WRITES:
+    if op in _HUMAN_WRITES or op in HOST_WRITES:
         return "log"
     from .review import HOST_PERSON_OPS
 
@@ -129,7 +133,7 @@ def classify(op: str) -> Category:
 
 def dry_run_supported(op: str) -> bool:
     """Only the log-write registry ops and ``human.prepare`` take ``opts.dry_run`` (§0.7)."""
-    return op == "human.prepare" or (op not in _HUMAN_WRITES and classify(op) == "log")
+    return op == "human.prepare" or (op not in _HUMAN_WRITES and op not in HOST_WRITES and classify(op) == "log")
 
 
 def request_idem(op: str, opts: Mapping[str, Any] | None) -> str | None:

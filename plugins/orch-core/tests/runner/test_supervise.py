@@ -317,3 +317,146 @@ def test_crash_sweep_also_stops_leftovers_of_ended_runs(state, sleeper):
         assert sup.get(run)["cleanup"] == "unknown" and sup.get(run)["state"] == "exited"
     finally:
         sup.close()
+
+
+# -- Opus review of #428 ------------------------------------------------------------------------------------------
+
+
+def _daemon(tmp_path):
+    """A classic double-forked daemon started by the test: setsid in the middle process, which then exits.
+    Returns (middle pid, middle birth, daemon pid, daemon birth)."""
+    import subprocess
+
+    info = tmp_path / "daemon.txt"
+    code = (
+        "import os, sys, time\n"
+        "if os.fork() == 0:\n"
+        "    os.setsid()\n"
+        "    mid = os.getpid()\n"
+        "    if os.fork() == 0:\n"
+        f"        open({str(info)!r}, 'w').write(f'{{mid}} {{os.getpid()}}')\n"
+        "        time.sleep(60)\n"
+        "        os._exit(0)\n"
+        "    time.sleep(0.3)\n"
+        "    os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+    text = wait_for(lambda: info.exists() and info.read_text())
+    mid, dpid = (int(x) for x in text.split())
+    dinfo = wait_for(lambda: procs.info(dpid))
+    wait_for(lambda: procs.info(mid) is None or procs.info(mid).zombie, timeout=5)
+    return mid, dinfo.birth - 1, dpid, dinfo.birth
+
+
+def test_old_record_never_matches_a_leaderless_session(state, tmp_path):
+    """Opus repro: an ended ``incomplete`` record whose sid equals a double-forked daemon's exited middle process. The
+    crash sweep matches exact identities only, so the daemon survives."""
+    mid, mbirth, dpid, dbirth = _daemon(tmp_path)
+    try:
+        table = RunTable(state / "runner", os.getuid())
+        table.load()
+        run = run_id()
+        table.put(run, {"workspace_id": "0" * 32, "kind": "agent", "state": "exited", "cleanup": "incomplete",
+                        "pid": mid, "birth": mbirth, "pgid": mid, "sid": mid, "cgroup": None,
+                        "boot": procs.boot_id()})  # fmt: skip
+        sup = Supervisor(state, cgroups=None, scan_interval=0.1)
+        try:
+            assert sup.open() == []
+            time.sleep(0.2)
+            assert procs.alive(dpid, dbirth)
+        finally:
+            sup.close()
+    finally:
+        kill_own(dpid, dbirth)
+
+
+def test_records_of_another_boot_are_never_matched(state, sleeper):
+    other = sleeper()
+    info = procs.info(other.pid)
+    table = RunTable(state / "runner", os.getuid())
+    table.load()
+    run = run_id()
+    table.put(run, {"workspace_id": "0" * 32, "kind": "agent", "state": "running", "pid": other.pid,
+                    "birth": info.birth, "pgid": other.pid, "sid": other.pid, "cgroup": None,
+                    "boot": "another-boot"})  # fmt: skip
+    sup = Supervisor(state, cgroups=None, scan_interval=0.1)
+    try:
+        assert sup.open() == [{"run": run, "workspace_id": "0" * 32, "swept": 0}]
+        assert other.poll() is None
+    finally:
+        sup.close()
+
+
+def test_a_member_of_another_uid_is_never_signalled_and_makes_cleanup_incomplete(state, sleeper, monkeypatch):
+    from orch.runner import supervise
+
+    other = sleeper()
+    real = procs.info(other.pid)
+    fake = procs.ProcInfo(real.pid, real.ppid, real.pgid, real.sid, os.getuid() + 1, real.birth)
+    monkeypatch.setattr(supervise.procs, "snapshot", lambda uid=None: {other.pid: fake})
+    sent = []
+    monkeypatch.setattr(supervise.procs, "signal_verified", lambda p, b, s: sent.append(p) or True)
+    monkeypatch.setattr(supervise, "KILL_WAIT", 0.2)
+    sup = Supervisor(state, cgroups=None, scan_interval=60)
+    rec = {"run": run_id(), "pid": other.pid, "birth": real.birth, "pgid": other.pid, "sid": other.pid}
+    assert sup._terminate(rec, {}, 0.1) == "incomplete"
+    assert sent == [] and other.poll() is None
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc")
+def test_linux_uid_comes_from_status():
+    assert procs._linux_uid(os.getpid()) == os.getuid()
+
+
+def test_signal_permission_error_is_not_sent(sleeper, monkeypatch):
+    other = sleeper()
+    info = procs.info(other.pid)
+
+    def denied(*a):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(procs.os, "kill", denied)
+    if hasattr(signal, "pidfd_send_signal"):
+        monkeypatch.setattr(procs.signal, "pidfd_send_signal", denied)
+    assert procs.signal_verified(other.pid, info.birth, signal.SIGTERM) is False
+
+
+def test_a_failing_cleanup_never_dies_silently(sup, tmp_path, monkeypatch):
+    s = spec(tmp_path, ["/bin/sh", "-c", "exec sleep 60"])
+    res = sup.spawn(s)
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sup, "_terminate", boom)
+    out = sup.stop(s.run, grace=0.1)
+    assert out["cleanup"] == "incomplete"
+    assert sup.live[s.run].lingering  # still supervised: the retry loop keeps killing it
+    monkeypatch.undo()
+    wait_for(lambda: not procs.alive(res["pid"], res["birth"]), timeout=10)
+
+
+def test_runner_env_deny_list(tmp_path):
+    cases = [({k: "x"}, "agent") for k in ("LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "BASH_ENV", "PYTHONPATH", "GIT_DIR")]
+    cases += [({"ENV": "x"}, "agent"), ({"ORCH_GRANT": "g"}, "shell"), ({"ORCH_SESSION": "s"}, "shell")]
+    for env, kind in cases:
+        with pytest.raises(SpawnError) as err:
+            spec(tmp_path, ["/bin/sh"], env=env, kind=kind).check()
+        assert err.value.code == "invalid.input"
+    spec(tmp_path, ["/bin/sh"], env={"ORCH_GRANT": "g", "PATH": "/bin"}, kind="agent").check()
+
+
+def test_cgroup_path_must_be_the_runs_own(tmp_path):
+    from orch.runner.cgroup import CgroupTree
+
+    sup = Supervisor(tmp_path / "s", cgroups=CgroupTree(tmp_path / "base"))
+    run = run_id()
+    assert sup._cgroup_of({"run": run, "cgroup": str(tmp_path / "base" / f"run-{run}")}) is not None
+    assert sup._cgroup_of({"run": run, "cgroup": "/sys/fs/cgroup/user.slice"}) is None
+    assert sup._cgroup_of({"run": run, "cgroup": str(tmp_path / "base" / f"run-{run_id()}")}) is None
+
+
+def test_spawn_of_a_run_id_older_than_retention_is_refused(sup, tmp_path):
+    with pytest.raises(SpawnError) as err:
+        sup.spawn(spec(tmp_path, ["/bin/sh", "-c", "exit 0"], run="r_0" + "1" * 25))
+    assert err.value.code == "invalid.input" and "older" in err.value.message

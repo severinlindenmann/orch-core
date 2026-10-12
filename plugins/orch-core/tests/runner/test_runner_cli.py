@@ -111,7 +111,7 @@ def test_enable_with_the_wrong_prefix_changes_nothing(env, manager, monkeypatch)
     code, doc = _cli(["enable", "--workspace", WID, "--dev"], env)
     assert code == 5 and doc["error"]["code"] == "invalid.input"
     assert enablement.state_of(Path(env["ORCH_STATE_DIR"]), WID, os.getuid())["enabled"] is False
-    assert manager.ran == []
+    assert all(argv[1] == "print" or argv[2] == "is-enabled" for argv in manager.ran)  # only looked, never started
 
 
 def test_enable_without_a_terminal_is_refused(env, manager, monkeypatch):
@@ -188,3 +188,32 @@ def test_manager_uses_the_runner_labels(tmp_path):
     ran.clear()
     svc.Manager(p, run=lambda argv: ran.append(list(argv)) or subprocess.CompletedProcess(argv, 1, "", "")).loaded()
     assert ran == [["launchctl", "print", "gui/501/io.orch.runner"]]
+
+
+def test_enable_refuses_a_label_loaded_from_another_file(env, monkeypatch):
+    fake = FakeManager()
+
+    def loaded(unit):
+        def run(argv):
+            fake.ran.append(list(argv))
+            return subprocess.CompletedProcess(list(argv), 0, "state = running\n", "")
+
+        return svc.Manager(unit, run=run)
+
+    monkeypatch.setattr(host_cli, "SERVICE_MANAGER", loaded)
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
+    code, doc = _cli(["enable", "--workspace", "ACME", "--dev"], env)
+    assert code == 4 and doc["error"]["code"] == "host.busy" and "loaded from another file" in doc["error"]["message"]
+
+
+def test_enable_passes_the_registered_roots_to_the_dev_check(env, manager, monkeypatch, tmp_path):
+    seen = {}
+
+    def dev_source(python, package, roots=()):
+        seen["roots"] = list(roots)
+        return "the interpreter is inside the workspace"
+
+    monkeypatch.setattr(svc, "dev_source", dev_source)
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
+    code, doc = _cli(["enable", "--workspace", "ACME"], env)
+    assert code == 5 and seen["roots"] == [str(tmp_path / "ws")]

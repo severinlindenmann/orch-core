@@ -11,18 +11,19 @@ from pathlib import Path
 from orch.runner import procs
 from orch.runner.supervise import SpawnSpec
 
-_COUNTER = [0]
 ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
 def run_id() -> str:
-    _COUNTER[0] += 1
-    n = _COUNTER[0] * 7919 + os.getpid()
+    """A fresh run id (``r_`` + a time-based ULID, as the host draws them)."""
+    import secrets
+
+    n = (int(time.time() * 1000) << 80) | secrets.randbits(80)
     tail = ""
-    for _ in range(25):
-        tail = ALPHABET[n % 32] + tail
-        n //= 32
-    return "r_0" + tail
+    for _ in range(26):
+        tail = ALPHABET[n & 31] + tail
+        n >>= 5
+    return "r_" + tail
 
 
 def pin(path: Path) -> dict:

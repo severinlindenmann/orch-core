@@ -24,7 +24,7 @@ import signal
 import sys
 from dataclasses import dataclass
 
-__all__ = ["ProcInfo", "alive", "birth", "info", "signal_verified", "snapshot"]
+__all__ = ["ProcInfo", "alive", "birth", "boot_id", "info", "signal_verified", "snapshot"]
 
 
 @dataclass(frozen=True)
@@ -98,11 +98,20 @@ def _darwin_pids() -> list[int]:  # pragma: no cover - macOS
 # -- Linux: /proc ----------------------------------------------------------------------------------------------------
 
 
+def _linux_uid(pid: int) -> int:
+    """The real UID from ``/proc/<pid>/status`` (the directory's owner is root for a non-dumpable process)."""
+    with open(f"/proc/{pid}/status", "rb") as f:
+        for line in f:
+            if line.startswith(b"Uid:"):
+                return int(line.split()[1])
+    raise OSError("no Uid line")
+
+
 def _linux_info(pid: int) -> ProcInfo | None:
     try:
         with open(f"/proc/{pid}/stat", "rb") as f:
             raw = f.read()
-        uid = os.stat(f"/proc/{pid}").st_uid
+        uid = _linux_uid(pid)
     except OSError:
         return None
     end = raw.rfind(b")")
@@ -169,7 +178,7 @@ def signal_verified(pid: int, expected_birth: int, sig: int) -> bool:
                 return False
             try:
                 send(fd, sig)
-            except ProcessLookupError:
+            except OSError:  # gone, or no longer ours to signal (a setuid exec): not sent
                 return False
             return True
         finally:
@@ -178,11 +187,31 @@ def signal_verified(pid: int, expected_birth: int, sig: int) -> bool:
         return False
     try:
         os.kill(pid, sig)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
+    except OSError:  # gone, or not ours to signal
         return False
     return True
+
+
+_BOOT: str | None = None
+
+
+def boot_id() -> str:
+    """This boot of the machine (Linux ``boot_id``; macOS ``kern.boottime``): birth times compare only within one."""
+    global _BOOT
+    if _BOOT is None:
+        if sys.platform.startswith("linux"):
+            with open("/proc/sys/kernel/random/boot_id") as f:
+                _BOOT = f.read().strip()
+        else:  # pragma: no cover - macOS
+            lib = ctypes.CDLL(None, use_errno=True)
+            buf = ctypes.create_string_buffer(16)
+            size = ctypes.c_size_t(16)
+            if lib.sysctlbyname(b"kern.boottime", buf, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
+                raise OSError(ctypes.get_errno(), "kern.boottime")
+            sec = int.from_bytes(buf.raw[0:8], sys.byteorder)
+            usec = int.from_bytes(buf.raw[8:12], sys.byteorder)
+            _BOOT = f"{sec}.{usec:06d}"
+    return _BOOT
 
 
 def alive(pid: int, expected_birth: int) -> bool:

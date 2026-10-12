@@ -152,7 +152,12 @@ class Gateway:
                 roster = adapters.members(link.call("member.list"))
                 features = self.features(ws)
                 count = len(link.call("needs")["items"]) if "today" in features else None
-                if hidden(show["name"]) or hidden(show["prefix"]):
+                if (
+                    not isinstance(show.get("name"), str)
+                    or not isinstance(show.get("prefix"), str)
+                    or hidden(show["name"])
+                    or hidden(show["prefix"])
+                ):
                     # Not repaired, not shown: invisible or bidi characters could make a name pass for another.
                     raise fail("workspace.name_invalid", "The workspace name has invisible characters.", exit=3)
                 result.append(

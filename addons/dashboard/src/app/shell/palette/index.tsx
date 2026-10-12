@@ -8,6 +8,7 @@ import { can } from '@/api/permissions'
 import { handoffMode } from '@/api/features'
 import type { HandoffAction } from '@/api/handoff'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { visible as showHidden } from '@/components/sign/visible'
 import { api } from '@/api/client'
 import { STATUSES, type ActionRequest, type Status } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
@@ -292,7 +293,7 @@ export function CommandPalette() {
       id: w.id,
       label: `Switch to ${w.prefix}`,
       icon: <Building2 />,
-      hint: w.name,
+      hint: showHidden(w.name),
       keys: keysFor(`workspace.${i + 1}`),
       run: () => {
         close()

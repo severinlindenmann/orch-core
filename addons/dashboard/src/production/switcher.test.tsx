@@ -142,7 +142,7 @@ it('the trigger and the hand-off dialog say which workspace when the prefix is s
   expect(document.querySelector('[data-ws-uuid-current]')).toHaveTextContent(uuid8(B))
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
   const dialog = await screen.findByRole('dialog', {}, T)
-  expect(within(dialog).getByTestId('handoff-workspace')).toHaveTextContent(`DEMO · Mobile id ${uuid8(B)}`)
+  expect(within(dialog).getByTestId('handoff-workspace')).toHaveTextContent(`DEMO id ${uuid8(B)} · Mobile`)
 })
 
 it('a ticket address with a shared prefix and no matching hint reads no ticket', async () => {
@@ -184,4 +184,35 @@ it('a name with a bidi override is shown escaped and cannot fake or reorder the 
   const labels = screen.getAllByRole('button', { name: /^DEMO · / }).map((b) => b.getAttribute('aria-label'))
   expect(labels.some((l) => l?.includes('\\u{202e}'))).toBe(true)
   expect(labels.some((l) => l?.includes('\u202e'))).toBe(false)
+})
+
+it('a name that looks like an id comes after the real id, which sits in its own badge', async () => {
+  const user = userEvent.setup()
+  state.host.workspaces[1].name = `Main id ${uuid8(A)}`
+  show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
+  await screen.findByRole('table', {}, T)
+  await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  const line = within(dialog).getByTestId('handoff-workspace')
+  expect(line.textContent?.indexOf(`id ${uuid8(B)}`)).toBeLessThan(line.textContent!.indexOf('Main'))
+  expect(line.querySelector('[data-ws-id]')?.textContent).toBe(`id ${uuid8(B)}`)
+})
+
+it('default-ignorable and private-use characters in a name are shown by number in the trigger', async () => {
+  state.host.workspaces[1].name = 'Mob\u{2800}ile\ue000'
+  show(`/w/DEMO/tickets?ws=${uuid8(B)}`)
+  const trigger = await screen.findByRole('button', { name: 'Switch workspace' }, T)
+  await waitFor(() => expect(trigger.textContent).toContain('\\u{2800}'))
+  expect(trigger.textContent).toContain('\\u{e000}')
+})
+
+it('a workspace with an unsafe name says so, not "Host not running"', async () => {
+  const user = userEvent.setup()
+  state.host.workspaces.push(workspace({ id: C, host_state: 'workspace.name_invalid' }))
+  show(`/w/DEMO/tickets?ws=${uuid8(A)}`)
+  await screen.findByRole('button', { name: 'Switch workspace' }, T)
+  await user.click(screen.getByRole('button', { name: 'Switch workspace' }))
+  const row = (await screen.findByText("This workspace's name can't be shown safely")).closest('[data-ws-stopped]')
+  expect(row).toHaveAttribute('data-ws-stopped', C)
+  expect(screen.queryByText('Host not running')).not.toBeInTheDocument()
 })

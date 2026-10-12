@@ -201,6 +201,8 @@ def roster(data) -> list[RosterMember]:
                 )
                 for d in m["devices"]
             ]
+            if not isinstance(m["name"], str) or hidden(m["name"]):
+                raise fail("member.name_invalid", "A member's name has invisible characters.", exit=3)
             out.append(RosterMember(person=m["person"], name=m["name"], role=m["role"], devices=devices))
         return out
     except (KeyError, TypeError, AttributeError, ValueError):

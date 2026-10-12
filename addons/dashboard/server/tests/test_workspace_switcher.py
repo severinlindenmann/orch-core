@@ -190,3 +190,25 @@ def test_a_workspace_name_with_hidden_characters_is_not_listed_as_that_name(two)
     got = {w["id"]: w for w in client.get("/api/workspaces", headers=headers).json()}
     assert got[stubs[1].ws]["host_state"] == "workspace.name_invalid" and got[stubs[1].ws]["name"] == stubs[1].ws
     assert got[stubs[0].ws]["host_state"] == "ok"
+
+
+@pytest.mark.parametrize("value", [None, 7, ["x"]])
+def test_a_non_string_name_is_name_invalid_not_a_crash(two, value):
+    client, headers, stubs, down, gateway = two
+    stubs[1].name = value
+    got = {w["id"]: w for w in client.get("/api/workspaces", headers=headers).json()}
+    assert got[stubs[1].ws]["host_state"] == "workspace.name_invalid"
+    assert got[stubs[0].ws]["host_state"] == "ok"
+
+
+def test_a_member_name_with_hidden_characters_is_refused(two):
+    from orch_dashboard import adapters
+    from orch_dashboard.errors import HostError
+
+    ok = {"members": [{"person": "p", "name": "Tom", "role": "member", "devices": []}]}
+    assert adapters.members(ok)[0].name == "Tom"
+    for name in ("To\u202em", "T\u2800", "x\ue000", None):
+        with pytest.raises(HostError):
+            adapters.members({"members": [{**ok["members"][0], "name": name}]})
+        with pytest.raises(HostError):
+            adapters.settings.roster({"members": [{**ok["members"][0], "name": name}]})

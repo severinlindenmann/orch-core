@@ -1,6 +1,7 @@
 import { Layers, ServerOff } from 'lucide-react'
 import type { Workspace } from '@/api/types'
 import { uuid8 } from '@/api/workspaces'
+import { visible } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { useWorkspace } from '../workspace'
 import { usePageHeader } from './ShellUi'
@@ -24,8 +25,10 @@ export function WorkspaceChoice({ prefix, choices }: { prefix: string; choices: 
           <li key={w.id}>
             <Button variant="outline" className="h-auto w-full justify-between px-3 py-2 text-left" onClick={() => setWorkspaceId(w.id, { url: 'replace' })}>
               <span className="min-w-0">
-                <span className="block truncate text-[13px]">{w.name}</span>
                 <span className="block font-mono text-[11px] text-text-faint">{w.id}</span>
+                <span className="block truncate text-[13px]">
+                  <bdi>{visible(w.name)}</bdi>
+                </span>
               </span>
               <span className="rounded bg-surface-3 px-1 font-mono text-[10px] text-text-muted">{uuid8(w.id)}</span>
             </Button>
@@ -38,7 +41,18 @@ export function WorkspaceChoice({ prefix, choices }: { prefix: string; choices: 
 
 /** An address that names (by `?ws=`) a workspace whose host is not running. The others keep working. */
 export function WorkspaceStopped({ workspace }: { workspace: Workspace }) {
-  usePageHeader('Host not running')
+  const unsafe = workspace.host_state === 'workspace.name_invalid'
+  usePageHeader(unsafe ? 'Workspace not shown' : 'Host not running')
+  if (unsafe)
+    return (
+      <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-surface p-8 text-center" role="status">
+        <ServerOff className="mx-auto size-7 text-text-muted" aria-hidden />
+        <h1 className="mt-3 text-lg font-semibold">This workspace&apos;s name can&apos;t be shown safely</h1>
+        <p className="mt-1.5 text-[13px] text-text-muted">
+          Workspace <span className="font-mono">{uuid8(workspace.id)}</span> has a name with hidden characters, so it is not shown. Your other workspaces keep working.
+        </p>
+      </div>
+    )
   return (
     <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-surface p-8 text-center" role="status">
       <ServerOff className="mx-auto size-7 text-text-muted" aria-hidden />

@@ -271,13 +271,14 @@ def enable(
     manager = SERVICE_MANAGER(unit)
     differs = svc.differences(unit)
     if not replace and (differs or (differs is None and _loaded(manager))):
-        fields = ", ".join(differs or ["a unit file elsewhere"])
+        named = differs or ["unit"]  # no unit file here, but the label is loaded: from a unit file elsewhere
+        what = ", ".join(named) + " differ" if differs else "unit differs: the label is loaded from another file"
         return _failure(
             "host.busy",
-            f"a host service ({unit.label}) is already installed for another setup ({fields} differ). Replacing it "
+            f"a host service ({unit.label}) is already installed for another setup ({what}). Replacing it "
             "stops that host and the workspaces it serves; to do that on purpose: orch host enable --replace",
             4,
-            differs=differs or [],
+            differs=named,
         )
     try:
         install_release(target=releases_dir(dict(env)))

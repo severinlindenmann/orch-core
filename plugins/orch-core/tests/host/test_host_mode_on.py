@@ -503,3 +503,34 @@ def test_status_prints_no_control_character(world, monkeypatch):
     }  # fmt: skip
     text = status.render(rep)
     assert "\x1b" not in text and "\x07" not in text and "\nproblem: forged" not in text
+
+
+def test_a_label_loaded_from_another_file_is_never_replaced_silently(tmp_path, fake):
+    """Opus 1 (last item): no unit file here, but the service manager has the label loaded from elsewhere."""
+    fake.loaded = True
+    env = {"HOME": str(tmp_path / "home"), "ORCH_HOST_RUN_DIR": "/r"}
+    code, out = host(["enable", "--dev", "--state", str(tmp_path / "s")], env)
+    doc = json.loads(out)
+    assert (code, doc["error"]["code"]) == (4, "host.busy") and doc["differs"] == ["unit"], doc
+    assert "loaded from another file" in doc["error"]["message"] and "--replace" in doc["error"]["message"]
+    assert not any(a[1] in ("bootout", "bootstrap", "kickstart") for a in fake.ran if a[0] == "launchctl")
+    assert not (tmp_path / "home" / "Library").exists() and not (tmp_path / "home" / ".config").exists()
+
+
+def test_a_subprocess_orch_host_enable_in_a_test_env_never_reaches_the_service_manager(tmp_path):
+    """A child ``orch host enable`` gets ``ORCH_NO_SERVICE_MANAGER=1`` from ``child_env`` (and from the session env), so
+    its own default runner refuses launchctl and systemctl before running either."""
+    from tests.conftest import child_env
+
+    env = child_env(tmp_path, ORCH_STATE_DIR=str(tmp_path / "s"), ORCH_HOST_RUN_DIR="/r")
+    assert env["ORCH_NO_SERVICE_MANAGER"] == "1"
+    res = subprocess.run(
+        [sys.executable, "-m", "orch", "host", "enable", "--dev"],
+        capture_output=True, text=True, timeout=120, env=env, cwd=tmp_path,
+    )  # fmt: skip
+    doc = json.loads(res.stdout.strip().splitlines()[-1])
+    if sys.platform not in ("darwin",) and not sys.platform.startswith("linux"):
+        assert doc["result"]["data"]["mode"] == "direct"
+        return
+    assert (res.returncode, doc["error"]["code"]) == (9, "host.unavailable"), res
+    assert "the service manager is off" in doc["error"]["message"]

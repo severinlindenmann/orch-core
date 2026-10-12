@@ -25,8 +25,14 @@ def refuse_real_keychain(path) -> None:
 
 
 def child_env(tmp_path: Path, **extra: str) -> dict[str, str]:
-    """The environment of a child process in a test: HOME is always a temporary directory, never the owner's."""
-    env = {"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "/usr/bin:/bin"), **extra}
+    """The environment of a child process in a test: HOME is always a temporary directory, never the owner's, and the
+    child never reaches launchctl or systemctl (``ORCH_NO_SERVICE_MANAGER=1``, H7)."""
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "ORCH_NO_SERVICE_MANAGER": "1",
+        **extra,
+    }
     home = os.path.realpath(env["HOME"])
     assert home == os.path.realpath(tmp_path) or home.startswith(os.path.realpath(tmp_path) + os.sep), home
     assert not real_keychains().startswith(home + os.sep), "HOME must not be the owner's home"
@@ -157,6 +163,7 @@ def _no_real_service_manager(tmp_path_factory):
 
     monkeypatch.setattr(release, "install_release", install_release)
     monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(tmp_path_factory.getbasetemp() / "no-host-run"))
+    monkeypatch.setenv("ORCH_NO_SERVICE_MANAGER", "1")  # every child process inherits it (subprocess, Popen)
     try:
         yield
     finally:

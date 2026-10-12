@@ -1,8 +1,8 @@
 """H7 parity of the parts other groups serve. A test whose group is not merged yet is ``xfail(strict=True)``: it fails
 for the reason named, and the day the group lands the strict mark turns its pass into a failure (XPASS) and must go.
 
-* (#413, merged) ``verdict`` and ``show`` on a ticket with a linked repo need git in the served workspace and the clean-tree
-  check (H10a ``tree.check``, #413). ``approve code`` binds the same source list through the same check; its gate
+* (#413, merged) ``verdict`` and ``show`` on a ticket with a linked repo need git in the served workspace and the
+  clean-tree check (H10a ``tree.check``). ``approve code`` binds the same source list through the same check; its gate
   must be independent (D59), so it needs a second person, and in tier A one UID maps to one person: its parity is
   the H10a host tests' (a clean tree allows it, a dirty one refuses it) rather than a two-mode script here.
 * the ``diff`` op the dashboard's Changes tab reads is served by feat/serve-diff (#417, stacked on #413).

@@ -575,7 +575,7 @@ def test_the_stub_signer_signs_settings_and_member_requests(worlds, team, tmp_pa
     assert status == 0, shown
     env.store.refresh()
     assert env.store.state.workspace.settings["grant_hours"] == 12
-    assert "Type DEMO/SETTINGS and Enter" in shown[0][0]  # stream A: <PREFIX>/SETTINGS
+    assert shown[0][1] == "DEMO/SETTINGS"  # stream A: <PREFIX>/SETTINGS
     person, pk, cert = invitee(env)
     got = handoff(world, {"action": "member_add", "name": "Nia", "role": "viewer", "pk": pk, "cert": cert}, 2).json()
     status, shown = signing.sign(got["code"], confirm=lambda text, word: word == person.ref)

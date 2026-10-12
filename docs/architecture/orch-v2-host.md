@@ -624,7 +624,8 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   current generation, or the caller's own person (the person of its grant) made the last change to that task's
   `verify` under a grant that is not revoked (revoking a leaked grant withdraws trust in what it wrote, also for the
   person's other grants; an expired grant stays trusted). The approval binds the command string only, not the repository
-  content it runs: an approved `make test` or `./run.sh` executes whatever the working copy holds. **Without an applicable plan gate only the caller's own command runs**; an unattended agent runs none that
+  content it runs: an approved `make test` or `./run.sh` executes whatever the working copy holds. **Without an
+  applicable plan gate only the caller's own command runs**; an unattended agent runs none that
   is not approved. A host that lied could only make the client run a command of its own choosing, as any program the
   user's own host-side state could already name. The host re-checks that the receipt's `cmd` equals the signed
   `verify.cmd` byte for byte and applies the same trust rule again when it takes the receipt (`verify.unapproved`
@@ -3348,6 +3349,9 @@ dispatch is turned on.
    - **Verify trust "own" becomes "same grant"** (#420 review): the rule of §0.8 "Trust of the command" keys "own" on the
      person, which is sound only while all of a person's agents share one UID; tier B (#287) narrows it to the author's
      grant (or agent UID class).
+   - **`diff`'s linked-repo check becomes a confidentiality boundary.** In tier B the check that `repo` is in the
+     ticket's `links.repos` must be a real boundary (commit provenance, or per-person repo visibility in
+     `settings.repos`), because agent UIDs then cannot read the disk themselves. In phase 1 it is accepted (§7 v1.5).
 
 ## 10. Decisions record
 

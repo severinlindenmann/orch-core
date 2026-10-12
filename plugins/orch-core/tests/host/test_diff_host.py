@@ -393,6 +393,34 @@ def test_a_ticket_restricted_while_its_diff_runs_is_not_found(world, monkeypatch
     assert _norm(out["res"], key) == _norm(missing, "DEMO-9999")
 
 
+def test_a_ticket_restricted_while_its_diff_fails_is_not_found(world, monkeypatch):
+    """The re-check also guards the error path: restricted during a reader phase that then fails
+    (``observe.unavailable``), the answer is ``not_found``, not the reader's error."""
+    served, _, tickets = world
+    uid, key = tickets["open"]
+    reader = served.service.capabilities().git.reader
+    started = threading.Event()
+
+    def fail(self, *a, **k):
+        started.set()
+        time.sleep(2.0)
+        raise Unavailable("the reader child died")
+
+    monkeypatch.setattr(type(reader), "diff", fail)
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("res", diff(served, {"ref": key}, grant=served.grant)))
+    t.start()
+    try:
+        assert started.wait(10)
+        served.restrict(uid, [served.quinn.ref])
+    finally:
+        t.join(30)
+    monkeypatch.undo()
+    missing = diff(served, {"ref": "DEMO-9999"}, grant=served.grant)
+    assert err(out["res"]) == "not_found"
+    assert _norm(out["res"], key) == _norm(missing, "DEMO-9999")
+
+
 def test_one_request_has_one_budget_for_all_its_repos(world, monkeypatch):
     """The reader call gets the request's remaining budget as its deadline (not the pool's own 30 s), and a
     request over budget is ``observe.unavailable`` without its reason (G is not a manager)."""

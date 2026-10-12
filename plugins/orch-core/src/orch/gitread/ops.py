@@ -17,6 +17,8 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from orch import canon  # imported here, before the sandbox hook: the request must not import anything later
+
 from . import limits, treecheck
 from .errors import NotFound, Unavailable
 from .fs import RepoPins, open_pin
@@ -144,8 +146,6 @@ def _entries(v: Any, repo: Repo, what: str, limit: int) -> list[dict[str, Any]]:
 
 
 def _same(a: str, b: str) -> bool:
-    from orch import canon
-
     try:
         return canon.same_repo_identity(a, b)
     except Exception:  # noqa: BLE001 - an identity that does not parse names no repo
@@ -260,11 +260,10 @@ def diff(
         raise Unavailable("bad request: ext")
     ident = None
     if ext:
-        from orch.gitread.client import identity_of
-
         name_ = _str(ext, "name")
         assert name_ is not None
-        ident = identity_of(repo.config.origin_urls, name_)
+        urls = repo.config.origin_urls
+        ident = canon.canonical_repo_identity(urls[0] if len(urls) == 1 else "", name_)  # F1 5.7, as client.identity_of
     pinned = None
     for p in _entries(ext.get("pins") or [], repo, "pins", 16):
         if ident is not None and _same(p["repo"], ident) and _usable(repo, p["sha"]):

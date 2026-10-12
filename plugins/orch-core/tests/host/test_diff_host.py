@@ -80,6 +80,12 @@ def direct(served, uid, **kw):
         store.close()
 
 
+def pinned(data):
+    """The host pins the first merge base it sees (H6c): later diffs say ``host_pinned`` where direct mode, which keeps
+    no host state, says ``local_ref``. Everything else is equal."""
+    return {**data, "sources": [{**s, "base_source": "local_ref" if s["base_source"] == "host_pinned" else s["base_source"]} for s in data["sources"]]}
+
+
 def test_diff_is_served_and_listed(world):
     served, _, _ = world
     welcome = served.client().welcome
@@ -91,7 +97,7 @@ def test_a_visible_linked_diff_equals_direct_mode(world):
     served, proj, tickets = world
     uid, key = tickets["open"]
     got = ok(diff(served, {"ref": key}))["data"]
-    assert got == direct(served, uid)
+    assert got == direct(served, uid)  # the first diff: nothing is pinned yet
     assert set(got) == {"sources", "files", "unified", "truncated"}  # no field added
     (src,) = got["sources"]
     assert src["repo"] == "proj" and src["branch"] == "feat/x" and src["base_source"] == "local_ref"
@@ -107,7 +113,7 @@ def test_a_visible_linked_diff_equals_direct_mode(world):
     assert "-broken\n+fixed\n" in got["unified"] and got["truncated"] is False
     # repo, context and max_bytes as direct mode takes them
     for kw in ({"repo": "proj"}, {"context": 0}, {"max_bytes": 1024}):
-        assert ok(diff(served, {"ref": key, **kw}))["data"] == direct(served, uid, **kw), kw
+        assert pinned(ok(diff(served, {"ref": key, **kw}))["data"]) == direct(served, uid, **kw), kw
 
 
 def test_the_dashboard_adapter_reads_the_served_shape(world):
@@ -171,14 +177,17 @@ def test_column_n_reads_a_workspace_ticket_and_g_reads_too(world):
     want = direct(served, uid)
     assert ok(diff(served, {"ref": key}, grant=served.grant))["data"] == want  # G
     as_agent_class(served)
-    assert ok(diff(served, {"ref": key}))["data"] == want  # N
+    assert pinned(ok(diff(served, {"ref": key}))["data"]) == want  # N (the first diff pinned the base)
 
 
 def test_the_arguments(world):
     served, _, tickets = world
     key = tickets["open"][1]
-    for bad in ({"ref": key, "context": 11}, {"ref": key, "max_bytes": 10}, {"ref": key, "since": "my_approval"},
-                {"ref": key, "head": "0" * 40}, {"ref": key, "base": "0" * 40}, {}):  # fmt: skip
+    for bad in ({"ref": key, "context": 11}, {"ref": key, "max_bytes": 10}, {"ref": key, "since": "latest"},
+                {"ref": key, "head": "0" * 40},  # no repo
+                {"ref": key, "repo": "proj", "head": "0" * 39}, {"ref": key, "repo": "proj", "base": "G" * 40},
+                {"ref": key, "repo": "proj", "since": "my_approval", "head": "0" * 40},
+                {"ref": key, "repo": "proj", "since": "my_approval", "base": "0" * 40}, {}):  # fmt: skip
         assert err(diff(served, bad)) == "invalid.input", bad
     c = served.client()
     assert err(c.req("diff", {"ref": key}, dry_run=True)) == "invalid.input"
@@ -325,7 +334,7 @@ def test_a_slow_diff_does_not_hold_the_workspace(world, monkeypatch):
         assert ok(diff(served, {"ref": key}))["data"]["sources"]  # another principal (the owner) is not refused
     finally:
         slow.join(30)
-    assert ok(out["g"])["data"] == direct(served, tickets["open"][0])
+    assert pinned(ok(out["g"])["data"]) == direct(served, tickets["open"][0])
     monkeypatch.undo()
     ok(diff(served, {"ref": key}, grant=served.grant))  # the slot is free again
 
@@ -458,3 +467,96 @@ def grant_value(gid):
     from tests.store.helpers import GRANT_SECRET
 
     return f"{gid}.{crypto.b64u(GRANT_SECRET)}"
+
+
+# --- H6c: since, head, base, host_pinned ---------------------------------------------------------------------------
+
+H6C = [
+    {"since": "my_approval"},
+    {"repo": "proj", "head": "a" * 40},
+    {"repo": "proj", "base": "b" * 40},
+]
+
+
+@pytest.mark.parametrize("extra", H6C, ids=["since", "head", "base"])
+def test_the_h6c_arguments_on_a_restricted_ticket_are_byte_identical_to_a_missing_one(world, extra):
+    served, _, tickets = world
+    uid, key = tickets["secret"]
+    served.restrict(uid, [served.quinn.ref])  # the grant's person (the owner) is off the list
+    hidden = diff(served, {"ref": key, **extra}, grant=served.grant)
+    missing = diff(served, {"ref": "DEMO-9999", **extra}, grant=served.grant)
+    assert err(hidden) == "not_found" and _norm(hidden, key) == _norm(missing, "DEMO-9999")
+    as_agent_class(served)  # no-person
+    assert err(diff(served, {"ref": key, **extra})) == "not_found"
+
+
+def test_since_without_an_approval_and_head_base_outside_the_ranges_are_not_found(world):
+    served, proj, tickets = world
+    uid, key = tickets["open"]
+    res = diff(served, {"ref": key, "since": "my_approval"})
+    assert err(res) == "not_found" and "no approval of yours" in res["error"]["message"]
+    # a commit that exists but is no part of the ticket's history, and one that does not exist: one answer
+    outside = served.lab.ws.git("rev-parse", "main")
+    texts = set()
+    for sha in (outside, "e" * 40):
+        res = diff(served, {"ref": key, "repo": "proj", "head": sha})
+        assert err(res) == "not_found"
+        texts.add(res["error"]["message"])
+    assert len(texts) == 1
+    res = diff(served, {"ref": key, "repo": "proj", "base": "e" * 40})
+    assert err(res) == "not_found" and res["error"]["message"] in texts
+    # the observed head and its default base are always allowed, and say so
+    head = served.lab.ws.git("rev-parse", "feat/x")
+    got = ok(diff(served, {"ref": key, "repo": "proj", "head": head, "base": outside}))["data"]
+    assert got["sources"][0]["base_sha"] == outside
+
+
+def test_the_first_merge_base_is_pinned_and_main_moving_is_counted(world):
+    served, proj, tickets = world
+    uid, key = tickets["open"]
+    git = served.lab.ws.git
+    first = ok(diff(served, {"ref": key}))["data"]["sources"][0]
+    assert first["base_source"] == "local_ref"
+    base = first["base_sha"]
+    path = served.lab.state / "hosts" / served.wid / "diff-bases.json"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert json.loads(path.read_text()) == {uid: {"local:proj": base}}
+    again = ok(diff(served, {"ref": key}))["data"]["sources"][0]
+    assert (again["base_source"], again["base_sha"], again["base_moved"]) == ("host_pinned", base, 0)
+    # main moves on and the branch merges it: the pin stays, and the commits it hides are counted
+    git("checkout", "-q", "main")
+    (proj / "main.txt").write_text("main\n")
+    git("add", "main.txt")
+    git("commit", "-qm", "main moves")
+    git("checkout", "-q", "feat/x")
+    git("merge", "-q", "--no-edit", "main")
+    moved = ok(diff(served, {"ref": key}))["data"]["sources"][0]
+    assert (moved["base_source"], moved["base_sha"], moved["base_moved"]) == ("host_pinned", base, 1)
+    assert json.loads(path.read_text()) == {uid: {"local:proj": base}}  # never moved forward
+
+
+@pytest.mark.parametrize("extra", H6C, ids=["since", "head", "base"])
+def test_the_h6c_arguments_keep_the_limits(world, monkeypatch, extra):
+    """One diff in flight per principal, and the ticket's visibility checked again after the read, on success and on
+    error, with the new arguments as with the old."""
+    served, _, tickets = world
+    uid, key = tickets["open"]
+    started = slow_reader(served, monkeypatch, 3.0)
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("g", diff(served, {"ref": key, **extra}, grant=served.grant)))
+    t.start()
+    try:
+        assert started.wait(10)
+        second = diff(served, {"ref": key, **extra}, grant=served.grant)
+        assert err(second) == "quota.host" and second["error"]["retryable"] is True
+        served.restrict(uid, [served.quinn.ref])
+    finally:
+        t.join(30)
+    monkeypatch.undo()
+    missing = diff(served, {"ref": "DEMO-9999"}, grant=served.grant)
+    assert err(out["g"]) == "not_found" and _norm(out["g"], key) == _norm(missing, "DEMO-9999")  # success or error path
+
+
+def test_diff_ext_is_listed(world):
+    served, _, _ = world
+    assert "diff_ext/1" in served.client().welcome["caps"]

@@ -422,7 +422,7 @@ class RegistryBackend:
                 failure = exc
             # visibility again before the answer or the error: a ticket restricted while the reader ran is
             # not_found, never the reader's error (F6, F8)
-            await asyncio.wrap_future(call.service.submit(git_diff.recheck, call))
+            await asyncio.wrap_future(call.service.submit(git_diff.recheck, call, pending))
             if failure is not None:
                 raise failure from None
             return redactor.obj(ok_result(data))

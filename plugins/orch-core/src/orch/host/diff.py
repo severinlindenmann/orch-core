@@ -250,8 +250,17 @@ def run(pending: Pending) -> dict[str, Any]:
         raise HostError(e.code, f"repo {e.repo}: not readable") from None
 
 
-def recheck(call: Call) -> None:
+def recheck(call: Call, pending: Pending | None = None) -> None:
     """Phase 3, on the worker thread: the caller may still see the ticket (F8: the column and the viewer from the
-    refreshed store), else ``not_found`` exactly as in :func:`prepare`."""
+    refreshed store), else ``not_found`` exactly as in :func:`prepare`. For ``since`` the approvals phase 1 resolved
+    are resolved again from the refreshed store and must be the same list: an approval revoked, voided or replaced
+    while the reader ran is ``not_found`` (the "no approval" answer), never the diff. Any error here refuses."""
     call.authorize()
-    Viewer.of(call).ticket(call.service.store, call.frame["args"]["ref"])
+    viewer = Viewer.of(call)
+    view = viewer.ticket(call.service.store, call.frame["args"]["ref"])
+    if pending is not None and pending.since:
+        from orch.ops.diff_core import approvals_of
+
+        now = list(approvals_of(call.service.store, view, viewer.person))
+        if any(list(job.approvals) != now for job in pending.jobs):
+            raise HostError("not_found", "no approval of yours covers this repo's history")

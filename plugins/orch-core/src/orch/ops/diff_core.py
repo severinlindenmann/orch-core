@@ -57,18 +57,35 @@ class RepoJob:
 PUSHES_MAX = 100
 
 
-def approvals_of(view: Any, person: str | None) -> list[dict[str, str]]:
+def approvals_of(store: Any, view: Any, person: str | None) -> list[dict[str, str]]:
     """``{repo, sha}`` of every source entry signed by a ``code`` approval of ``person`` (the caller's own: never
-    another person's, never a verdict), newest decision first. A new push voids an approval, which is exactly when a
-    reviewer asks "what changed since I approved", so a voided or superseded approval still names its commit; one
-    of a since-revoked device is left out. ``person`` ``None`` (no-person) has none."""
-    gate = view.gates.get("code")
-    if person is None or gate is None:
+    another person's, never a verdict), newest decision first. Fails closed: ``person`` must still be a member, and a
+    decision counts only while it is not voided and its signing device is the person's own, present and not revoked
+    (nor listed as revoked on a settled ticket). The walk stops at the newest decision that fails this, so a revoked
+    approval is never replaced by an older one. A push that raised the gate's generation leaves an approval usable:
+    "what changed since I approved" is asked exactly then. ``person`` ``None`` (no-person) has none."""
+    if person is None:
         return []
-    out = []
+    core = store.state._core
+    ws, t = core.ws, core.tickets[view.uid]
+    gate = t.gates.get("code")
+    if gate is None or person not in ws.members:
+        return []
+    out: list[dict[str, str]] = []
     for d in reversed(gate.decisions):
-        if d.kind == "approve" and d.person == person and d.source_sha and d.id not in gate.revoked_decisions:
-            out += [{"repo": s["repo"], "sha": s["sha"]} for s in d.source_sha]
+        if d.kind != "approve" or d.person != person or not d.source_sha:
+            continue
+        dev = ws.devices.get(d.device)
+        if (
+            d.voided
+            or d.id in gate.revoked_flag
+            or dev is None
+            or dev.removed
+            or dev.revoked is not None
+            or dev.person != person
+        ):
+            break
+        out += [{"repo": x["repo"], "sha": x["sha"]} for x in d.source_sha]
     return out[:64]
 
 
@@ -131,7 +148,7 @@ def diff_plan(
                 spec.get("default_branch"),
                 spec.get("remote"),
                 tuple(pushes_of(store, view, name)) if extended else (),
-                tuple(approvals_of(view, person)) if since else (),
+                tuple(approvals_of(store, view, person)) if since else (),
                 tuple({"repo": r, "sha": v} for r, v in sorted(dict(pins).items())),
             )
         )

@@ -101,3 +101,30 @@ def test_bad_arguments_are_invalid_input(hws, scene, kw):
     with pytest.raises(OrchError) as e:
         diff(hws, person="x", **kw)
     assert e.value.code == "invalid.input"
+
+
+def test_a_revoked_approver_device_or_removed_member_leaves_no_approval(hws, scene):
+    """Fail closed: the approval of a device that was revoked (or of a person no longer a member) is not a base, and an
+    older approval of the same person never replaces it."""
+    s, rita = scene
+    assert diff(hws, since="my_approval", person=rita.ref)["sources"][0]["base_sha"] == s["c2"]
+    hws.revoke_device(rita.device, rita)
+    for person in (rita.ref, hws.owner.ref):
+        with pytest.raises(OrchError) as e:
+            diff(hws, since="my_approval", person=person)
+        assert e.value.code == "not_found" and "no approval of yours" in e.value.message
+
+
+def test_a_voided_approval_is_not_used(hws, scene):
+    from orch.ops.diff_core import approvals_of
+
+    s, rita = scene
+    store = hws.other()
+    try:
+        view = store.ticket("1")
+        assert [a["sha"] for a in approvals_of(store, view, rita.ref)] == [s["c2"]]
+        (d,) = [d for d in store.state._core.tickets[view.uid].gates["code"].decisions if d.kind == "approve"]
+        d.voided = True  # what a removed member or a compromised device does to a decision
+        assert approvals_of(store, view, rita.ref) == []
+    finally:
+        store.close()

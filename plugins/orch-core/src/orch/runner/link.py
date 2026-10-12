@@ -118,6 +118,8 @@ class HostLink:
         #: tests: drop the report of these commands (a lost ack)
         self.drop_reports: set[str] = set()
         sup.on_event = self._on_event
+        if term is not None:
+            term.on_change = self._term_changed
 
     # -- life cycle
     def start(self) -> None:
@@ -302,7 +304,7 @@ class HostLink:
         except SpawnError as exc:
             outcome, payload = "error", {"code": exc.code, "message": exc.message}
         except TicketError as exc:
-            outcome, payload = "error", {"code": "invalid.input", "message": str(exc)}
+            outcome, payload = "error", {"code": exc.code, "message": str(exc)}
         except Exception as exc:  # noqa: BLE001 - never a traceback to the host
             LOG.exception("runner command %s failed", cmd)
             outcome, payload = "error", {"code": "run.spawn_failed", "message": type(exc).__name__}
@@ -325,17 +327,31 @@ class HostLink:
                 res = self.sup.spawn(spec)
             return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
         if cmd == "stop":
-            return self.sup.stop(str(args.get("run")), grace=max(0, int(args.get("grace_ms", 10_000))) / 1000)
+            run = str(args.get("run"))
+            if self.term is not None:  # the person stopped it: its viewers end with run.stopped (§12.6.2)
+                self.term.end_run(run, "run.stopped")
+            return self.sup.stop(run, grace=max(0, int(args.get("grace_ms", 10_000))) / 1000)
         if cmd == "attach.allow":
             if self.term is None:
-                raise TicketError("no terminal socket")
-            self.term.allow(args, epoch=tag)  # the epoch it arrived in, not the one current when it runs (F4)
-            return {}
+                raise TicketError("no terminal socket", "runner.unavailable")
+            return self.term.allow(args, epoch=tag)  # the epoch it arrived in, not the one current when it runs (F4)
         if cmd == "attach.end":
             if self.term is not None:
                 self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))
             return {}
         raise SpawnError("invalid.input", f"unknown command {cmd[:32]}")
+
+    # -- the term socket's reports
+    def _term_changed(self, run: str) -> None:
+        """A run's attachments, lease or size changed: ``runner.term`` (the host's counts and ``Run.viewers``)."""
+        if not self.ready.is_set() or self.term is None:
+            return
+        args = self.term.summary(run)
+        if args["cols"] is None:
+            args.pop("cols")
+            args.pop("rows")
+        with contextlib.suppress(OSError, ConnectionError):
+            self._send_req("runner.term", args)
 
     # -- supervisor events
     def _on_event(self, kind: str, run: str, payload: dict[str, Any]) -> None:

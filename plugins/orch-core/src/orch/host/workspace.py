@@ -30,6 +30,7 @@ then refreshes the store and **recomputes the column before the op runs**, and t
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -43,6 +44,7 @@ from .auth import AuthView, Verified, build_auth, secret_in_request
 from .columns import Column, OpKind, refusal, resolve
 from .custody import check_tree, check_workspace_files
 from .errors import HostError
+from .journal import Batch, Cursors, Journal
 from .outcomes import OutcomeStore, StoreReconciler
 from .registry import Entry
 from .requests import RequestStore
@@ -54,6 +56,7 @@ if TYPE_CHECKING:
 __all__ = ["Call", "OpBackend", "StatusBackend", "WorkspaceGate", "WorkspaceService", "ok_result", "person_ok"]
 
 State = Literal["ok", "degraded", "unavailable"]
+LOG = logging.getLogger(__name__)
 Phase = Literal["read", "write", "wait"]
 
 
@@ -118,6 +121,16 @@ class WorkspaceService:
         self.caps: Any = None
         #: set while ``unregister`` drains this workspace: new requests answer ``workspace.unavailable``
         self.closing = False
+        #: the subscription journal (:mod:`orch.host.journal`, H6a), built at open; worker thread only
+        self.journal: Journal | None = None
+        #: where the worker hands journal batches (the host's bus, on the event loop); ``None``: nobody listens
+        self.publish: Callable[[Batch], None] | None = None
+        #: the host's bus (:class:`orch.host.bus.Bus`): subscriptions and parked waits; set by the host
+        self.bus: Any = None
+        #: cursor authentication, the host's (set by the host; a private key otherwise)
+        self.cursors = Cursors(os.urandom(32))
+        #: why the journal could not be built ("" while it is fine): the workspace stays degraded
+        self.journal_failed = ""
         #: human requests (§0.8.1, H5a): ``<state>/hosts/<ws>/requests/``
         self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         self.outcomes.roll_forward = self._roll_forward
@@ -185,6 +198,92 @@ class WorkspaceService:
                 self.outcomes.sweep()
             except (HostError, OSError, ValueError) as exc:
                 self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
+        if self.state != "unavailable":
+            self._build_journal(audit=False)
+
+    # -- the subscription journal (H6a, D-P2-12, F11)
+    def _build_journal(self, *, audit: bool) -> None:
+        """(Re)build the journal from the logs and hook it into the store. A rebuild after a foreign append or a
+        restore marks the workspace ``degraded`` while it runs, writes one audit line, and its batch ends every
+        subscription with ``reset`` (the bus does that on a reset batch).
+
+        A build that fails leaves no journal: the workspace stays ``degraded`` (:attr:`journal_failed`), every
+        subscription ends with ``reset``, ``sub.open`` answers ``workspace.unavailable``, and the next try is the 60 s
+        check (no retry on every op)."""
+        store = self.store
+        if store is None:
+            return
+        journal = self.journal or Journal(self.entry.workspace_id, self.entry.root, self.cursors)
+        if audit:
+            self.state, self.cause = "degraded", "the subscription journal is being rebuilt"
+            LOG.warning(
+                "audit: workspace %s: foreign append or restore (%s); rebuilding the journal, ending subscriptions",
+                self.entry.workspace_id,
+                journal.cause or self.journal_failed or "start",
+            )
+        store.before_append, store.on_commit = None, None
+        try:
+            batch = journal.build(store)
+        except Exception as exc:  # noqa: BLE001 - whatever failed, there is no journal to serve from
+            self.journal = None
+            self.journal_failed = f"journal: {getattr(exc, 'code', type(exc).__name__)}: {exc}"[:300]
+            LOG.error("audit: workspace %s: the journal cannot be built: %s", self.entry.workspace_id, exc)
+            if self.publish is not None:  # end every subscription on the old feed
+                self.publish(Batch(self.entry.workspace_id, "", 0, (), {}, reset=True))
+            if self.store is not None:
+                self._judge()
+            return
+        self.journal, self.journal_failed = journal, ""
+        store.before_append, store.on_commit = journal.check, journal.committed
+        if self.store is not None:
+            self._judge()
+        if self.publish is not None:
+            self.publish(batch)
+
+    def sub_cursor(self, principal: str) -> str:
+        """The ``sub_cursor`` of a snapshot read (§0.9), on the worker thread right where the read takes its state:
+        the journal head after a foreign-append check, so every event the state shows is in the journal.
+        ``ticket.query``, ``ticket.get`` and ``needs`` (H6b) return it; ``sub.open {after}`` with it loses and repeats
+        nothing."""
+        self.sync(check=True)
+        if self.journal is None:
+            raise HostError("workspace.unavailable", "the subscription journal is not available")
+        return self.journal.cursor(principal)
+
+    def sync(self, *, check: bool = False, retry: bool = False) -> None:
+        """After an op (worker thread): look for a foreign append (cheaply; every log with ``check``, the 60 s check
+        and ``sub.open``), rebuild a stale journal, else hand its new entries to the bus with a fresh authentication
+        snapshot. A journal that failed to build is retried only with ``retry`` (the 60 s check)."""
+        store = self.store
+        if store is None:
+            return
+        if self.journal is None:
+            if retry and self.journal_failed and self.state != "unavailable":
+                self._build_journal(audit=True)
+                self._snapshot()
+            return
+        journal = self.journal
+        from orch.store import StoreError
+
+        try:
+            if check:
+                with store.locked():  # every log's signature, against the files as the lock finds them
+                    journal.check(full=True)
+            else:
+                journal.check()  # O(1): the store's own counter and one stat
+        except (StoreError, OSError) as exc:
+            LOG.warning("journal check of %s failed: %s", self.entry.workspace_id, exc)
+            return
+        if journal.stale:
+            self._build_journal(audit=True)
+            self._snapshot()
+            return
+        batch = journal.take()
+        if batch is None:
+            return
+        self._snapshot()  # delivery revalidates against this: a revoke or removal it carries counts at once
+        if self.publish is not None:
+            self.publish(batch)
 
     def _roll_forward(self, record: dict[str, Any]) -> dict[str, Any] | str:
         from .human import outcome_fields
@@ -197,6 +296,8 @@ class WorkspaceService:
             self._unavailable("the chain is broken at the genesis")
         elif ws.frozen or any(not item.acknowledged for item in ws.invalid):
             self.state, self.cause = "degraded", "an unacknowledged invalid event"
+        elif self.journal_failed:
+            self.state, self.cause = "degraded", self.journal_failed
         else:
             self.state, self.cause = "ok", ""
 
@@ -293,6 +394,8 @@ class Call:
     #: :meth:`authorize` first
     columns: Callable[[], tuple[Column, str | None, Verified]] | None = None
     kind: OpKind | None = None
+    #: the transport's handle of this request (``sub.open``: no ``evt`` of the subscription before its ``res``)
+    request: frames.Request | None = None
 
     def authorize(self) -> None:
         """Recompute the column from the refreshed store and refuse outside it (§0.6 steps 5 and 6, F8)."""
@@ -432,9 +535,14 @@ class WorkspaceGate:
             call = Call(
                 service, session, session.peer, frame, column, viewer, verified, principal(session.peer.uid, verified)
             )
+            call.request = request
             if deferred:
                 call.columns, call.kind = (lambda: self._column(service, session.peer, frame)), kind
             result = await self.backend.run(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})
         except HostError as exc:
             session.respond(request, exc.response(request.id))
+        finally:
+            bus = getattr(self.host, "bus", None)
+            if bus is not None:  # evts held back for this answer (a write's own events, a new subscription) may go
+                bus.kick()

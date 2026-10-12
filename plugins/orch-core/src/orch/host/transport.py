@@ -168,6 +168,8 @@ class Session:
         self.state = frames.Connection()
         self.decoder = frames.Decoder(clock=server.clock)
         self.subscriptions = 0  # H6 owns subscription lifetimes.
+        #: called once the connection is closed (the bus frees its subscriptions here)
+        self.on_close: list[Callable[[], Any]] = []
         self.hello: dict[str, Any] | None = None
         self.queue: asyncio.Queue[tuple[bytes, Callable[[], Any] | None]] = asyncio.Queue(WRITE_QUEUE_FRAMES)
         self.queued_bytes = 0  # Includes the frame currently being written.
@@ -399,6 +401,11 @@ class Session:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+                for hook in self.on_close:
+                    try:
+                        hook()
+                    except Exception:  # noqa: BLE001 - a hook never keeps a connection from closing
+                        LOG.exception("connection close hook failed")
 
 
 async def _fatal(sock: socket.socket, error: frames.FrameError) -> None:

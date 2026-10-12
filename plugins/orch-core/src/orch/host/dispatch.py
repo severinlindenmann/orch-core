@@ -1,12 +1,22 @@
 """The host's dispatcher (H4a1): the registry ops on a workspace socket, with §0.5 to §0.8 applied to each request.
 
 **The closed op list** (§0.4, §0.5). The host serves every registry op of :mod:`orch.ops` under its name at contract
-version 1, plus ``whoami``, ``host.status`` and ``outcome.get``, and nothing else (``unknown_command``). Left out:
+version 1, plus ``whoami``, ``host.status``, ``outcome.get``, ``sub.open`` and ``sub.close``, and nothing else
+(``unknown_command``). Left out:
 
 * ``init`` and ``import.v1`` (D-P2-9: ``init`` is ``host.wsk_create`` + ``host.bootstrap``; ``import v1`` runs in
   direct mode before registration);
-* ``task.done``, until H3b2 serves it at contract 2 (client receipts: the host never runs ``verify.cmd``);
-* ``wait``, until H6a serves it on the bus (its P1 handler sleeps, which would hold the workspace's one worker thread).
+* ``task.done``, until H3b2 serves it at contract 2 (client receipts: the host never runs ``verify.cmd``).
+
+**``wait`` on the bus (H6a).** Its P1 handler sleeps between looks at the log, which would hold the workspace's one
+worker thread. Here each look is one short job on the worker thread (``Context.wait_step``: the handler looks once and
+raises :class:`~orch.ops.commands.wait.Parked`); between looks the request parks on the event loop until the bus
+delivers an entry of the ticket's log or its ``timeout`` passes (:meth:`RegistryBackend.wait`). Its phase is ``wait``:
+a drain answers it ``host.restarting``, and ``opts.timeout_ms`` does not apply (§0.2).
+
+**Subscriptions (H6a, §0.9).** ``sub.open`` runs its checks on the worker thread (the column, the topics, a
+``ticket:<ref>`` through :meth:`Viewer.ticket`, the cursor against the journal) and fixes the live boundary there; the
+event loop then registers it with the host's :class:`~orch.host.bus.Bus` before its ``res`` is sent.
 
 Each op has a matrix category (:data:`orch.host.columns.OpKind`) from its registry ``who``: ``read`` (``doctor``,
 ``instructions.sync`` and ``instructions.hook`` are ``person_read``), ``agent``, ``unattended``, ``human``. The gate
@@ -49,6 +59,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
 import logging
 import time
 import traceback
@@ -59,6 +70,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from jsonschema import Draft202012Validator
 
 from .auth import Redactor
+from .bus import Subscription
 from .columns import OpKind
 from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
@@ -90,7 +102,6 @@ NOT_SERVED: dict[str, str] = {
     "init": "init is host.wsk_create and host.bootstrap (D-P2-9)",
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
     "task.done": "served at contract 2 from H3b2 (client receipts)",
-    "wait": "served on the bus from H6a",
 }
 PERSON_READS = frozenset({"doctor", "instructions.sync", "instructions.hook"})
 #: arguments the host refuses (``op.not_allowed``) on an op it otherwise serves
@@ -99,7 +110,10 @@ HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
         "repair": "doctor --repair is a control action of the host's owner, not a workspace op (a control op later)"
     },
 }
-HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1}
+HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1, "sub.open": 1, "sub.close": 1}
+#: registry ops served in the ``wait`` phase (parked on the bus, answered ``host.restarting`` by a drain)
+WAIT_OPS = frozenset({"wait"})
+_TOPIC = r"^(?:workspace|tickets|needs|ticket:(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}|[0-7][0-9A-HJKMNP-TV-Z]{25}))$"
 DEFAULT_TIMEOUT_MS = 30_000
 LOG = logging.getLogger(__name__)
 
@@ -111,6 +125,22 @@ _HOST_SCHEMAS = {
         "type": "object",
         "properties": {"idem": _IDEM},
         "required": ["idem"],
+        "additionalProperties": False,
+    },
+    # detail (v1.5) is not here: without sub_ext/1 it is an unknown key, so invalid.input (§0.3, §0.9)
+    "sub.open": {
+        "type": "object",
+        "properties": {
+            "topics": {"type": "array", "items": {"type": "string", "pattern": _TOPIC}, "minItems": 1, "maxItems": 8},
+            "after": {"type": "string", "minLength": 1, "maxLength": 256},
+        },
+        "required": ["topics"],
+        "additionalProperties": False,
+    },
+    "sub.close": {
+        "type": "object",
+        "properties": {"sub": {"type": "string", "pattern": r"^sub_[0-9a-z]{1,16}$"}},
+        "required": ["sub"],
         "additionalProperties": False,
     },
 }
@@ -137,6 +167,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS:
         return ("read", "read")
+    if name in WAIT_OPS:
+        return ("read", "wait")
     if name in HUMAN_OPS:
         return ("human_api", PHASES[name])  # type: ignore[return-value]
     if name in NOT_SERVED:
@@ -254,7 +286,7 @@ class ScopedRecords:
 class RegistryBackend:
     """The :class:`~orch.host.workspace.OpBackend` of every workspace socket."""
 
-    caps = ["ops/1", "outcome/1"]
+    caps = ["ops/1", "outcome/1", "sub/1"]
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
 
@@ -272,21 +304,90 @@ class RegistryBackend:
 
     async def run(self, call: Call) -> dict[str, Any]:
         op = call.frame["op"]
+        if op in WAIT_OPS:
+            return await self.wait(call)
         opts = call.frame.get("opts") or {}
         phase = self._kinds[op][1]  # type: ignore[index]
         timeout_ms = opts.get("timeout_ms", DEFAULT_TIMEOUT_MS)
         future = call.service.submit(self.serve, call)  # before any await: a connection's writes keep their order
         try:
-            return await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(future)), timeout_ms / 1000)
+            result = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(future)), timeout_ms / 1000)
         except TimeoutError:
             if phase == "write":  # never rolled back: it ends committed or failed, and outcome.get reports it
                 raise HostError(
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
+        if op == "sub.open":
+            return self._register(call, result)
+        if op == "sub.close":
+            bus = call.service.bus
+            if bus is not None:
+                bus.close(call.session, call.frame["args"]["sub"])
+        return result
+
+    def _register(self, call: Call, checked: dict[str, Any]) -> dict[str, Any]:
+        """``sub.open`` on the event loop: register the subscription the worker checked, at the boundary it fixed."""
+        bus = call.service.bus
+        if bus is None:
+            raise HostError("workspace.unavailable", "the workspace has no subscription bus")
+        data = checked["data"]
+        grant = (call.frame.get("auth") or {}).get("grant") if call.column.name == "G" else None
+        sub: Subscription = bus.open(
+            call.session,
+            call.request,
+            call.service.workspace_id,
+            topics=frozenset(data["topics"]),
+            tickets=frozenset(data["tickets"]),
+            principal=call.principal,
+            column=call.column.name,
+            person=call.viewer,
+            grant=grant,
+            grant_id=call.verified.grant.id if call.verified.grant is not None else None,
+            pos=int(data["pos"]),
+        )
+        return ok_result({"sub": sub.id, "cursor": bus.cursor(sub)})
+
+    async def wait(self, call: Call) -> dict[str, Any]:
+        """``wait`` on the bus: one look per worker job; between looks the request parks here until an entry of the
+        ticket's log arrives or its ``timeout`` passes (then one last look gives the timeout answer)."""
+        from orch.ops.commands.wait import Parked, Step
+
+        service = call.service
+        bus = service.bus
+        if bus is None:
+            raise HostError("workspace.unavailable", "the workspace has no subscription bus")
+        loop = asyncio.get_running_loop()
+        timeout = call.frame["args"].get("timeout", 540)
+        if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 3600:
+            timeout = 540  # the first look refuses it (invalid.input)
+        deadline = loop.time() + timeout
+        step = Step()
+        watch = bus.watch(service.workspace_id)  # before the first look: nothing committed after it is missed
+        try:
+            while True:
+                try:
+                    return await asyncio.wrap_future(service.submit(self.serve, call, step))
+                except Parked:
+                    pass
+                watch.uid = step.log
+                # look again only for an entry that can answer (or refuse) this wait, a rebuild, or the timeout
+                while not watch.relevant():
+                    watch.clear()
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        step.expired = True
+                        break
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(watch.event.wait(), remaining)
+                watch.clear()
+        finally:
+            bus.unwatch(watch)
 
     # -- on the worker thread
-    def serve(self, call: Call) -> dict[str, Any]:
+    def serve(self, call: Call, step: Any = None) -> dict[str, Any]:
+        from orch.ops.commands.wait import Parked
+
         redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
         try:
             call.authorize()  # the authoritative column, from the refreshed store, before anything else (F8)
@@ -299,13 +400,20 @@ class RegistryBackend:
             elif op in self.human.ops:
                 result = self.human.serve(call, redactor)
             else:
-                result = self._registry(call, redactor)
+                result = self._registry(call, redactor, step)
             return redactor.obj(result)
         except HostError as exc:
             raise redactor.error(exc) from None
+        except Parked:
+            raise
         except Exception:  # the transport answers internal without a cause: keep it in the host's log, redacted
             LOG.error("%s failed: %s", call.frame.get("op"), redactor.text(traceback.format_exc()))
             raise
+        finally:
+            try:  # the journal's new entries go to the bus before this answer is sent (and so before its evts)
+                call.service.sync()
+            except Exception:  # noqa: BLE001 - delivery bookkeeping never changes an op's answer
+                LOG.error("journal sync failed: %s", redactor.text(traceback.format_exc()))
 
     @staticmethod
     def _state(service: WorkspaceService, write: bool) -> None:
@@ -326,8 +434,36 @@ class RegistryBackend:
             return ok_result(self.whoami(call))
         if op == "host.status":
             return ok_result(self.status(call))
+        if op == "sub.close":
+            return ok_result({})
         self._state(call.service, False)
+        if op == "sub.open":
+            return ok_result(self.sub_open(call, args))
         return ok_result(call.service.outcomes.lookup(call.principal, args["idem"]))
+
+    @staticmethod
+    def sub_open(call: Call, args: dict[str, Any]) -> dict[str, Any]:
+        """The worker's part of ``sub.open``: the topics (a ``ticket:<ref>`` the viewer may not see is ``not_found``),
+        the cursor (``sub.reset`` unless it is this principal's, of this epoch and in the window) and the boundary."""
+        service = call.service
+        service.sync(check=True)  # a foreign append is found before the boundary is fixed
+        journal = service.journal
+        if journal is None or journal.stale:
+            raise HostError("workspace.unavailable", "the subscription journal is not available")
+        viewer = Viewer.of(call)
+        topics, tickets = set(), set()
+        for topic in args["topics"]:
+            if topic.startswith("ticket:"):
+                tickets.add(viewer.ticket(service.store, topic[len("ticket:") :]).uid)
+            else:
+                topics.add(topic)
+        if "after" in args:
+            pos = journal.position(args["after"], call.principal)
+            if pos is None:
+                raise HostError("sub.reset", "the cursor is too old, of another scope or epoch: take a snapshot")
+        else:
+            pos = journal.head
+        return {"topics": sorted(topics), "tickets": sorted(tickets), "pos": pos}
 
     def whoami(self, call: Call) -> dict[str, Any]:
         grant = call.verified.grant
@@ -358,7 +494,7 @@ class RegistryBackend:
         return data
 
     # -- registry ops
-    def _registry(self, call: Call, redactor: Redactor) -> dict[str, Any]:
+    def _registry(self, call: Call, redactor: Redactor, step: Any = None) -> dict[str, Any]:
         """§0.6 steps 8 to 11 of a registry op: a read (or dry run) runs directly, a write through the outcome store."""
         import orch.ops as ops
 
@@ -369,7 +505,7 @@ class RegistryBackend:
         idem_given = opts.get("idem") if operation.is_write and not dry_run else None
         digests, digest_args = call.service.outcomes.bind_files(call.principal, idem_given, specs)
         idem = request_idem(operation.name, opts)  # step 9 starts: idem.required (dry_run support was checked first)
-        ctx = self._context(call, session, dry_run, self._file_bytes(specs, args))
+        ctx = self._context(call, session, dry_run, self._file_bytes(specs, args), step)
         if idem is None:  # a read or a dry run: no outcome record, and the store's deny-all append check stays
             self._state(call.service, False)
             return self._run(operation, args, ctx, call)
@@ -479,7 +615,14 @@ class RegistryBackend:
         return out
 
     def _context(
-        self, call: Call, session: str | None, dry_run: bool, files: dict[str, bytes], *, prepare: Any = None
+        self,
+        call: Call,
+        session: str | None,
+        dry_run: bool,
+        files: dict[str, bytes],
+        step: Any = None,
+        *,
+        prepare: Any = None,
     ) -> Any:
         from orch.ops import Context
         from orch.ops.runtime import Workspace
@@ -503,6 +646,7 @@ class RegistryBackend:
             viewer=call.viewer,
             principal=call.principal,
             unserved=frozenset(NOT_SERVED),
+            wait_step=step,
             prepare=prepare,
         )
 

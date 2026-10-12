@@ -217,6 +217,14 @@ class Store:
         #: host) is committed, after its id is final; it raises :class:`StoreError` to refuse. The host uses it to make
         #: sure no event lands that its outcome record does not list (§0.7). ``None``: no check (direct mode).
         self.append_check: Callable[[str, dict[str, Any]], None] | None = None
+        #: Host mode (H6a): ``before_append()`` runs under the lock before every append (the host's foreign-append
+        #: check, F11), and ``on_commit(log, event)`` under the lock right after an event is committed (the host's
+        #: subscription journal). ``None``: no hook (direct mode).
+        self.before_append: Callable[[], None] | None = None
+        self.on_commit: Callable[[str, dict[str, Any]], None] | None = None
+        #: how often a lock found a log changed on disk that this store did not write (or a crashed append to
+        #: finish): the host's cheap foreign-append signal (F11)
+        self.outside_changes = 0
         self.workspace_id = workspace_id
         self._expected_genesis = expected_genesis
         self._host = host
@@ -375,6 +383,35 @@ class Store:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
             return self._read_events(uid, max(after, 0) + 1, last)
+
+    def replay_context(self) -> Any:
+        """The model context this store replays with (its verifier and both pins), for a caller that replays the same
+        events itself (the host's subscription journal)."""
+        return self.state._ctx
+
+    def log_size(self, log: str) -> int | None:
+        """The bytes of ``log`` this store has read or written (``None``: a log it does not know)."""
+        info = self._logs.get(log)
+        return info.offset if info is not None else None
+
+    def merged_events(self) -> list[tuple[str, dict[str, Any]]]:
+        """Every event of every log, as read and chain-checked, in the merged order of §5.5: ``(log, event)`` pairs,
+        the workspace log first within one ``ws_seq``, then ticket events by ``(at, uid, seq)``. Loads every ticket.
+        The host rebuilds its subscription journal (H6a) from it; call it with the lock held to pair it with a check of
+        the files."""
+        import heapq
+
+        with self._locked():
+            self._scan_dirs()  # a ticket log another writer created since the last scan is in it too
+            self._ensure(set(self._exists))
+            streams = []
+            for log, info in sorted(self._logs.items()):
+                events = self._read_events(log, 1, info.seq)
+                if log == WORKSPACE:
+                    streams.append([((e["seq"], 0, 0, "", e["seq"]), log, e) for e in events])
+                else:
+                    streams.append([((e["ws_seq"], 1, _epoch(e["at"]), log, e["seq"]), log, e) for e in events])
+            return [(log, e) for _, log, e in heapq.merge(*streams, key=lambda x: x[0])]
 
     def event_fields_before(self, uid: str, seq: int, names: set[str]) -> dict[str, dict[str, Any]]:
         """Find the last criteria and tasks before a tail, without replaying the log."""
@@ -887,7 +924,10 @@ class Store:
             self._load_transition_logs()
             pend = self._recover_pending()
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
-            reloaded = bool(pend) or self._needs_reload or not self._fresh()
+            outside = bool(pend) or not self._fresh()
+            if outside:
+                self.outside_changes += 1  # a log changed on disk since this store last read or wrote it
+            reloaded = outside or self._needs_reload
             if reloaded:
                 self._load()
             self._finish_pending(pend)
@@ -1358,6 +1398,8 @@ class Store:
         texts: dict[str, str] | None = None,
         force: tuple[str, ...] = (),
     ) -> Appended:
+        if self.before_append is not None:
+            self.before_append()
         typ = e.get("type", "")
         if typ == "restore" and self._pins and e.get("id"):
             path = self._pins.dir / "transitions" / (check_uid(e["id"]) + ".json")
@@ -1529,6 +1571,9 @@ class Store:
         except BaseException:
             self._needs_reload = True  # finish a committed transition before the next call, even without reopening
             raise
+        finally:
+            if self.on_commit is not None:  # the event is in the log whatever the bookkeeping above did
+                self.on_commit(log, ev)
         return Appended(ev, new_state)
 
     def _host_sign(self, ev: dict[str, Any], log: str) -> None:

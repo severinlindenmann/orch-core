@@ -110,7 +110,10 @@ def _first_frame(path: Path) -> dict:
     s.settimeout(20)  # the identity check runs in a thread; slow under load
     try:
         s.connect(str(path))
-        s.sendall(frames.encode({"t": "hello", "proto": [1], "client": "t", "caps": [], "ops": {}}))
+        try:  # a refused peer may already be closed (Linux: EPIPE); its fatal frame is still readable
+            s.sendall(frames.encode({"t": "hello", "proto": [1], "client": "t", "caps": [], "ops": {}}))
+        except BrokenPipeError:
+            pass
         dec = frames.Decoder()
         while True:
             got = dec.feed(s.recv(65536))

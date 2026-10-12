@@ -2,7 +2,8 @@
 
 Decided by Unicode category, not a fixed list: Cf (format: bidi marks and isolates, zero-width, soft hyphen, word
 joiner, Arabic letter mark, tag characters), Cc (control), Zl and Zp (line and paragraph separators),
-Co (private use), plus a few default-ignorable characters of other categories. Refused, never repaired: what is shown is what was sent.
+Co (private use), plus a few default-ignorable characters of other categories.
+Refused, never repaired: what is shown is what was sent.
 """
 
 import unicodedata

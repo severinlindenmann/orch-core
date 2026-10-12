@@ -17,7 +17,11 @@ WORKSPACE_ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f
 
 
 def state_dir():
-    return Path(os.environ.get("ORCH_STATE_DIR", str(Path.home() / ".config/orch")))
+    """The state directory exactly as core resolves it (ORCH_STATE_DIR, an absolute XDG_CONFIG_HOME/orch, then
+    HOME/.config/orch): the signer child reads the registry from the same place."""
+    from orch.ops.runtime import state_dir as core_state_dir
+
+    return core_state_dir(os.environ)
 
 
 def read_pins(path):

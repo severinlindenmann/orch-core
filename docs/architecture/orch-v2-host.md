@@ -305,8 +305,7 @@ may no longer run agents.
 | v1.6: `agent.preview`, `agent.start`, `run.stop`, `term.open`, `term.attach`, `attach.cancel`, `grant.deposit_status`, `grant.forget` | ✓ (own runs and grants) | — | — | — | — |
 | v1.6: `grant.deposit` | ✓ **with** a verified `auth.grant` of a `label:"runner"` grant (§12.4.2) | — | — | — | — |
 | v1.6: `worktree.list`, `worktree.create`, `worktree.remove` | ✓ (`force` P only) | ✓ (grant scope; create and remove only on the session's claimed ticket) | — | — | — |
-| v1.6: `records.status` | ✓ | ✓ | — | — | — |
-| v1.6: `records.snapshot`, `records.export_check`, `records.note` | ✓ (owners, maintainers) | — | — | — | — |
+| v1.6: `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ (owners, maintainers) | — | — | — | — |
 | v1.6: `quick.list` | ✓ | ✓ | ✓ (workspace tickets) | — | — |
 | v1.6: `runner.hello`, `runner.report`, `runner.exit` | — | — | — | — (runner class only) | — |
 
@@ -446,13 +445,24 @@ drops. The host never sends it.
 | `runner.disabled` | 3 | no | stays | the addon is not granted, or this machine has not enabled dashboard execution (or terminals) for the workspace; `detail.missing` is `addon`, `machine` or `terminals` | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
 | `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
-| `launch.invalid` | 5 | no | stays | a harness, mode, model or subagent model not allowed; the message names the field | — |
-| `launch.changed` | 5 | no | stays | `agent.start`'s recomputed `spec` differs from the preview's | — |
+| `launch.invalid` | 5 | no | stays | a harness, mode, model or subagent model not allowed; the message names the field (exit 5 like `invalid.input`: the client sent a value the registry refuses) | — |
+| `launch.changed` | 5 | no | stays | `agent.start`'s recomputed `spec` differs from the preview's (exit 5 like `idem.conflict`: the request no longer matches what was shown; preview again) | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned cwd no longer matches at spawn | — |
 | `harness.not_found` | 3 | no | stays | the program is not found by the login shell (or the configured absolute path) | — |
 | `harness.shell_unsupported` | 3 | no | stays | `$SHELL` is not POSIX-compatible and `login_shell` is on | — |
 | `run.spawn_failed` | 1 | no | stays | the trampoline failed; the message names the step, never an env value | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
+| `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
+| `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
+| `grant.expiring` | 3 | no | stays | `grant.deposit` of a grant with less than 15 minutes left | — |
+| `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
+| `worktree.none` | 3 | no | stays | `worktree.remove` for a (ticket, repo) with no registered worktree | — |
+
+Other v1.6 refusals reuse existing codes: an unknown or invisible run, attachment or `deposit_id` is `not_found`
+(§0.5); the run limits and the start rate (§0.11) are `quota.host` and `rate.limited` with `retry_after_ms`;
+`grant.deposit` while the runner is not connected is `runner.unavailable`, and while this machine has not enabled
+dashboard execution for the workspace `runner.disabled` (`detail.missing:"machine"`). Exit convention: state
+refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`), transient conditions 9.
 | `worktree.exists`, `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned` | 3 | no | stays | §12.7 | — |
 | `worktree.git_failed` | 1 | no | stays | git exited non-zero (stderr only in the runner log) | — |
 | `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
@@ -2221,11 +2231,13 @@ envelope.
   - A malformed frame, an unknown `op` or bad `args` answers `invalid.input` (a framing error closes the channel).
 
 ```
-prepare {workspace_id:WsId, op:OpName, args:object, idem:Idem, files?:{name: {b64:str}}}
+prepare {workspace_id:WsId, op:OpName, args:object, idem:Idem, files?:{name: {b64:str}},
+         deposit?:bool = false}                       // v1.6: only with op "grant" (§12.4.2)
   → {request_id:ReqHr, expires_at:Time, op:OpName, confirm:"click"|"word"}
 view    {workspace_id:WsId, request_id:ReqHr} → {view:View, view_digest:Hash}
 sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, word?:str{1..128}}
-  → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool}      // never a secret
+  → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool,     // never a secret
+     deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID}                       // v1.6: deposit grants only
 cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
 status  {} → {core:str, contract:1, workspaces:[{workspace_id:WsId, prefix:str,
                            custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
@@ -2250,7 +2262,7 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
 
   | `reason` | When |
   |---|---|
-  | `terminal_only` | `grant`, an op outside the allowlist, or a request too large for the View (more than 16 events or 1 MiB): use the terminal |
+  | `terminal_only` | `grant` without `deposit:true` (v1.6: a deposit grant whose `grant.issued` lacks `label:"runner"`, asks for more than 12 h, or is prepared while this machine has no dashboard execution enabled for the workspace), an op outside the allowlist, or a request too large for the View (more than 16 events or 1 MiB): use the terminal |
   | `not_prepared_here` | `view`/`sign`/`cancel` of a request this signer did not prepare |
   | `expired` | the approval's deadline passed |
   | `view_changed` | `view_digest` differs from the stored View, or the host's answer differs from the approval record |
@@ -2326,20 +2338,32 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
 
 **6. Which ops are click-signed.** The signer enforces an explicit operation allowlist and the complete emitted-event
 checks. Unknown operations and future additions fail closed (terminal-only). `grant` and any operation returning a
-bearer secret are refused before signing, irrespective of the secret field's initial value.
+bearer secret are refused before signing, irrespective of the secret field's initial value, **with one exception
+(v1.6, D-P2-27, owner decision of 12 Oct 2026):** a `grant` prepared with `deposit:true` is click + word
+`<PREFIX>~<WS8>/GRANT` when its prepared `grant.issued` carries `label:"runner"`, `hours` 1..12 (default 8) and
+`verbs:"agent"`, and this machine has dashboard execution enabled for the workspace. `check_prepared` admits exactly
+that case. The View adds the line "The secret goes to your orch runner on this machine and is never shown" with the
+person, scope, hours and until. `sign` draws the secret, signs, submits, and only after the commit calls
+`grant.deposit {deposit_id}` with `auth.grant` on its own host connection, wipes the secret and answers `deposit` and
+`deposit_id`; the secret is never in a result, a frame to the dashboard or a log. On `deposit:"unknown"` it asks
+`grant.deposit_status` once (§12.4.2).
 
 | Class | Ops |
 |---|---|
 | **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
 | **Click + typed word** | `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
-| **Terminal only** | `grant` and every op not listed above (v1.6: a `grant` with `deposit:true` and `label:"runner"` is click + word `<PREFIX>~<WS8>/GRANT`, at most 12 h, the secret going only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
+| **Click + word, deposit only** (v1.6) | `grant` with `deposit:true` and `label:"runner"`, at most 12 h (word `<PREFIX>~<WS8>/GRANT`; the secret goes only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
+| **Terminal only** | `grant` without `deposit:true`, and every op not listed above |
 
 Daily operations use click confirmation as a phase-1 usability decision. A later event may supersede their recorded
 state but may not reverse external effects. Typed words on member, addon-grant/purge, policy and repo-settings
 operations reduce accidental confirmation; they are neither authentication factors nor protection against
-script-driven signing (the word is in the View). Framing defences address clickjacking separately. Terminal-only
-`grant` keeps the grant secret off the HTTP path (F1, D-P2-16); it does not prevent every authority escalation through
-the allowed member, policy or addon operations.
+script-driven signing (the word is in the View). Framing defences address clickjacking separately. The grant secret
+stays off the HTTP path (F1, D-P2-16): a terminal `grant` shows it only on the terminal, and a click deposit grant
+(v1.6) hands it from the signer to the runner through `grant.deposit`, never through the dashboard. This protects
+against passive disclosure only; a click deposit grant is dashboard-controlled issuance of standing agent authority
+(up to 12 h, owner decision of 12 Oct 2026), and nothing here prevents every authority escalation through the allowed
+member, policy or addon operations.
 
 **7. What the dashboard does** (dashboard stream; not in this core PR).
 
@@ -2376,7 +2400,7 @@ the allowed member, policy or addon operations.
 | Another local user | Cannot directly read correctly protected person custody under ordinary OS permissions. Can reach loopback HTTP; signing additionally depends on bearer and session security. A stolen bearer crosses this boundary. |
 | Remote web page | Without credentials, same-origin execution or another vulnerability, browser requests are constrained by bearer, Host/Origin validation, CORS and framing controls. A page gaining same-origin script execution can drive signing. |
 | HTTP bug or compromise | A passive disclosure of HTTP memory does not directly disclose signer-resident keys. Disclosure of a bearer can disclose signing authority. Active control of the HTTP workflow can obtain unseen signatures through the signer API. Code execution in it can read the key. |
-| Stolen bearer | Can request unseen signatures for click-eligible operations while valid. Typed words do not prevent this. Terminal-only secret issuance remains unavailable through the click API. |
+| Stolen bearer | Can request unseen signatures for click-eligible operations while valid, including (v1.6) a deposit-only runner grant of up to 12 h. Typed words do not prevent this. Terminal-only secret issuance remains unavailable through the click API. |
 | Agent-prepared request | Signer-local preparation registration excludes foreign or historical pending requests from click eligibility. Host-reported PID equality alone does not. |
 | Host lies in material | Signer recomputation rejects mismatches between supplied material and signing inputs. It does not prove the truth of mutually consistent fabricated input or fields explicitly classified as host attestations. |
 | View swap | Full signing-input binding rejects changes to an approved record. It does not detect the dashboard displaying one record while requesting a signature for another. |
@@ -2821,7 +2845,7 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
 **v1.5 → v1.6 (decided 12 Oct 2026, §12).** Additive: new caps and ops, a new peer class and socket, new error codes; no
 existing op changes its version.
 
-15. **Phase-2 addons on the host side:** caps `run/1`, `term/1`, `worktree/1`, `records/1`, `quick/1` on the workspace
+16. **Phase-2 addons on the host side:** caps `run/1`, `term/1`, `worktree/1`, `records/1`, `quick/1` on the workspace
     socket and `runner/1` on the new runner socket (peer class `runner`); `whoami` and the workspace status carry
     `runner` info; the click signer's deposit-only grant (amends §0.8.6 item 6); D-P2-32 amends D-P2-19 and H10a (a
     registered worktree is the ticket's working copy for D58 and `tree.check`); new codes in §0.6 and limits in §0.11.
@@ -3615,7 +3639,8 @@ alternative:
 - **Same device on conversion; downgrade in place only with `--in-place`** (Codex 4, Opus R10). *Alternative:* a new
   device for every custody change. That is `--rotate`, designed for when device ops exist.
 - **Click for daily ops; a typed word for member, addon-grant/purge, policy and repo-settings ops; `grant` and unknown
-  ops terminal-only** (Codex 10, Opus R8). *Alternatives:* click for everything (the grant secret would cross the HTTP
+  ops terminal-only** (Codex 10, Opus R8; v1.6 adds the deposit-only runner grant, click + word, §10 entry 8 and
+  D-P2-27). *Alternatives:* click for everything (the grant secret would cross the HTTP
   process); a word for every op (the owner wants it easy).
 - **Per-workspace readers condition and blocking new readers** (owner, orch-d6). *Alternative:* allow adding a reader
   after switching back to terminal signing. Rejected by the owner: the history already holds convenience events, which
@@ -3801,7 +3826,7 @@ Status: decided 12 Oct 2026 by orch-52 (draft by stream A, Codex challenge, Opus
 dashboard stream's nine asks adopted) with three **owner decisions of 12 Oct 2026** (D-P2-27, D-P2-31, D-P2-34). It
 covers #307 (start an agent from the dashboard, D09; terminals, D16) and #308 (worktrees, C18; quick tasks, C16;
 records commit and push, C29/#253, the closed #254 as reference). Contract additions are **v1.6** (§0.4, §0.13 item
-15). **[SC]** marks a security-critical decision: its implementation needs the Opus review, and every change to it an
+16). **[SC]** marks a security-critical decision: its implementation needs the Opus review, and every change to it an
 Opus delta pass.
 
 **Phase 2 is tier A.** Agents, the runner, the dashboard server, the click signer and the person are one UID. No column,
@@ -3875,8 +3900,7 @@ grant column (it is evaluated as P) **and** a verified `auth.grant` naming a `la
 | `worktree/1` | `worktree.list` | ✓ | ✓ grant scope | — | read |
 | `worktree/1` | `worktree.create` | ✓ visible ticket | ✓ own claimed ticket | — | idem create |
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
-| `records/1` | `records.status` | ✓ | ✓ | — | read |
-| `records/1` | `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
+| `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 
@@ -3993,7 +4017,7 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 #### 12.4.2 The runner grant flow (D-P2-27)
 
 - **Click** (dashboard execution enabled for the workspace on this machine): `prepare {workspace_id, op:"grant",
-  args:{hours:1..12, scope}, idem, deposit:true}` on the click signer. `check_prepared` has one exception: a
+  args:{hours:1..12 (default 8), scope}, idem, deposit:true}` on the click signer. `check_prepared` has one exception: a
   `grant.issued` is click-eligible only with `deposit:true` and `label:"runner"`. The View's confirm kind is `word`,
   word `<PREFIX>~<WS8>/GRANT`; the View carries the person, scope, hours, until, the tier-A sentence and the line
   **"The secret goes to your orch runner on this machine and is never shown"** (the dashboard does not arm Sign without
@@ -4051,6 +4075,15 @@ by `:` (a path containing `:` is left out and named in `warnings`).
   `populated=0`; macOS group and session sweep (stop-check-kill against birth identity, as H10). The result names
   `cleanup`.
 - **Worktree git** runs as a supervised child in its own process group with a 30 s timeout that kills the group.
+- **Audit (D-P2-37).** The host's `audit-security.jsonl` gets one line each for: the launch **intent** (run id, idem,
+  spec digest), the **dispatch** of `spawn` to the runner, the **outcome** (pid or the spawn error), **reconciliation**
+  at `runner.hello` (adopted, lost, unknown runs reported), every **stop** and its cleanup result, **attach** and
+  detach with mode, every **lease takeover** (old and new attachment), **enablement changes** (machine switch on or
+  off, `--no-terminals`, with time and the text shown, written by `orch runner enable`), **grant deposit, replace and
+  forget** (grant id, person, `deposit_id`, outcome; never the secret), worktree **create and remove** (ticket, repo,
+  generation, force), and every **records export** (manifest, commit, and the destination identity: the exact push URL
+  and ref, and whether a private mark allowed it). Fields as D-P2-13; **never terminal content**, never environment
+  values.
 - **Logs:** `<state>/runner/runner.log` (0600, 10 MiB × 5): spawn (run id, `argv[0]`, pid, pgid, sid, env names),
   exit, signals, sweeps, git commands, failed git stderr capped at 4 KiB. The runner redacts every grant secret it
   holds. **Terminal content is never logged** by the host or the runner; there are no transcripts in phase 2 (an
@@ -4140,12 +4173,18 @@ attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte 
 - At most 4 attachments per run, 16 per person, 64 per runner.
 - Attach is read-only by default; a remount or reconnect never takes the lease implicitly; the previous holder gets
   `writer:false` and a "Take back" banner.
-- Only the run's own person may attach. Exited runs: the ring and an `exit` frame, read-only, for 1 h.
+- **Several tabs** of the same person attach independently and read-only by default; a tab that wants to type asks
+  with `take:true`, which moves the lease to it (the others show "Take back"); a tab never takes the lease on its own
+  after a reconnect, a remount or a focus change.
+- Only the run's own person may attach. Exited runs: the ring and an `exit` frame, read-only, for 1 h; after that the
+  dashboard shows **"Output no longer kept"**.
+- When `run.stop` answers `cleanup:"incomplete"` or `"unknown"`, the dashboard shows **"Some processes may still be
+  running"** next to the run.
 
 #### 12.6.6 The browser path (dashboard server, orch-fa)
 
 - `POST /api/w/<ws>/runs/<run>/attach {mode, take?, from?}` (bearer): the server calls `term.attach`, verifies the
-  runner (§12.6.1), and returns a **browser ticket** of its own (128 random bits, stored hashed, single use, 30 s,
+  runner (§12.6.1), and returns a **browser ticket** of its own (128 random bits, stored hashed, single use, 10 s (the same as the host capability),
   bound to the workspace, run, mode, the bearer session and the server generation; 10 attempts per minute). It does
   not connect to the runner until the WebSocket arrives; if the WebSocket never comes, it lets the host capability
   expire (10 s) or cancels it.
@@ -4161,7 +4200,7 @@ attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte 
   parser handlers swallowing replies to DECRQSS, XTGETTCAP, OSC 10/11/12 queries and `CSI > q`, so only CPR and DA1
   answer (rate-limited); `disableStdin` and dropped `onData` for read attachments; `onData` dropped while replayed
   bytes (offsets below the attach answer's `offset`) are written; `scrollback:5000`; `convertEol:false`; on `gap` or
-  at the ring start: `reset()` plus a dimmed out-of-band marker; xterm pinned by the lockfile. Every terminal-derived
+  at the ring start: `reset()` plus a dimmed out-of-band marker; xterm pinned by the lockfile; the page's CSP allows no inline script (`script-src 'self'`). Every terminal-derived
   text elsewhere goes through `visible.tsx`.
 
 ### 12.7 Worktrees (#308) [SC]
@@ -4189,7 +4228,9 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   `diff`, `commit.list` unchanged). The prepared request, each binding and the precommit carry the generation; a
   changed generation, pin, or a HEAD not on the current branch is `observe.unavailable`, never a fallback.
 - **Remove:** `tree.check` first; dirty is `worktree.dirty` unless `force` (P only); a live run with that cwd is
-  `worktree.in_use`; the branch is never deleted; the registration and pin go after the runner reports success.
+  `worktree.in_use`; no registration is `worktree.none`; the branch is never deleted; the registration and pin go
+  after the runner reports success, and the removal bumps the registration generation, so any request prepared against
+  the removed worktree is invalidated (`observe.unavailable`).
 - **Filters:** `.gitattributes` only selects drivers; their commands come from the person's global or system config
   (LFS, for example) and run as the runner's UID, which is the person in tier A, as when an agent runs git.
 - Done or closed tickets keep their worktrees; the Worktrees page offers removal.
@@ -4234,7 +4275,7 @@ records.note     {manifest:Hash, commit:Sha, pushed:bool, url?:str} → {}
   `GIT_NO_REPLACE_OBJECTS=1`; `info/grafts` and shallow repos are refused.
 - **Push:** fast-forward only. The tool resolves the effective push URL once (`pushurl`, else `url`; `insteadOf` and
   `pushInsteadOf` already refused), calls `records.export_check` with that literal URL, `ls-remote`s it, checks that the
-  remote tip T is an ancestor of the commit S, and runs `git push --no-recurse-submodules -c push.followTags=false
+  remote tip T is an ancestor of the commit S, and runs `git -c push.followTags=false push --no-recurse-submodules
   --force-with-lease=refs/heads/<b>:T <url> S:refs/heads/<b>`. A missing remote branch only with `orch records push
   --initial` (terminal). Divergence or a lease failure: `records.push_rejected`, never a rebase.
 - **Every git call:** argv only, `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, environment `{HOME, PATH,
@@ -4249,7 +4290,10 @@ records.note     {manifest:Hash, commit:Sha, pushed:bool, url?:str} → {}
   workspace at a time (a lock in the person state dir).
 - **Local config** `<person state>/records.json` (0600): per workspace `{auto, every_min:5..1440, push,
   private_remotes:[url], validated_tip}`. `orch records auto on|off [--push] [--every N]` and `orch records remote
-  private URL` are terminal only; the dashboard may switch `auto` off, never on. **Private remote (owner decision,
+  private URL` are terminal only; the dashboard may switch `auto` off, never on. **The private mark is the URL git
+  itself resolves for the push** (`git remote get-url --push <remote>`, after `insteadOf`/`pushInsteadOf` are refused):
+  that exact string is stored and later compared byte for byte with the URL git resolves at push time; no other
+  normalization (case, trailing `/` or `.git`) is applied, so any change of the URL needs a new mark. **Private remote (owner decision,
   12 Oct 2026):** the terminal prompt and the Records page say "orch trusts your word that only you read <url>".
 - **Log:** `<person state>/person/records.jsonl` (0600, 1 MiB × 4): start, commit, push result, refusal codes; never
   contents or credentials. #309's hook installer never touches the records repo.
@@ -4313,7 +4357,8 @@ Limits are in §0.11 (rows marked v1.6) and errors in the v1.6 table of §0.6.
 
 | Group | Content | Acceptance (T0 hints) | Review |
 |---|---|---|---|
-| **H11a Runner core** | `orch.runner`, `orch runner enable/disable/status/stop/restart`, units, the runner socket and class `runner` (main-PID, generation, the host peer-UID check by the runner), `runner.hello/report/exit` and commands, trampoline, PTY, ring, stop and sweep with birth identity, cgroup before exec, fd closing, bounded drain, persisted run table and crash sweep, spawn dedupe, env allow-list and `pass_env` deny-list, the machine switch (D-P2-31), the term socket listener and `attach.allow/end`, the first-party manifests | a second runner connection and a non-main-PID runner are `peer.denied`; the runner refuses commands from a socket whose peer is not the host UID; the child env equals §12.4.3 (property test); a swapped cwd is `launch.cwd_changed`; a `setsid` escapee on macOS yields `cleanup:"incomplete"`, Linux `cgroup.kill` empties the cgroup; a reused pid is never signalled; a process outside the run is never signalled; a lost spawn ack yields one process; the ring never blocks 50 MiB of output with no viewer; host restart keeps runs and ends attachments; runner crash marks `lost`/`unknown` and sweeps; `restart` refuses with live runs. T0 `tests/runner/test_trampoline.py`, `tests/runner/test_supervise.py`, `tests/host/test_runner_socket.py` | Opus |
+| **H11a Runner core** | `orch.runner`, `orch runner enable/disable/status/stop/restart`, units, the runner socket and class `runner` (main-PID, generation, the host peer-UID check by the runner), `runner.hello/report/exit` and commands, trampoline, PTY, ring, stop and sweep with birth identity, cgroup before exec, fd closing, bounded drain, persisted run table and crash sweep, spawn dedupe, env allow-list and `pass_env` deny-list, the machine switch (D-P2-31), the term socket listener and `attach.allow/end`, the first-party manifests | a second runner connection and a non-main-PID runner are `peer.denied`; the runner refuses commands from a socket whose peer is not the host UID; the child env equals §12.4.3 (property test); a swapped cwd is `launch.cwd_changed`; a `setsid` escapee on macOS yields `cleanup:"incomplete"`, Linux `cgroup.kill` empties the cgroup; a reused pid is never signalled; a process outside the run is never signalled; a lost spawn ack yields one process; the ring never blocks 50 MiB of output with no viewer; host restart keeps runs and ends attachments; runner crash marks `lost`/`unknown` and sweeps; `restart` refuses with live runs; `orch runner stop RUN` and
+`--all` work from the person's terminal with the host down and for a person no longer a member (no host call needed). T0 `tests/runner/test_trampoline.py`, `tests/runner/test_supervise.py`, `tests/host/test_runner_socket.py` | Opus |
 | **H11b Terminals** | `term.open/attach`, `attach.cancel`, `run.list/sub` with `rev`/`gone`, `run.stop`, capabilities, lease generation, input ids, gaps, resize rules; the dashboard server's WebSocket `Security` path (S1/S2) and the xterm list, as joint acceptance with orch-fa | only the run's person attaches (G, N, another person refused); an unused ticket never takes the lease and expires in 10 s; a replayed or other-generation ticket ends with `ticket_invalid`; `take` is needed against a holder; a retried input id types once; unacked input is not replayed after reconnect; replayed `ESC[6n` produces no input; a read viewer's resize is ignored and the writer's applies to all; a slow viewer gets `gap` and control frames still arrive; `attach.end` closes on person removal while the run continues; the host stays responsive (`human.prepare` round trip under 50 ms p99) while 8 runs flood output; WebSocket without Origin, with `Origin: null`, wrong Host, ticket after logout, slow or oversize first message, binary before the ticket are all refused; the canary corpus (OSC 52, OSC 8 `javascript:`, title injection, DA/DSR floods, 1 MB random, split UTF-8) leaves clipboard, `window.open` and `document.title` untouched. e2e `terminal_attach.spec` | Opus |
 | **H11c Start agent and runner grant** | harness registry, `agent.preview/start` with `spec`, `context` mode, `subagent_model`, `term.open {harness}`, POSIX-shell check, `grant.deposit` (P + secret, `label:"runner"`, `deposit_id`, forgotten ids), `grant.deposit_status/forget`, the click signer's deposit-only grant (`check_prepared` exception, word, View line, ≤ 12 h), `orch grant --runner`, `orch sign` show-or-runner | preview argv equals the spawned argv; a changed value between preview and start is `launch.changed`; a model starting with `-` or with a space is `launch.invalid`; a live claim refuses; a canary secret appears in no dashboard frame, host or runner log or result, only in the agent's environment; an agent depositing its own non-runner grant is refused; a forgotten id is `grant.forgotten`; a lost deposit ack yields `unknown`, never a false failure; the click signer refuses `grant` without `deposit:true`; a person-run harness has no `ORCH_GRANT`; idem retry of `agent.start` starts one process; fish as `$SHELL` is `harness.shell_unsupported`. e2e `start_agent.spec` (grant by click, start a stub harness that runs `orch status` and claims) | Opus |
 | **H11d Worktrees** | `worktree.*`, runner git under the per-repo lock, host pins and generations, D58 and `tree.check` on the registered worktree, `orch worktree` in POSIX direct mode | create on the linked branch at `<repo>.worktrees/<WS8>-<KEY>`; no branch is `worktree.no_branch`; a branch checked out elsewhere is `worktree.branch_in_use`; re-registration between prepare and binding invalidates the request; a re-pointed `.git` file, a moved worktree or a relinked branch is `observe.unavailable` and never falls back; a verdict on a ticket worked in its worktree passes; dirty remove refuses without `force` and G cannot force; the branch survives removal; a planted `post-checkout` never runs; G only on its own claimed ticket, rechecked at execution; direct-mode tools refuse while a host serves. T0 `tests/host/test_worktrees.py` | Opus |

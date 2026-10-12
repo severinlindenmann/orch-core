@@ -353,3 +353,49 @@ def test_the_terminal_path_for_the_same_intent_is_an_open_attempt_not_a_second_r
     fallback = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json={**body, "retry": 1}, headers=click.headers())
     assert fallback.status_code == 200, fallback.text
     world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{fallback.json()['id']}", headers=click.headers())
+
+
+# -- host idem and the signer's durable record, together (core #416 idem, #431 record) ---------------------------------
+
+
+def _head(click, world) -> int:
+    return click.ticket(world.keys["three"])["head"]["seq"]
+
+
+def test_two_tabs_same_intent_one_request_one_signature_and_a_repeat_adds_no_event(world, click):
+    body = {"action": "comment", "key": world.keys["three"], "message": f"both layers {time.time()}"}
+    one = click.prepare(body, fresh=False).json()
+    second = _second_session(world)
+    two = world.client.post(click.url("prepare"), json=body, headers=second).json()
+    assert one["request_id"] == two["request_id"]  # (a) the host's idem: one request for both tabs
+    rid = one["request_id"]
+    view = click.post("view", {"request_id": rid}).json()
+    time.sleep(1.2)
+    before = _head(click, world)
+    first = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"]})
+    assert first.status_code == 200 and first.json()["duplicate"] is False, first.text
+    after = _head(click, world)
+    assert after == before + 1  # exactly one event
+    # (b) the other tab signs the same request with the same View: the recorded result, no new event
+    again = world.client.post(
+        click.url("sign"), json={"request_id": rid, "view_digest": view["view_digest"]}, headers=second
+    )
+    assert again.status_code == 200 and again.json()["duplicate"] is True, again.text
+    assert _head(click, world) == after
+
+
+def test_a_different_view_for_an_already_signed_request_is_already_signed(world, click):
+    body = {"action": "comment", "key": world.keys["three"], "message": f"other view {time.time()}"}
+    rid = click.prepare(body, fresh=False).json()["request_id"]
+    view = click.post("view", {"request_id": rid}).json()
+    time.sleep(1.2)
+    assert click.post("sign", {"request_id": rid, "view_digest": view["view_digest"]}).status_code == 200
+    after = _head(click, world)
+    other = click.post("sign", {"request_id": rid, "view_digest": "sha256:" + "1" * 64})  # (c)
+    err = other.json()["error"]
+    assert other.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "already_signed", (
+        other.text
+    )
+    assert _head(click, world) == after
+    # The server did not cancel or forget anything because of it: the request's state still reads submitted.
+    assert click.post("state", {"request_id": rid}).json()["state"] == "submitted"

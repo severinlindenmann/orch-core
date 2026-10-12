@@ -104,11 +104,12 @@ def _e(key: str) -> bytes:
 # ``sig_enroll_request``
 # is signed by the new agent device key (``device``); ``sig_drop_object`` by an author ``dk_sig`` or ``WSK``;
 # ``sig_sk_grant`` (the Drop space owner's key, undefined before P2) is on no list until Drop exists.
-PERSON_KEY_LABELS: tuple[bytes, ...] = (  # PK: certificates, revocations, delegations, cert challenges
+PERSON_KEY_LABELS: tuple[bytes, ...] = (  # PK: certificates, revocations, delegations, cert challenges, rejections
     _p("sig_device_cert"),
     _p("sig_revocation"),
     _p("sig_ws_delegation"),
     _p("sig_cert_challenge"),
+    _p("sig_cert_rejection"),
 )
 DEVICE_KEY_LABELS: tuple[bytes, ...] = (  # dk_sig: person events and device requests
     _e("sig_ticket_event"),

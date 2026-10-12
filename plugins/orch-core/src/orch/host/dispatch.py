@@ -151,8 +151,11 @@ def served_ops() -> dict[str, int]:
     """Every op the workspace socket serves, with its contract version (``welcome.ops``)."""
     import orch.ops as ops
 
+    from .human import HUMAN_OPS
+
     out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
+    out.update(HUMAN_OPS)
     return out
 
 
@@ -160,10 +163,14 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     """(matrix category, phase) of a served op, ``None`` for an op that is not served."""
     import orch.ops as ops
 
+    from .human import HUMAN_OPS, PHASES
+
     if name in HOST_OPS:
         return ("read", "read")
     if name in WAIT_OPS:
         return ("read", "wait")
+    if name in HUMAN_OPS:
+        return ("human_api", PHASES[name])  # type: ignore[return-value]
     if name in NOT_SERVED:
         return None
     try:
@@ -285,8 +292,11 @@ class RegistryBackend:
 
     def __init__(self, started: Callable[[], float] | None = None) -> None:
         self.started = started
+        from .human import HumanOps
+
         self.ops = served_ops()
         self._kinds = {op: op_kind(op) for op in self.ops}
+        self.human = HumanOps(self)
         register_builders()
 
     def kind(self, op: str) -> tuple[OpKind, Phase] | None:
@@ -381,7 +391,12 @@ class RegistryBackend:
             if store is not None and store.append_check is None:
                 store.append_check = deny_append  # outside a write's apply no caller event may land (§0.7)
             op = call.frame["op"]
-            result = self._host_op(call) if op in HOST_OPS else self._registry(call, redactor, step)
+            if op in HOST_OPS:
+                result = self._host_op(call)
+            elif op in self.human.ops:
+                result = self.human.serve(call, redactor)
+            else:
+                result = self._registry(call, redactor, step)
             return redactor.obj(result)
         except HostError as exc:
             raise redactor.error(exc) from None
@@ -494,12 +509,14 @@ class RegistryBackend:
 
     def _step8(self, call: Call, operation: Operation, redactor: Redactor) -> tuple[dict[str, Any], Any, dict]:
         """Step 8: the args against the schema, the host's own refusals, the session label, the ``files``."""
-        from orch.cli.main import _SESSION, _check_input
+        from orch.cli.main import _SESSION
+        from orch.cli.render import redact
         from orch.ops.errors import OrchError
+        from orch.ops.inputs import check_input
 
         args = dict(call.frame["args"])
         try:
-            _check_input(operation, args, redactor.secrets)
+            check_input(operation, args, lambda text: redact(text, redactor.secrets)[:200])
         except OrchError as e:
             raise host_error(e, operation) from None
         for arg, why in HOST_REFUSED_ARGS.get(operation.name, {}).items():
@@ -594,7 +611,14 @@ class RegistryBackend:
         return out
 
     def _context(
-        self, call: Call, session: str | None, dry_run: bool, files: dict[str, bytes], step: Any = None
+        self,
+        call: Call,
+        session: str | None,
+        dry_run: bool,
+        files: dict[str, bytes],
+        step: Any = None,
+        *,
+        prepare: Any = None,
     ) -> Any:
         from orch.ops import Context
         from orch.ops.runtime import Workspace
@@ -619,6 +643,7 @@ class RegistryBackend:
             principal=call.principal,
             unserved=frozenset(NOT_SERVED),
             wait_step=step,
+            prepare=prepare,
         )
 
     def _run(self, operation: Operation, args: dict[str, Any], ctx: Any, call: Call) -> dict[str, Any]:

@@ -326,7 +326,7 @@ def test_the_typed_word_of_a_workspace_event_is_the_name_it_signs(monkeypatch):
     asked = []
     monkeypatch.setattr(human_mod, "review_prompt", lambda text, word: asked.append(word) or True)
     h = Human.__new__(Human)
-    h.ctx = types.SimpleNamespace(dry_run=False)
+    h.ctx = types.SimpleNamespace(dry_run=False, prepare=None)
     h.precheck = lambda event, log: None
     h._sign_and_append = lambda *a: "done"
     assert h.run({"type": "addon.granted", "name": "echo"}, "workspace", "x", review=["r"]) == "done"

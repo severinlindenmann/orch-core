@@ -5,9 +5,13 @@ Sections of ``suites.2`` consumed elsewhere: ``certs``, ``revocations`` and ``ca
 
 Sections **deferred**, with the phase that owns them (nothing in C2 builds those objects; they need the relay,
 bridge or Drop code): ``card`` (card/sealed part, relay update rules), ``wk_grants`` and ``member_lists`` (relay
-member lists, P2/P3), ``cert_request``, ``enroll`` and ``bridge`` (pairing and bridge v2, P2/P3), ``revocation_op``
-(host revocation op, P2), ``push`` (P3), ``drop`` and ``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth``
-(relay login, P3). ``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
+member lists, P2/P3), ``cert_request``, ``cert_binding``, ``rejected_forms``, ``approved_anchor``
+(pairing attempt binding, P3-D28; the formulas are checked in ``test_pairing_binding.py``), ``enroll`` and
+``bridge`` (pairing and bridge v2, P2/P3), ``member_list_snapshots`` and ``wk_commit`` (membership publication
+and WK commitments, P3), ``p3`` (relay HTTP, restore and queue vectors, P3), ``checkpoints`` (relay checkpoint
+transport and restore, P3), ``revocation_op`` (host revocation op, P2), ``push`` (P3), ``drop`` and
+``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth`` (relay login, P3).
+``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
 listed, so a vector update cannot go unconsumed silently.
 """
 
@@ -30,7 +34,13 @@ def test_vector_file_is_the_expected_version():
 
 
 def test_labels_match_the_vector_table():
-    assert labels.LABELS == ALL["labels"]
+    from orch import canon
+
+    # the vector table also lists the labels that orch.canon owns (events, checkpoints); they must equal canon's
+    owned = {k: v for k, v in canon.LABELS.items() if k in ALL["labels"]}
+    assert {**labels.LABELS, **owned} == ALL["labels"]
+    assert all(ALL["labels"][k] == v for k, v in canon.LABELS.items() if k in ALL["labels"])
+    assert not set(owned) & set(labels.LABELS)
 
 
 def test_signature_aad_and_hash_labels_are_prefix_free():
@@ -167,7 +177,8 @@ CONSUMED = {"keys", "ids", "sign", "hkdf", "salted_aead", "seal", "seal_open", "
 OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish"}
 DEFERRED = {
     "card", "wk_grants", "member_lists", "cert_request", "enroll", "bridge", "revocation_op", "push", "drop",
-    "ws_envelopes", "relay_auth",
+    "ws_envelopes", "relay_auth", "cert_binding", "rejected_forms", "approved_anchor",
+    "member_list_snapshots", "wk_commit", "p3", "checkpoints",
 }  # fmt: skip
 
 

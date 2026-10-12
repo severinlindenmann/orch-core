@@ -50,7 +50,8 @@ class FakeManager:
 
         def run(argv):
             self.ran.append(list(argv))
-            return subprocess.CompletedProcess(list(argv), 113 if "print" in argv else 0, "", "")
+            looks = "print" in argv or "is-enabled" in argv  # nothing is loaded before this test installs it
+            return subprocess.CompletedProcess(list(argv), 113 if looks else 0, "", "")
 
         return svc.Manager(unit, run=run)
 

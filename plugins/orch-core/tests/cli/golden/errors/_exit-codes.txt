@@ -27,6 +27,7 @@ grant.expired 3 retry:false
 grant.verb 3 retry:false
 role.denied 3 retry:false
 transition.refused 3 retry:false
+verify.unapproved 3 retry:false
 stop 3 retry:false
 claim.required 4 retry:false
 claim.held 4 retry:false

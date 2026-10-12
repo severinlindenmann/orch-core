@@ -16,6 +16,7 @@ errors:
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
   transition.refused (exit 3): orch show --section current_state | fix: orch show
+  verify.unapproved (exit 3): a person approves the plan, or add your own verify command | fix: orch show
   claim.required (exit 4): orch claim
   lease.held (exit 4): pick another task: orch task next | fix: orch task next
   lease.required (exit 4): orch task start TASK | fix: orch describe task.start

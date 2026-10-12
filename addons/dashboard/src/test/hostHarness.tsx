@@ -155,6 +155,8 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
         { type: 'member.added', person: 'p_' + 'd'.repeat(32), name: body.name, role: body.role, pk_pub: body.pk, device_cert: JSON.parse(body.cert as string) },
         { derived: { cert_device: 'd_' + '4'.repeat(32), cert_person: 'p_' + 'd'.repeat(32), cert_scopes_max: ['look', 'decide', 'operate', 'type'], cert_expires: null } },
       )
+    case 'move':
+      return workspaceRequest('move', { type: 'ticket.moved', from: 'open', to: body.to, ...(body.reason ? { reason: body.reason } : {}) })
     case 'member_role':
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':

@@ -17,7 +17,7 @@ export const uuid8 = (id: string): string => id.replace(/-/g, '').slice(-8).toLo
 /** Do these workspaces share the prefix (compared the way addresses are: regardless of case)? */
 export const sharesPrefix = (a: Pick<Workspace, 'prefix'>, b: Pick<Workspace, 'prefix'>): boolean => !!a.prefix && a.prefix.toUpperCase() === b.prefix.toUpperCase()
 
-/** The workspace an address names: its prefix, and `ws` (the first 8 hex of the UUID) when two share the prefix. */
+/** The workspace an address names: its prefix, and `ws` (the last 8 hex of the UUID) when two share the prefix. */
 export type Named<W> = { found: W } | { ambiguous: W[] } | { missing: true }
 export function workspaceByAddress<W extends Pick<Workspace, 'id' | 'prefix'>>(workspaces: readonly W[], prefix: string, hint?: string | null): Named<W> {
   const same = workspaces.filter((w) => w.prefix.toUpperCase() === prefix.toUpperCase())

@@ -512,3 +512,19 @@ browser console shows no CSP error (sonner's styles are in the built CSS).
 4. With the stub's `ORCH_DEV_SETTINGS=0` the settings show "This host does not say..." and no value.
 5. `touch <run>/<uuid>/stopped` takes a workspace down: the switcher shows "Host not running", the other keeps working; remove the file to
    bring it back. Open a hand-off and switch workspace (Back): it is cancelled.
+
+
+## Try the dashboard on a REAL host (RH)
+
+1. From `addons/dashboard`: `npm run build`, then `cd server && uv sync --locked`. Make a disposable demo with the real CLI and host:
+   `.venv/bin/python tests/realhost_kit.py up ~/orch-rh-demo` (creates a workspace with `orch init` in a pty, seeds tickets in every status,
+   starts `orch host run --foreground`; about 20 s; state and HOME stay under that folder, never `~/.config/orch`).
+2. `.venv/bin/python tests/realhost_kit.py open ~/orch-rh-demo` prints a single-use link (30 s): open it. Walk Today, Board, Tickets, a ticket
+   (Overview, Acceptance and tasks, Artifacts with digests, History), Settings and the switcher.
+3. Press a hand-off (for example "Approve requirements" on the "Audit log" ticket). The dialog shows `orch sign XXXX-XXXX`. In a terminal with
+   `ORCH_STATE_DIR=~/orch-rh-demo/state HOME=~/orch-rh-demo/home XDG_CONFIG_HOME=~/orch-rh-demo/home/.config ORCH_DEV=1`, run
+   `.venv/bin/python -m orch sign XXXX-XXXX` (passphrase `orange-pelican-vault-3917-demo`, type the key shown). The dialog turns to "Signed".
+4. The verify gate needs someone other than the worker: with one person it reads "no eligible approver". Set the verify policy first
+   (`orch sign` signs `policy.set`; the browser cannot prepare it until stream A fixes RH-3, see HANDOVER "P2 on the real host").
+5. `.venv/bin/python tests/realhost_kit.py down ~/orch-rh-demo` stops the host by its PID and the dashboard server.
+Automatic checks: `uv run pytest -m realhost -q` (server) and the Playwright scenarios in orch-dev-kit `e2e/dashboard/`.

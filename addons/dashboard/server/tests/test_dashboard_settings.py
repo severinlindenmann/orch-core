@@ -176,7 +176,9 @@ def test_the_members_read_has_devices_and_no_last_seen(worlds, team):
     world = worlds(env.owner.ref)
     got = world.get(f"/api/w/{world.stub.ws}/members").json()
     assert [m["name"] for m in got] == ["Owner", "Mara", "Tom", "Vic"]
-    assert all(set(m) == {"person", "name", "role", "devices"} for m in got)  # no last_seen, nothing invented
+    assert all(
+        set(m) == {"person", "name", "role", "devices", "name_hidden"} for m in got
+    )  # no last_seen, nothing invented
     device = got[1]["devices"][0]
     assert (
         set(device) == {"id", "auth", "scopes", "valid"} and device["valid"] is True and "operate" in device["scopes"]
@@ -234,6 +236,9 @@ def test_an_op_the_host_does_not_list_is_not_offered_and_is_refused(worlds, team
     features = world.get("/api/session").json()["features"]
     assert "do:member.role" in features and "do:policy.set" not in features and "do:settings.set" not in features
     res = handoff(world, {"action": "settings_set", "grant_hours": 12})
+    assert res.status_code == 501 and res.json()["error"]["code"] == "op.unsupported"
+    # Opus RH review L2: `move` too is refused here when the host doesn't list it, not passed on for the host to refuse.
+    res = handoff(world, {"action": "move", "key": "DEMO-0001", "to": "open"})
     assert res.status_code == 501 and res.json()["error"]["code"] == "op.unsupported"
     assert world.stub.requests.table == {}
 

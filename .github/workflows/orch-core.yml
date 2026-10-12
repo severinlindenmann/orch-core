@@ -16,7 +16,7 @@ jobs:
   tests:
     name: core tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +35,22 @@ jobs:
         env:
           # The 3.14 leg must have Unicode 16.0, so the canon comparison tests can never skip silently there.
           ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}
+  perf:
+    name: core perf (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: plugins/orch-core/uv.lock
+      - run: uv sync --locked
       # the slow marker holds, among others, the check that all 52 operation declarations validate against the
       # operation schema (startup does not validate)
       - run: uv run pytest -q -m slow -n auto --deselect tests/ops/test_perf.py --deselect tests/store/test_perf.py --deselect tests/model/test_perf.py

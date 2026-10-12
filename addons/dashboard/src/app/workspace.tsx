@@ -106,7 +106,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const split = ownsUrl ? splitWorkspacePath(publicPathOf(publicHref)) : { prefix: undefined, path: publicPathOf(publicHref) }
   const { prefix: urlPrefix, path: inAppPath } = split
   const scoped = isWorkspacePath(inAppPath)
-  // `?ws=<first 8 hex of the UUID>` tells two workspaces with one prefix apart (design 5).
+  // `?ws=<last 8 hex of the UUID (WS8)>` tells two workspaces with one prefix apart (design 5).
   const urlHint = ownsUrl && urlPrefix !== undefined ? new URL(publicHref, 'http://x').searchParams.get('ws') : null
   // Prefixes match regardless of case (`/w/demo/board`); the address is then corrected to the real one.
   // A ticket address is the ticket key's workspace; it takes `?ws=` only where the key's prefix is shared (or a hint is given).

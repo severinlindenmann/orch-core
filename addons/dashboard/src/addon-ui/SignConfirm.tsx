@@ -1,6 +1,6 @@
 import { ARG_KEY } from '@/api/addons'
 import { SignPrompt } from '@/components/sign/SignPrompt'
-import { plain, Prose, Raw, RawValue } from '@/components/sign/visible'
+import { plain, Prose, Raw, RawValue, visible } from '@/components/sign/visible'
 import { coreNote } from './coreNotes'
 import { AddonBadge } from './AddonBadge'
 
@@ -95,7 +95,7 @@ export function SignConfirm({
         // The values below are the addon's, bound by core: a core lead line says so before them.
         ...(problem || !Object.keys(args ?? {}).length ? [] : [ARGS_LEAD, ...argLines(args)]),
         ...(ticket ? [`About ${plain(ticket)}`] : []),
-        `In workspace ${workspace.name} (${workspace.prefix})`,
+        `In workspace ${visible(workspace.name)} (${workspace.prefix})`,
       ]}
       confirmLabel="Sign and run"
       disabled={!!problem}

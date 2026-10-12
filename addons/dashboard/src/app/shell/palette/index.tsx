@@ -8,6 +8,7 @@ import { can } from '@/api/permissions'
 import { handoffMode } from '@/api/features'
 import type { HandoffAction } from '@/api/handoff'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { visible as showHidden } from '@/components/sign/visible'
 import { api } from '@/api/client'
 import { STATUSES, type ActionRequest, type Status } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
@@ -241,7 +242,7 @@ export function CommandPalette() {
     }))
 
   const onBoard: Entry[] =
-    pathname === '/board' && can(role, 'ticket.move')
+    pathname === '/board' && can(role, 'ticket.move') && !handoffOn
       ? [
           {
             id: 'board-move',
@@ -279,7 +280,7 @@ export function CommandPalette() {
       if (t.status === 'done' || t.status === 'closed') out.push({ id: 'reopen', label: 'Reopen ticket', icon: <LockOpen />, run: () => (close(), setHandoff({ title: `Reopen ${key}`, action: { action: 'reopen', key } })) })
       else out.push({ id: 'close', label: 'Close ticket', icon: <Lock />, run: () => (close(), setHandoff({ title: `Close ${key}`, action: { action: 'close', key } })) })
     }
-    if (can(ticketRole, 'ticket.move')) out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
+    if (can(ticketRole, 'ticket.move') && !handoffOn) out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
     for (const g of av.approve) out.push({ id: `approve-${g}`, label: `Approve ${gateActionName(g)}`, icon: <Check />, run: () => sign({ kind: 'approve', gate: g }) })
     if (av.verdict) out.push({ id: 'verdict', label: 'Give verdict', icon: <Check />, run: () => sign({ kind: 'verdict' }) })
     return out
@@ -292,7 +293,7 @@ export function CommandPalette() {
       id: w.id,
       label: `Switch to ${w.prefix}`,
       icon: <Building2 />,
-      hint: w.name,
+      hint: showHidden(w.name),
       keys: keysFor(`workspace.${i + 1}`),
       run: () => {
         close()

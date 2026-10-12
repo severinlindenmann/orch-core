@@ -402,6 +402,7 @@ class Store:
         import heapq
 
         with self._locked():
+            self._scan_dirs()  # a ticket log another writer created since the last scan is in it too
             self._ensure(set(self._exists))
             streams = []
             for log, info in sorted(self._logs.items()):

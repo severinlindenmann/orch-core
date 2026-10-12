@@ -4,6 +4,7 @@ bus. Each acceptance item of the H6a row in §8 has a test here that fails witho
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 
@@ -281,6 +282,7 @@ def test_a_cursor_the_host_did_not_issue_is_sub_reset(w):
     head, _, mac = real.rpartition(".")
     flipped = head + "." + ("A" if mac[0] != "A" else "B") + mac[1:]
     assert err(c.call("sub.open", {"topics": ["tickets"], "after": flipped})) == "sub.reset"
+    assert err(c.call("sub.open", {"topics": ["tickets"], "after": head + ".éé"})) == "sub.reset"  # not internal
 
 
 def test_a_cursor_whose_entry_moved_after_a_rebuild_is_sub_reset(w):
@@ -626,3 +628,20 @@ def test_no_refresh_spin_when_the_snapshot_cannot_be_trusted(w):
     assert c.evt(sub["sub"])["end"] == "reset"
     w.h.run(asyncio.sleep(0.3))
     assert jobs == []  # ended, not refreshed over and over
+
+
+def test_a_ticket_a_foreign_writer_created_is_in_the_rebuilt_journal(w):
+    w.ticket()
+    c = w.conn()
+    sub = c.open(["tickets"])
+    before = w.service.journal.head
+    w.lab.ws.tick()
+    w.append(lambda store: w.lab.ws.new_ticket("foreign one"))  # a new tickets/<uid>/ the host never saw
+    uid = next(u for u in os.listdir(w.lab.ws.root / "tickets") if u not in w.service.journal.sigs)
+    w.check_journals()
+    assert c.evt(sub["sub"])["end"] == "reset"
+    journal = w.service.journal
+    assert journal.head == before + 1 and journal.window[-1].log == uid and journal.window[-1].type == "ticket.created"
+    again = c.open(["tickets"], after=sub["cursor"])
+    items, _ = c.items_until(again["sub"], before + 1)
+    assert [(i["uid"], i["type"]) for i in items] == [(uid, "ticket.created")]

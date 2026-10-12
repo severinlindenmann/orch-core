@@ -357,17 +357,20 @@ def test_a_ticket_that_becomes_visible_between_pages_adds_nothing(wq):
     assert query(wq, {"sort": "key", "order": "asc"})["total"] == 3  # a new first page sees it
 
 
-def test_a_removed_person_on_page_two_is_filtered_as_the_new_viewer(wq):
-    ws_tickets = [mk(wq, f"w{n}")[1] for n in range(2)]
+def test_a_removed_person_on_page_two_is_page_expired(wq):
+    """Stricter than "filtered as the new viewer" (§0.8): a change of the viewer's person on the same principal,
+    to none included, expires the token (pages.resume)."""
+    for n in range(2):
+        mk(wq, f"w{n}")
     uid, r = mk(wq, "restricted")
     wq.restrict(uid, [wq.lab.owner, wq.quinn.ref])
     args = {"limit": 1, "sort": "key", "order": "asc"}
     first = query(wq, args)
     assert first["total"] == 3
     wq.person_event("member.removed", person=wq.quinn.ref)  # the UID maps to a removed person: no-person now
-    rest = query(wq, {**args, "limit": 5, "page": first["next_page"]})
-    assert keys(first) + keys(rest) == ws_tickets and rest["total"] == 2  # the restricted row is gone
-    assert r not in json.dumps(rest)
+    res = wq.client().req("ticket.query", {**args, "limit": 5, "page": first["next_page"]})
+    assert err(res) == "page.expired"
+    assert r not in json.dumps(res)
 
 
 def test_a_revoked_grant_on_page_two_changes_the_principal_so_the_token_expires(w):

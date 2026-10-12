@@ -235,8 +235,6 @@ def handler(op: str) -> Callable[[Handler], Handler]:
 
 
 def _load() -> None:
-    if HANDLERS:
-        return
     from . import reads_feed, reads_query, reads_ticket, reads_ws  # noqa: F401 - they register their handlers
 
 

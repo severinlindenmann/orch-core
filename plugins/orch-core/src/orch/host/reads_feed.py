@@ -11,8 +11,15 @@ event only by :func:`~orch.host.readmodel.ws_event_visible`; ``no-person`` gets 
 needs the criteria and tasks before it, so those are replayed over the **visible** tickets' ``ticket.updated`` events
 only).
 
+**Cost.** The viewer-independent part of every event (its ``ActivityItem`` with ``key`` and ``title`` left out, its
+grant person) is derived once per workspace and kept in :class:`Base`, keyed by (journal epoch, journal head): it is
+extended from the journal window (``Entry.detail``) when the epoch is unchanged and rebuilt from the verified logs
+on an epoch change or when the window no longer reaches the cached head. Nothing viewer-specific is cached: visibility,
+``key`` and ``title`` are looked up per request, and only for tickets that pass.
+
 **Paging.** The first page takes ``ctx.sub_cursor()`` first, then fixes the snapshot: the journal head at that moment,
-the visibility of every ticket then, ``sub_cursor`` and ``as_of``, kept host-side (:mod:`orch.host.pages`). A later
+the visibility of every ticket then, ``sub_cursor`` and ``as_of``, kept host-side (:mod:`orch.host.pages`) only when
+there is a next page. A later
 page reads only events up to the snapshot's ``jpos``, filters them by the snapshot's visibility **and** the visibility
 of its own request's viewer, and continues from the last position the previous page scanned. A request scans at most
 :data:`SCAN_BUDGET` events: a page holds ``limit`` items or fewer when the budget ran out, and ``next_page`` is ``null``
@@ -21,7 +28,7 @@ only when no further visible item exists (a decision the budget may leave open, 
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 from . import readmodel
 from .errors import HostError
@@ -35,8 +42,72 @@ SCAN_BUDGET = 10_000
 OP = "activity.list"
 
 
-def _actor_matches(e: dict[str, Any], kinds: set[str] | None, person: str | None) -> bool:
-    a = e.get("actor") if isinstance(e.get("actor"), dict) else {}
+class Entry(NamedTuple):
+    """The viewer-independent derivation of one event (cached)."""
+
+    log: str
+    typ: str
+    at: str
+    actor: dict[str, Any]
+    grant_person: str | None
+    detail: dict[str, Any]  # the ActivityItem with key/title None
+
+
+class Base:
+    """Per-workspace cache of :class:`Entry` by jpos, valid for one journal epoch."""
+
+    def __init__(self) -> None:
+        self.epoch = ""
+        self.entries: list[Entry] = []
+
+
+def _from_journal(entry: Any) -> Entry | None:
+    d = entry.detail
+    if d is None:
+        return None
+    return Entry(entry.log, entry.type, entry.at, d["actor"], entry.grant_person, dict(d))
+
+
+def _from_events(ctx: ReadCtx) -> list[Entry]:
+    """Every event of the verified logs, derived once (the expensive path: reads every log)."""
+    ws = ctx.workspace
+    state = readmodel.SummaryState()
+    out: list[Entry] = []
+    for jpos, (log, e) in enumerate(ctx.store.merged_events(), 1):
+        typ = str(e.get("type"))
+        gp = _grant_person(typ, e, ws.grants) if log == "workspace" else None
+        if log == "workspace":
+            text, data = readmodel.summary(e), readmodel.data_of(log, e, grant_person=gp, devices=ws.devices)
+        else:
+            text, data = readmodel.summary(e, state.of(log)), readmodel.data_of(log, e)
+        item = readmodel.activity_item(jpos, log, e, key=None, title=None, summary_text=text, data=data)
+        out.append(Entry(log, typ, str(e.get("at")), item["actor"], gp, item))
+    return out
+
+
+def base_entries(ctx: ReadCtx, upto: int) -> list[Entry]:
+    """The cached entries, at least ``upto`` of them when the logs have that many (jpos = index + 1)."""
+    service = ctx.service
+    cache = getattr(service, "activity_base", None)
+    if cache is None:
+        cache = service.activity_base = Base()
+    journal = service.journal
+    if cache.epoch != ctx.epoch:
+        cache.epoch, cache.entries = ctx.epoch, []
+    have = len(cache.entries)
+    if have >= upto:
+        return cache.entries
+    if journal is not None and journal.window and journal.floor <= have + 1:
+        fresh = [_from_journal(x) for x in journal.after(have)]
+        if all(x is not None for x in fresh):
+            cache.entries.extend(x for x in fresh if x is not None)
+            if len(cache.entries) >= upto:
+                return cache.entries
+    cache.entries = _from_events(ctx)
+    return cache.entries
+
+
+def _actor_matches(a: dict[str, Any], kinds: set[str] | None, person: str | None) -> bool:
     if kinds is not None and a.get("kind") not in kinds:
         return False
     return person is None or a.get("id") == person or a.get("for") == person
@@ -84,16 +155,15 @@ def activity_list(ctx: ReadCtx) -> dict[str, Any]:
         snap_jpos = int(body["j"]) if body is not None else 0
         as_of, snap_vis, snap, position = ctx.as_of(), None, None, None
 
-    events = store.merged_events()  # jpos = index + 1, the journal's numbering
+    store.load_all()  # every ticket's state (the visibility below); merged_events() used to do it
+    events = base_entries(ctx, snap_jpos)  # jpos = index + 1, the journal's numbering
     last = min(len(events), snap_jpos)
     tickets = store.state.tickets
     vis_now = {uid: viewer.sees(view) for uid, view in tickets.items()}
     if snap is None:
         snap_vis = dict(vis_now)
         data = {"jpos": snap_jpos, "vis": snap_vis, "sub_cursor": sub_cursor, "as_of": as_of}
-        snap = ctx.pages.open(OP, ctx.principal, ctx.epoch, viewer.person, data)
         position = 0 if order == "asc" else last + 1
-    ws = ctx.workspace
 
     kinds = set(args["actor_kind"]) if "actor_kind" in args else None
     types = set(args["types"]) if "types" in args else None
@@ -102,10 +172,10 @@ def activity_list(ctx: ReadCtx) -> dict[str, Any]:
     def shown(uid: str) -> bool:
         return bool(snap_vis.get(uid)) and vis_now.get(uid, False)
 
-    def passes(jpos: int) -> tuple[str, dict[str, Any], str | None] | None:
-        """``(log, event, grant person)`` when the event matches every filter and the viewer may see it."""
-        log, e = events[jpos - 1]
-        typ = str(e.get("type"))
+    def passes(jpos: int) -> Entry | None:
+        """The entry when the event matches every filter and the viewer may see it."""
+        en = events[jpos - 1]
+        log, typ = en.log, en.typ
         if log == "workspace":
             if scope == "tickets" or wanted_uid is not None:
                 return None
@@ -113,25 +183,13 @@ def activity_list(ctx: ReadCtx) -> dict[str, Any]:
             return None
         if types is not None and typ not in types:
             return None
-        if not _actor_matches(e, kinds, person):
+        if not _actor_matches(en.actor, kinds, person):
             return None
-        at = str(e.get("at"))
-        if (since is not None and at < since) or (until is not None and at >= until):
+        if (since is not None and en.at < since) or (until is not None and en.at >= until):
             return None
         if log != "workspace":
-            return log, e, None
-        gp = _grant_person(typ, e, ws.grants)
-        return (log, e, gp) if readmodel.ws_event_visible(typ, viewer.person, viewer.owner, gp) else None
-
-    # the criteria and tasks before each ticket.updated of a visible ticket (what its summary names); nothing of a
-    # ticket the viewer may not see is replayed
-    summaries: dict[int, str] = {}
-    state = readmodel.SummaryState()
-    for jpos in range(1, last + 1):
-        log, e = events[jpos - 1]
-        if log != "workspace" and e.get("type") == "ticket.updated" and shown(log):
-            if wanted_uid is None or log == wanted_uid:
-                summaries[jpos] = readmodel.summary(e, state.of(log))
+            return en
+        return en if readmodel.ws_event_visible(typ, viewer.person, viewer.owner, en.grant_person) else None
 
     step = -1 if order == "desc" else 1
     items: list[dict[str, Any]] = []
@@ -150,21 +208,13 @@ def activity_list(ctx: ReadCtx) -> dict[str, Any]:
         if len(items) == limit:  # a visible item beyond the page: there is a next page
             more = True
             break
-        log, e, gp = hit
-        if log == "workspace":
-            item = readmodel.activity_item(
-                cursor, log, e, key=None, title=None, summary_text=readmodel.summary(e),
-                data=readmodel.data_of(log, e, grant_person=gp, devices=ws.devices),
-            )  # fmt: skip
-        else:
-            view = tickets[log]
-            text = summaries.get(cursor)
-            if text is None:
-                text = readmodel.summary(e)
-            item = readmodel.activity_item(
-                cursor, log, e, key=view.key, title=view.title, summary_text=text, data=readmodel.data_of(log, e)
-            )
+        item = dict(hit.detail)
+        if hit.log != "workspace":  # key and title now, only for a ticket that passed
+            view = tickets[hit.log]
+            item["key"], item["title"] = view.key, view.title
         items.append(item)
         cursor += step
+    if more and snap is None:  # a snapshot only when a later page can follow
+        snap = ctx.pages.open(OP, ctx.principal, ctx.epoch, viewer.person, data)
     token = ctx.pages.token(snap, cursor - step, args) if more else None  # resumes at ``cursor``
     return {"items": items, "next_page": token, "sub_cursor": sub_cursor, "as_of": as_of}

@@ -15,7 +15,8 @@ becomes ``no_eligible`` with ``cause:"no_visible_person"``, a model ``no_eligibl
 ``blocking_questions``, ``closed``, ``restricted``, ``epic``) only for a ticket that passed the filter, from that
 ticket's own log; ``epic`` is walked through tickets the viewer may see only (§0.5 "Computed after the filter").
 
-**Paging.** The first page stores the filtered, sorted rows in a host-side snapshot (``ctx.pages``); a later page
+**Paging.** A first page with a next page stores the filtered, sorted rows in a host-side snapshot (``ctx.pages``;
+the rows page one served are cut to their uid, and the pages module bounds the bytes); a later page
 serves that snapshot, keeping a row only if its ticket is visible to the request's own viewer both at the snapshot and
 now. ``total`` counts the snapshot's rows that pass that filter; ``next_page`` is ``null`` only when no further visible
 row exists.
@@ -353,8 +354,8 @@ def _sort(rows: list[dict[str, Any]], args: Mapping[str, Any]) -> list[dict[str,
     return rows
 
 
-def _first_page(ctx: ReadCtx) -> Any:
-    """Read the state once and store the snapshot (the filtered, sorted rows and each ticket's visibility)."""
+def _first_page(ctx: ReadCtx) -> dict[str, Any]:
+    """Read the state once: the snapshot data (filtered, sorted rows and each ticket's visibility), not yet stored."""
     args, viewer = ctx.args, ctx.viewer
     cursor = ctx.sub_cursor()  # before the state is read (H6a)
     parent = ctx.ticket(args["parent"]).key if "parent" in args else None
@@ -376,8 +377,7 @@ def _first_page(ctx: ReadCtx) -> Any:
             continue
         rows.append(_row(ctx, view, updated, _kinds(items), epic))
         vis[view.uid] = thaw(view.visibility)
-    data = {"rows": _sort(rows, args), "vis": vis, "sub_cursor": cursor, "as_of": ctx.as_of()}
-    return ctx.pages.open("ticket.query", ctx.principal, ctx.epoch, viewer.person, data)
+    return {"rows": _sort(rows, args), "vis": vis, "sub_cursor": cursor, "as_of": ctx.as_of()}
 
 
 def _still_visible(ctx: ReadCtx, uid: str, snapshot_vis: Any) -> bool:
@@ -399,8 +399,8 @@ def ticket_query(ctx: ReadCtx) -> dict[str, Any]:
             raise HostError("page.expired", "the page token is not valid any more: restart from the first page")
         ctx.sub_cursor()  # a foreign append check, so "now" below is current
     else:
-        snap, start = _first_page(ctx), 0
-    data = snap.data
+        snap, start = None, 0
+    data = snap.data if snap is not None else _first_page(ctx)
     out: list[dict[str, Any]] = []
     total, nxt = 0, None
     for idx, row in enumerate(data["rows"]):
@@ -413,6 +413,10 @@ def ticket_query(ctx: ReadCtx) -> dict[str, Any]:
             out.append(row)
         elif nxt is None:
             nxt = idx
+    if nxt is not None and snap is None:  # a snapshot only when a later page can follow
+        for i in range(nxt):  # what page one served is never read again: keep its uid (for ``total``), not the row
+            data["rows"][i] = {"uid": data["rows"][i]["uid"]}
+        snap = ctx.pages.open("ticket.query", ctx.principal, ctx.epoch, ctx.viewer.person, data)
     return {
         "rows": out,
         "next_page": ctx.pages.token(snap, nxt, args) if nxt is not None else None,

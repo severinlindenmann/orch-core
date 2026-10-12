@@ -15,9 +15,14 @@ The checks run in the order of §0.8: **authenticity** (a token this host did no
 
 **A snapshot** is a host-side record, kept in memory for :data:`TTL_SECONDS` after its last use: whatever the op needs
 to serve its later pages at the first page's state (rows, a position bound, the visibility of each ticket then, the
-``sub_cursor`` and ``as_of``). At most :data:`PER_PRINCIPAL` per principal and :data:`MAX_SNAPSHOTS` per workspace; the
-oldest is dropped first, and its tokens answer ``page.expired``. A host restart drops them all (and the key), which is
-the same ``page.expired``.
+``sub_cursor`` and ``as_of``). Only an op with a next page opens one. At most :data:`PER_PRINCIPAL` per principal and
+:data:`MAX_SNAPSHOTS` per workspace, and at most :data:`PRINCIPAL_BYTES` per principal and :data:`MAX_BYTES` per
+workspace (the size is ``len(json.dumps(data))``). Over a limit the oldest snapshot is dropped first, and its tokens
+answer ``page.expired``: a principal over its own share loses its own oldest, and over the workspace limit the
+principal holding the most loses its oldest, so one principal cannot push out the snapshots of others beyond its
+own share. A single snapshot larger than a share is kept alone (it evicts only its principal's others).
+A host restart drops them all (and the key), which
+is the same ``page.expired``.
 
 Every page is still **filtered for the viewer of its own request** by the op (§0.8): a snapshot never widens what the
 current viewer may see.
@@ -40,11 +45,22 @@ from typing import Any
 
 from .errors import HostError
 
-__all__ = ["MAX_SNAPSHOTS", "PER_PRINCIPAL", "TTL_SECONDS", "Pages", "Snapshot", "args_digest"]
+__all__ = [
+    "MAX_BYTES",
+    "MAX_SNAPSHOTS",
+    "PRINCIPAL_BYTES",
+    "PER_PRINCIPAL",
+    "TTL_SECONDS",
+    "Pages",
+    "Snapshot",
+    "args_digest",
+]
 
 TTL_SECONDS = 600
 MAX_SNAPSHOTS = 256
 PER_PRINCIPAL = 32
+MAX_BYTES = 64 * 1024 * 1024
+PRINCIPAL_BYTES = 8 * 1024 * 1024
 PREFIX = "p1."
 
 
@@ -76,6 +92,7 @@ class Snapshot:
     person: str | None
     data: dict[str, Any] = field(default_factory=dict)
     used: float = 0.0
+    size: int = 0
 
 
 class Pages:
@@ -92,15 +109,24 @@ class Pages:
     def open(self, op: str, principal: str, epoch: str, person: str | None, data: dict[str, Any]) -> Snapshot:
         """A new snapshot (the first page). Evicts expired ones, then the oldest beyond the limits."""
         now = self.clock()
-        snap = Snapshot(secrets.token_urlsafe(12), op, principal, epoch, person, data, now)
+        size = len(json.dumps(data, default=str, separators=(",", ":")))
+        snap = Snapshot(secrets.token_urlsafe(12), op, principal, epoch, person, data, now, size)
         with self._lock:
             for sid in [s for s, v in self._snaps.items() if now - v.used > TTL_SECONDS]:
                 del self._snaps[sid]
-            mine = [s for s, v in self._snaps.items() if v.principal == principal]
-            while len(mine) >= PER_PRINCIPAL:
-                del self._snaps[mine.pop(0)]
-            while len(self._snaps) >= MAX_SNAPSHOTS:
-                self._snaps.popitem(last=False)
+            mine = [s for s, v in self._snaps.items() if v.principal == principal]  # oldest first
+            held = sum(self._snaps[s].size for s in mine)
+            while mine and (len(mine) >= PER_PRINCIPAL or held + size > PRINCIPAL_BYTES):
+                held -= self._snaps.pop(mine.pop(0)).size
+            while self._snaps and (
+                len(self._snaps) >= MAX_SNAPSHOTS or sum(v.size for v in self._snaps.values()) + size > MAX_BYTES
+            ):
+                # the principal holding the most bytes loses its oldest snapshot
+                use: dict[str, int] = {}
+                for v in self._snaps.values():
+                    use[v.principal] = use.get(v.principal, 0) + v.size
+                top = max(use, key=lambda p: use[p])
+                del self._snaps[next(s for s, v in self._snaps.items() if v.principal == top)]
             self._snaps[snap.id] = snap
         return snap
 
@@ -138,7 +164,12 @@ class Pages:
         if not isinstance(token, str) or not token.startswith(PREFIX):
             raise expired
         body, _, mac = token[len(PREFIX) :].partition(".")
-        if not body or not mac or not hmac.compare_digest(self._mac(body), mac):  # 1. authenticity
+        if (
+            not body
+            or not mac
+            # compared as bytes: a non-ASCII token is a mismatch, never a TypeError
+            or not hmac.compare_digest(mac.encode("utf-8", "surrogatepass"), self._mac(body).encode("ascii"))
+        ):  # 1. authenticity
             raise expired
         try:
             fields = json.loads(_unb64(body))
@@ -158,8 +189,10 @@ class Pages:
                 raise expired
             if fields.get("e") != epoch or snap.epoch != epoch:
                 raise expired
-            if snap.person is not None and person is not None and snap.person != person:
-                raise expired  # the same principal now maps to another person: nothing of the first one carries over
+            if snap.person != person:
+                # the same principal now maps to another person, or to none, or from none to one: nothing of the
+                # first viewer carries over (stricter than "filtered as the new viewer", §0.8: restart from page 1)
+                raise expired
             if fields.get("a") != args_digest(args):  # 4. arguments
                 raise HostError("invalid.input", "the page token belongs to a request with other arguments")
             snap.used = now

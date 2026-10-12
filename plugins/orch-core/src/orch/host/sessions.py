@@ -7,10 +7,11 @@ through ``session.list`` and the ``session_ids`` of ``grant.list``, each under t
 
 * **Where.** ``<state>/hosts/<ws>/sessions.json`` (0600, atomic replace, no fsync), read once per workspace service,
   then kept in memory. The list the reads serve is the in-memory one, so ``last_at`` is exact; the file is written
-  only when a session is new or its ``last_at`` moved by :data:`WRITE_EVERY` (60 s) since the last write, so a busy
-  session costs one small write a minute.
-* **Bounds.** At most :data:`MAX_RECORDS` records (the oldest ``last_at`` is dropped first), none older than
-  :data:`RETENTION` (7 days).
+  at most once per :data:`WRITE_EVERY` (60 s) however many sessions arrive (and when the service closes), so a busy
+  host costs one small write a minute.
+* **Bounds.** At most :data:`PER_GRANT` records per grant (that grant's oldest is dropped), at most
+  :data:`MAX_RECORDS` in all (the grant holding the most loses its oldest first, so one grant cannot evict another's
+  records), none older than :data:`RETENTION` (7 days).
 * **The agent id** is the one the host stamps on that session's events: ``orch.ops.runtime.Call.agent_id()`` with the
   host's capabilities (an empty environment), so ``"orch-cli"``.
 * :func:`record` is called by the dispatcher for every request it serves, after the column. It never raises into
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,10 +30,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .workspace import Call, WorkspaceService
 
-__all__ = ["MAX_RECORDS", "RETENTION", "WRITE_EVERY", "Record", "Records", "agent_id", "records", "record"]
+__all__ = ["MAX_RECORDS", "PER_GRANT", "RETENTION", "WRITE_EVERY", "Record", "Records", "agent_id", "records", "record"]
 
 LOG = logging.getLogger(__name__)
 MAX_RECORDS = 10_000
+PER_GRANT = 256
 RETENTION = 7 * 24 * 3600
 WRITE_EVERY = 60
 _VERSION = 1
@@ -60,14 +63,20 @@ def agent_id(service: WorkspaceService) -> str:
 
 
 class Records:
-    """The session records of one workspace. Worker thread only (a lock guards the file against a stray reader)."""
+    """The session records of one workspace. Worker thread only (a lock guards the file against a stray reader).
+
+    Kept per grant, each grant's records in ``last_at`` order (oldest first), so a drop is O(1) and nothing is sorted
+    per request."""
 
     def __init__(self, path: Path, host_uid: int) -> None:
         self.path = path
         self.host_uid = host_uid
-        self._items: dict[tuple[str, str], Record] = {}
+        self._by_grant: dict[str, OrderedDict[str, Record]] = {}
+        self._count = 0
         self._lock = threading.Lock()
         self._loaded = False
+        self._dirty = False
+        self._flushed_at: float | None = None
 
     # -- the file
     def _load(self, now: float) -> None:
@@ -80,6 +89,7 @@ class Records:
             LOG.warning("session records %s unreadable: %s", self.path, exc)
             return
         rows = doc.get("sessions") if isinstance(doc, dict) and doc.get("v") == _VERSION else None
+        loaded: list[Record] = []
         for row in rows if isinstance(rows, list) else ():
             try:
                 rec = Record(
@@ -93,7 +103,17 @@ class Records:
                 continue
             rec.written = rec.last_at
             if rec.last_at > now - RETENTION:
-                self._items[(rec.grant_id, rec.session)] = rec
+                loaded.append(rec)
+        for rec in sorted(loaded, key=lambda r: r.last_at):  # one sort, at load
+            self._put(rec)
+        self._trim()
+
+    def flush(self) -> None:
+        """Write the file now if anything changed (also called when the workspace service closes)."""
+        with self._lock:
+            if self._loaded and self._dirty:
+                self._dirty = False
+                self._flush()
 
     def _flush(self) -> None:
         import json
@@ -102,49 +122,81 @@ class Records:
 
         from .custody import ensure_private_dir
 
-        ensure_private_dir(self.path.parent, self.host_uid, create=False)
-        rows = [
-            {"session": r.session, "agent": r.agent, "person": r.person, "grant_id": r.grant_id, "last_at": r.last_at}
-            for r in sorted(self._items.values(), key=lambda r: (r.last_at, r.grant_id, r.session))
-        ]
-        doc = {"v": _VERSION, "sessions": rows}
-        # atomic (a reader sees the old file or the new one) but not fsynced: these are display records, and the
-        # dispatcher must not wait for the disk
-        write_atomic(
-            self.path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode(), mode=0o600, durable=False
-        )
-        for r in self._items.values():
-            r.written = r.last_at
+        try:
+            ensure_private_dir(self.path.parent, self.host_uid, create=False)
+            recs = [r for grant in self._by_grant.values() for r in grant.values()]
+            rows = [
+                {
+                    "session": r.session,
+                    "agent": r.agent,
+                    "person": r.person,
+                    "grant_id": r.grant_id,
+                    "last_at": r.last_at,
+                }
+                for r in sorted(recs, key=lambda r: (r.last_at, r.grant_id, r.session))
+            ]
+            doc = {"v": _VERSION, "sessions": rows}
+            # atomic (a reader sees the old file or the new one) but not fsynced: these are display records, and the
+            # dispatcher must not wait for the disk
+            write_atomic(
+                self.path, json.dumps(doc, sort_keys=True, separators=(",", ":")).encode(), mode=0o600, durable=False
+            )
+            for r in recs:
+                r.written = r.last_at
+        except Exception as exc:  # noqa: BLE001 - the file is a convenience; memory still serves
+            LOG.warning("session records %s not written: %s", self.path, exc)
 
-    def _prune(self, now: float) -> None:
-        for key in [k for k, r in self._items.items() if r.last_at <= now - RETENTION]:
-            del self._items[key]
-        if len(self._items) > MAX_RECORDS:
-            keep = sorted(self._items.items(), key=lambda kv: (kv[1].last_at, kv[0]), reverse=True)[:MAX_RECORDS]
-            self._items = dict(keep)
+    # -- the in-memory set
+    def _put(self, rec: Record) -> None:
+        grant = self._by_grant.setdefault(rec.grant_id, OrderedDict())
+        if rec.session not in grant:
+            self._count += 1
+        grant[rec.session] = rec
+        grant.move_to_end(rec.session)
+
+    def _drop_oldest(self, grant_id: str) -> None:
+        grant = self._by_grant[grant_id]
+        grant.popitem(last=False)
+        self._count -= 1
+        if not grant:
+            del self._by_grant[grant_id]
+
+    def _trim(self) -> None:
+        """Per-grant cap first, then the workspace cap: the grant holding the most records loses its oldest, so one
+        grant (a client choosing a fresh session id per request) cannot push out another grant's records."""
+        for gid in [g for g, d in self._by_grant.items() if len(d) > PER_GRANT]:
+            while gid in self._by_grant and len(self._by_grant[gid]) > PER_GRANT:
+                self._drop_oldest(gid)
+        while self._count > MAX_RECORDS:
+            self._drop_oldest(max(self._by_grant, key=lambda g: len(self._by_grant[g])))
+
+    def _expire(self, now: float) -> None:
+        for gid in list(self._by_grant):
+            grant = self._by_grant[gid]
+            while grant and next(iter(grant.values())).last_at <= now - RETENTION:
+                self._drop_oldest(gid)
 
     # -- use
     def note(self, session: str, agent: str, person: str, grant_id: str, now: float) -> None:
-        """One request of ``session`` under ``grant_id`` at ``now``."""
+        """One request of ``session`` under ``grant_id`` at ``now``. The file is rewritten at most once per
+        :data:`WRITE_EVERY` seconds, whatever arrived meanwhile."""
         with self._lock:
             if not self._loaded:
                 self._load(now)
             at = int(now)
-            key = (grant_id, session)
-            rec = self._items.get(key)
+            rec = self._by_grant.get(grant_id, {}).get(session)
             if rec is None:
-                rec = self._items[key] = Record(session, agent, person, grant_id, at)
-                fresh = True
+                self._put(Record(session, agent, person, grant_id, at))
+                self._trim()
             else:
-                fresh = rec.written is None or at - rec.written >= WRITE_EVERY
                 rec.last_at = max(rec.last_at, at)
                 rec.agent, rec.person = agent, person
-            if fresh:
-                self._prune(now)
-                try:
-                    self._flush()
-                except Exception as exc:  # noqa: BLE001 - the file is a convenience; memory still serves
-                    LOG.warning("session records %s not written: %s", self.path, exc)
+                self._by_grant[grant_id].move_to_end(session)
+            self._dirty = True
+            if self._flushed_at is None or now - self._flushed_at >= WRITE_EVERY:
+                self._expire(now)
+                self._dirty, self._flushed_at = False, now
+                self._flush()
 
     def snapshot(self, now: float) -> list[Record]:
         """Every record within the retention, as copies (one consistent snapshot for one read)."""
@@ -153,7 +205,8 @@ class Records:
                 self._load(now)
             return [
                 Record(r.session, r.agent, r.person, r.grant_id, r.last_at, r.written)
-                for r in self._items.values()
+                for grant in self._by_grant.values()
+                for r in grant.values()
                 if r.last_at > now - RETENTION
             ]
 

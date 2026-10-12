@@ -338,7 +338,10 @@ def test_the_records_are_written_throttled_0600_and_survive_a_restart(w):
     w.lab.ws.clock[0] += 31  # 61 s after the write
     touch(c, w.grant, sid("keep"))
     assert json.loads(path.read_text())["sessions"][0]["last_at"] == at + 61
-    touch(c, w.grant, sid("other"))  # a new session is written at once
+    touch(c, w.grant, sid("other"))  # a new session waits for the throttle too (one rewrite per interval)
+    assert [r["session"] for r in json.loads(path.read_text())["sessions"]] == [sid("keep")]
+    w.lab.ws.clock[0] += 61
+    touch(c, w.grant, sid("keep"))
     assert sorted(r["session"] for r in json.loads(path.read_text())["sessions"]) == sorted([sid("keep"), sid("other")])
     reread = sessions.Records(path, os.getuid())
     assert sorted(r.session for r in reread.snapshot(w.lab.ws.clock[0])) == sorted([sid("keep"), sid("other")])

@@ -23,7 +23,6 @@ Decisions the contract leaves open:
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any
 
 from orch.canon import HashError, canonical_policy, check_repo_identity
@@ -58,10 +57,17 @@ def committed_epoch(ctx: ReadCtx) -> int:
 
 
 def _name(ctx: ReadCtx, prefix: str) -> str:
-    try:
-        doc = json.loads((ctx.store.root / "config.json").read_bytes())
-        name = doc["workspace"]["name"]
-    except (OSError, ValueError, KeyError, TypeError):
+    from orch import schema
+    from orch.store import fsio
+
+    try:  # the store's own rules: no symlink, size limit, bounded nesting, schema-valid
+        raw = fsio.read_or_none(ctx.store.root / "config.json")
+        if raw is None:
+            return prefix
+        doc = fsio.loads(raw)
+        schema.validate("workspace", doc)
+        name = doc["workspace"]["name"]  # type: ignore[index]
+    except (OSError, ValueError, KeyError, TypeError, RecursionError, schema.SchemaError):
         return prefix
     return name if isinstance(name, str) and name else prefix
 
@@ -136,18 +142,20 @@ def _person_reader(ctx: ReadCtx) -> None:
         raise HostError("op.not_allowed", f"{ctx.call.frame['op']} is not allowed here")
 
 
-def _holdings(ctx: ReadCtx) -> tuple[dict[tuple[str, str], list[str]], dict[str, list[str]]]:
-    """Live claims by (grant, session) and task leases by session (``KEY/T<n>``), over the tickets this viewer may
-    see: a ticket the viewer cannot see is never part of this."""
+def _holdings(ctx: ReadCtx) -> tuple[dict[tuple[str, str], list[str]], dict[tuple[str, str], list[str]]]:
+    """Live claims and task leases (``KEY/T<n>``) by (grant, session), over the tickets this viewer may see: a
+    ticket the viewer cannot see is never part of this."""
     claims: dict[tuple[str, str], list[str]] = {}
-    leases: dict[str, list[str]] = {}
+    leases: dict[tuple[str, str], list[str]] = {}
     for view in ctx.visible_tickets():
         claim = view.claim
         if claim is not None and claim.live:
             claims.setdefault((claim.grant, claim.session), []).append(view.key)
         for task in view.tasks:
-            if task.leased_by:
-                leases.setdefault(task.leased_by, []).append(f"{view.key}/{task.id}")
+            # a lease records only its session; task events need the claim (model/tasks.py), so the lease belongs to
+            # the grant of that claim, and a lease with no such claim to nobody (never to another grant's label)
+            if task.leased_by and claim is not None and claim.session == task.leased_by:
+                leases.setdefault((claim.grant, task.leased_by), []).append(f"{view.key}/{task.id}")
     return claims, leases
 
 
@@ -162,7 +170,7 @@ def session_list(ctx: ReadCtx) -> dict[str, Any]:
     rows = []
     for r in recs:
         keys = ctx.viewer.claims(ctx.store, claims.get((r.grant_id, r.session), []))
-        held = sorted(set(leases.get(r.session, [])))
+        held = sorted(set(leases.get((r.grant_id, r.session), [])))
         grant = ws.grants.get(r.grant_id)
         if active and not (grant is not None and grant.active and (keys or held or r.last_at > ctx.now - ttl)):
             continue
@@ -291,13 +299,13 @@ def _repo_entry(raw: dict[str, Any], manager: bool) -> dict[str, Any]:
     return entry
 
 
-def _snapshot(ctx: ReadCtx, limit: int) -> Any:
+def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
     from orch.store.render import thaw
 
     cursor = ctx.sub_cursor()  # right before the state is read (H6a)
     ws = ctx.workspace
     settings_at, policy_at, named = _settings_at(_ws_events(ctx))
-    data: dict[str, Any] = {
+    return {
         "settings": {k: int(ws.settings[k]) for k in SETTINGS},
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
@@ -307,7 +315,6 @@ def _snapshot(ctx: ReadCtx, limit: int) -> Any:
         "repos": {name: thaw(raw) for name, raw in sorted(ws.repos.items())},
         "limit": limit,
     }
-    return ctx.pages.open("workspace.settings", ctx.principal, ctx.epoch, ctx.viewer.person, data)
 
 
 @handler("workspace.settings")
@@ -315,15 +322,15 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
     viewer = ctx.viewer
     token = ctx.args.get("page")
     if token is None:
-        snap = _snapshot(ctx, int(ctx.args.get("limit", 32)))
-        start = 0
+        snap, start = None, 0
+        data = _snapshot(ctx, int(ctx.args.get("limit", 32)))
     else:
         snap, start = ctx.pages.resume("workspace.settings", token, ctx.principal, ctx.epoch, viewer.person, ctx.args)
         if "limit" in ctx.args and ctx.args["limit"] != snap.data["limit"]:
             raise HostError("invalid.input", "the page token belongs to a request with other arguments")
         if not isinstance(start, int) or not 0 <= start <= len(snap.data["repos"]):
             raise HostError("page.expired", "the page token is not valid any more: restart from the first page")
-    data = snap.data
+        data = snap.data
     limit = int(data["limit"])
     names = list(data["repos"])
     linked = _linked_repos(ctx) if viewer.column == "N" else None  # each page re-applies the current visibility
@@ -340,6 +347,8 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         page[name] = (
             {"default_branch": raw.get("default_branch")} if linked is not None else _repo_entry(raw, viewer.manager)
         )
+    if nxt is not None and snap is None:  # a snapshot only when a later page can follow
+        snap = ctx.pages.open("workspace.settings", ctx.principal, ctx.epoch, viewer.person, data)
     out: dict[str, Any] = {
         "settings": {**data["settings"], "repos": page},
         "next_page": ctx.pages.token(snap, nxt, ctx.args) if nxt is not None else None,

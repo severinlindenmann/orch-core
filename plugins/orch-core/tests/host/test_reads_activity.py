@@ -406,15 +406,16 @@ def test_a_ticket_that_becomes_invisible_between_pages_is_dropped(w):
     assert ua not in uids(flat(pages(c, {"limit": 200})))
 
 
-def test_a_removed_person_on_page_two_is_filtered_as_the_new_viewer(q):
+def test_a_removed_person_on_page_two_is_page_expired(q):
+    """Stricter than "filtered as the new viewer" (§0.8): a change of the viewer's person on the same principal,
+    to none included, expires the token (pages.resume), so nothing of the first viewer's snapshot is served."""
     ua, ka, ur, kr = populate(q)
     c = q.client()
     first = feed(c, {"limit": 2})
     assert ur in uids(flat(pages(c, {"limit": 200})))
     q.person_event("member.removed", person=q.quinn.ref)
     res = c.req("activity.list", {"limit": 2, "page": first["next_page"]})
-    rest = ok(res)["data"]["items"]  # the same principal, now no-person: workspace tickets only
-    assert rest and ur not in uids(rest) and all(i["log"] != "workspace" for i in rest)
+    assert err(res) == "page.expired"  # the same principal, now no-person
 
 
 def test_a_revoked_grant_on_page_two_is_filtered_as_the_new_viewer(w):

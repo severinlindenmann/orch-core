@@ -476,7 +476,15 @@ def test_envelope_invalid():
     bad("event", ev(g, auth="presence"), "/auth")
     bad("event", ev(g, auth="touchid"), "/auth")
     bad("event", ev(g, sig="p256:" + ex.SIG), "/sig")
-    for a in ("passphrase", "secure-enclave", "secure-enclave-unlocked", "webauthn", "tpm", "windows-hello"):
+    for a in (
+        "passphrase",
+        "secure-enclave",
+        "secure-enclave-unlocked",
+        "convenience",
+        "webauthn",
+        "tpm",
+        "windows-hello",
+    ):
         V("event", ev(g, auth=a), log="ticket")
     bad("event", ev(g, list_seq=7), "", "list_seq")  # F1 names it roster_v
 

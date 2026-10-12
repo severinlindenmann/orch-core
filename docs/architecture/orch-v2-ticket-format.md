@@ -33,7 +33,7 @@ several people in one workspace from day one (D39). The flows for colleagues are
 | T13 | Everything optional is an addon. Addons run out of process, with capabilities granted in signed events. |
 | T14 | **Events are the only truth for state:** status, people, claims, task and acceptance-criteria state, answers, gates, and artifacts. |
 | T15 | The prose sections depend on the ticket type. Context and Decisions are added; Current state is capped. |
-| T16 | Every human signature needs a human factor, recorded as `auth` in the event (D41, D65, D66; see §12 N2). |
+| T16 | Every person event records declared custody in `auth` (D41, D65, D66, D-P2-23; see §12 N2). `convenience` requires no human factor. Other person-capable backends follow their documented factor and interaction requirements. The `file` tier is not person-capable. |
 
 ## 2. Workspace layout
 
@@ -408,7 +408,9 @@ field is refused. Payload fields never reuse an envelope name.
 - **Custody of `dk_sig`** (§12 O2). `dk_sig` is held by the custody backend named in `auth` (D64). In P1
   (`passphrase`) the device signing key is encrypted under the passphrase exactly like the person key (D65), is
   decrypted only for one signature on a TTY, and is never cached. A device key that can sign without the factor its
-  `auth` names is a `file`-tier key and never signs person events.
+  `auth` names is a `file`-tier key and never signs person events. `convenience` names no factor: its device key
+  signs whenever a process of the person's OS user asks (orch-v2-host §0.8.6, D-P2-23, owner decision of 12 Oct
+  2026); it is a device-key custody, not the `file` tier.
 - **Device scopes.** A person event counts only if the signing device's certificate is valid at the event's
   position: not expired against `at`, not removed or revoked, and its `scopes_max` is a level list (a prefix of
   `look, decide, operate, type`, protocol §6.1) that contains `decide`. Certificates with a `drop:` scope
@@ -434,13 +436,16 @@ field is refused. Payload fields never reuse an envelope name.
   silent edit.
 - **`auth` is custody metadata, not proof** (§12 O1). It names the backend the signer's client used (D64, D66):
   `passphrase`, `secure-enclave` (Mac, user presence per signature, D41), `secure-enclave-unlocked` (iPhone, D49),
-  `webauthn`, `tpm`, `windows-hello`. It is covered by the signature, so nobody else can change it, but the format
+  `convenience` (no factor: any process running as the person can sign; phase 1 click-to-sign, D-P2-23), `webauthn`,
+  `tpm`, `windows-hello`. `auth` is a signed declaration of custody by the signing implementation, not
+  verifier-proven user presence or device attestation: possession of an exportable device key permits signing another
+  supported `auth` value. It is covered by the signature, so nobody else can change it, but the format
   can't prove the factor: the device certificate (protocol §6.1) has no backend field, and F1 adds none. The factor
   is recorded in the event's `auth`, not in the certificate (D64). WebAuthn needs a new signature contract
   and is deferred past P2. A workspace policy may later refuse named factors for named verbs (D66); the
   default accepts any. The weaker guarantees stay as stated where they were decided: `secure-enclave-unlocked`
-  signs whenever the phone is unlocked (D49), and `passphrase` does not protect a passphrase typed into a terminal
-  an agent can read (D65, orch-v2-portable-custody.md §3).
+  signs whenever the phone is unlocked (D49), `passphrase` does not protect a passphrase typed into a terminal
+  an agent can read (D65, orch-v2-portable-custody.md §3), and `convenience` asks for no factor at all (D-P2-23).
 - `presence` (in the 8 Oct draft) is replaced by `auth`.
 - **Phone decisions (P3/P4).** A phone answers a question with protocol §13's `decision`, signed over
   `"orch/v2/sig/decision|" || cj({workspace_id, question_id, content_hash, decision_id, answer})`. **These signed
@@ -2227,7 +2232,7 @@ Every string in `ticket.json`, `body.md` and events:
 | `device.revoked` reason | `compromised`, `lost`, `retired` |
 | device scope levels needed | `decide` for every person event; also `operate` for member, policy, settings, grant, addon and `restore` events; `drop:` certificates never |
 | `projection.repaired` cause | `external_edit`, `projection_mismatch`, `keys_mismatch` |
-| `auth` | `passphrase`, `secure-enclave`, `secure-enclave-unlocked`, `webauthn`, `tpm`, `windows-hello` |
+| `auth` | `passphrase`, `secure-enclave`, `secure-enclave-unlocked`, `convenience`, `webauthn`, `tpm`, `windows-hello` |
 | grant scope | `all`, `workable` |
 | grant verbs | `"agent"` or a list of operation names |
 | core artifact kind | `screenshot`, `log`, `report`, `link`, `dataset`, `build`, `diagram`, `receipt`, `feedback`, `other` |
@@ -2453,6 +2458,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 150 | C3 alarms across failed walks (orch-relay re-pin review; decided by orch-52) | Compromise evidence verified during a walk stays local evidence when the walk fails or does not commit. An alarm concerns a committed transition: compromised evidence for the signer of an already committed restore, learned from any walk, raises and persists the alarm; alarms about transitions of a walk that never committed are dropped. Receiver runtime; `judge_offer` reports the alarm of the transition it judges (§5.10). | Nothing of an uncommitted walk was accepted, but its verified evidence is still true and must keep refusing the device. |
 | 151 | Out-of-band verification and signer matching (raised by the Opus review of #387; decided by orch-52; rewritten by row 152) | An out-of-band revocation is independently verified (person-key derivation, certificate signature and device-key derivation, revocation signature, matching person/device fields) and retained under `(device_id, person_id)`. Receivers match a restore signer against held revocations by that pair. `local_revocations` is never filtered (only the `unpublished` output may be). The former "first verified evidence wins" binding for a device without a known binding is deleted: out-of-band evidence never creates or replaces a binding (row 152) (§5.10). | Any person can certify another's device public key; device-only matching let a stranger strand a receiver, and a filtered input would drop C3 for exactly the out-of-band devices. |
 | 152 | Row-151 fail-open fix: revocations per (device, person) (raised by the relay stream's PoC; draft orch-52, Codex challenge, adopted with all amendments; relay Opus review additions) | Out-of-band evidence never creates or replaces `known_devices` bindings; associations prove no key ownership and never drop, suppress or reattribute another person's evidence. Every verified revocation is retained per `(device_id, person_id)`; any held one matching the restore's signer pair refuses, every reason, regardless of `known_devices`. Carried entries are checked against `known_devices` only; completeness and `revocation.unpublished` are per pair with the verified person key; the restore list is unique per pair. Alarms match committed restores' recorded pairs (legacy bare ids via the pinned card owner, then `known_devices`, else no alarm). Harvesting is bounded before any signature, T's included; held out-of-band evidence is capped per person (members included, the pinned owner exempt), per device and in total; a forwarded upgrade of a chain pair is never carried in a restore (the bridge publishes it via `device.revoked`); no proof of possession at `device.added` is an accepted limit; membership is read at eviction time; a new non-member never evicts, a member evicts the oldest non-member; chain provenance is sticky per pair. Tombstone-only devices count as unknown for forwarding and carrying. Publication: durable queue, poll/retry without a new restore, evidence or authenticated references, acknowledgements are not publication; the host matches by pair (§5.10). | Bob could certify the id of Alice's unknown laptop and revoke it; delivered first, it bound the device to Bob and Alice's genuine compromised revocation was discarded, so a restore signed with the stolen laptop key was accepted. |
+| 153 | `convenience` auth value (owner decision 12 Oct 2026, orch-v2-host D-P2-23, H5c) | A seventh `auth` value, `convenience`: a device key held without any factor, for phase-1 click-to-sign. The signed bytes and `contract` 1 are unchanged (`auth` is already signed). A reader-compatibility change: a core without the value refuses such an event on schema (`auth.invalid_event` on replay), so every reader of a workspace must know it before its first convenience event; the host enforces this per workspace (orch-v2-host §0.8.6). Supersedes D41's presence for phase 1 (§5.3, §11.4, T16). | The owner wants signing easy in phase 1; the factor is declared honestly in every event. |
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).

@@ -50,6 +50,10 @@ def _parser() -> argparse.ArgumentParser:
     unreg.add_argument("workspace_id")
     unreg.add_argument("--state", type=Path)
     unreg.add_argument("--run", type=Path)
+    conv = sub.add_parser("convenience", help="click-to-sign per workspace (orch-v2-host §0.8.6); off by default")
+    conv.add_argument("switch", choices=("on", "off", "show"))
+    conv.add_argument("--workspace", required=False, help="workspace id or prefix (on/off)")
+    conv.add_argument("--state", type=Path)
     out = sub.add_parser("outcome")
     out.add_argument("idem")
     out.add_argument("--state", type=Path)
@@ -130,6 +134,8 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             else:
                 out.write(units.tmpfiles_conf(args.user or str(os.getuid()), args.group or "root", os.getuid()))
             return 0
+        if args.cmd == "convenience":
+            return _convenience(args, env, out)
         from .control_client import ControlClient, new_idem
         from .ownership import LOCK_WAIT_SECONDS
 
@@ -165,3 +171,39 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
         error = {"code": "host.unavailable", "message": str(exc)[:400], "retryable": True}
         out.write(json.dumps({"ok": False, "error": error}, sort_keys=True) + "\n")
         return 9
+
+
+def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
+    """``orch host convenience on|off|show [--workspace W]``: the per-workspace click-to-sign flag in the host state dir
+    (host UID only). Switching it on is an operator decision: every reader of the workspace must know auth
+    convenience (orch-v2-host §0.8.6 item 4); the host still checks the readers condition at every prepare. Errors use
+    the CLI's catalog envelope."""
+    from orch.custody.cli import write_error
+
+    from . import convenience
+    from .registry import registry_path
+
+    state = _state(args.state, env)
+    uid = os.getuid()
+    if env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", "an agent never switches signing custody")
+    if args.switch == "show":
+        out.write(json.dumps(convenience.read(state, uid), sort_keys=True) + "\n")
+        return 0
+    if not args.workspace:
+        return write_error(out, False, "invalid.input", "--workspace is required")
+    from .custody import read_json
+
+    reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
+    if len(match) != 1:
+        return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
+    wid = match[0]["workspace_id"]
+    convenience.set_enabled(state, wid, args.switch == "on", uid)
+    word = "on" if args.switch == "on" else "off"
+    out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
+    if args.switch == "on":
+        out.write(
+            "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"
+        )
+    return 0

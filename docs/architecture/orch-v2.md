@@ -219,6 +219,21 @@ The host loads keys through a custody backend:
 | Linux desktop | 0600 file owned by the host UID; P2 adds no keychain (D-P2-17) |
 | Linux server / VPS | Files mode 0600, owned by a separate `orch-host-<ws>` user. Agents run as a different UID. |
 
+**Person device keys (`dk_sig`).** The host never holds them (host D-P2-15). The signing client holds them through
+a custody backend named in every signed event's `auth` (D64, D66; F1 §5.3):
+
+| Backend (`auth`) | Where the key lives | Factor per signature | Status |
+|---|---|---|---|
+| `passphrase` | scrypt-encrypted key file in the person's state dir | the passphrase, typed on `/dev/tty` | P1 default (D65) |
+| `convenience` | macOS: an item in the traditional login keychain (service `io.orch.device-key`, account `<workspace_id>/<device_id>`, not synchronizable, the creating interpreter's ACL, no presence flag; encrypted at rest, may be in Time Machine backups and migrations); other Unix: a 0600 file in 0700 directories under the person's own state dir (`person/<ws>/devices/`), never in the host state dir; Windows: not supported in phase 1 | **none**: any process running as the person, and anything that takes over the dashboard, can sign | phase 1, click-to-sign from the dashboard through a signer process beside it, per workspace and only while every reader is local and updated (host §0.8.6, D-P2-23). **Accepted risk: "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."** |
+| `secure-enclave` | Secure Enclave P-256 key on the Mac | Touch ID per signature (D41) | phase 3 (H9) |
+| `secure-enclave-unlocked` | Secure Enclave on the iPhone | the phone is unlocked (D49) | P4 mobile |
+
+In phase 1 a convenience key is converted from the `passphrase` key with one passphrase prompt
+(`orch keys custody convenience`, once the workspace's flag is on); `orch keys custody passphrase --in-place` moves it
+back, with a warning that it was exposed, and `--rotate` (designed, built with device ops) replaces the device for a
+clean break. F1 records the value (§5.3, §11.4, T16).
+
 **The socket.**
 
 - Path: `<state>/hosts/<workspace_id>.sock`, one per workspace. Keep the path under macOS's 104-byte limit.
@@ -523,6 +538,15 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | **P5 Apps** | orch-publish: rename done, signed HTTPS API, namespaces, per-recipient tokens, the dashboard pages. | Each demo workspace publishes in its own namespace and cannot touch the other's apps. |
 | **P6 The rest** | Drop in full (inbox claim, documents, links, web agents), linked workspaces, colleagues and the internal relay, the AI Factory and Dark profile rebuild, the remaining addons, TIX switch-off. | Persona "colleague" exchanges a ticket and a document; iPhone session 3. |
 
+**Owner re-plan, 12 Oct 2026** (coordination log "OWNER RE-PLAN P2"; host D-P2-23). The frontend work is cut into three
+phases. **Phase 1:** core + dashboard running for real in direct mode and tier A (the host as the person's UID), with
+**click-to-sign** from the dashboard (host §0.8.6, group H5c: the `convenience` custody backend and a signer process
+beside the dashboard; `orch sign CODE` as the fallback; per workspace, only while every reader is local and updated;
+the accepted risk "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign"
+on the workspace card). The phase-1 gate replaces the cutover gate's H9 (host §8). **Phase 2:** the addons (#307–#310) and mobile. **Phase 3:** Touch ID (H9) and
+tier B (agents under their own OS users; Linux VPS and macOS local); Windows stays in direct mode. D41's
+per-signature presence applies again from phase 3.
+
 ## 14. Former open items (decided 8 Oct 2026)
 
 | # | Item | Decision |
@@ -547,7 +571,7 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D38 | Dark stack | The rebased PRs #79→#143 and #254 are closed with their branches kept. The Phase 2 Factory rebuild and the wave 2 records feature use them as reference. |
 | D39 | Several people in one workspace | D1 C is in scope at the format and protocol level now. A member device of another person is accepted when the signed member list includes that person (protocol v2 §7.2 check 8 is amended, orch-relay issue). Invitations, roles UI and colleague flows are built in P8. |
 | D40 | Ticket format | [orch-v2-ticket-format.md](orch-v2-ticket-format.md) T1–T16: `ticket.json` plus `body.md`, no YAML; folders by uid with a key registry; events are the only truth for state; one host writes and publishes signed checkpoints; restricted tickets are enforced by the host and sealed in transit, not encrypted on disk; everything optional is an out-of-process addon with signed capability grants. |
-| D41 | Human signatures on a Mac | Until agents run under their own OS user (P2), every human signature needs user presence: the device key sits in the keychain with Touch ID or password access control. Host appends use a separate key without prompts. |
+| D41 | Human signatures on a Mac | Until agents run under their own OS user (P2), every human signature needs user presence: the device key sits in the keychain with Touch ID or password access control. Host appends use a separate key without prompts. **Superseded for phase 1** by the owner decision of 12 Oct 2026 (host D-P2-23): click-to-sign with the `convenience` backend, no presence, risk shown on the workspace card; presence returns with H9 in phase 3. |
 | D42 | Phase order | Core → frontend → relay → mobile → apps → the rest (P1–P6, §13). The minimal core is specified in [orch-v2-core.md](orch-v2-core.md). |
 | D43 | Drop basics early | Sending a file from the phone to a workspace and back comes with mobile (P4); inbox claim, documents, links and web agents stay in P6. |
 | D44 | Cutover | v2 replaces v1 for daily work right after P2: `orch import v1` moves the workspaces and `develop` is merged into `main`. |

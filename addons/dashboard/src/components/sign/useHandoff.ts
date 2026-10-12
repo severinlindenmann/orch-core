@@ -47,9 +47,11 @@ export interface HandoffRun {
   cancel: () => Promise<void>
   /** Back to the start (the person chose "Prepare again"). The previous request must already be settled or cancelled. */
   reset: () => void
+  /** The person switched workspace while this request was open (or being prepared): it was cancelled, nothing was signed. */
+  switched: boolean
 }
 
-const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events']
+const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
 
 export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void): HandoffRun {
   const qc = useQueryClient()
@@ -65,6 +67,10 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   const mounted = useRef(true)
   const settled = useRef(onSettled)
   settled.current = onSettled
+  // The workspace the person is in now: a request is only for the workspace it was prepared in (design 5, switching).
+  const wsNow = useRef(ws)
+  wsNow.current = ws
+  const [switched, setSwitched] = useState(false)
 
   const setPhase = useCallback((p: HandoffPhase) => {
     live.current.phase = p
@@ -89,6 +95,13 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         attempt.current = null
         if (!mounted.current) {
           void api.cancelHandoff(ws, got.id).catch(() => {}) // closed while preparing: nobody will see this code
+          return
+        }
+        if (wsNow.current !== ws) {
+          // The person switched workspace while the host was preparing: nobody will see this code.
+          void api.cancelHandoff(ws, got.id).catch(() => {})
+          setSwitched(true)
+          setPhase('cancelled')
           return
         }
         if (!requestIsConsistent(got)) {
@@ -209,7 +222,17 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     if (mounted.current) setPhase('cancelled')
   }, [setPhase])
 
+  // Switching workspace with a request open cancels it at the host (design 5, 4.3): the dialog is for the old workspace.
+  useEffect(() => {
+    const { request: open, ws: where, phase: last } = live.current
+    if (!open || !where || where === ws || (last !== 'waiting' && last !== 'invalid')) return
+    void api.cancelHandoff(where, open.id).catch(() => {})
+    setSwitched(true)
+    setPhase('cancelled')
+  }, [ws, setPhase])
+
   const reset = useCallback(() => {
+    setSwitched(false)
     live.current.request = null
     setRequest(null)
     setState(null)
@@ -232,5 +255,5 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     }
   }, [])
 
-  return { phase, request, state, error, prepare, cancel, reset }
+  return { phase, request, state, error, prepare, cancel, reset, switched }
 }

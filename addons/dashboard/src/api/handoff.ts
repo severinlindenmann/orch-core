@@ -24,6 +24,16 @@ export type HandoffAction =
   /** One body section, replaced (the description follow-up, `section.set`). Spikes keep "findings" where other types have "verification". */
   | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
 
+  /** Reduced workspace settings (M4). `repos` is not here: the Repos addon owns repo editing. */
+  | { action: 'settings_set'; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
+  /** The workspace default policy of one gate (F1 5.7 `Policy`, exactly). The code gate: `not` has `assignees`, `independent` is true. */
+  | { action: 'policy_set'; gate: 'requirements' | 'plan' | 'verify' | 'code'; policy: { approvers: string[]; count: number; not: string[]; applies: 'all' | 'off' | string[]; independent: boolean } }
+  /** The invitee's own public key (base64url, 65 bytes) and first device certificate (strict JSON text): their files, uploaded by the person. */
+  | { action: 'member_add'; name: string; role: 'owner' | 'maintainer' | 'member' | 'viewer'; pk: string; cert: string }
+  | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
+  | { action: 'member_remove'; person: string }
+  | { action: 'grant_revoke'; grant: string; reason?: string }
+
 /** The hand-offs that follow a signed `new` for what it cannot carry. */
 export type FollowUpAction = Extract<HandoffAction, { action: 'details' | 'section' }>
 
@@ -179,6 +189,20 @@ export const confirmWord = (key: string, uid: string): string => `${key}/${uid.s
 
 /** The exact line the person runs. A code is 4+4 characters of the Crockford alphabet, so it is safe to put in a shell. */
 export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/
+/**
+ * The word the signer asks for on a request that is not about a ticket, when this dashboard knows it: a member's person id
+ * for the member operations and `GRANT.REVOKE` for a revoke (the real signer's rule). `null` where the signer's word is
+ * not settled (the settings and policy operations wait for the host's event types, R5): then nothing is promised.
+ */
+export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>): string | null {
+  if (request.material.ticket) return null
+  if (request.op === 'member.add' || request.op === 'member.role' || request.op === 'member.remove') {
+    const person = request.events[0]?.person
+    return typeof person === 'string' ? person : null
+  }
+  return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
+}
+
 export const signCommand = (code: string): string => `orch sign ${code}`
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'

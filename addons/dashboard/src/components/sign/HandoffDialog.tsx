@@ -17,10 +17,10 @@ interface Words {
 }
 
 /** What each end state says, in core's words. */
-function words(phase: HandoffPhase, title: string, error: string | null): Words | null {
+function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false): Words | null {
   switch (phase) {
     case 'done':
-      return { title: 'Signed', body: `${title} is in the ticket's log.`, tone: 'ok' }
+      return { title: 'Signed', body: `${title} is in the ${ofWorkspace ? "workspace's" : "ticket's"} log.`, tone: 'ok' }
     case 'cancelled':
       return { title: 'Cancelled', body: 'Nothing was signed.' }
     case 'expired':
@@ -81,6 +81,14 @@ export function HandoffDialog(p: HandoffDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.autoStart, p.ws])
 
+  // Switching workspace cancels the open request at the host; the dialog belongs to the old workspace and closes.
+  useEffect(() => {
+    if (!run.switched) return
+    toast(`${p.title}: cancelled, you switched workspace. Nothing was signed.`)
+    p.onClose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.switched])
+
   const open = phase === 'preparing' || phase === 'waiting'
   useEffect(() => {
     p.onPending?.(open)
@@ -96,7 +104,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     run.reset()
     void run.prepare(p.action)
   }
-  const end = words(phase, p.title, run.error?.message ?? null)
+  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && void close()}>

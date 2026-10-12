@@ -10,6 +10,8 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { addonActive } from '@/api/addons'
 import { can, roleOf } from '@/api/permissions'
+import { isRealHost } from '@/api/features'
+import { running, workspaceByAddress } from '@/api/workspaces'
 import type { AddonContribution, AddonPackage, AddonSlot, Workspace } from '@/api/types'
 import { bindsAddonState } from '@/addon-ui/slots'
 import { ticketsServerParams, type TicketsSearch } from './pages/tickets/search'
@@ -43,13 +45,13 @@ export const LOADER_WAIT_MS = 1500
 const atMost = (p: Promise<unknown>, ms = LOADER_WAIT_MS) => Promise.race([p, new Promise((res) => setTimeout(res, ms))]).then(() => undefined)
 
 const me = (qc: QueryClient) => qc.ensureQueryData(queries.me())
-const workspaces = (qc: QueryClient) => qc.ensureQueryData(queries.workspaces())
+const workspaces = (qc: QueryClient) => qc.ensureQueryData(queries.workspaces()).then(running)
 const addons = (qc: QueryClient) => qc.ensureQueryData(queries.addons())
 
 /** The workspace the page will show, as WorkspaceProvider picks it: the address's, else the remembered one, else the first. */
 function pickWorkspace(list: Workspace[], urls: UrlState): Workspace | undefined {
-  const p = urls.prefix?.toUpperCase()
-  return (p ? list.find((w) => w.prefix.toUpperCase() === p) : undefined) ?? list.find((w) => w.id === storedWorkspace()) ?? list[0]
+  const named = urls.prefix ? workspaceByAddress(list, urls.prefix, urls.hint) : undefined
+  return (named && 'found' in named ? named.found : undefined) ?? list.find((w) => w.id === storedWorkspace()) ?? list[0]
 }
 
 /** The shell's own data (sidebar, topbar, dock): read before the first paint so the frame does not move after it. */
@@ -161,6 +163,21 @@ export const settingsData =
   (tab: string, addon?: string) =>
   ({ qc, ws }: PageScope): Ensure[] => {
     const id = ws.id
+    if (isRealHost()) {
+      // The reduced settings (M4): what the host says, read before the page shows so it does not jump.
+      switch (tab) {
+        case 'general':
+          return [qc.ensureQueryData(queries.hostSettings(id)), qc.ensureQueryData(queries.identity(id))]
+        case 'members':
+          return [qc.ensureQueryData(queries.roster(id))]
+        case 'gates':
+          return [qc.ensureQueryData(queries.hostSettings(id))]
+        case 'grants':
+          return [qc.ensureQueryData(queries.hostGrants(id, true)), qc.ensureQueryData(queries.roster(id))]
+        default:
+          return []
+      }
+    }
     switch (addon ? 'addons' : tab) {
       case 'general':
         return [qc.ensureQueryData(queries.identity(id))]

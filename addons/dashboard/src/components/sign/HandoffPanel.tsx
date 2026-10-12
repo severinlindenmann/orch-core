@@ -3,7 +3,7 @@
 // host's `material` (never from a cached ticket) through visible.tsx, so every value is exact and nothing is hidden.
 import { Check, Copy, Terminal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import { confirmWord, signCommand, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
+import { confirmWord, signCommand, workspaceConfirmWord, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
 import { Prose, Raw, RawValue, plain } from './visible'
 
@@ -18,6 +18,12 @@ const EVENT_WORDS: Record<string, string> = {
   'ticket.closed': 'Close',
   'ticket.reopened': 'Reopen',
   'ticket.created': 'New ticket',
+  'settings.changed': 'Change to the workspace settings',
+  'policy.changed': 'Change to a gate policy',
+  'member.added': 'Add a member',
+  'role.changed': 'Change of a member\'s role',
+  'member.removed': 'Remove a member',
+  'grant.revoked': 'Revoke an agent grant',
 }
 
 /** The tail of the ticket's log id, shown by the dashboard and by the signer so the two reviews read alike. */
@@ -68,7 +74,7 @@ function Block({ title, children }: { title: ReactNode; children: ReactNode }) {
 }
 
 /** The preview: the host's `material` and nothing else. It says it is a preview and that the terminal shows what is signed. */
-export function MaterialPreview({ material, events = [] }: { material: HandoffMaterial; events?: HandoffRequest['events'] }) {
+export function MaterialPreview({ material, events = [], word = null }: { material: HandoffMaterial; events?: HandoffRequest['events']; word?: string | null }) {
   const total = material.review.length
   return (
     <div data-handoff-preview className="max-h-[38vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3">
@@ -81,6 +87,13 @@ export function MaterialPreview({ material, events = [] }: { material: HandoffMa
           </p>
           <p className="text-[12px] text-text-muted">
             In your terminal you type <Raw>{confirmWord(material.ticket.key, material.ticket.uid)}</Raw> to continue.
+          </p>
+        </Block>
+      )}
+      {!material.ticket && word && (
+        <Block title="Workspace operation">
+          <p className="text-[12px] text-text-muted">
+            In your terminal you type <Raw>{word}</Raw> to continue.
           </p>
         </Block>
       )}
@@ -223,7 +236,7 @@ export function HandoffPanel({ request }: { request: HandoffRequest }) {
           </span>
         </dd>
       </dl>
-      <MaterialPreview material={request.material} events={request.events} />
+      <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request)} />
       <p className="text-[12px] text-text-muted">Only sign a code you created yourself. This page follows the request and shows when it is signed.</p>
     </div>
   )

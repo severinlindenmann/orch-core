@@ -57,9 +57,14 @@ export function toPublicPath(path: string, prefix: string | null | undefined): s
   return `/w/${encodeURIComponent(prefix)}${path === '/' ? '' : path}`
 }
 
-/** Per-router URL state the rewrite reads: the workspace that in-app links point into. */
+/**
+ * Per-router URL state the rewrite reads: the workspace that in-app links point into. When two workspaces share a prefix
+ * the links also carry `?ws=<first 8 hex of the UUID>` (design 5): `hint` is that value for `prefix`.
+ */
 export interface UrlState {
   prefix: string | null
+  /** The `?ws=` of the workspace the links point into; null when its prefix is not shared. */
+  hint?: string | null
   /** Set when an incoming address changed `prefix` behind the router's back: its cached link addresses are stale. */
   stale?: boolean
   /** The last address the rewrite read. */
@@ -76,9 +81,13 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
       // Only for a new address: the router parses the same one again on reloads and invalidations.
       const fresh = url.href !== state.lastInput
       state.lastInput = url.href
+      // `?ws=` belongs to the address, not to a page: the pages never see it.
+      const hint = prefix === undefined ? null : url.searchParams.get('ws')
+      if (hint !== null) url.searchParams.delete('ws')
       // A ticket's key names its workspace: its address never moves the links' workspace.
-      if (fresh && prefix !== undefined && ticketKeyOf(path) === undefined && prefix !== state.prefix) {
+      if (fresh && prefix !== undefined && ticketKeyOf(path) === undefined && (prefix !== state.prefix || (hint ?? null) !== (state.hint ?? null))) {
         state.prefix = prefix
+        state.hint = hint
         state.stale = true
       }
       url.pathname = path
@@ -86,6 +95,9 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
     },
     output: ({ url }) => {
       url.pathname = toPublicPath(url.pathname, state.prefix)
+      // Links into the workspace the person is in carry its hint, so a shared prefix still names one workspace.
+      const own = splitWorkspacePath(url.pathname).prefix
+      if (state.hint && state.prefix && own !== undefined && own.toUpperCase() === state.prefix.toUpperCase()) url.searchParams.set('ws', state.hint)
       return url
     },
   }
@@ -96,9 +108,10 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
  * rewrite (TanStack drops that cache and re-renders the links when the rewrite changes). Call from an effect or an
  * event handler, never during render.
  */
-export function setLinkWorkspace(router: AnyRouter, urls: UrlState, prefix: string | null) {
-  if (urls.prefix === prefix && !urls.stale) return
+export function setLinkWorkspace(router: AnyRouter, urls: UrlState, prefix: string | null, hint: string | null = null) {
+  if (urls.prefix === prefix && (urls.hint ?? null) === hint && !urls.stale) return
   urls.prefix = prefix
+  urls.hint = hint
   urls.stale = false
   router.update({ ...router.options, rewrite: workspaceRewrite(urls) })
 }

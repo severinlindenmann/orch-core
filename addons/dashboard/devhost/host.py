@@ -68,6 +68,9 @@ class StubHost:
         config = json.loads((root / "config.json").read_text())
         self.ws = config["workspace"]["id"]
         self.name = config["workspace"].get("name", "Development workspace")
+        self.prefix = config["workspace"]["prefix"]
+        self.stopped = False  # the dev "host is not running" switch (see __main__.run_stub)
+        self.peers = [self]  # the workspaces this stub process serves (one control socket lists them all)
         self.lock = threading.RLock()
         # Person is an explicit local UID mapping, never inferred from a key.
         self.env = {"ORCH_WORKSPACE": str(root), "ORCH_STATE_DIR": str(state)}
@@ -231,18 +234,19 @@ class StubHost:
                     data = {
                         "workspaces": [
                             {
-                                "workspace_id": self.ws,
-                                "person": self.person,
-                                "prefix": ws.prefix,
-                                "root": str(self.root),
+                                "workspace_id": peer.ws,
+                                "person": peer.person,
+                                "prefix": peer.prefix,
+                                "root": str(peer.root),
                                 "state": "ok",
                                 "tier": "A",
                                 "socket": str(
                                     Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run")))
-                                    / self.ws
+                                    / peer.ws
                                     / "host.sock"
                                 ),
                             }
+                            for peer in self.peers
                         ]
                     }
                 elif op == "whoami":
@@ -359,7 +363,7 @@ class StubHost:
                 )
             sock.sendall(encode(welcome))
             sock.settimeout(0.5)
-            while True:
+            while not self.stopped:
                 # Poll only between frames; never time out halfway through a frame.
                 import select
 

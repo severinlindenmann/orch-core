@@ -219,9 +219,17 @@ person. The dashboard adds:
 
 - **A request belongs to the session that prepared it.** A double click or a retry reuses the click's idem and is answered from
   the server's own record. `human.prepare` ignores `opts.idem` (§0.7, "As built in H5a" 8a): every call creates a request, and
-  there is no `outcome.get` for it. After a lost answer (`outcome.unknown`) the retry lists the person's requests with
-  `human.pending` (no arguments), takes those for the same op and ticket created during the attempt that this session does
-  not know, adopts the newest and cancels the extras; it never leaves an orphan. Requests expire after 10 minutes (4 for
+  there is no `outcome.get` for it. After a lost answer (`outcome.unknown`) the server **never adopts** a request. On the person's
+  next click it may only **cancel** orphans that are provably its own: the same op and ticket, created inside the lost
+  call's own [start, end] window, unknown to every session of this process, and whose `origin` (from `human.get`; the
+  `human.pending` row has none) is this process (`pid`, `uid`) and client `orch-dashboard`. If another prepare for the same
+  op and ticket (any session or tab of this process) ran in that window, or the host states no origin, it cancels nothing.
+  The marker of the lost call is kept until a retry completed (a failure puts it back unchanged, a second lost answer widens
+  the window to the earliest start). In every case the panel says "An earlier attempt may still be open; it expires by itself
+  at <time>" (the host's `expires_at` when known, else "within 10 minutes"), and a new prepare happens only on that
+  explicit click. "Complete details" after a `new` targets only the ticket of the `new` request this dialog prepared and
+  watched (same request id, op `new`). When `human.prepare` honours `opts.idem` (stream A, later v1.5), the retry reuses the
+  idem and this cancel path goes away. Requests expire after 10 minutes (4 for
   a grant); more than 20 pending per person is `quota.host`. Two tabs are two requests.
 - **A refused submit stays open.** A refusal before any append (`gate.stale`, `members.stale`, `question.stale`,
   `sig.invalid`, `human.request_mismatch`) leaves the request `bound` until it expires, and `human.pending` shows

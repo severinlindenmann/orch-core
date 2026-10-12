@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { handoffMode } from '@/api/features'
-import type { FollowUpAction, HandoffAction } from '@/api/handoff'
+import { MAX_SECTION_BYTES, type FollowUpAction, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
 import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
@@ -34,6 +34,14 @@ const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
  * `set` for priority, size, labels and the parent epic, and one `section.set` per written section. What the host has no
  * person op for is said instead of dropped: restricted visibility, people, a due date and acceptance criteria.
  */
+/**
+ * The key "Complete details" may target: the one of the `new` request THIS dialog prepared and watched, and no other.
+ * The state must be that request's own (same id, op `new`); anything else gives no key and no follow-up.
+ */
+export function ownKey(state: HandoffState | null, request: HandoffRequest | null): string | null {
+  return state && request && state.id === request.id && request.op === 'new' && state.op === 'new' ? state.key : null
+}
+
 export function handoffNewTicket(d: Draft): { action: HandoffAction; details: FollowUpAction[] } | { problem: string } {
   const written = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
   const later = [
@@ -42,6 +50,8 @@ export function handoffNewTicket(d: Draft): { action: HandoffAction; details: Fo
     d.due && 'a due date',
     d.acceptance.length > 0 && 'acceptance criteria',
   ].filter(Boolean)
+  const big = written.find(([, t]) => new TextEncoder().encode((t as string).trim()).length > MAX_SECTION_BYTES)
+  if (big) return { problem: `${sectionLabel(d.type, big[0])} is longer than ${MAX_SECTION_BYTES / 1024} KiB (counted in UTF-8 bytes). Shorten it before the ticket is created.` }
   if (later.length) return { problem: `A signed new ticket cannot carry ${later.join(', ')} yet: the host has no signed operation for it. Create the ticket first, then add these.` }
   const fields = { ...(d.priority !== 'medium' ? { priority: d.priority } : {}), ...(d.size ? { size: d.size } : {}), ...(d.labels.length ? { labels: d.labels } : {}), ...(d.parent && d.type !== 'epic' ? { parent: d.parent } : {}) }
   const details: FollowUpAction[] = Object.keys(fields).length ? [{ action: 'details', key: '', ...fields }] : []
@@ -529,7 +539,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           action={handoffNew.action}
           autoStart
           onClose={() => setHandoffNew(null)}
-          onSettled={(phase, state) => phase === 'done' && handoffDone(handoffNew.another, state?.key ?? null, handoffNew.details)}
+          onSettled={(phase, state, request) => phase === 'done' && handoffDone(handoffNew.another, ownKey(state, request), handoffNew.details)}
         />
       )}
 

@@ -51,7 +51,7 @@ export interface HandoffRun {
 
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events']
 
-export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPhase, state: HandoffState | null) => void): HandoffRun {
+export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void): HandoffRun {
   const qc = useQueryClient()
   const [phase, setPhaseState] = useState<HandoffPhase>('idle')
   const [request, setRequest] = useState<HandoffRequest | null>(null)
@@ -136,7 +136,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       setState(got)
       setPhase(next)
       refetch()
-      settled.current?.(next, got)
+      settled.current?.(next, got, live.current.request)
     },
     [setPhase, refetch],
   )
@@ -157,6 +157,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         const got = await api.getHandoff(ws, request.id)
         failed = 0
         if (stopped) return
+        if (got.id !== request.id || got.op !== request.op) throw new ApiError(0, { code: 'not_found', message: 'That is not the request that was prepared.', retryable: false }) // never follow another request
         // A terminal answer ends the watch before finish() refetches: that refetch is itself a query update.
         if (got.error?.code && got.state === 'submitted') {
           stopped = true

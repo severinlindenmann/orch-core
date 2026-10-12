@@ -71,7 +71,12 @@ export interface HandoffRequest {
   material: HandoffMaterial
   events: HandoffEvent[]
   origin?: { uid: number; pid: number; client: string; created_at: string } | null
+  /** Only on a retry after a lost answer: an earlier attempt may still be open (its host expiry when known). */
+  earlier_open?: { expires_at: string | null }
 }
+
+/** A written section is at most 64 KiB of UTF-8 (P1 and the host), counted in bytes like the server. */
+export const MAX_SECTION_BYTES = 65536
 
 /** `GET /handoff/<id>`: where the request is now (host `human.pending`). `request` only with `?full=1` while open. */
 export interface HandoffState {

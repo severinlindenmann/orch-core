@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fingerprintOf, reviewDigestOf, type FollowUpAction, type HandoffEvent, type HandoffRequest } from '@/api/handoff'
 import { fakeRequest, spies, state } from '@/test/handoffHarness'
 import { CompleteDetails } from './CompleteDetails'
-import { EMPTY, handoffNewTicket } from './index'
+import { EMPTY, handoffNewTicket, ownKey } from './index'
 
 const T = { timeout: 5000 }
 const KEY = 'DEMO-0044'
@@ -114,5 +114,25 @@ describe('what a signed new ticket hands on', () => {
       expect(made).toHaveProperty('problem')
       expect((made as { problem: string }).problem).toMatch(/cannot carry/)
     }
+  })
+})
+
+describe('Complete details is bound to the new ticket this dialog signed', () => {
+  const own = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '7', key: 'DEMO-0044' })
+  const asNew = { ...own, op: 'new' }
+  it('takes the key only from the state of the very request that was prepared, an op new', () => {
+    expect(ownKey(state(asNew, { state: 'submitted', key: 'DEMO-0044' }), asNew)).toBe('DEMO-0044')
+  })
+  it('gives no key for another request id, another op, or no request at all', () => {
+    const other = { ...state(asNew, { state: 'submitted', key: 'DEMO-0099' }), id: 'hr_' + '0'.repeat(25) + '8' }
+    expect(ownKey(other, asNew)).toBeNull()
+    expect(ownKey(state(own, { state: 'submitted' }), own)).toBeNull() // not a new
+    expect(ownKey(state(asNew, { state: 'submitted' }), null)).toBeNull()
+    expect(ownKey(null, asNew)).toBeNull()
+  })
+  it('counts a written section in UTF-8 bytes, like the server', () => {
+    const text = 'ä'.repeat(40000) // 40000 characters, 80000 bytes
+    expect(handoffNewTicket({ ...EMPTY, title: 'T', sections: { requirements: text } })).toHaveProperty('problem')
+    expect(handoffNewTicket({ ...EMPTY, title: 'T', sections: { requirements: 'ä'.repeat(32768) } })).not.toHaveProperty('problem') // exactly 65536 bytes
   })
 })

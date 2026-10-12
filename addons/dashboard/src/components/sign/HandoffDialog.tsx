@@ -30,7 +30,7 @@ function words(phase: HandoffPhase, title: string, error: string | null): Words 
     case 'changed':
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
-      return { title: 'Unknown outcome', body: 'The dashboard lost track of this request. An earlier attempt may still be open; it expires by itself within 10 minutes, and preparing again cancels it. The page now shows the current state. Prepare again only if the change is not there.', tone: 'warn' }
+      return { title: 'Unknown outcome', body: 'The dashboard lost track of this request. An earlier attempt may still be open; it expires by itself within 10 minutes. The page now shows the current state. Prepare again only if the change is not there; that is a new request, and the earlier one is only cancelled when it is provably from this dashboard session.', tone: 'warn' }
     case 'invalid':
       return { title: 'Not shown', body: 'The host sent a request whose fingerprint does not match its content, so it is not shown and was cancelled. Nothing was signed.', tone: 'warn' }
     case 'error':
@@ -57,16 +57,16 @@ export interface HandoffDialogProps {
   /** Said above the panel while it is open: a warning that the page changed under it. */
   warning?: (request: HandoffRequest) => string | null
   /** The signer's event is in the log. */
-  onSettled?: (phase: HandoffPhase, state: HandoffState | null) => void
+  onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void
   onPending?: (pending: boolean) => void
   onClose: () => void
   initialFocus?: () => HTMLElement | null
 }
 
 export function HandoffDialog(p: HandoffDialogProps) {
-  const run = useHandoff(p.ws, (phase, state) => {
+  const run = useHandoff(p.ws, (phase, state, request) => {
     if (phase === 'done') toast.success(`${p.title}: signed in your terminal`)
-    p.onSettled?.(phase, state)
+    p.onSettled?.(phase, state, request)
   })
   const { phase } = run
   const started = useRef(false)
@@ -137,6 +137,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {run.state?.error?.code && (
               <p role="alert" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
                 Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
+              </p>
+            )}
+            {run.request.earlier_open && (
+              <p role="status" data-testid="earlier-open" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
+                An earlier attempt may still be open; it expires by itself {run.request.earlier_open.expires_at ? `at ${new Date(run.request.earlier_open.expires_at).toLocaleTimeString()}` : 'within 10 minutes'}. Sign only the code shown here.
               </p>
             )}
             <HandoffPanel request={run.request} />

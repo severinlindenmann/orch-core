@@ -91,6 +91,28 @@ describe('the hand-off dialog (real host)', () => {
     expect(s.cancel).not.toHaveBeenCalledWith(expect.any(String), request.id) // a signed request is never cancelled
   }, 15000)
 
+  it('never follows another request: a poll answering with a different id ends in Unknown outcome, not Signed', async () => {
+    const request = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '9' })
+    const other = fakeRequest({ id: 'hr_' + '0'.repeat(25) + 'A' })
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(other, { state: 'submitted', event_ids: ['x'], seq: 3 }))
+    await mount(PLAN)
+    expect(await screen.findByText('Unknown outcome', {}, { timeout: 9000 })).toBeInTheDocument()
+    expect(screen.queryByText('Signed')).not.toBeInTheDocument()
+  }, 15000)
+
+  it('says an earlier attempt may still be open, with the host expiry when known, else within 10 minutes', async () => {
+    const stamp = '2026-10-12T10:20:30Z'
+    s.prepare.mockResolvedValue({ ...fakeRequest(), earlier_open: { expires_at: null } })
+    s.get.mockResolvedValue(state(fakeRequest()))
+    const first = await mount(PLAN)
+    expect(await screen.findByTestId('earlier-open', {}, T)).toHaveTextContent('An earlier attempt may still be open; it expires by itself within 10 minutes')
+    first.unmount()
+    s.prepare.mockResolvedValue({ ...fakeRequest(), earlier_open: { expires_at: stamp } })
+    await mount(PLAN)
+    expect(await screen.findByTestId('earlier-open', {}, T)).toHaveTextContent(`it expires by itself at ${new Date(stamp).toLocaleTimeString()}`)
+  })
+
   it('cancel asks the host to cancel and closes', async () => {
     const request = fakeRequest()
     s.prepare.mockResolvedValue(request)

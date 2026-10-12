@@ -1,7 +1,8 @@
 """Test-only launcher for the real-host click tests: orch's own CLI or the real click signer (`orch.click`), with ONE
 seam replaced: `orch.custody.convenience.open_store` returns the 0600 file store of the disposable state instead of the
 macOS login keychain. That function is the documented test seam (core: "Tests replace this function"); nothing else
-differs, and the keychain is never opened. Usage: `python -I click_child.py signer --fd N`, `... cli ARGS` or `... dashboard serve`."""
+differs, and the keychain is never opened.
+Usage: `python -I click_child.py signer --fd N`, `... cli ARGS` or `... dashboard serve`."""
 
 import sys
 

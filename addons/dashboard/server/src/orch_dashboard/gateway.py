@@ -16,12 +16,12 @@ from .text import hidden
 WORKSPACE_ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$")
 
 
-def state_dir():
-    """The state directory exactly as core resolves it (ORCH_STATE_DIR, an absolute XDG_CONFIG_HOME/orch, then
-    HOME/.config/orch): the signer child reads the registry from the same place."""
+def state_dir(env=None) -> Path:
+    """The state directory exactly as core resolves it (ORCH_STATE_DIR made absolute, an absolute
+    XDG_CONFIG_HOME/orch, then HOME/.config/orch): the host and the click signer child read the same place."""
     from orch.ops.runtime import state_dir as core_state_dir
 
-    return core_state_dir(os.environ)
+    return core_state_dir(os.environ if env is None else env)
 
 
 def read_pins(path):

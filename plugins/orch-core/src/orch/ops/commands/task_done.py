@@ -132,7 +132,7 @@ OP = operation(
     props={
         "task": TASK(),
         "run": B("run the task's verify command first"),
-        "artifact": S("evidence file to store", **{"x-metavar": "PATH"}),
+        "artifact": S("evidence file to store", **{"x-metavar": "PATH", "x-file": True}),
         "ac": S("criterion the evidence is for", pattern=r"^AC[1-9][0-9]*$", **{"x-metavar": "AC"}),
         "message": MSG,
     },

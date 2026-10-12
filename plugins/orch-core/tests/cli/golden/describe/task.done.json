@@ -37,7 +37,8 @@
         "artifact": {
           "type": "string",
           "description": "evidence file to store",
-          "x-metavar": "PATH"
+          "x-metavar": "PATH",
+          "x-file": true
         },
         "ac": {
           "type": "string",

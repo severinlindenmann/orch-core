@@ -198,6 +198,8 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `control/1` | `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.bootstrap`, `host.restart` (1) | control |
 
 
+  - **`welcome.ops` decides per op.** A cap may be listed while only some of its ops are served (H4a2 lists `diff/1`
+    for `artifact.get` before `diff` is served); a client checks both the cap and the op in `welcome.ops`.
   - A call to an op the host does not list answers `unknown_command`.
   - A call to an op listed at a different version than the client's answers `op.unsupported`. Other ops keep working.
   - A version is bumped only when the op's input, output or errors change incompatibly.
@@ -1367,8 +1369,10 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    {request_id}`, not `outcome.get`. A client without an idem that lost a prepare's answer finds
    its open requests with `human.pending` (no arguments) and cancels the ones it will not use (`human.cancel`); unused
    requests expire after 10 minutes (a grant: 4), and at most 20 are pending per person (`quota.host` beyond).
-9. `human.prepare` takes inner-op files as `{b64}` only until H4a2's blobs land. The composite (`orch.host.signer.run`)
-   compares each `artifact.*` event's `sha256` and `bytes` with the bytes it uploaded itself.
+9. `human.prepare` takes inner-op files as `{b64}` or `{blob}` (H4a2): a blob must be a complete blob of the preparing
+   principal in this workspace; the prepare consumes it and the request's file bytes count against the preparing UID
+   until the request is terminal (§0.10). The composite
+   (`orch.host.signer.run`) compares each `artifact.*` event's `sha256` and `bytes` with the bytes it uploaded itself.
 10. **A grant request expires after 4 minutes**, not 10: its `issued_at` is the prepare time, and F1 refuses a
     `grant.issued` more than 300 s from its append.
 11. **D58 at submit.** Prepare appends nothing (no `branch.pushed` either). At submit, under the store lock, for every
@@ -1925,14 +1929,19 @@ BlobId = str/b_[A-Z2-7]{26}/
 - **Consumption.**
   - A blob is consumed when the write that uses it commits.
   - On a refusal or a dry run it stays available until it expires.
-  - An unused or incomplete blob expires 10 minutes after its last chunk, unless a prepared human request holds it (it
-    then lives as long as the request).
+  - An unused or incomplete blob expires 10 minutes after its last chunk that changed it (a resend without effect
+    does not extend it).
+  - `human.prepare` copies the inner op's file bytes into the request, so it consumes the blobs it used when the
+    request is stored (naming one again answers `blob.invalid`; a retry of the prepare with the same `opts.idem` names
+    the file by `{digest}`). The request's file bytes count against the preparing UID until the request is terminal;
+    a terminal request keeps no file bytes.
   - Blobs survive a reconnect by the same principal.
 - **Names.** A blob has no file name. The artifact name or other logical name comes from `args` (F1 §6 name rule).
 - **Limits.** Quotas count decoded bytes, reserved at the first chunk.
   - 64 MiB per blob.
-  - 256 MiB per **UID** across all its principals and workspaces. Blobs held by prepared human requests count against
-    the preparing UID.
+  - 256 MiB per **UID** across all its principals and workspaces. The file bytes of prepared human requests count
+    against the preparing UID.
+  - 256 live blobs per UID, and every blob counts at least 4 KiB.
   - 1 GiB per host, with 256 MiB reserved for person-class UIDs.
   - Over a limit: `quota.host`.
 
@@ -1954,6 +1963,7 @@ BlobId = str/b_[A-Z2-7]{26}/
 | git reader diff text | per file side 8 MiB and 200 000 lines; 1 000 000 diffed lines per request; over: "too large to diff" (§0.8) |
 | git reader inputs | object inflated ≤ 64 MiB (equal to its header); delta depth ≤ 64; `packed-refs` ≤ 32 MiB; pack `.idx` ≤ 256 MiB; `.git/index` ≤ 128 MiB and ≤ 1 000 000 entries; worktree walk ≤ 200 000 entries |
 | outcome records | 100 000 per principal |
+| blobs (§0.10) | 64 MiB each, counted at least 4 KiB; 256 MiB and 256 live blobs per UID; 1 GiB per host, 256 MiB of it for person-class UIDs |
 | `workspace.settings` repos (v1.5) | 32 per page |
 | `ticket.text` chunk (v1.5) | 4..262 144 bytes of text per response; nonempty progress |
 | `commit.list` (v1.5) | 500 commits per page; 10 000 commits walked per request |

@@ -28,7 +28,8 @@
         "path": {
           "type": "string",
           "description": "the new file",
-          "x-metavar": "PATH"
+          "x-metavar": "PATH",
+          "x-file": true
         },
         "ref": {
           "type": "string",

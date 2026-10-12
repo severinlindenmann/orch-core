@@ -9,8 +9,10 @@ A request is the browser session's: view, sign and cancel of an id this session 
 that never existed (the signer separately refuses anything it did not prepare itself).
 """
 
+import hashlib
 import threading
 import time
+from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
@@ -20,6 +22,7 @@ from . import adapters
 from .errors import fail
 from .gateway import Gateway
 from .handoff import (
+    PER_SESSION,
     WORKSPACE_OPS,
     AddLabel,
     PrepareBody,
@@ -52,15 +55,28 @@ class Clicks:
     def __init__(self, clock=time.monotonic):
         self.clock, self.lock = clock, threading.Lock()
         self.owned: dict[str, dict[str, tuple[str, float]]] = {}
+        self.ops: dict[tuple[str, str], str] = {}  # (token, request id) -> the op this server chose at prepare
+        self.by_idem: OrderedDict[tuple[str, str, str], str] = OrderedDict()  # (token, ws, idem) -> binding
 
-    def add(self, token: str, ws: str, request_id: str) -> None:
+    def prune(self, token: str) -> dict[str, tuple[str, float]]:  # under the lock
+        mine = self.owned.setdefault(token, {})
+        now = self.clock()
+        for rid in [rid for rid, (_, deadline) in mine.items() if deadline <= now]:
+            del mine[rid]
+            self.ops.pop((token, rid), None)
+        return mine
+
+    def count(self, token: str) -> int:
         with self.lock:
-            mine = self.owned.setdefault(token, {})
-            now = self.clock()
-            for rid in [rid for rid, (_, deadline) in mine.items() if deadline <= now]:
-                del mine[rid]
-            mine[request_id] = (ws, now + TTL)
+            return len(self.prune(token))
+
+    def add(self, token: str, ws: str, request_id: str, op: str = "") -> None:
+        with self.lock:
+            mine = self.prune(token)
+            mine[request_id] = (ws, self.clock() + TTL)
+            self.ops[(token, request_id)] = op
             while len(mine) > REMEMBERED:
+                self.ops.pop((token, next(iter(mine))), None)
                 del mine[next(iter(mine))]
 
     def has(self, token: str, ws: str, request_id: str) -> bool:
@@ -68,13 +84,26 @@ class Clicks:
             hit = self.owned.get(token, {}).get(request_id)
             return bool(hit and hit[0] == ws and hit[1] > self.clock())
 
+    def op_of(self, token: str, request_id: str) -> str:
+        with self.lock:
+            return self.ops.get((token, request_id), "")
+
     def forget(self, token: str, request_id: str) -> None:
         with self.lock:
             self.owned.get(token, {}).pop(request_id, None)
+            self.ops.pop((token, request_id), None)
 
     def open(self, token: str) -> list[tuple[str, str]]:
         with self.lock:
             return [(rid, ws) for rid, (ws, _) in self.owned.get(token, {}).items()]
+
+
+def refusal_check(message: str):
+    from .errors import HostError
+
+    return HostError(
+        {"code": "human.click_refused", "message": message, "retryable": False, "reason": "check_failed"}, 3
+    )
 
 
 def register(app: FastAPI, gateway: Gateway):
@@ -82,6 +111,7 @@ def register(app: FastAPI, gateway: Gateway):
     signer = gateway.click
 
     def mine(request: Request, ws: str, request_id: str) -> None:
+        gateway.enabled(ws)  # the workspace is pinned and the dashboard addon is enabled in it, like the hand-off
         if not clicks.has(request.state.token, ws, request_id):
             raise fail("not_found", exit=2)  # another session's request and one that never existed look the same
 
@@ -98,6 +128,16 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
+        gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
+        # The same click retried (one key) must be the same action: another body under a used key is a conflict.
+        binding = hashlib.sha256(adapters.handoff.cj(body.model_dump(exclude={"idem"}, exclude_none=True))).hexdigest()
+        slot = (token, ws, body.idem)
+        with clicks.lock:
+            known = clicks.by_idem.get(slot)
+            if known is not None and known != binding:
+                raise fail("idem.conflict", "This key was used for another action.", exit=5)
+        if known is None and clicks.count(token) >= PER_SESSION:
+            raise fail("quota.host", "Too many sign requests are open. Cancel one first.", exit=9)
         labels = (
             list(gateway.call(ws, "ticket.get", {"ref": body.key})["doc"].get("labels", []))
             if isinstance(body, AddLabel)
@@ -117,14 +157,23 @@ def register(app: FastAPI, gateway: Gateway):
         if files:
             sent["files"] = files
         got = signer.call("prepare", sent)
-        clicks.add(token, ws, got["request_id"])
+        clicks.add(token, ws, got["request_id"], op)
+        with clicks.lock:
+            clicks.by_idem[slot] = binding
+            while len(clicks.by_idem) > 256:
+                clicks.by_idem.popitem(last=False)
         return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
 
     @app.post("/api/w/{ws}/click/view")
     def view(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(request, ws, body.request_id)
         # The signer's View and digest, unchanged: nothing is added, hidden or re-rendered here.
-        return signer.call("view", {"workspace_id": ws, "request_id": body.request_id})
+        got = signer.call("view", {"workspace_id": ws, "request_id": body.request_id})
+        # Stricter than the signer alone: the View must be for the op this server chose when it prepared the request.
+        shown = got.get("view") if isinstance(got, dict) else None
+        if not isinstance(shown, dict) or shown.get("op") != clicks.op_of(request.state.token, body.request_id):
+            raise refusal_check("The review is not for the action that was asked for. Cancel it.")
+        return got
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):

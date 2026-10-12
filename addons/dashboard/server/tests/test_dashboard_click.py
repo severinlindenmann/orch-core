@@ -41,6 +41,7 @@ class Script:
         self.ws, self.enabled, self.available, self.contract = ws, True, True, 1
         self.refuse: dict[str, ClickError] = {}
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
+        self.prepared = 0
         self.started: list[dict] = []
         self.clients: list[Fake] = []
 
@@ -60,7 +61,13 @@ class Script:
                 row["problem"] = "disabled"
             return {"core": "2.0.0.dev0", "contract": self.contract, "workspaces": [row]}
         if op == "prepare":
-            return {"request_id": REQ, "expires_at": "2026-10-12T12:10:00Z", "op": args["op"], "confirm": "click"}
+            self.prepared += 1
+            return {
+                "request_id": f"hr_{self.prepared:026d}",
+                "expires_at": "2026-10-12T12:10:00Z",
+                "op": args["op"],
+                "confirm": "click",
+            }
         if op == "view":
             return self.view
         if op == "sign":
@@ -216,8 +223,8 @@ def test_sign_sends_exactly_what_was_typed_and_answers_without_the_hosts_result(
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
     assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "word": "  DEMO~ab  "}
-    plain = {"request_id": REQ, "view_digest": HASH}
-    prepare(client, token, stub)
+    plain = {"request_id": "hr_" + "0" * 25 + "2", "view_digest": HASH}
+    prepare(client, token, stub, approve(2))
     client.post(url(stub, "sign"), json=plain, headers=hdr(token))
     assert "word" not in [c for c in script.clients[0].calls if c[0] == "sign"][1][1]
 
@@ -397,3 +404,136 @@ def test_the_status_route_is_the_card_only(client, token, stub, script):
     assert res.json() == {"custody": "convenience", "enabled": True, "available": True}
     script.available = False
     assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["problem"] == "disabled"
+
+
+# -- parity with the hand-off: every gate of its routes, on the click routes too -------------------------------------
+
+
+def comment(n):
+    return {"action": "comment", "key": "DEMO-0001", "message": "hello", "idem": idem(n)}
+
+
+def policy_body(n):
+    policy = {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}
+    return {"action": "policy_set", "gate": "requirements", "policy": policy, "idem": idem(n)}
+
+
+def families(stub):
+    """(name, prepare url, request-scoped calls: (method, url-for-an-id) per step)."""
+    hand = f"/api/w/{stub.ws}/handoff"
+    click = f"/api/w/{stub.ws}/click"
+    return {
+        "handoff": {"prepare": hand, "steps": [("get", lambda r: f"{hand}/{r}"), ("delete", lambda r: f"{hand}/{r}")]},
+        "click": {
+            "prepare": f"{click}/prepare",
+            "steps": [("post", lambda r: f"{click}/view"), ("post", lambda r: f"{click}/cancel")],
+        },
+    }
+
+
+@pytest.fixture(params=["handoff", "click"])
+def family(request, stub, script, rich):
+    return request.param, families(stub)[request.param]
+
+
+def send(client, method, url, token=None, body=None, **headers):
+    h = {**({"Authorization": f"Bearer {token}"} if token else {}), **headers}
+    return client.request(method, url, json=body, headers=h)
+
+
+def mutate(client, method, url, token, body=None, **headers):
+    return send(client, method, url, token, body, **{"Origin": ORIGIN, **headers})
+
+
+def code(res):
+    return res.json().get("error", {}).get("code")
+
+
+def test_parity_the_same_refusals_before_anything_is_prepared(client, token, stub, script, family):
+    name, f = family
+    ok = approve(900)
+    assert send(client, "post", f["prepare"], None, ok, Origin=ORIGIN).status_code == 401
+    assert send(client, "post", f["prepare"], token, ok).status_code == 403  # no Origin
+    assert send(client, "post", f["prepare"], token, ok, Origin="null").status_code == 403
+    assert mutate(client, "post", f["prepare"], token, ok, **{"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    assert mutate(client, "post", f["prepare"], token, {**ok, "op": "grant"}).status_code == 400  # closed models
+    assert mutate(client, "post", f["prepare"], token, {**ok, "key": "bad key"}).status_code == 400
+    assert mutate(client, "post", f["prepare"], token, {"action": "grant", "idem": idem(901)}).status_code == 400
+    assert mutate(client, "post", f["prepare"], token, {**ok, "idem": "not-an-idem"}).status_code == 400
+    elsewhere = f["prepare"].replace(stub.ws, "f" * 32)
+    assert mutate(client, "post", elsewhere, token, ok).status_code == 404  # an unpinned workspace
+    served = mutate(client, "post", f["prepare"], token, policy_body(902))
+    assert served.status_code in (200, 501), (name, served.text)  # same rule: the host must list the op in welcome.ops
+
+
+def test_parity_a_workspace_without_the_addon_is_refused_everywhere(
+    client, token, stub, script, family, gateway, monkeypatch
+):
+    name, f = family
+    from orch_dashboard.errors import fail
+
+    def off(ws):
+        raise fail("addon.disabled", exit=3)
+
+    monkeypatch.setattr(gateway, "enabled", off)
+    assert code(mutate(client, "post", f["prepare"], token, approve(903))) == "addon.disabled"
+    rid = "hr_" + "0" * 25 + "1"
+    for method, build in f["steps"]:
+        body = {"request_id": rid} if method == "post" else None
+        res = (
+            mutate(client, method, build(rid), token, body)
+            if method != "get"
+            else send(client, "get", build(rid), token)
+        )
+        assert code(res) in ("addon.disabled", "not_found"), (name, method, res.text)
+
+
+def test_parity_other_sessions_requests_look_like_none(client, token, stub, script, family, auth):
+    name, f = family
+    made = mutate(client, "post", f["prepare"], token, approve(904))
+    assert made.status_code == 200, made.text
+    rid = made.json().get("id") or made.json()["request_id"]
+    other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()[
+        "token"
+    ]
+    for method, build in f["steps"]:
+        body = {"request_id": rid} if method == "post" else None
+        res = (
+            mutate(client, method, build(rid), other, body)
+            if method != "get"
+            else send(client, "get", build(rid), other)
+        )
+        assert res.status_code == 404, (name, method, res.text)
+    unknown = "hr_" + "0" * 24 + "77"
+    for method, build in f["steps"]:
+        body = {"request_id": unknown} if method == "post" else None
+        res = (
+            mutate(client, method, build(unknown), token, body)
+            if method != "get"
+            else send(client, "get", build(unknown), token)
+        )
+        assert res.status_code == 404, (name, method, res.text)
+
+
+def test_parity_the_per_session_quota(client, token, stub, script, family):
+    name, f = family
+    for n in range(8):
+        res = mutate(client, "post", f["prepare"], token, comment(910 + n))
+        assert res.status_code == 200, (name, n, res.text)
+    ninth = mutate(client, "post", f["prepare"], token, comment(930))
+    assert ninth.status_code == 503 and code(ninth) == "quota.host", (name, ninth.text)
+
+
+def test_parity_a_key_used_for_another_action_is_a_conflict(client, token, stub, script, family):
+    name, f = family
+    assert mutate(client, "post", f["prepare"], token, comment(940)).status_code == 200
+    other = mutate(client, "post", f["prepare"], token, {**comment(940), "message": "another"})
+    assert code(other) == "idem.conflict", (name, other.text)
+    assert mutate(client, "post", f["prepare"], token, comment(940)).status_code == 200  # the same click again
+
+
+def test_a_view_for_another_op_than_the_one_asked_for_is_refused(client, token, stub, script):
+    prepare(client, token, stub)
+    script.view = {"view": {**script.view["view"], "op": "close"}, "view_digest": HASH}
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"

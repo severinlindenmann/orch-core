@@ -243,7 +243,8 @@ export interface QuestionStatus extends QuestionDef {
 
 /** How an approval or answer came in. 'factory_charter': auto-approved by an agent under a signed factory charter (core's store.autoApprove). */
 export type Via = 'cli' | 'dashboard' | 'phone' | 'factory_charter'
-export type Presence = 'touchid' | 'passkey' | 'password'
+/** How the signer's key was held (custody metadata, not proof). A value core adds later arrives as its own name. */
+export type Presence = 'touchid' | 'passkey' | 'password' | 'convenience' | (string & {})
 
 export interface Artifact {
   name: string

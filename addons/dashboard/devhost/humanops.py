@@ -281,7 +281,7 @@ class Requests:
             raise invalid("signer is {device, auth}")
         if not isinstance(signer["device"], str) or not DEVICE.fullmatch(signer["device"]):
             raise invalid("device must be a device id")
-        if signer["auth"] not in ("passphrase", "secure-enclave"):
+        if signer["auth"] not in ("passphrase", "secure-enclave", "convenience"):
             raise invalid("auth must be passphrase or secure-enclave")
         device = store.state.workspace.devices.get(signer["device"])
         if device is None:

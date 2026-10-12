@@ -70,3 +70,19 @@ def test_changes_pair_files_with_their_hunks():
     assert result["files"][0]["lines"] == "@@ -1 +1,2 @@\n one\n+two"
     assert result["files"][1]["lines"].startswith("(binary")
     assert result["sources"][0]["repo"] == "code"
+
+
+def test_an_approvals_auth_is_shown_as_it_is_never_relabelled_as_a_password():
+    """H5c: `convenience` (no presence) must never read as "password"; an auth value this adapter doesn't know keeps
+    its own name, and an unreadable one is "unknown"."""
+    from orch_dashboard.adapters.tickets import _approval
+
+    def presence(auth):
+        return _approval({"person": "p_ana", "at": "2026-10-12T10:00:00Z", "auth": auth})["presence"]
+
+    assert presence("passphrase") == "password"
+    assert presence("secure-enclave") == "touchid"
+    assert presence("convenience") == "convenience"
+    assert presence("hardware-key") == "hardware-key"
+    assert presence("Pass‮word") == "unknown"
+    assert presence({"not": "a string"}) == "unknown"

@@ -21,6 +21,10 @@ What it does
   ``os.listdir``, ``os.scandir``, ``os.chdir`` and the ``shutil`` copy/move/remove events. Reads of metadata
   (``stat``) are not gated.
 * **ctypes.** ``ctypes.dlopen`` and ``ctypes.dlsym`` raise after install: preload every library first.
+* **Person custody (H5c, orch-v2-host §0.8.6).** The host never handles a person's key: an open (or any path event) of
+  a path under ``<root>/person`` or with the components ``person/<workspace id>/devices`` raises, ``Security.framework``
+  is never loaded, and :data:`NEVER` (the click signer and the convenience custody modules) is neither warmed nor
+  importable after install. In tier A this is an implementation invariant, not an OS boundary.
 
 Known limits (say so; do not rely on the hook for more)
 -------------------------------------------------------
@@ -38,6 +42,7 @@ from __future__ import annotations
 import importlib
 import os
 import pkgutil
+import re
 import sys
 from collections.abc import Iterable
 from typing import Any
@@ -56,6 +61,19 @@ _SPAWN_EVENTS = {
 }
 _LAUNCHER_EVENTS = {"subprocess.Popen", "os.posix_spawn"}
 _NO_LOAD = {"ctypes.dlopen", "ctypes.dlsym"}
+#: modules the host never imports (H5c): the click signer and person custody that signs without a factor
+NEVER = ("orch.click", "orch.custody.convenience", "orch.custody.keychain", "orch.custody.select", "orch.custody.cli")
+
+
+def _never(module: str) -> bool:
+    return any(module == m or module.startswith(m + ".") for m in NEVER)
+
+
+_WS = re.compile(r"[0-9a-f]{32}")
+#: file names of person custody, refused as relative names whatever directory fd they are opened from (a ``dir_fd``
+#: walk cannot be resolved from the audit event): convenience keys, the selection, the click log, the H5b passphrase
+#: device key
+_PERSON_NAMES = re.compile(r"d_[0-9A-Za-z_]{1,64}\.key|custody\.json|click\.jsonl(\.[0-9])?|dk\.key\.json")
 #: event -> indices of its path arguments (a link's text and a dir_fd are not paths)
 _PATH_EVENTS: dict[str, tuple[int, ...]] = {
     "os.chdir": (0,),
@@ -149,10 +167,15 @@ def warm() -> None:
     after :func:`install` (a late import opens files and fails closed). The host calls this before ``install``."""
     import orch
 
-    for info in pkgutil.walk_packages(orch.__path__, "orch."):
-        if info.name.endswith(".__main__"):
-            continue
-        importlib.import_module(info.name)
+    todo = [(list(orch.__path__), "orch.")]  # not walk_packages: it would import a skipped package to recurse
+    while todo:
+        path, prefix = todo.pop()
+        for info in pkgutil.iter_modules(path, prefix):
+            if info.name.endswith(".__main__") or _never(info.name):
+                continue
+            module = importlib.import_module(info.name)
+            if info.ispkg:
+                todo.append((list(getattr(module, "__path__", [])), info.name + "."))
     for dep in _THIRD_PARTY:  # their lazy imports (backends, validators) would open files after the hook
         _import_tree(dep)
     import orch.ops as ops
@@ -225,7 +248,23 @@ def make_hook(roots: Iterable[str | os.PathLike[str]]):
             parts = _lexical(os.getcwd())
         except OSError:
             return False
-        return parts is not None and _under(parts, root_parts)
+        return parts is not None and _under(parts, root_parts) and not person_key(parts)
+
+    person_parts = [(*r, "person") for r in root_parts]
+
+    def person_key(parts: list[str]) -> bool:
+        if _under(parts, person_parts):
+            return True
+        if parts and _PERSON_NAMES.fullmatch(parts[-1]):
+            return True
+        for i in range(len(parts) - 2):
+            if not _WS.fullmatch(parts[i + 1]):
+                continue
+            if parts[i] == "person" and parts[i + 2] == "devices":
+                return True  # <person state>/person/<ws>/devices/…
+            if parts[i] == "hosts" and parts[i + 2] == "person":
+                return True  # <state>/hosts/<ws>/person/… (H5b's passphrase device key)
+        return False
 
     def allowed(p: Any, open_flags: int | None = None) -> bool:
         if p is None or isinstance(p, int):
@@ -238,9 +277,9 @@ def make_hook(roots: Iterable[str | os.PathLike[str]]):
             return True
         if s.startswith("/"):
             parts = _lexical(s)
-            return parts is not None and _under(parts, root_parts)
+            return parts is not None and _under(parts, root_parts) and not person_key(parts)
         # relative: one component, never a link (for open), and only while the cwd is inside a root
-        if "/" in s or "\0" in s or s in ("", ".."):
+        if "/" in s or "\0" in s or s in ("", "..") or _PERSON_NAMES.fullmatch(s):
             return False
         if open_flags is not None and not open_flags & nofollow:
             return False
@@ -251,7 +290,11 @@ def make_hook(roots: Iterable[str | os.PathLike[str]]):
             if event in _LAUNCHER_EVENTS and launcher_call(event, args):
                 return
             raise PermissionError(f"host audit: {event} is not allowed")
+        if event == "import" and args and isinstance(args[0], str) and _never(args[0]):
+            raise PermissionError(f"host audit: the host never imports {args[0]}")
         if event in _NO_LOAD:
+            if args and "Security.framework" in str(args[0]):
+                raise PermissionError("host audit: the host never loads Security.framework (person custody)")
             raise PermissionError(f"host audit: {event} is not allowed after start")
         if event == "open":
             path, _mode, flags = args

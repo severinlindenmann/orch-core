@@ -4,6 +4,9 @@ import json
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
+
+from tests.conftest import child_env
 
 PRELUDE = textwrap.dedent(
     """
@@ -129,6 +132,7 @@ def _run(script, root, outside, cwd):
         cwd=cwd,
         timeout=120,
         check=False,
+        env=child_env(Path(root).parent),  # HOME is a temporary directory, never the owner's
     )
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])
@@ -183,3 +187,89 @@ def test_relative_open_from_a_cwd_outside_the_roots_is_refused(tmp_path):
     root, outside = _setup(tmp_path)
     r = _run(OUTSIDE_CWD, root, outside, cwd=outside)
     assert r["relative_open_from_outside_cwd"] == "denied"
+
+
+PERSON = PRELUDE + textwrap.dedent(
+    """
+    ws = "0123456789abcdef0123456789abcdef"
+    os.makedirs(root + "/person/" + ws + "/devices", exist_ok=True)
+    os.makedirs(root + "/hosts/" + ws + "/keys", exist_ok=True)
+    open(root + "/person/" + ws + "/devices/d.key", "w").close()
+    open(root + "/hosts/" + ws + "/keys/wsk", "w").close()
+    audit.warm()
+    out["warm_skipped_never"] = sorted(m for m in sys.modules if audit._never(m))
+    audit.install([root])
+    t("open_person_key", lambda: open(root + "/person/" + ws + "/devices/d.key").close())
+    t("open_person_dir_file", lambda: open(root + "/person/click.jsonl", "a").close())
+    t("listdir_person", lambda: os.listdir(root + "/person"))
+    t("open_host_key", lambda: open(root + "/hosts/" + ws + "/keys/wsk").close())
+    t("import_click", lambda: __import__("orch.click.signer"))
+    t("import_convenience", lambda: __import__("orch.custody.convenience"))
+    t("import_keychain", lambda: __import__("orch.custody.keychain"))
+    t("load_security", lambda: __import__("ctypes").CDLL("/System/Library/Frameworks/Security.framework/Security"))
+    print(json.dumps(out))
+    """
+)
+
+
+def test_the_host_never_handles_person_custody(tmp_path):
+    root, outside = _setup(tmp_path)
+    r = _run(PERSON, root, outside, cwd=root)
+    assert r["warm_skipped_never"] == []  # warm imports every orch module except the custody and signer ones
+    assert r["open_host_key"] == "ok"
+    for refused in (
+        "open_person_key",
+        "open_person_dir_file",
+        "listdir_person",
+        "import_click",
+        "import_convenience",
+        "import_keychain",
+        "load_security",
+    ):
+        assert r[refused] == "denied", (refused, r)
+
+
+WALKS = PRELUDE + textwrap.dedent(
+    """
+    ws = "0123456789abcdef0123456789abcdef"
+    dev = "d_" + "1" * 32
+    for d in ("/person/" + ws + "/devices", "/hosts/" + ws + "/person"):
+        os.makedirs(root + d, exist_ok=True)
+    with open(root + "/person/" + ws + "/devices/" + dev + ".key", "w") as f:
+        f.write("SECRET")
+    with open(root + "/hosts/" + ws + "/person/dk.key.json", "w") as f:
+        f.write("SECRET")
+    audit.warm()
+    audit.install([root])
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    def dir_fd_walk():
+        fd = os.open(root, flags)
+        for part in ("person", ws, "devices"):
+            fd = os.open(part, flags, dir_fd=fd)
+        os.close(os.open(dev + ".key", flags, dir_fd=fd))
+    def chdir_walk():
+        os.chdir(root)
+        for part in ("person", ws, "devices"):
+            os.chdir(part)
+        os.close(os.open(dev + ".key", flags))
+    t("dir_fd_walk", dir_fd_walk)
+    os.chdir(root)
+    t("chdir_walk", chdir_walk)
+    os.chdir(root)
+    t("legacy_abs", lambda: open(root + "/hosts/" + ws + "/person/dk.key.json").close())
+    def legacy_walk():
+        fd = os.open(root, flags)
+        for part in ("hosts", ws, "person"):
+            fd = os.open(part, flags, dir_fd=fd)
+        os.close(os.open("dk.key.json", flags, dir_fd=fd))
+    t("legacy_dir_fd_walk", legacy_walk)
+    print(json.dumps(out))
+    """
+)
+
+
+def test_the_host_cannot_walk_to_a_person_key_relatively(tmp_path):
+    root, outside = _setup(tmp_path)
+    r = _run(WALKS, root, outside, cwd=root)
+    for refused in ("dir_fd_walk", "chdir_walk", "legacy_abs", "legacy_dir_fd_walk"):
+        assert r[refused] == "denied", (refused, r)

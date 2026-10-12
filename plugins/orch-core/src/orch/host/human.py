@@ -7,7 +7,8 @@ The host never prompts and holds no device key (D-P2-15). A person op is prepare
   event it would sign or append is judged by the model and recorded instead. The host then builds the envelopes (event
   ids from a CSPRNG, one shared ``based_on``: the log head now), the ``material`` the signer reviews, its
   ``review_digest`` and the fingerprint (:mod:`orch.host.review`), and stores the request (``dry_run``: nothing is
-  stored, ``request: null``).
+  stored, ``request: null``). With ``opts.idem`` (v1.5) the same principal, idem and arguments give the same
+  request in its current state; other arguments are ``idem.conflict``; the outcome store keeps the record 24 h.
 * **get** returns the request; with ``signer`` it binds a ``prepared`` request to that device (device checks, then
   ``actor.device`` and ``auth`` are filled in, once). Nothing else of the request ever changes (invariant bytes).
 * **submit** is a log write: the generic idempotency step comes first (§0.6 step 9, H2b's outcome store), then the
@@ -249,6 +250,68 @@ class HumanOps:
 
     # -- prepare
     def prepare(self, call: Call, args: dict[str, Any], dry_run: bool) -> dict[str, Any]:
+        service = call.service
+        name = args["op"]
+        types = review.person_op_types(name)
+        from .dispatch import NOT_SERVED
+
+        if types is None or name in NOT_SERVED:
+            raise HostError("op.not_allowed", f"{name} is not an op a person runs through human.prepare")
+        signer, handoff = args.get("signer"), bool(args.get("handoff", False))
+        if handoff == (signer is not None):
+            raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
+        self.backend._state(service, True)  # the request prepares a write
+        intent: Any = None
+        idem = (call.frame.get("opts") or {}).get("idem")
+        if idem is not None and not dry_run:
+            # v1.5: prepare honours opts.idem (§0.7). The idem step comes before the quota, so a retry at 20 pending
+            # still finds its request. Nothing is stored for a dry run.
+            same, intent = self._begin_idem(call, str(idem), args)
+            if same is not None:
+                return same  # the same request, in its current state
+        try:
+            return self._prepare(call, args, dry_run, intent)
+        except BaseException:
+            if intent is not None:
+                service.outcomes.abandon(intent)  # nothing was created: a retry runs again
+            raise
+
+    def _begin_idem(self, call: Call, idem: str, args: dict[str, Any]) -> tuple[dict[str, Any] | None, Any]:
+        """The outcome-store step of ``human.prepare {idem}``: ``(None, intent)`` for a fresh record, or
+        ``(view, None)`` for the request the idem names, as it is now. Other arguments are ``idem.conflict``: the
+        binding holds the op, the inner args, the signer or hand-off, the session and the file digests."""
+        import orch.ops as ops
+
+        service = call.service
+        name = args["op"]
+        operation = ops.get(name)
+        inner = dict(args["args"])
+        specs = self.backend._file_specs(operation, call.frame, inner)
+        for arg, spec in specs.items():
+            if set(spec) != {"b64"}:
+                raise HostError("blob.invalid", f"files.{arg}: human.prepare takes the bytes inline (b64)")
+        digests, _ = service.outcomes.bind_files(call.principal, None, specs)
+        bound = {"op": name, "args": inner, "signer": args.get("signer"), "handoff": bool(args.get("handoff", False))}
+        begun = service.outcomes.begin(
+            call.principal,
+            idem,
+            "human.prepare",
+            bound,
+            planned=(),
+            files=digests,
+            session=(call.frame.get("auth") or {}).get("session"),
+            deferred=True,
+        )
+        if isinstance(begun, dict):  # a stored answer: the prepare result of the first call
+            begun = {k: v for k, v in begun.items() if k != "duplicate"}
+            requests = self._requests(service)
+            record = requests.read(begun["request"]["id"])
+            if record is None or record.get("principal") != call.principal:
+                return begun, None  # the request file is gone (swept); the stored answer is all that is left
+            return self._view(requests.expire(record)), None
+        return None, begun
+
+    def _prepare(self, call: Call, args: dict[str, Any], dry_run: bool, intent: Any) -> dict[str, Any]:
         import orch.ops as ops
         from orch.ops.errors import OrchError
         from orch.ops.prepare import Capture
@@ -257,14 +320,10 @@ class HumanOps:
         service = call.service
         name = args["op"]
         types = review.person_op_types(name)
-        from .dispatch import NOT_SERVED, host_error, result_dict
-
-        if types is None or name in NOT_SERVED:
-            raise HostError("op.not_allowed", f"{name} is not an op a person runs through human.prepare")
+        assert types is not None
         signer, handoff = args.get("signer"), bool(args.get("handoff", False))
-        if handoff == (signer is not None):
-            raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
-        self.backend._state(service, True)  # the request prepares a write
+        from .dispatch import host_error, result_dict
+
         if not dry_run:
             self._requests(service).admit(call.viewer)  # type: ignore[arg-type]
         store = service.store
@@ -336,7 +395,10 @@ class HumanOps:
             "outcome": None,
         }
         requests.write(record)
-        return self._view(record)
+        view = self._view(record)
+        if intent is not None:
+            service.outcomes.commit(intent, view)
+        return view
 
     @staticmethod
     def _new_code(requests: RequestStore) -> str:

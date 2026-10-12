@@ -488,9 +488,10 @@ lost response; "Lookup" says how a client asks for a result it never received.
 |---|---|---|---|---|
 | **log writes** | registry ops whose `who` is not `read`; `human.submit` | required | an outcome record, reconciled from the log by its planned event ids (below) | `outcome.get` (workspace socket) |
 | **control writes** | `host.register`, `host.unregister`, `host.bootstrap` | required | an intent record in `<state>/host/intents/<idem>` (0600), fsynced before the change and completed after it; replayed at host start | `host.outcome` (control socket) |
+| **idempotent create** | `human.prepare` (v1.5) | optional | an outcome record (`committed` once the request is stored, nothing stored before; a crash in between leaves a request that expires unused) | `outcome.get`, or a retry of the same call |
 | **job completion** | `job.done` | not used | a persisted completion record per job (§0.8.2); a repeat is compared with it canonically | none needed (the repeat is the lookup) |
 | **non-idempotent create** | `host.wsk_create` | not used | none: a retry creates a new key, and a key with no genesis after 1 h is deleted | none |
-| **reads and side-effect-free ops** | reads (v1.5: `workspace.settings`, `ticket.text`, `artifact.query`, `commit.list`, `session.refusals` are reads); `human.prepare`, `human.get`, `human.pending`, `human.cancel`; `blob.put` (idempotent by offset and `upload_key`, §0.10), `blob.drop`; `sub.*`; `outcome.get`, `host.outcome`; `job.next`, `job.heartbeat`; `host.list`, `host.status`, `host.restart` | ignored | none needed | none |
+| **reads and side-effect-free ops** | reads (v1.5: `workspace.settings`, `ticket.text`, `artifact.query`, `commit.list`, `session.refusals` are reads); `human.get`, `human.pending`, `human.cancel`; `blob.put` (idempotent by offset and `upload_key`, §0.10), `blob.drop`; `sub.*`; `outcome.get`, `host.outcome`; `job.next`, `job.heartbeat`; `host.list`, `host.status`, `host.restart` | ignored | none needed | none |
 
 **Dry run.** `opts.dry_run:true` is accepted only by the log-write registry ops and by `human.prepare`.
 
@@ -512,6 +513,17 @@ sha256(cj({op, args_normalised, files:{arg: Hash}, session}))
 - `files` holds each file's digest. The record keeps these digests **apart from the blobs**, so a retry after the blob
   was consumed names the file with `files.<arg>: {digest}` (§0.3) and the binding can still be computed.
 - The same key with another binding answers `idem.conflict`.
+- **`human.prepare` (v1.5)** honours an optional `opts.idem` in the same store, bound to
+  `{op:"human.prepare", args_normalised:{op, args, signer, handoff}, files, session}`:
+  - the same principal, idem and binding return **the same request** (same `request.id` and `code`) while it is
+    `prepared` or `bound`, with its current state; the idem step comes before the 20-pending quota, so a request counts
+    once and a retry at the quota still finds it;
+  - the same idem with other arguments is `idem.conflict`;
+  - once the request is terminal (`submitted`, `cancelled`, `expired`) the same idem answers that request in its terminal
+    state (never a new one) for the 24 h both are kept; when the request file is gone the stored prepare answer remains,
+    then `idem.expired` as for other idems;
+  - a refused prepare stores nothing, so a retry runs again; `dry_run` never stores or looks up (above);
+  - without `opts.idem` every call creates a request, as before.
 
 **States** (log writes).
 
@@ -1348,10 +1360,11 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    hand-off request (device checks included). `human.pending` is served: without arguments it lists the caller's
    requests (any state, within retention); `{request_id}` gives that one (or an empty list); `{code}` the pending
    request the code names (H5b). A failed submit shows `error:{code}` (the catalog code only).
-8a. **`human.prepare` ignores `opts.idem`** (§0.7: it is in the "reads and side-effect-free ops" row): every call creates
-   a new request, even with the same idem. A client that lost a prepare's answer finds its open requests with
-   `human.pending` (no arguments) and cancels the ones it will not use (`human.cancel`); unused requests expire after
-   10 minutes (a grant: 4), and at most 20 are pending per person (`quota.host` beyond).
+8a. **`human.prepare` honours `opts.idem`** (v1.5, §0.7): the same principal, idem and arguments return the same request
+   in its current state; other arguments are `idem.conflict`; a terminal request answers as for other idems (24 h); no
+   idem creates a request each call; `dry_run` never stores. A client without an idem that lost a prepare's answer finds
+   its open requests with `human.pending` (no arguments) and cancels the ones it will not use (`human.cancel`); unused
+   requests expire after 10 minutes (a grant: 4), and at most 20 are pending per person (`quota.host` beyond).
 9. `human.prepare` takes inner-op files as `{b64}` only until H4a2's blobs land. The composite (`orch.host.signer.run`)
    compares each `artifact.*` event's `sha256` and `bytes` with the bytes it uploaded itself.
 10. **A grant request expires after 4 minutes**, not 10: its `issued_at` is the prepare time, and F1 refuses a
@@ -2184,6 +2197,10 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
    `refusals/1`, `artifact_query/1` and `diff_ext/1` move to H6c.
 9. **Consistency review of #390:** `material.policy` is required in gate material; the v1.5 accepted risks are in §7;
    per-op error rows, limits and the H5a, H6b and H6c acceptance cover every stated v1.5 rule.
+10. **`human.prepare` honours `opts.idem` (v1.5, additive; orch-52 decision for the dashboard stream):** §0.7 moves
+    `human.prepare` from "side-effect free, idem ignored" to "optional idem": a retry returns the same request, other
+    arguments are `idem.conflict`, a terminal request answers as for other idems, no idem is unchanged and `dry_run`
+    never stores (§0.8.1 item 8a).
 
 ---
 

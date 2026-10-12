@@ -85,6 +85,11 @@ export function useWideLayout(min = 1280): boolean {
   return usePageWidth() >= min
 }
 
+/** How a signer's key was held, in words (custody metadata, not proof). "convenience" never reads as a password (H5c);
+ * a value this page doesn't know keeps its own name. */
+const PRESENCE: Record<string, string> = { touchid: 'Touch ID', passkey: 'passkey', password: 'password', convenience: 'convenience (no presence)' }
+export const presenceLabel = (presence: string): string => PRESENCE[presence] ?? presence
+
 export function fmtDuration(ms: number): string {
   if (ms < 1000) return `${ms} ms`
   const s = ms / 1000

@@ -13,7 +13,8 @@ keychain material (``grant`` is refused before signing, so no grant secret eithe
 
 Retention: records are pruned once the request's ``expires_at`` plus the host's request retention
 (:data:`orch.host.requests.KEEP_SECONDS`) has passed; the host keeps no request to submit to by then. An unreadable file
-is pruned on its modification time after the same span.
+is pruned on its modification time after the same span, a crash's leftover temporary file after :data:`TMP_AGE`. The
+signer prunes at start and at ``prepare``, never on the ``sign`` path.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ DIR = "click"
 MAX_BYTES = 8 * 1024 * 1024  # 16 events of a View of at most 1 MiB, signed, with room
 LIFETIME = 600  # orch.host.requests.EXPIRE_SECONDS: a request lives 10 minutes
 PRUNE_EVERY = 60.0
+TMP_AGE = 600.0  # a temporary file older than this is a crash's leftover
 KEYS = frozenset(
     {"v", "workspace_id", "request_id", "view_digest", "op", "idem", "events", "expires_at", "signed_at", "result"}
 )
@@ -119,8 +121,10 @@ class Records:
         from orch.custody.base import CustodyError, KeyNotFound
         from orch.custody.convenience import read_private
 
+        name = self._name(request_id)
+        _drop_linked_tmp(fd, name)
         try:
-            data = read_private(fd, self._name(request_id), limit=MAX_BYTES)
+            data = read_private(fd, name, limit=MAX_BYTES)
         except KeyNotFound:
             return None
         except CustodyError as exc:
@@ -166,7 +170,6 @@ class Records:
         data = canon.dumps(rec)
         if len(data) > MAX_BYTES:
             raise RecordError("the signed request is too large for a sign record")
-        self.prune()
         fd = self._dir(workspace_id, create=True)
         assert fd is not None
         try:
@@ -246,6 +249,15 @@ class Records:
     def _prune_dir(self, fd: int, ws: str, now: float) -> int:
         removed = 0
         for name in os.listdir(fd):
+            if name.startswith(".") and ".json.tmp" in name and REQ.fullmatch(name[1:].split(".json.tmp", 1)[0]):
+                try:  # a temporary file a crash left behind (write_private's own name pattern)
+                    st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    if now - st.st_mtime > TMP_AGE:
+                        os.unlink(name, dir_fd=fd)
+                        removed += 1
+                except OSError:
+                    pass
+                continue
             if not name.endswith(".json") or not REQ.fullmatch(name[:-5]):
                 continue
             until: float | None = None
@@ -274,6 +286,32 @@ class Records:
             except OSError:  # pragma: no cover
                 pass
         return removed
+
+
+def _drop_linked_tmp(fd: int, name: str) -> None:
+    """A crash between ``write_private``'s link and its unlink of the temporary file leaves the record with two links
+    (which :func:`read_private` refuses). When the second link is our own ``.<name>.tmp*`` sibling with the same
+    inode, remove it so the record reads again. Any other second link stays and fails closed."""
+    try:
+        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except OSError:
+        return
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 2:
+        return
+    try:
+        for other in os.listdir(fd):
+            if not other.startswith(f".{name}.tmp"):
+                continue
+            o = os.stat(other, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISREG(o.st_mode) and (o.st_ino, o.st_dev) == (st.st_ino, st.st_dev):
+                os.unlink(other, dir_fd=fd)
+                try:
+                    os.fsync(fd)
+                except OSError:  # pragma: no cover
+                    pass
+                return
+    except OSError:
+        return
 
 
 def _validate(rec: Any, workspace_id: str, request_id: str) -> None:

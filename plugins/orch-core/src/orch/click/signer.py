@@ -120,6 +120,7 @@ class ClickSigner:
         self.busy = False
         self.log = log
         self.records = records if records is not None else Records(self.state, wall=wall)
+        self.records.prune()  # retention runs at start and at prepare, never on the sign path
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
 
@@ -293,6 +294,7 @@ class ClickSigner:
             self._sweep()
             if len(self.approvals) >= MAX_APPROVALS:
                 raise ClickError("rate.limited", "too many open sign requests", retry_after_ms=10_000, retryable=True)
+        self.records.prune()
         _, sel = self._convenience(entry)
         device = sel["device"]
         body = {"op": op, "args": inner, "signer": {"device": device, "auth": "convenience"}}
@@ -386,6 +388,13 @@ class ClickSigner:
         if rec is not None:
             return self._replay(entry, rec, vd)
         entry, approval = self._approval(args)
+        if approval.signed is not None:  # the in-memory guard stays, also when the record was lost
+            if vd != approval.view_digest:
+                raise refused("already_signed", "this request was already signed for another review")
+            if approval.result is not None:
+                return {"result": approval.result, "duplicate": True}
+            self._rerecord(approval)
+            return self._submit(entry, approval, None)  # the identical events and idem, never a new signature
         if self._expired(approval):
             self.approvals.pop((approval.workspace_id, approval.request_id), None)
             raise refused("expired", "the request expired; prepare it again")
@@ -411,19 +420,21 @@ class ClickSigner:
         signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
         if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
             raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
+        idem = _new_idem()
         try:  # durable before the signature leaves: a crash after this resends these events, never signs again
             rec = self.records.create(
                 approval.workspace_id,
                 approval.request_id,
                 view_digest=approval.view_digest,
                 op=approval.op,
-                idem=_new_idem(),
+                idem=idem,
                 events=signed.events,
                 expires_at=approval.expires_at,
             )
         except RecordError as exc:  # nothing left the signer: these signatures are dropped
             raise refused("record_unavailable", f"{exc}; nothing was submitted") from None
-        self._note("signed", workspace=approval.workspace_id, request=approval.request_id, op=approval.op)
+        won = rec["idem"] == idem
+        self._note("signed" if won else "adopted", workspace=approval.workspace_id, request=approval.request_id)
         if rec["view_digest"] != approval.view_digest:  # another signer process recorded it first
             raise refused("already_signed", "this request was already signed for another review")
         return self._replay(entry, rec, approval.view_digest)
@@ -454,7 +465,24 @@ class ClickSigner:
         approval.signed, approval.idem = rec["events"], rec["idem"]
         return self._submit(entry, approval, rec)
 
-    def _submit(self, entry: dict[str, Any], approval: Approval, rec: dict[str, Any]) -> dict[str, Any]:
+    def _rerecord(self, approval: Approval) -> None:
+        """The record of a request signed in this process is gone (a cleanup, a restore): write it again from memory,
+        best effort. The resend does not depend on it."""
+        try:
+            if self.records.get(approval.workspace_id, approval.request_id) is None:
+                self.records.create(
+                    approval.workspace_id,
+                    approval.request_id,
+                    view_digest=str(approval.view_digest),
+                    op=approval.op,
+                    idem=str(approval.idem),
+                    events=list(approval.signed or []),
+                    expires_at=approval.expires_at,
+                )
+        except RecordError:
+            self._note("record_failed", workspace=approval.workspace_id, request=approval.request_id)
+
+    def _submit(self, entry: dict[str, Any], approval: Approval, rec: dict[str, Any] | None) -> dict[str, Any]:
         args = {"request_id": approval.request_id, "events": approval.signed}
         self._note("submit", workspace=approval.workspace_id, request=approval.request_id, op=approval.op)
         try:
@@ -475,12 +503,15 @@ class ClickSigner:
             raise  # the signed events stay: a retry resends them, the request is never signed twice
         return self._done(approval, rec, res)
 
-    def _done(self, approval: Approval, rec: dict[str, Any], res: dict[str, Any]) -> dict[str, Any]:
+    def _done(self, approval: Approval, rec: dict[str, Any] | None, res: dict[str, Any]) -> dict[str, Any]:
         approval.result = res
-        try:
-            self.records.settle(rec, res)
-        except RecordError:  # the record keeps the events: a repeated sign resends them under the same idem
-            pass
+        try:  # after the commit nothing may escape: the record keeps the events, a repeated sign resends them
+            if rec is None:
+                rec = self.records.get(approval.workspace_id, approval.request_id)
+            if rec is not None:
+                self.records.settle(rec, res)
+        except Exception:  # noqa: BLE001
+            self._note("record_failed", workspace=approval.workspace_id, request=approval.request_id)
         self._note("committed", workspace=approval.workspace_id, request=approval.request_id, op=approval.op)
         return {"result": res, "duplicate": bool(res.get("duplicate"))}
 

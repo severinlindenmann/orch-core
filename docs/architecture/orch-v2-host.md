@@ -2260,7 +2260,9 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   `(request_id, view_digest)`, across signer crashes and restarts:
   - **Where.** `<person state>/person/click/<workspace_id>/<request_id>.json`: person-owned directories 0700 and files
     0600, walked descriptor-relative with `O_NOFOLLOW` (`secure_dir`), each file a regular single-link file checked on
-    its own descriptor. Under `<state>/person/`, so the host's audit hook refuses it like the rest of person custody.
+    its own descriptor. One window has two links: a crash between linking the record into place and unlinking its
+    temporary file. A read that finds exactly that (the second link is the record's own `.<name>.tmp*` sibling with
+    the same inode) removes the temporary file and reads again; any other second link fails closed. Under `<state>/person/`, so the host's audit hook refuses it like the rest of person custody.
   - **What.** `{"v":1, workspace_id, request_id, view_digest, op, idem, events, expires_at, signed_at, result}`:
     `events` is the exact signed event array (its signatures are what the workspace log shows anyway), `idem` the submit
     idem, `result` null until `human.submit` answered, then its result. **Never** a key, a factor, keychain material
@@ -2271,15 +2273,18 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
     (`record_unavailable`). A record already in place (another signer process of the same person won the race) wins:
     its events are used, never the new ones. After the commit the record is replaced (temporary file, `fsync`,
     rename, directory `fsync`) by one that holds the result; failing that only costs a resubmit under the same idem.
-  - **Every `sign` reads the record first**, before the in-memory registry: the same `view_digest` answers the recorded
+  - **Every `sign` reads the record first**, before the in-memory registry, and **the in-memory guard stays as
+    well**: a request this process signed answers its cached result or resends the identical events and idem from
+    memory (and writes the record again, best effort) even when the record was lost. With the record: the same `view_digest` answers the recorded
     result (`duplicate: true`) or resends the recorded events under the recorded idem (also when the registry was lost
     in a restart: no `prepare` or `view` is needed, and nothing is signed); another `view_digest` is
     `human.click_refused`/`already_signed`. A record that exists but is not a private regular file of the person, does
     not parse or does not validate (shape, identifiers, its own request) fails closed with `record_unavailable`.
   - **Retention.** A record is pruned once its request's `expires_at` plus the host's request retention
     (`orch.host.requests.KEEP_SECONDS`, 24 h) has passed (an unreadable file: its modification time plus the 10-minute
-    request lifetime plus the retention); pruning runs before a new record is written, at most once a minute, and never
-    stops a signature. By then the host has no request to accept a submit for. `cancel` keeps the record: a cancelled
+    request lifetime plus the retention); pruning runs at signer start and at `prepare` (never on the `sign` path), at most once a
+    minute, and never stops a signature; temporary files a crash left behind (`.<request_id>.json.tmp*`) are removed
+    after 10 minutes. By then the host has no request to accept a submit for. `cancel` keeps the record: a cancelled
     request is still never signed again.
 - **Refusals do not cancel.** A click-path eligibility, availability, size or rate refusal does not cancel the host
   request; it invalidates the local approval. Explicit `cancel` cancels it: `cancel` is serialized with signing and
@@ -2368,17 +2373,18 @@ the allowed member, policy or addon operations.
 | Backup or sync | File custody may be backed up. Traditional login-keychain custody may also be backed up. Data-protection non-migration claims apply only to a correctly implemented and tested data-protection backend. |
 | A reader that does not know `convenience` | The per-workspace flag, the readers condition (`sign.convenience_unavailable`) and the block on adding readers (`sign.convenience_readers`). |
 | A same-UID process pre-claims a click idem | `idem.conflict`; the signer reports the request state and signs nothing again. A denial of service by an already accepted attacker. |
-| Signer crash or restart mid-sign; a dashboard retry or a second View after it | The durable sign record is synced before the signature leaves: a retry resends the identical events and idem, another View is `already_signed`. A same-UID process can delete or corrupt the record (accepted: it can sign anyway); corruption fails closed. |
+| Signer crash or restart mid-sign; a dashboard retry or a second View after it | The durable sign record is synced before the signature leaves: a retry resends the identical events and idem, another View is `already_signed`. A same-UID process can delete or corrupt the record (accepted: it can sign anyway); corruption fails closed. A record can also be lost without an attacker (a cleanup of the state directory, a backup restore, a wall-clock jump of more than 24 h before a prune, file-system loss): the live signer's in-memory guard still never signs again; only after the signer has also restarted can a lost record allow one fresh signature, and the host still commits a request once. |
 
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
 
 1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as
    `python -I -m orch.click --fd N`; the dashboard imports only `spawn`, `client` and `protocol`.
-2. **Durable sign records (H5c follow-up, changelog item 17)** are `orch.click.records.Records`, as item 5 specifies:
+2. **Durable sign records (H5c follow-up, changelog item 18)** are `orch.click.records.Records`, as item 5 specifies:
    `create` (exclusive, before `human.submit`), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
    (the result, after the commit) and `prune`. They reuse the custody helpers `secure_dir`, `read_private` and
    `write_private` (`orch.custody.convenience`). A record is at most 8 MiB. Two `human.click_refused` reasons are new:
-   `already_signed` and `record_unavailable`. Tests (`tests/host/test_click_records.py`) kill a real signer process
+   `already_signed` and `record_unavailable`; the log gains `adopted` (another signer process's record was used) and
+   `record_failed` (a record could not be written again or settled after the commit; never escapes). Tests (`tests/host/test_click_records.py`) kill a real signer process
    with `SIGKILL` after the record and before the submit, and after the host committed but before the reply, restart
    it and get the identical events and idem on retry; a second View of the same request after a restart is refused.
 
@@ -2807,7 +2813,7 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     `hello.ops`); a committed person request's `Result` keeps the inner op's `lines`.
     **Release note:** an older CLI (H4b, before H7) does not list `task.done` in its hello, so this host refuses its
     `orch task done` with `op.unsupported` ("served at version 2, not 1"); update the CLI. Every other op still works.
-17. **Durable click-sign records (H5c follow-up, additive, client-side only):** the click signer writes and syncs a
+18. **Durable click-sign records (H5c follow-up, additive, client-side only):** the click signer writes and syncs a
     per-request record of the signed events and submit idem before a signature leaves it, so it signs at most once per
     `(request_id, view_digest)` across crashes and restarts (§0.8.6 item 5, "Durable sign records"). New
     `human.click_refused` reasons `already_signed` (another `view_digest` for a signed request) and

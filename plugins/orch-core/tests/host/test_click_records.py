@@ -312,6 +312,99 @@ def test_records_are_pruned_after_the_request_retention(tmp_path):
     assert rs.get(wid, rid_new) is None
 
 
+def test_a_lost_record_in_a_live_signer_never_signs_again(click, served, human):
+    """Opus F1: the in-memory guard stays besides the record. An uncertain submit, the record deleted (a cleanup, a
+    restore), sign again: the same events and idem from memory, no second signature."""
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    sent = []
+    orig = click._connect
+
+    def connect(entry):
+        c = orig(entry)
+        real = c.call
+
+        def call(op, args, **kw):
+            if op == "human.submit":
+                sent.append((json.dumps(args, sort_keys=True), kw.get("idem")))
+                if len(sent) <= 2:
+                    raise ConnectionError("lost")  # never reaches the host's answer
+            return real(op, args, **kw)
+
+        c.call = call
+        return c
+
+    click.signer._connect = connect
+    click.signer.close()
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "uncertain")
+    _record_path(served, rid).unlink()
+    refused(lambda: click.sign(rid, "sha256:" + "3" * 64), "human.click_refused", "already_signed")
+    res = click.sign(rid, vd)
+    assert res["result"]["key"] == key
+    assert click.signatures == 1
+    assert len(set(sent)) == 1  # identical events and idem
+    assert _texts(served, key) == ["x"]
+    assert json.loads(_record_path(served, rid).read_bytes())["result"] == res["result"]  # written again
+    assert click.sign(rid, vd)["duplicate"] is True and click.signatures == 1
+
+
+def test_a_crash_between_link_and_unlink_leaves_a_readable_record(click, served, human, monkeypatch):
+    """Opus F2: write_private links the record, then dies before it unlinks its temporary file. The next sign
+    removes the same-inode temporary sibling and reads the record; prune removes stale temporary files."""
+    from orch.custody import convenience as conv
+
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    real_unlink = os.unlink
+
+    def die_on_tmp(path, *a, **kw):
+        if isinstance(path, str) and path.startswith(f".{rid}.json.tmp"):
+            raise Crash
+        return real_unlink(path, *a, **kw)
+
+    monkeypatch.setattr(conv.os, "unlink", die_on_tmp)
+    with pytest.raises(Crash):
+        click.sign(rid, vd)
+    monkeypatch.setattr(conv.os, "unlink", real_unlink)
+    path = _record_path(served, rid)
+    assert path.stat().st_nlink == 2
+    assert [n for n in os.listdir(path.parent) if n.startswith(".")]
+    again = _restart(click, served)
+    try:
+        assert again.sign(rid, vd)["result"]["key"] == key
+        assert again.signatures == 0 and _texts(served, key) == ["x"]
+        assert not [n for n in os.listdir(path.parent) if n.startswith(".")]
+        assert path.stat().st_nlink == 1
+    finally:
+        again.close()
+
+
+def test_prune_removes_stale_temporary_files(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    now = [1_800_000_000.0]
+    rs = Records(state, wall=lambda: now[0])
+    wid, rid = "a" * 32, "hr_" + "0" * 26
+    rs.create(
+        wid,
+        rid,
+        view_digest="sha256:" + "0" * 64,
+        op="log",
+        idem="a_" + "0" * 26,
+        events=[{"type": "log.added"}],
+        expires_at=records_mod._stamp(now[0] + 600),
+    )
+    d = state / "person" / "click" / wid
+    tmp = d / f".{rid}.json.tmp123.abcd"
+    tmp.write_bytes(b"{}")
+    os.utime(tmp, (now[0] - 601, now[0] - 601))
+    fresh = d / f".{rid}.json.tmp124.abcd"
+    fresh.write_bytes(b"{}")
+    os.utime(fresh, (now[0], now[0]))
+    assert rs.prune(force=True) == 1
+    assert not tmp.exists() and fresh.exists() and rs.get(wid, rid) is not None
+
+
 # --- a real kill (SIGKILL) between the record and the reply -----------------------------------------------------------
 
 CHILD = textwrap.dedent(
@@ -364,7 +457,6 @@ CHILD = textwrap.dedent(
 )
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize("at", ["before_submit", "before_reply"])
 def test_a_signer_killed_between_the_record_and_the_reply_gives_the_identical_signature_after_a_restart(
     click, served, human, tmp_path, at

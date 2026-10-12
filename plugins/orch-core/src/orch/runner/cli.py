@@ -185,24 +185,42 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
 def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from orch.host import enable as svc
 
+    from .link import HostLink, new_gen
     from .supervise import Supervisor
+    from .term import TermListener
 
     state = _state(args.state, env)
-    svc.run_dir_for(state, args.run, env)
+    run_dir = svc.run_dir_for(state, args.run, env)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    uid = os.getuid()
     sup = Supervisor(state)
     swept = sup.open()
+    log = logging.getLogger("orch.runner")
     for item in swept:
-        log = logging.getLogger("orch.runner")
         log.warning("run %s was lost (runner restart); swept %d", item["run"], item["swept"])
+    gen = new_gen()
+    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, info=sup.attach_info)
+    try:
+        term.open()
+    except OSError as exc:
+        log.warning("the terminal socket is not served: %s", exc)
+        term = None  # type: ignore[assignment]
+    # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
+    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term)
+    link.start()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: stop.set())
     try:
         stop.wait()
     finally:
-        # a controlled stop (D-P2-39): every managed run is stopped and verified before the runner exits
-        sup.close(stop_runs=True)
+        link.stop()  # first: no new command while the runs are stopped
+        try:
+            # a controlled stop (D-P2-39): every managed run is stopped and verified before the runner exits
+            sup.close(stop_runs=True)
+        finally:
+            if term is not None:
+                term.close()
     return 0
 
 

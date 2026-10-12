@@ -190,6 +190,8 @@ class Live:
     cleanup: str | None = None
     #: processes of the run were still there after the last kill: retried every scan, never pruned
     lingering: bool = False
+    cols: int = 120
+    rows: int = 40
     #: the member set saved at the last scan (exact identities for a later sweep)
     saved: list[list[int]] = field(default_factory=list)
     #: the leader was reaped: its PID (the session and group id) may be reused, so only exact identities match
@@ -258,7 +260,7 @@ class Supervisor:
         self.on_event = on_event
         self.live: dict[str, Live] = {}
         self.lock = threading.RLock()
-        self._spawn_lock = threading.Lock()
+        self._spawn_lock = threading.RLock()  # re-entrant: the host link checks its epoch and spawns under it
         self._sel = selectors.DefaultSelector()
         self._wake_r, self._wake_w = os.pipe()
         os.set_blocking(self._wake_r, False)
@@ -471,7 +473,9 @@ class Supervisor:
                     "run.spawn_failed", f"the run could not be started: {type(exc).__name__}", cleanup
                 ) from None
             os.set_blocking(master, False)
-            return Live(spec.run, proc, master, Ring(self.ring_bytes), proc.pid, found.birth, found.pgid, found.sid, cg)
+            live = Live(spec.run, proc, master, Ring(self.ring_bytes), proc.pid, found.birth, found.pgid, found.sid, cg)
+            live.cols, live.rows = spec.cols, spec.rows
+            return live
         except BaseException:
             if slave != -1:
                 os.close(slave)
@@ -552,6 +556,15 @@ class Supervisor:
             if live is None or live.pty_closed:
                 raise SpawnError("not_found", "no such live run")
             fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            live.cols, live.rows = cols, rows
+
+    def attach_info(self, run: str) -> dict[str, Any] | None:
+        """What an attachment's ``ready`` frame needs (§12.6.3), or ``None`` when the run's ring is not kept."""
+        live = self.live.get(run)
+        if live is None:
+            return None
+        return {"start": live.ring.start, "offset": live.ring.end, "cols": live.cols, "rows": live.rows,
+                "state": "running" if live.exit is None else "exited"}  # fmt: skip
 
     # -- membership
     def _cgroup_of(self, rec: dict[str, Any]) -> Path | None:

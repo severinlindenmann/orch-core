@@ -96,6 +96,7 @@ _READS = frozenset(
         "workspace.show", "member.list", "session.list", "grant.list",
         "activity.list", "workspace.settings", "ticket.text",
         "records.snapshot", "records.export_check",
+        "run.list", "run.sub",
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a)

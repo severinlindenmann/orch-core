@@ -7,6 +7,7 @@ is the custody store: `click_child.py` swaps `open_store` for the 0600 file stor
 documented test seam), so the macOS keychain is never opened. One workspace, one person, no relay, no phone.
 """
 
+import itertools
 import os
 import re
 import shutil
@@ -35,6 +36,7 @@ pytestmark = [
 CHILD = str(Path(__file__).with_name("click_child.py"))
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+RETRIES = itertools.count(1)  # one counter for the whole module: every "fresh" prepare is its own intent
 
 
 def seeding(ws: Workspace) -> dict:
@@ -102,7 +104,9 @@ def world(tmp_path_factory):
     with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
         launch = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers={"Origin": ORIGIN})
         token = launch.json()["token"]
-        yield type("World", (), {"ws": ws, "keys": keys, "gateway": gateway, "client": client, "token": token})
+        yield type(
+            "World", (), {"ws": ws, "keys": keys, "gateway": gateway, "client": client, "token": token, "auth": auth}
+        )
     gateway.close()
     for proc in children:
         assert proc.poll() is not None  # the signer exits with the server
@@ -128,8 +132,7 @@ class Click:
     def prepare(self, body, fresh=True):
         """`fresh`: an explicit "do it again" (a new retry counter), so tests that repeat an action stay independent.
         `fresh=False` is the plain intent: the same action again is the same request."""
-        self.n += 1
-        return self.post("prepare", {**body, "retry": self.n} if fresh else body)
+        return self.post("prepare", {**body, "retry": next(RETRIES)} if fresh else body)
 
     def workspace(self):
         res = self.w.client.get("/api/workspaces", headers=self.headers(False))
@@ -271,13 +274,82 @@ def test_a_view_is_refused_when_the_hosts_record_is_not_what_was_asked_for(world
     """The hand-off's gate on the host's own record (read with human.get through our link): another ticket is refused."""
     got = click.prepare(approve(world, "three")).json()
     app = world.client.app
-    token = click.headers()["Authorization"].split()[1]
-    op, body, epoch = app.state.clicks.ops[(token, got["request_id"])]
-    app.state.clicks.ops[(token, got["request_id"])] = (
-        op,
-        body.model_copy(update={"key": world.keys["two"], "gate": "plan"}),
-        epoch,
+    ws, op, body, epoch = app.state.clicks.get(got["request_id"])
+    app.state.clicks.add(
+        ws, got["request_id"], op, body.model_copy(update={"key": world.keys["two"], "gate": "plan"}), epoch
     )
     res = click.post("view", {"request_id": got["request_id"]})
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404  # cancelled and forgotten
+
+
+# -- one action intent -> at most one request -> at most one signature, against the REAL host and signer ---------------
+
+
+def _second_session(world):
+    from conftest import ORIGIN as origin
+
+    launch = world.auth.launch(PORT)
+    res = world.client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": origin})
+    return {"Authorization": f"Bearer {res.json()['token']}", "Origin": origin}
+
+
+def test_the_same_intent_is_the_same_request_for_every_tab_and_retry(world, click):
+    """Two prepares with the same intent idem return the same request_id: the signer forwards it and the host honours it."""
+    body = {"action": "comment", "key": world.keys["three"], "message": f"intent probe {time.time()}"}
+    one = click.prepare(body, fresh=False)
+    assert one.status_code == 200, one.text
+    again = click.prepare(body, fresh=False)  # a retry, or a reopened dialog after a lost answer
+    other = world.client.post(click.url("prepare"), json=body, headers=_second_session(world))  # a second tab
+    assert again.json()["request_id"] == other.json()["request_id"] == one.json()["request_id"]
+    # Both sessions of the person may view it (it is theirs, not the tab's).
+    view = world.client.post(
+        click.url("view"), json={"request_id": one.json()["request_id"]}, headers=_second_session(world)
+    )
+    assert view.status_code == 200, view.text
+    click.post("cancel", {"request_id": one.json()["request_id"]})
+
+
+def test_signed_once_then_already_done_and_only_an_explicit_click_repeats_it(world, click):
+    body = {"action": "comment", "key": world.keys["three"], "message": f"sign once {time.time()}"}
+    made = click.prepare(body, fresh=False).json()
+    view = click.post("view", {"request_id": made["request_id"]}).json()
+    time.sleep(1.2)
+    signed = click.post("sign", {"request_id": made["request_id"], "view_digest": view["view_digest"]})
+    assert signed.status_code == 200, signed.text
+    # The same action again, from this tab or another: the host returns its terminal state - no second request.
+    for headers in (click.headers(), _second_session(world)):
+        res = world.client.post(click.url("prepare"), json=body, headers=headers)
+        err = res.json()["error"]
+        assert res.status_code == 409 and err["code"] == "intent.done" and err["state"] == "submitted", res.text
+    # A second signature of the same request is refused or answered with the recorded result, never a new event.
+    again = click.post("sign", {"request_id": made["request_id"], "view_digest": view["view_digest"]})
+    assert again.status_code in (200, 404, 409), again.text
+    # "Do it again" is a new intent: a new request, signed on purpose.
+    more = click.prepare({**body, "retry": 1}, fresh=False)
+    assert more.status_code == 200 and more.json()["request_id"] != made["request_id"]
+    click.post("cancel", {"request_id": more.json()["request_id"]})
+
+
+def test_a_cancelled_attempt_is_ended_and_start_again_is_explicit(world, click):
+    body = {"action": "comment", "key": world.keys["three"], "message": f"cancel then start again {time.time()}"}
+    made = click.prepare(body, fresh=False).json()
+    assert click.post("cancel", {"request_id": made["request_id"]}).status_code == 200
+    res = click.prepare(body, fresh=False)
+    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.ended", res.text
+    fresh = click.prepare({**body, "retry": 1}, fresh=False)
+    assert fresh.status_code == 200 and fresh.json()["request_id"] != made["request_id"]
+    click.post("cancel", {"request_id": fresh.json()["request_id"]})
+
+
+def test_the_terminal_path_for_the_same_intent_is_an_open_attempt_not_a_second_request(world, click):
+    """The host binds an idem to its signer and path: the hand-off of an action that has a click request is refused
+    with idem.conflict (reported as intent.open), never a second request. The terminal fallback is another intent."""
+    body = {"action": "comment", "key": world.keys["three"], "message": f"cross path {time.time()}"}
+    made = click.prepare(body, fresh=False).json()
+    hand = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=body, headers=click.headers())
+    assert hand.status_code == 409 and hand.json()["error"]["code"] == "intent.open", hand.text
+    click.post("cancel", {"request_id": made["request_id"]})
+    fallback = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json={**body, "retry": 1}, headers=click.headers())
+    assert fallback.status_code == 200, fallback.text
+    world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{fallback.json()['id']}", headers=click.headers())

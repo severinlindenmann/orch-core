@@ -471,15 +471,81 @@ def test_run_ops_column_rules(w, rstate, tmp_path):
     """G sees only its person's agent runs (never shells); another person's runs are invisible to P."""
     hub = w.h.host.runners
     c = w.conn()
+    hidden_uid, hidden = w.ticket("not for the grant's person")
+    w.restrict(hidden_uid, [w.quinn.ref])
     for rec in (
         {**fields(w), "run": new_run_id(), "kind": "shell"},
-        {**fields(w), "run": new_run_id(), "kind": "agent", "harness": "codex"},
+        {**fields(w), "run": new_run_id(), "kind": "agent", "harness": "codex", "ticket": w.ticket()[1]},
         {**fields(w), "run": new_run_id(), "kind": "agent", "person": w.quinn.ref},
+        {**fields(w), "run": new_run_id(), "kind": "agent", "ticket": hidden},
     ):
         w.h.run(hub._save({**rec, "workspace_id": w.wid, "state": "running", "exit": None, "cleanup": None,
                            "runner_uid": UID, "generation": 1}))  # fmt: skip
     mine = ok(c.call("run.list", {}))["data"]["runs"]
-    assert sorted(x["kind"] for x in mine) == ["agent", "shell"]
+    assert sorted(x["kind"] for x in mine) == ["agent", "shell"]  # not quinn's run, not the hidden ticket's
     grant = w.lab.ws.grant
     as_grant = ok(c.call("run.list", {}, grant=grant))["data"]["runs"]
     assert [x["kind"] for x in as_grant] == ["agent"]
+
+
+# -- security scan follow-up -------------------------------------------------------------------------------------------
+
+
+def _put(w, **kw):
+    rec = {**fields(w), "run": new_run_id(), "workspace_id": w.wid, "state": "running", "exit": None,
+           "cleanup": None, "runner_uid": UID, "generation": 1, **kw}  # fmt: skip
+    w.h.run(w.h.host.runners._save(rec))
+    return rec["run"]
+
+
+def test_g_never_sees_ticketless_or_shell_runs_and_n_is_refused(w):
+    c = w.conn()
+    _put(w, kind="agent", ticket=None)
+    _put(w, kind="shell")
+    assert ok(c.call("run.list", {}, grant=w.lab.ws.grant))["data"]["runs"] == []
+    for args in ({}, {"state": "all"}):
+        res = c.call("run.list", args, grant="gr_bogus.notasecret")  # an unverified grant reads as N
+        assert res["ok"] is False and res["error"]["code"] in ("op.not_allowed", "grant.required", "grant.expired")
+    res = c.call("run.sub", {}, grant="gr_bogus.notasecret")
+    assert res["ok"] is False
+
+
+def test_hello_reports_naming_another_workspace_are_not_reports(w, rstate, tmp_path):
+    """The runner reports a run of this host under another workspace id: the host does not take it as evidence."""
+    hub = w.h.host.runners
+    run = _put(w, state="starting")
+    sock, _ = _hello(w.h.host.runner_path)
+    try:
+        rep = {"run": run, "workspace_id": "f" * 32, "state": "running", "pid": 1}
+        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello",
+                                    "args": {"version": "t", "generation": 1, "runs": [rep]}}))  # fmt: skip
+        wait_for(lambda: hub.store.records[run]["state"] != "starting")
+        assert hub.store.records[run]["state"] == "lost"  # not reported for its own workspace: lost, never running
+    finally:
+        sock.close()
+
+
+def test_host_stop_keeps_a_surviving_leader_running(w):
+    hub = w.h.host.runners
+    run = _put(w)
+
+    async def survived(cmd, args, timeout=None):
+        return {"state": "running", "cleanup": "incomplete"}
+
+    hub.command = survived  # what the runner answers when even SIGKILL did not end the leader
+    assert w.h.run(hub.stop(run, 100)) == {"state": "running", "cleanup": "incomplete"}
+    rec = hub.store.records[run]
+    assert rec["state"] == "running" and rec["cleanup"] == "incomplete" and rec["exit"] is None
+
+
+def test_runner_peer_cannot_call_client_ops(w):
+    sock, _ = _hello(w.h.host.runner_path)
+    try:
+        for i, op in enumerate(("run.list", "whoami", "new", "host.list")):
+            sock.sendall(frames.encode({"t": "req", "id": f"x{i}", "op": op, "args": {}}))
+        dec, got = frames.Decoder(), []
+        while len(got) < 4:
+            got += dec.feed(sock.recv(65536))
+        assert all(f["ok"] is False and f["error"]["code"] == "unknown_command" for f in got)
+    finally:
+        sock.close()

@@ -389,6 +389,8 @@ class RunnerHub:
             if rec.get("runner_uid") != self.uid:
                 continue
             rep = reported.get(run)
+            if rep is not None and rep.get("workspace_id") not in (None, rec.get("workspace_id")):
+                rep = None  # a report that names another workspace is no report about this run
             if rec.get("state") in LIVE:
                 await self._apply(rec, rep, previous_generation=previous)
                 reconciled += 1
@@ -533,12 +535,15 @@ class RunnerHub:
         res = await self.command("stop", {"run": run, "grace_ms": grace_ms}, timeout=grace_ms / 1000 + 10)
         cur = self.store.records[run]
         cleanup = res.get("cleanup") if res.get("cleanup") in ("complete", "incomplete", "unknown") else "unknown"
-        if cur.get("state") in LIVE or cur.get("cleanup") is None:
-            new = {**cur, "cleanup": cleanup}
-            if cur.get("state") in LIVE:
-                new.update(state="exited", exit=cur.get("exit") or _exit("stopped"))
+        # the runner's word decides whether the leader ended: a leader that survived the stop stays running
+        ended = res.get("state") in ("exited", "lost")
+        new = {**cur, "cleanup": cleanup}
+        if ended and cur.get("state") in LIVE:
+            new.update(state="exited", exit=cur.get("exit") or _exit("stopped"))
+        if new != cur:
             await self._save(new)
-        return {"state": "exited", "cleanup": cleanup}
+        state = new.get("state")
+        return {"state": "exited" if state not in LIVE else "running", "cleanup": cleanup}
 
     async def attach_allow(self, run: str, person: str, mode: str, *, lease_gen: int = 0) -> dict[str, Any]:
         """Mint a single-use attach ticket (D-P2-25) and register its hash at the runner. Returns ``{att, ticket,
@@ -569,10 +574,13 @@ class RunnerHub:
 
     # -- reads
     def visible(self, rec: dict[str, Any], column: str, person: str) -> bool:
-        """P: the caller person's runs; G: that person's agent runs (ticket visibility is checked by the caller)."""
+        """P: the caller person's runs; G: that person's agent runs on a ticket (the ticket's visibility to the grant's
+        person, i.e. the grant's reach, is checked by the caller); N and every other column: nothing."""
         if rec.get("person") != person:
             return False
-        return column == "P" or (column == "G" and rec.get("kind") == "agent")
+        if column == "P":
+            return True
+        return column == "G" and rec.get("kind") == "agent" and bool(rec.get("ticket"))
 
     def runner_state(self, workspace_id: str) -> dict[str, Any]:
         from orch.runner import enablement
@@ -641,7 +649,7 @@ class RunnerHub:
                     self.end_sub(sub, reason)
                     return
                 shown = self.visible(rec, sub.column, sub.person)
-                if shown and sub.column == "G" and rec.get("ticket"):
+                if shown and rec.get("ticket"):
                     shown = await asyncio.wrap_future(service.submit(_ticket_visible, service, sub, rec["ticket"]))
                 if shown:
                     item = {"id": f"{rec['rev']}.r", "t": "run", "run": view(rec)}
@@ -664,11 +672,11 @@ class RunnerHub:
 
 
 def _ticket_visible(service: Any, sub: RunSub, key: str) -> bool:
-    """On the worker thread: may the grant of ``sub`` see ticket ``key`` now?"""
+    """On the worker thread: may the person of ``sub`` (P, or G's grant person) see ticket ``key`` now?"""
     from .visibility import Viewer
 
     try:
-        Viewer("G", sub.person).ticket(service.store, key)
+        Viewer(sub.column, sub.person).ticket(service.store, key)
         return True
     except Exception:  # noqa: BLE001 - not visible, or not checkable: not shown
         return False
@@ -728,7 +736,7 @@ def serve(call: Call) -> dict[str, Any]:
     for rec in records:
         if rec.get("workspace_id") != service.workspace_id or hub is None or not hub.visible(rec, column, person):
             continue
-        if rec.get("ticket") and column == "G":
+        if rec.get("ticket"):  # P and G: a run on a ticket the caller's person cannot see is not shown (F6)
             try:
                 viewer.ticket(service.store, rec["ticket"])
             except HostError:

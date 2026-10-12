@@ -186,10 +186,11 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `text/1` | `ticket.text` (1) (v1.5) | workspace |
 | `sub_ext/1` | no ops of its own (v1.5): `sub.open` accepts `detail` (§0.9) | workspace |
 | `artifact_query/1` | `artifact.query` (1) (v1.5, later than H6b) | workspace |
-| `diff_ext/1` | `commit.list` (1); `diff` accepts `head` and `base` (v1.5, later than H6b) | workspace |
+| `diff_ext/1` | `commit.list` (1); `diff` accepts `since`, `head` and `base` (v1.5, later than H6b). H6c lists the cap and serves the `diff` arguments only: a client checks `welcome.ops` for `commit.list` | workspace |
 | `refusals/1` | `session.refusals` (1) (v1.5, later than H6b) | workspace |
 | `activity/1` | `activity.list` (1) | workspace |
 | `diff/1` | `diff`, `artifact.get` (1) | workspace |
+| `quick/1` | `quick.list` (1) (H11f) | workspace |
 | `human/1` | `human.prepare`, `human.get`, `human.submit`, `human.pending`, `human.cancel` (1) | workspace |
 | `sub/1` | `sub.open`, `sub.close` (1) | workspace |
 | `blob/1` | `blob.put`, `blob.drop` (1) | workspace |
@@ -459,6 +460,7 @@ drops. The host never sends it.
 | `activity.list` | `page.expired`, `not_found` (`ticket`), `invalid.input` (a `page` token used with other arguments than the first page's; `ticket` with `scope:"workspace"`; `since` after `until`) |
 | `diff` | `not_found`, `observe.unavailable`, `repo.remote_mismatch` |
 | `artifact.get` | `not_found` |
+| `quick.list` (H11f) | `page.expired` (a `page` token that is not a live token of this caller: the same as `ticket.query`), `invalid.input` (a valid token with other arguments than the first page's, any other key, `dry_run`), `blob.invalid` (`files`), `quota.host` (one `diff` or `quick.list` in flight per caller, and the host-wide diff cap, shared with `diff`), `observe.unavailable` (only when the reader phase hangs past its budget plus 5 s); a count the reader cannot give is `null`, not an error |
 | `workspace.settings` (v1.5) | `page.expired`, `invalid.input` (a `page` token with other arguments) |
 | `ticket.text` (v1.5) | `not_found` (ref, `seq`, a field the event does not have, or an `event_id` that is not the event at `seq`), `ambiguous_ref`, `invalid.input` (`offset` past the text or not on a scalar-value boundary; `offset > 0` without `event_id`) |
 | `artifact.query` (v1.5) | `page.expired`, `not_found` (`ticket`), `invalid.input` (a `page` token with other arguments, including `counts`) |
@@ -1010,13 +1012,13 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
      is a head with no parent.
   An optional `since:"my_approval"` argument instead diffs from the newest **code-gate approve** decision by the
   caller whose signed `source_sha` names this repo identity and is an ancestor of head (`base_source:"approved"`);
-  without such a decision it is `not_found`. A verdict's `source_sha` is never a base.
+  without such a decision it is `not_found`. A verdict's `source_sha` is never a base. (As built in H6c: see below.)
 - `sources[]` also carries `commits:[{sha, subject}]` for `base..head` (newest first, at most 50, `commits_more:int`),
   as display only; subjects are cleaned of control and bidi characters.
 - A client that prompts for a code approval shows, per repo, `base_sha`, `base_source`, `base_moved` when non-zero,
   and the commit list. The approval itself still signs only the head `source_sha` (D58); the diff is a display.
 - **H3b1 implements** `local_ref` and `first_parent` (`base_moved` is always 0) and the commit list. `host_pinned`
-  and `since:"my_approval"` are follow-ups (§9 Q9). A base the caller chose (`declared`, a later option) is never the
+  and `since:"my_approval"` were follow-ups (§9 Q9), built in H6c ("As built in H6c" below). A base the caller chose (`declared`, a later option) is never the
   approval screen's default: the approving client shows it with its sha and whether it is an ancestor of head, and
   the signing path never takes a base from the agent's side.
 - **Served** on the workspace socket since the H3b1 follow-up (`orch.host.diff`, after H10a wired the reader): the
@@ -1025,7 +1027,43 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
   children stay free for `show`, observe and the tree checks (else `quota.host`), 30 s for all repos of one request,
   and the ticket's visibility checked again before the answer. A reader's reason (it may name a host path) reaches only a person-class owner or maintainer;
   everyone else gets `repo <name>: not readable`. Until `since` lands it is an unknown key there (`invalid.input`,
-  §0.3).
+  §0.3). Since H6c `since`, `head` and `base` are served as well.
+- **As built in H6c** (`diff` only; additive, the result shape is unchanged; `commit.list`, `session.refusals` and
+  `artifact.query` of the H6c row are separate work):
+  1. **`host_pinned`.** Only a call of column P (a person) records a pin; G and N never do. The host keeps `{ticket uid: {repo identity: sha}}` in `hosts/<workspace>/diff-bases.json`
+     (0600, atomic replace, at most 20 000 entries). A served `diff` records the local merge base of the observed head
+     the first time it sees a (ticket, identity); a recorded base is never replaced. While it is an ancestor of the head
+     **and of the current tip of the default branch** (else it is ignored: an agent that moved the default branch, got a
+     pin recorded and moved it back must not hide its commits) it is the base (`base_source:"host_pinned"`), and `base_moved` is the number of commits between it and the current
+     local merge base (0 when there is none). A pin that is gone from the repo or is no ancestor is ignored (the
+     rules fall through to `local_ref`). Because the first diff pins the then-current merge base, a later diff of a host
+     answers `host_pinned` where direct mode, which keeps no host state, answers `local_ref`. P3 replaces first
+     observation with a base pinned at claim.
+  2. **`since:"my_approval"`.** The plan phase (worker thread) lists the source entries of the caller's own `code`
+     approvals, newest first (`approvals_of`); the reader keeps those whose repo identity is the observed one and takes
+     the newest that is an ancestor of the head (`base_source:"approved"`, `base_moved` 0). Only the caller's person
+     counts: a grant (G) acts for its grant's person, N (no-person) has none, and another person's approval is never
+     read. An approval is used only while its person is still a member, its decision is not voided, and its signing
+     device is that person's own, present and not revoked (nor flagged on a settled ticket). The newest approval that
+     fails this ends the search: an older approval never replaces it. A push or a change request that raised the gate's
+     generation does **not** disqualify an approval (that is exactly the "what changed since I approved" case).
+     Answer without a usable approval, or none that is an ancestor of the head: `not_found`, "no approval of yours covers
+     this repo's history". A verdict's `source_sha` is never read.
+  3. **`head`, `base`** (cap `diff_ext/1`, listed since H6c; `welcome.ops` lists `diff` only, `commit.list` is not
+     served). 40 or 64 lowercase hex only; `repo` required; `since` with either is `invalid.input`. The plan phase
+     passes the ticket's last 100 `branch.pushed` events of the repo name; the reader keeps those with the observed
+     identity (a `before` also needs its own identity and the push's ref). Root heads are the observed head and at most
+     20 qualifying pushed heads that exist; each root's range is `default base..root` by the section 0.8 rule
+     (including `host_pinned`). A `head` must lie in a range (at most 10 000 commits in all, else refused). A `base`
+     must be an ancestor of the selected head and one of: the base of a range holding the head (labelled by that
+     rule), the head's first parent (`first_parent`), a qualifying pushed `sha` or `before.sha` (`pushed`). Everything
+     else, existing or not, is `not_found` with one fixed message ("<repo>: not found for this ticket").
+  4. **Limits and rechecks are unchanged and shared**: one diff per principal, `MAX_CHILDREN - 2` host-wide, 30 s for the
+     request, and the phase-3 recheck on success and on error. For `since` the recheck resolves the approvals again
+     from the refreshed store and refuses (`not_found`, the "no approval" text) when they differ from the ones used;
+     an exception while rechecking refuses too (the transport answers `internal`, never the diff).
+  5. **Left out of H6c**: `commit.list` and `diff` combining several bases in one call, the P3 base pinned at claim,
+     rename detection, and a `host_pinned` base in direct mode (no host state there).
 - **Too large to diff.** A file whose side is over 8 MiB or 200 000 lines, or that would take the request past
   1 000 000 diffed lines (both sides of every file), is not diffed as text: its `files` entry has `too_large:true`,
   `binary:true`, `add` and `del` 0, and `unified` carries `diff --git a/<p> b/<p>` followed by
@@ -1541,6 +1579,51 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 6. **Run directory.** `ORCH_HOST_RUN_DIR` when set, else the service run directory when a host serves there, else
    `<state>/run`. It says only where to look and is not a trust input: the registry or the pin and the handshake decide
    whom the socket may belong to.
+
+**As built in H11f** (quick tasks, addon #308, D-P2-35; additive, cap `quick/1`, no new event type and no new store):
+
+1. **A quick task is a ticket** with `type: chore` and the label `quick`. Nothing records "quick" except that label, so
+   claims, grants, evidence, visibility, approval gates and the log work unchanged, and a task that outgrows the idea is
+   made an ordinary ticket by removing the label (`orch set KEY labels=…`).
+2. **`quick.list`** (read; columns P, G and N, like `ticket.query`: N sees `workspace` tickets only; registry op in the
+   CLI, so `orch describe quick.list` documents it) takes `{status?:[Status], limit?:int 1..200 = 100, page?:str,
+   max_commits?:int 1..100 = 1, max_files?:int 1..1000 = 3}` and answers `{rows, next_page, total}`. The limits are
+   flat arguments instead of the draft's `limits{}` object so the CLI can spell them (`--max-commits`, `--max-files`).
+   - On the host the rows are `ticket.query {label:["quick"], sort:"key", order:"desc"}` for the same viewer (one
+     code path: restricted tickets are never listed or counted, a later page rebuilds from the current state, closed
+     tickets only when `status` asks) and each carries `quick: {commits, files, over}`. Direct mode returns the same
+     fields minus the ones only the host's `ticket.query` rows have (`gates`, `needs`, `claim`, ...); its `page` token
+     is an offset (`o:<n>`), the host's is the opaque `ticket.query` token. Text and `--json` of the CLI are the same
+     in both modes except for the token and those extra row fields.
+   - `commits` and `files` come from the ticket's linked branches (the `diff` plan and reader, `context 0`: every
+     commit of `base..head` per linked repo including `commits_more`, and the changed files). `null` for all three
+     (`over` too) when the ticket links no repo, has no branch or working copy, or the reader fails or is out of time:
+     the numbers are a display and never an error. `over` is `commits > max_commits or files > max_files`; **the limits
+     are display only**, nothing refuses a quick task that is over them.
+   - The host answers in the three phases of `diff` (worker thread: rows and plans; reader executor: at most 20 s for
+     all rows together, one in flight per principal shared with `diff` and counted in the host-wide diff cap, so
+     `quota.host` when a diff or list of the same caller is running; worker thread again: column and visibility
+     re-checked, a row hidden meanwhile is dropped from the page and `total` is reduced by the rows dropped **on this
+     page only**: a ticket on another page hidden during the read stays counted until the next call). Direct mode has
+     the same 20 s total budget for its reader calls, and answers a bad `page` token `invalid.input`. `welcome.ops` lists `quick.list` at 1 and `welcome.caps` lists `quick/1`.
+3. **`orch quick add "TITLE"`** is a CLI composite, not an operation: `new TITLE --type chore`, then `set KEY
+   labels=quick`, each an ordinary call in direct or host mode (one title, one line, 1 to 120 characters, else
+   `invalid.input`). It prints `ok KEY quick.add created|labelled seq=N` (or the `--json` envelope with `{key, title,
+   type, labels, created}`). The draft's single-request person click flow (host spec §9 Q8) stays open: the dashboard
+   signs `new` and then `set`.
+4. **A failure between the two steps** leaves an ordinary chore ticket and answers the new catalog code
+   **`quick.unlabelled`** (exit 9, retryable; the message names the key, the step's own code and the manual fix
+   `orch set KEY labels=quick`). Running the same `quick add` again labels that ticket instead of creating a second
+   one. It adopts a ticket only when **all** hold: it is among the 50 newest, an exact title match, a `chore` with no
+   label, no claim and exactly one event (`ticket.created`); that event's actor is the caller's own (an agent with the
+   same grant id and the same session as the call, read from `show KEY --log --json`, whose `ticket.created` object
+   now carries `{at, actor:{kind, for, grant, session}}`); and it was created within the last 10 minutes. Anything else
+   (another person's or another grant's or session's chore, an older one) is never taken: a new ticket is made. Within
+   the CLI's own 15-minute dedup window an identical `new` in the same session is answered from its record, so a retry
+   of the whole command may also come back through that path with the same key. `quick.unlabelled` is raised by the
+   CLI only (no operation declares it).
+5. **Not built:** the quick-tasks addon manifest and its owner `needs` rule (manifest-only addons are D-P2-36 and
+   belong to the addon runner work) and the dashboard UI.
 
 **As built in H7** (host mode on by default for registered workspaces, phase 1, tier A):
 
@@ -2813,6 +2896,13 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     `hello.ops`); a committed person request's `Result` keeps the inner op's `lines`.
     **Release note:** an older CLI (H4b, before H7) does not list `task.done` in its hello, so this host refuses its
     `orch task done` with `op.unsupported` ("served at version 2, not 1"); update the CLI. Every other op still works.
+17. **H11f (additive):** cap `quick/1` and op `quick.list` (read, columns P, G and N); no new event type, no new store
+    (see "As built in H11f"). Catalog code `quick.unlabelled` (CLI only).
+
+15. **H6c (additive, `diff` only):** `diff` serves `since:"my_approval"` and, under `diff_ext/1` (now listed in
+    `welcome.caps`), `head` and `base`; `sources[].base_source` may be `host_pinned`, `approved` and `pushed`. No new
+    error code: an unusable approval or an unauthorized `head`/`base` is `not_found`. See "As built in H6c" in §0.8.
+
 18. **Durable click-sign records (H5c follow-up, additive, client-side only):** the click signer writes and syncs a
     per-request record of the signed events and submit idem before a signature leaves it, so it signs at most once per
     `(request_id, view_digest)` across crashes and restarts (§0.8.6 item 5, "Durable sign records"). New
@@ -3477,7 +3567,7 @@ dispatch is turned on.
      nothing from the workspace log for `no-person`).
    - `diff` with several heads or bases per repo, and commits (F1 stores only `branch.pushed`).
 9. **H3b1 follow-ups (#381 reviews).**
-   - **`host_pinned` base** (§10 entry 6, hole 4): the host keeps the first-seen merge base per (ticket uid, repo
+   - **`host_pinned` base** (built in H6c, §0.8) (§10 entry 6, hole 4): the host keeps the first-seen merge base per (ticket uid, repo
      identity) in its state dir (0600, never moved forward automatically) and reports `base_moved`. P3 replaces
      first observation with a base pinned at claim.
    - **`since:"my_approval"`** (holes 1, 2): only the caller's own code-gate approve decisions, in the dispatcher

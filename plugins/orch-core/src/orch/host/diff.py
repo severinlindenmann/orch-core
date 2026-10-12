@@ -23,16 +23,26 @@ reader's reason can name a host path (``/Users/…/proj/.git does not exist``); 
 to a person-class owner or maintainer (:attr:`Viewer.manager`), so every other caller gets ``repo <name>: not
 readable`` and the reason goes to the host log only.
 
-**Not here:** ``since:"my_approval"`` and the ``host_pinned`` base (§9 Q9 follow-ups), and v1.5 ``head``/``base``
-(``diff_ext/1``, H6c): each is an unknown key, so ``invalid.input`` (§0.3).
+**H6c additions** (all optional keys, the result shape unchanged):
+
+* ``since:"my_approval"``: the base is the newest still-counting ``code`` approval **of the caller's own person**
+  (never another person's, never a verdict) whose signed ``source_sha`` names this repo identity and is an ancestor of
+  the head (``base_source:"approved"``); none is ``not_found``.
+* ``head`` / ``base`` (``diff_ext/1``): object ids, ``repo`` required, ``since`` excludes them (``invalid.input``);
+  authorized by the reader from the ranges the host derives itself (§0.8.5), else ``not_found``.
+* the ``host_pinned`` base: :class:`BaseStore` keeps the first merge base the host saw per (ticket uid, repo
+  identity) in the state directory (0600) and never moves it forward.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -51,6 +61,7 @@ __all__ = [
     "IN_FLIGHT",
     "MAX_DIFFS",
     "SCHEMA",
+    "BaseStore",
     "VALIDATOR",
     "Pending",
     "prepare",
@@ -71,6 +82,9 @@ SCHEMA = {
         "repo": {"type": "string", "minLength": 1, "maxLength": 200},
         "context": {"type": "integer", "minimum": 0, "maximum": 10},
         "max_bytes": {"type": "integer", "minimum": 1024, "maximum": 1048576},
+        "since": {"const": "my_approval"},
+        "head": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+        "base": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
     },
     "required": ["ref"],
     "additionalProperties": False,
@@ -106,6 +120,58 @@ class InFlight:
 
 IN_FLIGHT = InFlight()
 
+#: first-seen merge bases kept per workspace: at most this many (ticket, repo identity) entries; past it a new one is
+#: simply not recorded (the diff then reports ``local_ref`` as before)
+BASES_MAX = 20_000
+
+
+class BaseStore:
+    """The ``host_pinned`` bases (§0.8, §9 Q9): ``{ticket uid: {repo identity: sha}}`` in a 0600 file of the host's
+    state directory. The first merge base seen for a (ticket, identity) is kept and never replaced; an unreadable
+    file reads as no pins (the diff then shows the local base, labelled so) and is not overwritten."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self._mu = threading.Lock()
+
+    def _read(self) -> dict[str, dict[str, str]] | None:
+        try:
+            doc = json.loads(self.path.read_text("utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError):
+            return None
+        if not isinstance(doc, dict):
+            return None
+        return {
+            u: {r: v for r, v in m.items() if isinstance(r, str) and isinstance(v, str)}
+            for u, m in doc.items()
+            if isinstance(u, str) and isinstance(m, dict)
+        }
+
+    def get(self, uid: str) -> dict[str, str]:
+        with self._mu:
+            return dict((self._read() or {}).get(uid, {}))
+
+    def record(self, uid: str, identity: str, sha: str) -> None:
+        """Keep ``sha`` as the base of (``uid``, ``identity``) unless one is kept already."""
+        with self._mu:
+            doc = self._read()
+            if doc is None or sum(map(len, doc.values())) >= BASES_MAX:
+                return
+            mine = doc.setdefault(uid, {})
+            if any(r.lower() == identity.lower() for r in mine):
+                return
+            mine[identity] = sha
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(doc, sort_keys=True))
+                os.replace(tmp, self.path)
+            except OSError:
+                LOG.warning("diff: the host-pinned bases could not be written")
+
 
 @dataclass(frozen=True)
 class Pending:
@@ -118,6 +184,12 @@ class Pending:
     max_bytes: int
     #: may see repo paths in messages (person-class owner or maintainer, §0.8.5)
     manager: bool
+    since: bool = False
+    head: str | None = None
+    base: str | None = None
+    #: records the first merge base seen for (ticket, repo identity); host mode only
+    bases: BaseStore | None = None
+    uid: str = ""
 
 
 def prepare(call: Call, args: dict[str, Any]) -> Pending:
@@ -131,12 +203,27 @@ def prepare(call: Call, args: dict[str, Any]) -> Pending:
     view = viewer.ticket(store, args["ref"])  # not_found for a ticket the viewer may not see (F6)
     Viewer.linked_repo(view, args.get("repo"))  # not_found for a repo the ticket does not link
     caps = service.caps_for(call.principal)  # pins kept by the service; reader children under the caller (F10)
+    since, head, base = args.get("since") == "my_approval", args.get("head"), args.get("base")
+    if since and (head is not None or base is not None):
+        raise HostError("invalid.input", "diff: since cannot be combined with head or base")
+    if (head is not None or base is not None) and args.get("repo") is None:
+        raise HostError("invalid.input", "diff: head and base need repo")
+    bases = BaseStore(service.state_dir / "hosts" / service.workspace_id / "diff-bases.json")
     try:
-        jobs = diff_plan(store, view, caps, repo=args.get("repo"))
+        jobs = diff_plan(
+            store,
+            view,
+            caps,
+            repo=args.get("repo"),
+            person=viewer.person,
+            since=since,
+            extended=head is not None or base is not None,
+            pins=bases.get(view.uid),
+        )
     except OrchError as e:  # no branch, no working copy: path-free messages
         raise HostError(e.code, e.message) from None
     context, max_bytes = args.get("context", 3), args.get("max_bytes", 262144)
-    return Pending(call.principal, caps, jobs, context, max_bytes, viewer.manager)
+    return Pending(call.principal, caps, jobs, context, max_bytes, viewer.manager, since, head, base, bases, view.uid)
 
 
 def run(pending: Pending) -> dict[str, Any]:
@@ -144,8 +231,17 @@ def run(pending: Pending) -> dict[str, Any]:
     from orch.ops.diff_core import RepoReadError, diff_run
 
     try:
+        bases = pending.bases
         return diff_run(
-            pending.caps, pending.jobs, context=pending.context, max_bytes=pending.max_bytes, budget=BUDGET_S
+            pending.caps,
+            pending.jobs,
+            context=pending.context,
+            max_bytes=pending.max_bytes,
+            budget=BUDGET_S,
+            since=pending.since,
+            head=pending.head,
+            base=pending.base,
+            pin_base=None if bases is None else lambda job, ident, sha: bases.record(pending.uid, ident, sha),
         )
     except RepoReadError as e:
         if e.code != "observe.unavailable" or pending.manager:

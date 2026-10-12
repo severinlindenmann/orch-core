@@ -3,7 +3,7 @@ from the declared ``remote`` (``repo.remote_mismatch``, F7)."""
 
 from __future__ import annotations
 
-__all__ = ["Busy", "RemoteMismatch", "Unavailable"]
+__all__ = ["Busy", "NotFound", "RemoteMismatch", "Unavailable"]
 
 
 class Unavailable(Exception):
@@ -24,3 +24,10 @@ class Busy(Unavailable):
     """Too many reads waiting for a reader child (section 0.11: queue bounds); retryable."""
 
     code = "quota.host"
+
+
+class NotFound(Unavailable):
+    """A ``head``, ``base`` or ``since`` the ticket's authorized history does not contain (H6c). The reason is fixed text:
+    a commit that does not exist and one that exists outside the authorized ranges read alike."""
+
+    code = "not_found"

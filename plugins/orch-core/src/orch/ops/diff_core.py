@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import base64
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,11 +47,66 @@ class RepoJob:
     path: Path
     default_branch: str | None
     remote: str | None
+    #: H6c, from the store: the ticket's ``branch.pushed`` entries of this repo name (newest first), the caller's own
+    #: still-counting code approvals' source entries (newest first), and the host-pinned bases of this ticket
+    pushes: tuple[Any, ...] = field(default=(), compare=False)
+    approvals: tuple[Any, ...] = field(default=(), compare=False)
+    pins: tuple[Any, ...] = field(default=(), compare=False)
 
 
-def diff_plan(store: Any, view: Any, caps: Any, *, repo: str | None = None) -> list[RepoJob]:
+PUSHES_MAX = 100
+
+
+def approvals_of(view: Any, person: str | None) -> list[dict[str, str]]:
+    """``{repo, sha}`` of every source entry signed by a ``code`` approval of ``person`` (the caller's own: never
+    another person's, never a verdict), newest decision first. A new push voids an approval, which is exactly when a
+    reviewer asks "what changed since I approved", so a voided or superseded approval still names its commit; one
+    of a since-revoked device is left out. ``person`` ``None`` (no-person) has none."""
+    gate = view.gates.get("code")
+    if person is None or gate is None:
+        return []
+    out = []
+    for d in reversed(gate.decisions):
+        if d.kind == "approve" and d.person == person and d.source_sha and d.id not in gate.revoked_decisions:
+            out += [{"repo": s["repo"], "sha": s["sha"]} for s in d.source_sha]
+    return out[:64]
+
+
+def pushes_of(store: Any, view: Any, name: str) -> list[dict[str, Any]]:
+    """The ticket's ``branch.pushed`` events for the linked repo ``name``, newest first (at most
+    :data:`PUSHES_MAX`), as the reader's authorization input."""
+    out = []
+    for e in reversed(store.events(view.uid)):
+        if e["type"] == "branch.pushed" and e.get("repo_name") == name:
+            b = e.get("before")
+            out.append(
+                {
+                    "repo": e["repo_id"],
+                    "ref": e["ref"],
+                    "sha": e["sha"],
+                    "before": None if not isinstance(b, dict) else {"repo": b["repo_id"], "ref": b["ref"], "sha": b["sha"]},
+                }
+            )
+            if len(out) >= PUSHES_MAX:
+                break
+    return out
+
+
+def diff_plan(
+    store: Any,
+    view: Any,
+    caps: Any,
+    *,
+    repo: str | None = None,
+    person: str | None = None,
+    since: bool = False,
+    extended: bool = False,
+    pins: Any = (),
+) -> list[RepoJob]:
     """The store part: which repos, on which branch, where. ``not_found`` for a repo the ticket does not link;
-    ``observe.unavailable`` for one without a branch or a working copy."""
+    ``observe.unavailable`` for one without a branch or a working copy. ``since`` (``"my_approval"``) loads the
+    approvals of ``person``; ``extended`` (``head``/``base``) the ticket's pushes; ``pins``: ``{repo_id: sha}``
+    host-pinned bases of this ticket (host mode)."""
     links = view.fields["links"]
     repos = store.state.workspace.repos
     names = sorted(links["repos"])
@@ -67,16 +123,38 @@ def diff_plan(store: Any, view: Any, caps: Any, *, repo: str | None = None) -> l
         if path is None:
             raise OrchError("observe.unavailable", f"{name}: no working copy in settings.repos")
         spec = repos[name]
-        jobs.append(RepoJob(name, branch, path, spec.get("default_branch"), spec.get("remote")))
+        jobs.append(
+            RepoJob(
+                name,
+                branch,
+                path,
+                spec.get("default_branch"),
+                spec.get("remote"),
+                tuple(pushes_of(store, view, name)) if extended else (),
+                tuple(approvals_of(view, person)) if since else (),
+                tuple({"repo": r, "sha": v} for r, v in sorted(dict(pins).items())),
+            )
+        )
     return jobs
 
 
 def diff_run(
-    caps: Any, jobs: list[RepoJob], *, context: int = 3, max_bytes: int = 262144, budget: float | None = None
+    caps: Any,
+    jobs: list[RepoJob],
+    *,
+    context: int = 3,
+    max_bytes: int = 262144,
+    budget: float | None = None,
+    since: bool = False,
+    head: str | None = None,
+    base: str | None = None,
+    pin_base: Callable[[RepoJob, str, str], None] | None = None,
 ) -> dict[str, Any]:
     """The reader part: ``caps.git.diff`` per job, combined. ``budget``: seconds for every repo together (host
-    mode: each reader call gets what is left; none left is ``observe.unavailable``)."""
-    from orch.gitread.errors import Busy, RemoteMismatch, Unavailable
+    mode: each reader call gets what is left; none left is ``observe.unavailable``). ``since`` / ``head`` / ``base``:
+    the H6c arguments (one repo, checked by :func:`check_ext`). ``pin_base(job, repo_id, sha)``: host mode records the
+    first merge base it sees for a repo identity of this ticket (``host_pinned``)."""
+    from orch.gitread.errors import Busy, NotFound, RemoteMismatch, Unavailable
     from orch.ops.caps import CapabilityDenied
 
     deadline = None if budget is None else time.monotonic() + budget
@@ -92,6 +170,19 @@ def diff_run(
             if left <= 0:
                 raise RepoReadError("observe.unavailable", name, f"the diff took longer than {budget:g} s")
             extra["wall"] = left
+        ext: dict[str, Any] = {}
+        if since or head is not None or base is not None or job.pins or pin_base is not None:
+            ext = {"name": name}
+            for key, val in (
+                ("since", True if since else None),
+                ("head", head),
+                ("base", base),
+                ("pins", list(job.pins) or None),
+                ("approvals", list(job.approvals) or None),
+                ("pushes", list(job.pushes) or None),
+            ):
+                if val is not None:
+                    ext[key] = val
         try:
             got = caps.git.diff(
                 job.path,
@@ -101,14 +192,21 @@ def diff_run(
                 remote=job.remote,
                 context=context,
                 max_bytes=max_bytes,
+                **({"ext": ext} if ext else {}),
                 **extra,
             )
+        except NotFound as e:
+            raise RepoReadError("not_found", name, e.reason) from None
         except Busy as e:
             raise RepoReadError("quota.host", name, e.reason, retryable=True) from None
         except RemoteMismatch as e:
             raise RepoReadError("repo.remote_mismatch", name, e.reason) from None
         except (Unavailable, CapabilityDenied) as e:
             raise RepoReadError("observe.unavailable", name, str(getattr(e, "reason", str(e)))) from None
+        if pin_base is not None and got.get("observed_base") and not any(True for _ in _pinned(job, got)):
+            from orch.gitread.client import identity_of
+
+            pin_base(job, identity_of(got["origin_urls"], name), got["observed_base"])
         sources.append(
             {
                 "repo": name,
@@ -137,6 +235,30 @@ def diff_run(
     }
 
 
+def _pinned(job: RepoJob, got: dict[str, Any]) -> Any:
+    """The pins of this job that already name the repo identity the reader observed."""
+    from orch import canon
+    from orch.gitread.client import identity_of
+
+    ident = identity_of(got["origin_urls"], job.name)
+    return (p for p in job.pins if canon.same_repo_identity(p["repo"], ident))
+
+
+def check_ext(since: Any, head: Any, base: Any, repo: str | None) -> bool:
+    """The H6c arguments (§0.8.5): ``since`` is only ``"my_approval"`` and excludes ``head`` and ``base``; ``head`` and
+    ``base`` are object ids (hex, 40 or 64) and need ``repo``. Returns whether ``since`` was given."""
+    if since is not None and since != "my_approval":
+        raise OrchError("invalid.input", 'since must be "my_approval"')
+    for k, v in (("head", head), ("base", base)):
+        if v is not None and (type(v) is not str or len(v) not in (40, 64) or not set(v) <= set("0123456789abcdef")):
+            raise OrchError("invalid.input", f"{k} must be a full lowercase object id")
+    if since is not None and (head is not None or base is not None):
+        raise OrchError("invalid.input", "since cannot be combined with head or base")
+    if (head is not None or base is not None) and repo is None:
+        raise OrchError("invalid.input", "head and base need repo")
+    return since is not None
+
+
 def check_args(context: Any, max_bytes: Any) -> None:
     if type(context) is not int or not 0 <= context <= 10:
         raise OrchError("invalid.input", "context must be 0..10")
@@ -145,8 +267,23 @@ def check_args(context: Any, max_bytes: Any) -> None:
 
 
 def diff_result(
-    caps: Any, store: Any, view: Any, *, repo: str | None = None, context: int = 3, max_bytes: int = 262144
+    caps: Any,
+    store: Any,
+    view: Any,
+    *,
+    repo: str | None = None,
+    context: int = 3,
+    max_bytes: int = 262144,
+    since: str | None = None,
+    head: str | None = None,
+    base: str | None = None,
+    person: str | None = None,
 ) -> dict[str, Any]:
-    """Both phases in one call (direct mode, and the reference the host's split is tested against)."""
+    """Both phases in one call (direct mode, and the reference the host's split is tested against). ``person``: the
+    caller's person, for ``since="my_approval"``."""
     check_args(context, max_bytes)
-    return diff_run(caps, diff_plan(store, view, caps, repo=repo), context=context, max_bytes=max_bytes)
+    use_since = check_ext(since, head, base, repo)
+    jobs = diff_plan(
+        store, view, caps, repo=repo, person=person, since=use_since, extended=head is not None or base is not None
+    )
+    return diff_run(caps, jobs, context=context, max_bytes=max_bytes, since=use_since, head=head, base=base)

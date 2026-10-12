@@ -943,7 +943,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string }
+  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string }
 }
 
 export class ApiError extends Error {
@@ -954,6 +954,8 @@ export class ApiError extends Error {
   readonly retry_after_ms?: number
   /** `human.click_refused` and `sign.convenience_unavailable` carry the reason the UI branches on. */
   readonly reason?: string
+  /** `click.unsettled`: the request whose signature has not settled yet (re-attach to it). */
+  readonly request_id?: string
   readonly exit?: number
   constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
     super(body.message)
@@ -964,6 +966,7 @@ export class ApiError extends Error {
     this.retryable = body.retryable
     this.retry_after_ms = body.retry_after_ms
     this.reason = body.reason
+    this.request_id = body.request_id
     this.exit = exit
   }
 }

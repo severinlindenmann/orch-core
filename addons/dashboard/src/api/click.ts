@@ -39,7 +39,7 @@ export interface ClickViewAnswer {
 }
 
 /** Where a request stands at the host (read by the server through its own link). */
-export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired'
+export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired' | 'unknown'
 
 export interface ClickSigned {
   state: 'submitted'
@@ -102,6 +102,12 @@ const REFUSED: Record<string, ClickProblem> = {
   uncertain: { title: 'The outcome is not certain yet', body: 'The signature may or may not have reached the host. It settles by itself; do not sign again until this says it is settled.', next: 'check' },
 }
 
+/**
+ * A sign whose outcome the browser cannot know: the answer was lost (a failed fetch) or came from a server that failed
+ * without saying anything (5xx, no catalog body). The signature may be at the host: wait for it, never offer a second one.
+ */
+export const unknownOutcome = (e: unknown): boolean => !(e instanceof ApiError) || (e.status >= 500 && e.exit === undefined)
+
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */
 export function clickProblem(e: unknown): ClickProblem {
   if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again, or sign in the terminal instead.', next: 'retry' }
@@ -110,6 +116,8 @@ export function clickProblem(e: unknown): ClickProblem {
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable':
       return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'} Sign in the terminal instead.`, next: 'terminal' }
+    case 'click.unsettled':
+      return { title: 'The last signature of this is not settled', body: 'It settles by itself. This shows its state until it does.', next: 'check' }
     case 'sign.convenience_readers':
       return { title: 'This would add a reader', body: e.message, next: 'terminal' }
     case 'rate.limited':

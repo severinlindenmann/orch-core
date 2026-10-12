@@ -122,6 +122,13 @@ export function HandoffDialog(p: HandoffDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [click.switched])
 
+  useEffect(() => {
+    if (!click.leftUnsettled) return
+    toast(`${p.title}: you switched workspace while its signature is not settled. Check the ticket before signing it again.`)
+    p.onClose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [click.leftUnsettled])
+
   const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
   const open = phase === 'preparing' || phase === 'waiting' || clickLive
   useEffect(() => {
@@ -220,6 +227,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
             <div>
               <p className="font-medium text-text">The outcome is not certain yet</p>
               <p className="text-text-muted">The signature may already be at the host. It settles by itself; this updates when it does. Do not sign again.</p>
+              {click.settleNote && <p data-testid="click-settle-note" className="mt-1 text-text">{click.settleNote}</p>}
             </div>
           </div>
         )}

@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { getToken } from '@/api/bootstrap'
-import { CLICK_RISK, clickProblem, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
+import { CLICK_RISK, clickProblem, unknownOutcome, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { newIdem, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 
@@ -44,6 +44,10 @@ export interface ClickRun {
   reset: (keepKey?: boolean) => void
   /** The person switched workspace with a request open: it was cancelled. */
   switched: boolean
+  /** The person left (switched workspace) while a signature's outcome was unknown: nothing was cancelled. */
+  leftUnsettled: boolean
+  /** While settling: what is known about the wait (set when it can no longer be followed). */
+  settleNote: string | null
 }
 
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
@@ -63,6 +67,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const [problem, setProblem] = useState<ClickProblem | null>(null)
   const [signed, setSigned] = useState<ClickSigned | null>(null)
   const [switched, setSwitched] = useState(false)
+  const [leftUnsettled, setLeftUnsettled] = useState(false)
+  const [settleNote, setSettleNote] = useState<string | null>(null)
   const live = useRef({ phase: 'idle' as ClickPhase, prepared: null as ClickPrepared | null, ws: undefined as string | undefined })
   const attempt = useRef<{ sig: string; idem: string; token: string | null } | null>(null)
   const busy = useRef(false)
@@ -132,6 +138,16 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         if (!mounted.current) return
         // A retry of the same click keeps its key only while the failure may be a lost answer.
         if (!(e instanceof ApiError && e.retryable)) attempt.current = null
+        if (e instanceof ApiError && e.code === 'click.unsettled' && e.request_id) {
+          // The server holds a signature of this very action whose outcome is unknown: follow that one, start nothing new.
+          const open: ClickPrepared = { request_id: e.request_id, expires_at: '', op: '', confirm: 'click' }
+          live.current.prepared = open
+          live.current.ws = ws
+          setPrepared(open)
+          setProblem(clickProblem(e))
+          setPhase('settling')
+          return
+        }
         fail(e)
       } finally {
         busy.current = false
@@ -170,8 +186,9 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       } catch (e) {
         if (mounted.current) {
           fail(e, 'ready') // refusals never cancel: the request stays open
-          // An unknown outcome is waited out, never retried: the signature may already be at the host.
-          if (clickProblem(e).next === 'check') setPhase('settling')
+          // An unknown outcome (the signer's, or a lost/failed HTTP answer) is waited out, never retried or replaced:
+          // the signature may already be at the host.
+          if (clickProblem(e).next === 'check' || unknownOutcome(e)) setPhase('settling')
         }
         refetch()
       } finally {
@@ -186,8 +203,14 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     if (phase !== 'settling' || !prepared || !live.current.ws) return
     const where = live.current.ws
     let stopped = false
-    const deadline = (Date.parse(prepared.expires_at) || Date.now() + 600_000) + 30_000
-    const check = async () => {
+    setSettleNote(null)
+    const expires = Date.parse(prepared.expires_at)
+    const deadline = (Number.isNaN(expires) ? Date.now() + 600_000 : expires) + 30_000
+    const stillOpen = () => {
+      const when = Number.isNaN(expires) ? '' : ` It expires at ${new Date(expires).toLocaleTimeString()}.`
+      setSettleNote(`Still not settled.${when} Check the ticket's activity before doing anything else; nothing is offered until it settles.`)
+    }
+    const check = async (last = false) => {
       try {
         const got = await api.stateClick(where, prepared.request_id)
         if (stopped) return
@@ -203,21 +226,25 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
           setProblem({ title: got.state === 'expired' ? 'Expired' : 'Cancelled', body: 'The host says it was not signed. You can sign in the terminal instead, or prepare it again.', next: 'terminal' })
           setPhase('failed')
           refetch()
-        }
+        } else if (last) stillOpen()
       } catch (e) {
-        // The server no longer knows it (the request settled and was forgotten): the host's log is the truth.
-        if (e instanceof ApiError && e.code === 'not_found' && !stopped) {
+        if (stopped) return
+        // Not even the server can say: never present that as "nothing was signed".
+        if (e instanceof ApiError && e.code === 'not_found') {
           stopped = true
-          setProblem({ title: 'Settled', body: 'The page shows the current state of the ticket. Check it before signing again.', next: 'terminal' })
-          setPhase('failed')
+          setSettleNote("Could not confirm what happened. Check the ticket's activity before doing anything else.")
           refetch()
-        }
+        } else if (last) stillOpen()
       }
     }
     const timer = setInterval(() => {
       if (Date.now() > deadline) {
         stopped = true
         clearInterval(timer)
+        void api.stateClick(where, prepared.request_id).then(
+          (got) => (got.state === 'submitted' || got.state === 'cancelled' || got.state === 'expired' ? undefined : stillOpen()),
+          () => stillOpen(),
+        )
         return
       }
       void check()
@@ -246,6 +273,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   useEffect(() => {
     const { prepared: open, ws: where, phase: last } = live.current
     if (!open || !where || where === ws || last === 'done' || last === 'cancelled' || last === 'idle') return
+    if (last === 'settling') {
+      // Its outcome is unknown: nothing is cancelled and nothing is claimed. The server keeps it unsettled.
+      setLeftUnsettled(true)
+      return
+    }
     void api.cancelClick(where, open.request_id).catch(() => {})
     setSwitched(true)
     setPhase('cancelled')
@@ -255,6 +287,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     if (!keepKey) attempt.current = null // a new request is a new click: a new key
     live.current.prepared = null
     setSwitched(false)
+    setLeftUnsettled(false)
+    setSettleNote(null)
     setPrepared(null)
     setView(null)
     setProblem(null)
@@ -292,5 +326,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched }
+  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote }
 }

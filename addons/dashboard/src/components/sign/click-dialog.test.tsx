@@ -235,7 +235,7 @@ describe('the action dialog with click-to-sign', () => {
   }, 15000)
 
   it('Try again after the View could not be read cancels the open request first, then prepares anew', async () => {
-    c.view.mockRejectedValueOnce(new ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }))
+    c.view.mockRejectedValueOnce(new ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }, 9))
     const m = await open()
     fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     await within(m.dialog).findByTestId('click-problem', {}, T)
@@ -260,13 +260,62 @@ describe('the action dialog with click-to-sign', () => {
     expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('convenience (no presence), device d_x')
   })
 
-  it('a rate limit keeps Sign off for the time the signer names', async () => {
+  it('a rate limit keeps Sign off for the time the signer names (fake timers: no wall-clock race)', async () => {
     const { dialog } = await toPanel()
-    c.sign.mockRejectedValueOnce(new ApiError(503, { code: 'rate.limited', message: 'x', retryable: true, retry_after_ms: 1500 }))
+    c.sign.mockRejectedValueOnce(new ApiError(503, { code: 'rate.limited', message: 'x', retryable: true, retry_after_ms: 5000 }, 3))
     press(await armed(dialog))
-    await within(dialog).findByText(/Try again in 2 s/, {}, T)
-    expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeDisabled()
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeEnabled(), { timeout: 6000 })
+    await within(dialog).findByText(/Try again in 5 s/, {}, T)
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeDisabled())
+    // The clock jumps past the wait (only Date is faked); the panel's own ticker notices on its next tick.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5600 })
+    try {
+      await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeEnabled(), T)
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 20000)
+})
+
+describe('an unknown outcome never leads to a second signature', () => {
+  const settle = async (m: Awaited<ReturnType<typeof toPanel>>) => {
+    press(await armed(m.dialog))
+    return within(m.dialog).findByTestId('click-settling', {}, T)
+  }
+  it.each([
+    ['a failed fetch', () => new TypeError('Failed to fetch')],
+    ['a body-less 5xx', () => new ApiError(502, { code: 'host.unavailable', message: 'Host not available', retryable: true })],
+  ])('%s on /click/sign is an unknown outcome: settling, no terminal, no retry', async (_n, failure) => {
+    const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
+    const m = await toPanel()
+    c.sign.mockRejectedValueOnce(failure())
+    await settle(m)
+    expect(within(m.dialog).queryByRole('button', { name: /Sign in the terminal instead|Try again|^Sign$/ })).toBeNull()
+    await waitFor(() => expect(stateSpy).toHaveBeenCalled(), T)
+  }, 20000)
+
+  it('closing and reopening the same action re-attaches to the unsettled request instead of preparing a new one', async () => {
+    const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'click.unsettled', message: 'x', retryable: false, request_id: REQ }))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    await within(m.dialog).findByTestId('click-settling', {}, T)
+    await waitFor(() => expect(stateSpy).toHaveBeenCalledWith(m.ws, REQ), T)
+    expect(c.view).not.toHaveBeenCalled()
+    expect(within(m.dialog).queryByRole('button', { name: /Sign in the terminal instead|^Sign$/ })).toBeNull()
+    stateSpy.mockResolvedValue({ id: REQ, state: 'submitted' })
+    await within(m.dialog).findByText('Signed', {}, { timeout: 8000 })
+  }, 20000)
+
+  it('after the polling deadline it says so honestly and still offers nothing', async () => {
+    c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() - 120_000).toISOString(), op: 'approve', confirm: 'click' })
+    vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
+    const m = await toPanel()
+    c.sign.mockRejectedValueOnce(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'uncertain' }))
+    await settle(m)
+    const note = await within(m.dialog).findByTestId('click-settle-note', {}, { timeout: 8000 })
+    expect(note).toHaveTextContent(/Still not settled/)
+    expect(note).toHaveTextContent(/Check the ticket/)
+    expect(within(m.dialog).queryByRole('button', { name: /Sign in the terminal instead|Try again|Prepare again|^Sign$/ })).toBeNull()
   }, 20000)
 })
 

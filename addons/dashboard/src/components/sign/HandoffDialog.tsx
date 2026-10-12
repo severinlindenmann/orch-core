@@ -2,13 +2,18 @@
 // Touch ID dialog it replaces, but the dashboard does not sign: it prepares a request with the host, shows the host's
 // material, the fingerprint, the code and the exact terminal command, and follows the outcome (design 4).
 import { Loader2, ShieldCheck } from 'lucide-react'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
+import { clickEligible, clickReady } from '@/api/click'
+import { ClickRisk, ClickSignPanel } from './ClickSignPanel'
+import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
 import { Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
@@ -76,19 +81,30 @@ export function HandoffDialog(p: HandoffDialogProps) {
   })
   const { phase } = run
   const { workspaces } = useWorkspace()
-  const here = workspaces.find((w) => w.id === p.ws)
+  // The workspace's card (the signer's flag) comes from the provider, or from the list when none wraps this dialog.
+  const known = useQuery(queries.workspaces())
+  const here = workspaces.find((w) => w.id === p.ws) ?? known.data?.find((w) => w.id === p.ws)
+  // Click-to-sign (H5c): offered where the signer says the flag is on and it can sign, for the actions it serves.
+  const click = useClickSign(p.ws, (_phase, state, request) => {
+    toast.success(`${p.title}: signed`)
+    p.onSettled?.('done', state, request)
+  })
+  const canClick = clickReady(here) && clickEligible(p.action)
+  const clickOpen = click.phase !== 'idle'
+  const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
   const started = useRef(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    if (p.autoStart && p.action && !started.current && p.ws) {
+    // Not before the list of workspaces is known: whether this one offers Sign decides how the dialog starts.
+    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && !canClick) {
       started.current = true
       void run.prepare(p.action)
     }
     // Once per opening: a changed action object is not a new click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.autoStart, p.ws])
+  }, [p.autoStart, p.ws, known.isPending, canClick])
 
   // Switching workspace cancels the open request at the host; the dialog belongs to the old workspace and closes.
   useEffect(() => {
@@ -98,15 +114,40 @@ export function HandoffDialog(p: HandoffDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.switched])
 
-  const open = phase === 'preparing' || phase === 'waiting'
+  // The click request lives in this dialog too: switching workspace cancels it like the hand-off.
+  useEffect(() => {
+    if (!click.switched) return
+    toast(`${p.title}: cancelled, you switched workspace. Nothing was signed.`)
+    p.onClose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [click.switched])
+
+  const clickLive = ['preparing', 'viewing', 'ready', 'signing'].includes(click.phase)
+  const open = phase === 'preparing' || phase === 'waiting' || clickLive
   useEffect(() => {
     p.onPending?.(open)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  useEffect(() => {
+    if (click.problem?.waitMs) setWaitUntil(Date.now() + click.problem.waitMs)
+  }, [click.problem])
+
   const close = async () => {
     if (phase === 'waiting' || phase === 'invalid') await run.cancel()
+    // Only Cancel cancels. When the outcome is unknown, closing must not cancel: the signature may be on its way.
+    if (click.prepared && click.problem?.next !== 'check' && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
     p.onClose()
+  }
+  /** "Sign in the terminal instead": the click request is cancelled (the person chose), then the hand-off prepares. */
+  const terminal = async () => {
+    if (click.prepared && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
+    click.reset()
+    if (p.action) void run.prepare(p.action)
+  }
+  const prepareClickAgain = () => {
+    click.reset()
+    if (p.action) void click.start(p.action)
   }
   const again = () => {
     if (!p.action) return
@@ -116,7 +157,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
 
   return (
-    <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && void close()}>
+    <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
       <DialogContent
         data-handoff-dialog
         className="max-w-lg gap-4 border-border bg-surface"
@@ -142,11 +183,57 @@ export function HandoffDialog(p: HandoffDialogProps) {
             </p>
           )}
           <DialogDescription>
-            {phase === 'idle' ? 'You sign in your terminal. This dashboard prepares the request and never signs.' : 'Signed with your key in your terminal. Only core prepares this request; an agent or an addon cannot sign it.'}
+            {clickOpen
+              ? 'Signed with your key by core’s signing helper, only after you press Sign. An agent or an addon cannot prepare this request.'
+              : phase === 'idle'
+                ? canClick
+                  ? 'Sign here with one click, or in your terminal. Either way core prepares the request.'
+                  : 'You sign in your terminal. This dashboard prepares the request and never signs.'
+                : 'Signed with your key in your terminal. Only core prepares this request; an agent or an addon cannot sign it.'}
           </DialogDescription>
         </DialogHeader>
 
-        {phase === 'idle' && p.children}
+        {phase === 'idle' && !clickOpen && p.children}
+        {phase === 'idle' && !clickOpen && canClick && <ClickRisk />}
+
+        {(click.phase === 'preparing' || click.phase === 'viewing') && (
+          <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            {click.phase === 'preparing' ? 'Preparing the request…' : 'Reading the review…'}
+          </p>
+        )}
+
+        {(click.phase === 'ready' || click.phase === 'signing') && click.view && (
+          <ClickSignPanel
+            answer={click.view}
+            problem={click.problem}
+            signing={click.phase === 'signing'}
+            onSign={(word) => void click.sign(word)}
+            onCancel={() => void close()}
+            onTerminal={() => void terminal()}
+            waitUntil={waitUntil}
+          />
+        )}
+
+        {click.phase === 'failed' && click.problem && (
+          <div role="alert" data-testid="click-problem" data-click-next={click.problem.next} className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
+            <p className="font-medium text-text">{click.problem.title}</p>
+            <p className="text-text-muted">{click.problem.body}</p>
+          </div>
+        )}
+
+        {click.phase === 'done' && (
+          <div role="status" data-click-end="done" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
+            <p className="font-medium text-text">Signed</p>
+            <p className="text-text-muted">{p.title} is in the log.</p>
+          </div>
+        )}
+        {click.phase === 'cancelled' && (
+          <div role="status" data-click-end="cancelled" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
+            <p className="font-medium text-text">Cancelled</p>
+            <p className="text-text-muted">Nothing was signed.</p>
+          </div>
+        )}
 
         {phase === 'preparing' && (
           <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted">
@@ -190,15 +277,43 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {phase === 'waiting' && 'Waiting for your signature'}
           </span>
           <div className="flex flex-wrap gap-2">
-            {phase === 'idle' && (
+            {phase === 'idle' && !clickOpen && (
               <>
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                   Cancel
                 </Button>
-                <Button onClick={() => p.action && void run.prepare(p.action)} disabled={!p.action || !p.ws || !!p.hint}>
-                  {p.confirmLabel ?? p.title}
+                {canClick && (
+                  <Button variant="outline" onClick={() => p.action && void run.prepare(p.action)} disabled={!p.action || !p.ws || !!p.hint}>
+                    Sign in the terminal instead
+                  </Button>
+                )}
+                <Button
+                  onClick={() => (canClick ? p.action && void click.start(p.action) : p.action && void run.prepare(p.action))}
+                  disabled={!p.action || !p.ws || !!p.hint}
+                >
+                  {canClick ? 'Sign' : (p.confirmLabel ?? p.title)}
                 </Button>
               </>
+            )}
+            {click.phase === 'failed' && click.problem && (
+              <>
+                {click.problem.next === 'review' && <Button onClick={() => void click.review()}>Read the review again</Button>}
+                {click.problem.next === 'prepare' && p.action && <Button onClick={prepareClickAgain}>Prepare again</Button>}
+                {click.problem.next === 'retry' && p.action && <Button onClick={prepareClickAgain}>Try again</Button>}
+                {(click.problem.next === 'terminal' || click.problem.next === 'retry') && p.action && (
+                  <Button variant="outline" onClick={() => void terminal()}>
+                    Sign in the terminal instead
+                  </Button>
+                )}
+                <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
+                  {click.prepared ? 'Cancel' : 'Close'}
+                </Button>
+              </>
+            )}
+            {(click.phase === 'done' || click.phase === 'cancelled') && (
+              <Button ref={cancelRef} variant={click.phase === 'done' ? 'default' : 'ghost'} onClick={() => void close()}>
+                Close
+              </Button>
             )}
             {phase === 'preparing' && (
               <Button ref={cancelRef} variant="ghost" disabled>

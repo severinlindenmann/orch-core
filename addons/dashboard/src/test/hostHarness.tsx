@@ -45,6 +45,8 @@ export interface FakeWs {
   grants: HostGrant[]
   /** The title the workspace's DEMO-0001 has (two workspaces may share a key and differ in everything else). */
   title: string
+  /** What the signer says about the workspace (the server adds the `click` feature when it can sign). */
+  click?: { custody: 'convenience' | 'passphrase' | 'none'; enabled: boolean; available: boolean; problem?: string } | null
 }
 
 export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
@@ -173,6 +175,11 @@ export class FakeHost {
   workspaces: FakeWs[]
   requests = new Map<string, HandoffRequest>()
   cancelled: string[] = []
+  /** Click-to-sign: what the fake signer was asked, and the Views it shows (by request id). */
+  clickRequests = new Map<string, { op: string; confirm: 'click' | 'word' }>()
+  clickCancelled: string[] = []
+  clickSigned: Record<string, unknown>[] = []
+  clickCount = 0
   /** A route a test overrides: return undefined to fall through. */
   override?: (path: string, method: string, body?: Record<string, unknown>) => Response | undefined
 
@@ -202,7 +209,7 @@ export class FakeHost {
       return json(
         this.workspaces.map((w) =>
           w.host_state === 'ok'
-            ? { id: w.id, prefix: w.prefix, name: w.name, members: w.roster.map((m) => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: w.features }
+            ? { id: w.id, prefix: w.prefix, name: w.name, members: w.roster.map((m) => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: w.features, click: w.click ?? null }
             : { id: w.id, prefix: '', name: w.id, members: [], needs_you: null, host_state: w.host_state, features: [] },
         ),
       )
@@ -225,6 +232,41 @@ export class FakeHost {
       const request = prepare(body!)
       this.requests.set(request.id, request)
       return json(request)
+    }
+    if (rest === 'click/prepare' && method === 'POST') {
+      const request = prepare(body!)
+      const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
+      const confirm = request.op === 'policy.set' || request.op.startsWith('member.') ? 'word' : 'click'
+      this.clickRequests.set(id, { op: request.op, confirm })
+      return json({ request_id: id, expires_at: request.expires_at, op: request.op, confirm })
+    }
+    if (rest === 'click/view' && method === 'POST') {
+      const got = this.clickRequests.get(String(body?.request_id))
+      if (!got) return missing()
+      return json({
+        view_digest: 'sha256:' + '9'.repeat(64),
+        view: {
+          risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.',
+          op: got.op,
+          workspace: { id: ws.id, name: ws.name, prefix: ws.prefix },
+          fingerprint: '0123456789ab',
+          lines: [`FROM-THE-SIGNER ${got.op}`],
+          checks: [],
+          confirm: got.confirm === 'word' ? { kind: 'word', word: `${ws.prefix}~${ws.id.slice(-8)}/POLICY` } : { kind: 'click' },
+          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          auth: 'convenience',
+          device: 'd_' + '1'.repeat(32),
+          artifacts: null,
+        },
+      })
+    }
+    if (rest === 'click/sign' && method === 'POST') {
+      this.clickSigned.push(body!)
+      return json({ state: 'submitted', duplicate: false, key: 'DEMO-0001', seq: 5 })
+    }
+    if (rest === 'click/cancel' && method === 'POST') {
+      this.clickCancelled.push(`${ws.id}:${String(body?.request_id)}`)
+      return json({ id: body?.request_id, state: 'cancelled' })
     }
     const h = /^handoff\/(hr_[0-9A-Z]+)$/.exec(rest)
     if (h && method === 'GET') {

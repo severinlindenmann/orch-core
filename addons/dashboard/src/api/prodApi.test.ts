@@ -91,3 +91,31 @@ it('reads the viewer as each workspace knows them (a different person id per wor
   expect(await api.getMe('w2')).toEqual({ person: 'p_2', name: 'Severin', role: 'owner' })
   await expect(api.getMe('w3')).rejects.toMatchObject({ status: 404 })
 })
+
+it('speaks the four click routes with POST bodies and keeps reason and wait on a refusal', async () => {
+  const answers = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (String(_url).endsWith('/click/sign')) return Response.json({ ok: false, error: { code: 'rate.limited', message: 'slow', retryable: true, retry_after_ms: 4200, reason: 'x' } }, { status: 503 })
+    return Response.json({ request_id: 'hr_x', init: String(init?.body) })
+  })
+  vi.stubGlobal('fetch', answers)
+  const action = { action: 'approve', key: 'DEMO-0001', gate: 'plan' } as const
+  await api.prepareClick(ws, action, 'a_idem')
+  await api.viewClick(ws, 'hr_1')
+  await api.cancelClick(ws, 'hr_1')
+  const calls = answers.mock.calls.map((c) => [String(c[0]), (c[1] as RequestInit).method, JSON.parse(String((c[1] as RequestInit).body))])
+  expect(calls).toEqual([
+    [`/api/w/${ws}/click/prepare`, 'POST', { action: 'approve', key: 'DEMO-0001', gate: 'plan', idem: 'a_idem' }],
+    [`/api/w/${ws}/click/view`, 'POST', { request_id: 'hr_1' }],
+    [`/api/w/${ws}/click/cancel`, 'POST', { request_id: 'hr_1' }],
+  ])
+  await expect(api.signClick(ws, 'hr_1', 'sha256:' + 'a'.repeat(64), '  word ')).rejects.toMatchObject({ code: 'rate.limited', retry_after_ms: 4200, reason: 'x' })
+  expect(JSON.parse(String((answers.mock.calls[3][1] as RequestInit).body))).toEqual({ request_id: 'hr_1', view_digest: 'sha256:' + 'a'.repeat(64), word: '  word ' })
+})
+
+it('offers a workspace the click card only when the server lists the click feature', async () => {
+  const row = (features: string[]) => ({ id: ws, prefix: 'DEMO', name: 'b', members: [], needs_you: 0, host_state: 'ok', features, click: { custody: 'convenience', enabled: true, available: true } })
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([row(['actions', 'click'])])))
+  expect((await api.getWorkspaces())[0].click).toEqual({ custody: 'convenience', enabled: true, available: true })
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([row(['actions'])])))
+  expect((await api.getWorkspaces())[0].click).toEqual({ custody: 'convenience', enabled: true, available: false })
+})

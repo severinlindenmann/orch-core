@@ -7,6 +7,7 @@ import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
 import type { HostGrant, HostSettings, RosterMember } from './settings'
 import {
   ApiError,
@@ -33,6 +34,7 @@ interface ServerWorkspace {
   needs_you: number | null
   host_state: string
   features: string[]
+  click?: Workspace['click']
 }
 interface ServerMe {
   person: string
@@ -136,6 +138,8 @@ function workspace(s: ServerWorkspace): Workspace {
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
+    // Offered only when the server lists the feature: the flag is on AND the signer can sign in this workspace.
+    ...(s.click ? { click: { ...s.click, available: s.click.available && s.features.includes('click') } } : {}),
   }
 }
 
@@ -212,7 +216,19 @@ const handoff = {
   cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff }
+/**
+ * Click-to-sign (H5c): prepare, look at the signer's View, sign, cancel. The server passes the View through unchanged;
+ * the key is in core's signer process and never here.
+ */
+const click = {
+  prepareClick: (ws: string, action: HandoffAction, idem: string) => call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, idem }),
+  viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
+  signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
+    call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
+  cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
+}
+
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

@@ -1018,6 +1018,13 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
   and `since:"my_approval"` are follow-ups (§9 Q9). A base the caller chose (`declared`, a later option) is never the
   approval screen's default: the approving client shows it with its sha and whether it is an ancestor of head, and
   the signing path never takes a base from the agent's side.
+- **Served** on the workspace socket since the H3b1 follow-up (`orch.host.diff`, after H10a wired the reader): the
+  ticket through the viewer's visibility, `repo` through the ticket's `links.repos`, then the reader under the caller's
+  principal, off the workspace's worker thread: one `diff` in flight per principal and two host-wide, so two reader
+  children stay free for `show`, observe and the tree checks (else `quota.host`), 30 s for all repos of one request,
+  and the ticket's visibility checked again before the answer. A reader's reason (it may name a host path) reaches only a person-class owner or maintainer;
+  everyone else gets `repo <name>: not readable`. Until `since` lands it is an unknown key there (`invalid.input`,
+  §0.3).
 - **Too large to diff.** A file whose side is over 8 MiB or 200 000 lines, or that would take the request past
   1 000 000 diffed lines (both sides of every file), is not diffed as text: its `files` entry has `too_large:true`,
   `binary:true`, `add` and `del` 0, and `unified` carries `diff --git a/<p> b/<p>` followed by
@@ -1433,8 +1440,9 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 11. **D58 at submit.** Prepare appends nothing (no `branch.pushed` either). At submit, under the store lock, for every
     event that signs a `source_sha`, the host reads each linked repo's head again through its git reader (under the
     caller's principal) and refuses with `gate.stale` when it differs from the signed source list, or with
-    `observe.unavailable` when the reader cannot answer (fail closed). The working tree's cleanliness is the worker's
-    `tree.check` (H10); until then `verdict` and `approve code` answer `observe.unavailable` at prepare in host mode.
+    `observe.unavailable` when the reader cannot answer (fail closed). The working tree's cleanliness is
+    `tree.check` at prepare and at binding (N3); in tier A the host runs it itself (H10a, below D-P2-19), in tier B
+    `verdict` and `approve code` answer `observe.unavailable` until the worker (H10) takes the job over.
 12. **Gate texts.** Gate material carries `texts` for every section in `input.sections` (next to `material.policy`);
     the signer checks each against `input.sections` and shows them with the criteria, tasks, links and policy, as P1's
     review did. `gate_gen` and `source_sha` are shown labelled as host attestations; the policy hash is recomputed from
@@ -3101,6 +3109,64 @@ UID. P2 adds no keychain.**
   - Any other file type (FIFO, socket, device) at a tracked path counts as changed (`why: "type"`).
   - The child runs the `worktree` profile.
   - Paths in `changed` are escaped and rendered with F1 §11.3's rules wherever they are shown.
+
+  **As built in H10a (phase 1, tier A, no containment).**
+  - There is no worker UID in tier A, so the host runs the `tree.check` job itself: `TreeCheckInput` from the repo's
+    pins, one `python -I -m orch.gitread` child through the launcher (fixed argv, empty environment, the §0.11 limits,
+    the child's audit hook) under the `worktree` profile, and the child's raw answer checked and escaped into
+    `TreeCheckResult` by the host (`orch.gitread.treecheck`, `orch.gitread.treejob`). The phase-3 worker takes over
+    the same job kind and input; only the caller of the child changes. A tier-B workspace has no check until then
+    (fail closed).
+  - It also compares the index with `HEAD`'s tree, so a staged change, an unmerged entry or an `intent-to-add` entry
+    is a change (`why:"modified"`; a path of `HEAD` missing from the index: `"deleted"`).
+  - **Clean at the signed commit.** `TreeCheckResult` also carries `head` and `head_ref` (host-side, never shown):
+    the child reads `HEAD` and the tree in one call, and at prepare and at binding they must equal the signed
+    `source_sha` entry of that repo's identity. A switch to another branch or commit between prepare and binding is
+    refused even when that tree is clean.
+  - Unknown, never clean: a split or sparse index (or any required index extension, or a directory entry of mode
+    040000), a bad checksum, a populated submodule (its own `HEAD` is not checked), a detached `HEAD`, a walk deeper
+    than 32 directories, and the §0.11 bounds (`INDEX_MAX`, `INDEX_ENTRIES`, `WALK_ENTRIES`) all answer
+    `observe.unavailable`. The `FSMN` and `UNTR` index extensions are skipped unread.
+  - **Practical ceiling.** The walk is pure Python under the child's 10 s CPU and 30 s wall limits, which are reached
+    long before `WALK_ENTRIES` (200 000) or `INDEX_ENTRIES` (1 000 000): a clean tree of 10 000 tracked files takes
+    about a second, and the practical bound is tens of thousands of files. A bigger tree, or one with very large
+    tracked files whose stat does not match, answers unknown (fail closed). The index entries and `HEAD`'s flattened
+    tree are held at once, under the 512 MiB resident limit (a larger repo is killed and unknown).
+  - `skip-worktree` and `assume-unchanged` are dirty (`flag`), never trusted, and so is a sparse checkout (its entries
+    carry `skip-worktree`); `extensions.worktreeConfig` (written by `git sparse-checkout`) or a sparse index is
+    unknown.
+  - **Best effort, by design (owner decision, phase 1).** The index and the ignore files are agent-writable, as they
+    are for git:
+    - *Forged stat data*: an entry whose stat fields are rewritten to match a file changed before the index was
+      written is trusted (`git status` is fooled the same way). The racy rule (an entry or file mtime/ctime in or
+      after the index's second is hashed) protects against accidents, not adversaries. Accepted for phase 1:
+      uncommitted bytes never enter what is approved (the decision signs a commit, re-read at submit). **H10 decision
+      for later:** "hash every tracked file at the binding check, unknown above a byte budget".
+    - *Hidden untracked files*: an untracked `.gitignore` (for example `*`, which also ignores itself) or
+      `.git/info/exclude` can hide untracked files, as from git. Always reporting an untracked `.gitignore` is not an
+      option (`.venv/`, `.pytest_cache/` and other tool caches ship one). `core.excludesFile` is config and is not
+      read, so a file only it ignores counts as untracked.
+  - Every repo a prepared event binds (each `source_sha` entry, by identity read again through the reader) must have
+    a clean check, at prepare and at binding; a missing one is `observe.unavailable`. The binding re-run reads the
+    tree again; the stored `checks` are never trusted.
+  - `human.prepare` returns `checks` for each linked repo found clean; `human.get` with `signer` runs the check again
+    when it binds and at later binding gets, refuses a changed, moved or unknown tree with `observe.unavailable`
+    (nothing is bound) and refreshes `checks[].at`. A bound request's later gets reuse a check younger than 5 s (a
+    polling client does not re-walk the tree each time); binding itself always checks. `attested_by` stays
+    `"worker"`: in tier A the host's reader child plays the worker's part. A dry run runs no `tree.check` job and
+    carries no `checks` (as above).
+  - Every check runs on the workspace's worker thread (other requests of that workspace wait, up to the child's 30 s)
+    and holds one of the host's four reader children. It fails closed and keeps the F10 per-principal rules; in
+    phase 3 the worker owns the job and the host thread only waits for `job.done`.
+  - **Wiring and pins.** The served workspace gets H3b1's reader (`Capabilities.host(git=...)`, pins in
+    `<state>/hosts/<ws>/git-pins.json` (0600), one `ReaderPool` per host). Pins are taken centrally by the workspace
+    service: at workspace open and whenever the declared `settings.repos` set changes (a `settings.changed`, checked
+    at each store refresh and before each request's capabilities), under the workspace's own principal
+    `host:<workspace id>`, never host-wide. An existing pin is never replaced. A repo that cannot be pinned is
+    remembered and retried only after a backoff (1 minute, doubling to 1 hour) or the next change of the declared
+    set; until then its reads are `observe.unavailable`. The pin file is written (a fresh 0600 temporary file,
+    fsynced, renamed) before the pins change in memory; an unreadable pin file denies git to the workspace (fail
+    closed), never fresh pins.
 - **`task done --run`:** the client runs `verify.cmd` and sends the receipt (§0.8). The host checks that `cmd` equals
   the approved `verify.cmd`; H3b2 (client receipts) adds `attested_by: "agent"`, absent from the current receipt.
   - This proves an authenticated agent **claimed** this result. It does not prove the command ran, its exit code, its
@@ -3157,6 +3223,13 @@ UID. P2 adds no keychain.**
     ranges, but a range may contain commits of other tickets (a merged branch, shared history), including content later
     deleted. That git content is disclosed to viewers of this ticket. F1 records no commit provenance, so no stronger
     promise is possible; the approval default (observed head, §0.8 base) is unchanged.
+  - **The linked-repo check is not a confidentiality boundary.** `diff {repo}` (and `commit.list {repo}`) accept only a
+    repo in the ticket's `links.repos`, and the branch comes from `links.branches`. Both are writable by anyone who may
+    `set` the ticket's links, including an agent on its own visible ticket. So such a caller can `diff` any declared
+    repo and any branch of it through that ticket, including a branch that belongs to a restricted ticket. The check
+    scopes a request; it does not hide repositories. A person-class owner or maintainer gets the reader's reasons, which
+    show whether a branch exists. Any other caller gets `repo <name>: not readable` (the reason goes to the host log),
+    so it learns only whether the diff succeeded.
   - **N's configuration exception.** `no-person` sees the three durations and the four default gate policies, which come
     from the workspace log, and the names and default branches of repos linked by tickets it can see.
   - **Refusal records are host-attested and incomplete.** They are unsigned, not in any log, dropped past the ingestion
@@ -3265,7 +3338,7 @@ dispatch is turned on.
      identity) in its state dir (0600, never moved forward automatically) and reports `base_moved`. P3 replaces
      first observation with a base pinned at claim.
    - **`since:"my_approval"`** (holes 1, 2): only the caller's own code-gate approve decisions, in the dispatcher
-     when `diff` is registered (H6b); the default view stays the full change.
+     of the served `diff` (`orch.host.diff`, registered without it); the default view stays the full change.
    - **A `declared` base is never the approval screen's default** (hole 5): a client rule, noted in §0.8.
    - **SHA-1 collision detection:** the reader checks SHA-1 ids with plain SHA-1, not git's SHA-1DC, so a
      SHAttered-style colliding object would be accepted. Accepted risk at today's cost; sha256 repos are unaffected.

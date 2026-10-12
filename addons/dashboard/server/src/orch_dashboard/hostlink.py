@@ -212,7 +212,10 @@ class HostLink:
         return cap in self.welcome.get("caps", [])
 
     def supports(self, op: str, cap="ops/1") -> bool:
-        return cap in self.welcome.get("caps", []) and self.welcome.get("ops", {}).get(op) == OPS.get(op, 1)
+        listed = self.welcome.get("ops", {}).get(op) == OPS.get(op, 1)
+        # Real-host finding (core H6b, stream A item RH-1): the host serves the human.* ops and lists them in `ops`, but
+        # `welcome.caps` has no `human/1`. `ops` decides per op (contract section 0.3), so a listed human op counts.
+        return listed and (cap in self.welcome.get("caps", []) or cap == "human/1")
 
     def send(self, frame):
         with self.send_lock:

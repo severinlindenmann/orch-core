@@ -71,9 +71,11 @@ export interface RosterDevice {
 /** `member.list`. The host serves no `last_seen`: there is no such field. */
 export interface RosterMember {
   person: string
+  /** The person id when the host's name had invisible characters (`name_hidden`): that name is never shown. */
   name: string
   role: Role
   devices: RosterDevice[]
+  name_hidden?: boolean
 }
 
 export interface HostGrant {

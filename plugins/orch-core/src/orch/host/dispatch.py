@@ -2,8 +2,8 @@
 
 **The closed op list** (§0.4, §0.5). The host serves every registry op of :mod:`orch.ops` under its name at contract
 version 1, plus ``whoami``, ``host.status``, ``outcome.get``, ``sub.open``, ``sub.close`` and the files ops
-(``blob.put``, ``blob.drop``, ``artifact.get``: H4a2, :mod:`orch.host.blobs`, :mod:`orch.host.artifacts`), and nothing
-else (``unknown_command``). Left out:
+(``blob.put``, ``blob.drop``, ``artifact.get``: H4a2, :mod:`orch.host.blobs`, :mod:`orch.host.artifacts`), ``diff``
+(the H3b1 follow-up, :mod:`orch.host.diff`), and nothing else (``unknown_command``). Left out:
 
 * ``init`` and ``import.v1`` (D-P2-9: ``init`` is ``host.wsk_create`` + ``host.bootstrap``; ``import v1`` runs in
   direct mode before registration).
@@ -80,6 +80,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from jsonschema import Draft202012Validator
 
+from . import diff as git_diff
 from . import reads, sessions
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
@@ -133,6 +134,8 @@ HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
 HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1, "sub.open": 1, "sub.close": 1}
 #: the files ops (H4a2, §0.10, §0.8): side-effect-free, columns P, G and N
 FILE_OPS: dict[str, int] = {"blob.put": 1, "blob.drop": 1, "artifact.get": 1}
+#: the git reads (§0.8, H3b1 follow-up): ``diff`` v1 (v1.4), columns P, G and N, through the host's reader
+GIT_OPS: dict[str, int] = {"diff": 1}
 #: registry ops served in the ``wait`` phase (parked on the bus, answered ``host.restarting`` by a drain)
 WAIT_OPS = frozenset({"wait"})
 _TOPIC = r"^(?:workspace|tickets|needs|ticket:(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}|[0-7][0-9A-HJKMNP-TV-Z]{25}))$"
@@ -189,6 +192,7 @@ def served_ops() -> dict[str, int]:
     out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
     out.update(FILE_OPS)
+    out.update(GIT_OPS)
     out.update(HUMAN_OPS)
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
@@ -209,7 +213,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     from .reads import PERSON_GRANT_READS, READ_OPS
     from .review import HOST_PERSON_OPS
 
-    if name in HOST_OPS or name in FILE_OPS:
+    if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
@@ -334,7 +338,8 @@ class ScopedRecords:
 class RegistryBackend:
     """The :class:`~orch.host.workspace.OpBackend` of every workspace socket."""
 
-    #: ``diff/1`` is listed for ``artifact.get`` (H4a2); the H6b read caps; ``sub_ext/1`` while detail is served
+    #: ``diff/1``: ``artifact.get`` (H4a2) and ``diff`` (H3b1 follow-up); the H6b read caps; ``sub_ext/1`` while
+    #: detail is served
     @property
     def caps(self) -> list[str]:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "human/1"]
@@ -371,6 +376,8 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
+        if op in GIT_OPS:
+            return await self._git_read(call, result)
         if op == "sub.open":
             return self._register(call, result)
         if op == "sub.close":
@@ -378,6 +385,41 @@ class RegistryBackend:
             if bus is not None:
                 bus.close(call.session, call.frame["args"]["sub"])
         return result
+
+    @staticmethod
+    async def _git_read(call: Call, pending: git_diff.Pending) -> dict[str, Any]:
+        """``diff``'s reader phase, off the workspace worker thread (the worker resolved visibility, links and
+        capabilities): one in flight per principal, :data:`~orch.host.diff.BUDGET_S` for the request."""
+        redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
+        principal = pending.principal
+
+        def work() -> dict[str, Any]:
+            # the slot is held until the reader work itself ends (also when the request stops waiting for it), and
+            # given back on this thread, so it never outlives the work even when the event loop stops first
+            try:
+                return git_diff.run(pending)
+            finally:
+                git_diff.IN_FLIGHT.give(principal)
+
+        try:
+            git_diff.IN_FLIGHT.take(principal)
+            try:
+                future = asyncio.get_running_loop().run_in_executor(git_diff.EXECUTOR, work)
+            except BaseException:  # never scheduled: work() will not give it back
+                git_diff.IN_FLIGHT.give(principal)
+                raise
+            try:  # the reader's deadlines end the work within the budget; this only bounds a stuck thread
+                data = await asyncio.wait_for(asyncio.shield(future), git_diff.BUDGET_S + 5)
+            except TimeoutError:
+                raise HostError("observe.unavailable", f"the diff took longer than {git_diff.BUDGET_S:g} s") from None
+            # visibility again before the answer: a ticket restricted while the reader ran is not_found (F6, F8)
+            await asyncio.wrap_future(call.service.submit(git_diff.recheck, call))
+            return redactor.obj(ok_result(data))
+        except HostError as exc:
+            raise redactor.error(exc) from None
+        except Exception:  # the transport answers internal without a cause: keep it in the host's log, redacted
+            LOG.error("diff failed: %s", redactor.text(traceback.format_exc()))
+            raise
 
     def _register(self, call: Call, checked: dict[str, Any]) -> dict[str, Any]:
         """``sub.open`` on the event loop: register the subscription the worker checked, at the boundary it fixed."""
@@ -454,7 +496,7 @@ class RegistryBackend:
                 result = self._host_op(call)
             elif op in READ_OPS:
                 result = reads.serve(call)
-            elif op in FILE_OPS:
+            elif op in FILE_OPS or op in GIT_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:
                 result = self.human.serve(call, redactor)
@@ -502,11 +544,13 @@ class RegistryBackend:
         return ok_result(call.service.outcomes.lookup(call.principal, args["idem"]))
 
     def _file_op(self, call: Call) -> dict[str, Any]:
-        """``blob.put``, ``blob.drop`` (§0.10) and ``artifact.get`` (§0.8): schema, no ``dry_run``, no ``files``, the
-        workspace state, then the op."""
+        """``blob.put``, ``blob.drop`` (§0.10), ``artifact.get`` and ``diff`` (§0.8): schema, no ``dry_run``, no
+        ``files``, the workspace state, then the op."""
         op, frame = call.frame["op"], call.frame
         args = frame["args"]
-        validator = ARTIFACT_VALIDATOR if op == "artifact.get" else BLOB_VALIDATORS[op]
+        validator = (
+            ARTIFACT_VALIDATOR if op == "artifact.get" else git_diff.VALIDATOR if op == "diff" else BLOB_VALIDATORS[op]
+        )
         errors = sorted(validator.iter_errors(args), key=lambda e: list(map(str, e.path)))
         if errors:
             where = ".".join(map(str, errors[0].absolute_path))
@@ -518,6 +562,8 @@ class RegistryBackend:
         self._state(service, False)
         if op == "artifact.get":
             return ok_result(artifact_get(call, args))
+        if op == "diff":
+            return git_diff.prepare(call, args)  # type: ignore[return-value]  # the reader phase is run()'s
         if op == "blob.drop":
             service.blobs.drop(call.principal, args["blob"])
             return ok_result({})
@@ -735,7 +781,7 @@ class RegistryBackend:
         from orch.ops.runtime import Workspace
 
         service = call.service
-        caps = service.capabilities().with_principal(call.principal)  # git reads run under the caller (F10)
+        caps = service.caps_for(call.principal)  # pins up to date; git reads run under the caller (F10)
         workspace = Workspace.hosted(
             Path(service.entry.root), service.store, env=caps.env, now=service.clock, files=caps.files
         )

@@ -403,9 +403,10 @@ class Git:
     * **Direct mode** (``reader`` ``None``): P1's behaviour, unchanged: the git CLI on a scrubbed environment
       (``orch.store.observe``); :meth:`diff` (new) uses orch's own reader in-process (:mod:`orch.gitread.local`).
     * **Host mode** (``reader`` a :class:`orch.gitread.client.HostGitReader`): no git process; every read is a
-      ``python -I -m orch.gitread`` child under the repo's pins (D-P2-19). :meth:`dirty` answers ``None`` ("cannot be
-      asked"): the clean-tree check is the worker's ``tree.check`` (H10), and without it ``verdict`` and ``approve
-      code`` are ``observe.unavailable``. :meth:`run` (an arbitrary git command) is denied.
+      ``python -I -m orch.gitread`` child under the repo's pins (D-P2-19). :meth:`dirty` is the ``tree.check`` job
+      (H10a, :mod:`orch.gitread.treejob`): orch's own index and worktree reader in a ``worktree``-profile child, never
+      git (F2). It answers ``None`` ("cannot be asked") whenever no clean answer can be established, so ``verdict``
+      and ``approve code`` fail closed (``observe.unavailable``). :meth:`run` (an arbitrary git command) is denied.
     * **Principal** (host mode): every read runs under the caller's principal, so the pool's one-child-per-principal
       rule (F10) is real. The dispatcher binds it per request with :meth:`Capabilities.with_principal`; a host-mode
       read without one is refused.
@@ -461,13 +462,36 @@ class Git:
 
         return observe.git(path, "symbolic-ref", "-q", "HEAD")
 
-    def dirty(self, path: Path) -> str | None:
+    def dirty(self, path: Path, name: str | None = None) -> str | None:
+        """What is uncommitted in the working copy at ``path``: ``""`` when clean, lines when not, ``None`` when it
+        cannot be told. Host mode: the ``tree.check`` job for repo ``name`` (``why: path`` lines, every path
+        escaped); unknown (no pin, a refusal, a limit, tier B without its worker) is ``None``."""
         self._need()
         if self.reader is not None:
-            return None  # the worker's tree.check (H10); never a git process in the host
+            return self.tree_lines(path, name)
         from orch.store import observe
 
         return observe.dirty(path)
+
+    def tree_check(self, path: Path, name: str | None = None) -> dict[str, Any] | None:
+        """Host mode only: the ``TreeCheckResult`` of ``path``, or ``None`` when no clean answer can be established
+        (fail closed). Never a git process (F2)."""
+        self._need()
+        if self.reader is None:
+            raise CapabilityDenied("git", "git: tree.check is the host's reader job")
+        from orch.gitread.errors import Unavailable
+
+        label = name if name is not None else path.name  # never cut: job_input refuses over 64 (unknown)
+        try:
+            return self.reader.tree_check(path, label, principal=self.principal)
+        except Unavailable:
+            return None
+
+    def tree_lines(self, path: Path, name: str | None = None) -> str | None:
+        from orch.gitread.treejob import render
+
+        got = self.tree_check(path, name)
+        return None if got is None else render(got)
 
     def run(self, path: Path, *args: str, strip: bool = True) -> str | None:
         self._need()
@@ -503,9 +527,7 @@ class Git:
             if problems is not None:
                 problems.append("git: a host-mode read needs the caller's principal; nothing was observed")
             return []
-        repos = store.state.workspace.repos
-        declared = [p for n in repos if (p := self.repo_path(store.root, repos, n)) is not None]
-        self.reader.sync(declared)  # pins a repo that first appears; an existing pin is never replaced
+        # pins are taken by the workspace service at open and on a settings.changed (F7), never here
         return observe.observe(store, ref, problems, backend=_ReaderBackend(self.reader, self))
 
     def diff(
@@ -518,9 +540,11 @@ class Git:
         remote: str | None,
         context: int = 3,
         max_bytes: int = 262144,
+        wall: float | None = None,
     ) -> dict[str, Any]:
         """The ``diff`` core for one repo (section 0.8): ``{branch, base_sha, head_sha, files, patch (base64),
-        truncated, origin_urls}``. Raises :class:`orch.gitread.errors.Unavailable`, or
+        truncated, origin_urls}``. ``wall`` (host mode): the reader's deadline in seconds, when shorter than its own.
+        Raises :class:`orch.gitread.errors.Unavailable`, or
         :class:`~orch.gitread.errors.RemoteMismatch` when ``remote`` is declared and the observed identity differs."""
         self._need()
         from orch import canon
@@ -535,6 +559,7 @@ class Git:
                 context=context,
                 max_bytes=max_bytes,
                 principal=self.principal,
+                **({} if wall is None else {"wall": wall}),
             )
         else:
             from orch.gitread import local

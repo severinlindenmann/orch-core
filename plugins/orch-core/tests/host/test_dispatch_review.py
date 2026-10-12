@@ -314,5 +314,6 @@ def test_a_git_read_through_the_dispatcher_runs_under_the_callers_principal(serv
         ops.bind("status", original)
     assert reader.principals == [f"g:{served.lab.ws.grant_id}@{UID}", f"uid:{UID}"]
     shown = ok(served.client().req("show", {"ref": key}, grant=served.grant))  # observe, through the real handler
-    assert reader.synced >= 1 and "needs the caller's principal" not in json.dumps(shown)
+    # pins are the workspace service's (at open and on a settings.changed, H10a), never taken by an op's observe
+    assert reader.synced == 0 and "needs the caller's principal" not in json.dumps(shown)
     assert service.caps.git.principal is None  # bound per request on a copy, never on the shared caps

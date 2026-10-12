@@ -111,6 +111,10 @@ class Host:
         self.cursors: Cursors = Cursors(secrets.token_bytes(32))
         #: the blob quotas every workspace shares (§0.10, F9)
         self.blob_quota = Quota(clock=self.clock)
+        #: the git reader children every workspace shares: at most four at once, one per principal (F10, H3b1)
+        from orch.gitread.client import ReaderPool
+
+        self.git_pool = ReaderPool()
         self.subscriptions_end: Callable[[str], None] = self.bus.end_all
         self.loop: asyncio.AbstractEventLoop | None = None
         self._lock_fd: int | None = None
@@ -262,6 +266,7 @@ class Host:
         service.bus, service.publish = self.bus, self.bus.publisher(entry.workspace_id)
         service.cursors = self.cursors
         service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
+        service.git_pool = self.git_pool
         await service.call(service.open)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         try:

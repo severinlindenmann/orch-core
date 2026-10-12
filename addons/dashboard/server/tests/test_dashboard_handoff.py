@@ -129,7 +129,7 @@ def test_label_adds_to_the_labels_the_ticket_has(ready):
 @pytest.mark.parametrize(
     "body",
     [
-        {"action": "move", "key": "DEMO-0001", "to": "backlog"},
+        {"action": "move", "key": "DEMO-0001", "to": "done"},
         {"action": "approve", "key": "DEMO-0001", "gate": "verify"},
         {"action": "approve", "key": "DEMO-0001", "gate": "plan", "op": "human.submit"},
         {"action": "approve", "key": "DEMO-0001", "gate": "plan", "path": "/etc/passwd"},

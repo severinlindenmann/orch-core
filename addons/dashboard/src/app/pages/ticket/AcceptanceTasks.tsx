@@ -53,7 +53,7 @@ function proofOf(ticket: TicketDocument, ac: AcceptanceStatus): Proof {
   return ac.evidence.some((ev) => evidenceVerified(ticket, ev)) ? 'proven' : 'asserted'
 }
 
-function ReceiptLine({ t }: { t: TaskStatus }) {
+export function ReceiptLine({ t }: { t: TaskStatus }) {
   if (!t.receipt) return <span className="text-text-faint">No receipt yet.</span>
   return (
     <span className="font-mono text-text-muted">
@@ -62,6 +62,14 @@ function ReceiptLine({ t }: { t: TaskStatus }) {
         <>
           {' · '}
           <span className="text-text">{t.receipt.commit}</span>
+        </>
+      )}
+      {t.receipt.attested_by && (
+        <>
+          {' · '}
+          <span className="text-text-faint" title="The agent ran the command and says so; the host does not run it.">
+            attested by {t.receipt.attested_by}
+          </span>
         </>
       )}
     </span>

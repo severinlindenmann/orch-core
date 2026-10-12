@@ -44,6 +44,51 @@ def _run(c: Call, view: Any, cmd: str) -> runner.Ran:
     )
 
 
+def _client_receipt(
+    c: Call, ctx: Context, view: Any, tid: str, task: dict[str, Any], args: dict[str, Any]
+) -> tuple[Any, Any]:
+    """Host mode, contract 2 (H3b2, §0.8): the client ran ``verify.cmd`` itself and sends ``receipt`` plus its output
+    through ``files``. The host never runs anything: it checks the claim against the ticket and labels it
+    ``attested_by: "agent"``. ``(None, None)`` when no receipt was sent."""
+    rc, name = args.get("receipt"), args.get("receipt_output")
+    if rc is None and name is None:
+        return None, None
+    if not ctx.hosted:
+        raise OrchError("invalid.input", "a client receipt is sent to a host: direct mode runs the command with --run")
+    if rc is None or name is None:
+        raise OrchError("invalid.input", "receipt and receipt_output (the command's output, in files) go together")
+    verify = task["verify"]
+    if verify is None:
+        raise OrchError("invalid.input", f"{tid} has no verify command; a receipt proves that command")
+    if rc["cmd"] != verify["cmd"]:
+        raise OrchError("invalid.input", "receipt.cmd must equal the task's verify.cmd")
+    if rc["exit"] != 0:
+        raise OrchError("verify.failed", "the receipt's exit code was not 0, nothing was appended")
+    repo, commit = rc.get("repo"), rc.get("commit")
+    linked = list(view.fields["links"]["repos"])
+    if linked:  # F1 section 6: evidence follows the source sha, so the receipt names a linked repo and its commit
+        if repo is None or repo not in linked:
+            raise OrchError("invalid.input", f"receipt.repo must be one of the repos this ticket links: {linked}")
+        if commit is None:
+            raise OrchError(
+                "invalid.input", "receipt.commit is required for a linked repo (the commit the command ran at)"
+            )
+    elif repo is not None or commit is not None:
+        raise OrchError("invalid.input", "receipt.repo and receipt.commit are null: this ticket links no repo")
+    output = c.read_artifact(name)
+    if len(output) > runner.OUTPUT_LIMIT:
+        raise OrchError("invalid.input", f"the receipt output is at most {runner.OUTPUT_LIMIT} bytes")
+    receipt = {
+        "cmd": rc["cmd"],
+        "exit": rc["exit"],
+        "ms": rc["duration_ms"],
+        "repo": rc.get("repo"),
+        "commit": rc.get("commit"),
+        "attested_by": "agent",
+    }
+    return receipt, output
+
+
 def _free_name(view: Any, base: str) -> str:
     taken = {a.name for a in view.artifacts}
     name, n = base, 1
@@ -81,9 +126,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         raise plans.unknown_task(view, tid)
     if args.get("ac") and not args.get("artifact"):
         raise OrchError("invalid.input", "--ac names what --artifact is evidence for")
-    receipt: dict[str, Any] | None = None
-    receipt_log: bytes | None = None
     notes: list[str] = []
+    receipt, receipt_log = _client_receipt(c, ctx, view, tid, task, args)
     if args.get("run"):
         if task["verify"] is None:
             raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
@@ -91,7 +135,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             notes.append(f"dry-run: would run: {views.short(task['verify']['cmd'], 100)}")
         else:  # the command runs before the lock is taken: it may take minutes
             ran = _run(c, view, task["verify"]["cmd"])
-            receipt, receipt_log, notes = ran.receipt, ran.output, list(ran.notes)
+            # the agent's environment ran it, not orch and not a host: say so in the record (F1 section 10.7)
+            receipt, receipt_log, notes = {**ran.receipt, "attested_by": "agent"}, ran.output, list(ran.notes)
     evidence = c.read_artifact(args["artifact"]) if args.get("artifact") else None
     with c.locked():
         view = c.resolve(ref or None)
@@ -135,6 +180,22 @@ OP = operation(
         "artifact": S("evidence file to store", **{"x-metavar": "PATH", "x-file": True}),
         "ac": S("criterion the evidence is for", pattern=r"^AC[1-9][0-9]*$", **{"x-metavar": "AC"}),
         "message": MSG,
+        # host mode only (contract 2, H3b2): the client's own run of verify.cmd; not a CLI flag
+        "receipt": {
+            "type": "object",
+            "description": "the client's run of verify.cmd (host mode)",
+            "properties": {
+                "cmd": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "exit": {"type": "integer", "minimum": -255, "maximum": 255},
+                "duration_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+                "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$"},
+                "repo": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
+            },
+            "required": ["cmd", "exit", "duration_ms"],
+            "additionalProperties": False,
+            "x-host": True,
+        },
+        "receipt_output": S("output file of the receipt's run (host mode)", **{"x-file": True, "x-host": True}),
     },
     required=("task",),
     positional=("task",),

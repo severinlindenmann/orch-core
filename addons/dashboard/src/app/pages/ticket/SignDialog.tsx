@@ -199,6 +199,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}: the evidence is enough`
   const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
   const receipts = ticket.tasks_state.filter((t) => t.receipt).length
+  const attested = ticket.tasks_state.some((t) => t.receipt?.attested_by)
 
   const answerText = action.kind === 'answer' ? action.text?.trim() || undefined : undefined
   const request = (): ActionRequest => {
@@ -292,6 +293,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
             <p className="flex flex-wrap items-center gap-x-3 text-[13px] text-text-muted">
               <span>
                 AC {proven}/{ticket.acceptance_state.length} evidenced · {receipts} {receipts === 1 ? 'receipt' : 'receipts'}
+                {attested && ' (agent-attested)'}
               </span>
               <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openEvidence} disabled={busy}>
                 Open evidence

@@ -1,4 +1,4 @@
-"""The runner's terminal socket (D-P2-25): ``<run>/term-<uid>/term.sock``, where the dashboard server attaches.
+"""The runner's terminal socket (D-P2-25): ``<run>/term/<uid>/term.sock``, where the dashboard server attaches.
 
 The host decides every attach and registers it here with ``attach.allow {att, ticket_hash, run, person, mode,
 lease_gen, expires}`` over its command stream; the dashboard server then connects to this socket and sends the ticket
@@ -85,6 +85,8 @@ class TermListener:
     # -- the socket
     def open(self) -> None:
         directory = self.path.parent
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(directory.parent, 0o711)  # <run>/term: only traversed (host doc §12.6.1)
         with contextlib.suppress(FileExistsError):
             os.mkdir(directory, 0o700)
         info = os.lstat(directory)

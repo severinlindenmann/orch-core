@@ -176,7 +176,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     for item in swept:
         log.warning("run %s was lost (runner restart); swept %d", item["run"], item["swept"])
     generation = next_generation(Path(state) / "runner", uid)
-    term = TermListener(Path(run_dir) / f"term-{uid}" / "term.sock", uid)
+    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid)
     try:
         term.open()
     except OSError as exc:

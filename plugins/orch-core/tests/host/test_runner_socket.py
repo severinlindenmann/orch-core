@@ -49,7 +49,7 @@ class Runner:
     def __init__(self, w, state: Path, generation: int = 1) -> None:
         self.sup = Supervisor(state, cgroups=None, scan_interval=0.2, exit_grace=0.5)
         self.sup.open()
-        self.term = TermListener(Path(w.lab.run) / f"term-{UID}" / "term.sock", UID)
+        self.term = TermListener(Path(w.lab.run) / "term" / str(UID) / "term.sock", UID)
         self.term.open()
         self.link = HostLink(
             self.sup, w.h.host.runner_path, host_uid=UID, generation=generation, term=self.term, backoff=(0.05, 0.2)

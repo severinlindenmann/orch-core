@@ -310,7 +310,10 @@ class RunnerHub:
     @property
     def term_socket(self) -> Path:
         return (
-            Path(self.host.run_dir) / f"term-{self.uid if self.uid is not None else self.host.host_uid}" / "term.sock"
+            Path(self.host.run_dir)
+            / "term"
+            / str(self.uid if self.uid is not None else self.host.host_uid)
+            / "term.sock"
         )
 
     def load(self) -> None:

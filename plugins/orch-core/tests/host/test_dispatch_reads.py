@@ -36,7 +36,8 @@ def world(tmp_path):
         baseline = {}
         c = s.client()
         for op in READS:  # what the owner (column P) sees, to know each read does show the ticket to someone
-            baseline[op] = json.dumps(c.req(op, args_for(op, key), session=SESSION))
+            if op != "wait":  # it parks for its timeout; its visibility is the ticket_visible precondition's
+                baseline[op] = json.dumps(c.req(op, args_for(op, key), session=SESSION))
         as_agent_class(s)
         yield s, key, baseline
     finally:
@@ -65,6 +66,12 @@ def args_for(op: str, ref: str) -> dict:
         return {}
     if op == "outcome.get":
         return {"idem": "a_01J9ZP0000000000000000000A"}
+    if op == "sub.open":  # H6a: a ticket topic goes through Viewer.ticket
+        return {"topics": [f"ticket:{ref}"]}
+    if op == "sub.close":
+        return {"sub": "sub_0"}
+    if op == "wait":  # parks on the bus: a short timeout for the owner's baseline
+        return {"ref": ref, "timeout": 1}
     schema = ops.get(op).input
     props = schema.get("properties", {})
     out: dict = {}
@@ -92,7 +99,7 @@ def test_no_person_learns_nothing_about_a_restricted_ticket(world, op):
     assert TITLE not in body, (op, body[:400])
     # the answer about the restricted ticket is the answer about a ticket that does not exist (modulo the echoed ref)
     assert norm(hidden, key) == norm(missing, "DEMO-9999"), op
-    if TITLE in baseline[op]:  # a read that shows the ticket to the owner shows nothing of it here
+    if TITLE in baseline.get(op, ""):  # a read that shows the ticket to the owner shows nothing of it here
         assert key not in body or not hidden["ok"]
 
 

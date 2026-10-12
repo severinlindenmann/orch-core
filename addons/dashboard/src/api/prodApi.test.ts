@@ -81,3 +81,13 @@ it('takes the highest role across workspaces for the person', async () => {
   ])))
   expect(await api.getMe()).toEqual({ person: 'p_1', name: 'Sev', role: 'owner' })
 })
+
+it('reads the viewer as each workspace knows them (a different person id per workspace)', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([
+    { person: 'p_1', name: 'Sev', role: 'member', tier: 'A', workspace: 'w1' },
+    { person: 'p_2', name: 'Severin', role: 'owner', tier: 'A', workspace: 'w2' },
+  ])))
+  expect(await api.getMe('w1')).toEqual({ person: 'p_1', name: 'Sev', role: 'member' })
+  expect(await api.getMe('w2')).toEqual({ person: 'p_2', name: 'Severin', role: 'owner' })
+  await expect(api.getMe('w3')).rejects.toMatchObject({ status: 404 })
+})

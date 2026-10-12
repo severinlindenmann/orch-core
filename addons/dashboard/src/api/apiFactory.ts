@@ -100,7 +100,7 @@ export function createApi(transport: Transport) {
 
   return {
     listTickets,
-    getMe: () => call<Me>('GET', '/api/me'),
+    getMe: (_ws?: string) => call<Me>('GET', '/api/me'),
     listPeople: (ws: string) => call<KnownPerson[]>('GET', `/api/workspaces/${ws}/people`),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),

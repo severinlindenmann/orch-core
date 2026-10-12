@@ -1,14 +1,13 @@
-import { useQuery } from '@tanstack/react-query'
 import { roleOf } from '@/api/permissions'
 import type { Role, Workspace } from '@/api/types'
-import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 /** The signed-in person's role in this workspace, from the host's roster (undefined while loading, or if not a member). */
 export function useViewerRole(workspace: Workspace): Role | undefined {
-  const me = useQuery(queries.me())
+  const me = useMe()
   return roleOf(workspace, me.data?.person)
 }
 
 export function useViewerPerson(): string | undefined {
-  return useQuery(queries.me()).data?.person
+  return useMe().data?.person
 }

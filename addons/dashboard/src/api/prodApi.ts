@@ -151,8 +151,14 @@ export async function logout() {
 export const session = () => call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session')
 
 const reads = {
-  getMe: async (): Promise<Me> => {
+  /** One person has a different id in each workspace: with `ws` this is that workspace's own entry (person, name, role). */
+  getMe: async (ws?: string): Promise<Me> => {
     const all = await call<ServerMe[]>('/api/me')
+    if (ws) {
+      const own = all.find((m) => m.workspace === ws)
+      if (!own) throw new ApiError(404, { code: 'not_found', message: 'You are not a member of this workspace', retryable: false })
+      return { person: own.person, name: own.name, role: own.role }
+    }
     const first = all[0]
     if (!first) throw new ApiError(404, { code: 'not_found', message: 'No workspace is available', retryable: false })
     // The highest role across workspaces, as the mock's `Me` says.

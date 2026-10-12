@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { usePageWidth } from '../../pageWidth'
 import { queries } from '@/api/queries'
 import { useWorkspace } from '@/app/workspace'
+import { useMe } from '@/app/useMe'
 
 // ------------------------------------------------------------------ viewer + people
 
@@ -25,7 +26,7 @@ export interface Viewer {
 /** The viewer's role in the ticket's home workspace (`workspaceOfTicket`) and a name lookup for person ids. */
 export function useViewer(ticketKey: string): Viewer {
   const ws = useQuery(queries.workspaces())
-  const me = useQuery(queries.me())
+  const me = useMe()
   const workspace = workspaceOfTicket(ticketKey, ws.data ?? [])
   const members = workspace?.members ?? []
   const person = me.data?.person ?? ''

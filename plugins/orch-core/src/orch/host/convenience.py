@@ -15,7 +15,11 @@ request.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import os
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +38,10 @@ __all__ = [
     "flag_path",
     "read",
     "reason",
+    "pending_handoffs",
+    "refuse_handoff",
     "refuse_reader_op",
+    "workspace_lock",
     "set_enabled",
 ]
 
@@ -152,3 +159,60 @@ def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
             hint="switch it off first: orch host convenience off --workspace W",
             fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
         )
+
+
+# -- one signing path per workspace (§0.8.6 item 8, owner decision of 12 Oct 2026)
+
+CLICK_ONLY_TEXT = (
+    "click-to-sign is on for this workspace: use Sign in the dashboard, or turn convenience off with "
+    "`orch host convenience off --workspace {ws}`"
+)
+
+
+@contextlib.contextmanager
+def workspace_lock(state_dir: Path, workspace_id: str, host_uid: int) -> Iterator[None]:
+    """An exclusive ``flock`` on ``<state>/host/convenience-<ws>.lock``: it serializes, across processes (the host and
+    ``orch host convenience on``), a hand-off prepare against switching the flag on, so exactly one wins."""
+    ensure_private_dir(host_dir(state_dir), host_uid)
+    fd = os.open(
+        host_dir(state_dir) / f"convenience-{workspace_id}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
+    )
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing releases the lock
+
+
+def refuse_handoff(service: Any) -> None:
+    """``sign.click_only`` while the flag is on: a hand-off request (one with a code) is not prepared, bound or
+    submitted. Call it under :func:`workspace_lock` at prepare."""
+    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+        raise HostError(
+            "sign.click_only",
+            CLICK_ONLY_TEXT.format(ws=service.workspace_id),
+            hint="sign in the dashboard, or: orch host convenience off --workspace W",
+            fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
+        )
+
+
+_now = time.time  # the CLI's clock for request expiry (tests set it to the lab's clock)
+
+
+def pending_handoffs(state_dir: Path, workspace_id: str, host_uid: int) -> list[dict[str, Any]]:
+    """The workspace's pending (``prepared`` or ``bound``, not expired) hand-off requests, as stored."""
+    from .requests import PENDING, RequestStore
+
+    store = RequestStore(state_dir, workspace_id, host_uid, clock=_now)
+    now, out = _now(), []
+    for rid in store.ids():
+        try:
+            rec = store.read(rid)
+        except HostError:
+            continue
+        if rec is None or not rec.get("code") or rec.get("state") not in PENDING:
+            continue
+        if not rec.get("submit") and now >= float(rec.get("expires", 0)):
+            continue
+        out.append(rec)
+    return out

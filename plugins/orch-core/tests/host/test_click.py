@@ -203,7 +203,7 @@ def test_member_add_is_refused_while_the_flag_is_on(click, served, human):
     p = Person()
     args = {"name": "q", "pk": crypto.b64u(p.pk_pub), "cert": "cert.json"}
     files = {"cert": {"b64": __import__("base64").b64encode(json.dumps(p.cert()).encode()).decode()}}
-    res = human.prepare_res("member.add", args, handoff=True, files=files)
+    res = human.prepare_res("member.add", args, files=files)
     assert err(res) == "sign.convenience_readers"
 
 
@@ -280,11 +280,11 @@ def test_sign_refusals_sign_nothing_and_do_not_cancel(click, served, human):
 
 def test_view_and_sign_refuse_a_request_the_signer_did_not_prepare(click, served, human):
     _, key = human.ticket()
-    h = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    h = human.prepare("log", {"ref": key, "text": "x"})  # a terminal request (hand-off is refused with the flag on)
     rid = h["request"]["id"]
     refused(lambda: click.view(rid), "human.click_refused", "not_prepared_here")
     refused(lambda: click.sign(rid, "sha256:" + "0" * 64), "human.click_refused", "not_prepared_here")
-    assert pending(served, rid)["state"] == "prepared"  # untouched: still the terminal's
+    assert pending(served, rid)["state"] == "bound"  # untouched: still the terminal's
 
 
 def test_terminal_only_ops_are_refused_before_the_host_is_asked(click, served, human):

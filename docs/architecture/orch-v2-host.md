@@ -431,6 +431,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
+| `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them); the fix is `orch host convenience off --workspace W` (§0.8.6 item 8) | — |
 | `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
@@ -2125,7 +2126,7 @@ orch-52). Owner decisions of 12 Oct 2026 (coordination log "OWNER RE-PLAN P2" an
 with one click. The person's device key sits in a store that needs no user presence (the `convenience` backend), and a
 separate **person-class signer process** next to the dashboard holds it. The host still holds no device key and never
 prompts (D-P2-15); the prepare → check and recompute → sign → submit contract of §0.8.1, the review, `review_digest`
-and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available. **Accepted risk, shown on the workspace
+and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available **while the flag is off** (one signing path per workspace, item 8). **Accepted risk, shown on the workspace
 card, on every sign panel and in the docs: "Convenience signing: agents running as you, or anything that takes over
 this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1; H9 (Touch ID) and tier B bring
 isolation back in phase 3, and only after migration, UID separation and removal of the old convenience devices.
@@ -2532,7 +2533,28 @@ member, policy or addon operations.
 | A same-UID process pre-claims a click idem | `idem.conflict`; the signer reports the request state and signs nothing again. A denial of service by an already accepted attacker. |
 | Signer crash or restart mid-sign; a dashboard retry or a second View after it | The durable sign record is synced before the signature leaves: a retry resends the identical events and idem, another View is `already_signed`. A same-UID process can delete or corrupt the record (accepted: it can sign anyway); corruption fails closed. A record can also be lost without an attacker (a cleanup of the state directory, a backup restore, a wall-clock jump of more than 24 h before a prune, file-system loss): the live signer's in-memory guard still never signs again; only after the signer has also restarted can a lost record allow one fresh signature, and the host still commits a request once. |
 
+**8. One signing path per workspace (owner decision of 12 Oct 2026, with the dashboard stream's clarification).** While
+click-to-sign is on for a workspace, the only way to sign is the click. The terminal hand-off (a request with a code,
+`human.prepare {handoff:true}`, signed with `orch sign CODE`) does not exist for that workspace:
+
+- `human.prepare` with `handoff:true` is refused with **`sign.click_only`** (exit 3, not retryable). The message says to
+  use Sign in the dashboard, or turn convenience off with `orch host convenience off --workspace W` (the `fix`).
+- `orch host convenience on` is **refused** (`sign.click_only`, the message lists each pending request's id, op and code)
+  while hand-off requests of that workspace are pending (`prepared` or `bound`, not expired). The owner cancels them or
+  lets them expire (10 minutes), then switches on. Refusing was chosen over cancelling them atomically: nothing is
+  cancelled silently. Requests prepared with a signer (not a hand-off) never block it.
+- A hand-off request that exists anyway (the flag was switched on by another path, e.g. editing the state file) cannot be
+  bound (`human.get` with `signer`) or submitted (`human.submit`, again under the store lock): `sign.click_only`.
+- **The race.** The host holds an exclusive `flock` on `<state>/host/convenience-<ws>.lock` from the flag check of a
+  hand-off prepare to the write of its request file; `orch host convenience on|off` holds the same lock across its pending
+  scan and the flag write. So exactly one wins: the prepare lands first (and `on` is refused, listing it), or the flag
+  lands first (and the prepare is refused).
+- `orch host convenience off` removes the flag and hand-off works again: the owner's CLI fallback.
+- Direct mode has no host and no convenience flag, and is unaffected.
+
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
+
+0. **One signing path (changelog item 19, item 8 above)** is `orch.host.convenience.workspace_lock`, `refuse_handoff` and `pending_handoffs`, called from `HumanOps.prepare` (under the lock), `get` and `submit`, and from `orch host convenience on`. Tests: `tests/host/test_click_only.py`.
 
 1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as
    `python -I -m orch.click --fd N`; the dashboard imports only `spawn`, `client` and `protocol`.
@@ -2997,6 +3019,12 @@ existing op changes its version.
     `human.click_refused` reasons `already_signed` (another `view_digest` for a signed request) and
     `record_unavailable` (the record cannot be written, or exists but cannot be read: fail closed). A repeated `sign`
     after a signer restart needs no new `prepare` or `view`. No host change and no wire change on the workspace socket.
+
+19. **One signing path per workspace (H5c follow-up, additive, owner decision of 12 Oct 2026):** new catalog code
+    `sign.click_only` (exit 3, not retryable). With click-to-sign on, `human.prepare {handoff:true}` is refused,
+    `orch host convenience on` is refused while hand-off requests are pending, and a hand-off request cannot be bound or
+    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock.
+    No wire schema change; a client that does not use `handoff:true` sees nothing new.
 
 ---
 

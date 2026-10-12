@@ -126,6 +126,16 @@ class Reopen(Action):
     message: Text | None = None
 
 
+class Move(Action):
+    """`move`: a workspace owner or maintainer returns unclaimed work to `backlog` or `open` (host contract 0.8, H6b).
+    Served only through `human.prepare`; the host refuses a claimed ticket and any other target."""
+
+    action: Literal["move"]
+    key: Key
+    to: Literal["backlog", "open"]
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
+
+
 class NewTicket(Action):
     """A person's `new` carries the key, type, title and owner only (stream A, 11 Oct); the rest is `Details`."""
 
@@ -324,6 +334,7 @@ PrepareBody = Annotated[
     | AddLabel
     | Close
     | Reopen
+    | Move
     | NewTicket
     | Details
     | WriteSection
@@ -362,6 +373,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "close", args | ({"message": action.message} if action.message else {})
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
+        case Move():
+            return "move", {"ref": action.key, "to": action.to} | ({"reason": action.reason} if action.reason else {})
         case NewTicket():
             return "new", {"title": action.title, "type": action.type}
         case Details():
@@ -416,6 +429,8 @@ def expected(action: Action):
         case PolicySet():
             _, args = host_call(action)
             return lambda ev: one(ev, "policy.changed", gates=args["gates"]) and "ref" not in ev[0]
+        case Move():
+            return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
             return lambda ev: one(ev, "role.changed", person=action.person, role=action.role)
         case MemberRemove():

@@ -242,7 +242,7 @@ export function CommandPalette() {
     }))
 
   const onBoard: Entry[] =
-    pathname === '/board' && can(role, 'ticket.move')
+    pathname === '/board' && can(role, 'ticket.move') && !handoffOn
       ? [
           {
             id: 'board-move',
@@ -280,7 +280,7 @@ export function CommandPalette() {
       if (t.status === 'done' || t.status === 'closed') out.push({ id: 'reopen', label: 'Reopen ticket', icon: <LockOpen />, run: () => (close(), setHandoff({ title: `Reopen ${key}`, action: { action: 'reopen', key } })) })
       else out.push({ id: 'close', label: 'Close ticket', icon: <Lock />, run: () => (close(), setHandoff({ title: `Close ${key}`, action: { action: 'close', key } })) })
     }
-    if (can(ticketRole, 'ticket.move')) out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
+    if (can(ticketRole, 'ticket.move') && !handoffOn) out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
     for (const g of av.approve) out.push({ id: `approve-${g}`, label: `Approve ${gateActionName(g)}`, icon: <Check />, run: () => sign({ kind: 'approve', gate: g }) })
     if (av.verdict) out.push({ id: 'verdict', label: 'Give verdict', icon: <Check />, run: () => sign({ kind: 'verdict' }) })
     return out

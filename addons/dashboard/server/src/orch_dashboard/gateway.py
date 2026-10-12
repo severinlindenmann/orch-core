@@ -45,7 +45,7 @@ def read_pins(path):
 
 
 # The inner ops of the settings hand-offs (M4). `grant` (issuing) is not here: the signer draws the secret.
-WRITE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+WRITE_OPS = ("move", "settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
 
 
 class Gateway:
@@ -131,6 +131,8 @@ class Gateway:
             # R5) is not offered. Hiding a control is a courtesy: the host stays the authority.
             served = link.welcome.get("ops", {})
             features += [f"do:{op}" for op in WRITE_OPS if served.get(op) == 1]
+            if served.get("move") == 1:
+                features.append("move")  # the board's move action (H6b): backlog <-> open through a hand-off
         return features
 
     def workspaces(self):

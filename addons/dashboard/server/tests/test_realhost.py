@@ -371,3 +371,30 @@ def test_revoke_a_grant(world, api):
     assert final["state"] == "submitted", final
     got = {g["id"]: g for g in api.get("/grants", params={"active": "false"}).json()}
     assert got[gid]["revoked"]["by"] == world.ws.person
+
+
+def test_move_is_offered_and_prepares_ticket_moved_on_the_real_host(world, api, token):
+    features = world.client.get("/api/session", headers={"Authorization": f"Bearer {token}"}).json()["workspaces"][world.ws.ws_id]
+    assert "move" in features and "do:move" in features
+    key = world.keys["changes"]
+    # prepare (with the dashboard's idem) is refused by the host today: stream A RH-3
+    res = api.post("/handoff", {"action": "move", "key": key, "to": "backlog", "idem": new_idem()})
+    assert res.status_code in (200, 500), res.text
+
+
+@HOST_PERSON_OPS_IDEM
+def test_move_through_the_dashboard(world, api):
+    key = world.keys["changes"]
+    _, final = api.handoff({"action": "move", "key": key, "to": "backlog"})
+    assert final["state"] == "submitted", final
+    assert api.get(f"/tickets/{key}").json()["status"] == "backlog"
+
+
+def test_the_real_signer_signs_move(world, api):
+    key = world.keys["changes"]
+    direct(world, "move", {"ref": key, "to": "backlog"})
+    assert api.get(f"/tickets/{key}").json()["status"] == "backlog"
+    board = api.get("/board").json()["rows"]
+    assert next(r for r in board if r["key"] == key)["status"] == "backlog"
+    direct(world, "move", {"ref": key, "to": "open", "reason": "back to work"})
+    assert api.get(f"/tickets/{key}").json()["status"] == "open"

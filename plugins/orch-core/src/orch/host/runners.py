@@ -399,7 +399,7 @@ class RunnerHub:
         return {"sub": self.sub_id, "epoch": f"{self.instance}.{self.epoch}", "reconciled": reconciled}
 
     def _after_hello(self) -> None:
-        """Nothing is queued yet; H11c re-sends grant state here."""
+        """After the hello's answer is queued: H11c revalidates the reported grants here (none in H11a)."""
 
     async def _apply(self, rec: dict[str, Any], rep: dict[str, Any] | None, *, previous_generation: int | None) -> None:
         """Reconcile one live record with the runner's report of it (``None``: not reported)."""
@@ -518,9 +518,9 @@ class RunnerHub:
             raise
         cur = self.store.records[run]
         if cur.get("state") == "starting":
-            state = res.get("state") if res.get("state") in ("running", "exited") else "running"
+            # running until the runner's exit report says otherwise (that report carries the exit itself)
             await self._save(
-                {**cur, "state": state, "pid": res.get("pid"), "started_at": res.get("started_at") or _iso()}
+                {**cur, "state": "running", "pid": res.get("pid"), "started_at": res.get("started_at") or _iso()}
             )
         return view(self.store.records[run])
 

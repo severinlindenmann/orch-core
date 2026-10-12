@@ -26,7 +26,19 @@ from orch import canon
 
 from . import review
 
-__all__ = ["Signed", "SignerRefused", "check", "check_reviews", "confirm_word", "header", "render", "run", "sign"]
+__all__ = [
+    "Signed",
+    "SignerRefused",
+    "check",
+    "check_reviews",
+    "confirm_word",
+    "finish",
+    "header",
+    "render",
+    "run",
+    "secret_text",
+    "sign",
+]
 
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -461,10 +473,29 @@ def _summary(block: Mapping[str, Any]) -> str:
     return typ
 
 
-def render(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None]) -> str:
+#: event types whose digest (``sha256``, ``bytes``) has no preimage in the material: the signer can compare it only with
+#: bytes it holds itself
+ARTIFACT_TYPES = frozenset({"artifact.added", "artifact.replaced"})
+UNSEEN = "signed commitment: orch sign has not seen these bytes; compare with the file you meant"
+SEEN = "checked against your local file"
+
+
+def render(
+    prepared: Mapping[str, Any],
+    workspace: Callable[[str], tuple[str, str] | None],
+    *,
+    artifacts: str | None = None,
+) -> str:
     """The review the person reads, from the material and the events only (never host text): the header, then one
     block per event in event order, every payload key in canonical order, then derived values; section texts and
-    ``before`` values are data, one ``| `` mark per line."""
+    ``before`` values are data, one ``| `` mark per line.
+
+    ``artifacts`` labels the ``sha256`` and ``bytes`` of artifact events: ``"unseen"`` (a hand-off: this signer never
+    held the bytes, :data:`UNSEEN`), ``"checked"`` (compared with local files, :data:`SEEN`), ``None`` (no label: the
+    composite, which uploaded the bytes itself and checks them with :func:`check_uploads`)."""
+    labels = {"unseen": UNSEEN, "checked": SEEN}
+    if artifacts is not None and artifacts not in labels:
+        raise ValueError(f"artifacts: {artifacts!r}")
     out = [*header(prepared, workspace), ""]
     material = prepared["material"]
     events = prepared["events"]
@@ -476,6 +507,8 @@ def render(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
                 out.append("secret_hash: drawn by this signer after you confirm")
                 continue
             label = " (consistency check against the gate input; host attestation)" if key == "source_sha" else ""
+            if artifacts is not None and block["type"] in ARTIFACT_TYPES and key in ("sha256", "bytes"):
+                label = f" ({labels[artifacts]})"
             out.append(f"{_clean(key)}: {_clean(payload[key])}{label}")
         if block["type"] in review.GATE_TYPES:
             out.append(f"gate_gen: {int(events[i - 1]['gate_gen'])} (host attestation, checked by the host at submit)")
@@ -616,11 +649,60 @@ def run(
     prepared = call(
         "human.prepare", {"op": op, "args": args, "signer": {"device": device, "auth": backend.auth}}, files=files
     )["data"]
-    request_id = prepared["request"]["id"]
+    return finish(
+        call,
+        prepared,
+        prepared["request"]["id"],
+        backend=backend,
+        key_id=key_id,
+        workspace_id=workspace_id,
+        person=person,
+        device=device,
+        workspace=workspace,
+        confirm=confirm,
+        show_secret=show_secret,
+        idem=idem,
+        files=files or {},  # every artifact event must name bytes this client uploaded: none uploaded, none passes
+    )
+
+
+def secret_text(secret: str) -> str:
+    """What the person's own terminal shows after a grant's commit (and nothing else ever shows)."""
+    return f"\nORCH_GRANT={secret}\n(shown once; orch keeps only its hash)\n"
+
+
+def finish(
+    call: Callable[..., Any],
+    prepared: Mapping[str, Any],
+    request_id: str,
+    *,
+    backend: Any,
+    key_id: str,
+    workspace_id: str,
+    person: str,
+    device: str,
+    workspace: Callable[[str], tuple[str, str] | None],
+    confirm: Callable[[str, str], bool],
+    show_secret: Callable[[str], None],
+    idem: str,
+    files: dict[str, Any] | None = None,
+    artifacts: str | None = None,
+    before: Callable[[], None] | None = None,
+    prefix: str = "",
+) -> dict[str, Any]:
+    """The tail every signing client shares (the composite and ``orch sign``): ``before`` (a client's own extra
+    checks), :func:`check`, :func:`check_uploads` (when ``files`` is given), the review (``prefix``, then
+    :func:`render`), the confirmation word, :func:`sign`; any failure up to there cancels the request (it expires
+    anyway) and re-raises. Then ``human.submit`` with ``idem``, and only after the commit a grant's secret on the
+    person's terminal. Returns ``human.submit``'s result."""
     try:
+        if before is not None:
+            before()
         check(prepared, workspace_id=workspace_id, person=person, device=device, auth=backend.auth)
-        check_uploads(prepared, files)
-        if not confirm(render(prepared, workspace), confirm_word(prepared)):
+        if files is not None:
+            check_uploads(prepared, files)
+        text = prefix + render(prepared, workspace, artifacts=artifacts)
+        if not confirm(text, confirm_word(prepared)):
             _refuse("not confirmed")
         signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)
     except BaseException:
@@ -631,5 +713,5 @@ def run(
         raise
     result = call("human.submit", {"request_id": request_id, "events": signed.events}, idem=idem)
     if signed.secret is not None:
-        show_secret(f"\nORCH_GRANT={signed.secret}\n(shown once; orch keeps only its hash)\n")
+        show_secret(secret_text(signed.secret))
     return result

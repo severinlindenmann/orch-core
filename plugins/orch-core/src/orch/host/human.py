@@ -20,15 +20,23 @@ The host never prompts and holds no device key (D-P2-15). A person op is prepare
 * **pending** lists the caller's requests (or the one named by ``request_id``), each with ``error: {code}`` after a
   refused submit (the catalog code only).
 
-Hand-off codes and ``orch sign CODE`` are H5b: a request prepared with ``handoff:true`` has ``code: null`` here (so
-``human.pending {code}`` answers an empty list) and can be bound by ``human.get`` with ``signer``.
+Hand-off (H5b, F5): a request prepared with ``handoff:true`` gets a code, ``XXXX-XXXX`` in Crockford base32 (40 bits
+from a CSPRNG, unique among this workspace's stored requests). The code **names** the request and authorises nothing:
+``human.pending {code}`` finds it only for the same principal and person, in this workspace, while it is pending
+(``prepared`` or ``bound``); a terminal request's code no longer resolves and is never issued again while the request is
+kept. Failed code lookups are limited to 5 per minute **per connection** (``rate.limited``), so one connection's
+failures never lock out another. ``human.get`` with ``signer`` binds the request to one device, once
+(:mod:`orch.host.handoff` is ``orch sign CODE``).
 """
 
 from __future__ import annotations
 
 import base64
 import copy
+import secrets
 import time
+import weakref
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -114,6 +122,17 @@ _SCHEMAS = {
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 _GATE_TYPES = {"gate.approved", "gate.changes_requested", "verdict.given"}
 _HASH = r"sha256:[0-9a-f]{64}"
+#: Crockford base32 (no I, L, O, U): 8 characters are 40 bits
+CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+#: failed ``human.pending {code}`` lookups allowed per connection per window (F5)
+LOOKUP_FAILURES = 5
+LOOKUP_WINDOW = 60.0
+
+
+def new_code() -> str:
+    """A hand-off code: 8 Crockford base32 characters from a CSPRNG (40 bits), shown as ``XXXX-XXXX``."""
+    s = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+    return f"{s[:4]}-{s[4:]}"
 
 
 def _iso(epoch: float) -> str:
@@ -198,6 +217,9 @@ class HumanOps:
 
     def __init__(self, backend: Any) -> None:
         self.backend = backend  # the RegistryBackend: its context, file and state helpers
+        #: per connection (the transport's Session): the times of its failed code lookups in the last window (F5).
+        #: Only the workspace worker thread touches it; a closed connection's entry goes with its session.
+        self._lookups: weakref.WeakKeyDictionary[Any, deque[float]] = weakref.WeakKeyDictionary()
 
     def serve(self, call: Call, redactor: Redactor) -> dict[str, Any]:
         op = call.frame["op"]
@@ -294,6 +316,7 @@ class HumanOps:
         if dry_run:
             return {"request": None, **prepared}
         rid = new_request_id()
+        requests = self._requests(service)
         record = {
             "v": 1,
             "id": rid,
@@ -301,7 +324,7 @@ class HumanOps:
             "principal": call.principal,
             "person": person,
             "op": name,
-            "code": None,
+            "code": self._new_code(requests) if handoff else None,
             "state": "bound" if signer is not None else "prepared",
             "signer": signer,
             "created": now,
@@ -312,8 +335,25 @@ class HumanOps:
             "submit": None,
             "outcome": None,
         }
-        self._requests(service).write(record)
+        requests.write(record)
         return self._view(record)
+
+    @staticmethod
+    def _new_code(requests: RequestStore) -> str:
+        """A code no request stored in this workspace carries (terminal ones included, for the 24 h they are kept), so a
+        code names one request only and is never issued twice while that request can be looked up."""
+        taken = set()
+        for rid in requests.ids():
+            try:
+                rec = requests.read(rid)
+            except HostError:
+                continue
+            if rec is not None and rec.get("code"):
+                taken.add(rec["code"])
+        while True:
+            code = new_code()
+            if code not in taken:
+                return code
 
     def _build(
         self, call: Call, name: str, log: str, capture: Any, store: Any, now: float
@@ -457,11 +497,11 @@ class HumanOps:
         return self._view(record)
 
     def pending(self, call: Call, requests: RequestStore, args: dict[str, Any]) -> dict[str, Any]:
-        """``human.pending`` (R6): this principal's requests, or the one named by ``request_id``. Codes are H5b: none
-        exists yet, so ``{code}`` answers an empty list (as for an unknown code). A failed submit carries
-        ``error: {code}``, the catalog code only, never the message."""
+        """``human.pending`` (R6): this principal's requests, the one named by ``request_id``, or the pending one named
+        by a hand-off ``code`` (F5). A failed submit carries ``error: {code}``, the catalog code only, never the
+        message."""
         if "code" in args:
-            return {"requests": []}
+            return {"requests": [self._summary(r) for r in self._by_code(call, requests, args["code"])]}
         if "request_id" in args:
             try:
                 records = [requests.load(args["request_id"], call.principal)]
@@ -479,6 +519,40 @@ class HumanOps:
                 if rec is not None and rec.get("principal") == call.principal:
                     records.append(requests.expire(rec))
         return {"requests": [self._summary(r) for r in records]}
+
+    def _by_code(self, call: Call, requests: RequestStore, code: str) -> list[dict[str, Any]]:
+        """The pending request of this principal and person that ``code`` names, in this workspace. After
+        ``LOOKUP_FAILURES`` failed lookups in ``LOOKUP_WINDOW`` seconds on **this connection**, every code lookup on it
+        answers ``rate.limited`` until the oldest failure leaves the window; other connections are not affected (F5)."""
+        now = call.service.clock()
+        failures = self._lookups.setdefault(call.session, deque())
+        while failures and now - failures[0] >= LOOKUP_WINDOW:
+            failures.popleft()
+        if len(failures) >= LOOKUP_FAILURES:
+            wait = max(1, int((failures[0] + LOOKUP_WINDOW - now) * 1000))
+            raise HostError(
+                "rate.limited",
+                f"too many failed code lookups on this connection: at most {LOOKUP_FAILURES} per minute",
+                retry_after_ms=wait,
+            )
+        found = []
+        for rid in requests.ids():
+            try:
+                rec = requests.read(rid)
+            except HostError:
+                continue
+            if (
+                rec is not None
+                and rec.get("code") == code
+                and rec.get("principal") == call.principal
+                and rec.get("person") == call.viewer
+            ):
+                rec = requests.expire(rec)
+                if rec["state"] in PENDING:
+                    found.append(rec)
+        if not found:
+            failures.append(now)
+        return found
 
     @staticmethod
     def _summary(record: dict[str, Any]) -> dict[str, Any]:

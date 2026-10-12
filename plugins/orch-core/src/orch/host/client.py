@@ -92,3 +92,57 @@ def handshake_pinned(pin: Pin, hello: dict[str, Any], *, timeout: float = 2) -> 
     except BaseException:
         sock.close()
         raise
+
+
+class Connection:
+    """A blocking person-class client of one workspace socket: the pinned handshake, then one request at a time.
+
+    The minimal client ``orch sign`` needs (H5b) without the host-mode CLI (H4b): ``call`` sends one ``req`` and returns
+    its ``result``, raising the host's error as :class:`~orch.host.errors.HostError`. Frames that are not the answer
+    (subscription items) are skipped. It never sends a grant: ``human.*`` is column P only.
+    """
+
+    def __init__(self, pin: Pin, *, client: str = "orch", timeout: float = 120) -> None:
+        hello = {"t": "hello", "proto": [1], "client": client, "caps": []}
+        self.sock, self.welcome = handshake_pinned(pin, hello)
+        self.sock.settimeout(timeout)
+        self._decoder = frames.Decoder()
+        self._frames: list[Any] = []
+        self._n = 0
+
+    def call(
+        self, op: str, args: dict[str, Any], *, idem: str | None = None, files: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        from .errors import HostError
+
+        self._n += 1
+        rid = f"c{self._n}"
+        frame: dict[str, Any] = {"t": "req", "id": rid, "op": op, "args": args}
+        if idem is not None:
+            frame["opts"] = {"idem": idem}
+        if files:
+            frame["files"] = files
+        self.sock.sendall(frames.encode(frame))
+        while True:
+            while not self._frames:
+                data = recv(self.sock)
+                if not data:
+                    raise ConnectionError("the host closed the connection")
+                self._frames.extend(self._decoder.feed(data))
+            got = self._frames.pop(0)
+            if isinstance(got, frames.FrameError):
+                raise got
+            if got.get("t") != "res" or got.get("id") != rid:
+                continue
+            if got.get("ok"):
+                return got["result"]
+            raise HostError.stored(got.get("error") or {"code": "internal"})
+
+    def close(self) -> None:
+        self.sock.close()
+
+    def __enter__(self) -> Connection:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()

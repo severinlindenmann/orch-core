@@ -132,11 +132,14 @@ class ReaderPool:
         self.peak = 0
         self.started = 0
 
-    def call(self, principal: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
-        """One request in a fresh child. Raises :class:`Unavailable`, :class:`RemoteMismatch` or :class:`Busy`."""
+    def call(
+        self, principal: str, hello: dict[str, Any], req: dict[str, Any], *, wall: float | None = None
+    ) -> dict[str, Any]:
+        """One request in a fresh child. Raises :class:`Unavailable`, :class:`RemoteMismatch` or :class:`Busy`.
+        ``wall``: a shorter deadline than the pool's (a caller's remaining budget), counted from now."""
         if not isinstance(principal, str) or not principal:
             raise Unavailable("a reader request without a principal")
-        deadline = time.monotonic() + self._wall
+        deadline = time.monotonic() + (self._wall if wall is None else max(0.0, min(self._wall, wall)))
         with self._mu:
             entry = self._principals.get(principal)
             if (entry is not None and entry[1] >= self._queue_per_principal) or self.waiting >= self._queue_max:
@@ -360,9 +363,18 @@ class HostGitReader:
             raise Unavailable("the repository was not pinned at registration")
         return pins
 
-    def _call(self, path: str | os.PathLike[str], op: str, args: dict[str, Any], principal: str | None) -> Any:
+    def _call(
+        self,
+        path: str | os.PathLike[str],
+        op: str,
+        args: dict[str, Any],
+        principal: str | None,
+        wall: float | None = None,
+    ) -> Any:
         hello = {"profile": "gitdir", "pins": self._pins(path).to_json()}
-        return self.pool.call(principal or self.principal, hello, {"op": op, "args": args})
+        if wall is None:
+            return self.pool.call(principal or self.principal, hello, {"op": op, "args": args})
+        return self.pool.call(principal or self.principal, hello, {"op": op, "args": args}, wall=wall)
 
     # -- reads
     def observe(self, path: str | os.PathLike[str], refs: Iterable[str] = (), principal: str | None = None) -> Any:
@@ -378,9 +390,10 @@ class HostGitReader:
         context: int = 3,
         max_bytes: int = 262144,
         principal: str | None = None,
+        wall: float | None = None,
     ) -> dict[str, Any]:
         args = {"branch": branch, "default_branch": default_branch, "context": context, "max_bytes": max_bytes}
-        return _check_diff(self._call(path, "diff", args, principal), max_bytes)
+        return _check_diff(self._call(path, "diff", args, principal, wall), max_bytes)
 
     def tree_check(self, path: str | os.PathLike[str], name: str, principal: str | None = None) -> dict[str, Any]:
         """``TreeCheckResult`` for the declared working copy at ``path`` (repo ``name``). Raises

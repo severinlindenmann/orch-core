@@ -540,9 +540,11 @@ class Git:
         remote: str | None,
         context: int = 3,
         max_bytes: int = 262144,
+        wall: float | None = None,
     ) -> dict[str, Any]:
         """The ``diff`` core for one repo (section 0.8): ``{branch, base_sha, head_sha, files, patch (base64),
-        truncated, origin_urls}``. Raises :class:`orch.gitread.errors.Unavailable`, or
+        truncated, origin_urls}``. ``wall`` (host mode): the reader's deadline in seconds, when shorter than its own.
+        Raises :class:`orch.gitread.errors.Unavailable`, or
         :class:`~orch.gitread.errors.RemoteMismatch` when ``remote`` is declared and the observed identity differs."""
         self._need()
         from orch import canon
@@ -557,6 +559,7 @@ class Git:
                 context=context,
                 max_bytes=max_bytes,
                 principal=self.principal,
+                **({} if wall is None else {"wall": wall}),
             )
         else:
             from orch.gitread import local

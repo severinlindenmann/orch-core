@@ -11,7 +11,7 @@ the viewer the dispatcher passes in. The hooks below serve the reads that later 
 | :meth:`Viewer.needs_person` | ``needs {person}`` | H6b |
 | :meth:`Viewer.session_visible`, :meth:`Viewer.claims` | ``session.list``, ``grant.list`` | H6b |
 | :meth:`Viewer.ticket` | ``ticket.get``, ``diff``, ``artifact.get``, ``sub.open {ticket}`` | H6b, H3b1, H4a2, H6a |
-| :meth:`Viewer.linked_repo` | ``diff {repo}`` | H3b1 |
+| :meth:`Viewer.linked_repo` | ``diff {repo}`` | H3b1 (served by :mod:`orch.host.diff`) |
 | :meth:`Viewer.artifact` | ``artifact.get {name}`` | H4a2 |
 | :meth:`Viewer.ticket`, :meth:`Viewer.manager` | ``ticket.text``, ``workspace.settings``, ``activity.list`` | H6b |
 

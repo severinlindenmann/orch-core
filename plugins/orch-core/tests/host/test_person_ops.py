@@ -321,3 +321,72 @@ def test_the_signer_refuses_a_person_op_event_outside_its_table(human):
     with pytest.raises(Exception, match="do not fit|knows"):
         human.check(prepared)
     assert UID  # (the UID is the one the helpers map to the owner)
+
+
+# --- the signer knows the three ops: confirmation words (§0.8.1 item 7) and per-op checks ---------------------------
+
+
+def _registry(prefix: str = "MINE"):
+    return lambda wid: ("my workspace", prefix)
+
+
+def test_the_confirmation_words_of_the_three_ops(human):
+    from orch.host import signer
+
+    _, key = human.ticket()
+    moved = human.prepare("move", {"ref": key, "to": "backlog"})
+    assert signer.confirm_word(moved, _registry()) == f"{key}/{moved['log'][-8:]}"
+    ticket_policy = human.prepare("policy.set", {"ref": key, "gates": {"requirements": policy(count=2)}})
+    assert signer.confirm_word(ticket_policy, _registry()) == f"{key}/{ticket_policy['log'][-8:]}"
+    ws_policy = human.prepare("policy.set", {"gates": {"requirements": policy(count=2)}})
+    # the prefix comes from the signer's own registry, never from the host
+    assert signer.confirm_word(ws_policy, _registry("MINE")) == "MINE/POLICY"
+    settings = human.prepare("settings.set", {"set": {"lease_ttl_min": 10}})
+    assert signer.confirm_word(settings, _registry("MINE")) == "MINE/SETTINGS"
+    with pytest.raises(signer.SignerRefused):
+        signer.confirm_word(settings, lambda wid: None)  # not in the signer's registry: nothing to type
+
+
+def test_the_signer_header_names_the_three_ops_in_plain_words(human):
+    from orch.host import signer
+
+    _, key = human.ticket()
+    for op, args, word in (
+        ("move", {"ref": key, "to": "backlog"}, "move "),
+        ("policy.set", {"gates": {"requirements": policy(count=2)}}, "set the gate policies"),
+        ("settings.set", {"set": {"lease_ttl_min": 10}}, "change the workspace settings"),
+    ):
+        lines = signer.header(human.prepare(op, args), _registry())
+        assert word in lines[1], (op, lines[1])
+
+
+@pytest.mark.parametrize(
+    "op,args,tamper",
+    [
+        ("move", None, lambda e: e.update(to="in_progress")),
+        ("policy.set", {"gates": {"requirements": None}}, lambda e: e["gates"].update(nope={})),
+        ("settings.set", {"set": {"lease_ttl_min": 10}}, lambda e: e["set"].update(other=1)),
+    ],
+)
+def test_the_signer_refuses_a_person_op_event_that_changes_what_its_op_does_not(human, op, args, tamper):
+    from orch.host import signer
+
+    _, key = human.ticket()
+    if op == "move":
+        args = {"ref": key, "to": "backlog"}
+    if op == "policy.set":
+        args = {"gates": {"requirements": policy(count=2)}}
+    prepared = human.prepare(op, args)
+    tamper(prepared["events"][0])
+    with pytest.raises(signer.SignerRefused, match="cannot sign"):
+        human.check(prepared)
+
+
+def test_a_workspace_policy_set_on_a_ticket_log_is_refused(human):
+    from orch.host import signer
+
+    _, key = human.ticket()
+    prepared = human.prepare("policy.set", {"ref": key, "gates": {"requirements": policy(count=2)}})
+    prepared["material"] = {**prepared["material"], "ticket": None}  # claims workspace scope on a ticket log
+    with pytest.raises(signer.SignerRefused):
+        human.check(prepared)

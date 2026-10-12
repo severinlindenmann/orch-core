@@ -202,7 +202,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `job/1` | `job.next`, `job.heartbeat`, `job.done` (1) | worker |
 | `control/1` | `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.bootstrap`, `host.restart` (1) | control |
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
-| `term/1` | `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
+| `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` (1) (v1.6, §12.8) | workspace |
 | `quick/1` | `quick.list` (1) (v1.6, §12.9) | workspace |
@@ -302,7 +302,7 @@ may no longer run agents.
 | `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.bootstrap`, `host.outcome`, `host.restart` | — | — | — | — | ✓ |
 | `policy.set`, `settings.set`, `move` and the human registry ops | through `human.*` only (owners, or owners and maintainers for `move`) | — | — | — | — |
 | v1.6 (§12.3.1): `run.sub`, `run.list` | ✓ (own person's runs) | ✓ (agent runs in the grant's scope) | — | — | — |
-| v1.6: `agent.preview`, `agent.start`, `run.stop`, `term.open`, `term.attach`, `attach.cancel`, `grant.deposit_status`, `grant.forget` | ✓ (own runs and grants) | — | — | — | — |
+| v1.6: `agent.preview`, `agent.start`, `run.stop`, `term.preview`, `term.open`, `term.attach`, `attach.cancel`, `grant.deposit_status`, `grant.forget` | ✓ (own runs and grants) | — | — | — | — |
 | v1.6: `grant.deposit` | ✓ **with** a verified `auth.grant` of a `label:"runner"` grant (§12.4.2) | — | — | — | — |
 | v1.6: `worktree.list`, `worktree.create`, `worktree.remove` | ✓ (`force` P only) | ✓ (grant scope; create and remove only on the session's claimed ticket) | — | — | — |
 | v1.6: `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ (owners, maintainers) | — | — | — | — |
@@ -455,14 +455,19 @@ drops. The host never sends it.
 | `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
 | `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
 | `grant.expiring` | 3 | no | stays | `grant.deposit` of a grant with less than 15 minutes left | — |
+| `term.not_attachable` | 3 | no | stays | `term.attach` on a run that is `starting` or `lost`, or `exited` with no ring kept; `detail.state` names it | — |
+| `run.limit` | 9 | yes | stays | a run limit of §0.11; `detail.which` is `agent_ws`, `agent_person`, `shell_person` or `runner` | when a run ends |
+| `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `worktree.none` | 3 | no | stays | `worktree.remove` for a (ticket, repo) with no registered worktree | — |
 
-Other v1.6 refusals reuse existing codes: an unknown or invisible run, attachment or `deposit_id` is `not_found`
-(§0.5); the run limits and the start rate (§0.11) are `quota.host` and `rate.limited` with `retry_after_ms`;
+Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
+attachment or `deposit_id` is `not_found` (§0.5); the start rate (§0.11) is `rate.limited` with `retry_after_ms`;
 `grant.deposit` while the runner is not connected is `runner.unavailable`, and while this machine has not enabled
-dashboard execution for the workspace `runner.disabled` (`detail.missing:"machine"`). Exit convention: state
-refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`), transient conditions 9.
+dashboard execution for the workspace `runner.disabled` (`detail.missing:"machine"`). A runner reconnecting after a
+host restart shows as `RunnerInfo.connected:false` and, for ops that need it, `runner.unavailable`. Exit convention:
+state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`), transient conditions 9. Every
+`message` is host-authored and untrusted: clients render it as plain text.
 | `worktree.exists`, `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned` | 3 | no | stays | §12.7 | — |
 | `worktree.git_failed` | 1 | no | stays | git exited non-zero (stderr only in the runner log) | — |
 | `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
@@ -2237,7 +2242,7 @@ prepare {workspace_id:WsId, op:OpName, args:object, idem:Idem, files?:{name: {b6
 view    {workspace_id:WsId, request_id:ReqHr} → {view:View, view_digest:Hash}
 sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, word?:str{1..128}}
   → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool,     // never a secret
-     deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID}                       // v1.6: deposit grants only
+     deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID, grant?:str}           // v1.6: deposit grants only
 cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
 status  {} → {core:str, contract:1, workspaces:[{workspace_id:WsId, prefix:str,
                            custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
@@ -2247,7 +2252,9 @@ View = {risk:"Convenience signing: agents running as you, or anything that takes
         lines:[str],                                       // the terminal review of orch sign, line for line, escaped
         checks:[{repo:str, clean:true, attested_by:"worker", at:Time}],   // shown; `at` is not in view_digest
         confirm:{kind:"click"} | {kind:"word", word:str}, expires_at:Time, auth:"convenience", device:Device,
-        artifacts:"checked"|"unseen"|null}
+        artifacts:"checked"|"unseen"|null,
+        deposit?:true,                 // v1.6: set only for a deposit grant (§0.8.6 item 6); the line below is then in lines
+        deposit_line?:"The secret goes to your orch runner on this machine and is never shown"}
 view_digest = "sha256:" + hex(sha256(cj(View with every checks[].at removed)))
 Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, one per click, reused on retry
 ```
@@ -2342,8 +2349,9 @@ bearer secret are refused before signing, irrespective of the secret field's ini
 (v1.6, D-P2-27, owner decision of 12 Oct 2026):** a `grant` prepared with `deposit:true` is click + word
 `<PREFIX>~<WS8>/GRANT` when its prepared `grant.issued` carries `label:"runner"`, `hours` 1..12 (default 8) and
 `verbs:"agent"`, and this machine has dashboard execution enabled for the workspace. `check_prepared` admits exactly
-that case. The View adds the line "The secret goes to your orch runner on this machine and is never shown" with the
-person, scope, hours and until. `sign` draws the secret, signs, submits, and only after the commit calls
+that case, and `orch.click.view.build` sets the View's `deposit:true` and `deposit_line` (the constant "The secret goes
+to your orch runner on this machine and is never shown") only then, with the person, scope, hours and until in
+`lines`. The dashboard requires `args.deposit` and `view.deposit` to agree, else no Sign button. `sign` draws the secret, signs, submits, and only after the commit calls
 `grant.deposit {deposit_id}` with `auth.grant` on its own host connection, wipes the secret and answers `deposit` and
 `deposit_id`; the secret is never in a result, a frame to the dashboard or a log. On `deposit:"unknown"` it asks
 `grant.deposit_status` once (§12.4.2).
@@ -2572,9 +2580,9 @@ BlobId = str/b_[A-Z2-7]{26}/
 | `detail` subscription queue (v1.5) | 256 items or 1 MiB (§0.9 `overflow`) |
 | audit log | `audit.jsonl` rotated at 10 MiB, 20 files kept. `human.*`, writes, `peer.denied` and control ops go to `audit-security.jsonl`, which read traffic never rotates away. |
 | idle connection | closed after 10 min unless it has a subscription or a request in flight |
-| runs (v1.6) | 8 agent runs per person per workspace; 16 agent runs and 16 shells per person; 64 per runner; 10 starts per minute per person (burst 5) |
+| runs (v1.6) | 8 agent runs per person per workspace; 16 agent runs and 16 shells per person; 64 per runner (`run.limit`); 10 starts per minute per person, burst 5 (`rate.limited`) |
 | run ring (v1.6) | 1 MiB per run; an exited run's ring kept 1 h, at most 64 exited runs |
-| term attachments (v1.6) | 4 per run, 16 per person, 64 per runner; capability 10 s unused; 10 failed presentations per minute per runner |
+| term attachments (v1.6) | 4 per run, 16 per person, 64 per runner (`attach.limit`); capability 10 s unused (pending capabilities count toward no limit); 10 failed presentations per minute per runner |
 | term output and input (v1.6) | 64 KiB per frame; 512 KiB queue per attachment (overrun: `gap`); input 256 KiB/s and 1 MiB per 10 s per run; sizes 20..500 × 5..200 |
 | runner grants (v1.6) | 1 per (workspace, person), 64 per runner; click-issued at most 12 h |
 | worktrees (v1.6) | 200 registered per workspace; create/remove 10 per minute per person; one git command per repo at a time, 30 s each; `worktree.list {check}` 8 checks per call |
@@ -3837,7 +3845,7 @@ protection against passive disclosure). §9 item 11 lists what tier B (phase 3) 
 
 ```
 Browser (xterm.js) ──fetch, fetch-SSE──► Dashboard server ──socketpair──► click signer (orch.click)
-        └──WebSocket /api/term (ticket)──►      │  (person UID)                    │ grant.deposit (P + secret)
+        └──WebSocket /term (ticket)──►          │  (person UID)                    │ grant.deposit (P + secret)
                                                  │ workspace socket, person class   ▼
                                                  ├──────────────────────────► Host (never spawns anything but orch.gitread)
                                                  │                                 │ runner socket <run>/runner/host.sock
@@ -3895,6 +3903,7 @@ grant column (it is evaluated as P) **and** a verified `auth.grant` naming a `la
 | `run/1` | `run.stop` | ✓ own runs | — | — | side effect |
 | `run/1` | `grant.deposit` | ✓ with `auth.grant` | — | — | side effect, `deposit_id` |
 | `run/1` | `grant.deposit_status`, `grant.forget` | ✓ own grants | — | — | read / side effect |
+| `term/1` | `term.preview` | ✓ | — | — | read (no side effects) |
 | `term/1` | `term.open` | ✓ | — | — | idem create |
 | `term/1` | `term.attach`, `attach.cancel` | ✓ own runs | — | — | side effect (mints a capability) |
 | `worktree/1` | `worktree.list` | ✓ | ✓ grant scope | — | read |
@@ -3915,7 +3924,7 @@ Model     = str/[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,63}/          (never starts w
 RunId     = str/r_[0-7][0-9A-HJKMNP-TV-Z]{25}/                     AttId = str/at_[0-7][0-9A-HJKMNP-TV-Z]{25}/
 Gen       = str/[0-9a-f]{32}/                                      (a runner generation, drawn at runner start)
 Cwd       = {kind:"worktree", repo:RepoName, ticket:Key} | {kind:"repo", repo:RepoName} | {kind:"workspace"}
-Run       = {run:RunId, rev:int, kind:"agent"|"shell", person:Person, ticket:Key | null, harness:TermHarness,
+Run       = {run:RunId, rev:int, kind:"agent"|"shell", person:Person,      // kind "shell": everything run as the person ticket:Key | null, harness:TermHarness,
              mode:Mode | null, model:Model | null, subagent_model:Model | null, label:str{1..40} | null,
              session:str | null,             // = actor.session of the agent's F1 events; null for shells
              grant:str | null, grant_state:"ok"|"ended" | null, as_person:bool,    // true: no ORCH_GRANT (acts as you)
@@ -3923,13 +3932,16 @@ Run       = {run:RunId, rev:int, kind:"agent"|"shell", person:Person, ticket:Key
              exit:{code:int | null, signal:str | null, at:Time,
                    reason:"exited"|"stopped"|"spawn_failed"|"runner_restarted"|"lost",
                    cleanup:"complete"|"incomplete"|"unknown"} | null,
-             viewers:int 0..4, writer:bool, cols:int, rows:int}
+             viewers:int 0..4, writer:bool, cols:int, rows:int,
+             replay_until:Time | null}       // until when attach can replay the ring; null: running, or no ring kept
 RunnerInfo = {connected:bool, enabled:bool, terminals:bool, gen:Gen | null,
               grant:{id:str, until:Time, scope:"all"|"workable"} | null}     // the caller person's runner grant
 
 run.sub        {} → {sub:SubId}        evt items: {id, t:"run", run:Run} | {id, t:"gone", run:RunId}
-run.list       {state?:"live"|"all" = "live", ticket?:Ref, kind?:"agent"|"shell", since?:int}
-               → {runs:[Run & {out_bytes:int}]{0..256}, runner:RunnerInfo}
+run.list       {state?:"live"|"all" = "live", ticket?:Ref, kind?:"agent"|"shell", since?:int, page?:str{1..512}}
+               → {runs:[Run & {out_bytes:int}]{0..256}, next_page:str | null, runner:RunnerInfo}
+whoami         (v1.6, with run/1) gains runner?:RunnerInfo for P and G of the person (the card reads it before any
+               run.list)
 agent.preview  {ticket:Ref, harness:Harness, mode:Mode, model?:Model, subagent_model?:Model, label?:str{1..40},
                 worktree?:bool = true}
                → {ticket:Key, spec:Hash, argv:[str]{1..16}, display:str, login_shell:bool, program:str | null,
@@ -3937,11 +3949,15 @@ agent.preview  {ticket:Ref, harness:Harness, mode:Mode, model?:Model, subagent_m
                   blocked:{code:str, detail?:object, message:str} | null, warnings:[str]{0..8}}
 agent.start    {…the preview's arguments…, spec:Hash, cols?:int 20..500 = 120, rows?:int 5..200 = 40} + opts.idem?
                → {run:Run}
-term.open      {harness?:TermHarness = "shell", ticket?:Ref, mode?:"context", cwd?:Cwd, label?:str{1..40},
-                spec?:Hash, cols?, rows?} + opts.idem? → {run:Run}
-               // claude-code/codex here run as the person: ORCH_TICKET only, no ORCH_GRANT, no ORCH_SESSION;
-               // the preview line says "acts as you, not as an agent". A spec is required for a harness other than shell
-               // (from agent.preview with the same values).
+term.preview   {harness?:TermHarness = "shell", ticket?:Ref, mode?:"context", model?:Model, cwd?:Cwd,
+                label?:str{1..40}}
+               → {spec:Hash, argv:[str]{1..16}, display:str, login_shell:bool, program:str | null, cwd:Cwd, cwd_path:str,
+                  env:[str], as_person:true, notice:"acts as you, not as an agent",
+                  blocked:{code:str, detail?:object, message:str} | null, warnings:[str]{0..8}}
+term.open      {…the preview's arguments…, spec:Hash, cols?, rows?} + opts.idem? → {run:Run}
+               // a person-run harness or shell: kind "shell", as_person:true, session:null, ORCH_TICKET only
+               // (no ORCH_GRANT, no ORCH_SESSION); no claim precheck, no runner grant; `ticket` is checked for
+               // visibility only; `mode:"context"` needs a ticket. Same spec digest rules as agent.start.
 run.stop       {run:RunId, grace_ms?:int 0..30000 = 10000}
                → {state:"exited"|"stopping", cleanup:"complete"|"incomplete"|"unknown"|null}
 grant.deposit  {deposit_id:ULID} + auth.grant → {deposit:"confirmed"|"rejected"|"unknown", grant:str, until:Time,
@@ -3954,6 +3970,17 @@ term.attach    {run:RunId, mode:"read"|"write" = "read", take?:bool = false, fro
 attach.cancel  {att:AttId} → {}
 ```
 
+- **Runs and revisions.** `rev` is host-monotonic per workspace and persisted with the run records, so it survives
+  host restarts. `run.list` returns runs newest `rev` first, paged (`next_page`); `since` returns runs with
+  `rev > since` and is only for the gap between `run.sub` and `run.list` (it cannot report gone runs). After any
+  reconnect or `end` the client replaces its state with a full `run.list`. `{t:"gone"}` is sent when a run leaves the
+  caller's view, also when it is evicted by retention. The host coalesces `run` items that only change `viewers`,
+  `writer`, `cols` or `rows` to at most one per run per 250 ms. `run.sub` ends as `sub/1` subscriptions do (§0.9:
+  `person.removed`, `grant.expired`, `overflow`, `host.restarting`).
+- `kind:"agent"` runs appear on the Agents page; the dock lists both kinds. `label` is client-chosen untrusted text
+  (rendered through `visible.tsx`; null shows the harness and ticket).
+- `runner.disabled` with several things missing reports the first of `addon`, `machine`, `terminals`. Whether the
+  addon is granted is read from `addon.list`, not from `RunnerInfo`.
 - `display` is the POSIX-quoted rendering of `argv`, for display only. `cwd_path` is a host path on the person's own
   machine, shown to that person only.
 - The `spec` digest covers harness, mode, model, subagent model, argv, the cwd pin and its registration generation, the
@@ -4111,97 +4138,176 @@ by `:` (a path containing `:` is left out and named in `warnings`).
      main PID when the runner connected (D-P2-24), so the binding is transitive;
   4. the runner's first frame is `{t:"hello", gen, pid}`; `gen` must equal `runner.gen`.
   Any mismatch: the dashboard closes, sends `attach.cancel`, and shows "the runner changed; try again". In tier A all
-  of this is hygiene against mistakes and stale sockets, not a boundary.
+  of this is hygiene against mistakes and stale sockets, not a boundary. The ACL part of step 2 is best effort
+  (macOS `acl_get_link_np`, Linux the `system.posix_acl_access` attribute); the peer PID comes from
+  `getsockopt(SOL_LOCAL, LOCAL_PEERPID)` on macOS and `SO_PEERCRED` on Linux. `orch runner enable` refuses, naming the
+  path, when `<run>/term/<uid>/term.sock` would pass 100 bytes.
 
 #### 12.6.2 The attach capability
 
-The host mints it at `term.attach` and registers it at the runner before answering:
+The dashboard server calls `term.attach` **only when the browser's WebSocket has arrived with a valid browser ticket**
+(lazy attach, §12.6.6), on a host connection of its own. The host mints the capability and registers it at the runner
+before answering:
 
 ```
 attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte ticket; the runner never sees the ticket
                workspace_id:WsId, person:Person, run:RunId, session:str | null,
-               mode:"read"|"write", take:bool, lease_gen:int,   // the generation the lease must have when consumed
+               mode:"read"|"write", take:bool, lease_gen:int,   // the generation seen at minting (take:false only)
                runner_gen:Gen, from:int | null, nonce:str/[0-9a-f]{32}/, expires_at:Time}
 ```
 
-- **Ticket:** 32 random bytes (base64url, 43 characters), returned only to the caller of `term.attach` (the dashboard
-  server's host connection). The host keeps only its hash, the runner only `ticket_hash`.
+- **Ticket:** 32 random bytes (base64url, 43 characters), returned only to the dashboard server. The host keeps only
+  its hash, the runner only `ticket_hash`. **The host ticket, `nonce`, the socket path, `runner.pid`/`gen`, `lease_gen`
+  and `input_id` never reach the browser.**
 - **Lifetime:** 10 s unused, then the runner drops it. Minting allocates nothing but the pending record: **the ticket
-  never holds the lease.**
-- **Consumption, single use:** the client sends `{t:"attach", ticket, nonce}` as its first frame on a new term socket
-  connection. The runner atomically consumes the record whose hash matches, checks `runner_gen` is its own, `nonce`,
-  expiry and `run`, and for `write` takes the lease: if the current lease generation is not `lease_gen` (someone took
-  it meanwhile) or the lease is held and `take` is false, it answers `{t:"end", reason:"writer_busy"}`; otherwise it
-  increments the generation, tells the old holder `{t:"writer", writer:false}` and sends `SIGWINCH` (a resize to the
-  current size) so TUIs redraw. A consumed, expired, unknown or other-generation ticket closes the connection with
-  `{t:"end", reason:"ticket_invalid"}` and nothing else (a replay learns nothing). At most 10 failed presentations per
-  minute per runner; beyond that the listener refuses for 60 s.
+  never holds the lease**, and a pending capability counts toward no attachment limit. `attach.cancel` releases it.
+- **Consumption, single use:** the dashboard server sends `{t:"attach", ticket, nonce}` as its first frame on a new
+  term socket connection. The runner atomically consumes the record whose hash matches and checks `runner_gen`,
+  `nonce`, expiry and `run`. For `write`:
+  - `take:false`: refused with `{t:"end", reason:"writer_busy"}` when the lease is held or its generation is no longer
+    `lease_gen`;
+  - `take:true`: takes the lease whatever its generation;
+  - on success the generation increments, the old holder gets `{t:"writer", writer:false, lease_gen}`, and the runner
+    sends `SIGWINCH` (a resize to the current size) so TUIs redraw.
+  A read attachment cannot be upgraded on the same connection: writing needs a new `term.attach {mode:"write"}`.
+- **Lease release on close:** when the connection holding the lease closes (any reason), the lease is released at once,
+  the generation increments and every other viewer gets `{t:"writer", writer:false, lease_gen}` (nobody holds it). A
+  reconnect asks for `read`; the page offers "Take control" and never re-requests `write` by itself.
+- **Bad tickets:** a consumed, expired, unknown or other-generation ticket closes the connection with
+  `{t:"end", reason:"ticket_invalid"}` and nothing else (a replay learns nothing). The lockout counts only
+  presentations of a hash the runner **has seen** (a consumed or expired capability), at most 10 per minute per
+  runner, then 60 s of refusals; an unknown hash closes the connection without counting, so no process can lock
+  terminals out with random tickets.
 - **Ending it:** the host sends `attach.end {att, reason}` when the person loses the mapping or membership, the ticket
   becomes invisible to them, the person stops the run, a host restart begins, or `attach.cancel` arrives; the runner
   closes that connection with `{t:"end", reason}` and discards its queue. Reasons: `person.removed`, `not_visible`,
-  `run.stopped`, `host.restarting`, `cancelled`, `runner.restarting`.
+  `run.stopped`, `host.restarting`, `cancelled`, `runner.restarting`, `exited` (below).
 
-#### 12.6.3 Frames on the term socket
+#### 12.6.3 Frames on the term socket (dashboard server ↔ runner)
 
 §0.2's codec (4-byte length, at most 2 MiB). After the attach frame:
 
-- runner → client: `{t:"out", off:int, b64}` (≤ 64 KiB decoded), and control frames that are **never dropped**:
-  `{t:"gap", from, to}`, `{t:"resize", cols, rows}`, `{t:"writer", writer:bool, lease_gen}`, `{t:"exit", code, signal}`,
-  `{t:"ack", input_id}`, `{t:"end", reason}`;
-- client → runner (write lease only): `{t:"in", input_id:int, lease_gen:int, b64}` (≤ 64 KiB), `{t:"resize",
+- runner → server: first `{t:"ready", start:int, offset:int, cols:int, rows:int, writer:bool, lease_gen:int,
+  state:"running"|"exited"}`; then `{t:"out", off:int, b64}` (≤ 64 KiB decoded), and control frames that are **never
+  dropped**: `{t:"gap", from, to}`, `{t:"resize", cols, rows}`, `{t:"writer", writer:bool, lease_gen}`,
+  `{t:"exit", code, signal}`, `{t:"ack", input_id}`, `{t:"throttle", retry_ms:int}`, `{t:"end", reason}`.
+- server → runner (write lease only): `{t:"in", input_id:int, lease_gen:int, b64}` (≤ 64 KiB), `{t:"resize",
   lease_gen, cols:20..500, rows:5..200}`.
-- `input_id` is monotonic per attachment; the runner drops a repeated or lower id, acknowledges each frame after the
-  full write to the master and retries a partial write itself. A stale `lease_gen` is refused with `{t:"writer",
-  writer:false}`. **Unacknowledged input is never replayed across a new attachment** (the client shows "input may not
-  have arrived").
-- **Backpressure:** the ring (1 MiB per run) never blocks the PTY; each attachment has a 512 KiB queue of output
-  frames; on overrun the oldest output frames are dropped and replaced by one `gap`. The dashboard server applies the
-  same rule toward the browser.
-- Rate: input 256 KiB/s and 1 MiB per 10 s per run.
+- **The dashboard server owns `input_id` and `lease_gen`.** It numbers input per attachment (monotonic), splits it into
+  frames of at most 64 KiB, and updates `lease_gen` from `ready` and `writer` frames. The runner drops a repeated or
+  lower id, acknowledges each frame after the full write to the master and retries a partial write itself. A stale
+  `lease_gen` is refused with `{t:"writer", writer:false}`. **Unacknowledged input is never replayed across a new
+  attachment**: the server reports `input_lost` to the browser.
+- **After `exit`** the runner sends `{t:"end", reason:"exited"}` and closes, so every attachment has one terminal
+  state. Attaching to an exited run whose ring is still kept gives `ready {state:"exited"}`, the ring, `exit`, `end`.
+- **Backpressure:** the ring (1 MiB per run) never blocks the PTY; each attachment has a 512 KiB queue of output frames
+  at the runner; on overrun the oldest output frames are dropped and replaced by one `gap`. The dashboard server reads
+  the runner socket continuously and keeps its own 512 KiB (decoded) queue per WebSocket with the same rule, emitting
+  `gap` with the runner's offsets; control frames are never dropped on either side.
+- **Input rate:** 256 KiB/s and 1 MiB per 10 s per run. Over it, the runner answers `{t:"throttle", retry_ms}` and
+  does not write that frame (no `ack`); the server pauses reading the browser for `retry_ms` and resends the frame
+  with the same `input_id`; the page shows "Input paused". Nothing is dropped silently.
 
 #### 12.6.4 Resize
 
-- **Only the current writer's resize applies.** A read-only viewer sends no resize (the runner ignores and the
-  dashboard server drops any) and renders at the writer's size: the runner sends `{t:"resize"}` to every viewer
-  whenever the PTY size changes, and the viewer's xterm keeps those columns and rows, scaling down or scrolling in its
-  container (it never reflows to its own size).
+- **Only the current writer's resize applies.** A read-only viewer sends no resize (the server drops any, the runner
+  ignores any) and renders at the writer's size: the `ready` frame carries the size and the runner sends
+  `{t:"resize"}` to every viewer whenever the PTY size changes; the viewer's xterm keeps those columns and rows and
+  scrolls in its container (it never fits or reflows to its own size).
 - With **no writer**, the last size stays; a new writer's first resize after taking the lease applies.
-- Sizes outside 20..500 × 5..200 are refused.
+- The dashboard server coalesces the writer's resizes to at most 4 per second; the runner sends one `resize` per
+  applied size. Sizes outside 20..500 × 5..200 are refused.
 
 #### 12.6.5 Viewers and the lease
 
-- At most 4 attachments per run, 16 per person, 64 per runner.
+- At most 4 attachments per run, 16 per person, 64 per runner (`attach.limit`).
 - Attach is read-only by default; a remount or reconnect never takes the lease implicitly; the previous holder gets
   `writer:false` and a "Take back" banner.
 - **Several tabs** of the same person attach independently and read-only by default; a tab that wants to type asks
-  with `take:true`, which moves the lease to it (the others show "Take back"); a tab never takes the lease on its own
-  after a reconnect, a remount or a focus change.
-- Only the run's own person may attach. Exited runs: the ring and an `exit` frame, read-only, for 1 h; after that the
-  dashboard shows **"Output no longer kept"**.
+  with `take:true`, which moves the lease to it (the others show "Another tab or device is controlling this
+  terminal" with "Take control"); a tab never takes the lease on its own after a reconnect, a remount or a focus
+  change.
+- Only the run's own person may attach. Exited runs: the ring and an `exit` frame, read-only, until
+  `Run.replay_until`; after that the dashboard shows **"Output no longer kept"** without trying to attach.
 - When `run.stop` answers `cleanup:"incomplete"` or `"unknown"`, the dashboard shows **"Some processes may still be
   running"** next to the run.
 
 #### 12.6.6 The browser path (dashboard server, orch-fa)
 
-- `POST /api/w/<ws>/runs/<run>/attach {mode, take?, from?}` (bearer): the server calls `term.attach`, verifies the
-  runner (§12.6.1), and returns a **browser ticket** of its own (128 random bits, stored hashed, single use, 10 s (the same as the host capability),
-  bound to the workspace, run, mode, the bearer session and the server generation; 10 attempts per minute). It does
-  not connect to the runner until the WebSocket arrives; if the WebSocket never comes, it lets the host capability
-  expire (10 s) or cancels it.
-- `GET /api/term` WebSocket: the `Security` middleware handles the `websocket` scope: exact `Host`, exact `Origin`
-  (missing and `null` refused), close before `accept` on failure, no subprotocols, no cookies, only this path,
-  `permessage-deflate` off, `max_size` 64 KiB, the bearer requirement for `/api/**` exempted for this path only and
-  replaced by the ticket check; a plain GET stays 401/400. The **first message** is `{"ticket": "…"}` within 5 s;
-  nothing the client sends before the attachment is bound is accepted as input. The bearer session is rechecked on
-  every heartbeat; the socket closes when it ends. Binary messages are terminal bytes, text messages JSON control.
-- `connect-src` gains `ws://127.0.0.1:<port>` explicitly. No URL parameter opens, attaches or starts anything.
-- **xterm.js (testable list):** `allowProposedApi:false`; `windowOptions:{}`; no `onTitleChange` consumer; linkHandler
-  `NO_LINKS` (no link provider in phase 2); addons Fit and Search only (no Clipboard, WebLinks, Image, Serialize);
-  parser handlers swallowing replies to DECRQSS, XTGETTCAP, OSC 10/11/12 queries and `CSI > q`, so only CPR and DA1
-  answer (rate-limited); `disableStdin` and dropped `onData` for read attachments; `onData` dropped while replayed
-  bytes (offsets below the attach answer's `offset`) are written; `scrollback:5000`; `convertEol:false`; on `gap` or
-  at the ring start: `reset()` plus a dimmed out-of-band marker; xterm pinned by the lockfile; the page's CSP allows no inline script (`script-src 'self'`). Every terminal-derived
-  text elsewhere goes through `visible.tsx`.
+**Attach (lazy).**
+
+1. `POST /api/w/<ws>/runs/<run>/attach {mode, take?, from?}` (bearer) stores the intent and returns a **browser
+   ticket**: 128 random bits, stored hashed, single use, bound to the workspace, run, mode, take, from, the bearer
+   session and the server generation, valid at most 30 s (the dashboard server's choice), 10 attempts per minute. It
+   calls nothing on the host. (React StrictMode's double mount leaves one unused ticket that simply expires.)
+2. The browser opens the WebSocket `GET /term` and sends `{"ticket":"…"}`.
+3. Only then the server calls `term.attach`, verifies the runner (§12.6.1), connects and presents the host ticket at
+   once. So the 10 s host capability and the runner's lockout can never be burned by a slow browser.
+
+**WebSocket security.** The path is `/term` (outside `/api/**`, so the bearer rule there stays unconditional). The
+`Security` middleware handles the `websocket` scope and closes before `accept` unless: `Host` is exactly
+`127.0.0.1:<port>` (`localhost` refused), `Origin` is exactly `http://127.0.0.1:<port>` (missing and `null` refused), no
+`Sec-WebSocket-Protocol`, no cookies, `permessage-deflate` off, `max_size` 64 KiB. The first message must be text, at
+most 4 KiB, within 5 s; any binary message before the attachment is bound closes the socket. The bearer session is
+rechecked at least every 250 ms (as `live.py`); after logout or expiry the socket closes within about a second and no
+server message follows. `connect-src` is `'self' ws://127.0.0.1:<port>` with the dashboard's own port only (no `ws:`
+wildcard, no `localhost`); `script-src 'self'` (no inline script); `style-src` is not loosened for xterm.
+
+**Messages, browser ↔ server.**
+
+```
+browser → server:  text {"ticket":str} (first, once) | text {"t":"resize","cols":int,"rows":int}
+                   | binary: keystroke and paste bytes only (dropped on a read attachment)
+server → browser:  text {"t":"ready","start":int,"offset":int,"cols":int,"rows":int,"writer":bool,
+                         "state":"running"|"exited"}                       (first message after the ticket)
+                   | binary: 8-byte big-endian offset, then output bytes    (every output chunk carries its offset)
+                   | text {"t":"gap","from":int,"to":int}
+                   | text {"t":"resize","cols":int,"rows":int}
+                   | text {"t":"writer","writer":bool}
+                   | text {"t":"input_lost"} | text {"t":"input_paused","retry_ms":int}
+                   | text {"t":"exit","code":int|null,"signal":str|null}
+                   | text {"t":"end","reason":str}                           (last message; then the close below)
+```
+
+- **Replay versus live:** every output chunk carries its offset; chunks with an offset below `ready.offset` are
+  replay. The browser drops all `onData` until the `write` callback of the last replay chunk has fired (completion is
+  counted in xterm's write callback, not at receipt).
+- **End reasons the browser sees:** the runner's (`person.removed`, `not_visible`, `run.stopped`, `host.restarting`,
+  `cancelled`, `runner.restarting`, `exited`, `writer_busy`, `ticket_invalid`) and those the server synthesizes:
+  `runner.lost` (the runner socket closed without `end`), `runner.changed` (the §12.6.1 check failed: "the runner
+  changed; try again"), `session.ended` (logout or bearer expiry), `overflow` (the browser did not read), `protocol`
+  (a malformed message), `host.error` (`term.attach` refused; the message carries its code).
+- **Close codes:** 1000 after `end` (normal: `exited`, `run.stopped`, `cancelled`); 4401 ticket refused or
+  `session.ended`; 4403 not allowed (`person.removed`, `not_visible`, `ticket_invalid`, `host.error` with
+  `op.not_allowed`/`not_found`); 4409 `writer_busy`; 4503 `runner.lost`, `runner.changed`, `runner.restarting`,
+  `host.restarting`, `host.error` otherwise (retry later); 4400 `protocol`; 4429 `overflow` or rate limit.
+- **Dashboard server hygiene:** it never logs, stores, echoes or returns terminal output, input, tickets or frame
+  contents (also not in exceptions or validation errors), and no HTTP route reads them. WebSockets exist only for
+  mounted terminals and count toward the 16 open streams per session; each attachment uses one host connection for
+  `term.attach` (counted in the §0.11 per-UID connection limit) and one term-socket connection.
+
+#### 12.6.7 xterm.js configuration (testable)
+
+- `allowProposedApi:false`; `windowOptions:{}`; no `onTitleChange` consumer (`document.title` and tab labels come only
+  from `Run.label` or the ticket, through `visible.tsx`); `linkHandler` is the explicit no-op handler `NO_LINKS`
+  (xterm's default OSC 8 behaviour would `confirm()` and `window.open`); addons Fit and Search only (no Clipboard,
+  WebLinks, Image, Serialize, Unicode11); copy and paste only through the user's own gesture; `scrollback:5000`;
+  `convertEol:false`; xterm pinned by the lockfile.
+- **Replies are a property, not a hand list.** xterm answers queries by emitting `onData`: DA1, DA2 (`CSI > c`), DA3
+  (`CSI = c`), DECRQM (`CSI Ps $ p`, `CSI ? Ps $ p`), DSR (`CSI 5 n`, CPR `CSI 6 n`, `CSI ? 6 n`, `CSI ? 15 n`,
+  `CSI ? 25 n`, `CSI ? 26 n`), DECRQSS (`DCS $ q`), XTGETTCAP (`DCS + q`), OSC 4/10/11/12 colour queries,
+  `CSI > q`, and window reports (off). The page registers parser handlers that swallow the replies it can, **and the
+  dashboard server forwards no terminal-generated reply except an allow-list**: the property tested is "for every
+  sequence of the canary corpus plus a fuzz run, the bytes the server sends to the runner on a write attachment, other
+  than those caused by a key or paste event, are a subset of {CPR `ESC [ r ; c R`, DA1 `ESC [ ? … c`}", at most 4 such
+  replies per second (burst 8, the rest dropped). An xterm upgrade that adds a query type fails this test.
+- Read attachments: `disableStdin`, and every `onData` dropped at the sink. During replay: every `onData` dropped
+  (§12.6.6).
+- On `gap` and at the ring start of a replay: `term.reset()` and a dimmed marker written by the page (never composed
+  from host strings).
+- **Canary corpus:** OSC 52 read and write; OSC 8 with `javascript:` and `data:`; OSC 0/1/2 titles; DA/DSR/DECRQM
+  floods; XTGETTCAP and DECRQSS floods; 1 MB of random bytes; split UTF-8. Asserted: clipboard untouched, no
+  `window.open`, no `document.title` change, forwarded replies within the allow-list.
 
 ### 12.7 Worktrees (#308) [SC]
 
@@ -4246,7 +4352,9 @@ is transport metadata, never authorization or freshness: consumers verify by F1 
 records.status   {} → {configured:bool, repo:{state:"ok"|"missing"|"not_dedicated"|"unsafe"|"index_differs",
                        problem?:str} | null, pending:{events:int, tickets:[{key:Key, events:int}]{0..200}, more:bool,
                        workspace_events:int}, last:{commit:Sha, at:Time, by:Person, ws_seq:int, pushed_at:Time | null}
-                       | null, auto:{on:bool, every_min:int, push:bool} | null}
+                       | null, auto:{on:bool, every_min:int, push:bool} | null,
+                       remote:{url:str, private:bool, export:"ok"|"blocked_convenience"} | null}
+                       // remote: the push URL git resolves now (§12.8), shown through visible.tsx
 records.snapshot {page?:str} → {manifest:Hash, ws_seq:int, heads:{str:Hash}, taken_at:Time,
                        files:[{path:str, size:int, sha256:Hash}]{0..2000}, next_page:str | null}
 records.export_check {manifest:Hash, sha:Sha, url:str{1..512}, ref:str} → {ok:true}
@@ -4336,18 +4444,47 @@ ops. No quick-specific state exists.
 
 | Feature | Host ops and items | Dashboard server |
 |---|---|---|
-| Card line, enablement | `whoami`/workspace status carry `runner:RunnerInfo`; `runner.disabled` `detail.missing:"addon"\|"machine"\|"terminals"` | shows the D-P2-31 card line when `enabled` |
+| Card line, enablement | `whoami.runner` (`RunnerInfo`, cap `run/1`); `runner.disabled` `detail.missing:"addon"\|"machine"\|"terminals"` | shows the D-P2-31 card line when `enabled` |
 | Agents page, dock | `run.sub` first, then `run.list {since}`; keep the higher `rev`; `{t:"gone"}` removes | SSE fan-out like `live.py` (replaces the mockup's `agent.started`/`agent.stopped`) |
-| Start dialog | `agent.preview` → show exactly `display`, cwd, env names, grant, warnings, the login-shell line → `agent.start {…, spec}` with idem | core component `SpawnConfirm`; never from an addon frame |
+| Start dialog | `agent.preview` → show exactly `display`, cwd, env names, grant, warnings, the login-shell line → `agent.start {…, spec}` with idem; `blocked.code` is one of `runner.disabled`, `runner.unavailable`, `launch.claimed`, `launch.no_grant`, `launch.invalid`, `harness.*`, `worktree.*` | core component `SpawnConfirm`; never from an addon frame |
+| Dock: person-run shell, Claude, Codex | `term.preview` (shows `display` and the notice "acts as you, not as an agent") → `term.open {…, spec}` with idem | runs as `kind:"shell"` |
 | Runner grant | click `prepare {op:"grant", deposit:true}` → `view` (word `<PREFIX>~<WS8>/GRANT`, the deposit line) → `sign` → `deposit`; `unknown` → `grant.deposit_status`; fallback hand-off | never receives a secret |
 | Terminal | `term.open`, `term.attach {mode, take, from}`, `attach.cancel`, `run.stop` | §12.6.1 verification, §12.6.6 browser path and xterm list |
 | Worktrees | `worktree.list {check}`, `worktree.create`, `worktree.remove {force}` | destructive confirm for `force`; "Open terminal here" = `term.open {cwd:{kind:"worktree", …}}` |
-| Records | `records.status` | spawns the records child (one per workspace), shows the export warning, `auto` off switch only |
+| Records | `records.status` (owners, maintainers) | spawns the records child (one per workspace), shows the export warning, `auto` off switch only |
 | Quick tasks | `quick.list {limits}`, existing `new`/`set`/sign paths | limits are a local setting |
 
 Click-eligible versus other ops (G12): click with a word: `grant` with `deposit:true`, `addon.grant`. No signature,
 dashboard-direct: `agent.start`, `run.stop`, `term.*`, `worktree.*`, the records child. Terminal only: `orch runner
 enable`, `orch records remote private`, `orch records auto on`/`--push`, `orch records push --initial`.
+
+**Rules and strings for the dashboard.**
+
+- **Constants in the bundle** (client text, never host text): the D-P2-31 line "Dashboard execution: agents and
+  terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run
+  commands and read your files and keys." (card, Start dialog, terminal header, whenever `runner.enabled`, whatever
+  `terminals` says); the deposit line "The secret goes to your orch runner on this machine and is never shown"; the
+  export warning "Push publishes every ticket in this workspace to <url>, restricted ones included."; the private
+  remote line "orch trusts your word that only you read <url>."; "Output no longer kept"; "Some processes may still be
+  running"; "Another tab or device is controlling this terminal" with "Take control"; "Input paused"; "Input may not
+  have arrived".
+- **Idem:** the browser draws one idem per dialog opening (stable across retries), the server forwards it. After a
+  timeout the dashboard reads `run.list` and retries with the same idem, never a new one. `launch.changed` reopens the
+  dialog with a fresh preview; the dashboard posts exactly the preview's values plus `spec`.
+- **Grant states:** `grant_state:"ended"` is not a run state: the agent's next write fails with `grant.expired` and its
+  claims lapse (`grant_ended`); the dashboard offers Stop. Exit reasons `spawn_failed`, `lost`, `runner_restarted` are
+  errors; `exited` and `stopped` are normal. `grant.list` shows runner grants with label `runner`; the dashboard offers
+  "Forget the runner grant on this machine" (`grant.forget`) next to Revoke, and Revoke uses the sign result's `grant`
+  in the `unknown` deposit case.
+- **Records child:** fixed argv `python -I -m orch.records commit [--push] --workspace <id> --json` or
+  `… auto off --workspace <id> --json`; environment `HOME`, `PATH`, `SSH_AUTH_SOCK`, `LANG`, and the orch state
+  variables only; 60 s limit enforced by the dashboard. Output: one JSON line `{ok:bool, code?:str, message?:str,
+  commit?:Sha, pushed?:bool, url?:str}`; exit 0 on success, the catalog exit of `code` otherwise. `url` and `message`
+  are rendered through `visible.tsx`.
+- **Worktree states:** `missing` and `moved`: offer Remove (the registration only) and Create; `unpinned`: Remove and
+  retry Create; `stale_branch`: Remove and Create on the current branch; `dirty:null` shows "unknown";
+  `worktree.in_use` offers "Stop the run"; `created_by` through `visible.tsx`.
+- **Quick tasks:** one flow with two signatures until §9 item 12 is built, said in the UI.
 
 ### 12.12 Limits and errors
 
@@ -4359,8 +4496,8 @@ Limits are in §0.11 (rows marked v1.6) and errors in the v1.6 table of §0.6.
 |---|---|---|---|
 | **H11a Runner core** | `orch.runner`, `orch runner enable/disable/status/stop/restart`, units, the runner socket and class `runner` (main-PID, generation, the host peer-UID check by the runner), `runner.hello/report/exit` and commands, trampoline, PTY, ring, stop and sweep with birth identity, cgroup before exec, fd closing, bounded drain, persisted run table and crash sweep, spawn dedupe, env allow-list and `pass_env` deny-list, the machine switch (D-P2-31), the term socket listener and `attach.allow/end`, the first-party manifests | a second runner connection and a non-main-PID runner are `peer.denied`; the runner refuses commands from a socket whose peer is not the host UID; the child env equals §12.4.3 (property test); a swapped cwd is `launch.cwd_changed`; a `setsid` escapee on macOS yields `cleanup:"incomplete"`, Linux `cgroup.kill` empties the cgroup; a reused pid is never signalled; a process outside the run is never signalled; a lost spawn ack yields one process; the ring never blocks 50 MiB of output with no viewer; host restart keeps runs and ends attachments; runner crash marks `lost`/`unknown` and sweeps; `restart` refuses with live runs; `orch runner stop RUN` and
 `--all` work from the person's terminal with the host down and for a person no longer a member (no host call needed). T0 `tests/runner/test_trampoline.py`, `tests/runner/test_supervise.py`, `tests/host/test_runner_socket.py` | Opus |
-| **H11b Terminals** | `term.open/attach`, `attach.cancel`, `run.list/sub` with `rev`/`gone`, `run.stop`, capabilities, lease generation, input ids, gaps, resize rules; the dashboard server's WebSocket `Security` path (S1/S2) and the xterm list, as joint acceptance with orch-fa | only the run's person attaches (G, N, another person refused); an unused ticket never takes the lease and expires in 10 s; a replayed or other-generation ticket ends with `ticket_invalid`; `take` is needed against a holder; a retried input id types once; unacked input is not replayed after reconnect; replayed `ESC[6n` produces no input; a read viewer's resize is ignored and the writer's applies to all; a slow viewer gets `gap` and control frames still arrive; `attach.end` closes on person removal while the run continues; the host stays responsive (`human.prepare` round trip under 50 ms p99) while 8 runs flood output; WebSocket without Origin, with `Origin: null`, wrong Host, ticket after logout, slow or oversize first message, binary before the ticket are all refused; the canary corpus (OSC 52, OSC 8 `javascript:`, title injection, DA/DSR floods, 1 MB random, split UTF-8) leaves clipboard, `window.open` and `document.title` untouched. e2e `terminal_attach.spec` | Opus |
-| **H11c Start agent and runner grant** | harness registry, `agent.preview/start` with `spec`, `context` mode, `subagent_model`, `term.open {harness}`, POSIX-shell check, `grant.deposit` (P + secret, `label:"runner"`, `deposit_id`, forgotten ids), `grant.deposit_status/forget`, the click signer's deposit-only grant (`check_prepared` exception, word, View line, ≤ 12 h), `orch grant --runner`, `orch sign` show-or-runner | preview argv equals the spawned argv; a changed value between preview and start is `launch.changed`; a model starting with `-` or with a space is `launch.invalid`; a live claim refuses; a canary secret appears in no dashboard frame, host or runner log or result, only in the agent's environment; an agent depositing its own non-runner grant is refused; a forgotten id is `grant.forgotten`; a lost deposit ack yields `unknown`, never a false failure; the click signer refuses `grant` without `deposit:true`; a person-run harness has no `ORCH_GRANT`; idem retry of `agent.start` starts one process; fish as `$SHELL` is `harness.shell_unsupported`. e2e `start_agent.spec` (grant by click, start a stub harness that runs `orch status` and claims) | Opus |
+| **H11b Terminals** | `term.open/attach`, `attach.cancel`, `run.list/sub` with `rev`/`gone`, `run.stop`, capabilities, lease generation, input ids, gaps, resize rules; the dashboard server's WebSocket `Security` path (S1/S2) and the xterm list, as joint acceptance with orch-fa | only the run's person attaches (G, N, another person refused); an unused ticket never takes the lease and expires in 10 s; a replayed or other-generation ticket ends with `ticket_invalid`; `take` is needed against a holder; a retried input id types once; unacked input is not replayed after reconnect; replayed `ESC[6n` produces no input; a read viewer's resize is ignored and the writer's applies to all; a slow viewer gets `gap` and control frames still arrive; `attach.end` closes on person removal while the run continues; the host stays responsive (`human.prepare` round trip under 50 ms p99) while 8 runs flood output; WebSocket without Origin, with `Origin: null`, wrong Host, ticket after logout, slow or oversize first message, binary before the ticket are all refused; the canary corpus of §12.6.7 leaves clipboard, `window.open` and `document.title` untouched and the forwarded replies stay within the CPR/DA1 allow-list; the browser ticket is lazy (no host call before the WebSocket), a closed writer connection releases the lease at once, replay chunks (offset below `ready.offset`) produce no input, every end reason maps to its close code, `throttle` pauses without dropping input, and the dashboard server logs no terminal bytes or tickets. e2e `terminal_attach.spec` | Opus |
+| **H11c Start agent and runner grant** | harness registry, `agent.preview/start` with `spec`, `context` mode, `subagent_model`, `term.preview` and `term.open {harness}`, POSIX-shell check, `grant.deposit` (P + secret, `label:"runner"`, `deposit_id`, forgotten ids), `grant.deposit_status/forget`, the click signer's deposit-only grant (`check_prepared` exception, word, View line, ≤ 12 h), `orch grant --runner`, `orch sign` show-or-runner | preview argv equals the spawned argv; a changed value between preview and start is `launch.changed`; a model starting with `-` or with a space is `launch.invalid`; a live claim refuses; a canary secret appears in no dashboard frame, host or runner log or result, only in the agent's environment; an agent depositing its own non-runner grant is refused; a forgotten id is `grant.forgotten`; a lost deposit ack yields `unknown`, never a false failure; the click signer refuses `grant` without `deposit:true`; a person-run harness (`term.preview`/`term.open`) has no `ORCH_GRANT`, no claim precheck and kind `shell`; the View's `deposit` field is set only for a deposit grant; idem retry of `agent.start` starts one process; fish as `$SHELL` is `harness.shell_unsupported`. e2e `start_agent.spec` (grant by click, start a stub harness that runs `orch status` and claims) | Opus |
 | **H11d Worktrees** | `worktree.*`, runner git under the per-repo lock, host pins and generations, D58 and `tree.check` on the registered worktree, `orch worktree` in POSIX direct mode | create on the linked branch at `<repo>.worktrees/<WS8>-<KEY>`; no branch is `worktree.no_branch`; a branch checked out elsewhere is `worktree.branch_in_use`; re-registration between prepare and binding invalidates the request; a re-pointed `.git` file, a moved worktree or a relinked branch is `observe.unavailable` and never falls back; a verdict on a ticket worked in its worktree passes; dirty remove refuses without `force` and G cannot force; the branch survives removal; a planted `post-checkout` never runs; G only on its own claimed ticket, rechecked at execution; direct-mode tools refuse while a host serves. T0 `tests/host/test_worktrees.py` | Opus |
 | **H11e Records** | `records.status/snapshot/export_check/note`, `orch.records` (commit, push, init, sync-index, auto, remote private), timer units, the dashboard child contract | a snapshot during appends commits only whole lines; `.state/` never committed, and a historical `.state/` file blocks push until fresh history; the written tree equals the manifest; the person's index is untouched unless it equalled HEAD; local `url.*.insteadOf`, `credential.helper`, `filter.*`, `core.sshCommand` or two URLs refuse and name the key; `ext::`/`file://` refused; a non-records commit in `tip..HEAD` refuses; divergence refuses without rebase or force; `MERGE_HEAD` refuses; push with convenience events and no private mark is `sign.convenience_readers`; a changed push URL after a private mark refuses; G gets `op.not_allowed`; auto mode commits only when pending and due. T0 `tests/test_records_sync.py`, `tests/host/test_records_ops.py` | Opus |
 | **H11f Quick tasks** | `quick.list`, `orch quick add/list`, the manifest | `quick.list` equals `ticket.query {label:["quick"]}` for every viewer; counts `null` when unreadable; a failed label `set` is retried on the created ticket. T0 `tests/host/test_quick.py` | Codex |

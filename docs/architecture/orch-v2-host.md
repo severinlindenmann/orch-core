@@ -649,7 +649,8 @@ Closed = {resolution:"wont_do"|"duplicate"|"obsolete"|"other", duplicate_of:Key 
   principal, is `page.expired`; a valid token of the caller used with other arguments is `invalid.input`. Tokens expire
   after 10 min (`page.expired`). **Every page is filtered for the viewer of its own request** (§0.5, rechecked per
   request, so a revoked grant or a removed person changes the viewer at once), and a row is returned only when its
-  ticket is visible to that viewer both at the snapshot and now.
+  ticket is visible to that viewer both at the snapshot and now. A change of the principal's viewer, to or from
+  `no-person`, is `page.expired` (H6b: nothing computed for the first viewer carries over).
 - `total` counts visible matching rows in the snapshot.
 
 Errors: `invalid.input`, `page.expired`, `not_found` (`parent` or `epic`).

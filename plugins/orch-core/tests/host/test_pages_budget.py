@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from orch.host import pages as pages_mod
+from orch.host.errors import HostError
 
 
 def test_a_principal_over_its_byte_share_loses_only_its_own_oldest(monkeypatch):
@@ -55,5 +58,82 @@ def test_scan_finding_one_oversized_snapshot_evicts_nobody_else(monkeypatch):
     monkeypatch.setattr(pages_mod, "MAX_BYTES", 300)
     pages = pages_mod.Pages("ws_x")
     others = [pages.open("ticket.query", f"uid:{i}", "e", None, {"x": "o" * 50}) for i in range(3)]
-    pages.open("ticket.query", "uid:huge", "e", None, {"x": "h" * 1000})
+    with pytest.raises(HostError) as exc:  # larger than one principal's share: refused, never stored
+        pages.open("ticket.query", "uid:huge", "e", None, {"x": "h" * 1000})
+    assert exc.value.code == "quota.host"
     assert all(s.id in pages._snaps for s in others)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_snapshot_store(monkeypatch):
+    """Each test gets its own host-wide snapshot store (pages.STORE is process-wide)."""
+    from orch.host import pages as _pages
+
+    monkeypatch.setattr(_pages, "STORE", _pages.SnapshotStore())
+
+
+# --- scan finding (resource-cap bypass): one choke point, every scope ---------------------------------------------
+
+
+def test_scan_finding_every_paged_reader_stores_its_snapshot_through_the_one_store(tmp_path, monkeypatch):
+    from tests.host.live_helpers import ok, world
+
+    w = world(tmp_path)
+    try:
+        for n in range(3):
+            w.ticket(f"t{n}")
+        w.person_event("settings.changed", set={"repos": {"a": {"path": "/r/a"}, "b": {"path": "/r/b"}}})
+        seen: list[str] = []
+        admit = pages_mod.STORE.admit
+
+        def spy(snap, now):
+            seen.append(snap.op)
+            return admit(snap, now)
+
+        monkeypatch.setattr(pages_mod.STORE, "admit", spy)
+        c = w.client()
+        for op in ("ticket.query", "activity.list", "workspace.settings"):
+            first = ok(c.req(op, {"limit": 1}))["data"]
+            assert first["next_page"] is not None, op
+            assert ok(c.req(op, {"limit": 1, "page": first["next_page"]}))["data"] is not None
+        assert seen == ["ticket.query", "activity.list", "workspace.settings"]  # each first page, once
+        held = {v.op for v in pages_mod.STORE.snaps.values()}
+        assert held == {"ticket.query", "activity.list", "workspace.settings"}
+    finally:
+        w.close()
+        w.lab.close()
+
+
+def test_scan_finding_a_uids_grants_share_one_cap(monkeypatch):
+    """Varying principals (several grants of one UID) does not widen the UID's share."""
+    monkeypatch.setattr(pages_mod, "PER_UID", 4)
+    store = pages_mod.STORE
+    pages = pages_mod.Pages("ws_x")
+    for g in range(10):
+        pages.open("ticket.query", f"g:gr_{g}@501", "e", None, {"x": g})
+    assert sum(1 for v in store.snaps.values() if pages_mod.uid_of(v.principal) == "501") <= 4
+
+
+def test_scan_finding_caps_hold_across_workspaces_and_host_wide(monkeypatch):
+    """One principal opening snapshots in many workspaces stays inside its principal cap (the store is host-wide);
+    the host cap evicts the heaviest UID, never a UID holding one snapshot."""
+    monkeypatch.setattr(pages_mod, "PER_PRINCIPAL", 3)
+    monkeypatch.setattr(pages_mod, "HOST_SNAPSHOTS", 6)
+    victim = pages_mod.Pages("ws_v").open("ticket.query", "uid:7", "e", None, {"x": 0})
+    for n in range(20):
+        pages_mod.Pages(f"ws_{n}").open("ticket.query", "uid:501", "e", None, {"x": n})
+    for n in range(20):
+        pages_mod.Pages(f"ws_{n}").open("ticket.query", "uid:502", "e", None, {"x": n})
+    snaps = pages_mod.STORE.snaps.values()
+    assert sum(v.principal == "uid:501" for v in snaps) <= 3
+    assert len(pages_mod.STORE.snaps) <= 6
+    assert victim.id in pages_mod.STORE.snaps
+
+
+def test_scan_finding_another_workspaces_token_never_resumes_here():
+    a, b = pages_mod.Pages("ws_a"), pages_mod.Pages("ws_b", key=None)
+    snap = a.open("ticket.query", "uid:1", "e", None, {"x": 1})
+    token = a.token(snap, 1, {})
+    with pytest.raises(HostError) as exc:
+        b.resume("ticket.query", token, "uid:1", "e", None, {})
+    assert exc.value.code == "page.expired"

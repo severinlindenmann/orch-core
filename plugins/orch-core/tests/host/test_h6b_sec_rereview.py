@@ -59,3 +59,28 @@ def test_a_second_activity_list_over_a_warm_cache_answers(w):
     w.write(key, "two")
     second = feed(w)  # the cache is warm: its integrity check runs
     assert second[: len(first)] == first and len(second) == len(first) + 1
+
+
+def test_the_workspace_byte_cap_holds_against_oversize_snapshots_of_several_principals(monkeypatch):
+    from orch.host import pages as pages_mod
+
+    monkeypatch.setattr(pages_mod, "MAX_BYTES", 10_000)
+    monkeypatch.setattr(pages_mod, "PRINCIPAL_BYTES", 2_000)
+    pages = pages_mod.Pages("ws_x")
+    from orch.host.errors import HostError
+
+    for n in range(10):  # each principal opens one snapshot larger than its share: refused, never stored
+        try:
+            pages.open("ticket.query", f"uid:{n}", "e", None, {"rows": "x" * 6_000})
+        except HostError as exc:
+            assert exc.code == "quota.host"
+    held = sum(s.size for s in pages._snaps.values())
+    assert held <= pages_mod.MAX_BYTES + 6_100, f"{held} bytes held against a {pages_mod.MAX_BYTES} byte cap"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_snapshot_store(monkeypatch):
+    """Each test gets its own host-wide snapshot store (pages.STORE is process-wide)."""
+    from orch.host import pages as _pages
+
+    monkeypatch.setattr(_pages, "STORE", _pages.SnapshotStore())

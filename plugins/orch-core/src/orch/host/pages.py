@@ -51,8 +51,14 @@ __all__ = [
     "PRINCIPAL_BYTES",
     "PER_PRINCIPAL",
     "TTL_SECONDS",
+    "PER_UID",
+    "STORE",
+    "UID_BYTES",
+    "HOST_BYTES",
+    "HOST_SNAPSHOTS",
     "Pages",
     "Snapshot",
+    "SnapshotStore",
     "args_digest",
 ]
 
@@ -61,6 +67,12 @@ MAX_SNAPSHOTS = 256
 PER_PRINCIPAL = 32
 MAX_BYTES = 64 * 1024 * 1024
 PRINCIPAL_BYTES = 8 * 1024 * 1024
+#: per kernel UID, across its principals (grants) and workspaces
+PER_UID = 64
+UID_BYTES = 16 * 1024 * 1024
+#: host-wide, across every workspace
+HOST_SNAPSHOTS = 1024
+HOST_BYTES = 256 * 1024 * 1024
 PREFIX = "p1."
 
 
@@ -93,46 +105,101 @@ class Snapshot:
     data: dict[str, Any] = field(default_factory=dict)
     used: float = 0.0
     size: int = 0
+    workspace: str = ""
+
+
+def uid_of(principal: str) -> str:
+    """The kernel UID part of a principal (``uid:<n>`` or ``g:<grant>@<n>``): one UID's grants share its caps."""
+    return principal.rpartition("@")[2] if principal.startswith("g:") else principal.removeprefix("uid:")
+
+
+class SnapshotStore:
+    """**The one choke point** for page snapshots, shared by every workspace of the host (one per process): every
+    paged read (``ticket.query``, ``activity.list``, ``workspace.settings``) stores its snapshot only through
+    :meth:`Pages.open`, which admits it here. Caps hold per principal, per kernel UID (all its grants), per workspace
+    and host-wide, in count and in bytes. A principal cannot widen its share by varying arguments, sessions or
+    connections (none of them is part of the key) or by issuing grants (the UID cap). When a cap is exceeded, the
+    heaviest holder **within that scope** (the opener included) loses its oldest snapshot; a principal within its
+    share is never evicted while another holds more. A snapshot larger than one principal's byte share is refused
+    (``quota.host``)."""
+
+    def __init__(self) -> None:
+        self.snaps: OrderedDict[str, Snapshot] = OrderedDict()
+        self.lock = threading.RLock()
+
+    def scopes(self, snap: Snapshot) -> list[tuple[Callable[[Snapshot], bool], int, int, Callable[[Snapshot], str]]]:
+        """(member test, count cap, byte cap, holder) per scope; holder groups the scope's snapshots for eviction."""
+        uid = uid_of(snap.principal)
+        return [
+            (lambda v: v.principal == snap.principal, PER_PRINCIPAL, PRINCIPAL_BYTES, lambda v: v.principal),
+            (lambda v: uid_of(v.principal) == uid, PER_UID, UID_BYTES, lambda v: v.principal),
+            (lambda v: v.workspace == snap.workspace, MAX_SNAPSHOTS, MAX_BYTES, lambda v: uid_of(v.principal)),
+            (lambda v: True, HOST_SNAPSHOTS, HOST_BYTES, lambda v: uid_of(v.principal)),
+        ]
+
+    def admit(self, snap: Snapshot, now: float) -> None:
+        if snap.size > PRINCIPAL_BYTES:
+            raise HostError("quota.host", "the result is too large to page: narrow the query")
+        with self.lock:
+            for sid in [k for k, v in self.snaps.items() if now - v.used > TTL_SECONDS]:
+                del self.snaps[sid]
+            self.snaps[snap.id] = snap
+            for member, max_count, max_bytes, holder in self.scopes(snap):
+                while True:
+                    inside = [v for v in self.snaps.values() if member(v)]
+                    if len(inside) <= max_count and sum(v.size for v in inside) <= max_bytes:
+                        break
+                    use: dict[str, float] = {}
+                    for v in inside:  # each holder's share of this scope's caps
+                        use[holder(v)] = use.get(holder(v), 0.0) + v.size / max_bytes + 1 / max_count
+                    top = max(use, key=lambda h: use[h])  # ties: the holder of the oldest snapshot (dict order)
+                    victim = next(v for v in inside if holder(v) == top)  # its oldest (insertion order)
+                    del self.snaps[victim.id]
+            if snap.id not in self.snaps:
+                raise HostError("quota.host", "the host holds too many page snapshots now: retry shortly")
+
+    def get(self, sid: str) -> Snapshot | None:
+        return self.snaps.get(sid)
+
+    def touch(self, snap: Snapshot, now: float) -> None:
+        snap.used = now
+        if snap.id in self.snaps:
+            self.snaps.move_to_end(snap.id)
+
+
+#: the host-wide store (one per process)
+STORE = SnapshotStore()
 
 
 class Pages:
-    """The page tokens and snapshots of one workspace. Thread-safe (the worker thread is the only user today)."""
+    """The page tokens of one workspace, over the host-wide :data:`STORE`. Thread-safe."""
 
-    def __init__(self, workspace_id: str, *, clock: Callable[[], float] = time.time, key: bytes | None = None) -> None:
+    def __init__(
+        self,
+        workspace_id: str,
+        *,
+        clock: Callable[[], float] = time.time,
+        key: bytes | None = None,
+        store: SnapshotStore | None = None,
+    ) -> None:
         self.workspace_id = workspace_id
         self.clock = clock
         self._key = key or secrets.token_bytes(32)
-        self._snaps: OrderedDict[str, Snapshot] = OrderedDict()
-        self._lock = threading.Lock()
+        self.store = store or STORE
+        self._lock = self.store.lock
+
+    @property
+    def _snaps(self) -> dict[str, Snapshot]:
+        """This workspace's snapshots (a view, for tests and diagnostics)."""
+        return {k: v for k, v in self.store.snaps.items() if v.workspace == self.workspace_id}
 
     # -- snapshots
     def open(self, op: str, principal: str, epoch: str, person: str | None, data: dict[str, Any]) -> Snapshot:
-        """A new snapshot (the first page). Evicts expired ones, then the oldest beyond the limits."""
+        """A new snapshot (a first page with a next page), admitted through the store's caps."""
         now = self.clock()
         size = len(json.dumps(data, default=str, separators=(",", ":")))
-        snap = Snapshot(secrets.token_urlsafe(12), op, principal, epoch, person, data, now, size)
-        with self._lock:
-            for sid in [s for s, v in self._snaps.items() if now - v.used > TTL_SECONDS]:
-                del self._snaps[sid]
-            mine = [s for s, v in self._snaps.items() if v.principal == principal]  # oldest first
-            held = sum(self._snaps[s].size for s in mine)
-            while mine and (len(mine) >= PER_PRINCIPAL or held + size > PRINCIPAL_BYTES):
-                held -= self._snaps.pop(mine.pop(0)).size
-            while self._snaps and (
-                len(self._snaps) >= MAX_SNAPSHOTS or sum(v.size for v in self._snaps.values()) + size > MAX_BYTES
-            ):
-                # the principal using the largest share of the caps (its count against PER_PRINCIPAL plus its bytes
-                # against PRINCIPAL_BYTES, the opener's new snapshot included) loses its oldest: a principal within a
-                # fair share is never evicted while another holds more
-                use: dict[str, float] = {principal: size / PRINCIPAL_BYTES + 1 / PER_PRINCIPAL}
-                for v in self._snaps.values():
-                    use[v.principal] = use.get(v.principal, 0.0) + v.size / PRINCIPAL_BYTES + 1 / PER_PRINCIPAL
-                top = max(use, key=lambda p: (use[p], p == principal))
-                victim = next((s for s, v in self._snaps.items() if v.principal == top), None)
-                if victim is None:  # the opener is the heaviest and holds nothing older: nobody else pays for it
-                    break
-                del self._snaps[victim]
-            self._snaps[snap.id] = snap
+        snap = Snapshot(secrets.token_urlsafe(12), op, principal, epoch, person, data, now, size, self.workspace_id)
+        self.store.admit(snap, now)
         return snap
 
     # -- tokens
@@ -189,8 +256,13 @@ class Pages:
         if not isinstance(t, int) or now - t > TTL_SECONDS or t > now + 5:  # 3. expiry
             raise expired
         with self._lock:
-            snap = self._snaps.get(str(fields.get("s")))
-            if snap is None or now - snap.used > TTL_SECONDS or snap.principal != principal:
+            snap = self.store.get(str(fields.get("s")))
+            if (
+                snap is None
+                or snap.workspace != self.workspace_id
+                or now - snap.used > TTL_SECONDS
+                or snap.principal != principal
+            ):
                 raise expired
             if fields.get("e") != epoch or snap.epoch != epoch:
                 raise expired
@@ -200,6 +272,5 @@ class Pages:
                 raise expired
             if fields.get("a") != args_digest(args):  # 4. arguments
                 raise HostError("invalid.input", "the page token belongs to a request with other arguments")
-            snap.used = now
-            self._snaps.move_to_end(snap.id)
+            self.store.touch(snap, now)
         return snap, fields.get("i")

@@ -466,7 +466,7 @@ def test_a_token_with_other_arguments_is_invalid_input(w):
 
 def test_a_token_whose_snapshot_is_gone_is_page_expired(w):
     args, first = paged(w)
-    w.service.pages._snaps.clear()  # the host-side snapshot is gone (eviction or restart)
+    w.service.pages.store.snaps.clear()  # the host-side snapshot is gone (eviction or restart)
     assert err(w.client().req("ticket.query", with_page(args, first["next_page"]))) == "page.expired"
 
 

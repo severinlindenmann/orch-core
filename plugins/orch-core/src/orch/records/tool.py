@@ -1,0 +1,545 @@
+"""The person-side records tool (H11e): commit exactly the host-named manifest, validate history, push fast-forward
+only. Run as ``python -I -m orch.records`` (one shot, as the person; never the host, never the runner).
+
+**Commit** (D-P2-33 items 1, 3, 4):
+
+1. The repo is a dedicated records repo (:func:`orch.records.git.open_repo`), on a branch, with no merge, rebase or
+   cherry-pick in progress, and a configuration that passed the deny-list.
+2. The manifest comes from ``records.snapshot`` (all pages, one manifest id, recomputed here so pages of two cuts are
+   never mixed; path rules and byte limits checked again).
+3. Each file is opened beneath the record root component by component with ``O_NOFOLLOW``, exactly ``size`` bytes are
+   read **once**, hashed, and those same bytes become the blob (``git fast-import``; the blob ids are computed here and
+   checked against the repo). A mismatch takes a new snapshot once, then ``records.snapshot_changed``.
+4. A temporary index is built **from empty** (``read-tree --empty``) and populated only from the manifest; the tree is
+   written and ``ls-tree -r`` must equal the manifest exactly (paths, mode 100644, blob ids) before ``commit-tree``.
+5. ``commit-tree`` (unsigned: F1's chain is the integrity, git is transport) with the documented trailer, then
+   ``update-ref`` as a compare and swap on the branch.
+6. The real index is never touched, except a compare-and-swap refresh: when it was exactly the old HEAD's tree, it is
+   replaced (under ``index.lock``, only if its bytes are still the ones compared) by the new tree. Otherwise it is
+   left alone and the result says ``index: "differs"``. The working tree is never written.
+
+**History** (item 2): every commit reachable from the pushed commit and not from the last validated tip must be a
+records commit of this workspace (the ``Orch-Records`` trailer, at most one parent) whose changes touch record paths
+only, as regular files. Replace objects are off, grafts and shallow repos are refused. ``--fresh-history`` makes the
+next commit a root commit instead (the old history stays in the repo but leaves the branch).
+
+**Push** (items 6, D-P2-34): the source commit S is resolved once; the effective push URL is resolved once; the remote
+tip T comes from ``ls-remote`` of that literal URL; T must exist locally and be an ancestor of S; the history is
+validated; ``records.export_check`` is asked with (S, URL, ref); then exactly S is pushed to that URL with
+``--force-with-lease=<ref>:<T>``. The lease only guards the race: it never authorizes a non-fast-forward, because T is
+an ancestor of S. A missing remote branch needs ``--initial``.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import json
+import os
+import tempfile
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from . import FILE_MAX, TOTAL_MAX, Entry, RecordsError, is_record_path, manifest_id, open_root, read_exact
+from .git import EMPTY_TREE, Git
+
+__all__ = [
+    "AUTHOR",
+    "Link",
+    "Manifest",
+    "ValidatedTips",
+    "commit",
+    "fetch_manifest",
+    "init_repo",
+    "push",
+    "validate_history",
+]
+
+Link = Callable[[str, dict[str, Any]], dict[str, Any]]
+AUTHOR = ("orch records", "records@orch.invalid")
+TRAILER = "Orch-Records"
+_FIXED_DATE = None  # commit dates are the clock's; tests may pin them through GIT_*_DATE in base_env
+
+
+@dataclass(frozen=True)
+class Manifest:
+    id: str
+    workspace: str
+    ws_seq: int
+    heads: dict[str, str | None]
+    files: tuple[Entry, ...]
+
+
+# --- the manifest ----------------------------------------------------------------------------------------------------
+
+
+def fetch_manifest(link: Link, workspace_id: str) -> Manifest:
+    """Every page of one ``records.snapshot``, checked: one manifest id, recomputed; record paths only, no
+    duplicates; the byte limits."""
+    data = link("records.snapshot", {})
+    mid, heads, ws_seq = data["manifest"], data["heads"], data["ws_seq"]
+    if data.get("workspace") != workspace_id:
+        raise RecordsError("records.snapshot_invalid", "the snapshot names another workspace")
+    files = list(data["files"])
+    while data.get("next_page"):
+        data = link("records.snapshot", {"page": data["next_page"]})
+        if data["manifest"] != mid:
+            raise RecordsError("records.snapshot_invalid", "a snapshot page belongs to another manifest")
+        files += data["files"]
+    entries, seen, total = [], set(), 0
+    for f in files:
+        path, size, digest = f.get("path"), f.get("size"), f.get("sha256")
+        if not is_record_path(path) or path in seen:
+            raise RecordsError("records.snapshot_invalid", f"the manifest names {path!r}")
+        if type(size) is not int or not 0 <= size <= FILE_MAX:
+            raise RecordsError("records.too_large", f"{path}: {size} bytes")
+        if type(digest) is not str or len(digest) != 64:
+            raise RecordsError("records.snapshot_invalid", f"{path}: no sha256")
+        total += size
+        if total > TOTAL_MAX:
+            raise RecordsError("records.too_large", f"the records are over {TOTAL_MAX} bytes")
+        seen.add(path)
+        entries.append(Entry(path, size, digest))
+    if manifest_id(workspace_id, ws_seq, heads, entries) != mid:
+        raise RecordsError("records.snapshot_invalid", "the manifest id does not match its pages")
+    return Manifest(mid, workspace_id, int(ws_seq), dict(heads), tuple(sorted(entries, key=lambda e: e.path)))
+
+
+def _blob_id(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324 - git's object id
+
+
+def read_manifest_bytes(root: Path, manifest: Manifest) -> dict[str, bytes] | None:
+    """The bytes of every manifest file, read once each; ``None`` when one no longer matches (replaced after the
+    cut)."""
+    root_fd = open_root(root)
+    try:
+        out: dict[str, bytes] = {}
+        for e in manifest.files:
+            data = read_exact(root_fd, e.path, e.size)
+            if data is None or hashlib.sha256(data).hexdigest() != e.sha256:
+                return None
+            out[e.path] = data
+        return out
+    finally:
+        os.close(root_fd)
+
+
+def _store_blobs(repo: Git, blobs: dict[str, bytes]) -> dict[str, str]:
+    """Write the blobs the repo lacks (one ``git fast-import``) and return path -> blob id, every id checked."""
+    ids = {path: _blob_id(data) for path, data in blobs.items()}
+    unique = sorted(set(ids.values()))
+    present = _have(repo, unique)
+    missing = [i for i in unique if i not in present]
+    if missing:
+        by_id = {ids[p]: blobs[p] for p in blobs}
+        stream = b"".join(b"blob\ndata %d\n" % len(by_id[i]) + by_id[i] + b"\n" for i in missing)
+        repo.run("fast-import", "--quiet", input=stream + b"done\n", timeout=60.0)  # type: ignore[arg-type]
+        if _have(repo, missing) != set(missing):
+            raise RecordsError("records.git_failed", "git did not store every blob")
+    return ids
+
+
+def _have(repo: Git, ids: list[str]) -> set[str]:
+    if not ids:
+        return set()
+    res = repo.run("cat-file", "--batch-check=%(objectname) %(objecttype)", input="\n".join(ids).encode() + b"\n")
+    out = set()
+    for line in res.stdout.decode().splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == "blob":
+            out.add(parts[0])
+    return out
+
+
+# --- the commit ----------------------------------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _temp_index() -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(prefix="orch-records-") as d:
+        os.chmod(d, 0o700)
+        yield Path(d) / "index"
+
+
+def build_tree(repo: Git, manifest: Manifest, ids: Mapping[str, str]) -> str:
+    """A tree of exactly the manifest: a temporary index from empty, the manifest entries, ``write-tree``, then
+    ``ls-tree -r`` must equal the manifest (``records.tree_mismatch``)."""
+    with _temp_index() as index:
+        repo.run("read-tree", "--empty", index=index)
+        info = b"".join(f"100644 {ids[e.path]}\t{e.path}".encode() + b"\0" for e in manifest.files)
+        repo.run("update-index", "-z", "--index-info", input=info, index=index)
+        tree = repo.out("write-tree", index=index)
+    verify_tree(repo, tree, {e.path: ids[e.path] for e in manifest.files})
+    return tree
+
+
+def tree_entries(repo: Git, tree: str) -> dict[str, tuple[str, str, str]]:
+    raw = repo.run("ls-tree", "-r", "-z", "--full-tree", tree).stdout
+    out: dict[str, tuple[str, str, str]] = {}
+    for item in raw.split(b"\0"):
+        if not item:
+            continue
+        meta, _, path = item.partition(b"\t")
+        mode, typ, oid = meta.decode().split(" ")
+        out[path.decode(errors="surrogateescape")] = (mode, typ, oid)
+    return out
+
+
+def verify_tree(repo: Git, tree: str, want: Mapping[str, str]) -> None:
+    have = tree_entries(repo, tree)
+    expected = {p: ("100644", "blob", oid) for p, oid in want.items()}
+    if have != expected:
+        extra = sorted(set(have) - set(expected))[:3]
+        missing = sorted(set(expected) - set(have))[:3]
+        raise RecordsError(
+            "records.tree_mismatch",
+            f"the built tree is not exactly the manifest (extra {extra}, missing {missing}); nothing was committed",
+        )
+
+
+def _message(manifest: Manifest) -> bytes:
+    return (
+        f"orch: records ws_seq {manifest.ws_seq}\n\nOrch-Manifest: {manifest.id}\n{TRAILER}: {manifest.workspace}\n"
+    ).encode()
+
+
+def _index_path(repo: Git) -> Path:
+    return repo.git_dir / "index"
+
+
+def _index_tree(repo: Git, raw: bytes | None) -> str | None:
+    """The tree a copy of the real index would write (the real index itself is never written), or None when it
+    cannot (unmerged entries)."""
+    if raw is None:
+        return EMPTY_TREE
+    with _temp_index() as index:
+        index.write_bytes(raw)
+        res = repo.run("write-tree", index=index, check=False)
+    return res.stdout.decode().strip() if res.returncode == 0 else None
+
+
+def _read_index(repo: Git) -> bytes | None:
+    try:
+        return _index_path(repo).read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _refresh_index(repo: Git, compared: bytes | None, new_commit: str) -> bool:
+    """Compare and swap the real index to ``new_commit``'s tree: under ``index.lock`` (git's own lock), only if its
+    bytes are still the ones compared."""
+    lock = repo.git_dir / "index.lock"
+    try:
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    except FileExistsError:
+        return False
+    done = False
+    try:
+        with _temp_index() as index:
+            repo.run("read-tree", new_commit, index=index)
+            data = index.read_bytes()
+        if _read_index(repo) != compared:
+            return False
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(lock, _index_path(repo))
+        done = True
+        return True
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if not done:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(lock)
+
+
+def commit(repo: Git, link: Link, workspace_id: str, *, fresh: bool = False) -> dict[str, Any]:
+    """Commit exactly the host-named manifest on the current branch. ``fresh``: a root commit (fresh history)."""
+    branch = repo.branch()
+    ref = f"refs/heads/{branch}"
+    blobs: dict[str, bytes] | None = None
+    manifest: Manifest | None = None
+    for _attempt in range(2):
+        manifest = fetch_manifest(link, workspace_id)
+        blobs = read_manifest_bytes(repo.root, manifest)
+        if blobs is not None:
+            break
+    if blobs is None or manifest is None:
+        raise RecordsError("records.snapshot_changed", "a record changed after the cut twice; try again")
+    ids = _store_blobs(repo, blobs)
+    tree = build_tree(repo, manifest, ids)
+    old = repo.resolve(ref)
+    old_tree = repo.out("rev-parse", f"{old}^{{tree}}") if old else EMPTY_TREE
+    if old is not None and old_tree == tree and not fresh:
+        return {"commit": old, "tree": tree, "manifest": manifest.id, "ws_seq": manifest.ws_seq, "changed": False,
+                "branch": branch, "index": "unchanged"}  # fmt: skip
+    args = ["commit-tree", "--no-gpg-sign", tree]
+    if old is not None and not fresh:
+        args += ["-p", old]
+    real_before = _read_index(repo)
+    index_matches = _index_tree(repo, real_before) == old_tree
+    name, email = AUTHOR
+    repo.base_env.update(
+        GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email, GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email
+    )
+    new = repo.out(*args, "-F", "-", input=_message(manifest))  # type: ignore[arg-type]
+    repo.run("update-ref", "-m", "orch records", ref, new, old or "0" * 40)
+    index = "refreshed" if index_matches and _refresh_index(repo, real_before, new) else "differs"
+    return {"commit": new, "tree": tree, "manifest": manifest.id, "ws_seq": manifest.ws_seq, "changed": True,
+            "branch": branch, "index": index, "fresh": fresh}  # fmt: skip
+
+
+# --- history ---------------------------------------------------------------------------------------------------------
+
+
+def _commits(repo: Git, tip: str, since: str | None) -> list[str]:
+    args = ["rev-list", tip] + (["--not", since] if since else [])
+    return repo.out(*args).split()
+
+
+def _cat_commits(repo: Git, ids: list[str]) -> dict[str, tuple[int, str]]:
+    """id -> (parent count, message)."""
+    raw = repo.run("cat-file", "--batch", input="\n".join(ids).encode() + b"\n").stdout
+    out: dict[str, tuple[int, str]] = {}
+    pos = 0
+    for oid in ids:
+        nl = raw.index(b"\n", pos)
+        header = raw[pos:nl].decode().split()
+        if len(header) != 3 or header[1] != "commit":
+            raise RecordsError("records.history_invalid", f"{oid} is not a commit")
+        size = int(header[2])
+        body = raw[nl + 1 : nl + 1 + size]
+        pos = nl + 1 + size + 1
+        head, _, message = body.partition(b"\n\n")
+        parents = sum(1 for line in head.split(b"\n") if line.startswith(b"parent "))
+        out[oid] = (parents, message.decode(errors="replace"))
+    return out
+
+
+def _has_trailer(message: str, workspace_id: str) -> bool:
+    paragraphs = [p for p in message.strip().split("\n\n") if p.strip()]
+    if not paragraphs:
+        return False
+    return f"{TRAILER}: {workspace_id}" in [line.strip() for line in paragraphs[-1].splitlines()]
+
+
+def validate_history(repo: Git, workspace_id: str, tip: str, since: str | None = None) -> int:
+    """Every commit reachable from ``tip`` (and not from ``since``, a tip validated before) is a records commit of
+    this workspace whose changes touch record paths only, as regular files (``records.history_invalid``,
+    ``records.not_records_only``). Returns how many commits were checked."""
+    repo.no_grafts()
+    if since is not None and not _is_ancestor(repo, since, tip):
+        since = None  # the validated tip left the history: check all of it
+    ids = _commits(repo, tip, since)
+    if not ids:
+        return 0
+    meta = _cat_commits(repo, ids)
+    for oid in ids:
+        parents, message = meta[oid]
+        if parents > 1:
+            raise RecordsError("records.history_invalid", f"{oid[:12]} is a merge: records history is linear")
+        if not _has_trailer(message, workspace_id):
+            raise RecordsError(
+                "records.not_records_only",
+                f"{oid[:12]} is not a records commit of this workspace",
+                hint="push by hand, or start a fresh history: orch records commit --fresh-history",
+            )
+    raw = repo.run("diff-tree", "--stdin", "-r", "-z", "--no-renames", "--root", input="\n".join(ids).encode() + b"\n")
+    tokens = raw.stdout.split(b"\0")
+    current = None
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith(b":"):
+            fields = tok[1:].decode().split(" ")
+            path = tokens[i + 1].decode(errors="surrogateescape")
+            i += 2
+            new_mode, status = fields[1], fields[4]
+            if status == "D":
+                continue
+            if not is_record_path(path) or new_mode != "100644":
+                raise RecordsError(
+                    "records.history_invalid",
+                    f"{(current or '?')[:12]} holds {path!r} (mode {new_mode}), which is not a record: the history "
+                    "cannot be pushed",
+                    hint="start a fresh history: orch records commit --fresh-history",
+                )
+            continue
+        if tok:
+            current = tok.decode()
+        i += 1
+    return len(ids)
+
+
+def _is_ancestor(repo: Git, a: str, b: str) -> bool:
+    return repo.run("merge-base", "--is-ancestor", a, b, check=False).returncode == 0
+
+
+# --- validated tips (the person's records.json) -------------------------------------------------------------------
+
+
+class ValidatedTips:
+    """``<person state>/records.json`` (0600): per workspace and branch, the last tip whose history was validated."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def _doc(self) -> dict[str, Any]:
+        try:
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
+            return {"v": 1, "validated": {}}
+        with os.fdopen(fd, "rb") as fh:
+            st = os.fstat(fh.fileno())
+            if st.st_uid != os.getuid() or st.st_mode & 0o077:
+                raise RecordsError("records.unsafe_config", f"{self.path} is not private to you")
+            doc = json.loads(fh.read(1 << 20) or b"{}")
+        if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("validated"), dict):
+            return {"v": 1, "validated": {}}
+        return doc
+
+    def get(self, workspace_id: str, branch: str) -> str | None:
+        v = (self._doc()["validated"].get(workspace_id) or {}).get(branch)
+        return v if isinstance(v, str) else None
+
+    def set(self, workspace_id: str, branch: str, sha: str) -> None:
+        doc = self._doc()
+        doc["validated"].setdefault(workspace_id, {})[branch] = sha
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            json.dump(doc, fh, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, self.path)
+
+
+# --- push ------------------------------------------------------------------------------------------------------------
+
+
+def push_url(repo: Git, remote: str) -> str:
+    """The one effective push URL of ``remote`` as git resolves it under the frozen configuration (``pushurl``, else
+    ``url``; ``insteadOf``/``pushInsteadOf`` applied). Not exactly one URL, or a transport outside the allow-list, is
+    refused."""
+    from .git import check_local, url_allowed
+
+    check_local(repo.local, remote)
+    res = repo.run("remote", "get-url", "--push", "--all", remote, check=False)
+    if res.returncode != 0:
+        raise RecordsError("records.remote_missing", f"the records repo has no remote {remote!r}")
+    urls = [u for u in res.stdout.decode().splitlines() if u]
+    if len(urls) != 1:
+        n = len(urls)
+        raise RecordsError("records.remote_invalid", f"remote {remote!r} has {n} push URLs; exactly one is needed")
+    url = urls[0]
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url) or not url_allowed(url, repo.protocols):
+        raise RecordsError("records.remote_invalid", f"remote {remote!r}: transport not allowed ({url[:80]})")
+    return url
+
+
+def remote_tip(repo: Git, url: str, ref: str) -> str | None:
+    res = repo.run("ls-remote", "--refs", url, ref, network=True, rewrites=False)
+    tips = [line.split("\t") for line in res.stdout.decode().splitlines() if "\t" in line]
+    exact = [sha for sha, name in tips if name == ref]
+    if len(exact) > 1:
+        raise RecordsError("records.push_rejected", f"the remote lists {ref} twice")
+    return exact[0] if exact else None
+
+
+def push(
+    repo: Git,
+    link: Link,
+    workspace_id: str,
+    tips: ValidatedTips,
+    *,
+    remote: str = "origin",
+    initial: bool = False,
+) -> dict[str, Any]:
+    """Push exactly the branch's current commit, fast-forward only, after the history and the export check."""
+    branch = repo.branch()
+    ref = f"refs/heads/{branch}"
+    source = repo.resolve(ref)  # S, resolved once
+    if source is None:
+        raise RecordsError("records.git_state", f"{branch} has no commit yet: orch records commit first")
+    url = push_url(repo, remote)
+    target = remote_tip(repo, url, ref)  # T
+    if target is None and not initial:
+        raise RecordsError(
+            "records.push_rejected",
+            f"the remote has no {ref}",
+            hint="a first push creates it: orch records push --initial (terminal)",
+        )
+    repo.no_grafts()
+    if target is not None:
+        if repo.run("cat-file", "-e", f"{target}^{{commit}}", check=False).returncode != 0:
+            raise RecordsError(
+                "records.push_rejected",
+                f"the remote's {ref} ({target[:12]}) is not in the records repo: it diverged; resolve it by hand",
+            )
+        if target != source and not _is_ancestor(repo, target, source):
+            raise RecordsError(
+                "records.push_rejected",
+                f"the remote's {ref} ({target[:12]}) is not an ancestor of {source[:12]}: never a non-fast-forward",
+            )
+    if target == source:
+        return {"pushed": False, "commit": source, "url": url, "ref": ref, "reason": "up_to_date"}
+    checked = validate_history(repo, workspace_id, source, tips.get(workspace_id, branch))
+    tips.set(workspace_id, branch, source)
+    check = link("records.export_check", {"sha": source, "url": url, "ref": ref})
+    if check.get("sha") != source or check.get("url") != url or check.get("ref") != ref:
+        raise RecordsError("records.push_rejected", "the export check answered for another push")
+    repo.recheck_local()
+    lease = f"--force-with-lease={ref}:{target or ''}"
+    res = repo.run(
+        "-c", "push.followTags=false", "-c", "push.gpgSign=false", "-c", "push.recurseSubmodules=no",
+        "push", "--no-verify", "--porcelain", "--no-recurse-submodules", "--no-follow-tags", lease,
+        url, f"{source}:{ref}",
+        network=True, rewrites=False, check=False,
+    )  # fmt: skip
+    if res.returncode != 0:
+        why = (res.stderr.decode(errors="replace").strip().splitlines() or ["?"])[-1][:300]
+        raise RecordsError("records.push_rejected", f"the remote refused the push (no rebase, no force): {why}")
+    return {"pushed": True, "commit": source, "from": target, "url": url, "ref": ref, "checked": checked,
+            "policy": check.get("policy"), "check": check.get("check")}  # fmt: skip
+
+
+# --- init ------------------------------------------------------------------------------------------------------------
+
+
+def init_repo(root: Path, *, branch: str = "main", env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """A dedicated records repo at the record root: ``git init`` when there is none, and ``.state/`` (and every
+    non-record name) kept out of ``git status`` through ``info/exclude`` (no tracked ``.gitignore``: the tree holds
+    records only)."""
+    import subprocess
+
+    from .git import LOCAL_TIMEOUT, _base_env
+
+    root = Path(os.path.realpath(root))
+    created = False
+    if not os.path.lexists(root / ".git"):
+        subprocess.run(
+            ["git", "-c", "core.hooksPath=/dev/null", "init", "-q", "-b", branch, str(root)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env=_base_env(os.environ if env is None else env, "file"),
+            timeout=LOCAL_TIMEOUT,
+            check=True,
+        )
+        created = True
+    from .git import git_dir_of
+
+    git_dir = git_dir_of(root)
+    info = git_dir / "info"
+    info.mkdir(exist_ok=True)
+    exclude = info / "exclude"
+    lines = ["# orch records: only the store's record files are tracked", ".state/", "addons/"]
+    have = exclude.read_text().splitlines() if exclude.exists() else []
+    if not all(line in have for line in lines):
+        exclude.write_text("\n".join(have + [line for line in lines if line not in have]) + "\n")
+    return {"root": str(root), "created": created}

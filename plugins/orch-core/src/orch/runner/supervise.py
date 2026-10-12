@@ -79,8 +79,9 @@ KEEP_RING_SECONDS = 3600.0
 KEEP_RINGS = 64
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 #: never in a run's environment (§12.4.3 deny-list): loader, interpreter and shell start-up hooks
+#: used with ``fullmatch``: prefix matches only for the families, exact names for the rest (§12.4.3)
 ENV_DENY = re.compile(
-    r"(LD_|DYLD_|PYTHON|GIT_).*|BASH_ENV|ENV|ZDOTDIR|IFS|PS4|NODE_OPTIONS|PERL5OPT|RUBYOPT|BASH_FUNC_.*"
+    r"(?:LD_|DYLD_|PYTHON|GIT_|BASH_FUNC_).*|BASH_ENV|ENV|ZDOTDIR|IFS|PS4|NODE_OPTIONS|PERL5OPT|RUBYOPT"
 )
 #: never in a shell's environment: a shell acts as the person, never as an agent (D-P2-27)
 SHELL_DENY = frozenset({"ORCH_GRANT", "ORCH_SESSION"})
@@ -133,8 +134,6 @@ class SpawnSpec:
     cwd: dict[str, Any]
     cols: int = 120
     rows: int = 40
-    #: the member set saved at the last scan (exact identities for a later sweep)
-    saved: list[list[int]] = field(default_factory=list)
 
     def check(self) -> None:
         def bad(what: str) -> SpawnError:
@@ -154,7 +153,7 @@ class SpawnSpec:
             ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v for k, v in self.env.items()
         ):
             raise bad("environment")
-        denied = [k for k in self.env if ENV_DENY.match(k) or (self.kind == "shell" and k in SHELL_DENY)]
+        denied = [k for k in self.env if ENV_DENY.fullmatch(k) or (self.kind == "shell" and k in SHELL_DENY)]
         if denied:  # defence in depth: the host's allow-list (H11a2, H11c) should never send these
             raise bad(f"environment name {denied[0][:40]}")
         cwd = self.cwd
@@ -195,9 +194,29 @@ class Live:
     rows: int = 40
     #: the member set saved at the last scan (exact identities for a later sweep)
     saved: list[list[int]] = field(default_factory=list)
+    #: the leader was reaped: its PID (the session and group id) may be reused, so only exact identities match
+    reaped: bool = False
     done: threading.Event = field(default_factory=threading.Event)
     ended_at: float = 0.0
     stop_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def session_ok(self) -> bool:
+        return not self.reaped
+
+
+def peek_exit(proc: subprocess.Popen[bytes]) -> int | None:
+    """The leader's exit status in ``returncode`` form, **without reaping it** (``waitid(WNOWAIT)``): until it is
+    reaped its PID, and so the run's session and group id, cannot be reused."""
+    if proc.returncode is not None:
+        return proc.returncode
+    try:
+        res = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    except ChildProcessError:
+        return proc.poll()
+    if res is None:
+        return None
+    return res.si_status if res.si_code == os.CLD_EXITED else -res.si_status
 
 
 def _signame(code: int | None) -> tuple[int | None, str | None]:
@@ -466,20 +485,24 @@ class Supervisor:
     def _abort(self, run: str, proc: subprocess.Popen[bytes], cg: Path | None) -> str:
         """A spawn failed after the fork: wait briefly for the trampoline's own exit (a failed step exits 127), kill
         it if it hangs, sweep its session, and say honestly what is left."""
-        try:
-            proc.wait(timeout=KILL_WAIT)
-        except subprocess.TimeoutExpired:
+        deadline = time.monotonic() + KILL_WAIT
+        while peek_exit(proc) is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if peek_exit(proc) is None:
             proc.kill()  # our unreaped child: its PID cannot have been reused
-            try:
-                proc.wait(timeout=KILL_WAIT)
-            except subprocess.TimeoutExpired:
+            deadline = time.monotonic() + KILL_WAIT
+            while peek_exit(proc) is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if peek_exit(proc) is None:
                 return "incomplete"
         rec = {**(self.table.get(run) or {}), "run": run}
-        if self._members(rec, {}, live=True):
-            return self._terminate(rec, {}, 0.5, live=True)
-        if cg is not None:
+        cleanup: str = "complete"
+        if self._members(rec, {}, live=True):  # the leader is not reaped yet: its session is still the run's
+            cleanup = self._terminate(rec, {}, 0.5, live=True)
+        proc.wait()
+        if cg is not None and cleanup == "complete":
             self.cgroups.remove(cg)  # type: ignore[union-attr]
-        return "complete"
+        return cleanup
 
     def _read_status(self, fd: int) -> dict[str, Any] | None:
         """``None`` once the trampoline exec'd (EOF without bytes); otherwise its failure record."""
@@ -629,7 +652,7 @@ class Supervisor:
 
     def _scan_run(self, live: Live, snap: dict[int, procs.ProcInfo], children: dict[int, list[procs.ProcInfo]]):
         rec = self._rec(live)
-        known = {p: bu[0] for p, bu in self._members(rec, live.tracked, snap, live=True).items()}
+        known = {p: bu[0] for p, bu in self._members(rec, live.tracked, snap, live=live.session_ok).items()}
         inside = set(known)
         queue = list(known)
         while queue:
@@ -686,17 +709,20 @@ class Supervisor:
             if live.cleanup != "incomplete":
                 return
             rec = self._rec(live)
-            members = self._members(rec, live.tracked, live=True)
+            members = self._members(rec, live.tracked, live=live.session_ok)
             if self._cgroup_of(rec) is not None:
                 self.cgroups.kill(live.cgroup)  # type: ignore[union-attr,arg-type]
             for p, (b, u) in members.items():
                 if u == self.uid:
                     procs.signal_verified(p, b, signal.SIGKILL)
             time.sleep(0.05)
-            if live.proc.poll() is not None and live.exit is None:
+            if peek_exit(live.proc) is not None and live.exit is None:
                 self._leader_exit(live)
-            left = self._members(rec, live.tracked, live=True)
-            live.lingering = bool(left) or live.proc.poll() is None
+            if peek_exit(live.proc) is not None and not live.reaped:
+                live.proc.wait()
+                live.reaped = True
+            left = self._members(rec, live.tracked, live=live.session_ok)
+            live.lingering = bool(left) or not live.reaped
             if not live.lingering and live.escaped and not live.done.is_set():
                 live.ended_at = time.monotonic()  # nothing seen is left: prunable, but it stays "incomplete"
                 live.done.set()
@@ -725,24 +751,30 @@ class Supervisor:
                     live.tracked,
                     grace,
                     escaped=lambda: live.escaped,
-                    leader_done=lambda: live.proc.poll() is not None,
-                    live=True,
+                    leader_done=lambda: peek_exit(live.proc) is not None,
+                    live=live.session_ok,
                 )
             except Exception:  # noqa: BLE001 - the clean-up never dies silently: unknown, and retried
                 LOG.exception("run %s: clean-up failed", live.run)
                 cleanup = "incomplete"
-            try:
-                live.proc.wait(timeout=KILL_WAIT)
-                reaped = True
-            except subprocess.TimeoutExpired:
-                reaped, cleanup = False, "incomplete"
+            deadline = time.monotonic() + KILL_WAIT
+            while peek_exit(live.proc) is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            reaped = peek_exit(live.proc) is not None
             if reaped:
                 self._leader_exit(live)  # the run ended; a leader still alive is never reported as exited
+                if not live.reaped:
+                    live.proc.wait()  # reaped only now, after the session sweep: from here on, exact identities only
+                    live.reaped = True
+            else:
+                cleanup = "incomplete"
             if live.cgroup is not None and cleanup == "complete":
                 self.cgroups.remove(live.cgroup)  # type: ignore[union-attr]
             live.cleanup = cleanup
             live.lingering = cleanup == "incomplete" and (
-                not reaped or bool(self._members(self._rec(live), live.tracked, live=True)) or cleanup == "incomplete"
+                not reaped
+                or bool(self._members(self._rec(live), live.tracked, live=live.session_ok))
+                or cleanup == "incomplete"
             )
             self.table.update(live.run, cleanup=cleanup)
             if cleanup != "incomplete" or not live.lingering:
@@ -888,7 +920,7 @@ class Supervisor:
         return next_scan
 
     def _watch(self, live: Live, now: float) -> None:
-        if live.exit is None and live.proc.poll() is not None:
+        if live.exit is None and peek_exit(live.proc) is not None:  # seen, not reaped: _finish reaps after the sweep
             self._leader_exit(live)
             if not live.stopping:
                 threading.Thread(target=self._finish, args=(live, self.exit_grace), daemon=True).start()
@@ -944,7 +976,7 @@ class Supervisor:
         with self.lock:
             if live.exit is not None:
                 return
-            code, sig = _signame(live.proc.returncode)
+            code, sig = _signame(peek_exit(live.proc))
             live.exit = {
                 "code": code,
                 "signal": sig,

@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
-from .errors import fail
+from .errors import HostError, fail
 from .gateway import Gateway
 from .hostlink import _pairs, _valid
 from .reads import Key, workspace
@@ -459,6 +459,9 @@ class Handoffs:
         self.owned: dict[str, dict[str, tuple[str, float]]] = {}  # token -> request id -> (workspace, deadline)
         self.active: dict[str, set[str]] = {}  # open requests per session: hand-off AND click requests, one quota
         self.until: dict[tuple[str, str], float] = {}  # click requests in `active`: their own deadline
+        # A signature whose outcome is unknown: (workspace, action binding) -> request. Until the host says the request
+        # is terminal (or it has expired), nothing of this person may prepare the same action again, from any session.
+        self.unsettled: dict[tuple[str, str], tuple[str, float]] = {}
         self.pending: dict[str, int] = {}  # slots reserved by a prepare that has not answered yet
         self.by_idem: OrderedDict[tuple[str, str, str], tuple[str, dict | None]] = OrderedDict()  # None: in flight
 
@@ -477,6 +480,53 @@ class Handoffs:
                 del self.until[(tok, rid)]
                 self.active.get(token, set()).discard(rid)
         return mine
+
+    def mark_unsettled(self, ws: str, binding: str, request_id: str, until: float) -> None:
+        with self.lock:
+            self.unsettled[(ws, binding)] = (request_id, until)
+
+    def unsettled_for(self, ws: str, binding: str) -> str | None:
+        with self.lock:
+            hit = self.unsettled.get((ws, binding))
+            if hit and hit[1] > self.clock():
+                return hit[0]
+            self.unsettled.pop((ws, binding), None)
+            return None
+
+    def is_unsettled(self, request_id: str) -> str | None:
+        """The workspace of an unsettled request, else None."""
+        with self.lock:
+            now = self.clock()
+            for (ws, binding), (rid, until) in list(self.unsettled.items()):
+                if until <= now:
+                    del self.unsettled[(ws, binding)]
+                elif rid == request_id:
+                    return ws
+            return None
+
+    def any_unsettled(self) -> bool:
+        with self.lock:
+            now = self.clock()
+            return any(until > now for _, until in self.unsettled.values())
+
+    def settled(self, request_id: str) -> None:
+        with self.lock:
+            for key, (rid, _) in list(self.unsettled.items()):
+                if rid == request_id:
+                    del self.unsettled[key]
+
+    def refuse_if_unsettled(self, ws: str, binding: str) -> None:
+        rid = self.unsettled_for(ws, binding)
+        if rid:
+            raise HostError(
+                {
+                    "code": "click.unsettled",
+                    "message": "The last signature of this action has not settled yet. It settles by itself.",
+                    "retryable": False,
+                    "request_id": rid,
+                },
+                exit=9,
+            )
 
     def reserve(self, token: str):  # under the lock: check AND take a slot in one step
         self.prune(token)
@@ -528,6 +578,7 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token, binding = request.state.token, handoffs.binding(body)
+        handoffs.refuse_if_unsettled(ws, binding)  # an unknown outcome is never answered with a second request
         slot = (token, ws, body.idem)
         with handoffs.lock:
             known = handoffs.by_idem.get(slot)

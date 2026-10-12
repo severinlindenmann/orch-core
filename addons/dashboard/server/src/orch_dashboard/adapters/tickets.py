@@ -289,8 +289,8 @@ def _verify(v) -> dict | None:
 
 
 def _attested(value) -> str:
-    """Who vouches for a receipt: a plain lowercase word the host sent, else "unknown" (never free text)."""
-    return value if isinstance(value, str) and re.fullmatch(r"[a-z]{1,16}", value) else "unknown"
+    """Who vouches for a receipt: only the host's `agent` label is shown as such; anything else is "unknown"."""
+    return "agent" if value == "agent" else "unknown"
 
 
 def _task(t: dict, host: dict | None, ext: bool) -> dict:

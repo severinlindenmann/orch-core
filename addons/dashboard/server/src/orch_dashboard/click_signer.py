@@ -50,6 +50,8 @@ class Signer:
         self.lock = threading.RLock()  # the lifecycle (start, restart, stop): short
         self.chan = threading.Lock()  # the channel: one request at a time, held through a slow sign
         self._last: dict[str, dict] = {}
+        self.suspect = False  # a live child that did not answer in time
+        self.unsettled: Callable[[], bool] = lambda: False  # set by the routes: is a signature's outcome unknown?
         self.client = None
         self.core: str | None = None
         self.last_spawn = -1e9
@@ -75,7 +77,9 @@ class Signer:
 
     def _drop(self) -> None:
         client, self.client = self.client, None
+        self.suspect = False
         if client is not None:
+            self.restarts += 1  # its open approvals are gone, however it was dropped (exit, lost channel, replaced)
             try:
                 client.close()
             except Exception:  # noqa: BLE001 - a dead child must not stop a restart
@@ -90,8 +94,7 @@ class Signer:
         if self._alive():
             return self.client
         if self.client is not None:
-            self._drop()
-            self.restarts += 1  # it exited: its open approvals are gone (terminal-only, which is safe)
+            self._drop()  # it exited
         if self.clock() - self.last_spawn < RESTART_AFTER:
             raise unavailable()
         self.last_spawn = self.clock()
@@ -127,44 +130,61 @@ class Signer:
 
     # -- calls -----------------------------------------------------------------------------------------------------
     def call(self, op: str, args: dict, lost: "HostError | None" = None) -> dict:
-        """One request. A refusal of the signer becomes a `HostError` with its code, reason and wait.
+        """One request on the channel (one at a time). See `_call`."""
+        with self.chan:
+            return self._call(op, args, lost)
 
-        The channel carries one request at a time (`chan`); `lock` only guards the lifecycle, so a slow `sign` never
-        blocks `status` or the workspace list. A lost channel drops the child **only if it actually exited**: a timeout
-        leaves a live signer alone (it may be finishing a submit, and killing it would lose its retained events and
-        idem). `lost` is what the caller says for a lost answer (`sign`: the outcome is unknown, never "gone")."""
+    def _call(self, op: str, args: dict, lost: "HostError | None" = None) -> dict:
+        """A refusal of the signer becomes a `HostError` with its code, reason and wait.
+
+        `lock` only guards the lifecycle, so a slow `sign` never blocks `status`. A lost channel drops the child
+        **only if it actually exited**: a timeout leaves a live signer alone (it may be finishing a submit, and killing
+        it would lose its retained events and idem), and only marks it suspect. A suspect signer is replaced at the next
+        call when no signature's outcome is unknown. `lost` is what the caller says for a lost answer (`sign`: the
+        outcome is unknown, never "gone")."""
         from orch.click.protocol import ClickError
 
-        with self.chan:
+        with self.lock:
+            if self.suspect and self.client is not None and not self.unsettled():
+                self._drop()  # hung but alive, and nothing could be mid-submit: replace it
+                self.last_spawn = -1e9  # on purpose: the respawn guard is for a signer that dies at once
+            client = self._ensure()
+        try:
+            result = client.call(op, args, timeout=TIMEOUT[op])
+        except ClickError as exc:
+            raise refusal(exc) from None
+        except Exception as exc:  # noqa: BLE001 - channel loss, a frame error, a timeout
+            dropped = False
             with self.lock:
-                client = self._ensure()
-            try:
-                result = client.call(op, args, timeout=TIMEOUT[op])
-            except ClickError as exc:
-                raise refusal(exc) from None
-            except Exception as exc:  # noqa: BLE001 - channel loss, a frame error, a timeout
-                with self.lock:
-                    proc = getattr(client, "proc", None)
-                    exited = proc is None or proc.poll() is not None or not isinstance(exc, TimeoutError)
-                    if exited and self.client is client:
-                        self._drop()
-                raise lost or unavailable(
-                    "The signing helper stopped. Open sign requests are gone; sign in the terminal."
-                ) from None
+                proc = getattr(client, "proc", None)
+                exited = proc is None or proc.poll() is not None or not isinstance(exc, TimeoutError)
+                if exited and self.client is client:
+                    self._drop()
+                    dropped = True
+                elif self.client is client:
+                    self.suspect = True
+            if lost is not None:
+                raise lost from None
+            raise unavailable(
+                "The signing helper stopped. Open sign requests are gone; sign in the terminal."
+                if dropped
+                else "The signing helper did not answer in time. Try again."
+            ) from None
         return result
 
     def status(self) -> dict[str, dict]:
-        """Per workspace: custody, enabled, available, problem. Empty when no signer can run (never raises). While a
-        request is in flight the last answer is returned instead of waiting for it."""
+        """Per workspace: custody, enabled, available, problem. Empty when no signer can run (never raises). It never
+        waits for the channel: while a request is in flight the last answer is returned."""
         if self.off:
             return {}
         if not self.chan.acquire(blocking=False):
             return self._last
-        self.chan.release()
         try:
-            got = self.call("status", {})
+            got = self._call("status", {})
         except HostError:
             return {}
+        finally:
+            self.chan.release()
         self._last = {
             w["workspace_id"]: w for w in got.get("workspaces", []) if isinstance(w, dict) and "workspace_id" in w
         }

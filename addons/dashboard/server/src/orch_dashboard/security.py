@@ -8,7 +8,7 @@ CSP = (
 )
 # Bodies of the sign routes are tiny (ids, a hash, a typed word); everything else keeps the general bound.
 CLICK_BODY_LIMIT = 16_384
-CLICK_STEP = ("/view", "/sign", "/cancel")
+CLICK_STEP = ("/view", "/sign", "/cancel", "/state")
 
 
 class Security:

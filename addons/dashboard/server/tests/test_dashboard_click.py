@@ -664,10 +664,11 @@ def test_m1_a_signer_that_really_exited_is_dropped_and_restarted(client, token, 
 
     script.clients[0].handler = broken
     res = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
-    assert res.json()["error"]["reason"] == "uncertain"  # still never "sign in the terminal" for a sign
+    assert res.json()["error"].get("reason") == "uncertain", res.text  # still never "sign in the terminal" for a sign
     assert script.clients[0].closed
     clock[0] += 5
-    assert prepare(client, token, stub, approve(7)).status_code == 200 and len(script.started) == 2
+    assert prepare(client, token, stub, {**comment(7), "message": "after"}).status_code == 200
+    assert len(script.started) == 2
 
 
 def test_m2_the_view_is_checked_against_the_hosts_own_record(client, token, stub, script, host_check):
@@ -775,9 +776,181 @@ def test_l5_cancel_of_a_request_the_signer_forgot_still_frees_it(client, token, 
     assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
 
 
-def test_info_attested_by_is_a_plain_word_or_unknown():
+def test_n10_only_the_agent_label_is_shown_as_such():
     from orch_dashboard.adapters.tickets import _attested
 
-    assert [_attested(v) for v in ("agent", "person", "Agent X", "a" * 40, 7, None, "")] == ["agent", "person"] + [
+    assert [_attested(v) for v in ("agent", "person", "verified", "host", "a" * 40, 7, None, "")] == ["agent"] + [
         "unknown"
-    ] * 5
+    ] * 7
+
+
+# -- Opus re-check (N1-N11): while a signature's outcome is unknown, nothing leads to signing the same action again ----
+
+
+def lose_sign(script):
+    def timeout(op, args):
+        if op == "sign":
+            raise TimeoutError
+        return script.handler(op, args)
+
+    script.clients[0].handler = timeout
+    script.clients[0].proc = Alive()
+
+
+def sign_lost(client, token, stub, rid=REQ):
+    return client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token))
+
+
+def other_session(client, auth):
+    return client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()[
+        "token"
+    ]
+
+
+def test_n4_an_unsettled_action_cannot_be_prepared_again_by_click_or_handoff_and_names_the_request(
+    client, token, stub, script, auth, rich
+):
+    prepare(client, token, stub, comment(1))
+    lose_sign(script)
+    assert sign_lost(client, token, stub).json()["error"]["reason"] == "uncertain"
+    again = comment(2)  # the same action, a new click (new key)
+    for who in (token, other_session(client, auth)):
+        res = client.post(url(stub, "prepare"), json=again, headers=hdr(who))
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "click.unsettled" and res.json()["error"]["request_id"] == REQ
+        hand = client.post(f"/api/w/{stub.ws}/handoff", json=again, headers=hdr(who))
+        assert hand.json()["error"]["code"] == "click.unsettled" and hand.json()["error"]["request_id"] == REQ
+    # Another action is not blocked.
+    assert (
+        client.post(url(stub, "prepare"), json={**comment(3), "message": "other"}, headers=hdr(token)).status_code
+        == 200
+    )
+
+
+def test_n4_the_other_session_follows_it_and_the_host_settling_lifts_the_block(
+    client, token, stub, script, auth, host_check, rich
+):
+    prepare(client, token, stub, comment(1))
+    lose_sign(script)
+    sign_lost(client, token, stub)
+    second = other_session(client, auth)
+    host_check.pending[REQ] = "bound"
+    got = client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(second))
+    assert got.status_code == 200 and got.json()["state"] == "bound"  # re-attached: not `not_found`
+    assert client.post(url(stub, "prepare"), json=comment(9), headers=hdr(second)).status_code == 409
+    host_check.pending[REQ] = "expired"
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(second)).json()["state"] == "expired"
+    assert client.post(url(stub, "prepare"), json=comment(10), headers=hdr(second)).status_code == 200
+
+
+def test_n4_logout_does_not_cancel_an_unsettled_request(client, token, stub, script, host_check, rich):
+    prepare(client, token, stub, comment(1))
+    lose_sign(script)
+    sign_lost(client, token, stub)
+    client.post("/auth/logout", headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN})
+    assert [c for c in script.clients[0].calls if c[0] == "cancel"] == [] and host_check.cancelled == []
+
+
+def test_n4_cancel_of_an_unsettled_request_is_refused(client, token, stub, script, rich):
+    prepare(client, token, stub, comment(1))
+    lose_sign(script)
+    sign_lost(client, token, stub)
+    res = client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert [c for c in script.clients[0].calls if c[0] == "cancel"] == []
+
+
+def test_n1_a_lost_channel_advances_the_epoch_and_the_sweep_spares_the_unsettled(
+    client, token, stub, script, gateway, host_check, rich
+):
+    clock = [100.0]
+    gateway.click.clock = lambda: clock[0]
+    prepare(client, token, stub, comment(1))  # REQ: its sign will be lost
+    prepare(client, token, stub, {**comment(2), "message": "second"})  # an ordinary orphan
+    first = script.clients[0]
+
+    def eof(op, args):
+        if op == "sign":
+            raise BrokenPipeError
+        return script.handler(op, args)
+
+    first.handler = eof
+    assert sign_lost(client, token, stub).json()["error"]["reason"] == "uncertain"
+    assert gateway.click.restarts == 1  # the drop itself advanced the epoch (it used to stay 0)
+    clock[0] += 5
+    assert (
+        client.post(url(stub, "prepare"), json={**comment(5), "message": "third"}, headers=hdr(token)).status_code
+        == 200
+    )
+    assert len(script.started) == 2  # restarted, and the prepare swept
+    assert host_check.cancelled == [f"hr_{2:026d}"]  # the ordinary orphan, cancelled at the host
+    host_check.pending[REQ] = "bound"
+    assert (
+        client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "bound"
+    )  # kept
+
+
+def test_n8_an_unknown_or_missing_host_state_is_unknown_not_a_500(client, token, stub, script, host_check, rich):
+    prepare(client, token, stub, comment(1))
+    for odd in ("weird", None):
+        host_check.pending[REQ] = odd
+        res = client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token))
+        assert res.status_code == 200 and res.json()["state"] == "unknown"
+
+
+def test_n7_state_bodies_are_small(client, token, stub, script):
+    res = client.post(url(stub, "state"), json={"request_id": REQ, "x": "y" * 20000}, headers=hdr(token))
+    assert res.status_code == 413
+
+
+def test_n6_status_never_waits_for_the_channel(script, stub, tmp_path):
+    from orch_dashboard.click_signer import Signer
+
+    signer = Signer(tmp_path, start=script.start)
+    assert signer.status()  # fills the last answer
+    held = threading.Event()
+
+    def hold():
+        with signer.chan:
+            held.set()
+            time.sleep(1.0)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(2)
+    t0 = time.monotonic()
+    assert signer.status() == signer._last
+    assert time.monotonic() - t0 < 0.3
+    t.join()
+
+
+def test_n11_a_hung_signer_is_replaced_only_when_nothing_is_unsettled(script, stub, tmp_path):
+    from orch_dashboard.click_signer import Signer
+    from orch_dashboard.errors import HostError
+
+    clock = [100.0]
+    signer = Signer(tmp_path, start=script.start, clock=lambda: clock[0])
+    signer.call("status", {})
+    first = script.clients[0]
+    first.proc = Alive()
+    first.handler = lambda op, args: (_ for _ in ()).throw(TimeoutError())
+    with pytest.raises(HostError) as err:
+        signer.call("prepare", {})
+    assert "did not answer" in err.value.error["message"] and not first.closed and signer.suspect
+    signer.unsettled = lambda: True  # a signature may be mid-submit: the hung signer stays
+    clock[0] += 5
+    with pytest.raises(HostError):
+        signer.call("view", {})
+    assert not first.closed and len(script.started) == 1
+    signer.unsettled = lambda: False
+    clock[0] += 5
+    signer.call("status", {})
+    assert first.closed and len(script.started) == 2 and signer.restarts == 1
+
+
+def test_the_unsettled_error_status_is_a_409_with_the_request_id_only(client, token, stub, script, rich):
+    prepare(client, token, stub, comment(1))
+    lose_sign(script)
+    sign_lost(client, token, stub)
+    err = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(token)).json()["error"]
+    assert set(err) == {"code", "message", "retryable", "request_id"}

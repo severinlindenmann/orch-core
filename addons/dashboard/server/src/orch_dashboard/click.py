@@ -104,6 +104,10 @@ class Clicks:
                 if e != epoch and rid in self.owned.get(tok, {})
             ]
 
+    def adopt(self, token: str, ws: str, request_id: str) -> None:
+        with self.lock:
+            self.owned.setdefault(token, {})[request_id] = (ws, self.clock() + TTL)
+
     def forget(self, token: str, request_id: str) -> None:
         with self.lock:
             self.owned.get(token, {}).pop(request_id, None)
@@ -131,6 +135,11 @@ def register(app: FastAPI, gateway: Gateway):
     clicks = app.state.clicks = Clicks()
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
+    signer.unsettled = handoffs.any_unsettled  # a hung signer is not replaced while a signature may be mid-submit
+    STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
+
+    def binding_of(body) -> str:
+        return hashlib.sha256(adapters.handoff.cj(body.model_dump(exclude={"idem"}, exclude_none=True))).hexdigest()
 
     def human(ws: str, op: str, args: dict):
         return app.state.human(ws, op, args)
@@ -139,6 +148,8 @@ def register(app: FastAPI, gateway: Gateway):
         """After a signer restart its approvals are gone: cancel the orphaned click requests at the host through OUR
         link and give their quota slots back, so they cannot hold the session's limit for 11 minutes."""
         for token, ws, rid in clicks.stale(signer.restarts):
+            if handoffs.is_unsettled(rid):
+                continue  # its signature may be at the host: it settles by itself, nothing is cancelled or forgotten
             try:
                 human(ws, "human.cancel", {"request_id": rid})
             except Exception:  # noqa: BLE001 - already settled, or the host is away: the host expires it anyway
@@ -167,7 +178,8 @@ def register(app: FastAPI, gateway: Gateway):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         # The same click retried (one key) must be the same action: another body under a used key is a conflict.
-        binding = hashlib.sha256(adapters.handoff.cj(body.model_dump(exclude={"idem"}, exclude_none=True))).hexdigest()
+        binding = binding_of(body)
+        handoffs.refuse_if_unsettled(ws, binding)  # an unknown outcome is never answered with a second request
         slot = (token, ws, body.idem)
         with clicks.lock:
             known = clicks.by_idem.get(slot)
@@ -204,6 +216,7 @@ def register(app: FastAPI, gateway: Gateway):
         if files:
             sent["files"] = files
         got = signer.call("prepare", sent)
+        sweep()  # this call may have started a new signer: the old one's orphans are cancelled now
         clicks.add(token, ws, got["request_id"], op, body, signer.restarts)
         if reserved:
             handoffs.commit(token, got["request_id"], until=handoffs.clock() + TTL)
@@ -266,15 +279,34 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/click/state")
     def state(body: Step, request: Request, ws: str = Depends(workspace)):
-        """Where a request stands at the host (read through our own link): the answer to an unknown outcome."""
-        mine(request, ws, body.request_id)
-        rows = human(ws, "human.pending", {"request_id": body.request_id})["requests"]
-        if len(rows) != 1 or rows[0].get("id") != body.request_id:
+        """Where a request stands at the host (read through our own link): the answer to an unknown outcome. An
+        unsettled request is answered for any session of this person, and never as `not_found`."""
+        token, rid = request.state.token, body.request_id
+        unsettled = handoffs.is_unsettled(rid) == ws
+        if unsettled:
+            gateway.enabled(ws)
+            clicks.adopt(token, ws, rid)  # a session that comes back (or another tab) follows it too
+        else:
+            mine(request, ws, rid)
+        try:
+            rows = human(ws, "human.pending", {"request_id": rid})["requests"]
+        except HostError:
+            if unsettled:
+                return {"id": rid, "state": "unknown"}
+            raise
+        row = rows[0] if len(rows) == 1 and isinstance(rows[0], dict) and rows[0].get("id") == rid else None
+        if row is None:
+            if unsettled:
+                return {"id": rid, "state": "unknown"}
             raise fail("not_found", exit=2)
-        if rows[0]["state"] not in ("prepared", "bound"):
-            clicks.forget(request.state.token, body.request_id)
-            handoffs.settle(request.state.token, body.request_id)
-        return {"id": body.request_id, "state": rows[0]["state"]}
+        got = row.get("state")
+        if got not in STATES:
+            return {"id": rid, "state": "unknown"}  # the host sent something this dashboard does not know: say so
+        if got not in ("prepared", "bound"):
+            clicks.forget(token, rid)
+            handoffs.settle(token, rid)
+            handoffs.settled(rid)
+        return {"id": rid, "state": got}
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
@@ -286,6 +318,11 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             got = signer.call("sign", {"workspace_id": ws, "request_id": body.request_id, **args}, lost=lost_sign())
         except HostError as exc:
+            wanted = clicks.body_of(token, body.request_id)
+            if exc.error.get("reason") == "uncertain" and wanted is not None:
+                # The signature may be at the host: this action is unsettled for this person until the host says so.
+                # (Before the sweep, which must spare it.)
+                handoffs.mark_unsettled(ws, binding_of(wanted), body.request_id, handoffs.clock() + TTL + 60)
             sweep()
             if (exc.error.get("reason") or exc.error["code"]) in ENDED:
                 clicks.forget(token, body.request_id)
@@ -293,6 +330,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise  # an uncertain outcome keeps its slot and its request: it settles at the host
         clicks.forget(token, body.request_id)
         handoffs.settle(token, body.request_id)
+        handoffs.settled(body.request_id)
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
         if isinstance(result.get("key"), str):
@@ -305,6 +343,8 @@ def register(app: FastAPI, gateway: Gateway):
     def cancel(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(request, ws, body.request_id)
         token = request.state.token
+        if handoffs.is_unsettled(body.request_id):
+            raise refusal_check("A signature of this is settling; it cannot be cancelled now.")
         try:
             got = _signer_call("cancel", ws, body.request_id)
         except HostError as exc:
@@ -318,6 +358,8 @@ def register(app: FastAPI, gateway: Gateway):
     def cancel_session(token: str):
         """Logout: the click requests this session left open are cancelled (best effort, each on its own)."""
         for rid, ws in clicks.open(token):
+            if handoffs.is_unsettled(rid):
+                continue  # logout never cancels a signature whose outcome is unknown
             try:
                 signer.call("cancel", {"workspace_id": ws, "request_id": rid})
             except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout

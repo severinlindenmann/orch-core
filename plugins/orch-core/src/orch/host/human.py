@@ -47,7 +47,15 @@ from orch import canon
 from . import review
 from .errors import HostError
 from .outcomes import Planned, request_idem
-from .requests import EXPIRE_SECONDS, GRANT_EXPIRE_SECONDS, KEEP_SECONDS, PENDING, RequestStore, new_request_id
+from .requests import (
+    EXPIRE_SECONDS,
+    GRANT_EXPIRE_SECONDS,
+    KEEP_SECONDS,
+    PENDING,
+    RequestStore,
+    file_bytes,
+    new_request_id,
+)
 from .workspace import ok_result
 
 if TYPE_CHECKING:
@@ -297,7 +305,8 @@ class HumanOps:
         operation = ops.get(name)
         inner = dict(args["args"])
         specs = self._specs(operation, call.frame, inner)
-        digests, _ = self.backend.bind_files(call, None, specs)  # a {blob} must be the preparing principal's (F9)
+        # a {blob} must be the preparing principal's (F9); a {digest} binds only to an existing record (§0.3)
+        digests, digest_args = self.backend.bind_files(call, idem, specs)
         # the inner args as given (not normalised: a REF and its uid are two bindings, which only ever errs towards
         # idem.conflict), the person and the signer or hand-off; the session and file digests are added by binding_of
         bound = {
@@ -310,7 +319,15 @@ class HumanOps:
         session = (call.frame.get("auth") or {}).get("session")
         outcomes = service.outcomes
         begun = outcomes.begin(
-            call.principal, idem, "human.prepare", bound, planned=(), files=digests, session=session, deferred=True
+            call.principal,
+            idem,
+            "human.prepare",
+            bound,
+            planned=(),
+            files=digests,
+            session=session,
+            deferred=True,
+            digest_args=digest_args,  # a {digest} where the prepare has to run again: upload again
         )
         if isinstance(begun, dict):  # a stored answer: the prepare result of the first call
             begun = {k: v for k, v in begun.items() if k != "duplicate"}
@@ -404,22 +421,25 @@ class HumanOps:
             "submit": None,
             "outcome": None,
         }
-        requests.write(record)
-        # the blobs the inner op used are held with the request: they live (and count against this UID) as long as it
-        service.blobs.hold(call.principal, _blob_ids(specs), rid, record["expires"])
+        # the record holds the inner op's file bytes from now on: they are charged to the preparing UID until the
+        # request goes terminal and they are stripped, and the blobs they came from are consumed (§0.10, F9)
+        blobs = _blob_ids(specs)
+        service.blobs.hold_request(rid, call.principal, call.peer.uid, file_bytes(record), consumed=blobs)
+        try:
+            requests.write(record)
+        except BaseException:
+            service.blobs.release_request(rid)
+            raise
+        service.blobs.consume(call.principal, blobs)
         view = self._view(record)
         if intent is not None:
             service.outcomes.commit(intent, view)
         return view
 
     def _specs(self, operation: Any, frame: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
-        """The inner op's ``files``: inline ``{b64}`` or a ``{blob}``; a ``{digest}`` names no bytes, and a prepare
-        has no earlier record to bind it to, so it is ``blob.invalid``."""
-        specs = self.backend._file_specs(operation, frame, inner)
-        for arg, spec in specs.items():
-            if set(spec) not in ({"b64"}, {"blob"}):
-                raise HostError("blob.invalid", f"files.{arg}: human.prepare takes the bytes (b64) or a blob")
-        return specs
+        """The inner op's ``files``: inline ``{b64}``, a ``{blob}``, or (only on a retry of a prepare with
+        ``opts.idem`` that has a record, since the prepare consumed the blob) a ``{digest}``, which only binds."""
+        return self.backend._file_specs(operation, frame, inner)
 
     @staticmethod
     def _new_code(requests: RequestStore) -> str:
@@ -665,7 +685,6 @@ class HumanOps:
         if record["state"] in PENDING:
             record = {**record, "state": "cancelled", "done_at": call.service.clock()}
             requests.write(record)
-            call.service.blobs.release(record["id"])  # the blobs it held go with it
         # an expired request can never be submitted either: it answers cancelled (§0.8.1 lists two answers)
         return {"state": "submitted" if record["state"] == "submitted" else "cancelled"}
 
@@ -701,7 +720,6 @@ class HumanOps:
         except BaseException:
             outcomes.release(begun)  # the log and the request say what landed; start-up recovery finishes it
             raise
-        service.blobs.release(args["request_id"])  # submitted: the blobs it held are consumed
         return outcomes.commit(begun, result)["result"]
 
     def _note_refusal(self, call: Call, request_id: str, code: str) -> None:

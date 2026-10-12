@@ -14,14 +14,21 @@ Every lookup is by ``(principal, id)``: another principal's blob, or one of anot
 unknown id (``blob.invalid``).
 
 **Lifetime.** A blob is consumed when the write that uses it commits (:meth:`BlobStore.consume`); after a refusal or a
-dry run it stays. An unused or incomplete blob expires 10 minutes after its last chunk, unless a prepared human request
-holds it (:meth:`BlobStore.hold`): it then lives as long as the request, and goes when the request is submitted or
-cancelled (:meth:`BlobStore.release`). Blobs are kept in memory and on disk for the host process only: they survive a
-reconnect, not a host restart (leftover files are removed at open; a prepared request keeps its own copy of the bytes).
+dry run it stays. An unused or incomplete blob expires 10 minutes after the last chunk that changed it (a resend
+without effect does not keep it alive). Blobs are kept in memory and on disk for the host process only: they
+survive a reconnect, not a host restart (leftover files are removed at open and at close).
 
-**Quotas** (:class:`Quota`, one per host, shared by every workspace's store) count decoded bytes, reserved at the
-first chunk: 64 MiB per blob, 256 MiB per **UID** across all its principals and workspaces (held blobs included), and
-1 GiB per host, of which 256 MiB only person-class UIDs may use (the person reserve). Over a limit: ``quota.host``.
+**Prepared human requests.** ``human.prepare`` copies the inner op's file bytes into the request record, so it
+**consumes** the blobs it used when the request is stored (a second prepare or a direct write naming the same blob then
+answers ``blob.invalid``), and the record's bytes are charged instead: a request reservation
+(:meth:`BlobStore.hold_request`) under the preparing UID, inline bytes included, kept until the record's file bytes
+are stripped, which happens when the request goes terminal (submitted, cancelled, expired;
+:meth:`orch.host.requests.RequestStore.write`). At open the reservations of the stored records are rebuilt.
+
+**Quotas** (:class:`Quota`, one per host, shared by every workspace's store) count decoded bytes, at least 4 KiB per
+blob, reserved at the first chunk: 64 MiB per blob, 256 MiB per **UID** across all its principals and workspaces
+(request reservations included), at most 256 live blobs per UID, and 1 GiB per host, of which 256 MiB only
+person-class UIDs may use (the person reserve). Over a limit: ``quota.host``.
 
 **Storage.** ``<state>/hosts/<ws>/blobs/<id>`` (0600) in a host-owned 0700 directory, opened once; every file
 operation is relative to that directory's fd with ``O_NOFOLLOW``, and an id is checked against ``^b_[A-Z2-7]{26}$``
@@ -41,6 +48,7 @@ import re
 import secrets
 import stat
 import threading
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +81,9 @@ PERSON_RESERVE = 256 * MIB
 CHUNK_MAX = 768 * 1024
 INLINE_MAX = 512 * 1024
 EXPIRE_SECONDS = 600
+#: the least a blob is charged, so tiny blobs are not free, and the most live blobs a UID may have
+MIN_CHARGE = 4096
+UID_BLOBS = 256
 BLOB_ID = re.compile(r"b_[A-Z2-7]{26}")
 _HASH = r"^sha256:[0-9a-f]{64}$"
 _B64 = r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
@@ -108,6 +119,17 @@ def new_blob_id() -> str:
     return "b_" + base64.b32encode(secrets.token_bytes(16)).decode().rstrip("=")
 
 
+def pread_all(fd: int, length: int, offset: int) -> bytes:
+    """Up to ``length`` bytes at ``offset`` (fewer only at the end of the file), read in pieces of at most 1 MiB."""
+    out = bytearray()
+    while len(out) < length:
+        chunk = os.pread(fd, min(length - len(out), MIB), offset + len(out))
+        if not chunk:
+            break
+        out += chunk
+    return bytes(out)
+
+
 def decoded_len(b64: str) -> int:
     """The decoded length of canonical base64 text, without decoding it."""
     return len(b64) // 4 * 3 - (2 if b64.endswith("==") else 1 if b64.endswith("=") else 0)
@@ -132,20 +154,23 @@ class Blob:
     received: int = 0
     digest: str | None = None
     hasher: Any = field(default_factory=hashlib.sha256)
-    #: the request that holds it (``human.prepare``), and until when
+    #: a request reservation (``human.prepare``): the request id; it lives until :meth:`BlobStore.release_request`
     held_by: str | None = None
-    held_until: float = 0.0
     gone: bool = False
 
     @property
     def complete(self) -> bool:
         return self.digest is not None
 
+    @property
+    def charge(self) -> int:
+        return self.size if self.held_by is not None else max(self.size, MIN_CHARGE)
+
     def alive(self, now: float) -> bool:
         if self.gone:
             return False
         if self.held_by is not None:
-            return now < self.held_until
+            return True
         return now < self.last_at + EXPIRE_SECONDS
 
 
@@ -159,42 +184,58 @@ class Quota:
         per_uid: int = UID_MAX,
         host: int = HOST_MAX,
         person_reserve: int = PERSON_RESERVE,
+        uid_blobs: int = UID_BLOBS,
         clock: Callable[[], float] | None = None,
     ) -> None:
-        import time
-
         self.per_uid, self.host, self.person_reserve = per_uid, host, person_reserve
+        self.uid_blobs = uid_blobs
         self.clock = clock or time.time
         self._lock = threading.Lock()
         self._blobs: set[Blob] = set()
 
     def usage(self) -> tuple[int, int, dict[int, int]]:
-        """(host total, non-person total, per UID) of the live reservations."""
+        """(host total, non-person total, per UID) of the live reservations, in charged bytes."""
         with self._lock:
-            return self._usage(self.clock())
+            return self._usage(self.clock(), ())[:3]
 
-    def _usage(self, now: float) -> tuple[int, int, dict[int, int]]:
-        total, others, per_uid = 0, 0, {}
+    def count(self, uid: int) -> int:
+        """The live blobs of ``uid`` (request reservations are not blobs)."""
+        with self._lock:
+            return self._usage(self.clock(), ())[3].get(uid, 0)
+
+    def _usage(self, now: float, skip: Iterable[Blob]) -> tuple[int, int, dict[int, int], dict[int, int]]:
+        skipped = set(skip)
+        total, others, per_uid, blobs = 0, 0, {}, {}
         for blob in list(self._blobs):
             if not blob.alive(now):
                 self._blobs.discard(blob)  # expired: its store removes the file when it next looks
                 continue
-            total += blob.size
+            if blob in skipped:
+                continue
+            total += blob.charge
             if not blob.person:
-                others += blob.size
-            per_uid[blob.uid] = per_uid.get(blob.uid, 0) + blob.size
-        return total, others, per_uid
+                others += blob.charge
+            per_uid[blob.uid] = per_uid.get(blob.uid, 0) + blob.charge
+            if blob.held_by is None:
+                blobs[blob.uid] = blobs.get(blob.uid, 0) + 1
+        return total, others, per_uid, blobs
 
-    def reserve(self, blob: Blob) -> None:
-        """Count ``blob.size`` against its UID and the host, or ``quota.host``."""
+    def reserve(self, blob: Blob, *, replacing: Iterable[Blob] = (), force: bool = False) -> None:
+        """Count ``blob`` against its UID and the host, or ``quota.host``. ``replacing``: reservations ``blob`` takes
+        over (left out of the check; the caller releases them). ``force``: count it without a check (the stored
+        requests rebuilt at open: their bytes are on disk already)."""
         with self._lock:
-            total, others, per_uid = self._usage(self.clock())
-            if per_uid.get(blob.uid, 0) + blob.size > self.per_uid:
-                raise HostError("quota.host", "the blob quota of this user is used up; drop or use blobs first")
-            if total + blob.size > self.host:
-                raise HostError("quota.host", "the host's blob quota is used up; retry later")
-            if not blob.person and others + blob.size > self.host - self.person_reserve:
-                raise HostError("quota.host", "the host's blob quota is used up; retry later")
+            total, others, per_uid, blobs = self._usage(self.clock(), replacing)
+            if not force:
+                charge = blob.charge
+                if per_uid.get(blob.uid, 0) + charge > self.per_uid:
+                    raise HostError("quota.host", "the blob quota of this user is used up; drop or use blobs first")
+                if blob.held_by is None and blobs.get(blob.uid, 0) >= self.uid_blobs:
+                    raise HostError("quota.host", f"at most {self.uid_blobs} blobs per user; drop or use blobs first")
+                if total + charge > self.host:
+                    raise HostError("quota.host", "the host's blob quota is used up; retry later")
+                if not blob.person and others + charge > self.host - self.person_reserve:
+                    raise HostError("quota.host", "the host's blob quota is used up; retry later")
             self._blobs.add(blob)
 
     def release(self, blob: Blob) -> None:
@@ -224,6 +265,8 @@ class BlobStore:
         self.quota = quota or Quota(clock=clock)
         self._blobs: dict[str, Blob] = {}
         self._keys: dict[tuple[str, str], str] = {}
+        #: request id -> its reservation (``human.prepare``)
+        self._held: dict[str, Blob] = {}
         self._dfd: int | None = None
 
     # -- the directory
@@ -240,8 +283,12 @@ class BlobStore:
                 os.unlink(name, dir_fd=self._dfd)
 
     def close(self) -> None:
+        """Forget every blob and remove its file (blobs do not outlive the store), and release the request
+        reservations (rebuilt at the next open)."""
         for blob in list(self._blobs.values()):
-            self._forget(blob, unlink=False)
+            self._forget(blob)
+        for rid in list(self._held):
+            self.release_request(rid)
         if self._dfd is not None:
             os.close(self._dfd)
             self._dfd = None
@@ -271,13 +318,7 @@ class BlobStore:
     def _read(self, blob: Blob, offset: int, length: int) -> bytes:
         fd = self._open(blob.id, os.O_RDONLY)
         try:
-            out = bytearray()
-            while len(out) < length:
-                chunk = os.pread(fd, length - len(out), offset + len(out))
-                if not chunk:
-                    break
-                out += chunk
-            return bytes(out)
+            return pread_all(fd, length, offset)
         finally:
             os.close(fd)
 
@@ -339,29 +380,44 @@ class BlobStore:
         return data
 
     def consume(self, principal: str, ids: Iterable[str]) -> None:
-        """The write that used these blobs committed: they go."""
+        """The write that used these blobs committed: they go (a request reservation is never one of them)."""
         for blob_id in ids:
             blob = self._get(principal, blob_id)
-            if blob is not None:
+            if blob is not None and blob.held_by is None:
                 self._forget(blob)
 
-    def hold(self, principal: str, ids: Iterable[str], request_id: str, until: float) -> None:
-        """A prepared human request holds these blobs: they live as long as it does (``until``, its expiry)."""
-        for blob_id in ids:
-            blob = self._get(principal, blob_id)
-            if blob is not None:
-                blob.held_by, blob.held_until = request_id, until
+    def hold_request(
+        self,
+        request_id: str,
+        principal: str,
+        uid: int,
+        size: int,
+        *,
+        consumed: Iterable[str] = (),
+        force: bool = False,
+    ) -> None:
+        """Charge ``size`` bytes, the file bytes a prepared request record holds, to ``uid`` until
+        :meth:`release_request`. ``consumed``: the blobs the request copied, which it takes over (the check leaves them
+        out; call :meth:`consume` once the request is stored). ``quota.host`` when the bytes do not fit."""
+        self.release_request(request_id)
+        if size <= 0:
+            return
+        blobs = [b for b in (self._get(principal, i) for i in consumed) if b is not None]
+        held = Blob(request_id, self.workspace_id, principal, uid, True, size, None, self.clock(), held_by=request_id)
+        self.quota.reserve(held, replacing=blobs, force=force)
+        self._held[request_id] = held
 
-    def release(self, request_id: str) -> None:
-        """The request was submitted or cancelled: the blobs it held go."""
-        for blob in [b for b in self._blobs.values() if b.held_by == request_id]:
-            self._forget(blob)
+    def release_request(self, request_id: str) -> None:
+        """The request's file bytes were stripped (it went terminal) or the store closes: its reservation goes."""
+        held = self._held.pop(request_id, None)
+        if held is not None:
+            held.gone = True
+            self.quota.release(held)
 
     def drop(self, principal: str, blob_id: str) -> None:
-        """``blob.drop``: an unknown or foreign id is not an error (and says nothing). A blob a prepared request holds
-        is the request's until it ends: a drop leaves it."""
+        """``blob.drop``: an unknown or foreign id is not an error (and says nothing)."""
         blob = self._get(principal, blob_id)
-        if blob is not None and blob.held_by is None:
+        if blob is not None:
             self._forget(blob)
 
     # -- blob.put
@@ -427,8 +483,7 @@ class BlobStore:
         if blob.complete:  # immutable: only an identical resend, and a final one must name the same digest
             if last and (end != blob.size or sha != blob.digest):
                 raise HostError("blob.invalid", "the blob is complete with another final chunk or digest")
-            blob.last_at = self.clock()
-            return self._answer(blob)
+            return self._answer(blob)  # no effect, and no new lease of life
         if last:
             if end != blob.size:
                 raise HostError("blob.invalid", f"the last chunk must end at size ({blob.size})")
@@ -444,7 +499,8 @@ class BlobStore:
             blob.received = end
         if last:
             blob.digest = sha
-        blob.last_at = self.clock()
+        if new or last:  # a resend without effect does not extend the blob's life
+            blob.last_at = self.clock()
         return self._answer(blob)
 
     @staticmethod

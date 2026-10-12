@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 
 from orch.host.artifacts import CHUNK
@@ -93,6 +94,11 @@ def test_a_file_changed_or_swapped_behind_the_log_is_not_served(served):
     path = served.lab.ws.root / "tickets" / uid / "artifacts" / "e.log"
     path.write_bytes(b"tampered bytes\n")
     assert err(get(c, key, "e.log")) == "not_found"
+    audit = served.lab.state / "host" / "audit-security.jsonl"  # a tamper signal is recorded (§0.11)
+    line = json.loads(audit.read_text().splitlines()[-1])
+    assert line["event"] == "artifact.mismatch" and line["ticket"] == uid and line["name"] == "e.log"
+    assert line["expected"] == sha(b"original bytes\n") and line["workspace"] == served.wid
+    assert audit.stat().st_mode & 0o777 == 0o600
     path.unlink()
     target = served.lab.ws.root / "elsewhere.log"
     target.write_bytes(b"original bytes\n")

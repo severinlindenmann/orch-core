@@ -9,7 +9,8 @@
 * **By digest.** The file is ``<root>/tickets/<uid>/artifacts/<name>`` with the uid and name the manifest gives, opened
   through the workspace's host-mode ``Files`` (fd walk, ``O_NOFOLLOW``, a regular file with one link). Its bytes must
   hash to the manifest's digest; a file that does not (edited or replaced behind the log) is ``not_found``: the bytes
-  the log names are not there. The whole file is hashed once per version of it (device, inode, size, mtime, ctime),
+  the log names are not there, and an ``artifact.mismatch`` line goes to ``audit-security.jsonl``
+  (:mod:`orch.host.securitylog`). The whole file is hashed once per version of it (device, inode, size, mtime, ctime),
   not once per chunk, and the version is checked again after the chunk is read.
 * ``offset`` = ``size`` answers an empty ``b64`` with ``last:true``; ``offset`` > ``size`` is ``invalid.input``.
   ``length`` is 1..786432 (768 KiB), its default the maximum. ``digest`` is the manifest's, the value ``ticket.get``
@@ -28,6 +29,8 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from . import securitylog
+from .blobs import BLOB_MAX, MIB, pread_all
 from .errors import HostError
 from .visibility import Viewer
 
@@ -37,8 +40,8 @@ if TYPE_CHECKING:
 __all__ = ["CHUNK", "SCHEMA", "artifact_get"]
 
 CHUNK = 786_432
-#: the store's artifact limit (64 MiB): a larger file is not one the log can name
-FILE_LIMIT = 64 * 1024 * 1024
+#: the store's artifact limit (64 MiB, the blob limit too): a larger file is not one the log can name
+FILE_LIMIT = BLOB_MAX
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -65,20 +68,10 @@ def _missing() -> HostError:
     return HostError("not_found", "no such artifact on this ticket")
 
 
-def _pread(fd: int, length: int, offset: int) -> bytes:
-    out = bytearray()
-    while len(out) < length:
-        chunk = os.pread(fd, min(length - len(out), 1 << 20), offset + len(out))
-        if not chunk:
-            break
-        out += chunk
-    return bytes(out)
-
-
 def _hash(fd: int, size: int) -> str:
     h, pos = hashlib.sha256(), 0
     while pos < size:
-        chunk = os.pread(fd, min(1 << 20, size - pos), pos)
+        chunk = os.pread(fd, min(MIB, size - pos), pos)
         if not chunk:
             break
         h.update(chunk)
@@ -112,6 +105,17 @@ def artifact_get(call: Call, args: dict[str, Any]) -> dict[str, Any]:
                 _VERIFIED.move_to_end(key)
         if not known:
             if _hash(fd, st.st_size) != art.digest:
+                securitylog.record(  # a file changed or swapped behind the log: a tamper signal (§0.11)
+                    service.state_dir,
+                    service.host_uid,
+                    service.clock(),
+                    "artifact.mismatch",
+                    workspace=service.workspace_id,
+                    ticket=view.uid,
+                    name=art.name,
+                    expected=art.digest,
+                    size=st.st_size,
+                )
                 raise HostError("not_found", "the artifact's file does not match the digest the ticket records")
             with _LOCK:
                 _VERIFIED[key] = None
@@ -119,7 +123,7 @@ def artifact_get(call: Call, args: dict[str, Any]) -> dict[str, Any]:
                     _VERIFIED.popitem(last=False)
         if offset > st.st_size:
             raise HostError("invalid.input", f"offset is past the end of the file ({st.st_size} bytes)")
-        data = _pread(fd, length, offset)
+        data = pread_all(fd, length, offset)
         if _version(os.fstat(fd)) != key[-1]:  # changed while it was read: the hash no longer vouches for it
             with _LOCK:
                 _VERIFIED.pop(key, None)

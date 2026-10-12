@@ -10,8 +10,9 @@ import os
 
 import pytest
 
-from orch.host.blobs import BLOB_MAX, CHUNK_MAX, EXPIRE_SECONDS, MIB, BlobStore, Quota
+from orch.host.blobs import BLOB_MAX, CHUNK_MAX, EXPIRE_SECONDS, MIB, MIN_CHARGE, UID_BLOBS, Blob, BlobStore, Quota
 from orch.host.control_client import new_idem
+from orch.host.requests import RequestStore
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
 from tests.host.human_helpers import Human
@@ -258,7 +259,6 @@ def test_the_per_uid_quota_counts_every_principal_and_frees_on_drop(served):
 def test_the_host_quota_keeps_a_reserve_for_person_class_uids():
     now = [0.0]
     q = Quota(clock=lambda: now[0])
-    from orch.host.blobs import Blob
 
     def blob(uid: int, person: bool, size: int = BLOB_MAX) -> Blob:
         return Blob(f"b_{uid}_{len(q._blobs)}", "w", f"uid:{uid}", uid, person, size, None, now[0])
@@ -280,20 +280,101 @@ def test_the_host_quota_keeps_a_reserve_for_person_class_uids():
     q.reserve(blob(2004, False))
 
 
-def test_a_blob_held_by_a_prepared_request_counts_against_the_preparing_uid(served):
+def requests_bytes(served: Served) -> int:
+    d = served.service.requests.dir
+    return sum((d / n).stat().st_size for n in os.listdir(d))
+
+
+def artifacts_in(served: Served, request_id: str) -> list:
+    record = json.loads((served.service.requests.dir / request_id).read_text())
+    return [e.get("artifacts") for e in record["extras"] if e.get("artifacts")]
+
+
+def on_worker(served: Served, fn, *args):
+    return served.service.submit(fn, *args).result(timeout=30)
+
+
+def test_a_prepare_consumes_its_blob_and_charges_the_request_bytes_to_the_preparing_uid(served):
     human = Human(served)
     _, key = served.ticket()
-    data = b"evidence for a person\n"
+    data = os.urandom(600_000)
     blob = upload(human.c, data)
     tick(served, 300)
-    prepared = human.prepare("artifact.add", {"ref": key, "path": "proof.txt"}, files={"path": {"blob": blob}})
+    prepared = human.prepare("artifact.add", {"ref": key, "path": "p0.bin"}, files={"path": {"blob": blob}})
+    rid = prepared["request"]["id"]
+    assert served.service.blobs.digest(f"uid:{UID}", blob) is None  # consumed: the record holds the bytes now
     tick(served, 400)  # past the blob's own 10 minutes, within the request's
-    assert quota(served)[2][UID] == len(data)  # held with the request, counted against the preparing UID
-    ok(human.c.req("blob.drop", {"blob": blob}))  # the request's now: a drop leaves it
-    assert quota(served)[2][UID] == len(data)
-    ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
-    assert quota(served)[2].get(UID, 0) == 0  # submitted: consumed
+    assert quota(served)[2][UID] == len(data)  # the record's bytes, charged to the preparing UID
+    # one blob cannot feed a second request, nor a direct write after the prepare
+    for i in range(1, 5):
+        res = human.prepare_res("artifact.add", {"ref": key, "path": f"p{i}.bin"}, files={"path": {"blob": blob}})
+        assert err(res) == "blob.invalid"
+    direct = human.c.req(
+        "artifact.add", {"ref": key, "path": "b.bin"}, session=SESSION, idem=True, files={"path": {"blob": blob}}
+    )
+    assert err(direct) == "blob.invalid" and quota(served)[2][UID] == len(data)
+    assert len(os.listdir(served.service.requests.dir)) == 1
+    ok(human.submit_res(rid, human.sign(prepared).events))
+    assert quota(served)[2].get(UID, 0) == 0  # submitted: the record is terminal and keeps no file bytes
+    assert artifacts_in(served, rid) == []
     assert served.lab.ws.events(key)[-1]["sha256"] == sha(data)
+
+
+def test_prepare_and_cancel_in_a_loop_cannot_grow_the_disk_or_escape_the_quota(served):
+    human = Human(served)
+    _, key = served.ticket()
+    data = os.urandom(400_000)
+    for i in range(30):  # far more than the 20 pending, and past what the UID quota would hold without stripping
+        blob = upload(human.c, data)
+        prepared = human.prepare("artifact.add", {"ref": key, "path": f"c{i}.bin"}, files={"path": {"blob": blob}})
+        assert quota(served)[2][UID] == len(data)
+        ok(human.c.req("human.cancel", {"request_id": prepared["request"]["id"]}))
+        assert quota(served)[2].get(UID, 0) == 0 and artifacts_in(served, prepared["request"]["id"]) == []
+    assert requests_bytes(served) < 30 * 100_000  # 30 stripped records, not 30 copies of 400 KB
+
+
+def test_an_expired_requests_bytes_count_until_they_are_stripped(served):
+    human = Human(served)
+    _, key = served.ticket()
+    inline = os.urandom(300_000)  # inline bytes are a request's file bytes too
+    prepared = human.prepare("artifact.add", {"ref": key, "path": "x.bin"}, files={"path": {"b64": b64(inline)}})
+    rid = prepared["request"]["id"]
+    assert quota(served)[2][UID] == len(inline)
+    tick(served, 601)
+    assert quota(served)[2][UID] == len(inline)  # expired, not yet stripped: still on disk, still counted
+    on_worker(served, served.service.requests.sweep)
+    assert quota(served)[2].get(UID, 0) == 0 and artifacts_in(served, rid) == []
+
+
+def test_the_stored_requests_bytes_are_charged_again_at_open(served):
+    human = Human(served)
+    _, key = served.ticket()
+    kept = human.prepare("artifact.add", {"ref": key, "path": "k.bin"}, files={"path": {"b64": b64(b"k" * 5000)}})
+    done = human.prepare("artifact.add", {"ref": key, "path": "d.bin"}, files={"path": {"b64": b64(b"d" * 7000)}})
+    ok(human.c.req("human.cancel", {"request_id": done["request"]["id"]}))
+    requests = RequestStore(served.lab.state, served.wid, UID, clock=lambda: served.lab.ws.clock[0])
+    requests.open()
+    assert list(requests.held()) == [(kept["request"]["id"], f"uid:{UID}", 5000)]
+    q = Quota(clock=lambda: served.lab.ws.clock[0])
+    store = BlobStore(served.lab.tmp / "other-state", served.wid, UID, clock=lambda: 0.0, quota=q)
+    store.hold_request(kept["request"]["id"], f"uid:{UID}", UID, 5000, force=True)
+    assert q.usage()[2] == {UID: 5000}
+
+
+def test_pending_does_not_read_the_records(served, monkeypatch):
+    human = Human(served)
+    _, key = served.ticket()
+    for i in range(3):
+        human.prepare("artifact.add", {"ref": key, "path": f"r{i}.bin"}, files={"path": {"b64": b64(b"x" * 1000)}})
+    requests = served.service.requests
+    reads = []
+    real = type(requests).read
+    monkeypatch.setattr(type(requests), "read", lambda self, rid: reads.append(rid) or real(self, rid))
+    assert on_worker(served, requests.pending, served.lab.owner) == 3
+    assert reads == []  # from the index
+    tick(served, 601)
+    assert on_worker(served, requests.pending, served.lab.owner) == 0  # due ones are read once and expired
+    assert len(reads) == 3
 
 
 # --- consumption and expiry -------------------------------------------------------------------------------------------
@@ -332,7 +413,7 @@ def test_an_unused_or_incomplete_blob_expires_ten_minutes_after_its_last_chunk(s
     ok(put(c, grant=served.grant, blob=part["data"]["blob"], offset=10, b64=b64(data[10:20]), last=False))
     tick(served, 2)  # the complete blob is past 10 minutes, the incomplete one had a chunk 2 s ago
     assert err(add(served, c, key, {"path": {"blob": blob}})) == "blob.invalid"
-    assert quota(served)[2][UID] == 100
+    assert quota(served)[2][UID] == MIN_CHARGE  # 100 bytes count as 4 KiB
     ok(put(c, grant=served.grant, blob=part["data"]["blob"], offset=20, b64=b64(data[20:30]), last=False))
     tick(served, EXPIRE_SECONDS)
     res = put(c, grant=served.grant, blob=part["data"]["blob"], offset=30, b64=b64(data[30:]), last=False)
@@ -413,3 +494,89 @@ def test_the_blob_directory_is_private_and_no_handler_root(served):
     blob = upload(c, b"secret-ish")
     assert (blobs / blob).stat().st_mode & 0o777 == 0o600
     assert json.dumps(served.client().welcome["limits"]).count(str(BLOB_MAX)) == 1
+
+
+# --- review round (#405) ----------------------------------------------------------------------------------------------
+
+
+def test_tiny_blobs_cost_at_least_4_kib_and_a_uid_has_at_most_256_live_ones(served):
+    c = served.client()
+    empty = {"offset": 0, "b64": "", "size": 0, "last": True, "sha256": sha(b"")}
+    refused = None
+    for i in range(6000):
+        res = put(c, upload_key=new_idem(), **empty)
+        if not res["ok"]:
+            refused = i
+            break
+    assert refused == UID_BLOBS and err(res) == "quota.host"
+    assert len(os.listdir(served.service.blobs.dir)) == UID_BLOBS
+    assert quota(served)[2][UID] == UID_BLOBS * MIN_CHARGE
+    tick(served, EXPIRE_SECONDS)  # they expire, and the count frees
+    assert ok(put(c, upload_key=new_idem(), **empty))
+
+
+def test_a_resend_without_effect_does_not_extend_a_blobs_life(served):
+    c = served.client()
+    data = b"keep me"
+    final = {"offset": 0, "b64": b64(data), "size": len(data), "last": True, "sha256": sha(data)}
+    blob = ok(put(c, upload_key=KEY, **final))["data"]["blob"]
+    tick(served, EXPIRE_SECONDS - 10)
+    ok(put(c, blob=blob, **{k: v for k, v in final.items() if k != "size"}))
+    tick(served, 20)
+    assert served.service.blobs.digest(f"uid:{UID}", blob) is None
+
+
+def test_a_grant_secret_split_across_chunks_is_refused_when_the_blob_is_used(served):
+    _, key = served.ticket()
+    c = served.client()
+    data = b"see " + served.grant.encode() + b" here\n"
+    cut = 4 + len(served.grant) // 2
+    g = served.grant
+    first = put(c, grant=g, offset=0, b64=b64(data[:cut]), size=len(data), upload_key=new_idem(), last=False)
+    blob = ok(first)["data"]["blob"]  # neither half carries the grant
+    ok(put(c, grant=g, blob=blob, offset=cut, b64=b64(data[cut:]), last=True, sha256=sha(data)))
+    for op, args, arg in (
+        ("log", {"ref": key, "file": "notes.txt"}, "file"),
+        ("artifact.add", {"ref": key, "path": "s.log"}, "path"),
+    ):
+        res = c.req(op, args, grant=served.grant, session=SESSION, idem=True, files={arg: {"blob": blob}})
+        assert err(res) == "grant.secret_in_args" and served.grant not in json.dumps(res), (op, res)
+    assert all(served.grant not in json.dumps(e) for e in served.lab.ws.events(key))
+
+
+def test_the_person_reserve_end_to_end(served):
+    from tests.host.test_dispatch_matrix import as_agent_class
+
+    q = served.h.host.blob_quota
+    q.host, q.person_reserve = 3 * MIB, 1 * MIB  # agents may use 2 MiB of this host's 3
+    registry = served.h.host.registry
+    person_entry = registry.get(served.wid)
+    as_agent_class(served)
+    agent = served.client()
+    assert ok(put(agent, offset=0, b64="", size=2 * MIB, upload_key=new_idem(), last=False))
+    assert err(put(agent, offset=0, b64="", size=1, upload_key=new_idem(), last=False)) == "quota.host"
+    with registry._lock:
+        registry._entries[served.wid] = person_entry  # back to a person-class peer: the reserve is open to it
+    person = served.client()
+    assert ok(put(person, offset=0, b64="", size=MIB // 2, upload_key=new_idem(), last=False))
+
+
+def test_a_replay_of_a_committed_write_consumes_the_blob_it_names(served):
+    _, key = served.ticket()
+    c = served.client()
+    data = b"replayed\n"
+    idem = new_idem()
+    first = ok(add(served, c, key, {"path": {"blob": upload(c, data, grant=served.grant)}}, idem=idem))
+    again = upload(c, data, grant=served.grant)  # the client lost the answer and uploaded once more
+    replay = ok(add(served, c, key, {"path": {"blob": again}}, idem=idem))
+    assert replay["duplicate"] is True and replay["seq"] == first["seq"]
+    assert served.service.blobs.digest(f"g:{served.lab.ws.grant_id}@{UID}", again) is None
+
+
+def test_closing_a_workspace_removes_its_blob_files(served):
+    c = served.client()
+    upload(c, b"one")
+    upload(c, b"two")
+    assert len(os.listdir(served.service.blobs.dir)) == 2
+    on_worker(served, served.service.blobs.close)
+    assert os.listdir(served.service.blobs.dir) == [] and quota(served)[2].get(UID, 0) == 0

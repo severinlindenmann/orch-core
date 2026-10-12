@@ -138,6 +138,8 @@ class WorkspaceService:
         self.outcomes.prepared = self._prepared
         #: blobs (§0.10, H4a2): ``<state>/hosts/<ws>/blobs/``; the host shares one quota among its workspaces
         self.blobs = BlobStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
+        if self.requests is not None:  # a request's file bytes are charged until it goes terminal (stripped)
+            self.requests.on_terminal = self.blobs.release_request
 
     @property
     def workspace_id(self) -> str:
@@ -199,6 +201,10 @@ class WorkspaceService:
                     self.requests.open()
                     recover(self)  # a crash between two appends of a human submission rolls forward (§0.8.1)
                 self.blobs.open()
+                if self.requests is not None:  # the stored requests' file bytes count again (F9)
+                    for rid, principal, size in self.requests.held():
+                        uid = int(principal.rpartition("@")[2] if "@" in principal else principal.partition(":")[2])
+                        self.blobs.hold_request(rid, principal, uid, size, force=True)
                 self.outcomes.reconcile_all()  # a crash between an append and its record (§0.7)
                 self.outcomes.sweep()
             except (HostError, OSError, ValueError) as exc:

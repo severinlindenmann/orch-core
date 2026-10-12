@@ -15,8 +15,8 @@ viewer may see, read by the host's git reader under the caller's principal.
    :data:`MAX_DIFFS` host-wide are in flight (:class:`InFlight`, else ``quota.host``), and one request has
    :data:`BUDGET_S` seconds for all its repos together (each reader call gets what is left).
 3. **Back on the worker thread** (:func:`recheck`): the column and the ticket's visibility again, from the refreshed
-   store, before the answer is sent: a ticket restricted while its diff ran is ``not_found``, as one that does not
-   exist.
+   store, before the answer is sent, and also before a reader error is (``observe.unavailable``,
+   ``repo.remote_mismatch``): a ticket restricted while its diff ran is ``not_found``, as one that does not exist.
 
 **Errors** (§0.6, §0.8): ``observe.unavailable``, ``repo.remote_mismatch`` (F7), ``quota.host`` (retryable). A
 reader's reason can name a host path (``/Users/…/proj/.git does not exist``); §0.5 and §0.8.5 show a repo's path only

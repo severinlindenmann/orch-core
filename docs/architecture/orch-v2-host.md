@@ -624,7 +624,8 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   current generation, or the caller's own person (the person of its grant) made the last change to that task's
   `verify` under a grant that is not revoked (revoking a leaked grant withdraws trust in what it wrote, also for the
   person's other grants; an expired grant stays trusted). The approval binds the command string only, not the repository
-  content it runs: an approved `make test` or `./run.sh` executes whatever the working copy holds. **Without an applicable plan gate only the caller's own command runs**; an unattended agent runs none that
+  content it runs: an approved `make test` or `./run.sh` executes whatever the working copy holds. **Without an
+  applicable plan gate only the caller's own command runs**; an unattended agent runs none that
   is not approved. A host that lied could only make the client run a command of its own choosing, as any program the
   user's own host-side state could already name. The host re-checks that the receipt's `cmd` equals the signed
   `verify.cmd` byte for byte and applies the same trust rule again when it takes the receipt (`verify.unapproved`
@@ -2252,9 +2253,10 @@ the allowed member, policy or addon operations.
   Untrusted artifacts are downloads or use an isolated origin. Send `Content-Security-Policy: default-src 'self';
   script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
   `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`. No URL or query
-  parameter opens a sign panel or prepares a request. Each new View resets confirmation state. Sign is enabled only
-  after 500 ms of visible presentation (the timer restarts on blur or when `visibilityState` is not `visible`), and
-  activation begun before presentation is ignored for pointer and keyboard input. This reduces accidental activation;
+  parameter opens a sign panel or prepares a request. Each new View resets confirmation state. Sign is armed after
+  1 s of visible presentation (the timer restarts on blur or when `visibilityState` is not `visible`); the signer's own
+  1 s dwell since it built the View is the authority (a sign earlier is refused with `too_soon`), and the dashboard arms
+  no earlier. Activation begun before presentation is ignored for pointer and keyboard input. This reduces accidental activation;
   it proves neither review nor human presence and does not constrain a compromised client.
 
 **8. Threats.**
@@ -2691,6 +2693,9 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
 12. **Fixes (RH-1, RH-3):** `welcome.caps` lists `human/1` (it was in §0.4's table but missing from the welcome), and
     `human.prepare {idem}` also works for the host person ops `move`, `policy.set` and `settings.set` (same binding
     and `idem.conflict` rules as for registry ops).
+13. **Sign dwell (§0.8.6 item 7, decided with the dashboard stream):** Sign is armed after 1 s of visible presentation
+    instead of 500 ms; the signer's own 1 s dwell since it built the View is the authority (`too_soon` before it) and
+    the dashboard arms no earlier.
 
 ---
 
@@ -3348,6 +3353,9 @@ dispatch is turned on.
    - **Verify trust "own" becomes "same grant"** (#420 review): the rule of §0.8 "Trust of the command" keys "own" on the
      person, which is sound only while all of a person's agents share one UID; tier B (#287) narrows it to the author's
      grant (or agent UID class).
+   - **`diff`'s linked-repo check becomes a confidentiality boundary.** In tier B the check that `repo` is in the
+     ticket's `links.repos` must be a real boundary (commit provenance, or per-person repo visibility in
+     `settings.repos`), because agent UIDs then cannot read the disk themselves. In phase 1 it is accepted (§7 v1.5).
 
 ## 10. Decisions record
 

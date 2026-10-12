@@ -1919,7 +1919,8 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   `cmd` against the task's `verify.cmd` and the same rule again. H3b2 (client receipts) adds `attested_by: "agent"`;
   the current `task.done` receipt has no such field. This proves an authenticated agent claimed a result, not that the
   command ran, its exit code, output or commit. The host never executes workspace-controlled code. `task done --run`
-  runs the ticket's `verify.cmd` split into arguments, in its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
+  runs the ticket's `verify.cmd` split into arguments, in its own process group with a hard timeout (a process that
+  leaves the group with `setsid` survives: without a separate
   user or job object nothing stops it), stdin closed, 1 MiB of output kept and the rest dropped, an **allow-list**
   environment (`PATH`, `HOME`, `LANG`, `LC_*`, `TMPDIR`, `TERM`, plus the names the ticket's skills declare, D56, none yet),
   so no grant, token, `ORCH_*` or `GIT_*` variable reaches it. git is asked with a scrubbed environment and

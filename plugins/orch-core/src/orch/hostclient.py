@@ -462,6 +462,28 @@ def _local_repo(ctx: Any, linked: list[str]) -> tuple[str | None, Path | None]:
     return named[0], path
 
 
+def _preflight(
+    task: dict[str, Any], args: dict[str, Any], key: str, tid: str, target: Target, auth: dict[str, str] | None
+) -> None:
+    """Nothing runs before the host said it would take the receipt (F1 "Receipts", §0.8 "Trust of the command"):
+    ``verify_runnable`` of the ``task.list`` answer (an approved plan's command, or one the caller's own person wrote;
+    absent from an older host: refused), then a dry-run ``task.done`` for the same task, which checks the claim, the
+    lease and the task's state exactly as the real one will. The host checks the trust again when the receipt comes."""
+    if task.get("verify_runnable") is not True:
+        who = task.get("verify_author")
+        who = who if isinstance(who, str) and who else "someone else"
+        from orch.canon.text import clean
+
+        raise OrchError(
+            "verify.unapproved",
+            f"{tid}'s verify command was written by {clean(who)} and is not approved in the current plan, or the plan "
+            f"gate does not apply: nothing was run. Approve the plan (a person: orch approve {key} plan) or add your "
+            "own verify command (orch task add TEXT --verify CMD)",
+        )
+    dry = {"task": f"{key}/{tid}", **{k: args[k] for k in ("message",) if args.get(k)}}
+    _request(target, "task.done", dry, auth=auth, dry_run=True)
+
+
 def _client_receipt(
     op: Operation, args: dict[str, Any], ctx: Any, target: Target, auth: dict[str, str] | None
 ) -> tuple[dict[str, Any], bytes, list[str]]:
@@ -480,6 +502,7 @@ def _client_receipt(
     if task is None:
         raise OrchError("not_found", f"no task {tid} on this ticket")
     cmd = _checked_cmd(task.get("verify"), tid)
+    _preflight(task, args, key, tid, target, auth)
     if ctx.progress is not None:  # the host's answer decides what runs on this machine: show it first, escaped
         from orch.canon.text import clean
 

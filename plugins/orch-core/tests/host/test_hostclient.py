@@ -360,7 +360,7 @@ def test_task_done_never_forwards_run_and_dry_run_runs_nothing(lab):
         orig = hostclient._request
 
         def spy(target, op, args, **kw):
-            sent.append((op, dict(args)))
+            sent.append((op if not kw.get("dry_run") else op + "?dry", dict(args)))
             return orig(target, op, args, **kw)
 
         import pytest as _pt
@@ -606,12 +606,13 @@ def test_the_task_done_goes_to_the_ticket_the_command_was_read_from(lab, monkeyp
         orig = hostclient._request
 
         def spy(target, op, args, **kw):
-            sent.append((op, dict(args)))
+            sent.append((op if not kw.get("dry_run") else op + "?dry", dict(args)))
             return orig(target, op, args, **kw)
 
         monkeypatch.setattr(hostclient, "_request", spy)
         assert c("task", "done", "T1", "--run").code == 0
         assert [a["task"] for o, a in sent if o == "task.done"] == ["DEMO-0001/T1"]
+        assert [a["task"] for o, a in sent if o == "task.done?dry"] == ["DEMO-0001/T1"]  # the preflight, same task
     finally:
         served.close()
 

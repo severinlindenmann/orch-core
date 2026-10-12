@@ -52,6 +52,12 @@
                 },
                 "verify": {
                   "type": "string"
+                },
+                "verify_runnable": {
+                  "type": "boolean"
+                },
+                "verify_author": {
+                  "type": "string"
                 }
               },
               "required": [

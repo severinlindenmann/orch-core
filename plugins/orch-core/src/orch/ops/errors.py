@@ -211,6 +211,16 @@ _SPECS = [
         "A status transition or an edit on a done or closed ticket that the lifecycle refuses.",
     ),
     _e(
+        "verify.unapproved",
+        3,
+        False,
+        "the task's verify command is neither approved nor yours",
+        "a person approves the plan, or add your own verify command",
+        ["orch", "show"],
+        "task done --run: the verify command runs only if the plan gate applies and is approved at its current "
+        "generation, or the caller's own person wrote it last (F1 Receipts); nothing was run.",
+    ),
+    _e(
         "stop",
         3,
         False,

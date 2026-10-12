@@ -46,9 +46,8 @@ from orch import canon
 
 from . import review
 from .errors import HostError
-from .intents import binding_of
 from .outcomes import Planned, request_idem
-from .requests import EXPIRE_SECONDS, GRANT_EXPIRE_SECONDS, PENDING, RequestStore, new_request_id
+from .requests import EXPIRE_SECONDS, GRANT_EXPIRE_SECONDS, KEEP_SECONDS, PENDING, RequestStore, new_request_id
 from .workspace import ok_result
 
 if TYPE_CHECKING:
@@ -275,7 +274,11 @@ class HumanOps:
         except BaseException:
             if intent is not None:
                 rid = intent.record.get("request_id")
-                if rid and self._requests(service).read(rid) is not None:
+                try:
+                    stored = bool(rid) and self._requests(service).read(rid) is not None
+                except Exception:  # noqa: BLE001 - unreadable: keep the record, never hide the original error
+                    stored = True
+                if stored:
                     # the request is stored but the answer was not: keep the record (with the request id), so the
                     # retry finds this request instead of creating a second one
                     service.outcomes.release(intent)
@@ -309,19 +312,6 @@ class HumanOps:
         }
         session = (call.frame.get("auth") or {}).get("session")
         outcomes = service.outcomes
-        # a record left ``pending`` with its request id (the answer could not be stored): that request is the answer
-        stuck = outcomes.read(outcomes.key(outcomes.namespace, call.principal, idem))
-        if (
-            stuck is not None
-            and stuck.get("step") == outcomes.START
-            and stuck.get("request_id")
-            and stuck.get("binding") == binding_of("human.prepare", bound, session, digests)
-        ):
-            record = self._requests(service).read(stuck["request_id"])
-            if record is not None and record.get("principal") == call.principal:
-                view = self._view(self._requests(service).expire(record))
-                outcomes.settle(outcomes.key(outcomes.namespace, call.principal, idem), self._stored(record))
-                return view, None
         begun = outcomes.begin(
             call.principal, idem, "human.prepare", bound, planned=(), files=digests, session=session, deferred=True
         )
@@ -333,11 +323,6 @@ class HumanOps:
                 raise HostError("idem.expired", "the request this idem prepared is no longer kept; use a new idem")
             return self._view(requests.expire(record)), None
         return None, begun
-
-    @staticmethod
-    def _stored(record: dict[str, Any]) -> dict[str, Any]:
-        """The outcome-store answer of a prepare: the first view of its request."""
-        return {"state": "committed", "exit": 0, "result": HumanOps._view({**record, "state": "prepared"})}
 
     def _prepare(self, call: Call, args: dict[str, Any], dry_run: bool, intent: Any) -> dict[str, Any]:
         import orch.ops as ops
@@ -896,6 +881,27 @@ def roll_forward(service: WorkspaceService, requests: RequestStore, record: dict
         key = (done.get("submit") or {}).get("outcome_key")
         if key and done.get("outcome"):
             service.outcomes.settle(key, done["outcome"])
+
+
+def first_view(record: dict[str, Any]) -> dict[str, Any]:
+    """The answer ``human.prepare`` gave for ``record``: a hand-off request (it has a code) is ``prepared``, any other
+    one was bound to its signer at prepare."""
+    return HumanOps._view({**record, "state": "prepared" if record.get("code") else "bound"})
+
+
+def outcome_prepared(service: WorkspaceService, record: dict[str, Any]) -> dict[str, Any] | str:
+    """The reconciler hook of the outcome store for a ``pending`` ``human.prepare`` record that names its request: the
+    request is stored, so the call committed (with its first view); not stored and older than the request's lifetime
+    plus its retention, the idem is a tombstone (never a new request under it); otherwise nothing was created."""
+    rid = record.get("request_id")
+    if not rid or service.requests is None:
+        return "none"
+    stored = service.requests.read(rid)
+    if stored is not None and stored.get("principal") == record.get("principal"):
+        return {"step": "committed", "result": first_view(stored), "exit": 0}
+    if service.clock() - float(record.get("at", 0)) > EXPIRE_SECONDS + KEEP_SECONDS:
+        return {"step": "tombstone", "state": "failed", "exit": 0}
+    return "none"
 
 
 def outcome_fields(service: WorkspaceService, record: dict[str, Any]) -> dict[str, Any] | str:

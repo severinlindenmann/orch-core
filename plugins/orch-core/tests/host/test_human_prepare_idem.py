@@ -188,3 +188,69 @@ def test_the_pending_quota_counts_the_request_once(human, served):
     assert err(human.prepare_res("log", {"ref": key, "text": "extra"})) == "quota.host"
     # a retry at the quota still finds its request
     assert human.prepare("log", {"ref": key, "text": "n0"}, idem=idem)["request"]["id"] == first["request"]["id"]
+
+
+def _fail_commit_once(served, monkeypatch):
+    out = served.service.outcomes
+    real = out.commit
+    boom = []
+
+    def commit(intent, result):
+        if not boom:
+            boom.append(1)
+            raise OSError("disk full")
+        return real(intent, result)
+
+    monkeypatch.setattr(out, "commit", commit)
+
+
+def test_a_restart_reconcile_keeps_the_request_of_a_stuck_prepare(human, served, monkeypatch):
+    _, key = human.ticket()
+    idem = new_idem()
+    _fail_commit_once(served, monkeypatch)
+    human.prepare_res("log", {"ref": key, "text": "x"}, idem=idem)
+    rid = next(requests_dir(served).iterdir()).name
+    done = served.service.submit(served.service.outcomes.reconcile_all).result(10)
+    assert ("human.prepare", "committed") in done
+    a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
+    assert a["request"]["id"] == rid and a["request"]["state"] == "bound"
+    assert len(list(requests_dir(served).iterdir())) == 1
+
+
+def test_outcome_get_keeps_the_request_of_a_stuck_prepare(human, served, monkeypatch):
+    _, key = human.ticket()
+    idem = new_idem()
+    _fail_commit_once(served, monkeypatch)
+    human.prepare_res("log", {"ref": key, "text": "x"}, idem=idem)
+    rid = next(requests_dir(served).iterdir()).name
+    got = ok(human.c.req("outcome.get", {"idem": idem}))["data"]
+    assert got["state"] == "committed" and got["result"]["request"]["id"] == rid
+    assert human.prepare("log", {"ref": key, "text": "x"}, idem=idem)["request"]["id"] == rid
+    assert len(list(requests_dir(served).iterdir())) == 1
+
+
+def test_a_stuck_prepare_whose_request_is_long_gone_is_a_tombstone(human, served, monkeypatch):
+    from tests.host.test_human import tick
+
+    _, key = human.ticket()
+    idem = new_idem()
+    _fail_commit_once(served, monkeypatch)
+    human.prepare_res("log", {"ref": key, "text": "x"}, idem=idem)
+    (requests_dir(served) / next(requests_dir(served).iterdir()).name).unlink()
+    tick(served, 25 * 3600)
+    assert err(human.prepare_res("log", {"ref": key, "text": "x"}, idem=idem)) == "idem.expired"
+    assert not list(requests_dir(served).iterdir())
+
+
+def test_an_unreadable_request_does_not_hide_the_error_or_leave_the_key_running(human, served, monkeypatch):
+    from orch.host.errors import HostError
+
+    _, key = human.ticket()
+    idem = new_idem()
+    _fail_commit_once(served, monkeypatch)
+    store = served.service.requests
+    real = store.read
+    monkeypatch.setattr(store, "read", lambda rid: (_ for _ in ()).throw(HostError("workspace.unavailable", "x")))
+    assert err(human.prepare_res("log", {"ref": key, "text": "x"}, idem=idem)) != "outcome.unknown"
+    monkeypatch.setattr(store, "read", real)
+    assert not served.service.outcomes._running

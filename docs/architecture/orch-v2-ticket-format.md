@@ -1003,6 +1003,10 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   `(device, that owner)` pair; a thief of that key can sign as that pair, and the key holder's own revocation (another
   pair) does not refuse it. Signer refusal is per pair by decision (row 152); certifying only keys one holds is the
   owner's responsibility.
+  Accepted limit (relay registration, P3-D30): a relay refuses a new registration of a device id for which any
+  chain-learned revocation exists. Chain carriage is not authentication, so a workspace host that knows a device's
+  `dk_sig_pub` before it registers can block that id's registration by carrying a self-certified pair in its own
+  restore. Availability only; closed by proof of possession at registration (relay G1, before any public deployment).
   Out-of-band classification means that this receiver has not established an accepted occurrence of this evidence in
   this workspace's history. It makes no assertion about whether the host possesses the revocation. Every held verified
   revocation remains effective locally, regardless of classification, and refuses its device as a restore signer under

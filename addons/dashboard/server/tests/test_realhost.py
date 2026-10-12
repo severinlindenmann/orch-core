@@ -1,0 +1,167 @@
+"""The dashboard server against a REAL orch host (core H6b and later): `orch host run --foreground` as a subprocess.
+
+A disposable workspace is created with the real `orch init` in a pty, seeded with the real CLI, served by a real host
+and read through the server's TestClient. Every hand-off is signed with the real `orch sign CODE` in a pty. Nothing
+touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under a throwaway directory (see
+`realhost_kit`). Skipped when the host cannot start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.
+"""
+
+import json
+import os
+import shutil
+import time
+import uuid
+
+import pytest
+from conftest import ORIGIN, PORT
+from fastapi.testclient import TestClient
+from realhost_kit import Workspace, seed, short_run_root
+
+from orch_dashboard.app import create_app
+from orch_dashboard.auth import Auth
+from orch_dashboard.gateway import Gateway
+
+pytestmark = [
+    pytest.mark.realhost,
+    pytest.mark.skipif(os.name != "posix", reason="a real host needs unix sockets and a pty"),
+]
+
+
+@pytest.fixture(scope="module")
+def world(tmp_path_factory):
+    root = short_run_root() / uuid.uuid4().hex[:6]
+    ws = Workspace(root / "w")
+    try:
+        keys = ws.bring_up(seed)
+    except (RuntimeError, TimeoutError, OSError) as exc:
+        ws.stop_host()
+        shutil.rmtree(root, ignore_errors=True)
+        pytest.skip(f"the real host cannot start here: {str(exc)[:300]}")
+    static = tmp_path_factory.mktemp("static")
+    (static / "assets").mkdir()
+    (static / "index.html").write_text('<html><script src="/assets/main-hash.js"></script></html>')
+    (static / "assets/main-hash.js").write_text("console.log(1)")
+    gateway = Gateway(ws.state)
+    auth = Auth()
+    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+        yield type("World", (), {"ws": ws, "keys": keys, "gateway": gateway, "auth": auth, "client": client, "root": root})
+    gateway.close()
+    ws.stop_host()
+    shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def token(world):
+    launch = world.auth.launch(PORT)
+    res = world.client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN})
+    assert res.status_code == 200, res.text
+    return res.json()["token"]
+
+
+@pytest.fixture
+def api(world, token):
+    headers = {"Authorization": f"Bearer {token}"}
+
+    class Api:
+        base = f"/api/w/{world.ws.ws_id}"
+
+        def get(self, path, **kw):
+            return world.client.get(self.base + path, headers=headers, **kw)
+
+        def post(self, path, body):
+            return world.client.post(self.base + path, json=body, headers={**headers, "Origin": ORIGIN})
+
+        def handoff(self, body, *, sign=True, timeout=60):
+            """prepare -> `orch sign CODE` in a pty -> follow to the end. Returns (prepared, final)."""
+            body = {**body, "idem": "a_" + uuid.uuid4().hex[:26].upper().replace("I", "1").replace("L", "1").replace("O", "0").replace("U", "V")}
+            res = self.post("/handoff", body)
+            assert res.status_code == 200, res.text
+            prepared = res.json()
+            if not sign:
+                return prepared, None
+            world.ws.sign(prepared["code"])
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                final = self.get(f"/handoff/{prepared['id']}").json()
+                if final["state"] not in ("prepared", "bound"):
+                    return prepared, final
+                time.sleep(0.3)
+            raise AssertionError("the request never reached a final state")
+
+    return Api()
+
+
+def test_launch_and_session(world, token):
+    res = world.client.get("/api/session", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200
+    features = res.json()["workspaces"][world.ws.ws_id]
+    for name in ("today", "board", "ticket", "evidence", "actions", "settings", "members", "grant_list", "read_ext"):
+        assert name in features, features
+    assert "changes" not in features  # the host lists diff/1 but does not serve `diff` yet (stream A RH-2)
+
+
+def test_shell_reads(world, api, token):
+    h = {"Authorization": f"Bearer {token}"}
+    spaces = world.client.get("/api/workspaces", headers=h).json()
+    assert [(w["prefix"], w["host_state"], w["name"]) for w in spaces] == [("DEMO", "ok", "billing")]
+    assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 4
+    me = world.client.get("/api/me", headers=h).json()
+    assert me[0]["role"] == "owner" and me[0]["tier"] == "A"
+    ident = api.get("/identity").json()
+    assert ident["uuid"] == world.ws.ws_id and ident["prefix"] == "DEMO" and ident["me"]["person"] == world.ws.person
+    today = api.get("/today").json()
+    kinds = {(n["ticket"], n["kind"]) for n in today["needs_you"]}
+    k = world.keys
+    assert (k["question"], "question") in kinds and (k["gate"], "approval") in kinds
+    assert (k["verdict"], "no_eligible") in kinds  # one person: nobody else may decide verify
+    assert [t["key"] for t in today["working"]] == [k["in_progress"]]
+
+
+def test_board_and_backlog_paging(world, api):
+    k = world.keys
+    board = api.get("/board").json()
+    by_status = {}
+    for row in board["rows"]:
+        by_status.setdefault(row["status"], []).append(row["key"])
+    assert sorted(by_status["testing"]) == sorted([k["verdict"], k["testing"]])
+    assert by_status["in-progress"] == [k["in_progress"]]
+    assert k["closed"] not in sum(by_status.values(), [])  # closed never on the board
+    page1 = api.get("/tickets", params={"limit": 2}).json()
+    assert len(page1["rows"]) == 2 and page1["next_page"]
+    page2 = api.get("/tickets", params={"limit": 2, "page": page1["next_page"]}).json()
+    keys = [r["key"] for r in page1["rows"] + page2["rows"]]
+    assert len(set(keys)) == 4
+    closed = api.get("/tickets", params={"status": "closed"})
+    assert closed.status_code in (200, 400, 422)
+
+
+def test_ticket_page_sections_tasks_evidence_log(world, api):
+    k = world.keys["verdict"]
+    doc = api.get(f"/tickets/{k}").json()
+    assert doc["status"] == "testing" and "artifact manifest" not in doc["unavailable"]
+    assert doc["body"]["requirements"].startswith("Finance can download")
+    assert [t["state"] for t in doc["tasks_state"]] == ["done"] and doc["tasks_state"][0]["receipt"]
+    assert [a["state"] for a in doc["acceptance_state"]] == ["proven"]
+    names = {a["name"]: a for a in doc["artifacts"]}
+    assert {"report.txt", "T1-receipt.log"} <= set(names) and names["report.txt"]["sha256"] and names["report.txt"]["bytes"] == 22
+    body = api.get(f"/tickets/{k}/artifacts/report.txt").json()
+    assert "invoices exported: 42" in json.dumps(body)
+    events = api.get(f"/tickets/{k}/events").json()
+    assert {"ticket.created", "task.done", "ticket.submitted"} <= {e["type"] for e in events}
+    assert api.get(f"/tickets/{world.keys['closed']}").json()["status"] == "closed"
+    assert api.get("/tickets/DEMO-9999").status_code == 404
+
+
+def test_settings_members_grants_reads(world, api):
+    st = api.get("/settings").json()
+    assert st["available"] is True and st["grant_hours"] == 8 and st["claim_ttl_min"] == 120
+    assert set(st["gates"]) == {"requirements", "plan", "verify", "code"}
+    members = api.get("/members").json()
+    assert [m["role"] for m in members] == ["owner"] and members[0]["devices"][0]["valid"] is True
+    grants = api.get("/grants").json()
+    assert len(grants) == 1 and grants[0]["scope"] == "workable"
+
+
+def test_changes_are_unavailable_until_the_host_serves_diff(api, world):
+    res = api.get(f"/tickets/{world.keys['verdict']}/changes")
+    assert res.status_code == 501  # welcome.caps has diff/1 but welcome.ops has no `diff` (stream A RH-2)

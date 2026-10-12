@@ -7,7 +7,7 @@ the recovery-code check of `orch init` and the "Type KEY and Enter" confirmation
 
 `base` must be SHORT and outside any sticky directory such as /tmp: the host refuses ancestors it does not trust, and a unix
 socket path (`<state>/run/<ws>/host.sock`, `<state>/dashboard/ctl.sock`) holds about 100 bytes. `short_run_root()` gives
-`~/.cache/orch-realhost` unless `XDG_RUNTIME_DIR` is a real 0700 directory.
+`~/.cache/orch-rh` unless `XDG_RUNTIME_DIR` is a real 0700 directory.
 """
 
 from __future__ import annotations
@@ -41,9 +41,9 @@ def python() -> str:
 def short_run_root() -> Path:
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     if runtime and Path(runtime).is_dir() and (Path(runtime).stat().st_mode & 0o777) == 0o700:
-        root = Path(runtime) / "orch-realhost"
+        root = Path(runtime) / "orch-rh"
     else:
-        root = Path.home() / ".cache" / "orch-realhost"
+        root = Path.home() / ".cache" / "orch-rh"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return root
 
@@ -135,6 +135,7 @@ class Workspace:
             "XDG_CONFIG_HOME": str(self.home / ".config"),
             "ORCH_STATE_DIR": str(self.state),
             "ORCH_DEV": "1",
+            "ORCH_HOST_RUN_DIR": str(self.run),  # H4b: a registered workspace's CLI talks to the host on this socket dir
             "TERM": "xterm",
             "PYTHONWARNINGS": "ignore",
         }
@@ -171,6 +172,13 @@ class Workspace:
         if ok and done.returncode != 0:
             raise RuntimeError(f"orch {' '.join(args)} exited {done.returncode}:\n{done.stdout}{done.stderr}")
         return done.stdout + done.stderr
+
+    def sign(self, code: str, *extra: str, timeout: int = 90) -> str:
+        """`orch sign CODE` at the person's terminal (H5b): the real signer, in a pty, with the confirmation typed."""
+        run = Pty(self.orch("sign", code, *extra), self.env(), self.root, confirm_rules(), timeout).run()
+        if run.code != 0:
+            raise RuntimeError(f"orch sign {code} exited {run.code}:\n{run.output[-2000:]}")
+        return run.output
 
     # -- bring-up ---------------------------------------------------------------------------------------------------
     def init(self) -> None:

@@ -23,6 +23,7 @@ packages = ["src/orch_dashboard"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["realhost: runs a real orch host (core) as a subprocess; skipped when it cannot start"]
 pythonpath = ["..", "../../../plugins/orch-core"]
 
 [tool.ruff]

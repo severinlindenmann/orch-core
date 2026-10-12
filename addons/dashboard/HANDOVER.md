@@ -982,7 +982,8 @@ stops this process from cancelling the request or replacing the signer under it 
 the host through our link). A sign whose answer is lost is retried through the signer (identical events, never a new signature);
 `already_signed` (signed with another View) and `record_unavailable` (the signer's record is unreadable, fail closed: use the terminal path)
 are mapped. A dashboard restart loses the in-memory parts and the session binding of the host's idem: a repeat prepare is then `intent.open`
-until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed.
+until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed. The terminal path ("Sign in
+the terminal instead") is deliberately another intent (retry >= 1; the click path starts at 0), since the host binds an idem to its path.
 
 **Open points.** The rate limit (30 per minute) is mapped and unit tested, not provoked on the real signer. The server cannot show the
 prepared events of a click request (the signer holds them and validates them), so the hand-off's `expected()` event check is replaced by the

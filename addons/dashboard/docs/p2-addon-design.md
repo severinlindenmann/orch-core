@@ -238,7 +238,10 @@ person. The dashboard adds:
   means the host holds an attempt of this intent bound to something else (the other path, the signer, or a session from
   before a dashboard restart) - safe, because it is not a second request - and is shown as "An attempt for this is
   already open ... it settles or expires by itself" with nothing offered that prepares again; "Sign in the terminal
-  instead" after a click request is the one deliberate exception: it is another intent (retry above the click's). On
+  instead" is the one deliberate exception: the terminal path is another intent than the click path (retry 1 and up, the
+  click path starts at 0), because the host binds an idem to its path. So a click request and a terminal request of one
+  action can both exist when the person chooses the terminal while another window holds a click request; the click
+  request is cancelled first in the same dialog, and the gate/stale checks of the host refuse a duplicate decision. On
   `idem.expired` (the host forgot the idem) the server moves to the next deterministic epoch of the same intent, so
   every tab converges on the same fresh request. There is no `outcome.get` for a prepare; a request is read with
   `human.pending {request_id}`. "Complete details" after a `new` targets only the ticket of the `new` request this dialog

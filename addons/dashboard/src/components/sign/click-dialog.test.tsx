@@ -93,6 +93,17 @@ describe('the action dialog with click-to-sign', () => {
     expect(s.prepare).not.toHaveBeenCalled() // an approve no longer starts the terminal request by itself
   })
 
+  it('"Sign in the terminal instead" from the start is another intent than Sign (retry 1; the click path starts at 0)', async () => {
+    const request = fakeRequest()
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    const { dialog } = await open()
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign in the terminal instead' }, T))
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(s.prepare.mock.calls[0][2]).toBe(1)
+    expect(c.prepare).not.toHaveBeenCalled()
+  })
+
   it('without the flag there is no Sign button and the hand-off starts as before', async () => {
     flag(false)
     s.prepare.mockResolvedValue(fakeRequest())

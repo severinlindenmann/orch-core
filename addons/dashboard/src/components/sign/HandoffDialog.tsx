@@ -145,11 +145,13 @@ export function HandoffDialog(p: HandoffDialogProps) {
     if (click.prepared && click.problem?.next !== 'check' && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
     p.onClose()
   }
+  /** The terminal path is another intent than the click path (the host binds an idem to its path), so it never collides
+   *  with a click request of the same action: retry 1 and up, while the click path starts at 0. */
   /** "Sign in the terminal instead": the click request is cancelled (the person chose), then the hand-off prepares. */
   const terminal = async () => {
     if (click.prepared && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
     click.reset()
-    if (p.action) void run.prepare(p.action, click.retryOf())
+    if (p.action) void run.prepare(p.action, Math.max(1, click.retryOf()))
   }
   const prepareClickAgain = () => {
     if (p.action) void click.again(p.action) // cancels an open request first: no leaked slot
@@ -294,7 +296,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
                   Cancel
                 </Button>
                 {canClick && (
-                  <Button variant="outline" onClick={() => p.action && void run.prepare(p.action)} disabled={!p.action || !p.ws || !!p.hint}>
+                  <Button variant="outline" onClick={() => p.action && void run.prepare(p.action, 1)} disabled={!p.action || !p.ws || !!p.hint}>
                     Sign in the terminal instead
                   </Button>
                 )}

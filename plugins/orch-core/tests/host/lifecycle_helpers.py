@@ -175,7 +175,7 @@ class Lab:
         out, err = io.StringIO(), io.StringIO()
         code = main(
             [*argv, "--json"],
-            env=self.ws.env(session=None, grant=grant, **({"ORCH_RUN_DIR": str(self.run)} if run else {})),
+            env=self.ws.env(session=None, grant=grant, **({"ORCH_HOST_RUN_DIR": str(self.run)} if run else {})),
             stdout=out,
             stderr=err,
             now=lambda: self.ws.clock[0],

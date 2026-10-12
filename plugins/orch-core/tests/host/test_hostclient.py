@@ -3,6 +3,7 @@ commands through the signer composite, and the CLI contract against a live host 
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -14,15 +15,20 @@ from orch.ops.runtime import Workspace
 from tests.host.human_helpers import KeyBackend
 from tests.host.lifecycle_helpers import UID, Lab
 from tests.ops.helpers import Cli
+from tests.store.helpers import WS
 
-# ids, the per-output fence nonce and the workspace-bound gate hashes differ between two workspaces by design
-ID = re.compile(
-    r"[0-7][0-9A-HJKMNP-TV-Z]{25}|[0-9a-f]{32}|(?<=\[)[0-9a-f]{8}(?=\])|(?<=end )[0-9a-f]{8}|(?<=#)[0-9a-f]{12}"
-)
+# What differs between two workspaces by design: the workspace id, the per-output fence nonce and the gate hashes that
+# bind it and each lab's owner key and grant. Nothing else is masked: ticket uids, digests and other hashes must match.
+NONCE = re.compile(r"(?<=\[)[0-9a-f]{8}(?=\])|(?<=--- end )[0-9a-f]{8}")
+GATE = re.compile(r"(?<=#)[0-9a-f]{12}")
+PERSON = re.compile(r"p_[0-9a-f]{32}|gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")  # each lab draws its own owner key and grant
 
 
-def flat(r) -> tuple[int, str, str]:
-    return r.code, ID.sub("<id>", r.out), ID.sub("<id>", r.err)
+def flat(r, wid: str) -> tuple[int, str, str]:
+    def mask(text: str) -> str:
+        return PERSON.sub("<person>", GATE.sub("<gate>", NONCE.sub("<nonce>", text.replace(wid, "<ws>"))))
+
+    return r.code, mask(r.out), mask(r.err)
 
 
 @pytest.fixture
@@ -59,7 +65,7 @@ def hosted(lab, **kw):
 
 
 def hcli(lab, **env):
-    return Cli(lab.ws, ORCH_RUN_DIR=str(lab.run), **env)
+    return Cli(lab.ws, ORCH_HOST_RUN_DIR=str(lab.run), **env)
 
 
 # the script both modes run: every non-human op family, text and JSON, successes and refusals
@@ -93,11 +99,11 @@ def test_every_non_human_op_renders_byte_identically_in_both_modes(tmp_path_fact
     other = Lab(tmp_path_factory.mktemp("h"))
     try:
         d = Cli(direct.ws)
-        want = [flat(d(*argv)) for argv in SCRIPT]
+        want = [flat(d(*argv), WS) for argv in SCRIPT]
         served = hosted(other)
         try:
             h = hcli(other)
-            got = [flat(h(*argv)) for argv in SCRIPT]
+            got = [flat(h(*argv), WS) for argv in SCRIPT]
         finally:
             served.close()
     finally:
@@ -108,14 +114,16 @@ def test_every_non_human_op_renders_byte_identically_in_both_modes(tmp_path_fact
     assert any(c[0] == 0 for c in want) and any(c[0] != 0 for c in want)
 
 
-def test_the_golden_suite_is_unchanged_against_a_live_host(lab, monkeypatch):
-    """P1's goldens (help, describe, every error envelope, usage) with the workspace registered and served."""
+def test_the_local_golden_paths_are_unchanged_with_the_workspace_registered(lab, monkeypatch):
+    """The golden cases are help, describe, rendered error envelopes and parser errors: none of them is a request to
+    the host. This only shows that those stay local and unchanged while the workspace is registered and served; the
+    parity of everything that does reach the host is ``test_every_non_human_op_renders_byte_identically...``."""
     from tests.cli import conftest as cc
     from tests.cli import golden_cases
 
     served = hosted(lab)
     try:
-        base = {"ORCH_WORKSPACE": str(lab.root), "ORCH_STATE_DIR": str(lab.state), "ORCH_RUN_DIR": str(lab.run)}
+        base = {"ORCH_WORKSPACE": str(lab.root), "ORCH_STATE_DIR": str(lab.state), "ORCH_HOST_RUN_DIR": str(lab.run)}
 
         def run_cli(*argv, env=None, **kw):
             return cc.run_cli(*argv, env={**base, **(env or {})}, **kw)
@@ -141,7 +149,7 @@ def test_mode_is_by_registration_and_a_dead_host_is_never_a_direct_write(lab):
     served = hosted(lab)
     try:
         assert hcli(lab)("new", "Hosted").code == 0
-        target = hostclient.locate(env | {"ORCH_RUN_DIR": str(lab.run)}, Workspace(env, files=_files()))
+        target = hostclient.locate(env | {"ORCH_HOST_RUN_DIR": str(lab.run)}, Workspace(env, files=_files()))
         assert target.role == "person" and target.host_uid == UID
     finally:
         served.close()
@@ -166,7 +174,7 @@ def test_an_agent_pin_selects_the_host_and_an_unreadable_registry_fails_closed(l
         lab.pin_agent(UID, [served.wid])
         from orch.host.pins import AgentPins
 
-        env = lab.ws.env() | {"ORCH_RUN_DIR": str(lab.run)}
+        env = lab.ws.env() | {"ORCH_HOST_RUN_DIR": str(lab.run)}
         t = hostclient.locate(env, Workspace(env, files=_files()), uid=UID, pins=AgentPins(lab.pins_dir, owner=UID))
         assert (t.role, t.host_uid, t.entry) == ("agent", UID, None)
         (lab.state / "host" / "workspaces.json").write_text("{")
@@ -273,10 +281,152 @@ def test_wait_is_one_request_parked_on_the_host_bus(lab):
         served.close()
 
 
-def test_init_and_import_stay_local_for_a_registered_workspace(lab):
+def test_import_stays_local_and_the_person_registry_guard_answers_host_required(lab):
     served = hosted(lab)
     try:
         r = hcli(lab, grant=False).j("import", "v1", str(lab.tmp / "nowhere"))
-        assert r.err_code in ("host.required", "invalid.input", "usage", "human_only", "not_found"), r.out
+        # it ran locally (the importer looked for the v1 folder): no request reached the host, no host.unavailable
+        assert (r.code, r.err_code) == (2, "not_found"), r.out
+        # the person-registry path of the direct guard (not only an agent pin)
+        from orch.host.ownership import DirectGuard
+
+        with pytest.raises(Exception) as caught:
+            DirectGuard(lab.state, served.wid).check()
+        assert getattr(caught.value, "code", None) == "host.required"
     finally:
         served.close()
+
+
+def test_task_done_is_refused_clearly_until_the_host_serves_it(lab):
+    served = hosted(lab)
+    try:
+        c = hcli(lab)
+        c("new", "A")
+        c("claim", "1")
+        r = c.j("task", "done", "T1")
+        assert (r.code, r.err_code) == (1, "not_implemented") and "H3b2" in r.doc["error"]["message"], r.out
+    finally:
+        served.close()
+
+
+def _registry(state, root_of):
+    from orch.host.custody import ensure_private_dir, write_private
+    from orch.host.registry import registry_path
+
+    ensure_private_dir(registry_path(state).parent, UID)
+    items = [
+        {"workspace_id": wid, "prefix": "X", "root": root, "host_uid": UID, "group": "g",
+         "peers": {str(UID): {"class": "person", "person": "p_" + "0" * 32}}, "repos": {}}
+        for wid, root in root_of.items()
+    ]  # fmt: skip
+    write_private(registry_path(state), {"v": 1, "workspaces": items})
+
+
+def _tree(path, wid):
+    path.mkdir(parents=True)
+    (path / "config.json").write_text(json.dumps({"schema": "orch.workspace/2", "workspace": {"id": wid, "name": "n"}}))
+    return path
+
+
+def test_a_config_json_naming_another_registered_workspace_is_not_routed_to_it(tmp_path):
+    a_id, b_id = "a" * 32, "b" * 32
+    a = _tree(tmp_path / "A", a_id)
+    b = _tree(tmp_path / "B", b_id)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    _registry(state, {a_id: str(a), b_id: str(b)})
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state)}
+    from orch.ops.runtime import Workspace
+
+    def locate(root):
+        return hostclient.locate(env, Workspace(env | {"ORCH_WORKSPACE": str(root)}, files=_files()), state=state)
+
+    assert locate(a).workspace_id == a_id and locate(b).workspace_id == b_id
+    (a / "config.json").write_text(
+        json.dumps({"schema": "orch.workspace/2", "workspace": {"id": b_id, "name": "n"}})
+    )  # A's config now carries B's id
+    with pytest.raises(hostclient.HostFailure) as caught:
+        locate(a)
+    assert (caught.value.code, caught.value.wire_exit) == ("host.unavailable", 9)
+    assert str(b) in caught.value.message
+    # an id that is not 32 hex characters never reaches a socket path
+    (a / "config.json").write_text(
+        json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "/tmp/x", "name": "n"}})
+    )
+    assert locate(a) is None
+
+
+def test_a_socket_of_another_uid_is_host_untrusted_and_nothing_is_sent(lab):
+    served = hosted(lab)
+    try:
+        target = hostclient.Target(served.wid, UID + 1, lab.run / served.wid / "host.sock", "person", lab.state, None)
+        with pytest.raises(hostclient.HostFailure) as caught:
+            hostclient._request(target, "status", {}, auth={"grant": "gr_SECRET"}, idem=None)
+        assert (caught.value.code, caught.value.wire_exit) == ("host.untrusted", 3)
+    finally:
+        served.close()
+
+
+def test_a_lost_submit_is_sent_again_with_the_same_idem_and_a_grant_exists_once(lab, monkeypatch):
+    served = hosted(lab)
+    try:
+        owner = lab.ws.owner
+
+        class Backend(KeyBackend):
+            def public_key(self, key_id):
+                return owner.sig_pub
+
+        shown, secrets = [], []
+        monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: shown.append(word) or True)
+        monkeypatch.setattr(ops_human, "show_secret", lambda text: secrets.append(text))
+        keys = ops_human.keys_dir(lab.state, served.wid)
+        keys.mkdir(parents=True)
+        (keys / ops_human.KEY_FILE).write_text("{}")
+        real, seen = Connection.call, []
+
+        def lossy(self, op, args, **kw):
+            out = real(self, op, args, **kw)
+            if op == "human.submit":
+                seen.append(kw.get("idem"))
+                if len(seen) == 1:
+                    raise ConnectionError("the answer was lost")
+            return out
+
+        monkeypatch.setattr(Connection, "call", lossy)
+        r = hcli(lab, grant=False).j("grant", "--label", "ci")
+        assert r.code == 0, r.out
+        assert len(seen) == 2 and seen[0] == seen[1] and seen[0].startswith("a_")
+        assert len(secrets) == 1 and "ORCH_GRANT=" in secrets[0]
+        # never silent: when every attempt is lost the idem is named
+        seen.clear()
+        monkeypatch.setattr(
+            Connection,
+            "call",
+            lambda self, op, args, **kw: (
+                (_ for _ in ()).throw(ConnectionError("gone")) if op == "human.submit" else real(self, op, args, **kw)
+            ),
+        )
+        r = hcli(lab, grant=False).j("grant", "--label", "ci2")
+        assert (r.code, r.err_code) == (9, "host.unavailable")
+        assert "idem a_" in r.doc["error"]["message"] and "human.pending" in r.doc["error"]["message"]
+    finally:
+        served.close()
+
+
+def test_a_blob_retry_names_the_digest_and_a_fresh_upload_drops_the_unused_blob():
+    calls = []
+
+    class Conn:
+        def call(self, op, args, **kw):
+            calls.append((op, args.get("blob")))
+            return {"data": {"blob": "b_" + "A" * 26}}
+
+    data = {"path": bytes(range(256)) * 3000}
+    build = hostclient.files_builder(data, None)
+    first = build(Conn(), "first")
+    assert first["path"] == {"blob": "b_" + "A" * 26}
+    assert build(Conn(), "digest")["path"]["digest"].startswith("sha256:")
+    n = len(calls)
+    build(Conn(), "fresh")
+    assert ("blob.drop", "b_" + "A" * 26) in calls[n:]

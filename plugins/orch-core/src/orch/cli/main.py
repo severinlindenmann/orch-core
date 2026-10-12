@@ -163,7 +163,7 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     return res
 
 
-def run_hosted(parsed: parser.Parsed, ctx: Context, target: Any) -> tuple[Result, bool]:
+def run_hosted(parsed: parser.Parsed, ctx: Context, target: Any) -> Result:
     """The same call as a request to the host (H4b, :mod:`orch.hostclient`). The checks that need no store stay here
     (input, who, grant shape), so a bad call fails the same way in both modes and without a round trip; the stop rule,
     the session dedup and the declared-error check are the host's (it runs :func:`run`)."""
@@ -325,17 +325,13 @@ def main(
         from orch import hostclient
 
         target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
-        text_ok = True
         if target is not None:
             hosted = True
-            res, text_ok = run_hosted(parsed, ctx, target)
+            res = run_hosted(parsed, ctx, target)
         else:
             res = run(parsed, ctx, records, hooks)
         if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent
-            if as_json:
-                emit(render.dumps(render.result_envelope(res)), out)
-            else:
-                emit(render.result_text(op, res) if text_ok else "\n".join([res.head or "", *res.lines]), out)
+            emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
         if session and op.is_write and not parsed.dry_run and not hosted:
             records.succeeded_write(session)
         return res.exit

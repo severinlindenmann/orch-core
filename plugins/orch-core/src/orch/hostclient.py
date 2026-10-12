@@ -25,8 +25,9 @@ never gets here (``human_only``).
 
 **``wait``** is one request: the host parks it on its bus (H6a). Its socket timeout is the ``--timeout`` plus a margin.
 
-The run directory is ``ORCH_RUN_DIR`` when set (tests, dev), else the service-managed directory when a host serves
-there, else ``<state>/run`` (as ``orch host`` and ``orch sign``).
+The run directory is ``ORCH_HOST_RUN_DIR`` when set (tests, dev), else the service-managed directory when a host serves
+there, else ``<state>/run`` (as ``orch host`` and ``orch sign``). It only says where to look: it is **not** a trust
+input. Whom the socket may belong to comes from the registry or the root-owned pin, checked by the handshake.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -47,9 +49,11 @@ __all__ = ["HostFailure", "Target", "dry_text", "execute", "locate", "result_fro
 
 #: registry ops the host does not serve (``dispatch.NOT_SERVED``): they stay local, the direct-mode guard decides
 LOCAL_OPS = frozenset({"help", "describe", "init", "import.v1"})
-FilesFn = Callable[[Any, bool], dict[str, Any] | None]
+FilesFn = Callable[[Any, str], dict[str, Any] | None]  # (connection, "first" | "digest" | "fresh")
 WAIT_MARGIN = 30.0
+#: attempts of a write (the first call and two retries with the same idem)
 RETRIES = 3
+WS_ID = re.compile(r"[0-9a-f]{32}")
 
 
 class HostFailure(OrchError):
@@ -75,8 +79,8 @@ class Target:
 def workspace_socket(env: Mapping[str, str], state: Path, host_uid: int, workspace_id: str) -> Path:
     from orch.host.listener import default_run_directory
 
-    if env.get("ORCH_RUN_DIR"):
-        return Path(env["ORCH_RUN_DIR"]) / workspace_id / "host.sock"
+    if env.get("ORCH_HOST_RUN_DIR"):
+        return Path(env["ORCH_HOST_RUN_DIR"]) / workspace_id / "host.sock"
     try:
         service = default_run_directory(host_uid) / workspace_id / "host.sock"
     except Exception:  # noqa: BLE001 - an unsupported platform has no service run directory
@@ -109,7 +113,7 @@ def locate(
         return None
     cfg = _config(root, workspace.files)
     wid = ((cfg or {}).get("workspace") or {}).get("id")
-    if not isinstance(wid, str):
+    if not isinstance(wid, str) or not WS_ID.fullmatch(wid):
         return None
     uid = os.getuid() if uid is None else uid
     sd = Path(state) if state is not None else state_dir(env, workspace.files)
@@ -132,10 +136,26 @@ def locate(
         raise _unavailable("the host registry has an unexpected shape; refusing direct mode") from None
     if entry is None:
         return None
+    if not _same_root(str(entry.get("root")), root):
+        raise _unavailable(
+            "this directory's config.json names a registered workspace that lives elsewhere "
+            f"({entry.get('root')}); refusing to send this call to it. Run orch from that workspace, or fix config.json"
+        )
     host_uid = entry.get("host_uid")
     if type(host_uid) is not int:
         raise _unavailable("the host registry entry has no host UID")
     return Target(wid, host_uid, workspace_socket(env, sd, host_uid, wid), "person", sd, entry)
+
+
+def _same_root(registered: str, found: Path) -> bool:
+    """The registry's root and the directory the CLI found are one directory (the found one may be its
+    ``orchestrator/`` subdirectory, as ``find_workspace`` allows)."""
+    try:
+        want = Path(registered).resolve()
+        have = Path(found).resolve()
+    except (OSError, RuntimeError):
+        return False
+    return have == want or (have.name == "orchestrator" and have.parent == want)
 
 
 # --- connection ----------------------------------------------------------------------------------------------------
@@ -144,16 +164,14 @@ def locate(
 def _connect(target: Target) -> Any:
     from orch.host import frames
     from orch.host._unix import UnsafePath
-    from orch.host.client import Connection, Pin
+    from orch.host.client import Connection, Pin, PinMismatch
     from orch.host.errors import HostError
 
     try:
         return Connection(Pin(target.host_uid, target.workspace_id, target.socket), client="orch cli")
+    except PinMismatch as exc:  # the process behind the socket is not the registry's host: a hard refusal
+        raise HostFailure(HostError("host.untrusted", f"{target.socket}: {exc}; refusing to talk to it")) from None
     except UnsafePath as exc:
-        if str(exc).startswith("Server"):  # the process behind the socket is not the registry's host: a hard refusal
-            raise HostFailure(
-                HostError("host.untrusted", f"{target.socket}: {exc}; refusing to talk to it"), 3
-            ) from None
         raise _unavailable(f"the host socket {target.socket} is not usable: {exc}") from None
     except (FileNotFoundError, ConnectionRefusedError):
         raise _unavailable(f"the orch host is not serving this workspace (no one listens on {target.socket})") from None
@@ -161,12 +179,23 @@ def _connect(target: Target) -> Any:
         raise _unavailable(f"cannot talk to the orch host: {exc}") from None
 
 
-def _failure(exc: Any) -> HostFailure:
-    return HostFailure(exc)
-
-
 def _sleep(i: int) -> None:
     time.sleep(0.2 * (i + 1))
+
+
+def _send_once(target: Target, op: str, args: dict[str, Any], mode: str, **kw: Any) -> dict[str, Any]:
+    """One attempt on a new pinned connection. ``mode``: how files go (``first`` upload, ``digest`` for a retry,
+    ``fresh`` upload again after the host had no record of the first attempt)."""
+    from orch.host.errors import HostError
+
+    files = kw.pop("files", None)
+    with _connect(target) as c:
+        try:
+            return c.call(op, args, files=files(c, mode) if files else None, **kw)
+        except HostError as exc:
+            if files and mode == "digest" and exc.code == "blob.invalid":  # no record: the blob may be consumed or gone
+                return c.call(op, args, files=files(c, "fresh"), **kw)
+            raise
 
 
 def _request(
@@ -179,52 +208,36 @@ def _request(
     files: FilesFn | None = None,
     dry_run: bool = False,
     timeout: float | None = None,
-    conn: Any = None,
 ) -> dict[str, Any]:
-    """One request, its ``result``. With an ``idem`` a lost answer is retried with the same key on a new connection.
-    ``files(conn, retry)`` builds the ``files`` member on the live connection (``retry``: a blob that may be consumed
-    is named by its digest)."""
+    """One request, its ``result``. With an ``idem`` a lost answer (or ``outcome.unknown``) is sent again with the same
+    key on a new connection, at most :data:`RETRIES` attempts in all."""
     from orch.host import frames
     from orch.host.errors import HostError
 
     attempts = RETRIES if idem else 1
     last: BaseException | None = None
     for i in range(attempts):
-        retry = i > 0
-        own = conn is None
         try:
-            c = conn if conn is not None else _connect(target)
+            return _send_once(
+                target, op, args, "first" if i == 0 else "digest",
+                files=files, idem=idem, auth=auth, dry_run=dry_run, timeout=timeout,
+            )  # fmt: skip
         except HostFailure:
             if i == 0:
                 raise
-            _sleep(i)
-            continue
-        try:
-            spec = files(c, retry) if files is not None else None
-            try:
-                return c.call(op, args, idem=idem, files=spec, auth=auth, dry_run=dry_run, timeout=timeout)
-            except HostError as exc:
-                if retry and exc.code == "blob.invalid" and files is not None:
-                    return c.call(
-                        op, args, idem=idem, files=files(c, False), auth=auth, dry_run=dry_run, timeout=timeout
-                    )
-                raise
+            last = None  # the host is not reachable now: say so below
         except HostError as exc:
+            if not (idem and exc.code == "outcome.unknown"):
+                raise HostFailure(exc) from None
             last = exc
-            if idem and exc.code == "outcome.unknown" and i + 1 < attempts:
-                _sleep(i)
-                continue
-            raise _failure(exc) from None
         except (OSError, ConnectionError, TimeoutError, frames.FrameError) as exc:
             last = exc
-            if not idem or conn is not None or i + 1 >= attempts:
+            if not idem:
                 break
+        if i + 1 < attempts:
             _sleep(i)
-        finally:
-            if own:
-                c.close()
-    if isinstance(last, HostError):  # outcome.unknown after every retry
-        raise _failure(last) from None
+    if isinstance(last, HostError):  # outcome.unknown after every attempt
+        raise HostFailure(last) from None
     extra = f" (idem {idem}: ask `outcome.get` before repeating a write)" if idem else ""
     raise _unavailable(f"lost the connection to the orch host: {last}{extra}")
 
@@ -306,26 +319,30 @@ def upload(conn: Any, data: bytes, auth: dict[str, str] | None) -> str:
     return blob
 
 
-def files_builder(
-    data: Mapping[str, bytes], auth: dict[str, str] | None
-) -> Callable[[Any, bool], dict[str, Any] | None]:
-    """``files`` member of a request: inline up to 512 KiB in all, else a blob per file. A blob is uploaded once; on a
-    retry it is named by its digest (the first call may have consumed it)."""
+def files_builder(data: Mapping[str, bytes], auth: dict[str, str] | None) -> FilesFn:
+    """``files`` member of a request: inline up to 512 KiB in all, else a blob per file. A blob is uploaded once; a
+    retry names it by its digest (the first call may have consumed it); ``fresh`` drops the unused first blob and
+    uploads again (the host had no record of the first call)."""
     from orch.host.blobs import INLINE_MAX
 
     blobs: dict[str, str] = {}
     inline = sum(len(b) for b in data.values()) <= INLINE_MAX
 
-    def build(conn: Any, retry: bool) -> dict[str, Any] | None:
+    def build(conn: Any, mode: str) -> dict[str, Any] | None:
         if not data:
             return None
         if inline:
             return {n: {"b64": base64.b64encode(b).decode()} for n, b in data.items()}
         out: dict[str, Any] = {}
         for name, b in data.items():
-            if retry and name in blobs:
+            if mode == "digest" and name in blobs:
                 out[name] = {"digest": _sha(b)}
                 continue
+            if mode == "fresh" and name in blobs:
+                try:
+                    conn.call("blob.drop", {"blob": blobs[name]}, auth=auth)
+                except Exception:  # noqa: BLE001 - best effort: an unused blob expires in 10 minutes anyway
+                    pass
             blobs[name] = upload(conn, b, auth)
             out[name] = {"blob": blobs[name]}
         return out
@@ -370,11 +387,18 @@ def _auth(ctx: Any) -> dict[str, str] | None:
     return auth or None
 
 
-def execute(parsed: Any, ctx: Any, target: Target) -> tuple[Result, bool]:
-    """Send ``parsed`` to the host and return ``(result, text_ok)``; ``text_ok`` is False for a host-mode dry run of a
-    person op, which :func:`dry_text` shapes. Raises :class:`~orch.ops.errors.OrchError` for every refusal."""
+def execute(parsed: Any, ctx: Any, target: Target) -> Result:
+    """Send ``parsed`` to the host and return its result. Raises :class:`~orch.ops.errors.OrchError` on a refusal."""
+    from orch.host.dispatch import NOT_SERVED
+
     op: Operation = parsed.op
     args = dict(parsed.args)
+    if op.name in NOT_SERVED:
+        raise OrchError(
+            "not_implemented",
+            f"{op.cli}: not served by the host yet ({NOT_SERVED[op.name]}); "
+            "direct mode is off for a registered workspace",
+        )
     if op.who == "human":
         return _human(op, args, ctx, target, parsed.dry_run)
     files = read_files(op, args, ctx)
@@ -398,10 +422,44 @@ def execute(parsed: Any, ctx: Any, target: Target) -> tuple[Result, bool]:
         dry_run=parsed.dry_run,
         timeout=timeout,
     )
-    return result_from(doc), True
+    return result_from(doc)
 
 
-def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_run: bool) -> tuple[Result, bool]:
+def _durable(target: Target, link: list[Any], idem: str) -> Callable[..., Any]:
+    """``call`` for the signer composite. Every call goes on the current connection; ``human.submit`` (the one write)
+    that loses its answer is sent again with the same idem and the same signed events on a new pinned connection, so it
+    is applied once. If it stays uncertain the person is told the idem: a new request is never made silently."""
+    from orch.host import frames
+    from orch.host.errors import HostError
+
+    def call(op: str, args: dict[str, Any], **kw: Any) -> Any:
+        if op != "human.submit":
+            return link[0].call(op, args, **kw)
+        last: BaseException | None = None
+        for i in range(RETRIES):
+            try:
+                if i:
+                    link[0].close()
+                    link[0] = _connect(target)
+                return link[0].call(op, args, **kw)
+            except HostError as exc:
+                if exc.code != "outcome.unknown":
+                    raise
+                last = exc
+            except (OSError, ConnectionError, TimeoutError, frames.FrameError, HostFailure) as exc:
+                last = exc
+            if i + 1 < RETRIES:
+                _sleep(i)
+        raise _unavailable(
+            f"lost the answer to human.submit ({last}); the signed request may have been applied (idem {idem}). "
+            "Check with `orch show` or human.pending before signing again; a grant's secret cannot be shown again "
+            "(revoke the grant and issue a new one)"
+        ) from None
+
+    return call
+
+
+def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_run: bool) -> Result:
     from orch.custody import CustodyError
     from orch.host import signer
     from orch.host.control_client import new_idem
@@ -428,6 +486,8 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
         raise OrchError("custody.no_key", "this machine holds no device key of yours for this workspace")
     name = Path(str(entry.get("root") or wid)).name
     conn = _connect(target)
+    idem = new_idem()
+    link = [conn]
     try:
         backend = human.open_backend(directory)
         device = device_ref(backend.public_key(human.KEY_ID))
@@ -438,9 +498,9 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
                 dry_run=True,
                 files=wire,
             )
-            return dry_text(op, doc["data"]), False
+            return dry_text(op, doc["data"])
         res = signer.run(
-            conn.call,
+            _durable(target, link, idem),
             op.name,
             args,
             backend=backend,
@@ -451,23 +511,23 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
             workspace=lambda w: (name, str(entry.get("prefix"))) if w == wid else None,
             confirm=human.review_prompt,
             show_secret=human.show_secret,
-            idem=new_idem(),
+            idem=idem,
             files=wire,
         )
-        return result_from(res), True
+        return result_from(res)
     except OrchError:
         raise
     except signer.SignerRefused as exc:
         text = "not confirmed: nothing was signed" if str(exc) == "not confirmed" else f"{exc}; nothing was signed"
         raise OrchError("invalid.input", text[:400]) from None
     except HostError as exc:
-        raise _failure(exc) from None
+        raise HostFailure(exc) from None
     except CustodyError as exc:
         declared = {e["code"] for e in op.errors}
         if exc.code in ("custody.no_prompt", "custody.no_key", "custody.wrong_passphrase") and exc.code in declared:
             raise OrchError(exc.code, str(exc)) from None
         raise OrchError("internal", f"the key custody: {exc}") from None
     except (OSError, ConnectionError, TimeoutError) as exc:
-        raise _unavailable(f"lost the connection to the orch host: {exc}") from None
+        raise _unavailable(f"lost the connection to the orch host: {exc} (idem {idem})") from None
     finally:
-        conn.close()
+        link[0].close()

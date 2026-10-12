@@ -134,3 +134,28 @@ it('switching workspace with a hand-off panel open cancels that request at the h
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), T)
   expect(state.host.deletes().length).toBe(1)
 })
+
+it('the trigger and the hand-off dialog say which workspace when the prefix is shared', async () => {
+  const user = userEvent.setup()
+  show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
+  await screen.findByRole('table', {}, T)
+  expect(document.querySelector('[data-ws-uuid-current]')).toHaveTextContent(uuid8(B))
+  await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  expect(within(dialog).getByTestId('handoff-workspace')).toHaveTextContent(`DEMO · Mobile (${uuid8(B)})`)
+})
+
+it('a ticket address with a shared prefix and no matching hint reads no ticket', async () => {
+  show('/w/DEMO/ticket/DEMO-0001')
+  expect(await screen.findByRole('heading', { name: 'Which workspace?' }, T)).toBeInTheDocument()
+  await new Promise((r) => setTimeout(r, 300))
+  expect(state.host.calls.some((c) => c.path.includes('/tickets/DEMO-0001'))).toBe(false)
+})
+
+it('a ticket address whose hint names a stopped host reads no ticket', async () => {
+  state.host.workspaces.push(workspace({ id: C, host_state: 'host.unavailable' }))
+  show(`/w/DEMO/ticket/DEMO-0001?ws=${uuid8(C)}`)
+  expect(await screen.findByRole('heading', { name: 'Host not running' }, T)).toBeInTheDocument()
+  await new Promise((r) => setTimeout(r, 300))
+  expect(state.host.calls.some((c) => c.path.includes('/tickets/DEMO-0001'))).toBe(false)
+})

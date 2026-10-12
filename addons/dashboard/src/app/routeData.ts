@@ -51,7 +51,7 @@ const addons = (qc: QueryClient) => qc.ensureQueryData(queries.addons())
 /** The workspace the page will show, as WorkspaceProvider picks it: the address's, else the remembered one, else the first. */
 function pickWorkspace(list: Workspace[], urls: UrlState): Workspace | undefined {
   const named = urls.prefix ? workspaceByAddress(list, urls.prefix, urls.hint) : undefined
-  if (named && 'ambiguous' in named) return undefined // the page asks which workspace: nothing is read for either
+  if (named && ('ambiguous' in named || (urls.hint && 'missing' in named))) return undefined // the page asks which workspace: nothing is read
   return (named && 'found' in named ? named.found : undefined) ?? list.find((w) => w.id === storedWorkspace()) ?? list[0]
 }
 
@@ -222,14 +222,19 @@ export function workspaceOfKey(key: string, list: Workspace[], urls?: UrlState):
   // Workspaces that share the prefix: the address's `?ws=` names the one (else the first, as the page will ask which).
   const hint = urls?.ticketHint
   const hinted = hint ? same.filter((w) => w.prefix.toUpperCase() === hint.prefix.toUpperCase() && uuid8(w.id) === hint.hint.toLowerCase()) : []
-  return hinted.length === 1 ? hinted[0] : same[0]
+  if (hinted.length === 1) return hinted[0]
+  // Two or more share the prefix and none is named (or the hint fits none): the page asks which; nothing is read for a guess.
+  return same.length === 1 && !hint ? same[0] : undefined
 }
 
 /** A ticket page: the ticket itself and its addon panels, in the ticket's own workspace. */
 export const ticketData =
   (key: string) =>
   ({ qc, ws: shown, list, pkgs, urls }: PageScope): Ensure[] => {
-    const ws = workspaceOfKey(key, list, urls) ?? shown
+    const named = workspaceOfKey(key, list, urls)
+    const known = list.some((w) => key.toUpperCase().startsWith(`${w.prefix.toUpperCase()}-`))
+    if (!named && known) return [] // ambiguous, or a hint that fits none: the page asks, nothing is read for a guess
+    const ws = named ?? shown
     return [
       qc.ensureQueryData(queries.ticket(ws.id, key)),
       // The ticket's addon panels (their count shows in the header's Panels button).

@@ -222,7 +222,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                     <span className="flex items-center gap-2">
                       <PersonAvatar id={m.person} name={m.name} />
                       <Raw>{m.name}</Raw>
-                      <span className="font-mono text-[11px] text-text-faint">{m.person}</span>
+                      <span className="font-mono text-[11px] text-text-faint"><Raw>{m.person}</Raw></span>
                     </span>
                   </TableCell>
                   <TableCell>{select}</TableCell>
@@ -233,9 +233,9 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                       <ul aria-label={`Devices of ${m.name}`} className="space-y-0.5 text-[12px]">
                         {m.devices.map((d) => (
                           <li key={d.id} className="flex flex-wrap gap-x-2">
-                            <span className="font-mono text-text-muted">{d.id}</span>
-                            <span className={d.valid ? 'text-text-faint' : 'text-warning'}>{d.valid ? d.scopes.join(', ') : 'not valid'}</span>
-                            {d.auth && <span className="text-text-faint">{d.auth}</span>}
+                            <span className="font-mono text-text-muted"><Raw>{d.id}</Raw></span>
+                            <span className={d.valid ? 'text-text-faint' : 'text-warning'}>{d.valid ? <Raw>{d.scopes.join(', ')}</Raw> : 'not valid'}</span>
+                            {d.auth && <span className="text-text-faint"><Raw>{d.auth}</Raw></span>}
                           </li>
                         ))}
                       </ul>

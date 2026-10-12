@@ -409,6 +409,13 @@ def test_member_add_sends_the_certificate_as_a_file_and_shows_what_it_says(world
         "handoff": True,
     }
     assert base64.b64decode(prepare[2]["files"]["cert"]["b64"]).decode() == cert  # the bytes the person uploaded
+    # The certificate is never an inline argument (a host with blobs refuses that): only its logical name is.
+    assert cert not in json.dumps(prepare[1]) and set(prepare[2]["files"]) == {"cert"}
+    with pytest.raises(Exception) as inline:
+        world.stub.call(
+            "human.prepare", {"op": "member.add", "args": {**prepare[1]["args"], "cert": cert}, "handoff": True}, {}
+        )
+    assert inline.value.error["code"] == "blob.invalid"
     assert person.ref not in env.store.state.workspace.members  # nothing was written
 
 
@@ -568,7 +575,7 @@ def test_the_stub_signer_signs_settings_and_member_requests(worlds, team, tmp_pa
     assert status == 0, shown
     env.store.refresh()
     assert env.store.state.workspace.settings["grant_hours"] == 12
-    assert "SETTINGS.SET" in shown[0][1]  # the confirmation word is the op in capitals
+    assert "Type DEMO/SETTINGS and Enter" in shown[0][0]  # stream A: <PREFIX>/SETTINGS
     person, pk, cert = invitee(env)
     got = handoff(world, {"action": "member_add", "name": "Nia", "role": "viewer", "pk": pk, "cert": cert}, 2).json()
     status, shown = signing.sign(got["code"], confirm=lambda text, word: word == person.ref)
@@ -581,3 +588,72 @@ def test_the_stub_signer_signs_settings_and_member_requests(worlds, team, tmp_pa
     assert env.store.state.workspace.grants[grants["owner"]].revoked
     after = world.get(f"/api/w/{world.stub.ws}/settings").json()
     assert after["grant_hours"] == 12 and after["defaults"] == ["claim_ttl_min", "lease_ttl_min"]
+
+
+BIDI = "\u202e"
+
+
+@pytest.mark.parametrize("hidden", ["\u202e", "\u2066", "\u200b", "\u200f", "\ufeff", "\u2028"])
+def test_hidden_characters_from_the_host_are_not_forwarded(hidden):
+    page = {
+        "settings": {
+            "grant_hours": 8,
+            "claim_ttl_min": 120,
+            "lease_ttl_min": 60,
+            "repos": {"a": {"default_branch": "main", "remote": f"https://git.example.test/x{hidden}moc/a"}},
+        },
+        "next_page": None,
+        "gates": {},
+        "defaults": [],
+    }
+    assert adapters.settings.settings(page, [], False).repos[0].remote is None  # not repaired, not shown
+    page["settings"]["repos"] = {"a": {"default_branch": f"ma{hidden}in"}}
+    with pytest.raises(Exception) as caught:
+        adapters.settings.settings(page, [], False)
+    assert caught.value.error["code"] == "internal"
+
+
+def test_roster_and_grant_words_are_checked_and_a_bad_value_is_internal_not_500():
+    good = {
+        "members": [
+            {
+                "person": "p_a",
+                "name": "N",
+                "role": "member",
+                "devices": [{"id": "d_1", "auth": None, "scopes": ["look"], "valid": True}],
+            }
+        ]
+    }
+    assert adapters.settings.roster(good)[0].devices[0].scopes == ["look"]
+    for patch in ({"scopes": ["lo" + BIDI + "ok"]}, {"id": "d_" + BIDI}, {"auth": "pass" + BIDI}):
+        bad = {"members": [{**good["members"][0], "devices": [{**good["members"][0]["devices"][0], **patch}]}]}
+        with pytest.raises(Exception) as caught:
+            adapters.settings.roster(bad)
+        assert caught.value.error["code"] == "internal"
+    grant = {
+        "id": "gr_" + "0" * 26,
+        "person": "p_a",
+        "scope": "all",
+        "verbs": "agent",
+        "issued_at": "x",
+        "expires_at": "y",
+        "sessions": 0,
+    }
+    with pytest.raises(Exception) as caught:
+        adapters.settings.grants({"grants": [{**grant, "scope": "al" + BIDI + "l"}]}, False)
+    assert caught.value.error["code"] == "internal"
+    with pytest.raises(Exception) as caught:  # a wrong type pydantic rejects is the same error, not a 500
+        adapters.settings.grants({"grants": [{**grant, "person": 5}]}, False)
+    assert caught.value.error["code"] == "internal"
+
+
+@pytest.mark.parametrize("field,value", [("name", "Ni" + BIDI + "a"), ("reason", "x" + BIDI)])
+def test_typed_one_line_texts_refuse_bidi_and_invisible_characters(worlds, team, field, value):
+    world = worlds(team[0].owner.ref)
+    if field == "name":
+        person, pk, cert = invitee(team[0])
+        body = {"action": "member_add", "name": value, "role": "member", "pk": pk, "cert": cert}
+    else:
+        body = {"action": "grant_revoke", "grant": "gr_" + "0" * 26, field: value}
+    res = handoff(world, body)
+    assert res.status_code == 400

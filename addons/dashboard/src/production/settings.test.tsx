@@ -53,6 +53,7 @@ it('changing the grant length opens the hand-off with the typed action, and show
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 12, idem: expect.stringMatching(/^a_/) }])
   expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent('orch sign 7F3K-Q2MA')
   expect(dialog).toHaveTextContent('Change to the workspace settings')
+  expect(dialog).toHaveTextContent('In your terminal you type DEMO/SETTINGS to continue.')
   expect(dialog).toHaveTextContent('HOST-BEFORE-VALUE') // the host's "current value, not signed", labelled as such
   expect(dialog).toHaveTextContent('Current values according to the host, not signed')
   expect(within(dialog).queryByLabelText(/passphrase/i)).toBeNull()
@@ -269,6 +270,14 @@ it('Grants: ended grants are shown on request, with who revoked them only when t
   expect(unknown).not.toHaveTextContent(/ by /)
   expect(state.host.calls.some((c) => c.path.endsWith('grants?active=false'))).toBe(true)
   expect(within(unknown).queryByRole('button', { name: /Revoke/ })).not.toBeInTheDocument()
+})
+
+it('host strings with bidi characters are shown escaped, not applied', async () => {
+  state.host.workspaces[0].grants = [grant(GRANT_A, OWNER, { scope: 'al\u202el' })]
+  show('/w/DEMO/settings/grants')
+  const row = (await screen.findByText(GRANT_A, {}, T)).closest('tr')!
+  expect(row.textContent).toContain('\\u{202e}')
+  expect(row.textContent).not.toContain('\u202e')
 })
 
 it('settings, policy and grant live items refresh the settings queries', async () => {

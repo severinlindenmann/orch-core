@@ -7,6 +7,8 @@ import { toast } from 'sonner'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { sharesPrefix, uuid8 } from '@/api/workspaces'
+import { useWorkspace } from '@/app/workspace'
 import { HandoffPanel } from './HandoffPanel'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
 
@@ -17,7 +19,7 @@ interface Words {
 }
 
 /** What each end state says, in core's words. */
-function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false): Words | null {
+function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false, code?: string): Words | null {
   switch (phase) {
     case 'done':
       return { title: 'Signed', body: `${title} is in the ${ofWorkspace ? "workspace's" : "ticket's"} log.`, tone: 'ok' }
@@ -28,6 +30,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'already':
       return { title: 'Already done', body: 'The host says this is already in place, so there is nothing to sign. The page shows the current state.' }
     case 'changed':
+      if (code === 'idem.conflict') return { title: 'Changed since your first try', body: 'The page the request is built from changed since your first try, so the host will not match the earlier key. Nothing was signed. Start again to prepare what is there now.', tone: 'warn' }
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
@@ -71,6 +74,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
     p.onSettled?.(phase, state, request)
   })
   const { phase } = run
+  const { workspaces } = useWorkspace()
+  const here = workspaces.find((w) => w.id === p.ws)
+  const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
   const started = useRef(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -106,7 +112,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
-  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket)
+  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && void close()}>
@@ -123,6 +129,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
             <ShieldCheck className="size-4 text-brand" />
             {p.title}
           </DialogTitle>
+          {shared && here && (
+            <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
+              Workspace {here.prefix} · {here.name} ({uuid8(here.id)})
+            </p>
+          )}
           <DialogDescription>
             {phase === 'idle' ? 'You sign in your terminal. This dashboard prepares the request and never signs.' : 'Signed with your key in your terminal. Only core prepares this request; an agent or an addon cannot sign it.'}
           </DialogDescription>
@@ -149,7 +160,12 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
               </p>
             )}
-            <HandoffPanel request={run.request} />
+            {run.earlierOpen && (
+              <p role="status" data-testid="earlier-open" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
+                You signed in again after an answer was lost, so an earlier attempt may still be open; it expires by itself within 10 minutes (4 for a grant). Sign only the code shown here.
+              </p>
+            )}
+            <HandoffPanel request={run.request} prefix={here?.prefix ?? null} />
           </>
         )}
 
@@ -188,7 +204,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
               </Button>
             )}
             {(phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'stale' || phase === 'error') && p.action && (
-              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'stale' ? 'Start again' : 'Prepare again'}</Button>
+              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'stale' || run.error?.code === 'idem.conflict' ? 'Start again' : 'Prepare again'}</Button>
             )}
             {end && (
               <Button ref={cancelRef} variant={phase === 'done' ? 'default' : 'ghost'} onClick={() => void close()}>

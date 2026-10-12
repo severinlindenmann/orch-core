@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fmtDateTime, nowMs } from '@/lib/time'
 import { queries } from '@/api/queries'
+import { Raw } from '@/components/sign/visible'
 import { Mono, Pill } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerPerson, useViewerRole } from './useViewerRole'
@@ -90,11 +91,11 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                 return (
                   <TableRow key={g.id}>
                     <TableCell>
-                      <span className="block">{name(g.person)}</span>
+                      <span className="block"><Raw>{name(g.person)}</Raw></span>
                       <Mono className="text-[11px] text-text-faint">{g.id}</Mono>
                     </TableCell>
                     <TableCell>
-                      <Mono>{g.scope}</Mono>
+                      <Mono><Raw>{g.scope}</Raw></Mono>
                     </TableCell>
                     <TableCell className="whitespace-normal tabular-nums">
                       {g.revoked ? (
@@ -108,7 +109,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {g.sessions}
-                      {g.session_ids && g.session_ids.length > 0 && <span className="block text-[11px] text-text-faint">{g.session_ids.join(', ')}{g.sessions_more ? ', …' : ''}</span>}
+                      {g.session_ids && g.session_ids.length > 0 && <span className="block text-[11px] text-text-faint"><Raw>{g.session_ids.join(', ')}</Raw>{g.sessions_more ? ', …' : ''}</span>}
                     </TableCell>
                     <TableCell>
                       <Pill tone={TONE[s]} className="capitalize">

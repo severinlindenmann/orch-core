@@ -847,3 +847,23 @@ Real `orch sign`: signs `member.*` and `grant.revoke`; it refuses `settings.set`
 
 Open for stream A: `member.add` takes the key as `pk` (argument) and only the certificate as a file today; confirm that is the R9 shape
 (the brief spoke of both as files). Confirmation word for `settings.set`/`policy.set`. `human.pending` carries no origin.
+
+### M4 fix round 1 (Opus security review)
+
+L1: when a prefix is shared the switcher trigger, its tooltip and the hand-off dialog name the workspace with its `uuid8`. L2: the ticket
+loader reads nothing when the key's prefix is shared and no `?ws=` names one, when the hint fits none, or when the host is stopped (and
+`pickWorkspace` likewise on a hint that fits nothing). L3: host strings on the settings pages (remote, branch, grant scope, device id/auth/
+scopes, names, session ids) render through `Raw`; the server refuses U+202A-202E, U+2066-2069, U+200B-200F, U+2028/2029 and U+FEFF in a
+branch, a remote, a one-line typed text, and checks device/auth/scope/grant-scope words. I-3: a pydantic `ValueError` in the settings
+adapters is `internal`, not a 500. I-5: `PolicyBody.canonical` docstring. I-2: `idem.conflict` on a prepare shows "Changed since your first
+try" and "Start again" (new key on the click).
+
+**L4 limit (documented):** the host key is `a_` + hash(session token, workspace, browser idem). After a new login or a dashboard restart
+the token is unknown, so a kept key cannot be matched by the host. The browser drops it, prepares with a new key and says the earlier
+attempt may still be open until it expires on its own (10 minutes, 4 for a grant). Such an earlier request is not cancelled by logout
+and counts toward the host's 20 pending. "Never a second request" therefore holds within one session.
+
+Confirmation words (stream A decision): workspace `settings.set` = `<PREFIX>/SETTINGS`, `policy.set` = `<PREFIX>/POLICY` (prefix from
+the signer's own registry); the panel shows them and the stub signer asks for them. Real `orch sign` learns them with H6b. `member.add`:
+`pk` is a plain argument and the certificate travels only in `files.cert` (the argument carries `-`); a test checks it is never an inline
+argument, and the stub refuses an inline certificate with `blob.invalid`.

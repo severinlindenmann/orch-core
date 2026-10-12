@@ -192,16 +192,17 @@ export const confirmWord = (key: string, uid: string): string => `${key}/${uid.s
 /** The exact line the person runs. A code is 4+4 characters of the Crockford alphabet, so it is safe to put in a shell. */
 export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/
 /**
- * The word the signer asks for on a request that is not about a ticket, when this dashboard knows it: a member's person id
- * for the member operations and `GRANT.REVOKE` for a revoke (the real signer's rule). `null` where the signer's word is
- * not settled (the settings and policy operations wait for the host's event types, R5): then nothing is promised.
+ * The word the signer asks for on a request that is not about a ticket: a member's person id for the member operations,
+ * `GRANT.REVOKE` for a revoke, and `<PREFIX>/SETTINGS` or `<PREFIX>/POLICY` for the workspace settings and policy (stream A's
+ * decision; real `orch sign` learns them with H6b). `null` where this dashboard does not know the word.
  */
-export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>): string | null {
+export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>, prefix?: string | null): string | null {
   if (request.material.ticket) return null
   if (request.op === 'member.add' || request.op === 'member.role' || request.op === 'member.remove') {
     const person = request.events[0]?.person
     return typeof person === 'string' ? person : null
   }
+  if (request.op === 'settings.set' || request.op === 'policy.set') return prefix ? `${prefix}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null // stream A: <PREFIX>/SETTINGS, <PREFIX>/POLICY (the prefix is the signer's own registry's)
   return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
 }
 

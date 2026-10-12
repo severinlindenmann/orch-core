@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { fmtDateTime, plural } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
+import { Raw } from '@/components/sign/visible'
 import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
@@ -142,9 +143,9 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           <ul aria-label="Repositories" className="divide-y divide-border text-[13px]">
             {data.repos.map((r) => (
               <li key={r.name} className="flex flex-wrap items-center gap-x-4 gap-y-0.5 py-1.5">
-                <Mono>{r.name}</Mono>
-                <span className="text-text-muted">{r.default_branch ?? 'no default branch'}</span>
-                {r.remote && <span className="min-w-0 break-all text-text-faint">{r.remote}</span>}
+                <Mono><Raw>{r.name}</Raw></Mono>
+                <span className="text-text-muted">{r.default_branch === null ? 'no default branch' : <Raw>{r.default_branch}</Raw>}</span>
+                {r.remote && <span className="min-w-0 break-all text-text-faint"><Raw>{r.remote}</Raw></span>}
               </li>
             ))}
           </ul>

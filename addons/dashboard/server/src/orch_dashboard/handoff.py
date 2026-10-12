@@ -193,7 +193,7 @@ class WriteSection(Action):
 Person = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
 GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Role = Literal["owner", "maintainer", "member", "viewer"]
-OneLine = r"^[^\x00-\x1f\x7f\u2028\u2029]+$"
+OneLine = r"^[^\x00-\x1f\x7f\u2028\u2029\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]+$"
 Token = Literal["owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers"]
 PolicyGate = Literal["requirements", "plan", "verify", "code"]
 TicketType = Literal["feature", "bug", "chore", "spike", "epic"]
@@ -228,7 +228,7 @@ class PolicyBody(BaseModel):
     independent: bool
 
     def canonical(self) -> dict:
-        """Stored in canonical form (F1 5.7): lists sorted and de-duplicated; a non-canonical policy is refused."""
+        """The policy in the canonical form F1 5.7 stores (lists sorted, repeats removed): what is sent and shown."""
         return {
             "approvers": sorted(set(self.approvers)),
             "count": self.count,

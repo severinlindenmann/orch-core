@@ -101,6 +101,7 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
   const list = useRef<HTMLUListElement>(null)
   const quietFocus = useRef(false)
   const headingId = useId()
+  const currentShared = !!workspace && workspaces.some((o) => o.id !== workspace.id && sharesPrefix(o, workspace))
   const trigger = (
     <button
       type="button"
@@ -112,6 +113,11 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
     >
       <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{workspace?.prefix ?? '…'}</span>
       <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{workspace?.name}</span>
+      {currentShared && workspace && (
+        <span data-ws-uuid-current className={cn('font-mono text-[10px] text-text-faint', collapsed && 'hidden')}>
+          {uuid8(workspace.id)}
+        </span>
+      )}
       <ChevronsUpDown className={cn('size-3.5 text-text-faint', collapsed && 'hidden')} />
     </button>
   )
@@ -122,10 +128,15 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>{trigger}</PopoverTrigger>
           </TooltipTrigger>
-          <TooltipContent side="right">{workspace ? `${workspace.prefix} · ${workspace.name}` : 'Workspace'}</TooltipContent>
+          <TooltipContent side="right">{workspace ? `${workspace.prefix} · ${workspace.name}${currentShared ? ` (${uuid8(workspace.id)})` : ''}` : 'Workspace'}</TooltipContent>
         </Tooltip>
       ) : (
-        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right">{workspace ? `${workspace.prefix} · ${workspace.name}${currentShared ? ` (${uuid8(workspace.id)})` : ''}` : 'Workspace'}</TooltipContent>
+        </Tooltip>
       )}
       <PopoverContent
         align="start"

@@ -161,12 +161,14 @@ def canon_person(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 34 and value.startswith("p_")
 
 
-def confirm_word(prepared: dict[str, Any], key_word: str | None, person: str) -> str:
+def confirm_word(prepared: dict[str, Any], key_word: str | None, person: str, prefix: str = "") -> str:
     """Ticket ops: KEY/FRAG. Member ops: the member's person id. Other workspace ops: the op name in capitals."""
     if key_word:
         return key_word
     if prepared["op"] in MEMBER_OPS:
         return clean(prepared["events"][0].get("person"))
+    if prepared["op"] in ("settings.set", "policy.set"):
+        return f"{prefix}/{'SETTINGS' if prepared['op'] == 'settings.set' else 'POLICY'}"  # stream A: <PREFIX>/SETTINGS
     return prepared["op"].upper() if prepared["op"] in WORKSPACE_OPS else person
 
 
@@ -212,7 +214,9 @@ def render(prepared: dict[str, Any], *, workspace: dict[str, Any], person: str) 
         out += [f"  {clean(k)}: {clean(v)}" for k, v in sorted(material["before"].items())]
     if material.get("kind") == "gate":
         out += ["", f"gate: {clean(material['gate'])}", f"gate hash {events[0].get('hash', '')[7:19]}"]
-    return "\n".join(out) + "\n", confirm_word(prepared, f"{key}/{frag}" if key else None, person)
+    return "\n".join(out) + "\n", confirm_word(
+        prepared, f"{key}/{frag}" if key else None, person, clean(workspace["prefix"])
+    )
 
 
 def run(

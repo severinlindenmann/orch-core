@@ -21,9 +21,14 @@ APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees",
 TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
 PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")
 REPO = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-BRANCH = re.compile(r"^[^\x00-\x1f\x7f]{1,255}$")
+# No control, bidi, zero-width or byte-order characters in anything shown from the host (they could reorder a line).
+HIDDEN = "\u2028\u2029\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff"
+BRANCH = re.compile(rf"^[^\x00-\x1f\x7f{HIDDEN}]{{1,255}}$")
+WORD = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 # F1 5.7: a canonical identity is `https://host[:port]/path` or `local:<name>`, and carries no userinfo.
-REMOTE = re.compile(r"^(?:https://[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?/[^\s@?#]{0,1000}|local:[A-Za-z0-9._-]{1,64})$")
+REMOTE = re.compile(
+    rf"^(?:https://[A-Za-z0-9.-]{{1,253}}(?::[0-9]{{1,5}})?/[^\s@?#{HIDDEN}\x00-\x1f\x7f]{{0,1000}}|local:[A-Za-z0-9._-]{{1,64}})$"
+)
 USERINFO = re.compile(r"^(https://)[^/@\s]*@")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
@@ -160,7 +165,7 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
             settings_at=stamp(first.get("settings_at")),
             policy_at=stamp(first.get("policy_at")),
         )
-    except (KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError, ValueError):
         raise bad() from None
 
 
@@ -179,22 +184,28 @@ class RosterMember(BaseModel):
     # `last_seen` is not served by the host (v1.5): there is no such field to fill.
 
 
+def word(value) -> str:
+    if not isinstance(value, str) or not WORD.fullmatch(value):
+        raise bad()
+    return value
+
+
 def roster(data) -> list[RosterMember]:
     try:
         out = []
         for m in data["members"]:
             devices = [
                 Device(
-                    id=str(d["id"]),
-                    auth=d.get("auth") if isinstance(d.get("auth"), str) else None,
-                    scopes=[str(s) for s in d.get("scopes") or []],
+                    id=word(d["id"]),
+                    auth=word(d["auth"]) if isinstance(d.get("auth"), str) else None,
+                    scopes=[word(s) for s in d.get("scopes") or []],
                     valid=d.get("valid") is True,
                 )
                 for d in m["devices"]
             ]
             out.append(RosterMember(person=m["person"], name=m["name"], role=m["role"], devices=devices))
         return out
-    except (KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError, ValueError):
         raise bad() from None
 
 
@@ -243,7 +254,7 @@ def grants(data, ext: bool) -> list[Grant]:
                 Grant(
                     id=g["id"],
                     person=g["person"],
-                    scope=g["scope"],
+                    scope=word(g["scope"]),
                     verbs=g["verbs"],
                     issued_at=g["issued_at"],
                     expires_at=g["expires_at"],
@@ -254,5 +265,5 @@ def grants(data, ext: bool) -> list[Grant]:
                 )
             )
         return out
-    except (KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError, ValueError):
         raise bad() from None

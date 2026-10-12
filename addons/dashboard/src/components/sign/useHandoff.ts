@@ -4,6 +4,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
+import { getToken } from '@/api/bootstrap'
 import { ALREADY_DONE, CHANGED, KEY_REUSED, KEY_TOO_OLD, expiryMs, newIdem, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { ApiError } from '@/api/types'
 
@@ -51,6 +52,8 @@ export interface HandoffRun {
   reset: (keepKey?: boolean) => void
   /** The person switched workspace while this request was open (or being prepared): it was cancelled, nothing was signed. */
   switched: boolean
+  /** The session changed after a lost answer: the earlier attempt may still be open until it expires on its own. */
+  earlierOpen: boolean
 }
 
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
@@ -64,7 +67,9 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   // The request is pinned to the workspace it was prepared in: poll, cancel and unmount use that one, whatever `ws` is now.
   const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws: undefined as string | undefined })
   const [pinned, setPinned] = useState<string | undefined>(undefined)
-  const attempt = useRef<{ sig: string; idem: string } | null>(null)
+  const attempt = useRef<{ sig: string; idem: string; token: string | null } | null>(null)
+  // A kept key only means something inside the session it was made in (the server binds it to the session token).
+  const [earlierOpen, setEarlierOpen] = useState(false)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -90,8 +95,14 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       setPhase('preparing')
       const sig = JSON.stringify(action)
       // The same click retried (after a lost answer) reuses its idem; another action draws a new one.
+      const token = getToken()
+      if (attempt.current && attempt.current.token !== token) {
+        // New login or a restarted dashboard: the host cannot match the old key. The earlier attempt may still be open.
+        attempt.current = null
+        setEarlierOpen(true)
+      }
       const idem = attempt.current?.sig === sig ? attempt.current.idem : newIdem()
-      attempt.current = { sig, idem }
+      attempt.current = { sig, idem, token }
       try {
         const got = await api.prepareHandoff(ws, action, idem)
         // The key stays: a retry after a lost poll returns this same request (host contract 0.7), never a second.
@@ -145,8 +156,10 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           attempt.current = null // only the person's click starts again, and it draws a new key
           setPhase('stale')
         } else if (err.code === KEY_REUSED) {
+          // The same key with other arguments: what the action is built from (a ticket's labels) changed since the first try.
           attempt.current = null
-          setPhase('error')
+          refetch()
+          setPhase('changed')
         } else if (err.code === 'outcome.unknown') {
           setPhase('unknown') // the key is kept: "Try again" returns the same request if the host made one
         } else {
@@ -250,6 +263,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   const reset = useCallback((keepKey = false) => {
     if (!keepKey) attempt.current = null // a new request is a new click: a new key
     setSwitched(false)
+    if (!keepKey) setEarlierOpen(false)
     live.current.request = null
     setRequest(null)
     setState(null)
@@ -272,5 +286,5 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     }
   }, [])
 
-  return { phase, request, state, error, prepare, cancel, reset, switched }
+  return { phase, request, state, error, prepare, cancel, reset, switched, earlierOpen }
 }

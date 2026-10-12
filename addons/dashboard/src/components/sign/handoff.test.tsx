@@ -137,16 +137,35 @@ describe('the hand-off dialog (real host)', () => {
     expect(s.prepare.mock.calls[1][2]).not.toBe(s.prepare.mock.calls[0][2])
   })
 
-  it('idem.conflict is an honest error and the next click draws a new key', async () => {
+  it('idem.conflict says the page changed since the first try, and the next click draws a new key', async () => {
     const request = fakeRequest()
     s.prepare.mockRejectedValueOnce(refusal('idem.conflict', 409)).mockResolvedValue(request)
     s.get.mockResolvedValue(state(request))
     const { user } = await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
-    expect(await within(dialog).findByText('Could not prepare', {}, T)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect(await within(dialog).findByText('Changed since your first try', {}, T)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Start again' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare.mock.calls[1][2]).not.toBe(s.prepare.mock.calls[0][2])
+  })
+
+  it('a new session drops the kept key after a lost answer and says the earlier attempt may still be open', async () => {
+    const { bootstrap } = await import('@/api/bootstrap')
+    sessionStorage.setItem('orch-session', 'demo-not-a-real-token-one')
+    await bootstrap()
+    const request = fakeRequest()
+    s.prepare.mockRejectedValueOnce(refusal('outcome.unknown', 503)).mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    const { user } = await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByText('Unknown outcome', {}, T)
+    sessionStorage.setItem('orch-session', 'demo-not-a-real-token-two') // signed in again
+    await bootstrap()
+    await user.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect(await within(dialog).findByTestId('earlier-open', {}, T)).toHaveTextContent('an earlier attempt may still be open')
+    expect(s.prepare.mock.calls[1][2]).not.toBe(s.prepare.mock.calls[0][2]) // not the old key: the host would not match it
+    sessionStorage.removeItem('orch-session')
+    await bootstrap()
   })
 
   it('cancel asks the host to cancel and closes', async () => {

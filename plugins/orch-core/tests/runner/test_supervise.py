@@ -140,7 +140,7 @@ def test_crash_sweep_stops_recorded_processes_that_match(state, tmp_path):
     """After a runner crash the recorded run (birth identity matches) is swept and reported lost/unknown."""
     one = Supervisor(state, cgroups=None, scan_interval=0.1)
     one.open()
-    s = spec(tmp_path, ["/bin/sh", "-c", "sleep 60"])
+    s = spec(tmp_path, ["/bin/sh", "-c", "exec sleep 60"])  # one process (dash forks a last command, zsh execs it)
     first = one.spawn(s)
     # a crash: no stop, the I/O thread just ends (the process keeps running, as after a runner SIGKILL)
     one._closing = True

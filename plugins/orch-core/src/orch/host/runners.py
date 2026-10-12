@@ -84,8 +84,10 @@ LIVE = ("starting", "running")
 RUN_ID = r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
 #: codes a runner may report for a command; anything else becomes ``run.spawn_failed`` / ``internal``
 RUNNER_CODES = frozenset(
-    {"launch.cwd_changed", "harness.not_found", "run.spawn_failed", "invalid.input", "not_found", "term.busy"}
-)
+    {"launch.cwd_changed", "harness.not_found", "run.spawn_failed", "invalid.input", "not_found", "term.busy",
+     # H11d: worktree git (orch.runner.wtgit)
+     "worktree.branch_in_use", "worktree.exists", "worktree.dirty", "worktree.git_failed"}
+)  # fmt: skip
 KEEP_SECONDS = 7 * 24 * 3600
 KEEP_ENDED = 1000
 PER_CONNECTION = 8

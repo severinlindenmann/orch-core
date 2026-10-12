@@ -96,6 +96,7 @@ from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
 from .runners import RUN_CAPS, RUN_OPS
+from .worktrees import WORKTREE_CAPS, WORKTREE_OPS
 from .visibility import Viewer
 from .workspace import deny_append, ok_result
 
@@ -207,6 +208,7 @@ def served_ops() -> dict[str, int]:
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     out.update(records_ops.RECORDS_OPS)
     out.update(RUN_OPS)  # H11a: run.list, run.sub
+    out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
     return out
 
 
@@ -230,6 +232,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
     if name in RUN_OPS:  # H11a: P and G only (§0.5, D-P2-26)
         return ("pg_read", "read")
+    if name in WORKTREE_OPS:  # H11d: P and G (G only on its claimed ticket, checked by the op), never N
+        return ("pg_read", "read") if name == "worktree.list" else ("pg_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -359,7 +363,7 @@ class RegistryBackend:
     @property
     def caps(self) -> list[str]:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
-        return [*base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS]
+        return [*base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *WORKTREE_CAPS]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
@@ -398,6 +402,10 @@ class RegistryBackend:
             return self._register(call, result)
         if op == "run.sub":
             return await self._register_runs(call, result)
+        if op in WORKTREE_OPS and op != "worktree.list":  # H11d: the runner's git, then the registration
+            from . import worktrees
+
+            return await worktrees.execute(call, result)
         if op == "sub.close":
             bus = call.service.bus
             closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
@@ -560,6 +568,10 @@ class RegistryBackend:
                 from . import runners
 
                 result = runners.serve(call)
+            elif op in WORKTREE_OPS:
+                from . import worktrees
+
+                result = worktrees.serve(call)
             elif op in FILE_OPS or op in GIT_OPS or op in QUICK_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:

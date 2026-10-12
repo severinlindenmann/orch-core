@@ -223,15 +223,23 @@ class Human:
             branch = links["branches"].get(name)
             if not branch:
                 continue
-            path = self.ctx.caps.git.repo_path(self.store.root, self.store.state.workspace.repos, name)
-            if path is None or not path.is_dir():
-                out.append(f"{name}: no working copy in settings.repos")
-                continue
-            ref = f"refs/heads/{branch}"
             git = self.ctx.caps.git
             if not git.enabled:  # git denied (an unreadable pin file in host mode): refused, never an internal error
                 out.append(f"{name}: git cannot be read here")
                 continue
+            # H11d: the ticket's registered worktree when it has one (never a fallback), else the declared copy
+            copy = git.ticket_copy(self.store.root, self.store.state.workspace.repos, view.uid, name)
+            path = copy.path
+            if copy.why is not None:
+                out.append(copy.why)
+                continue
+            if path is None or not path.is_dir():
+                where = "the ticket's worktree is missing" if copy.registered else "no working copy in settings.repos"
+                out.append(f"{name}: {where}")
+                continue
+            if self.ctx.prepare is not None:
+                self.ctx.prepare.copies.append(copy.binding(view.uid, name))
+            ref = f"refs/heads/{branch}"
             head = git.head(path)
             on = git.symbolic_head(path)
             identity = git.identity(path, name)

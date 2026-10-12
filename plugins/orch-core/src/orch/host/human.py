@@ -416,7 +416,8 @@ class HumanOps:
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
-            require_checks(call, prepared)  # a decision that binds commits is never prepared without its checks
+            # a decision that binds commits is never prepared without its checks
+            require_checks(call, prepared, capture.copies)
         result = result_dict(res)
         # H7: the lines too (a grant's "the secret was shown" line), so the committed result renders as direct mode's
         template = {"data": result["data"], "key": result["key"], "hints": result["hints"], "lines": result["lines"]}
@@ -443,6 +444,9 @@ class HumanOps:
             "expires": now + (GRANT_EXPIRE_SECONDS if name == "grant" else EXPIRE_SECONDS),
             "prepared": prepared,
             "trees_checked": now if prepared.get("checks") else None,  # human.get's re-check rate bound (N3)
+            # H11d (D-P2-32): the working copy (registration generation and pin) of each linked repo; binding and
+            # precommit refuse another one (observe.unavailable), never falling back to the declared copy
+            "copies": capture.copies,
             "extras": extras,
             "result": template,
             "submit": None,
@@ -849,7 +853,7 @@ class HumanOps:
         seq, prev, at = stamp["seq"], stamp["prev"], stamp["at"]
         for ev in events:
             if "source_sha" in ev and log != "workspace":  # D58 first: git is read under the same lock
-                recheck_sources(git, store, store.ticket(log), ev["source_sha"])
+                recheck_sources(git, store, store.ticket(log), ev["source_sha"], record.get("copies"))
             probe = {**ev, "seq": seq, "prev": prev, "at": at}
             if "ws_seq" in stamp:
                 probe["ws_seq"] = stamp["ws_seq"]
@@ -884,7 +888,7 @@ def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
     covered: set[str] = set()
     for c in prepared.get("checks") or []:
         name = c["repo"]
-        path = git.repo_path(store.root, repos, name) if git.enabled and git.reader is not None else None
+        path = bound_copy(git, store, prepared["log"], name, record.get("copies"))
         got = git.tree_check(path, name) if path is not None else None
         if got is None:
             raise HostError("observe.unavailable", f"{name}: the working tree cannot be checked now; nothing was bound")
@@ -916,20 +920,39 @@ def _binds_commits(prepared: dict[str, Any]) -> bool:
     return any(ev.get("source_sha") for ev in prepared["events"])
 
 
-def require_checks(call: Call, prepared: dict[str, Any]) -> None:
+def bound_copy(git: Any, store: Any, log: str, name: str, copies: list[dict[str, Any]] | None) -> Any:
+    """H11d (D-P2-32, §12.7): the path of the working copy of (ticket ``log``, repo ``name``) **if** it is still the
+    one the request was prepared against: the same registration generation, the same registered (or declared) copy
+    and the same worktree pin. A re-registration, a removal or a re-pin since prepare is ``observe.unavailable``;
+    there is never a fallback to the declared working copy."""
+    if not git.enabled or git.reader is None:
+        return None
+    want = next((c for c in copies or [] if c.get("repo") == name and c.get("ticket") == log), None)
+    copy = git.ticket_copy(store.root, store.state.workspace.repos, log, name)
+    if want is None or copy.binding(log, name) != want:
+        raise HostError(
+            "observe.unavailable",
+            f"{name}: the ticket's worktree registration changed since the request was prepared; prepare it again",
+        )
+    if copy.path is None:
+        raise HostError("observe.unavailable", (copy.why or f"{name}: no working copy")[:300])
+    return copy.path
+
+
+def require_checks(call: Call, prepared: dict[str, Any], copies: list[dict[str, Any]] | None = None) -> None:
     """At prepare: every repository a prepared event binds (each ``source_sha`` entry, by identity) must have a
     clean-tree check in ``checks``; otherwise ``observe.unavailable``. The checked repos' identities are read again
-    through the reader, so a check of one repo can never stand in for another."""
+    through the reader (in the working copy the check ran in, H11d), so a check of one repo can never stand in for
+    another."""
     need = {e["repo"] for ev in prepared["events"] for e in ev.get("source_sha") or []}
     if not need:
         return
     service = call.service
     git = service.caps_for(call.principal).git
     store = service.store
-    repos = store.state.workspace.repos
     have: set[str] = set()
     for c in prepared.get("checks") or []:
-        path = git.repo_path(store.root, repos, c["repo"]) if git.enabled and git.reader is not None else None
+        path = bound_copy(git, store, prepared["log"], c["repo"], copies)
         if path is not None and c.get("clean") is True:
             have.add(git.identity(path, c["repo"]))
     missing = sorted(need - have)
@@ -939,22 +962,28 @@ def require_checks(call: Call, prepared: dict[str, Any]) -> None:
         )
 
 
-def recheck_sources(git: Any, store: Any, view: Any, signed: list[dict[str, Any]]) -> None:
+def recheck_sources(
+    git: Any, store: Any, view: Any, signed: list[dict[str, Any]], copies: list[dict[str, Any]] | None = None
+) -> None:
     """D58 at submit, under the store lock: each linked repo's head, read again through the host's git reader (under
     the caller's principal), must be the commit the decision signs, on the bound branch: ``gate.stale`` otherwise. A
     reader that cannot answer fails closed (``observe.unavailable``). The working tree's cleanliness is ``tree.check``
-    at prepare and binding (:func:`recheck_trees`, N3), not checked here (H0 amends F1 section 10.8)."""
+    at prepare and binding (:func:`recheck_trees`, N3), not checked here (H0 amends F1 section 10.8).
+
+    H11d (D-P2-32): the head is read in the working copy the request was prepared against (:func:`bound_copy`: the
+    same registration generation and pin, never a fallback to the declared copy), and ``HEAD`` must still be the
+    symbolic ref of the ticket's **current** branch."""
     from orch.ops.caps import CapabilityDenied
 
     links = view.fields["links"]
-    repos = store.state.workspace.repos
     for name in links["repos"]:
         branch = links["branches"].get(name)
         if not branch:
             continue
         try:
-            path = git.repo_path(store.root, repos, name)
+            path = bound_copy(git, store, view.uid, name, copies)
             head = git.head(path) if path is not None else None
+            on = git.symbolic_head(path) if head is not None else None
             identity = git.identity(path, name) if head is not None else None
         except (CapabilityDenied, OSError) as exc:
             raise HostError("observe.unavailable", f"{name}: git cannot be read now ({exc})") from None
@@ -963,6 +992,8 @@ def recheck_sources(git: Any, store: Any, view: Any, signed: list[dict[str, Any]
         entry = next((e for e in signed if e.get("repo") == identity), None)
         if entry is None or entry.get("ref") != f"refs/heads/{branch}" or entry.get("sha") != head:
             raise HostError("gate.stale", f"{name}: the code moved since the request was prepared; look again")
+        if on != f"refs/heads/{branch}":
+            raise HostError("observe.unavailable", f"{name}: the working tree is not on the ticket's branch {branch}")
 
 
 class _Stored(Exception):

@@ -605,8 +605,12 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   none takes `repo: null` and `commit: null` only. Two `files` arguments with the same logical name are `blob.invalid`.
   A direct-mode receipt (`--run`) carries `attested_by: "agent"` too: the agent's environment ran it, not orch. The
   verify-gate review (terminal text and the dashboard dialog) says "attested by the agent".
-  `task.list` data gives each task's exact `verify` command (when it has one) and the ticket's linked `repos`, so a
-  client can run it. The thin CLI (`orch task done T --run`) reads them, runs the command with the P1 runner (allow-listed
+  `task.list` data gives each task's exact `verify` command (when it has one), `verify_runnable` (whether the caller may
+  run it, below) and `verify_author` (who changed it last, for display), and the ticket's linked `repos`, so a client
+  can run it. The thin CLI (`orch task done T --run`) reads them, refuses with `verify.unapproved` unless
+  `verify_runnable` is true, sends a dry-run `task.done` for the same task (the claim, the lease and the task state,
+  checked exactly as the real request will; idempotency does not apply to a dry run, §0.7) and only then runs the
+  command with the P1 runner (allow-listed
   environment, timeout, output capped at 1 MiB), refuses a dirty working tree of a linked repo (the receipt must name its
   commit), picks the only linked repo or, with several, the one whose directory name matches the working copy it is in,
   and sends nothing when the command fails. `orch describe` does not list the `x-host` arguments.
@@ -615,14 +619,25 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   ticket asked for (the key, or the number given) and a task with exactly that id, and `verify` is a non-empty string of
   at most 4096 bytes without NUL; otherwise nothing runs. No other host field, error text or argument is ever executed.
   It then runs through the same runner as direct mode (same argv splitting without a shell, allow-listed environment,
-  timeout, output cap, working copy as cwd) and the `task.done` goes to the key it was read from. This equals direct
-  mode's trust: the person approved `verify.cmd` in the plan, and a host that lied could only make the client run a
-  command of its own choosing, as any program the user's own host-side state could already name. The host re-checks
-  that the receipt's `cmd` equals the signed `verify.cmd` byte for byte.
+  timeout, output cap, working copy as cwd) and the `task.done` goes to the key it was read from. It equals direct
+  mode's trust, which is enforced (F1 "Receipts"): the command runs only if the plan gate applies and is approved at its
+  current generation, or the caller's own person (the person of its grant) made the last change to that task's
+  `verify` under a grant that is not revoked (revoking a leaked grant withdraws trust in what it wrote, also for the
+  person's other grants; an expired grant stays trusted). The approval binds the command string only, not the repository
+  content it runs: an approved `make test` or `./run.sh` executes whatever the working copy holds. **Without an applicable plan gate only the caller's own command runs**; an unattended agent runs none that
+  is not approved. A host that lied could only make the client run a command of its own choosing, as any program the
+  user's own host-side state could already name. The host re-checks that the receipt's `cmd` equals the signed
+  `verify.cmd` byte for byte and applies the same trust rule again when it takes the receipt (`verify.unapproved`
+  otherwise), so a stale or modified client cannot get around it.
   The CLI prints the exact command (escaped) before running it. **Trust direction (D-P2-19):** in host mode the command
   reaches the agent's machine through the host's answer; a compromised host that passes the pin could make the CLI run an
   arbitrary command as the agent user. That is accepted in tier A, where the host runs as the same UID. Phase 3 (tier B)
   must revisit it, for example by verifying the command against the signed ticket log locally.
+  **"Own" is per person, which is safe only in tier A.** In tier A and in direct mode all of a person's agents, the
+  person and the host share one UID, so "the caller's own person wrote it" adds no reach the UID did not already have.
+  In tier B (agent UIDs, #287) it would let one agent UID plant a command another agent UID of the same person (or the
+  person, with a grant) runs, crossing the boundary tier B enforces: there "own" must mean the same grant (or the same
+  agent UID class), not the same person. A phase-3 follow-up (§9 item 10).
 - `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
   `host.wsk_create` + `host.bootstrap` composite.
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.
@@ -3329,6 +3344,10 @@ dispatch is turned on.
      SHAttered-style colliding object would be accepted. Accepted risk at today's cost; sha256 repos are unaffected.
      Add the known collision-disturbance check, or prefer sha256 repos.
    - **Rename detection** (§0.8 keeps `R` and `old_path` for a later version).
+10. **Phase-3 follow-ups (tier B).**
+   - **Verify trust "own" becomes "same grant"** (#420 review): the rule of §0.8 "Trust of the command" keys "own" on the
+     person, which is sound only while all of a person's agents share one UID; tier B (#287) narrows it to the author's
+     grant (or agent UID class).
 
 ## 10. Decisions record
 

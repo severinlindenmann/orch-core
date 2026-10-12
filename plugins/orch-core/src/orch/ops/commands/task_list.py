@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from orch.ops import views
-from orch.ops._dsl import INT, REF_PATTERN, STR, S, arr, err, obj, operation
+from orch.ops import verify_trust, views
+from orch.ops._dsl import BOOL, INT, REF_PATTERN, STR, S, arr, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.runtime import Call, flat
 
@@ -14,8 +14,19 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c.shown(view, fields=("tasks",))
     tasks = [{"id": t.id, "text": flat(t.text), "state": t.state} for t in view.tasks]
     # for a host client that runs a verify command itself (H3b2): the exact command and the repos the ticket links
+    # and whether the caller may run it (F1 "Receipts": an approved plan's command or its own person's), with who wrote
+    # it: the client runs nothing before it knows
     cmds = {x["id"]: x["verify"]["cmd"] for x in view.fields["tasks"] if x["verify"] is not None}
-    rows = [{**t, "verify": cmds[t["id"]]} if t["id"] in cmds else t for t in tasks]
+    person, grants = verify_trust.caller_person(c), verify_trust.grants(c)
+
+    def verify_of(tid: str) -> dict[str, Any]:
+        return {
+            "verify": cmds[tid],
+            "verify_runnable": verify_trust.trust(view, tid, person, grants) is not None,
+            "verify_author": verify_trust.author(view, tid) or "unknown",
+        }
+
+    rows = [{**t, **verify_of(t["id"])} if t["id"] in cmds else t for t in tasks]
     return c.result(
         view,
         {"count": len(rows), "tasks": rows, "repos": list(view.fields["links"]["repos"])},
@@ -35,7 +46,19 @@ OP = operation(
     data=obj(
         {
             "count": INT,
-            "tasks": arr(obj({"id": STR, "text": STR, "state": STR, "verify": STR}, optional=("verify",))),
+            "tasks": arr(
+                obj(
+                    {
+                        "id": STR,
+                        "text": STR,
+                        "state": STR,
+                        "verify": STR,
+                        "verify_runnable": BOOL,
+                        "verify_author": STR,
+                    },
+                    optional=("verify", "verify_runnable", "verify_author"),
+                )
+            ),
             "repos": arr(STR),
         }
     ),

@@ -3,8 +3,11 @@
 What the receipt is: "this command exited 0 in the agent's environment, in this working copy, at this commit". It is
 **attested by the agent's environment**, not independent verification: the agent controls ``PATH`` (a fake ``pytest``
 exits 0), may choose among the linked repositories by its working directory, and a ``verify.cmd`` such as
-``sh -c '...'`` runs a shell (orch adds none). The control is that ``verify.cmd`` sits in the plan a person approves,
-and P2 uses client-run receipts checked by the host against that command (§10.7). What orch does guarantee:
+``sh -c '...'`` runs a shell (orch adds none). The control (``orch.ops.verify_trust``, F1 "Receipts") is enforced
+before this runs: the command runs only if the plan gate applies and is approved at its current generation, or the
+caller's own person wrote it last under a grant that is not revoked. The approval binds the command string, not the
+repository content it runs. P2 uses client-run receipts checked by the host against that command and the same rule
+(§10.7). What orch does guarantee:
 
 * the command is the ticket's ``verify.cmd`` split into arguments (``shlex``), never anything the agent passes;
 * it runs in its own process group with a hard timeout (the group is killed; a process that leaves it with ``setsid``

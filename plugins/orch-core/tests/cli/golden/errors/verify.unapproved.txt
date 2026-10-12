@@ -1,0 +1,1 @@
+err verify.unapproved the task's verify command is neither approved nor yours · retry:false · next: a person approves the plan, or add your own verify command · fix: orch show

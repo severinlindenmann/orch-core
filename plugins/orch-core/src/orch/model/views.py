@@ -78,6 +78,7 @@ class TaskView:
     leased_by: str | None
     proves: tuple[str, ...]
     done_event: str | None
+    verify_by: Mapping[str, Any] | None = None  # who made the last change to its verify (model.edits)
 
 
 @dataclass(frozen=True)
@@ -260,6 +261,7 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
                 lease.session if lease and tasks.lease_active(ws, lease, now) else None,
                 tuple(x["proves"]),
                 tk.done_event if tk else None,
+                freeze(t.verify_by[x["id"]]) if x["id"] in t.verify_by else None,
             )
         )
     return TicketView(

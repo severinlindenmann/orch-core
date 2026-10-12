@@ -120,6 +120,13 @@ class WorkspaceService:
         self.auth: AuthView | None = None
         #: the handlers' capabilities (D-P2-9): built once per workspace on the worker thread, closed with it
         self.caps: Any = None
+        #: the host's pool of git reader children (:class:`orch.gitread.client.ReaderPool`, F10), set by the host;
+        #: ``None``: git is denied to this workspace's handlers
+        self.git_pool: Any = None
+        #: the declared repo paths last pinned (:meth:`sync_git`), and when to retry pins that failed (monotonic)
+        self._git_declared: tuple[str, ...] | None = None
+        self._git_retry_at = 0.0
+        self._git_backoff = 0.0
         #: set while ``unregister`` drains this workspace: new requests answer ``workspace.unavailable``
         self.closing = False
         #: the subscription journal (:mod:`orch.host.journal`, H6a), built at open; worker thread only
@@ -193,6 +200,7 @@ class WorkspaceService:
         self._judge()
         self._snapshot()
         if self.state != "unavailable":
+            self.sync_git()  # pins at workspace open (F7), under this workspace's principal
             try:
                 self.outcomes.open()
                 if self.requests is not None:
@@ -346,6 +354,7 @@ class WorkspaceService:
             return
         self._judge()
         self._snapshot()
+        self.sync_git()  # a settings.changed that added, moved or removed a repo (F7)
 
     def person_valid(self, person: str) -> bool:
         self.refresh()
@@ -377,8 +386,61 @@ class WorkspaceService:
 
             # The workspace root only: the host's state directory (keys, pins, outcome records) is never a handler's
             # file root, and no ORCH_STATE_DIR or ORCH_WORKSPACE reaches a handler (the store is injected).
-            self.caps = Capabilities.host((self.entry.root,), env={}, clock=self.clock)
+            git = None
+            if self.git_pool is not None:
+                from orch.gitread.client import HostGitReader, PinStore
+                from orch.gitread.errors import Unavailable
+
+                # pins live in the host's state directory (0600), one file per workspace. Tier A runs the
+                # tree.check job in the host's own worktree-profile child (H10a); tier B waits for the worker (H10).
+                try:
+                    pins = PinStore(self.state_dir / "hosts" / self.workspace_id / "git-pins.json")
+                    git = HostGitReader(
+                        self.git_pool,
+                        pins,
+                        principal=f"host:{self.workspace_id}",  # pins queue per workspace, never host-wide (F10)
+                        tree_checks=self.entry.tier == "A",
+                    )
+                except (OSError, ValueError, Unavailable):
+                    git = None  # an unreadable pin file is never replaced by fresh pins: git is denied (fail closed)
+            self.caps = Capabilities.host((self.entry.root,), env={}, clock=self.clock, git=git)
         return self.caps
+
+    def sync_git(self) -> None:
+        """Pin the repos ``settings.repos`` declares, at workspace open and whenever the declared set changes (a
+        ``settings.changed``, F7), and drop pins of repos no longer declared; an existing pin is never replaced
+        (:meth:`orch.gitread.client.HostGitReader.sync`). Pins run under this workspace's own principal. A repo that
+        cannot be pinned is remembered and retried only after a backoff (1 min, doubling to 1 h) or the next change of
+        the declared set, never on every read; until then each read of it is ``observe.unavailable``. Cheap when
+        nothing changed (worker thread). Called centrally: by :meth:`open`, :meth:`refresh` and :meth:`caps_for`."""
+        caps = self.capabilities()
+        reader = caps.git.reader
+        if reader is None or self.store is None:
+            return
+        repos = self.store.state.workspace.repos
+        declared = tuple(
+            sorted(os.fspath(p) for n in repos if (p := caps.git.repo_path(self.store.root, repos, n)) is not None)
+        )
+        now = time.monotonic()
+        if declared == self._git_declared and now < self._git_retry_at:
+            return
+        if declared != self._git_declared:
+            self._git_backoff = 0.0
+        try:
+            failed = any(why is not None for why in reader.sync(list(declared)).values())
+        except OSError:
+            failed = True  # the pin file cannot be written: nothing new is pinned (PinStore writes the file first)
+        self._git_declared = declared
+        if failed:
+            self._git_backoff = min(3600.0, max(60.0, self._git_backoff * 2))
+            self._git_retry_at = now + self._git_backoff
+        else:
+            self._git_backoff, self._git_retry_at = 0.0, float("inf")
+
+    def caps_for(self, principal: str) -> Any:
+        """One request's capabilities: pins up to date (:meth:`sync_git`), git reads under ``principal``."""
+        self.sync_git()
+        return self.capabilities().with_principal(principal)
 
     def close(self) -> None:
         def shut() -> None:

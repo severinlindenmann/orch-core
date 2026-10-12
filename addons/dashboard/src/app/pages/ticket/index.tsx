@@ -190,7 +190,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   if (!ticket) return <TicketSkeleton />
 
   // The mock shows Changes once work started; a real host serves the diff of any ticket with a linked branch.
-  const showChanges = HAS_CHANGES.has(ticket.status) || (isRealHost() && hasFeature('changes', ticketWs) && Object.keys(ticket.links.branches).length > 0)
+  // A real host that does not serve `diff` (core H6b lists the cap but not the op) has no Changes tab: nothing could load.
+  const showChanges = isRealHost() ? hasFeature('changes', ticketWs) && (HAS_CHANGES.has(ticket.status) || Object.keys(ticket.links.branches).length > 0) : HAS_CHANGES.has(ticket.status)
   const props: TabProps = { ticket, viewer, jump, sign: setSigning }
   const openQuestions = ticket.questions_state.filter((x) => x.state === 'open').length
   const provenCount = ticket.acceptance_state.filter((a) => a.state === 'proven').length

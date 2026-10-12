@@ -23,6 +23,7 @@ packages = ["src/orch_dashboard"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["realhost: runs a real orch host (core) as a subprocess; skipped when it cannot start"]
 pythonpath = ["..", "../../../plugins/orch-core"]
 
 [tool.ruff]
@@ -31,3 +32,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Long prose lines in the real-host kit and tests (prompts, reasons and findings read better unwrapped).
+"tests/realhost_kit.py" = ["E501"]
+"tests/test_realhost.py" = ["E501"]

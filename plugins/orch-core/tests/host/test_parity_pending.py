@@ -1,7 +1,7 @@
-"""H7 parity that waits for groups not merged yet. Each test is ``xfail(strict=True)``: it fails today for the reason
-named, and the day the group lands it passes, the strict mark turns that into a failure (XPASS), and the mark must go.
+"""H7 parity of the parts other groups serve. A test whose group is not merged yet is ``xfail(strict=True)``: it fails
+for the reason named, and the day the group lands the strict mark turns its pass into a failure (XPASS) and must go.
 
-* ``verdict`` (and ``show``) on a ticket with a linked repository need git in the served workspace and the clean-tree
+* (#413, merged) ``verdict`` and ``show`` on a ticket with a linked repo need git in the served workspace and the clean-tree
   check (H10a ``tree.check``, #413). ``approve code`` binds the same source list through the same check; its gate
   must be independent (D59), so it needs a second person, and in tier A one UID maps to one person: its parity is
   the H10a host tests' (a clean tree allows it, a dirty one refuses it) rather than a two-mode script here.
@@ -65,7 +65,6 @@ def _fake_free(ws):  # host mode with the host's own git (no test reader): what 
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(strict=True, reason=TREE_CHECK)
 def test_verdict_and_show_on_a_linked_repo_match_direct_mode(tmp_path, monkeypatch):
     real = Path(os.path.realpath(tmp_path))
     want = _script(real / "d", _direct, monkeypatch)

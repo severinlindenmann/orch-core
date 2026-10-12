@@ -272,6 +272,53 @@ def test_a_command_written_under_a_since_revoked_grant_is_foreign_even_to_the_sa
     assert not marker.exists() and done_events(ws) == []
 
 
+def person_rewrites_verify(ws: Ws, cmd: str, tid: str = "T1") -> None:
+    """The owner (a person, signing directly: no grant, no agent) sets task ``tid``'s verify command."""
+    old, ws.store = ws.store, ws.other()
+    try:
+        uid = ws.store.uid_of("1")
+        ws.store.ticket(uid)
+        tasks = [
+            {**dict(t), "verify": {"cmd": cmd}} if t["id"] == tid else dict(t)
+            for t in thaw(ws.store.state.tickets[uid].fields["tasks"])
+        ]
+        ws.tick()
+        ws.store.append(
+            ws.person_event(
+                ws.owner,
+                uid,
+                "ticket.updated",
+                set={"ticket.tasks": tasks},
+                base_rev=ws.base_rev(uid, {"ticket.tasks": None}, {}),
+            ),
+            log=uid,
+        )
+    finally:
+        ws.store.close()
+        ws.store = old
+
+
+def test_a_command_written_by_a_person_is_own_for_that_person_and_foreign_to_anothers_grant(ws, cli, tmp_path):
+    """A person's own edit carries no grant: it is "own" for that person's agents and refused for another person's."""
+    marker = tmp_path / "M"
+    assert cli("new", "A ticket").code == 0 and cli("claim", "1").code == 0
+    assert cli("task", "add", "do it", "--verify", "true").code == 0
+    assert cli("release").code == 0
+    person_rewrites_verify(ws, touch(marker))
+    by = ws.view("1").tasks[0].verify_by
+    assert by["kind"] == "person" and by["person"] == ws.owner.ref and not by.get("grant")
+    bob = Cli(ws, session=BOB_SESSION, ORCH_GRANT=second_person(ws))
+    assert bob("claim", "1").code == 0 and bob("task", "start", "T1").code == 0
+    r = bob.j("task", "done", "T1", "--run")
+    assert (r.code, r.err_code) == (3, "verify.unapproved"), r.out
+    assert not marker.exists() and done_events(ws) == []
+    assert bob("release").code == 0
+    assert cli("claim", "1").code == 0 and cli("task", "start", "T1").code == 0
+    r = cli("task", "done", "T1", "--run")
+    assert r.code == 0, r.err
+    assert marker.exists() and len(done_events(ws)) == 1
+
+
 def test_an_expired_authors_grant_stays_trusted(ws, tmp_path):
     from orch.ops import verify_trust
 

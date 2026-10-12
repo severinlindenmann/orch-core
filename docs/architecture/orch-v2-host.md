@@ -4164,6 +4164,29 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   gui/<uid>/io.orch.runner`, systemd `MainPID`); a second one is `peer.denied`. The host records `gen` and `pid`; they
   bind the term socket (§12.6.1).
 
+**As built in H11a** (#428, #432). Where the code differs from the text above, the code is this:
+
+- **Commands and reports.** A command item is `{id:"<n>.c", cmd:ULID, op, args}`: `op` names the command, `cmd` is
+  its id, and `runner.report {cmd}` names that id. The stop command is **`stop {run, grace_ms}`**, not `signal {run,
+  sig, sweep}`: the runner runs the whole §12.5 sequence itself (it holds the birth identities) and answers `{state,
+  cleanup}`; `state` stays `running` when even `SIGKILL` did not end the leader (then `cleanup:"incomplete"`, the run
+  stays supervised and is killed again on every scan; it is never reported ended or dropped).
+- **`runner.exit`** is sent once the clean-up has a result, and again when an `incomplete` clean-up completes; the host
+  sets `exit.reason` (`stopped` after a `run.stop`, else `exited`).
+- **`runner.hello`** answers `{sub}`; `gen` is drawn at every runner start (not persisted). `grants` is accepted by the
+  schema and ignored until H11c. A spawn that is half-done while the hello is built cannot happen (the runner holds its
+  spawn lock); a spawn that failed after the fork is in the table with its pid and birth time.
+- **Trampoline.** The runner starts `python -I <release>/orch/runner/exec.py SPEC_FD STATUS_FD`, not `-m`: under `-I`
+  a release's `orch` is not importable, and `-I` implies `-P`, so the file imports only the standard library. The status
+  pipe is close-on-exec: EOF means `execve` happened; otherwise it names the failed step.
+- **Machine switch.** `orch runner enable` records the switch in `<state>/host/dashboard-execution.json` (0600), with
+  the time and the exact text shown; a corrupt file reads as off.
+- **macOS `cleanup:"complete"`** means: nothing of the run's group or session and no tracked descendant is left, and no
+  descendant was ever seen outside the session. The escape scan runs every 2 s and right before a stop; a descendant
+  that calls `setsid()` and whose parent exits between two scans cannot be seen. That is the stated best effort.
+- **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says.
+  The byte path after `ready` (`out`, `in`, `ack`, `gap`, `throttle`) is H11b.
+
 ### 12.4 Start an agent (#307)
 
 1. `agent.preview`: the host checks the column, the ticket's visibility, the addon and the machine switch

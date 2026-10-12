@@ -147,6 +147,8 @@ class Live:
     cleanup: str | None = None
     #: processes of the run were still there after the last kill: retried every scan, never pruned
     lingering: bool = False
+    cols: int = 120
+    rows: int = 40
     done: threading.Event = field(default_factory=threading.Event)
     ended_at: float = 0.0
     stop_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -347,6 +349,7 @@ class Supervisor:
                 ) from None
             os.set_blocking(master, False)
             live = Live(spec.run, proc, master, Ring(self.ring_bytes), proc.pid, found.birth, found.pgid, found.sid, cg)
+            live.cols, live.rows = spec.cols, spec.rows
             self.table.update(
                 spec.run,
                 state="running",
@@ -435,6 +438,15 @@ class Supervisor:
         if not (20 <= cols <= 500 and 5 <= rows <= 200):
             raise SpawnError("invalid.input", "size out of range")
         fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        live.cols, live.rows = cols, rows
+
+    def attach_info(self, run: str) -> dict[str, Any] | None:
+        """What an attachment's ``ready`` frame needs (§12.6.3), or ``None`` when the run's ring is not kept."""
+        live = self.live.get(run)
+        if live is None:
+            return None
+        return {"start": live.ring.start, "offset": live.ring.end, "cols": live.cols, "rows": live.rows,
+                "state": "running" if live.exit is None else "exited"}  # fmt: skip
 
     # -- membership
     def _members(self, rec: dict[str, Any], tracked: dict[int, int], snap: dict[int, procs.ProcInfo] | None = None):

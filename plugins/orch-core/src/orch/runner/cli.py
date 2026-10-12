@@ -162,7 +162,7 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
 def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from orch.host import enable as svc
 
-    from .link import HostLink, next_generation
+    from .link import HostLink, new_gen
     from .supervise import Supervisor
     from .term import TermListener
 
@@ -175,15 +175,15 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     log = logging.getLogger("orch.runner")
     for item in swept:
         log.warning("run %s was lost (runner restart); swept %d", item["run"], item["swept"])
-    generation = next_generation(Path(state) / "runner", uid)
-    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid)
+    gen = new_gen()
+    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, info=sup.attach_info)
     try:
         term.open()
     except OSError as exc:
         log.warning("the terminal socket is not served: %s", exc)
         term = None  # type: ignore[assignment]
     # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
-    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, generation=generation, term=term)
+    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term)
     link.start()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

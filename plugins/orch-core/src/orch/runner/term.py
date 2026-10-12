@@ -1,15 +1,22 @@
-"""The runner's terminal socket (D-P2-25): ``<run>/term/<uid>/term.sock``, where the dashboard server attaches.
+"""The runner's term socket (§12.6.1, §12.6.2): ``<run>/term/<uid>/term.sock``, where the dashboard server attaches.
 
-The host decides every attach and registers it here with ``attach.allow {att, ticket_hash, run, person, mode,
-lease_gen, expires}`` over its command stream; the dashboard server then connects to this socket and sends the ticket
-once, as its first line (``{"ticket": "…"}``, at most 1 KiB, within 5 s). The runner consumes it atomically: a ticket
-works once, only until it expires (at most 10 s after the allow arrived, so an unused ticket never holds anything),
-and only while the host connection that issued it is live. ``attach.end`` closes an attachment; losing the host ends
-every attachment (``host.restarting``) and refuses new tickets until the next ``runner.hello`` is answered (a new
-authorization epoch, D-P2-39).
+The host decides every attach and registers it here with ``attach.allow`` over its command stream (§12.6.2); the
+runner never sees a ticket, only its SHA-256. On every new connection (peer UID = the runner's UID) the runner sends
+first ``{t:"hello", gen, pid}`` (the dashboard server checks both against what the host told it, §12.6.1 step 4); the
+server answers with ``{t:"attach", ticket, nonce}`` within 5 s. Frames use §0.2's codec (4-byte length).
 
-The directory is the runner UID's own (0700, never a symlink), the socket 0600, and every connection's peer UID must be
-the runner's UID. The byte path itself (output frames, input ids, the write lease) is H11b.
+The capability is consumed atomically and only once: the hash must match a pending record whose ``runner_gen``,
+``nonce`` and expiry hold (10 s unused at most, whatever the host's expiry says), in the current host epoch. A bad
+ticket closes the connection with ``{t:"end", reason:"ticket_invalid"}`` and nothing else. Only presentations of a hash
+the runner **has seen** (consumed or expired) count toward the lockout (10 per minute, then 60 s of refusals); an
+unknown hash closes without counting, so random tickets cannot lock terminals out.
+
+On success the runner answers ``{t:"ready", start, offset, cols, rows, writer, lease_gen, state}``. The write lease
+(§12.6.2): ``take:false`` is refused with ``{t:"end", reason:"writer_busy"}`` when the lease is held or its generation
+moved; ``take:true`` takes it; either way the generation increments and the old holder gets ``{t:"writer",
+writer:false, lease_gen}``. Closing the holder's connection releases the lease. ``attach.end`` closes an attachment
+with ``{t:"end", reason}``; losing the host ends every attachment (``host.restarting``) and refuses capabilities until
+the next ``runner.hello`` is answered (a new authorization epoch). The byte path (``out``, ``in``, ``ack``) is H11b.
 """
 
 from __future__ import annotations
@@ -17,28 +24,29 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
-import json
 import logging
 import os
 import socket
 import stat
 import threading
 import time
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from orch.host import frames
 from orch.host._socket import peer_credentials
 
 __all__ = ["TermListener", "TicketError"]
 
 LOG = logging.getLogger(__name__)
-TICKET_WAIT = 5.0
+ATTACH_WAIT = 5.0
 ALLOW_SECONDS = 10.0
-ATTEMPTS_PER_MINUTE = 10
-LINE_MAX = 1024
+LOCKOUT_COUNT = 10
+LOCKOUT_SECONDS = 60.0
+SEEN_KEEP = 1024
 
 
 class TicketError(Exception):
@@ -49,10 +57,16 @@ class TicketError(Exception):
 class Allow:
     att: str
     ticket_hash: str
-    run: str
+    workspace_id: str
     person: str
+    run: str
+    session: str | None
     mode: str
+    take: bool
     lease_gen: int
+    runner_gen: str
+    start_from: int | None
+    nonce: str
     expires: float
     epoch: int
 
@@ -63,21 +77,40 @@ class Attachment:
     run: str
     person: str
     mode: str
-    lease_gen: int
     conn: socket.socket
+    writer: bool = False
+
+
+def _parse_time(value: Any) -> float:
+    if not isinstance(value, str):
+        raise ValueError("expires_at")
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
 class TermListener:
-    def __init__(self, path: Path, uid: int, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        path: Path,
+        uid: int,
+        *,
+        gen: str = "0" * 32,
+        info: Callable[[str], dict[str, Any] | None] | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self.path = Path(path)
         self.uid = uid
+        self.gen = gen
+        self.info = info or (lambda run: {"start": 0, "offset": 0, "cols": 120, "rows": 40, "state": "running"})
         self.clock = clock
         self.lock = threading.Lock()
         self.allows: dict[str, Allow] = {}  # by ticket hash
         self.attachments: dict[str, Attachment] = {}
+        self.leases: dict[str, tuple[str | None, int]] = {}  # run -> (holder att, lease generation)
         self.accepting = False
         self.epoch = 0
-        self.attempts: deque[float] = deque()
+        self.seen: dict[str, float] = {}  # hashes of consumed or expired capabilities
+        self.strikes: list[float] = []
+        self.locked_until = 0.0
         self.sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._closing = False
@@ -86,7 +119,7 @@ class TermListener:
     def open(self) -> None:
         directory = self.path.parent
         with contextlib.suppress(FileExistsError):
-            os.mkdir(directory.parent, 0o711)  # <run>/term: only traversed (host doc §12.6.1)
+            os.mkdir(directory.parent, 0o711)  # <run>/term: only traversed
         with contextlib.suppress(FileExistsError):
             os.mkdir(directory, 0o700)
         info = os.lstat(directory)
@@ -121,7 +154,7 @@ class TermListener:
 
     def close(self) -> None:
         self._closing = True
-        self.host_lost("closed")
+        self.host_lost("runner.restarting")
         if self.sock is not None:
             with contextlib.suppress(OSError):
                 self.sock.shutdown(socket.SHUT_RDWR)
@@ -141,9 +174,12 @@ class TermListener:
     def host_lost(self, reason: str = "host.restarting") -> None:
         with self.lock:
             self.accepting = False
+            for item in self.allows.values():
+                self._remember(item.ticket_hash)
             self.allows.clear()
             ended = list(self.attachments.values())
             self.attachments.clear()
+            self.leases.clear()
         for att in ended:
             _end(att.conn, reason)
 
@@ -151,13 +187,17 @@ class TermListener:
         now = self.clock()
         try:
             item = Allow(
-                str(args["att"]), str(args["ticket_hash"]), str(args["run"]), str(args["person"]), str(args["mode"]),
-                int(args.get("lease_gen") or 0), min(float(args["expires"]), now + ALLOW_SECONDS), self.epoch,
+                str(args["att"]), str(args["ticket_hash"]), str(args["workspace_id"]), str(args["person"]),
+                str(args["run"]), args.get("session"), str(args["mode"]), bool(args.get("take")),
+                int(args.get("lease_gen") or 0), str(args["runner_gen"]), args.get("from"), str(args["nonce"]),
+                min(_parse_time(args["expires_at"]), now + ALLOW_SECONDS), self.epoch,
             )  # fmt: skip
         except (KeyError, TypeError, ValueError):
             raise TicketError("invalid attach.allow") from None
-        if item.mode not in ("read", "write") or len(item.ticket_hash) != 64:
+        if item.mode not in ("read", "write") or len(item.ticket_hash) != 64 or len(item.nonce) != 32:
             raise TicketError("invalid attach.allow")
+        if item.runner_gen != self.gen:
+            raise TicketError("attach.allow for another runner generation")
         with self.lock:
             if not self.accepting:
                 raise TicketError("no host epoch")
@@ -168,35 +208,77 @@ class TermListener:
         with self.lock:
             found = self.attachments.pop(att, None)
             for key in [k for k, a in self.allows.items() if a.att == att]:
+                self._remember(key)
                 del self.allows[key]
+            others = self._release(found) if found is not None else []
         if found is not None:
             _end(found.conn, reason)
+        for conn, frame in others:
+            _send(conn, frame)
         return found is not None
+
+    def _remember(self, digest: str) -> None:
+        self.seen[digest] = self.clock()
+        if len(self.seen) > SEEN_KEEP:
+            for key in sorted(self.seen, key=self.seen.__getitem__)[: len(self.seen) - SEEN_KEEP]:
+                del self.seen[key]
 
     def _expire(self, now: float) -> None:
         for key in [k for k, a in self.allows.items() if a.expires <= now]:
+            self._remember(key)
             del self.allows[key]
 
-    def consume(self, ticket: str) -> Allow | None:
-        """The allow this ticket names, removed (single use); ``None`` for an unknown, expired or stale one."""
+    def _strike(self, now: float) -> None:
+        self.strikes = [t for t in self.strikes if t > now - 60] + [now]
+        if len(self.strikes) >= LOCKOUT_COUNT:
+            self.locked_until = now + LOCKOUT_SECONDS
+            self.strikes = []
+
+    def consume(self, ticket: str, nonce: str) -> Allow | None:
+        """The capability this ticket names, removed (single use); ``None`` when it is bad in any way."""
         digest = hashlib.sha256(ticket.encode()).hexdigest()
         now = self.clock()
         with self.lock:
             self._expire(now)
-            item = self.allows.pop(digest, None)
-            if item is None or not self.accepting or item.epoch != self.epoch:
+            if now < self.locked_until:
+                return None
+            item = self.allows.get(digest)
+            if item is None:
+                if digest in self.seen:  # a replayed or expired capability counts; an unknown hash never does
+                    self._strike(now)
+                return None
+            del self.allows[digest]
+            self._remember(digest)
+            if not self.accepting or item.epoch != self.epoch or item.runner_gen != self.gen or item.nonce != nonce:
                 return None
             return item
 
-    def _rate_ok(self) -> bool:
-        now = self.clock()
-        with self.lock:
-            while self.attempts and self.attempts[0] < now - 60:
-                self.attempts.popleft()
-            if len(self.attempts) >= ATTEMPTS_PER_MINUTE:
-                return False
-            self.attempts.append(now)
-            return True
+    # -- the lease (runner side, §12.6.2)
+    def _take(self, item: Allow, att: Attachment) -> tuple[bool, list[tuple[socket.socket, dict[str, Any]]]]:
+        holder, gen = self.leases.get(item.run, (None, 0))
+        if not item.take and (holder is not None or gen != item.lease_gen):
+            return False, []
+        gen += 1
+        notes = []
+        old = self.attachments.get(holder) if holder else None
+        if old is not None:
+            old.writer = False
+            notes.append((old.conn, {"t": "writer", "writer": False, "lease_gen": gen}))
+        self.leases[item.run] = (att.att, gen)
+        att.writer = True
+        return True, notes
+
+    def _release(self, att: Attachment) -> list[tuple[socket.socket, dict[str, Any]]]:
+        holder, gen = self.leases.get(att.run, (None, 0))
+        if holder != att.att:
+            return []
+        gen += 1
+        self.leases[att.run] = (None, gen)
+        return [
+            (a.conn, {"t": "writer", "writer": False, "lease_gen": gen})
+            for a in self.attachments.values()
+            if a.run == att.run and a.att != att.att
+        ]
 
     # -- connections
     def _accept_loop(self) -> None:
@@ -211,35 +293,43 @@ class TermListener:
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket) -> None:
-        keep = False
+        att: Attachment | None = None
         try:
             if peer_credentials(conn).uid != self.uid:
                 return
-            if not self._rate_ok():
-                _reply(conn, {"ok": False, "error": "rate.limited"})
+            _send(conn, {"t": "hello", "gen": self.gen, "pid": os.getpid()})
+            frame = _read_frame(conn, ATTACH_WAIT)
+            ok = isinstance(frame, dict) and frame.get("t") == "attach"
+            ticket, nonce = (frame.get("ticket"), frame.get("nonce")) if ok else (None, None)
+            item = None
+            if isinstance(ticket, str) and isinstance(nonce, str) and 0 < len(ticket) <= 64:
+                item = self.consume(ticket, nonce)
+            info = self.info(item.run) if item is not None else None
+            if item is None or info is None:
+                _end(conn, "ticket_invalid")
                 return
-            line = _read_line(conn, TICKET_WAIT)
-            try:
-                doc = json.loads(line) if line is not None else None
-            except ValueError:
-                doc = None
-            ticket = doc.get("ticket") if isinstance(doc, dict) else None
-            item = self.consume(ticket) if isinstance(ticket, str) and 0 < len(ticket) <= 256 else None
-            if item is None:
-                _reply(conn, {"ok": False, "error": "term.ticket"})
-                return
-            att = Attachment(item.att, item.run, item.person, item.mode, item.lease_gen, conn)
+            new = Attachment(item.att, item.run, item.person, item.mode, conn)
             with self.lock:
                 if not self.accepting or item.epoch != self.epoch:
-                    _reply(conn, {"ok": False, "error": "term.ticket"})
+                    _end(conn, "ticket_invalid")
                     return
-                self.attachments[item.att] = att
-            keep = True
-            _reply(conn, {"ok": True, "att": item.att, "run": item.run, "mode": item.mode})
+                notes: list[tuple[socket.socket, dict[str, Any]]] = []
+                if item.mode == "write":
+                    taken, notes = self._take(item, new)
+                    if not taken:
+                        _end(conn, "writer_busy")
+                        return
+                self.attachments[item.att] = att = new
+                lease_gen = self.leases.get(item.run, (None, 0))[1]
+            for other, note in notes:
+                _send(other, note)
+            _send(conn, {"t": "ready", "start": info["start"], "offset": info["offset"], "cols": info["cols"],
+                         "rows": info["rows"], "writer": new.writer, "lease_gen": lease_gen,
+                         "state": info["state"]})  # fmt: skip
             conn.settimeout(None)
             while True:  # H11b streams here; until then the attachment stays open until either side ends it
                 try:
-                    data = conn.recv(4096)
+                    data = conn.recv(65536)
                 except OSError:
                     data = b""
                 if not data:
@@ -247,41 +337,44 @@ class TermListener:
         except OSError:
             pass
         finally:
-            if keep:
+            if att is not None:
                 with self.lock:
-                    current = self.attachments.get(att.att)
-                    if current is att:
+                    others: list[tuple[socket.socket, dict[str, Any]]] = []
+                    if self.attachments.get(att.att) is att:
                         del self.attachments[att.att]
+                        others = self._release(att)
+                for other, note in others:
+                    _send(other, note)
             with contextlib.suppress(OSError):
                 conn.close()
 
 
-def _read_line(conn: socket.socket, wait: float) -> bytes | None:
+def _read_frame(conn: socket.socket, wait: float) -> Any:
     deadline = time.monotonic() + wait
-    buf = b""
-    while b"\n" not in buf:
+    decoder = frames.Decoder()
+    while True:
         left = deadline - time.monotonic()
-        if left <= 0 or len(buf) > LINE_MAX:
+        if left <= 0:
             return None
         conn.settimeout(left)
         try:
-            part = conn.recv(LINE_MAX + 1 - len(buf))
+            part = conn.recv(4096)
         except (TimeoutError, OSError):
             return None
         if not part:
             return None
-        buf += part
-    line = buf.split(b"\n", 1)[0]
-    return line if len(line) <= LINE_MAX else None
+        got = decoder.feed(part)
+        if got:
+            return None if isinstance(got[0], frames.FrameError) else got[0]
 
 
-def _reply(conn: socket.socket, doc: dict[str, Any]) -> None:
+def _send(conn: socket.socket, frame: dict[str, Any]) -> None:
     with contextlib.suppress(OSError):
         conn.settimeout(2)
-        conn.sendall(json.dumps(doc).encode() + b"\n")
+        conn.sendall(frames.encode(frame))
 
 
 def _end(conn: socket.socket, reason: str) -> None:
-    _reply(conn, {"end": reason})
+    _send(conn, {"t": "end", "reason": reason})
     with contextlib.suppress(OSError):
         conn.shutdown(socket.SHUT_RDWR)

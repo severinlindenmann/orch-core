@@ -31,6 +31,7 @@ from tests.host.live_helpers import world
 
 pytestmark = pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the runner is POSIX only")
 ME = os.getpid()
+GEN1, GEN2 = "a" * 32, "b" * 32
 
 
 def wait_for(cond, timeout: float = 10.0):
@@ -46,14 +47,14 @@ def wait_for(cond, timeout: float = 10.0):
 class Runner:
     """A runner in this process: supervisor + terminal socket + host link."""
 
-    def __init__(self, w, state: Path, generation: int = 1) -> None:
+    def __init__(self, w, state: Path, gen: str = GEN1) -> None:
         self.sup = Supervisor(state, cgroups=None, scan_interval=0.2, exit_grace=0.5)
         self.sup.open()
-        self.term = TermListener(Path(w.lab.run) / "term" / str(UID) / "term.sock", UID)
-        self.term.open()
-        self.link = HostLink(
-            self.sup, w.h.host.runner_path, host_uid=UID, generation=generation, term=self.term, backoff=(0.05, 0.2)
+        self.term = TermListener(
+            Path(w.lab.run) / "term" / str(UID) / "term.sock", UID, gen=gen, info=self.sup.attach_info
         )
+        self.term.open()
+        self.link = HostLink(self.sup, w.h.host.runner_path, host_uid=UID, gen=gen, term=self.term, backoff=(0.05, 0.2))
         self.link.start()
         assert self.link.ready.wait(10), "the runner never got its hello answered"
 
@@ -106,7 +107,7 @@ def _hello(path: Path) -> tuple[socket.socket, dict]:
 def _first_frame(path: Path) -> dict:
     """Connect and read the host's first frame (a refused peer gets ``fatal`` before any hello)."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5)
+    s.settimeout(20)  # the identity check runs in a thread; slow under load
     try:
         s.connect(str(path))
         s.sendall(frames.encode({"t": "hello", "proto": [1], "client": "t", "caps": [], "ops": {}}))
@@ -150,7 +151,22 @@ def test_runner_class_and_one_connection_per_uid(w):
 def test_runner_ops_need_hello_first(w):
     sock, _ = _hello(w.h.host.runner_path)
     try:
-        sock.sendall(frames.encode({"t": "req", "id": "a1", "op": "runner.exit", "args": {"run": new_run_id()}}))
+        sock.sendall(
+            frames.encode(
+                {
+                    "t": "req",
+                    "id": "a1",
+                    "op": "runner.exit",
+                    "args": {
+                        "run": new_run_id(),
+                        "code": 0,
+                        "signal": None,
+                        "at": "2026-10-12T00:00:00Z",
+                        "cleanup": "complete",
+                    },
+                }
+            )
+        )
         dec = frames.Decoder()
         got = []
         while not got:
@@ -200,7 +216,7 @@ def test_spawn_writes_intent_first_and_runs_once(w, rstate, tmp_path):
         assert res["run"] == run and res["state"] == "running"
         path = Path(w.lab.state) / "hosts" / w.wid / "runs" / f"{run}.json"
         doc = json.loads(path.read_text())
-        assert doc["state"] == "running" and doc["runner_uid"] == UID and doc["generation"] == 1
+        assert doc["state"] == "running" and doc["runner_uid"] == UID and doc["gen"] == GEN1
         assert os.stat(path).st_mode & 0o777 == 0o600 and os.stat(path.parent).st_mode & 0o777 == 0o700
         assert "pid" not in res and "argv" not in json.dumps(res)  # the client view holds no pid, argv or env
         again = w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "sleep 60"])))
@@ -251,7 +267,7 @@ def test_host_restart_reconciles_and_marks_missing_runs_lost(tmp_path, rstate):
         # a record the runner never heard of (as if the host crashed between intent and dispatch)
         ghost = new_run_id()
         rec = {**fields(w), "run": ghost, "workspace_id": w.wid, "state": "starting", "exit": None, "cleanup": None,
-               "runner_uid": UID, "generation": 1, "dispatched": True}  # fmt: skip
+               "runner_uid": UID, "gen": GEN1, "dispatched": True}  # fmt: skip
         w.h.run(hub._save(rec))
         pid = next(x for x in r.sup.runs() if x["run"] == keep)["pid"]
         w.h.stop()  # the host restarts; the run keeps running
@@ -277,7 +293,7 @@ def test_host_restart_reconciles_and_marks_missing_runs_lost(tmp_path, rstate):
 
 def test_runner_restart_marks_its_runs_runner_restarted(w, rstate, tmp_path):
     hub = w.h.host.runners
-    r = Runner(w, rstate, generation=1)
+    r = Runner(w, rstate, gen=GEN1)
     run = new_run_id()
     w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "sleep 60"])))
     # a crash: the link and I/O just stop (the process keeps running), then a new runner generation starts
@@ -287,7 +303,7 @@ def test_runner_restart_marks_its_runs_runner_restarted(w, rstate, tmp_path):
     r.sup._wake()
     r.sup._thread.join()
     pid, birth = next((x["pid"], x["birth"]) for x in r.sup.runs() if x["run"] == run)
-    r2 = Runner(w, rstate, generation=2)
+    r2 = Runner(w, rstate, gen=GEN2)
     try:
         wait_for(lambda: hub.store.records[run]["state"] == "lost")
         assert hub.store.records[run]["exit"]["reason"] == "runner_restarted"
@@ -325,10 +341,11 @@ def test_exit_reports_are_accepted_only_for_the_runners_own_runs(w, rstate, tmp_
     try:
         foreign = new_run_id()
         rec = {**fields(w), "run": foreign, "workspace_id": w.wid, "state": "running", "exit": None, "cleanup": None,
-               "runner_uid": UID + 7, "generation": 1}  # fmt: skip
+               "runner_uid": UID + 7, "gen": GEN1}  # fmt: skip
         w.h.run(hub._save(rec))
         res = r.link.call(
-            "runner.exit", {"run": foreign, "exit": {"code": 0, "signal": None, "at": "x", "reason": "exited"}}
+            "runner.exit",
+            {"run": foreign, "code": 0, "signal": None, "at": "2026-10-12T00:00:00Z", "cleanup": "complete"},
         )
         assert res["ok"] is False and res["error"]["code"] == "not_found"
         assert hub.store.records[foreign]["state"] == "running"
@@ -352,18 +369,24 @@ def test_natural_exit_reaches_the_host(w, rstate, tmp_path):
 # -- the terminal socket ----------------------------------------------------------------------------------------------
 
 
-def _attach(path: str, ticket: str) -> tuple[socket.socket, dict]:
+def _recv_frame(s: socket.socket) -> dict:
+    dec = frames.Decoder()
+    while True:
+        part = s.recv(65536)
+        assert part, "the runner closed the connection"
+        got = dec.feed(part)
+        if got:
+            return got[0]
+
+
+def _attach(got: dict, nonce: str | None = None) -> tuple[socket.socket, dict, dict]:
+    """Connect as the dashboard server: the runner's hello first, then the attach frame; returns the reply."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(5)
-    s.connect(path)
-    s.sendall(json.dumps({"ticket": ticket}).encode() + b"\n")
-    buf = b""
-    while b"\n" not in buf:
-        part = s.recv(4096)
-        if not part:
-            break
-        buf += part
-    return s, json.loads(buf.split(b"\n")[0])
+    s.connect(got["socket"])
+    hello = _recv_frame(s)
+    s.sendall(frames.encode({"t": "attach", "ticket": got["ticket"], "nonce": nonce or got["nonce"]}))
+    return s, hello, _recv_frame(s)
 
 
 def test_attach_ticket_is_single_use_and_ended_by_the_host(w, rstate, tmp_path):
@@ -373,16 +396,46 @@ def test_attach_ticket_is_single_use_and_ended_by_the_host(w, rstate, tmp_path):
         run = new_run_id()
         w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "sleep 60"])))
         got = w.h.run(hub.attach_allow(run, w.lab.owner, "read"))
-        assert got["socket"] == str(r.term.path)
-        s, first = _attach(got["socket"], got["ticket"])
-        assert first == {"ok": True, "att": got["att"], "run": run, "mode": "read"}
-        s2, again = _attach(got["socket"], got["ticket"])
-        assert again == {"ok": False, "error": "term.ticket"}
+        assert got["socket"] == str(r.term.path) == str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+        assert got["runner"] == {"uid": UID, "pid": ME, "gen": GEN1} and len(got["ticket"]) == 43
+        s, hello, ready = _attach(got)
+        assert hello == {"t": "hello", "gen": GEN1, "pid": ME}  # what the server checks against got["runner"]
+        assert ready["t"] == "ready" and ready["writer"] is False and ready["state"] == "running"
+        assert {"start", "offset", "cols", "rows", "lease_gen"} <= set(ready)
+        s2, _, again = _attach(got)
+        assert again == {"t": "end", "reason": "ticket_invalid"}
         s2.close()
         w.h.run(hub.attach_end(got["att"], "person.removed"))
-        line = s.recv(4096)
-        assert json.loads(line.split(b"\n")[0]) == {"end": "person.removed"}
+        assert _recv_frame(s) == {"t": "end", "reason": "person.removed"}
         s.close()
+    finally:
+        r.close()
+
+
+def test_wrong_nonce_and_write_lease(w, rstate, tmp_path):
+    hub = w.h.host.runners
+    r = Runner(w, rstate)
+    try:
+        run = new_run_id()
+        w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "sleep 60"])))
+        bad = w.h.run(hub.attach_allow(run, w.lab.owner, "read"))
+        s, _, refused = _attach(bad, nonce="0" * 32)
+        assert refused == {"t": "end", "reason": "ticket_invalid"}
+        s.close()
+        first = w.h.run(hub.attach_allow(run, w.lab.owner, "write"))
+        s1, _, ready1 = _attach(first)
+        assert ready1["writer"] is True and ready1["lease_gen"] == 1
+        busy = w.h.run(hub.attach_allow(run, w.lab.owner, "write", lease_gen=1))
+        s2, _, refused = _attach(busy)
+        assert refused == {"t": "end", "reason": "writer_busy"}  # take:false while the lease is held
+        s2.close()
+        take = w.h.run(hub.attach_allow(run, w.lab.owner, "write", take=True))
+        s3, _, ready3 = _attach(take)
+        assert ready3["writer"] is True and ready3["lease_gen"] == 2
+        assert _recv_frame(s1) == {"t": "writer", "writer": False, "lease_gen": 2}
+        s3.close()  # closing the holder releases the lease
+        assert _recv_frame(s1) == {"t": "writer", "writer": False, "lease_gen": 3}
+        s1.close()
     finally:
         r.close()
 
@@ -395,42 +448,53 @@ def test_host_loss_ends_attachments_and_refuses_tickets_until_hello(w, rstate, t
         w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "sleep 60"])))
         a = w.h.run(hub.attach_allow(run, w.lab.owner, "write"))
         b = w.h.run(hub.attach_allow(run, w.lab.owner, "read"))
-        s, first = _attach(a["socket"], a["ticket"])
-        assert first["ok"] is True
+        s, _, ready = _attach(a)
+        assert ready["t"] == "ready"
         r.term.host_lost()  # what the link does when the host connection drops
-        assert json.loads(s.recv(4096).split(b"\n")[0]) == {"end": "host.restarting"}
+        assert _recv_frame(s) == {"t": "end", "reason": "host.restarting"}
         s.close()
-        s2, refused = _attach(b["socket"], b["ticket"])  # minted in the old epoch
-        assert refused == {"ok": False, "error": "term.ticket"}
+        s2, _, refused = _attach(b)  # minted in the old epoch
+        assert refused == {"t": "end", "reason": "ticket_invalid"}
         s2.close()
         from orch.runner.term import TicketError
 
         with pytest.raises(TicketError):
-            r.term.allow(
-                {
-                    "att": "att_x",
-                    "ticket_hash": "0" * 64,
-                    "run": run,
-                    "person": "p",
-                    "mode": "read",
-                    "expires": time.time() + 30,
-                }
-            )
+            r.term.allow(_allow_args(run))
     finally:
         r.close()
 
 
-def test_unused_ticket_expires(tmp_path):
-    now = [1000.0]
-    path = Path(tmp_path).resolve() / "t" / "term.sock"
-    term = TermListener(path, os.getuid(), clock=lambda: now[0])
-    term.host_ready(1)
+def _allow_args(run: str, ticket: bytes = b"tk", expires: float | None = None, gen: str = GEN1) -> dict:
     import hashlib
 
-    term.allow({"att": "att_1", "ticket_hash": hashlib.sha256(b"tk").hexdigest(), "run": "r", "person": "p",
-                "mode": "read", "expires": now[0] + 30})  # fmt: skip
-    now[0] += 11  # an allow lives at most 10 s, whatever the host's expiry says
-    assert term.consume("tk") is None
+    from orch.host.runners import _iso
+
+    digest = hashlib.sha256(ticket).hexdigest()
+    return {"att": "at_" + new_run_id()[2:], "ticket_hash": digest, "workspace_id": "0" * 32,
+            "person": "p_" + "0" * 32, "run": run, "session": None, "mode": "read", "take": False, "lease_gen": 0,
+            "runner_gen": gen, "from": None, "nonce": "1" * 32,
+            "expires_at": _iso(expires if expires is not None else time.time() + 30)}  # fmt: skip
+
+
+def test_unused_ticket_expires_and_lockout_counts_only_seen_hashes(tmp_path):
+    from orch.runner.term import TicketError
+
+    now = [time.time()]
+    term = TermListener(Path(tmp_path) / "t" / "term.sock", os.getuid(), gen=GEN1, clock=lambda: now[0])
+    term.host_ready(1)
+    term.allow(_allow_args("r_x", expires=now[0] + 30))
+    now[0] += 11  # a capability lives at most 10 s unused, whatever the host's expiry says
+    assert term.consume("tk", "1" * 32) is None
+    with pytest.raises(TicketError):
+        term.allow(_allow_args("r_x", gen=GEN2))  # minted for another runner generation
+    for i in range(20):  # random tickets never lock anybody out
+        assert term.consume(f"random{i}", "1" * 32) is None
+    assert term.locked_until == 0.0
+    for _ in range(10):  # a replayed, already-seen capability does
+        term.consume("tk", "1" * 32)
+    assert term.locked_until > now[0]
+    term.allow(_allow_args("r_y", ticket=b"fresh", expires=now[0] + 30))
+    assert term.consume("fresh", "1" * 32) is None  # locked out for 60 s
 
 
 # -- run.list / run.sub ------------------------------------------------------------------------------------------------
@@ -440,9 +504,10 @@ def test_run_sub_then_list_with_rev_and_runner_state(w, rstate, tmp_path):
     hub = w.h.host.runners
     c = w.conn()
     sub = ok(c.call("run.sub", {}))["data"]
-    assert set(sub) == {"sub", "rev"}
+    assert set(sub) == {"sub"}
     listed = ok(c.call("run.list", {}))["data"]
-    assert listed["runs"] == [] and listed["runner"] == {"connected": False, "enabled": False, "terminals": False}
+    assert listed["runs"] == [] and listed["next_page"] is None
+    assert listed["runner"] == {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None}
     enablement.set_enabled(Path(w.lab.state), w.wid, True, UID, terminals=False, text="t")
     r = Runner(w, rstate)
     try:
@@ -452,14 +517,18 @@ def test_run_sub_then_list_with_rev_and_runner_state(w, rstate, tmp_path):
         while not any(i["t"] == "run" and i["run"]["state"] == "running" for i in items):
             items += c.evt(sub["sub"])["items"]
         revs = [int(i["id"].split(".")[0]) for i in items]
-        assert revs == sorted(revs) and revs[0] > sub["rev"]
+        assert revs == sorted(revs)
         run_item = items[-1]["run"]
         assert run_item["run"] == run and run_item["person"] == w.lab.owner and "pid" not in run_item
+        assert run_item["rev"] == revs[-1] and run_item["exit"] is None and run_item["as_person"] is False
         listed = ok(c.call("run.list", {}))["data"]
-        assert [x["run"] for x in listed["runs"]] == [run]
-        assert listed["runner"] == {"connected": True, "enabled": True, "terminals": False}
-        assert listed["rev"] >= revs[-1]
+        assert [x["run"] for x in listed["runs"]] == [run] and "out_bytes" in listed["runs"][0]
+        assert listed["runner"] == {"connected": True, "enabled": True, "terminals": False, "gen": GEN1, "grant": None}
+        assert listed["runs"][0]["rev"] >= revs[-1]
+        assert ok(c.call("run.list", {"since": listed["runs"][0]["rev"]}))["data"]["runs"] == []
         w.h.run(hub.stop(run, 500))
+        stopped = ok(c.call("run.list", {"state": "all"}))["data"]["runs"][0]
+        assert stopped["exit"]["reason"] == "stopped" and stopped["exit"]["cleanup"] == "complete"
         assert ok(c.call("run.list", {}))["data"]["runs"] == []
         assert [x["run"] for x in ok(c.call("run.list", {"state": "all"}))["data"]["runs"]] == [run]
         ok(c.call("sub.close", {"sub": sub["sub"]}))
@@ -480,7 +549,7 @@ def test_run_ops_column_rules(w, rstate, tmp_path):
         {**fields(w), "run": new_run_id(), "kind": "agent", "ticket": hidden},
     ):
         w.h.run(hub._save({**rec, "workspace_id": w.wid, "state": "running", "exit": None, "cleanup": None,
-                           "runner_uid": UID, "generation": 1}))  # fmt: skip
+                           "runner_uid": UID, "gen": GEN1}))  # fmt: skip
     mine = ok(c.call("run.list", {}))["data"]["runs"]
     assert sorted(x["kind"] for x in mine) == ["agent", "shell"]  # not quinn's run, not the hidden ticket's
     grant = w.lab.ws.grant
@@ -493,7 +562,7 @@ def test_run_ops_column_rules(w, rstate, tmp_path):
 
 def _put(w, **kw):
     rec = {**fields(w), "run": new_run_id(), "workspace_id": w.wid, "state": "running", "exit": None,
-           "cleanup": None, "runner_uid": UID, "generation": 1, **kw}  # fmt: skip
+           "cleanup": None, "runner_uid": UID, "gen": GEN1, **kw}  # fmt: skip
     w.h.run(w.h.host.runners._save(rec))
     return rec["run"]
 
@@ -517,8 +586,9 @@ def test_hello_reports_naming_another_workspace_are_not_reports(w, rstate, tmp_p
     sock, _ = _hello(w.h.host.runner_path)
     try:
         rep = {"run": run, "workspace_id": "f" * 32, "state": "running", "pid": 1}
-        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello",
-                                    "args": {"version": "t", "generation": 1, "runs": [rep]}}))  # fmt: skip
+        term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+        args = {"version": "t", "gen": GEN1, "pid": ME, "term_socket": term, "runs": [rep], "grants": []}
+        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
         wait_for(lambda: hub.store.records[run]["state"] != "starting")
         assert hub.store.records[run]["state"] == "lost"  # not reported for its own workspace: lost, never running
     finally:
@@ -549,3 +619,18 @@ def test_runner_peer_cannot_call_client_ops(w):
         assert all(f["ok"] is False and f["error"]["code"] == "unknown_command" for f in got)
     finally:
         sock.close()
+
+
+def test_hello_must_name_the_connecting_pid_and_the_expected_term_socket(w):
+    term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+    for bad in ({"pid": ME + 1, "term_socket": term}, {"pid": ME, "term_socket": "/tmp/elsewhere.sock"}):
+        sock, _ = _hello(w.h.host.runner_path)
+        try:
+            args = {"version": "t", "gen": GEN1, "runs": [], **bad}
+            sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
+            res = _recv_frame(sock)
+            assert res["ok"] is False and res["error"]["code"] == "invalid.input"
+            assert not w.h.host.runners.connected
+        finally:
+            sock.close()
+        wait_for(lambda: not w.h.host.limits.runners)

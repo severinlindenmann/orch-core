@@ -479,13 +479,13 @@ class RegistryBackend:
 
     @staticmethod
     def _register_runs(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
-        """``run.sub`` on the event loop (H11a): register it with the runs it may see now; the answer's ``rev`` is the
-        host's run revision, so a client that lists after it loses nothing (subscribe, then list)."""
+        """``run.sub`` on the event loop (H11a): register it with the runs it may see now. A client subscribes first,
+        then lists, and keeps the higher per-run ``rev`` (§12.3.2), so it loses nothing."""
         hub = getattr(call.service, "runners", None)
         if hub is None:
             raise HostError("runner.unavailable", "this host serves no runs", retry_after_ms=1000)
         sub = hub.open_sub(call, set(checked["data"]["seen"]))
-        return ok_result({"sub": sub.id, "rev": hub.store.rev})
+        return ok_result({"sub": sub.id})
 
     async def wait(self, call: Call) -> dict[str, Any]:
         """``wait`` on the bus: one look per worker job; between looks the request parks here until an entry of the

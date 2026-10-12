@@ -31,6 +31,7 @@ subscribes first (``run.sub`` answers the current ``rev``), then lists, and keep
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import logging
@@ -131,52 +132,85 @@ def _obj(props: dict[str, Any], required: tuple[str, ...] = ()) -> dict[str, Any
 _RUN = {"type": "string", "pattern": RUN_ID}
 _INT = {"type": "integer", "minimum": 0}
 _TIME = {"type": "string", "minLength": 1, "maxLength": 40}
+_NULLINT = {"type": ["integer", "null"]}
+_GEN = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+_ULID = {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
+_CLEANUP = {"enum": ["complete", "incomplete", "unknown"]}
+#: ``exit`` of a reported run (§12.3.3): ``reason`` and ``cleanup`` may be left out
 _EXIT = _obj(
     {
-        "code": {"type": ["integer", "null"]},
+        "code": _NULLINT,
         "signal": {"type": ["string", "null"], "maxLength": 16},
         "at": _TIME,
         "reason": {"enum": ["exited", "stopped", "spawn_failed", "lost", "runner_restarted"]},
+        "cleanup": {"enum": ["complete", "incomplete", "unknown", None]},
         "error": {"type": "string", "maxLength": 64},
     },
-    ("code", "signal", "at", "reason"),
+    ("code", "signal", "at"),
 )
-_CLEANUP = {"enum": ["complete", "incomplete", "unknown", None]}
 _REPORTED = _obj(
     {
         "run": _RUN,
         "workspace_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-        "kind": {"enum": ["agent", "shell", None]},
-        "state": {"enum": ["spawning", "running", "exited", "lost"]},
-        "pid": {"type": ["integer", "null"]},
+        "pid": _NULLINT,
+        "birth": _NULLINT,
+        "pgid": _NULLINT,
+        "sid": _NULLINT,
+        "cgroup": {"type": ["string", "null"], "maxLength": 1024},
         "started_at": {"type": ["string", "null"], "maxLength": 40},
+        "state": {"enum": ["running", "exited", "lost"]},
+        "out": _INT,
         "exit": {"anyOf": [_EXIT, {"type": "null"}]},
-        "cleanup": _CLEANUP,
     },
-    ("run", "state"),
+    ("run", "workspace_id", "state"),
+)
+#: reserved for H11c (the runner's deposited grants, revalidated at hello); H11a accepts and ignores them
+_GRANT = _obj(
+    {
+        "workspace_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "person": {"type": "string", "pattern": "^p_[0-9a-f]{32}$"},
+        "grant": {"type": "string", "minLength": 1, "maxLength": 64},
+        "until": _TIME,
+    },
+    ("workspace_id", "person", "grant", "until"),
 )
 RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
     "runner.hello": _obj(
         {
             "version": {"type": "string", "minLength": 1, "maxLength": 64},
-            "generation": {"type": "integer", "minimum": 1},
-            "runs": {"type": "array", "maxItems": 2048, "items": _REPORTED},
+            "gen": _GEN,
+            "pid": {"type": "integer", "minimum": 2},
+            "term_socket": {"type": "string", "minLength": 1, "maxLength": 200},
+            "runs": {"type": "array", "maxItems": 256, "items": _REPORTED},
+            "grants": {"type": "array", "maxItems": 64, "items": _GRANT},
         },
-        ("version", "generation", "runs"),
+        ("version", "gen", "pid", "term_socket", "runs"),
     ),
     "runner.report": _obj(
         {
-            "cid": {"type": "string", "pattern": "^c_[0-9a-f]{16}$"},
+            "cmd": _ULID,
             "outcome": {"enum": ["ok", "error"]},
             "result": {"type": "object"},
             "error": _obj(
-                {"code": {"type": "string", "minLength": 1, "maxLength": 64}, "message": {"type": "string"}},
+                {
+                    "code": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "message": {"type": "string", "minLength": 1, "maxLength": 400},
+                },
                 ("code",),
             ),
         },
-        ("cid", "outcome"),
+        ("cmd", "outcome"),
     ),
-    "runner.exit": _obj({"run": _RUN, "exit": _EXIT, "cleanup": _CLEANUP}, ("run",)),
+    "runner.exit": _obj(
+        {
+            "run": _RUN,
+            "code": _NULLINT,
+            "signal": {"type": ["string", "null"], "maxLength": 16},
+            "at": _TIME,
+            "cleanup": _CLEANUP,
+        },
+        ("run", "code", "signal", "at", "cleanup"),
+    ),
 }
 RUN_SCHEMAS: dict[str, dict[str, Any]] = {
     "run.list": _obj(
@@ -184,6 +218,8 @@ RUN_SCHEMAS: dict[str, dict[str, Any]] = {
             "state": {"enum": ["live", "all"]},
             "kind": {"enum": ["agent", "shell"]},
             "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
+            "since": _INT,
+            "page": {"type": "string", "minLength": 1, "maxLength": 512},
         }
     ),
     "run.sub": _obj({}),
@@ -200,15 +236,28 @@ def validate(op: str, args: Any) -> None:
 
 # -- the records -------------------------------------------------------------------------------------------------------
 
-#: the fields of a record a client sees (``Run``); pid, runner UID, generation and the spawn payload stay host-side
-VIEW_FIELDS = (
-    "run", "kind", "person", "ticket", "harness", "mode", "model", "session", "label", "state", "started_at", "exit",
-    "cleanup", "rev",
-)  # fmt: skip
+#: §12.3.2 ``Run``: the record's client fields with their defaults; pid, runner UID, gen and spawn payload stay here
+VIEW_DEFAULTS: dict[str, Any] = {
+    "run": None, "rev": 0, "kind": "shell", "person": None, "ticket": None, "harness": "shell", "mode": None,
+    "model": None, "subagent_model": None, "label": None, "session": None, "grant": None, "grant_state": None,
+    "as_person": False, "cwd": {"kind": "workspace"}, "state": "starting", "started_at": None, "viewers": 0,
+    "writer": False, "cols": 120, "rows": 40, "replay_until": None,
+}  # fmt: skip
+#: the fields a caller of ``spawn`` may set on a new record
+FIELDS = tuple(k for k in VIEW_DEFAULTS if k not in ("run", "rev", "state", "started_at", "viewers", "writer"))
 
 
 def view(rec: dict[str, Any]) -> dict[str, Any]:
-    return {k: rec.get(k) for k in VIEW_FIELDS}
+    out = {k: rec.get(k, d) for k, d in VIEW_DEFAULTS.items()}
+    exit_ = rec.get("exit")
+    if isinstance(exit_, dict):
+        out["exit"] = {
+            "code": exit_.get("code"), "signal": exit_.get("signal"), "at": exit_.get("at"),
+            "reason": exit_.get("reason") or "exited", "cleanup": rec.get("cleanup") or "unknown",
+        }  # fmt: skip
+    else:
+        out["exit"] = None
+    return out
 
 
 class RunStore:
@@ -291,7 +340,8 @@ class RunnerHub:
         self.command_timeout = command_timeout
         self.session: Session | None = None
         self.uid: int | None = None
-        self.generation: int | None = None
+        self.generation: str | None = None  # the runner's gen (§12.3.2 Gen)
+        self.pid: int | None = None
         self.epoch = 0
         self.instance = secrets.token_hex(4)
         self.sub_id: str | None = None
@@ -375,63 +425,78 @@ class RunnerHub:
             session.respond(request, exc.response(request.id))
 
     # -- runner ops
+    def expected_term_socket(self, uid: int) -> Path:
+        """§12.6.1: the only term socket path the host accepts for a runner UID."""
+        return Path(self.host.run_dir) / "term" / str(uid) / "term.sock"
+
     async def hello(self, session: Session, args: dict[str, Any]) -> dict[str, Any]:
         if self.session is not None and self.session is not session and not self.session.closed:
             raise HostError("peer.denied", "another runner connection is live")
         if self.session is session:
             raise HostError("req.invalid", "runner.hello was already sent on this connection")
+        uid = session.peer.uid
+        if args["pid"] != session.credentials.pid:  # the PID the main-PID check accepted, nothing else
+            raise HostError("invalid.input", "runner.hello: pid is not the connecting process")
+        if args["term_socket"] != str(self.expected_term_socket(uid)):
+            raise HostError("invalid.input", "runner.hello: term_socket is not <run>/term/<uid>/term.sock")
         previous = self.generation
-        self.session, self.uid, self.generation = session, session.peer.uid, int(args["generation"])
+        self.session, self.uid, self.generation, self.pid = session, uid, args["gen"], args["pid"]
         self.epoch += 1
         self.sub_id = "sub_" + secrets.token_hex(8)
         session.subscriptions += 1  # the command stream keeps the connection out of the idle close
         session.on_close.append(lambda: self.disconnected(session))
         reported = {r["run"]: r for r in args["runs"]}
-        reconciled = 0
         for run, rec in list(self.store.records.items()):
-            if rec.get("runner_uid") != self.uid:
+            if rec.get("runner_uid") != uid:
                 continue
             rep = reported.get(run)
-            if rep is not None and rep.get("workspace_id") not in (None, rec.get("workspace_id")):
+            if rep is not None and rep.get("workspace_id") != rec.get("workspace_id"):
                 rep = None  # a report that names another workspace is no report about this run
             if rec.get("state") in LIVE:
-                await self._apply(rec, rep, previous_generation=previous)
-                reconciled += 1
-            elif rep is not None and rec.get("cleanup") is None and rep.get("cleanup"):
-                await self._save({**rec, "cleanup": rep["cleanup"]})
-        self.ignored += sum(1 for run in reported if run not in self.store.records)
-        LOG.info("runner connected: uid %s generation %s epoch %s", self.uid, self.generation, self.epoch)
-        return {"sub": self.sub_id, "epoch": f"{self.instance}.{self.epoch}", "reconciled": reconciled}
+                await self._apply(rec, rep)
+            elif rep is not None and rec.get("cleanup") in (None, "incomplete"):
+                cleanup = (rep.get("exit") or {}).get("cleanup")
+                if cleanup and cleanup != rec.get("cleanup"):
+                    await self._save({**rec, "cleanup": cleanup})
+        unknown = sum(1 for run in reported if run not in self.store.records)
+        if unknown:
+            LOG.warning("runner.hello reported %d run(s) this host does not know; not adopted", unknown)
+        # grants (§12.3.3) are H11c's: accepted by the schema, never stored or acted on here
+        LOG.info(
+            "runner connected: uid %s gen %s epoch %s (previous gen %s)", uid, self.generation, self.epoch, previous
+        )
+        return {"sub": self.sub_id}
 
     def _after_hello(self) -> None:
         """After the hello's answer is queued: H11c revalidates the reported grants here (none in H11a)."""
 
-    async def _apply(self, rec: dict[str, Any], rep: dict[str, Any] | None, *, previous_generation: int | None) -> None:
+    async def _apply(self, rec: dict[str, Any], rep: dict[str, Any] | None) -> None:
         """Reconcile one live record with the runner's report of it (``None``: not reported)."""
         if rep is None:  # never spawned again: the runner has no record of it (D-P2-37)
             await self._save({**rec, "state": "lost", "cleanup": "unknown", "exit": _exit("lost")})
             return
         state = rep["state"]
         new = dict(rec)
-        if state in ("spawning", "running"):
-            if state == "running":
-                new.update(
-                    state="running", pid=rep.get("pid"), started_at=rep.get("started_at") or rec.get("started_at")
-                )
+        if state == "running":
+            new.update(state="running", pid=rep.get("pid"), out=rep.get("out", rec.get("out")),
+                       started_at=rep.get("started_at") or rec.get("started_at"))  # fmt: skip
             if new != rec:
                 await self._save(new)
             return
-        exit_ = rep.get("exit") or _exit("lost")
+        reported_exit = rep.get("exit") or {}
+        exit_ = {k: reported_exit.get(k) for k in ("code", "signal", "at")}
+        exit_["at"] = exit_["at"] or _iso()
+        cleanup = reported_exit.get("cleanup") or "unknown"
         if state == "lost":
-            reason = "runner_restarted" if rec.get("generation") != self.generation else "lost"
-            exit_ = {**exit_, "reason": reason}
-            new.update(state="lost", exit=exit_, cleanup=rep.get("cleanup") or "unknown")
+            exit_["reason"] = "runner_restarted" if rec.get("gen") != self.generation else "lost"
+            new.update(state="lost", exit=exit_, cleanup=cleanup)
         else:
-            new.update(state="exited", exit=exit_, cleanup=rep.get("cleanup"))
+            exit_["reason"] = reported_exit.get("reason") or ("stopped" if rec.get("stopping") else "exited")
+            new.update(state="exited", exit=exit_, cleanup=reported_exit.get("cleanup"))
         await self._save(new)
 
     async def report(self, args: dict[str, Any]) -> dict[str, Any]:
-        future = self.pending.pop(args["cid"], None)
+        future = self.pending.pop(args["cmd"], None)
         if future is None or future.done():
             raise HostError("not_found", "no such command")
         if args["outcome"] == "ok":
@@ -443,13 +508,17 @@ class RunnerHub:
         return {}
 
     async def exit(self, session: Session, args: dict[str, Any]) -> dict[str, Any]:
+        """``runner.exit {run, code, signal, at, cleanup}``: the leader ended and the clean-up has a result (a later
+        one may follow when an incomplete clean-up completes). Only for runs of this runner UID and generation."""
         rec = self.store.records.get(args["run"])
-        if rec is None or rec.get("runner_uid") != session.peer.uid or rec.get("generation") != self.generation:
+        if rec is None or rec.get("runner_uid") != session.peer.uid or rec.get("gen") != self.generation:
             raise HostError("not_found", "no such run on this runner")
         new = dict(rec)
-        if "exit" in args and rec.get("state") in LIVE:
-            new.update(state="exited", exit=args["exit"])
-        if args.get("cleanup") and rec.get("cleanup") is None:
+        if rec.get("state") in LIVE:
+            reason = "stopped" if rec.get("stopping") else "exited"
+            new.update(state="exited", exit={"code": args["code"], "signal": args["signal"], "at": args["at"],
+                                             "reason": reason})  # fmt: skip
+        if rec.get("cleanup") != args["cleanup"] and rec.get("cleanup") in (None, "incomplete"):
             new["cleanup"] = args["cleanup"]
         if new != rec:
             await self._save(new)
@@ -472,11 +541,11 @@ class RunnerHub:
         session = self.session
         if session is None or session.closed or self.sub_id is None:
             raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
-        cid = "c_" + secrets.token_hex(8)
+        cid = new_ulid()  # the command id the runner's report names (`runner.report {cmd}`, §12.3.3)
         self.seq += 1
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self.pending[cid] = future
-        item = {"id": f"{self.seq}.c", "cmd": cmd, "cid": cid, "args": args}
+        item = {"id": f"{self.seq}.c", "cmd": cid, "op": cmd, "args": args}
         try:
             session.send({"t": "evt", "sub": self.sub_id, "cursor": str(self.seq), "items": [item]})
         except frames.FrameError as exc:
@@ -500,7 +569,9 @@ class RunnerHub:
         if run in self.store.records:
             return view(self.store.records[run])
         rec = {
-            **{k: fields.get(k) for k in VIEW_FIELDS if k not in ("run", "state", "exit", "cleanup", "rev")},
+            **{k: fields.get(k, VIEW_DEFAULTS[k]) for k in FIELDS},
+            "cols": payload.get("cols", VIEW_DEFAULTS["cols"]),
+            "rows": payload.get("rows", VIEW_DEFAULTS["rows"]),
             "run": run,
             "workspace_id": workspace_id,
             "state": "starting",
@@ -508,7 +579,7 @@ class RunnerHub:
             "cleanup": None,
             "created_at": _iso(),
             "runner_uid": self.uid,
-            "generation": self.generation,
+            "gen": self.generation,
             "dispatched": True,
         }
         await self._save(rec)
@@ -535,6 +606,8 @@ class RunnerHub:
             raise HostError("not_found", "no such run")
         if rec.get("state") not in LIVE:
             return {"state": rec.get("state"), "cleanup": rec.get("cleanup") or "unknown"}
+        if not rec.get("stopping"):
+            rec = await self._save({**rec, "stopping": True}, publish=False)  # the exit report then says "stopped"
         res = await self.command("stop", {"run": run, "grace_ms": grace_ms}, timeout=grace_ms / 1000 + 10)
         cur = self.store.records[run]
         cleanup = res.get("cleanup") if res.get("cleanup") in ("complete", "incomplete", "unknown") else "unknown"
@@ -548,28 +621,39 @@ class RunnerHub:
         state = new.get("state")
         return {"state": "exited" if state not in LIVE else "running", "cleanup": cleanup}
 
-    async def attach_allow(self, run: str, person: str, mode: str, *, lease_gen: int = 0) -> dict[str, Any]:
-        """Mint a single-use attach ticket (D-P2-25) and register its hash at the runner. Returns ``{att, ticket,
-        socket}``; the ticket itself is never stored here."""
+    async def attach_allow(
+        self,
+        run: str,
+        person: str,
+        mode: str,
+        *,
+        take: bool = False,
+        lease_gen: int = 0,
+        session: str | None = None,
+        start_from: int | None = None,
+    ) -> dict[str, Any]:
+        """Mint a single-use attach capability (§12.6.2) and register its hash at the runner before answering.
+        Returns ``{att, ticket, nonce, expires_at, socket, runner:{uid, pid, gen}}``; the host keeps only the hash."""
         if mode not in ("read", "write"):
             raise HostError("invalid.input", "mode is read or write")
-        att = "att_" + secrets.token_hex(8)
-        ticket = secrets.token_urlsafe(16)
-        expires = int(time.time()) + ATTACH_SECONDS
+        rec = self.store.records.get(run)
+        if rec is None:
+            raise HostError("not_found", "no such run")
+        att = "at_" + new_ulid()
+        ticket = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")  # 43 characters
+        nonce = secrets.token_hex(16)
+        expires_at = _iso(time.time() + ATTACH_SECONDS)
         await self.command(
             "attach.allow",
-            {
-                "att": att,
-                "ticket_hash": _hash(ticket),
-                "run": run,
-                "person": person,
-                "mode": mode,
-                "lease_gen": lease_gen,
-                "expires": expires,
-            },  # fmt: skip
-        )
+            {"att": att, "ticket_hash": _hash(ticket), "workspace_id": rec["workspace_id"], "person": person,
+             "run": run, "session": session, "mode": mode, "take": take, "lease_gen": lease_gen,
+             "runner_gen": self.generation, "from": start_from, "nonce": nonce, "expires_at": expires_at},
+        )  # fmt: skip
         self.attachments[att] = {"run": run, "person": person, "mode": mode}
-        return {"att": att, "ticket": ticket, "socket": str(self.term_socket)}
+        return {
+            "att": att, "ticket": ticket, "nonce": nonce, "expires_at": expires_at, "socket": str(self.term_socket),
+            "runner": {"uid": self.uid, "pid": self.pid, "gen": self.generation},
+        }  # fmt: skip
 
     async def attach_end(self, att: str, reason: str) -> None:
         self.attachments.pop(att, None)
@@ -589,7 +673,8 @@ class RunnerHub:
         from orch.runner import enablement
 
         state = enablement.state_of(self.host.state_dir, workspace_id, self.host.host_uid)
-        return {"connected": self.connected, "enabled": state["enabled"], "terminals": state["terminals"]}
+        return {"connected": self.connected, "enabled": state["enabled"], "terminals": state["terminals"],
+                "gen": self.generation if self.connected else None, "grant": None}  # grant: H11c  # fmt: skip
 
     def publish(self, rec: dict[str, Any]) -> None:
         for sub in list(self.subs.values()):
@@ -699,14 +784,18 @@ def _hash(ticket: str) -> str:
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
-def new_run_id() -> str:
-    """``r_`` + a ULID (48-bit ms time, 80 random bits), Crockford base32."""
+def new_ulid() -> str:
+    """A ULID (48-bit ms time, 80 random bits), Crockford base32."""
     n = (int(time.time() * 1000) << 80) | secrets.randbits(80)
     out = ""
     for _ in range(26):
         out = _CROCKFORD[n & 31] + out
         n >>= 5
-    return "r_" + out
+    return out
+
+
+def new_run_id() -> str:
+    return "r_" + new_ulid()
 
 
 # -- the workspace ops (on the worker thread) ---------------------------------------------------------------------
@@ -734,7 +823,6 @@ def serve(call: Call) -> dict[str, Any]:
     if args.get("ticket"):
         wanted = viewer.ticket(service.store, args["ticket"]).key
     records = [] if hub is None else list(hub.store.records.values())
-    rev = 0 if hub is None else hub.store.rev
     shown = []
     for rec in records:
         if rec.get("workspace_id") != service.workspace_id or hub is None or not hub.visible(rec, column, person):
@@ -746,14 +834,26 @@ def serve(call: Call) -> dict[str, Any]:
                 continue
         shown.append(rec)
     if op == "run.sub":
-        return ok_result({"seen": [r["run"] for r in shown], "rev": rev})
+        return ok_result({"seen": [r["run"] for r in shown]})
     if args.get("state", "live") == "live":
         shown = [r for r in shown if r.get("state") in LIVE]
     if args.get("kind"):
         shown = [r for r in shown if r.get("kind") == args["kind"]]
     if wanted is not None:
         shown = [r for r in shown if r.get("ticket") == wanted]
+    if args.get("since") is not None:  # only for the gap between run.sub and run.list (§12.3.2)
+        shown = [r for r in shown if int(r.get("rev") or 0) > args["since"]]
     shown.sort(key=lambda r: -int(r.get("rev") or 0))
+    offset = 0
+    if args.get("page"):
+        page = args["page"]
+        if not re.fullmatch(r"o[0-9]{1,6}", page):
+            raise HostError("page.expired", "run.list: start again without page")
+        offset = int(page[1:])
+    window = shown[offset : offset + 256]
+    more = offset + 256 < len(shown)
     runner = hub.runner_state(service.workspace_id) if hub is not None else {"connected": False, "enabled": False,
-                                                                              "terminals": False}  # fmt: skip
-    return ok_result({"runs": [view(r) for r in shown[:256]], "rev": rev, "runner": runner})
+                                                                              "terminals": False, "gen": None,
+                                                                              "grant": None}  # fmt: skip
+    runs = [view(r) | {"out_bytes": int(r.get("out") or 0)} for r in window]
+    return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})

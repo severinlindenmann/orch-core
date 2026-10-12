@@ -2,21 +2,23 @@
 
 The runner is a client of the host's runner socket ``<run>/runner/host.sock``. Before it sends a byte it checks the
 socket's peer UID against the host UID it was configured with (:func:`orch.host.client.connect_pinned`), so it never
-takes commands or grants from a process of another UID; then the handshake, then ``runner.hello {version, generation,
-runs}`` with every run of its table (the host reconciles; it treats the report as evidence only about runs it knows).
-The answer opens the command stream: ``evt`` items ``{cmd, cid, args}``, each answered with ``runner.report``.
+takes commands or grants from a process of another UID; then the handshake, then ``runner.hello {version, gen, pid,
+term_socket, runs, grants}`` (§12.3.3) with every run of its table (the host reconciles; it treats the report as
+evidence only about runs it knows). The answer opens the command stream: ``evt`` items ``{cmd, cid, args}``, each
+answered with ``runner.report``.
 
-**Service generation.** Every runner start takes the next generation (``<state>/runner/generation.json``), so the host
-can tell a reconnect of the same runner from a restarted one (runs lost then are ``runner_restarted``).
+**Service generation.** Every runner start draws a new ``gen`` (32 hex digits), so the host can tell a reconnect of
+the same runner from a restarted one (runs lost then are ``runner_restarted``); the term socket's hello carries it
+too.
 
 **Authorization epochs.** Losing the host ends every attachment and refuses new tickets
-(:meth:`orch.runner.term.TermListener.host_lost`); only the next hello's answer re-opens them. Spawns stay idempotent by
-run id across reconnects (:meth:`orch.runner.supervise.Supervisor.spawn`).
+(:meth:`orch.runner.term.TermListener.host_lost`); only the next hello's answer re-opens them. Spawns stay
+idempotent by run id across reconnects (:meth:`orch.runner.supervise.Supervisor.spawn`).
 
 Environment of a spawn (defence in depth; the host computes it, H11c adds ``pass_env``): the variables named in
 ``env_names`` must be on the runner's allow-list and are copied from the runner's own environment; ``env_fixed`` may
-only hold host-chosen values (``ORCH_TICKET``, ``ORCH_WORKTREE``, ``ORCH_WORKTREES``, ``ORCH_HARNESS``); ``TERM`` and
-``COLORTERM`` are fixed. Nothing else passes; the host never sends a secret in a spawn.
+only hold host-chosen values (``ORCH_TICKET``, ``ORCH_WORKTREE``, ``ORCH_WORKTREES``, ``ORCH_HARNESS``); ``TERM``
+and ``COLORTERM`` are fixed. Nothing else passes; the host never sends a secret in a spawn.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import concurrent.futures
 import contextlib
 import logging
 import os
+import secrets
 import threading
 import time
 from collections.abc import Mapping
@@ -34,12 +37,12 @@ from typing import Any
 from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
-from orch.host.custody import ensure_private_dir, read_json, write_private
 
 from .supervise import SpawnError, SpawnSpec, Supervisor
+from .table import now_iso
 from .term import TermListener, TicketError
 
-__all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "next_generation"]
+__all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_gen"]
 
 LOG = logging.getLogger(__name__)
 
@@ -72,13 +75,9 @@ def build_env(args: Mapping[str, Any], own: Mapping[str, str]) -> dict[str, str]
     return env
 
 
-def next_generation(directory: Path, uid: int) -> int:
-    ensure_private_dir(directory, uid)
-    path = directory / "generation.json"
-    doc = read_json(path, uid) or {}
-    gen = int(doc.get("generation") or 0) + 1 if isinstance(doc, dict) else 1
-    write_private(path, {"v": 1, "generation": gen})
-    return gen
+def new_gen() -> str:
+    """The runner generation (§12.3.2 ``Gen``): 32 hex digits drawn at every runner start."""
+    return secrets.token_hex(16)
 
 
 class HostLink:
@@ -90,7 +89,7 @@ class HostLink:
         socket_path: Path,
         *,
         host_uid: int,
-        generation: int,
+        gen: str,
         term: TermListener | None = None,
         env: Mapping[str, str] | None = None,
         backoff: tuple[float, float] = (0.5, 10.0),
@@ -98,7 +97,7 @@ class HostLink:
         self.sup = sup
         self.socket_path = Path(socket_path)
         self.host_uid = host_uid
-        self.generation = generation
+        self.gen = gen
         self.term = term
         self.env = dict(os.environ if env is None else env)
         self.backoff = backoff
@@ -162,7 +161,12 @@ class HostLink:
         sock.settimeout(None)
         self.sock = sock
         decoder = frames.Decoder()
-        rid = self._send_req("runner.hello", {"version": VERSION, "generation": self.generation, "runs": self._runs()})
+        term_socket = str(self.term.path) if self.term is not None else ""
+        with self.sup._spawn_lock:  # no spawn half-done while the table is reported
+            runs = self._runs()
+        hello_args = {"version": VERSION, "gen": self.gen, "pid": os.getpid(), "term_socket": term_socket,
+                      "runs": runs, "grants": []}  # grants: H11c  # fmt: skip
+        rid = self._send_req("runner.hello", hello_args)
         while not self._stop.is_set():
             data = recv(sock)
             if not data:
@@ -188,27 +192,37 @@ class HostLink:
                             event.set()
                 elif kind == "evt":
                     for item in frame.get("items") or []:
-                        if "cmd" in item:
+                        if "op" in item and "cmd" in item:
                             self._pool.submit(self._command, item)
                 elif kind == "fatal":
                     raise ConnectionError(f"the host closed the connection: {frame.get('error')}")
 
     def _runs(self) -> list[dict[str, Any]]:
+        """§12.3.3 ``runs``: every run of the table, newest first, at most 256; a half-started spawn reads as lost."""
         out = []
-        for r in self.sup.runs()[:2048]:
+        for r in sorted(self.sup.runs(), key=lambda x: str(x.get("started_at") or ""), reverse=True)[:256]:
+            state = r.get("state") if r.get("state") in ("running", "exited", "lost") else "lost"
             exit_ = r.get("exit")
             if isinstance(exit_, dict):
-                exit_ = {k: exit_[k] for k in ("code", "signal", "at", "reason", "error") if k in exit_}
+                exit_ = {k: exit_.get(k) for k in ("code", "signal", "at")} | {
+                    "reason": exit_.get("reason"), "cleanup": r.get("cleanup"),
+                }  # fmt: skip
+                if exit_["reason"] not in ("exited", "stopped", "spawn_failed", "lost", "runner_restarted"):
+                    del exit_["reason"]
+            rec = self.sup.table.get(r["run"]) or {}
             out.append(
                 {
                     "run": r["run"],
-                    "workspace_id": r.get("workspace_id"),
-                    "kind": r.get("kind"),
-                    "state": r.get("state") or "lost",
+                    "workspace_id": r.get("workspace_id") or "0" * 32,
                     "pid": r.get("pid"),
+                    "birth": r.get("birth"),
+                    "pgid": r.get("pgid"),
+                    "sid": r.get("sid"),
+                    "cgroup": rec.get("cgroup"),
                     "started_at": r.get("started_at"),
+                    "state": state,
+                    "out": int(r.get("out") or rec.get("out") or 0),
                     "exit": exit_,
-                    "cleanup": r.get("cleanup"),
                 }  # fmt: skip
             )
         return out
@@ -235,8 +249,8 @@ class HostLink:
             raise TimeoutError(op)
         return self._answers.pop(rid)
 
-    def _report(self, cid: str, outcome: str, payload: dict[str, Any]) -> None:
-        args: dict[str, Any] = {"cid": cid, "outcome": outcome}
+    def _report(self, cmd: str, outcome: str, payload: dict[str, Any]) -> None:
+        args: dict[str, Any] = {"cmd": cmd, "outcome": outcome}
         args["result" if outcome == "ok" else "error"] = payload
         try:
             self._send_req("runner.report", args)
@@ -245,7 +259,7 @@ class HostLink:
 
     # -- commands
     def _command(self, item: dict[str, Any]) -> None:
-        cmd, cid, args = item.get("cmd"), str(item.get("cid")), item.get("args") or {}
+        cmd, cid, args = item.get("op"), str(item.get("cmd")), item.get("args") or {}
         try:
             result = self._run(str(cmd), args)
         except SpawnError as exc:
@@ -285,15 +299,19 @@ class HostLink:
 
     # -- supervisor events
     def _on_event(self, kind: str, run: str, payload: dict[str, Any]) -> None:
-        if not self.ready.is_set():
-            return  # the next hello carries the state
-        args: dict[str, Any] = {"run": run}
-        if kind == "exit":
-            args["exit"] = {k: payload[k] for k in ("code", "signal", "at", "reason") if k in payload}
-        elif kind == "cleanup":
-            args["cleanup"] = payload.get("cleanup")
-        else:
-            return
+        if not self.ready.is_set() or kind != "cleanup":
+            return  # the next hello carries the state; runner.exit is sent once the clean-up has a result
+        rec = self.sup.table.get(run) or {}
+        exit_ = rec.get("exit") or {}
+        if not exit_:
+            return  # a leader still alive (incomplete stop): no exit to report yet
+        args: dict[str, Any] = {
+            "run": run,
+            "code": exit_.get("code"),
+            "signal": exit_.get("signal"),
+            "at": exit_.get("at") or now_iso(),
+            "cleanup": payload.get("cleanup") or "unknown",
+        }
         with contextlib.suppress(OSError, ConnectionError):
             self._send_req("runner.exit", args)
 

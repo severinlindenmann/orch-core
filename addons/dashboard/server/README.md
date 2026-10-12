@@ -136,6 +136,7 @@ Closed route surface (M1, extended by M2):
 | `GET /api/w/<uuid>/tickets/<key>` | `ticket.get` as the UI's ticket document (v1.4: a closed ticket reads like any other, with `status: closed` and a `closed` object; a host without `read_ext/1` leaves the optional fields out and the document says `read_ext: false`) |
 | `GET /api/w/<uuid>/tickets/<key>/events?since=&limit=` | The structured log (`seq`, `type`, `at`, `actor`, host `summary`) as UI events |
 | `GET /api/w/<uuid>/tickets/<key>/changes?repo=&context=` | `diff` as the UI's changes: files with their hunks, sources per repo, `truncated`; 409 `observe.unavailable` when the branch moved since the host observed it |
+| `GET /api/w/<uuid>/settings`, `/members`, `/grants?active=` | M4: `workspace.settings` (cap `settings/1`, else `available:false`), `member.list` with devices, `grant.list` (what the host gives this person; `read_ext/2` fields or `null`). The writes are hand-off actions on `POST /handoff`: `settings_set`, `policy_set`, `member_add` (files), `member_role`, `member_remove`, `grant_revoke` |
 | `GET /api/w/<uuid>/tickets/<key>/artifacts/<name>` | An evidence file, read in chunks up to 3 chunks, digest checked (409 `artifact.mismatch`), returned as text data or flagged binary |
 
 Every API path, including unknown ones, needs a bearer token. Authenticated unknown routes

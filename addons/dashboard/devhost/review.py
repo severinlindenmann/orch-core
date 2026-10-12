@@ -34,6 +34,13 @@ EMITS = {
     "set": ("ticket.updated",),
     "section.set": ("ticket.updated",),
     "new": ("ticket.created",),
+    # Workspace operations (M4): one event each, in the workspace log.
+    "settings.set": ("settings.changed",),
+    "policy.set": ("policy.changed",),
+    "member.add": ("member.added",),
+    "member.role": ("role.changed",),
+    "member.remove": ("member.removed",),
+    "grant.revoke": ("grant.revoked",),
 }
 
 
@@ -65,6 +72,15 @@ def fingerprint(review_digest: str, events: list[dict[str, Any]], op: str) -> st
 
 def derived_of(event: dict[str, Any], material: dict[str, Any]) -> dict[str, Any]:
     typ = event["type"]
+    if typ in ("member.added", "workspace.created", "device.added"):
+        # From the embedded certificate, as the real signer works them out (`orch.host.review`).
+        o = (event.get("device_cert" if typ != "device.added" else "cert") or {}).get("o") or {}
+        return {
+            "cert_device": "d_" + str(o["device_id"]),
+            "cert_person": "p_" + str(o["person_id"]),
+            "cert_scopes_max": list(o["scopes_max"]),
+            "cert_expires": o.get("expires_ms"),
+        }
     if typ in DECISIONS:
         return {"ticket_key": (material.get("ticket") or {}).get("key")}
     if typ in SECTIONED:

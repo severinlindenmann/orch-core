@@ -10,6 +10,8 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { addonActive } from '@/api/addons'
 import { can, roleOf } from '@/api/permissions'
+import { isRealHost } from '@/api/features'
+import { running, uuid8, workspaceByAddress } from '@/api/workspaces'
 import type { AddonContribution, AddonPackage, AddonSlot, Workspace } from '@/api/types'
 import { bindsAddonState } from '@/addon-ui/slots'
 import { ticketsServerParams, type TicketsSearch } from './pages/tickets/search'
@@ -43,13 +45,14 @@ export const LOADER_WAIT_MS = 1500
 const atMost = (p: Promise<unknown>, ms = LOADER_WAIT_MS) => Promise.race([p, new Promise((res) => setTimeout(res, ms))]).then(() => undefined)
 
 const me = (qc: QueryClient) => qc.ensureQueryData(queries.me())
-const workspaces = (qc: QueryClient) => qc.ensureQueryData(queries.workspaces())
+const workspaces = (qc: QueryClient) => qc.ensureQueryData(queries.workspaces()).then(running)
 const addons = (qc: QueryClient) => qc.ensureQueryData(queries.addons())
 
 /** The workspace the page will show, as WorkspaceProvider picks it: the address's, else the remembered one, else the first. */
 function pickWorkspace(list: Workspace[], urls: UrlState): Workspace | undefined {
-  const p = urls.prefix?.toUpperCase()
-  return (p ? list.find((w) => w.prefix.toUpperCase() === p) : undefined) ?? list.find((w) => w.id === storedWorkspace()) ?? list[0]
+  const named = urls.prefix ? workspaceByAddress(list, urls.prefix, urls.hint) : undefined
+  if (named && ('ambiguous' in named || (urls.hint && 'missing' in named))) return undefined // the page asks which workspace: nothing is read
+  return (named && 'found' in named ? named.found : undefined) ?? list.find((w) => w.id === storedWorkspace()) ?? list[0]
 }
 
 /** The shell's own data (sidebar, topbar, dock): read before the first paint so the frame does not move after it. */
@@ -81,6 +84,8 @@ const addonState = (qc: QueryClient, ws: string, name: string, ticket?: string) 
 
 /** What a page loader gets: the query client, the workspace it will show and the viewer's role there. */
 interface PageScope {
+  /** The address as the router read it (a ticket address's `?ws=` tells workspaces of one prefix apart). */
+  urls?: UrlState
   qc: QueryClient
   ws: Workspace
   /** All of the viewer's workspaces (a ticket's key names its own). */
@@ -104,7 +109,7 @@ export function pageLoader(parts: (s: PageScope) => Ensure[], chunks: (() => Pro
       const ws = pickWorkspace(list, context.urls)
       if (!ws) return
       const owner = can(roleOf(ws, person?.person), 'settings')
-      await settle([...shellScoped(qc, ws, pkgs), ...parts({ qc, ws, list, pkgs, person: person?.person, owner })])
+      await settle([...shellScoped(qc, ws, pkgs), ...parts({ qc, ws, list, pkgs, person: person?.person, owner, urls: context.urls })])
     }
     await Promise.all([code, atMost(data())])
   }
@@ -161,6 +166,21 @@ export const settingsData =
   (tab: string, addon?: string) =>
   ({ qc, ws }: PageScope): Ensure[] => {
     const id = ws.id
+    if (isRealHost()) {
+      // The reduced settings (M4): what the host says, read before the page shows so it does not jump.
+      switch (tab) {
+        case 'general':
+          return [qc.ensureQueryData(queries.hostSettings(id)), qc.ensureQueryData(queries.identity(id))]
+        case 'members':
+          return [qc.ensureQueryData(queries.roster(id))]
+        case 'gates':
+          return [qc.ensureQueryData(queries.hostSettings(id))]
+        case 'grants':
+          return [qc.ensureQueryData(queries.hostGrants(id, true)), qc.ensureQueryData(queries.roster(id))]
+        default:
+          return []
+      }
+    }
     switch (addon ? 'addons' : tab) {
       case 'general':
         return [qc.ensureQueryData(queries.identity(id))]
@@ -196,16 +216,25 @@ export const addonPageData =
     addonActive(ws, name) ? [addonState(qc, ws.id, name)] : []
 
 /** The workspace a ticket key names (`OPS-0001` → OPS), as the ticket page makes it current. */
-export function workspaceOfKey(key: string, list: Workspace[]): Workspace | undefined {
+export function workspaceOfKey(key: string, list: Workspace[], urls?: UrlState): Workspace | undefined {
   const k = key.toUpperCase()
-  return list.find((w) => k.startsWith(`${w.prefix.toUpperCase()}-`))
+  const same = list.filter((w) => k.startsWith(`${w.prefix.toUpperCase()}-`))
+  // Workspaces that share the prefix: the address's `?ws=` names the one (else the first, as the page will ask which).
+  const hint = urls?.ticketHint
+  const hinted = hint ? same.filter((w) => w.prefix.toUpperCase() === hint.prefix.toUpperCase() && uuid8(w.id) === hint.hint.toLowerCase()) : []
+  if (hinted.length === 1) return hinted[0]
+  // Two or more share the prefix and none is named (or the hint fits none): the page asks which; nothing is read for a guess.
+  return same.length === 1 && !hint ? same[0] : undefined
 }
 
 /** A ticket page: the ticket itself and its addon panels, in the ticket's own workspace. */
 export const ticketData =
   (key: string) =>
-  ({ qc, ws: shown, list, pkgs }: PageScope): Ensure[] => {
-    const ws = workspaceOfKey(key, list) ?? shown
+  ({ qc, ws: shown, list, pkgs, urls }: PageScope): Ensure[] => {
+    const named = workspaceOfKey(key, list, urls)
+    const known = list.some((w) => key.toUpperCase().startsWith(`${w.prefix.toUpperCase()}-`))
+    if (!named && known) return [] // ambiguous, or a hint that fits none: the page asks, nothing is read for a guess
+    const ws = named ?? shown
     return [
       qc.ensureQueryData(queries.ticket(ws.id, key)),
       // The ticket's addon panels (their count shows in the header's Panels button).

@@ -89,3 +89,25 @@ describe('a request must be what it says it is', () => {
     expect(expiryMs('2020-01-01T00:00:00Z')).toBeNull()
   })
 })
+
+describe('workspace operations (M4)', () => {
+  const material = { kind: 'payload' as const, ticket: null, review: [] }
+  const ev = (over: Record<string, unknown>) => [{ type: 'x', actor: { kind: 'person', id: 'p_a', device: null }, auth: null, ...over }]
+
+  it('the confirmation word is the member for member operations and GRANT.REVOKE for a revoke', async () => {
+    const { workspaceConfirmWord } = await import('./handoff')
+    expect(workspaceConfirmWord({ op: 'member.role', events: ev({ person: 'p_member' }), material })).toBe('p_member')
+    expect(workspaceConfirmWord({ op: 'member.add', events: ev({ person: 'p_new' }), material })).toBe('p_new')
+    expect(workspaceConfirmWord({ op: 'member.remove', events: ev({ person: 'p_gone' }), material })).toBe('p_gone')
+    expect(workspaceConfirmWord({ op: 'grant.revoke', events: ev({}), material })).toBe('GRANT.REVOKE')
+  })
+  it('nothing is promised for operations whose signer word is not settled, or for a ticket', async () => {
+    const { workspaceConfirmWord } = await import('./handoff')
+    expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material })).toBeNull() // no prefix known
+    const ws = { prefix: 'DEMO', id: 'b5c67894e3cf0cf3e4b0a64b4357e3f3' }
+    expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material }, ws)).toBe('DEMO~4357e3f3/SETTINGS')
+    expect(workspaceConfirmWord({ op: 'policy.set', events: ev({}), material }, ws)).toBe('DEMO~4357e3f3/POLICY')
+    expect(workspaceConfirmWord({ op: 'member.role', events: ev({ person: 'p_a' }), material: { ...material, ticket: { key: 'DEMO-1', uid: 'U' } } })).toBeNull()
+    expect(workspaceConfirmWord({ op: 'member.role', events: ev({}), material })).toBeNull()
+  })
+})

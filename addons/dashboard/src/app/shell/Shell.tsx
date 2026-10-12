@@ -9,6 +9,7 @@ import { DockArea } from '../terminal/dock/DockArea'
 import { useLiveUpdates } from '../live'
 import { useWorkspace, WorkspaceProvider } from '../workspace'
 import { WorkspaceNotFound } from './WorkspaceNotFound'
+import { WorkspaceChoice, WorkspaceStopped } from './WorkspaceChoice'
 import { HelpSheet } from './HelpSheet'
 import { NewTicketHost } from './NewTicketHost'
 import { CommandPalette } from './palette'
@@ -50,8 +51,10 @@ function LiveUpdates() {
 
 /** The page, or "no such workspace" when the address names a workspace the viewer does not have (a skeleton until known). */
 function PageOutlet() {
-  const { missingPrefix, pendingPrefix } = useWorkspace()
+  const { missingPrefix, pendingPrefix, ambiguous, stopped } = useWorkspace()
   if (pendingPrefix) return <GenericSkeleton />
+  if (ambiguous) return <WorkspaceChoice prefix={ambiguous[0].prefix} choices={ambiguous} />
+  if (stopped) return <WorkspaceStopped workspace={stopped} />
   return missingPrefix !== undefined ? <WorkspaceNotFound prefix={missingPrefix} /> : <Outlet />
 }
 

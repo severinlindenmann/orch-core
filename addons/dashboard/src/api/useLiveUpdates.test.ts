@@ -50,7 +50,7 @@ it('implements the invalidation table scoped by UUID', () => {
     seed(); invalidateLive(client, 'ws', event, []); expect(invalid()).toEqual(keys.slice(0, 5))
   }
   seed(); invalidateLive(client, 'ws', 'items', [{ id: '3.e', type: 'settings.changed' }])
-  expect(invalid()).toEqual(keys.slice(0, 5))
+  expect(invalid()).toEqual([keys[4]]) // settings: only the settings queries and the identity card
 })
 it('gone cancels and purges details and rows, closes views; revoked purges workspace', () => {
   const client = new QueryClient(), close = vi.fn(), cancel = vi.spyOn(client, 'cancelQueries')

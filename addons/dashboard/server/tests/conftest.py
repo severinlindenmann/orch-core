@@ -280,3 +280,71 @@ class Signing:
 @pytest.fixture
 def signing(stub, p1, tmp_path):
     return Signing(stub, p1, tmp_path)
+
+
+class World:
+    """One dashboard server (its own session) for one person of the dev workspace."""
+
+    def __init__(self, client, token, stub, gateway):
+        self.client, self.token, self.stub, self.gateway = client, token, stub, gateway
+
+    def headers(self, write=False):
+        return {"Authorization": f"Bearer {self.token}", **({"Origin": ORIGIN} if write else {})}
+
+    def get(self, path, **kw):
+        return self.client.get(path, headers=self.headers(), **kw)
+
+    def post(self, path, body):
+        return self.client.post(path, json=body, headers=self.headers(True))
+
+
+@pytest.fixture
+def worlds(p1, tmp_path, monkeypatch):
+    """`worlds(person_ref)` -> a `World`: the stub host and a dashboard server acting as that person (the owner's
+    registry pin is replaced by the person's own, in a state directory of its own)."""
+    routes: dict[str, StubHost] = {}
+    threads, stack = [], []
+
+    def connect(path, uid, ws):
+        stub = next(s for prefix, s in routes.items() if str(path).startswith(prefix))
+        client, host = socket.socketpair()
+        thread = threading.Thread(target=stub.serve_connection, args=(host, ws is None), daemon=True)
+        thread.start()
+        threads.append(thread)
+        return HostLink(client, uid, ws)
+
+    monkeypatch.setattr(HostLink, "connect", connect)
+
+    def make(person: str, **flags):
+        stub = StubHost(p1.root, p1.host_state, person)
+        for name, value in flags.items():
+            setattr(stub, name, value)
+        state = tmp_path / f"registry-{len(routes)}"
+        (state / "host").mkdir(parents=True, mode=0o700)
+        pin = {
+            "workspace_id": stub.ws,
+            "host_uid": os.getuid(),
+            "peers": {str(os.getuid()): {"class": "person", "person": person}},
+        }
+        registry = state / "host/workspaces.json"
+        registry.write_text(json.dumps({"workspaces": [pin]}))
+        registry.chmod(0o600)
+        routes[str(state / "run")] = stub
+        gateway = Gateway(state)
+        static = tmp_path / f"static-{len(routes)}"
+        (static / "assets").mkdir(parents=True)
+        (static / "index.html").write_text("<html></html>")
+        app_client = TestClient(create_app(PORT, gateway, Auth(), static), base_url=ORIGIN)
+        app_client.__enter__()
+        stack.append((app_client, gateway))
+        launch = app_client.app.state.auth.launch(PORT)
+        res = app_client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN})
+        assert res.status_code == 200
+        return World(app_client, res.json()["token"], stub, gateway)
+
+    yield make
+    for app_client, gateway in stack:
+        app_client.__exit__(None, None, None)
+        gateway.close()
+    for thread in threads:
+        thread.join(timeout=3)

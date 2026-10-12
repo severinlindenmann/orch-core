@@ -3,6 +3,8 @@ rules the section 0.8.6 item 7 puts on this process. The signer is faked here (a
 runs in test_realhost_click.py."""
 
 import logging
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -42,6 +44,7 @@ class Script:
         self.refuse: dict[str, ClickError] = {}
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
+        self.delay = 0.0
         self.started: list[dict] = []
         self.clients: list[Fake] = []
 
@@ -61,6 +64,7 @@ class Script:
                 row["problem"] = "disabled"
             return {"core": "2.0.0.dev0", "contract": self.contract, "workspaces": [row]}
         if op == "prepare":
+            time.sleep(self.delay)
             self.prepared += 1
             return {
                 "request_id": f"hr_{self.prepared:026d}",
@@ -537,3 +541,33 @@ def test_a_view_for_another_op_than_the_one_asked_for_is_refused(client, token, 
     script.view = {"view": {**script.view["view"], "op": "close"}, "view_digest": HASH}
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_concurrent_prepares_cannot_overshoot_the_one_quota(client, token, stub, script, rich):
+    """Click and hand-off requests share the session's quota; check and reserve are one step."""
+    script.delay = 0.05  # a wide window between "checked" and "committed"
+    results = []
+
+    def go(n):
+        if n % 2:
+            res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1000 + n), headers=hdr(token))
+        else:
+            res = client.post(url(stub, "prepare"), json=comment(1000 + n), headers=hdr(token))
+        results.append((n % 2, res.status_code, res.json().get("error", {}).get("code")))
+
+    threads = [threading.Thread(target=go, args=(n,)) for n in range(24)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    ok = [r for r in results if r[1] == 200]
+    assert len(results) == 24 and len(ok) == 8, results  # exactly the quota, never more
+    assert {r[2] for r in results if r[1] != 200} == {"quota.host"}
+
+
+def test_a_failed_prepare_gives_its_slot_back(client, token, stub, script):
+    script.refuse["prepare"] = ClickError("custody.no_key", "no key")
+    for n in range(12):
+        assert client.post(url(stub, "prepare"), json=comment(3000 + n), headers=hdr(token)).status_code == 409
+    script.refuse.clear()
+    assert client.post(url(stub, "prepare"), json=comment(3100), headers=hdr(token)).status_code == 200

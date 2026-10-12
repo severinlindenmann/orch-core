@@ -457,7 +457,9 @@ class Handoffs:
         self.clock = clock
         self.lock = threading.Lock()
         self.owned: dict[str, dict[str, tuple[str, float]]] = {}  # token -> request id -> (workspace, deadline)
-        self.active: dict[str, set[str]] = {}
+        self.active: dict[str, set[str]] = {}  # open requests per session: hand-off AND click requests, one quota
+        self.until: dict[tuple[str, str], float] = {}  # click requests in `active`: their own deadline
+        self.pending: dict[str, int] = {}  # slots reserved by a prepare that has not answered yet
         self.by_idem: OrderedDict[tuple[str, str, str], tuple[str, dict | None]] = OrderedDict()  # None: in flight
 
     def binding(self, action: Action) -> str:
@@ -470,7 +472,29 @@ class Handoffs:
         for rid in [rid for rid, (_, deadline) in mine.items() if deadline <= now]:
             del mine[rid]
             self.active.get(token, set()).discard(rid)
+        for (tok, rid), deadline in list(self.until.items()):
+            if tok == token and deadline <= now:
+                del self.until[(tok, rid)]
+                self.active.get(token, set()).discard(rid)
         return mine
+
+    def reserve(self, token: str):  # under the lock: check AND take a slot in one step
+        self.prune(token)
+        if len(self.active.setdefault(token, set())) + self.pending.get(token, 0) >= PER_SESSION:
+            raise fail("quota.host", "Too many sign requests are open. Cancel one first.", exit=9)
+        self.pending[token] = self.pending.get(token, 0) + 1
+
+    def release(self, token: str):
+        with self.lock:
+            self.pending[token] = max(0, self.pending.get(token, 0) - 1)
+
+    def commit(self, token: str, request_id: str, until: float | None = None):
+        """The reserved slot becomes the open request `request_id`. A click request carries its own deadline."""
+        with self.lock:
+            self.pending[token] = max(0, self.pending.get(token, 0) - 1)
+            self.active.setdefault(token, set()).add(request_id)
+            if until is not None:
+                self.until[(token, request_id)] = until
 
     def known_ids(self, token: str) -> set[str]:
         with self.lock:
@@ -485,6 +509,7 @@ class Handoffs:
     def settle(self, token: str, request_id: str):
         with self.lock:
             self.active.get(token, set()).discard(request_id)
+            self.until.pop((token, request_id), None)
 
 
 def register(app: FastAPI, gateway: Gateway):
@@ -512,9 +537,7 @@ def register(app: FastAPI, gateway: Gateway):
                 if known[1] is None:
                     raise fail("lock.busy", "This request is still being prepared.", exit=9)
                 return known[1]
-            handoffs.prune(token)
-            if len(handoffs.active.setdefault(token, set())) >= PER_SESSION:
-                raise fail("quota.host", "Too many sign requests are open. Cancel one first.", exit=9)
+            handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
             handoffs.by_idem[slot] = (binding, None)  # reserved: a concurrent twin is refused, not prepared again
             while len(handoffs.by_idem) > REMEMBERED:
                 handoffs.by_idem.popitem(last=False)
@@ -543,14 +566,17 @@ def register(app: FastAPI, gateway: Gateway):
                 prepared, ws, expect_op=op, expect_key=key, expect_events=expected(body)
             )
         except BaseException:
+            handoffs.release(token)
             with handoffs.lock:
                 handoffs.by_idem.pop(slot, None)  # a retry with the same key gets the same request back
             raise
         with handoffs.lock:
             handoffs.by_idem[slot] = (binding, response)
             handoffs.prune(token)[response["id"]] = (ws, handoffs.clock() + TTL)
-            if response["state"] in ("prepared", "bound"):
-                handoffs.active.setdefault(token, set()).add(response["id"])
+        if response["state"] in ("prepared", "bound"):
+            handoffs.commit(token, response["id"])
+        else:
+            handoffs.release(token)
         return response
 
     def owned_ws(request: Request, request_id: str, ws: str) -> str:

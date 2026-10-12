@@ -19,10 +19,9 @@ from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from . import adapters
-from .errors import fail
+from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
-    PER_SESSION,
     WORKSPACE_OPS,
     AddLabel,
     PrepareBody,
@@ -37,6 +36,8 @@ ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Word = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 TTL = 660  # a request lives 10 minutes at most (the signer caps it); the session forgets it a minute later
 REMEMBERED = 64
+#: refusals after which a request can no longer be signed: its slot is free again
+ENDED = {"expired", "not_prepared_here", "custody_changed", "human.request_expired", "human.request_state"}
 
 
 class Step(BaseModel):
@@ -65,10 +66,6 @@ class Clicks:
             del mine[rid]
             self.ops.pop((token, rid), None)
         return mine
-
-    def count(self, token: str) -> int:
-        with self.lock:
-            return len(self.prune(token))
 
     def add(self, token: str, ws: str, request_id: str, op: str = "") -> None:
         with self.lock:
@@ -108,6 +105,7 @@ def refusal_check(message: str):
 
 def register(app: FastAPI, gateway: Gateway):
     clicks = app.state.clicks = Clicks()
+    handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
 
     def mine(request: Request, ws: str, request_id: str) -> None:
@@ -134,10 +132,20 @@ def register(app: FastAPI, gateway: Gateway):
         slot = (token, ws, body.idem)
         with clicks.lock:
             known = clicks.by_idem.get(slot)
-            if known is not None and known != binding:
-                raise fail("idem.conflict", "This key was used for another action.", exit=5)
-        if known is None and clicks.count(token) >= PER_SESSION:
-            raise fail("quota.host", "Too many sign requests are open. Cancel one first.", exit=9)
+        if known is not None and known != binding:
+            raise fail("idem.conflict", "This key was used for another action.", exit=5)
+        reserved = known is None
+        if reserved:
+            with handoffs.lock:
+                handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
+        try:
+            return _prepare(body, token, ws, slot, binding, reserved)
+        except BaseException:
+            if reserved:
+                handoffs.release(token)
+            raise
+
+    def _prepare(body, token, ws, slot, binding, reserved):
         labels = (
             list(gateway.call(ws, "ticket.get", {"ref": body.key})["doc"].get("labels", []))
             if isinstance(body, AddLabel)
@@ -158,6 +166,8 @@ def register(app: FastAPI, gateway: Gateway):
             sent["files"] = files
         got = signer.call("prepare", sent)
         clicks.add(token, ws, got["request_id"], op)
+        if reserved:
+            handoffs.commit(token, got["request_id"], until=handoffs.clock() + TTL)
         with clicks.lock:
             clicks.by_idem[slot] = binding
             while len(clicks.by_idem) > 256:
@@ -181,8 +191,14 @@ def register(app: FastAPI, gateway: Gateway):
         args = {"workspace_id": ws, "request_id": body.request_id, "view_digest": body.view_digest}
         if body.word is not None:
             args["word"] = body.word  # exactly as typed
-        got = signer.call("sign", args)
+        try:
+            got = signer.call("sign", args)
+        except HostError as exc:
+            if (exc.error.get("reason") or exc.error["code"]) in ENDED:
+                handoffs.settle(request.state.token, body.request_id)
+            raise
         clicks.forget(request.state.token, body.request_id)
+        handoffs.settle(request.state.token, body.request_id)
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
         if isinstance(result.get("key"), str):
@@ -196,6 +212,7 @@ def register(app: FastAPI, gateway: Gateway):
         mine(request, ws, body.request_id)
         got = signer.call("cancel", {"workspace_id": ws, "request_id": body.request_id})
         clicks.forget(request.state.token, body.request_id)
+        handoffs.settle(request.state.token, body.request_id)
         return {"id": body.request_id, "state": got.get("state")}
 
     def cancel_session(token: str):
@@ -206,5 +223,6 @@ def register(app: FastAPI, gateway: Gateway):
             except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
                 pass
             clicks.forget(token, rid)
+            handoffs.settle(token, rid)
 
     app.state.cancel_clicks = cancel_session

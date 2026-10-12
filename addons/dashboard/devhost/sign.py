@@ -39,6 +39,7 @@ OP_WORDS = {
     "reopen": "reopen",
     "log": "add a comment to",
     "set": "change fields of",
+    "section.set": "write a section of",
     "new": "create the ticket",
 }
 WARNING = "only sign a code you created yourself"
@@ -107,11 +108,19 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
         if "source_sha" in e and (material.get("input") or {}).get("source_sha") not in (None, e["source_sha"]):
             raise Refused("source_sha is not the one the material shows")
         if e["type"] == "ticket.updated":
+            sets_, sections_ = e.get("set") or {}, e.get("sections") or {}
+            if op == "section.set" and (sets_ or len(sections_) != 1):
+                raise Refused("section.set changes one section and no field")
+            if op == "set" and (sections_ or not sets_):
+                raise Refused("set changes fields only")
+            if set(e.get("base_rev") or {}) != set(sets_) | {"body." + sid for sid in sections_}:
+                raise Refused("base_rev does not name exactly the paths the edit touches")
             before = material.get("before") or {}
-            if set(before) - set(e.get("set") or {}):
-                raise Refused("a 'before' value for a field the event does not set")
+            if set(before) - set(e.get("set") or {}) - {"body." + sid for sid in e.get("sections") or {}}:
+                raise Refused("a 'before' value for a path the event does not change")
             for path, value in before.items():
-                if (e.get("base_rev") or {}).get(path) != canon.value_hash(value):
+                want = canon.section_hash(value) if path.startswith("body.") else canon.value_hash(value)
+                if (e.get("base_rev") or {}).get(path) != want:
                     raise Refused(f"the current value of {clean(path)} does not match base_rev")
         for sid, entry in (review.derived_of(e, material).get("sections") or {}).items():
             if entry["text"] is None or canon.section_hash(entry["text"]) != entry["hash"]:

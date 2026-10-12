@@ -18,9 +18,14 @@ export type HandoffAction =
   | { action: 'label'; key: string; label: string }
   | { action: 'close'; key: string; resolution?: 'wont_do' | 'duplicate' | 'obsolete' | 'other'; duplicate_of?: string; message?: string }
   | { action: 'reopen'; key: string; message?: string }
-  /** A person's `new` carries the title and type only. Everything else is a follow-up `details` hand-off. */
+  /** A person's `new` carries the title and type only. Everything else is a follow-up hand-off (`details`, `section`). */
   | { action: 'new'; title: string; type?: 'feature' | 'bug' | 'chore' | 'spike' | 'epic' }
-  | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[] }
+  | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string }
+  /** One body section, replaced (the description follow-up, `section.set`). Spikes keep "findings" where other types have "verification". */
+  | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
+
+/** The hand-offs that follow a signed `new` for what it cannot carry. */
+export type FollowUpAction = Extract<HandoffAction, { action: 'details' | 'section' }>
 
 export type HandoffStateName = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired'
 

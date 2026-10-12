@@ -751,7 +751,7 @@ Signed actions through the terminal hand-off (#305). **The dashboard never signs
 
 | Route | Host op | Notes |
 | --- | --- | --- |
-| `POST /api/w/<uuid>/handoff` | `human.prepare {op, args, handoff:true}` | body: `idem` (`a_` + 26 Crockford chars, client-made, one per click) and a typed action (`approve`, `request_changes`, `verdict`, `answer`, `comment` -> `log`, `label` -> `set labels=`, `close`, `reopen`, `new`). `extra=forbid`; `new` carries title and type only, `details` (priority, size, labels) is the follow-up. `move`, `ask`, settings: 400. Requests belong to the session token that prepared them (other token: 404). The same idem from the same token = the recorded answer; two tabs = two requests; 8 open per session (`quota.host`). After a lost prepare answer the retry first cancels the person's open request for that action created since the lost call |
+| `POST /api/w/<uuid>/handoff` | `human.prepare {op, args, handoff:true}` | body: `idem` (`a_` + 26 Crockford chars, client-made, one per click) and a typed action (`approve`, `request_changes`, `verdict`, `answer`, `comment` -> `log`, `label` -> `set labels=`, `close`, `reopen`, `new`, `details` -> `set`, `section` -> `section.set`). `extra=forbid`; `new` carries title and type only; the follow-ups are `details` (priority, size, labels, parent: one `set`) and `section` (one `section.set` per written section; id from the closed list, text 1..65536). `move`, `ask`, settings: 400. Requests belong to the session token that prepared them (other token: 404). The same idem from the same token = the recorded answer; two tabs = two requests; 8 open per session (`quota.host`). After a lost prepare answer the retry first cancels the person's open request for that action created since the lost call |
 | `GET /api/w/<uuid>/handoff/<request_id>` | `human.pending {request_id}` | `{state, event_ids, seq, error?}`; owner only |
 | `DELETE /api/w/<uuid>/handoff/<request_id>` | `human.cancel` | idempotent; logout cancels the session's open requests |
 
@@ -780,3 +780,13 @@ on the three decision types only; the confirmation word is `KEY/FRAG` (last 8 ch
 stub signer print the same five header lines with the key labelled "ticket key per host, not proven"; a refused submit leaves the
 request `bound` with `error:{code}` in `human.pending`; after a lost prepare answer the server adopts or cancels the orphan.
 Not yet from H5a: gate `material.texts` is shown only if present; the signer's op-specific `ticket.updated` checks are not in the stub signer.
+
+M3 complete details (this round): after a signed `new` the page offers "Complete details" (`new-ticket/CompleteDetails.tsx`), one
+hand-off per step, in order: one `details` (`set`: priority, size, labels, parent epic) and one `section` per written section
+(`section.set`). Host contract 0.8.1 item 3 and "Person versions of agent ops" name `set` and `section.set` as person ops, so
+the stub now serves both (`parent=KEY|none` validated against visible tickets and not the ticket itself; `section.set` appends
+with `body=` so the P1 store checks the text against the signed hash; the stub signer checks that `section.set` changes one
+section and no field, `set` fields only, and that `base_rev` names exactly the touched paths). The list shown is the person's
+own input; the preview inside the dialog is the host's material only. Cancelling any step ends the offer (the rest stays
+unset). Still refused up front, with the reason in the form: restricted visibility, people, due date, acceptance criteria (the
+host has no person op that sets them). A spike's "verification" text travels as the host's `findings` section.

@@ -24,8 +24,9 @@ from typing import Any
 from orch import canon
 from orch.identity import new_ulid
 from orch.ops.errors import OrchError
+from orch.schema import SECTIONS_BY_TYPE
 from orch.store import StoreError
-from orch.store.render import thaw
+from orch.store.render import section_entry, thaw
 
 from orch_dashboard.errors import HostError, fail
 
@@ -43,7 +44,8 @@ LABEL = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 QUESTION = re.compile(r"^Q[1-9][0-9]*$")
 GATES = ("requirements", "plan", "code")
 RESOLUTIONS = ("wont_do", "duplicate", "obsolete", "other")
-SETTABLE = {"labels", "priority", "size", "title"}
+SETTABLE = {"labels", "priority", "size", "title", "parent"}
+MAX_SECTION = 65536
 MAX_TEXT = 4096
 
 
@@ -341,7 +343,13 @@ class Requests:
             ):
                 raise fail("human.request_mismatch", "the events differ from the prepared ones", exit=5)
         try:
-            request["appended"] = [store.append(dict(e), log=request["log"]) for e in events]
+            texts = (request["material"].get("texts") or {}) if request["op"] == "section.set" else {}
+            request["appended"] = [
+                store.append(dict(e), log=request["log"], body={sid: texts[sid] for sid in e.get("sections") or {}})
+                if texts
+                else store.append(dict(e), log=request["log"])
+                for e in events
+            ]
         except StoreError as exc:
             if exc.code == "sig.invalid":
                 raise fail("sig.invalid", "the signature does not verify", exit=5) from None
@@ -461,7 +469,7 @@ class Builder:
 
     # -- operations --------------------------------------------------------------------------------------------------
     def build(self, op: str, args: dict[str, Any]):
-        return getattr(self, "op_" + op)(args)
+        return getattr(self, "op_" + op.replace(".", "_"))(args)
 
     def op_approve(self, args):
         self.exact(args, {"ref", "gate"})
@@ -593,6 +601,14 @@ class Builder:
                 if "\n" in title or len(title) > 200:
                     raise invalid("the title is one line, at most 200 characters")
                 sets[path] = title
+            elif name == "parent":
+                if value in ("none", "null"):
+                    sets[path] = None
+                else:
+                    parent = self.ticket(value)  # exists and is visible to the person
+                    if parent.key == view.key:
+                        raise invalid("a ticket is not its own parent")
+                    sets[path] = parent.key
             elif name == "priority":
                 if value not in ("low", "medium", "high", "urgent"):
                     raise invalid("priority is low, medium, high or urgent")
@@ -609,6 +625,27 @@ class Builder:
         }
         events = [self.envelope(event, view.uid)]
         return events, view.uid, self.payload_material(view, events, before=before)
+
+    def op_section_set(self, args):
+        self.exact(args, {"ref", "section", "message"})
+        view = self.ticket(args["ref"])
+        sid = args["section"]
+        if not isinstance(sid, str) or sid not in SECTIONS_BY_TYPE[view.type]:
+            raise invalid(f"a {view.type} ticket has no section {str(sid)[:40]}")
+        text = args["message"]
+        if not isinstance(text, str) or not text.strip() or len(text.encode()) > MAX_SECTION:
+            raise invalid(f"the section is 1 to {MAX_SECTION} bytes of text")
+        if not canon.is_clean_text(text):
+            raise fail("parse.text", "the section has characters orch refuses", exit=6)
+        text = text.strip("\n")
+        before = self.store.body_sections(view.uid).get(sid, "")
+        event = {
+            "type": "ticket.updated",
+            "base_rev": {f"body.{sid}": canon.section_hash(before)},
+            "sections": {sid: section_entry(text)},
+        }
+        events = [self.envelope(event, view.uid)]
+        return events, view.uid, self.payload_material(view, events, texts={sid: text}, before={f"body.{sid}": before})
 
     def op_new(self, args):
         self.exact(args, {"title"}, {"type", "priority", "size", "label", "parent", "message"})

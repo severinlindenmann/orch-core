@@ -125,16 +125,50 @@ class Details(Action):
     priority: Literal["low", "medium", "high", "urgent"] | None = None
     size: Literal["xs", "s", "m", "l", "xl"] | None = None
     labels: list[Label] | None = Field(default=None, min_length=1, max_length=16)
+    parent: Key | None = None
 
     @model_validator(mode="after")
     def something(self):
-        if self.priority is None and self.size is None and self.labels is None:
+        if self.priority is None and self.size is None and self.labels is None and self.parent is None:
             raise ValueError("details change at least one field")
         return self
 
 
+SectionId = Literal[
+    "summary",
+    "context",
+    "requirements",
+    "out_of_scope",
+    "plan",
+    "decisions",
+    "verification",
+    "findings",
+    "current_state",
+]
+SectionText = Annotated[str, StringConstraints(min_length=1, max_length=65536)]
+
+
+class WriteSection(Action):
+    """The follow-up hand-off after `new` for the description: one section, replaced as one signed change."""
+
+    action: Literal["section"]
+    key: Key
+    section: SectionId
+    text: SectionText
+
+
 PrepareBody = Annotated[
-    Approve | RequestChanges | Verdict | Answer | Comment | AddLabel | Close | Reopen | NewTicket | Details,
+    Approve
+    | RequestChanges
+    | Verdict
+    | Answer
+    | Comment
+    | AddLabel
+    | Close
+    | Reopen
+    | NewTicket
+    | Details
+    | WriteSection,
     Field(discriminator="action"),
 ]
 
@@ -170,7 +204,11 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
             if action.labels:
                 pairs.append("labels=" + ",".join(sorted(set(action.labels))))
+            if action.parent:
+                pairs.append(f"parent={action.parent}")
             return "set", {"ref": action.key, "pairs": pairs}
+        case WriteSection():
+            return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 

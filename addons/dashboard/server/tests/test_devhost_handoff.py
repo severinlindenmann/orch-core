@@ -204,6 +204,8 @@ def test_every_person_operation_prepares_and_signs(signing, rich):
         ("close", {"ref": "DEMO-0002", "resolution": "wont_do", "message": "no longer needed"}),
         ("reopen", {"ref": "DEMO-0002"}),
         ("new", {"title": "Made in the dashboard", "type": "bug"}),
+        ("set", {"ref": "DEMO-0001", "pairs": ["parent=DEMO-0003", "size=s"]}),
+        ("section.set", {"ref": "DEMO-0001", "section": "summary", "message": "A written summary."}),
     ]
     for op, args in cases:
         got = prepare(link, op, args)
@@ -216,6 +218,8 @@ def test_every_person_operation_prepares_and_signs(signing, rich):
     assert "new-one" in state.tickets[ids["First"]].fields["labels"]
     assert any(t.title == "Made in the dashboard" for t in state.tickets.values())
     assert state.tickets[ids["Second"]].status == "open"
+    assert state.tickets[ids["First"]].fields["parent"] == "DEMO-0003"
+    assert env.store.body_sections(ids["First"])["summary"] == "A written summary."
 
 
 def test_extra_fields_of_new_are_refused_by_the_stub(signing, rich):
@@ -232,6 +236,10 @@ def test_typed_arguments_are_checked(signing, rich):
         ("approve", {"ref": "DEMO-0001", "gate": "plan", "extra": 1}),
         ("log", {"ref": "DEMO-0001", "message": ""}),
         ("set", {"ref": "DEMO-0001", "pairs": ["owner=p_x"]}),
+        ("set", {"ref": "DEMO-0001", "pairs": ["parent=DEMO-0001"]}),
+        ("section.set", {"ref": "DEMO-0001", "section": "bogus", "message": "x"}),
+        ("section.set", {"ref": "DEMO-0001", "section": "plan", "message": ""}),
+        ("section.set", {"ref": "DEMO-0001", "section": "plan"}),
         ("answer", {"ref": "DEMO-0001", "question": "x"}),
     ]:
         with pytest.raises(HostError, match="invalid.input"):
@@ -355,6 +363,7 @@ def test_material_has_only_the_schema_keys_for_every_operation_and_the_signer_re
         ("answer", {"ref": "DEMO-0001", "question": "Q2", "option": "csv"}),
         ("log", {"ref": "DEMO-0001", "message": "x"}),
         ("set", {"ref": "DEMO-0001", "pairs": ["labels=zz"]}),
+        ("section.set", {"ref": "DEMO-0001", "section": "plan", "message": "Do it."}),
         ("new", {"title": "T"}),
     ]
     device = signing.p1.owner.device

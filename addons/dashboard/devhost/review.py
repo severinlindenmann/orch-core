@@ -32,6 +32,7 @@ EMITS = {
     "reopen": ("ticket.reopened",),
     "log": ("log.added",),
     "set": ("ticket.updated",),
+    "section.set": ("ticket.updated",),
     "new": ("ticket.created",),
 }
 

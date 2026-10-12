@@ -81,6 +81,21 @@ ACTIONS = [
         "ticket.updated",
         "payload",
     ),
+    (
+        {"action": "details", "key": "DEMO-0001", "parent": "DEMO-0003", "size": "s"},
+        "ticket.updated",
+        "payload",
+    ),
+    (
+        {
+            "action": "section",
+            "key": "DEMO-0001",
+            "section": "summary",
+            "text": "Why this exists.\n\nSecond paragraph.",
+        },
+        "ticket.updated",
+        "payload",
+    ),
 ]
 
 
@@ -128,6 +143,12 @@ def test_label_adds_to_the_labels_the_ticket_has(ready):
         {"action": "close", "key": "DEMO-0001", "resolution": "other", "file": "-"},
         {"action": "new", "title": ""},
         {"action": "details", "key": "DEMO-0001"},
+        {"action": "details", "key": "DEMO-0001", "parent": "not a key"},
+        {"action": "details", "key": "DEMO-0001", "owner": "p_x"},
+        {"action": "section", "key": "DEMO-0001", "section": "nope", "text": "x"},
+        {"action": "section", "key": "DEMO-0001", "section": "summary", "text": ""},
+        {"action": "section", "key": "DEMO-0001", "section": "summary"},
+        {"action": "section", "key": "DEMO-0001", "section": "summary", "text": "x", "message": "y"},
         {"action": "new", "title": "t", "labels": ["a"]},
         {"action": "new", "title": "x" * 201},
         {"action": "new", "title": "t", "type": "story"},
@@ -433,3 +454,47 @@ def test_extra_orphans_are_cancelled_and_one_is_adopted(ready, monkeypatch):
     assert post(client, token, stub, body).status_code == 200 or True  # recovery adopts it, prepares nothing new
     states = sorted(r["state"] for r in signing.stub.requests.table.values())
     assert states.count("prepared") == 1 and states.count("cancelled") == len(states) - 1
+
+
+def test_details_set_the_parent_and_the_fields_as_one_set_with_their_prior_values(ready):
+    client, token, stub, rich, signing = ready
+    body = {"action": "details", "key": "DEMO-0001", "parent": "DEMO-0003", "priority": "high", "idem": idem(5)}
+    got = post(client, token, stub, body).json()
+    event = got["events"][0]
+    assert event["set"] == {"ticket.parent": "DEMO-0003", "ticket.priority": "high"}
+    assert got["material"]["before"]["ticket.parent"] is None and "sections" not in event
+
+
+def test_details_refuse_a_parent_that_is_not_there_or_is_the_ticket_itself(ready):
+    client, token, stub, rich, signing = ready
+    for parent in ("DEMO-0999", "DEMO-0001"):
+        res = post(client, token, stub, {"action": "details", "key": "DEMO-0001", "parent": parent, "idem": idem(6)})
+        assert res.status_code in (400, 404), res.text
+    assert signing.stub.requests.table == {}
+
+
+def test_a_section_is_prepared_with_its_text_in_the_material_and_signed_in_the_terminal(ready):
+    client, token, stub, rich, signing = ready
+    env, ids = rich
+    text = "Line one.\n\n- a\n- b"
+    got = post(
+        client,
+        token,
+        stub,
+        {"action": "section", "key": "DEMO-0001", "section": "context", "text": text, "idem": idem(7)},
+    ).json()
+    assert got["op"] == "section.set" and got["material"]["texts"] == {"context": text}
+    assert set(got["events"][0]) >= {"sections", "base_rev"} and "set" not in got["events"][0]
+    assert "body.context" in got["material"]["before"]
+    status, shown = signing.sign(got["code"])
+    assert status == 0, shown
+    env.store.refresh()
+    assert env.store.body_sections(ids["First"])["context"] == text
+
+
+def test_a_section_the_ticket_type_does_not_have_is_refused_by_the_host(ready):
+    client, token, stub, rich, signing = ready
+    res = post(
+        client, token, stub, {"action": "section", "key": "DEMO-0003", "section": "plan", "text": "x", "idem": idem(8)}
+    )  # DEMO-0003 is an epic: no plan
+    assert res.status_code == 400 and signing.stub.requests.table == {}

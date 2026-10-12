@@ -391,15 +391,23 @@ class RegistryBackend:
         """``diff``'s reader phase, off the workspace worker thread (the worker resolved visibility, links and
         capabilities): one in flight per principal, :data:`~orch.host.diff.BUDGET_S` for the request."""
         redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
-        try:
-            git_diff.IN_FLIGHT.take(pending.principal)
+        principal = pending.principal
+
+        def work() -> dict[str, Any]:
+            # the slot is held until the reader work itself ends (also when the request stops waiting for it), and
+            # given back on this thread, so it never outlives the work even when the event loop stops first
             try:
-                future = asyncio.get_running_loop().run_in_executor(git_diff.EXECUTOR, git_diff.run, pending)
-            except BaseException:
-                git_diff.IN_FLIGHT.give(pending.principal)
+                return git_diff.run(pending)
+            finally:
+                git_diff.IN_FLIGHT.give(principal)
+
+        try:
+            git_diff.IN_FLIGHT.take(principal)
+            try:
+                future = asyncio.get_running_loop().run_in_executor(git_diff.EXECUTOR, work)
+            except BaseException:  # never scheduled: work() will not give it back
+                git_diff.IN_FLIGHT.give(principal)
                 raise
-            # the slot is held until the reader work itself ends, also when this request stops waiting for it
-            future.add_done_callback(lambda _f: git_diff.IN_FLIGHT.give(pending.principal))
             try:  # the reader's deadlines end the work within the budget; this only bounds a stuck thread
                 data = await asyncio.wait_for(asyncio.shield(future), git_diff.BUDGET_S + 5)
             except TimeoutError:
@@ -407,6 +415,9 @@ class RegistryBackend:
             return redactor.obj(ok_result(data))
         except HostError as exc:
             raise redactor.error(exc) from None
+        except Exception:  # the transport answers internal without a cause: keep it in the host's log, redacted
+            LOG.error("diff failed: %s", redactor.text(traceback.format_exc()))
+            raise
 
     def _register(self, call: Call, checked: dict[str, Any]) -> dict[str, Any]:
         """``sub.open`` on the event loop: register the subscription the worker checked, at the boundary it fixed."""

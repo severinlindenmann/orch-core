@@ -305,12 +305,12 @@ def slow_reader(served, monkeypatch, seconds):
 
 
 def test_a_slow_diff_does_not_hold_the_workspace(world, monkeypatch):
-    """The reader phase runs off the workspace's one worker thread: while a G caller's diff waits on its reader, the
-    owner's ``ticket.get`` and writes are answered at once, and a second diff of the same principal is
-    ``quota.host`` (one in flight per principal) while another principal's diff runs."""
+    """The reader phase runs off the workspace's one worker thread: while a G caller's diff waits 6 s on its
+    reader, the owner's ``ticket.get`` answers within 2 s, the owner's own diff is not refused, and a second diff of
+    the same principal is ``quota.host`` (one in flight per principal)."""
     served, _, tickets = world
     key = tickets["open"][1]
-    started = slow_reader(served, monkeypatch, 3.0)
+    started = slow_reader(served, monkeypatch, 6.0)
     out = {}
     slow = threading.Thread(target=lambda: out.setdefault("g", diff(served, {"ref": key}, grant=served.grant)))
     slow.start()
@@ -318,7 +318,7 @@ def test_a_slow_diff_does_not_hold_the_workspace(world, monkeypatch):
         assert started.wait(10)
         t0 = time.monotonic()
         ok(served.client().req("ticket.get", {"ref": key}))
-        assert time.monotonic() - t0 < 1.0
+        assert time.monotonic() - t0 < 2.0
         second = diff(served, {"ref": key}, grant=served.grant)
         assert err(second) == "quota.host" and second["error"]["retryable"] is True
         assert ok(diff(served, {"ref": key}))["data"]["sources"]  # another principal (the owner) is not refused

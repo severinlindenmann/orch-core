@@ -298,10 +298,38 @@ def test_no_card_below_the_highest_signed_seq():
 def test_file_ledger_survives_a_restart(tmp_path):
     from orch.relay.state import FileSignLedger, StateDir
 
-    led = FileSignLedger(StateDir(tmp_path / "relay"))
-    sig = signer(ledger=led).card(dict(CARD["o"]))
+    st = StateDir(tmp_path / "relay")
+    sig = signer(ledger=FileSignLedger(st)).card(dict(CARD["o"]))
+    st.close()
     again = FileSignLedger(StateDir(tmp_path / "relay"))
     k = Key()
     assert signer(k, ledger=again).card(dict(CARD["o"])) == sig and k.signed == []
     with pytest.raises(sign.SignerRefused):
         signer(ledger=again).card({**CARD["o"], "issued_ms": 9})
+
+
+def test_two_signers_on_one_state_dir_never_return_two_cards_at_one_seq(tmp_path):
+    """Review D1: concurrent signers sharing a directory; at most one distinct card signature leaves at card_seq 1."""
+    import threading
+
+    from orch.relay.state import FileSignLedger, StateDir
+
+    st = StateDir(tmp_path / "relay")
+    got, errors = [], []
+    barrier = threading.Barrier(6)
+
+    def go(i):
+        s = signer(ledger=FileSignLedger(st))
+        barrier.wait()
+        try:
+            got.append((i % 2, s.card({**CARD["o"], "issued_ms": 1000 + i % 2})))
+        except (sign.SignerRefused, Exception) as e:  # noqa: BLE001 - a refusal is the safe outcome
+            errors.append(type(e).__name__)
+
+    ts = [threading.Thread(target=go, args=(i,)) for i in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(30)
+    assert len({variant for variant, _ in got}) <= 1, got
+    st.close()

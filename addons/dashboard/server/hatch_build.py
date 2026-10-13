@@ -52,6 +52,10 @@ def get_build_hook():
             packaged_manifest = server / "src/orch_dashboard/orch-addon.json"
             shutil.copyfile(manifest, packaged_manifest)
             includes = build_data.setdefault("force_include", {})
+            if self.target_name == "wheel" and version == "editable":
+                # `uv sync` (development, CI's Python jobs) installs editable: the package data stays in the source
+                # tree, so only the manifest copy is needed and no UI is built (those jobs have no Node 24).
+                return
             if self.target_name == "wheel":
                 static = ensure_ui(server)
                 includes[str(packaged_manifest)] = "orch_dashboard/orch-addon.json"

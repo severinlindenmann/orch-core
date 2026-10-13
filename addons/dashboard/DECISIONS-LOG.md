@@ -1474,3 +1474,5 @@ A retained binding without an open request also caused a 24 h lockout.
 
 **Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
 never restore whole-ticket or member-role bases as an incidental refactor.
+
+- 2026-10-13 — **Decision:** show host submitted_at only for committed pending rows (seq present); failed submissions require Start again; preserve host fixes and retry lock.busy. **Why:** submission time alone is not proof of a logged signature (#437). **Revert:** remove this dashboard mapping if the host outcome contract changes.

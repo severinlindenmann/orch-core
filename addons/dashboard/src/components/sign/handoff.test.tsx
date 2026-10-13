@@ -180,11 +180,37 @@ describe('the hand-off dialog (real host)', () => {
     expect(within(dialog).queryByText('Signed')).toBeNull()
     expect(dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
     expect(dialog).toHaveTextContent('HOST-SIGNED comment text')
+    expect(within(dialog).getByText(/A similar comment/).closest('p')).toHaveAttribute('title', done.signed_at)
     expect(s.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     await user.click(within(dialog).getByRole('button', { name: 'Do it again' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare.mock.calls.map((c) => c[2])).toEqual([0, 1])
   })
+
+  it('a failed submitted intent offers Start again with the next retry', async () => {
+    const fresh = fakeRequest()
+    s.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.failed', message: 'The earlier attempt was submitted but did not land (gate.stale). It was not signed into the log.', retryable: false })).mockResolvedValue(fresh)
+    s.get.mockResolvedValue(state(fresh))
+    const { user } = await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByText('The earlier attempt did not land', {}, T)
+    expect(dialog).not.toHaveTextContent('Already done')
+    expect(dialog).toHaveTextContent('not signed into the log')
+    await user.click(within(dialog).getByRole('button', { name: 'Start again' }))
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(s.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('keeps polling a busy host until a committed outcome arrives', async () => {
+    const request = fakeRequest()
+    s.prepare.mockResolvedValue(request)
+    for (let i = 0; i < 5; i++) s.get.mockRejectedValueOnce(new ApiError(503, { code: 'lock.busy', message: 'busy', retryable: true }, 9))
+    s.get.mockResolvedValue(state(request, { state: 'submitted', seq: 8 }))
+    await mount(PLAN)
+    expect(await screen.findByText('Signed', {}, { timeout: 18000 })).toBeInTheDocument()
+    expect(s.prepare).toHaveBeenCalledTimes(1)
+    expect(s.get.mock.calls.length).toBeGreaterThanOrEqual(6)
+  }, 22000)
 
   it('a lost answer is retried as the same intent (the same retry), also after signing in again', async () => {
     const request = fakeRequest()
@@ -343,7 +369,7 @@ describe('requests stay with their workspace and their tab', () => {
     s.prepare.mockResolvedValue(request)
     s.get.mockResolvedValue(state(request, { state: 'submitted', error: { code: 'gate.stale' } }))
     await mount(PLAN)
-    expect(await screen.findByText(/The ticket changed before it was signed/, {}, { timeout: 9000 })).toBeInTheDocument()
+    expect(await screen.findByText(/The earlier attempt was submitted but did not land/, {}, { timeout: 9000 })).toBeInTheDocument()
   }, 15000)
 })
 

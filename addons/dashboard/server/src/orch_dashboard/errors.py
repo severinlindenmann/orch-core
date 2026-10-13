@@ -19,6 +19,8 @@ def fail(code: str, message: str | None = None, exit: int = 9):
                 "quota.host",
                 "timeout",
                 "host.restarting",
+                "host.busy",
+                "lock.busy",
                 "page.expired",
                 "click.unavailable",
             },
@@ -66,5 +68,5 @@ def response(code: str, http: int):
 
 
 def host_response(exc: HostError):
-    error = {k: v for k, v in exc.error.items() if k != "fix"}
+    error = dict(exc.error)
     return JSONResponse({"ok": False, "exit": exc.exit, "error": error}, status_code=status(error["code"]))

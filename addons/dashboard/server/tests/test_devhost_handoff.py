@@ -94,6 +94,10 @@ def test_signer_signs_and_the_store_appends_through_p1(signing, rich, stub):
     row = pending(link, request_id=got["request"]["id"])[0]
     assert row["state"] == "submitted" and row["event_ids"] == [got["events"][0]["id"]] and row["seq"] > 1
     assert row["code"] is None
+    assert row["submitted_at"] is not None
+    assert (
+        link.call("human.get", {"request_id": got["request"]["id"]})["request"]["submitted_at"] == row["submitted_at"]
+    )
 
 
 def test_replay_of_a_submit_is_refused_or_answered_from_the_tombstone(signing, rich):
@@ -426,3 +430,31 @@ def test_failed_code_lookups_are_limited_per_connection_and_terminal_codes_count
         pending(first, code=open_["request"]["code"])  # the right code included
     now[0] += 61
     assert pending(first, code=open_["request"]["code"])[0]["id"] == open_["request"]["id"]
+
+
+def test_append_failure_keeps_submission_time_without_committed_marker(signing, rich, monkeypatch):
+    from orch import canon, crypto
+
+    from orch_dashboard.errors import fail
+
+    env, ids = rich
+    link = signing.link()
+    got = prepare(link, "log", {"ref": "DEMO-0001", "message": "append fails"})
+    rid = got["request"]["id"]
+    assert got["request"]["submitted_at"] is None
+    bound = link.call(
+        "human.get", {"request_id": rid, "signer": {"device": signing.p1.owner.device, "auth": "passphrase"}}
+    )
+    event = dict(bound["events"][0])
+    event["sig"] = crypto.b64u(signing.p1.owner.dk_sign(canon.person_signing_bytes(signing.ws, got["log"], event)))
+
+    def broken_append(*args, **kwargs):
+        raise fail("internal", "injected append failure")
+
+    monkeypatch.setattr(type(env.store), "append", broken_append)
+    with pytest.raises(HostError, match="internal"):
+        link.call("human.submit", {"request_id": rid, "events": [event]}, idem="a_" + "7" * 26)
+    row = pending(link, request_id=rid)[0]
+    assert row["state"] == "submitted" and row["seq"] is None
+    assert row["submitted_at"] is not None and row["error"] == {"code": "internal"}
+    assert link.call("human.get", {"request_id": rid})["request"]["submitted_at"] == row["submitted_at"]

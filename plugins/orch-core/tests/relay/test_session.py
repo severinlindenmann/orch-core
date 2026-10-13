@@ -556,3 +556,25 @@ def test_card_of_another_wsk_validly_delegated_is_misbehaving(relay):
     relay.expect(*login_expects(), Expect("GET", f"/v2/workspaces/{WS}/card", reply=json_reply(200, {"card": other})))
     with pytest.raises(RelayMisbehaving):
         directory(sess(relay)).get_card()
+
+
+def test_holder_conflict_wait_ends_when_stop_is_set(relay):
+    """Review L2: the 40 s lease wait honours the stop event."""
+    import threading
+    import time
+
+    relay.expect(*login_expects(), fixture_expect("host_hold", "refusal_409_holder_conflict"))
+    stop = threading.Event()
+    threading.Timer(0.2, stop.set).start()
+    s = make_session(relay.origin(), V_ORIGIN, stop=stop, clock=_RealSleepClock())
+    t0 = time.monotonic()
+    with pytest.raises(session.SessionError):
+        s.hold()
+    assert time.monotonic() - t0 < 5.0
+
+
+class _RealSleepClock(Clock):
+    def sleep(self, s):
+        import time
+
+        time.sleep(s)

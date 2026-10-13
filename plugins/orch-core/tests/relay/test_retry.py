@@ -226,3 +226,55 @@ def test_refusal_from_response():
     assert "SECRET" not in str(junk) and "SECRET" not in repr(junk)
     weird = retry.RelayRefused.from_response("R", Response(400, {}, b'{"error":"Bad\\r\\nCode"}'))
     assert weird.code is None
+
+
+# --- waits honour the stop event (review L2, 11A.7: stop joins within 5 s) -------------------------------------------
+
+
+def _stop_soon():
+    import threading
+
+    stop = threading.Event()
+    threading.Timer(0.2, stop.set).start()
+    return stop
+
+
+@pytest.mark.parametrize(
+    "err",
+    [
+        refused(429, "rate_limited", retry_after=3600),  # a long Retry-After
+        refused(503, "overloaded"),  # backoff
+    ],
+)
+def test_a_long_wait_ends_when_stop_is_set(err):
+    import time
+
+    stop = _stop_soon()
+    r = retry.Retrier(sleep=lambda s: time.sleep(s), alarm=lambda c, d: None, rng=random.Random(1), stop=stop)
+    calls = []
+
+    def fn():
+        calls.append(1)
+        if len(calls) > 1:
+            raise AssertionError("retried after stop")
+        raise err
+
+    t0 = time.monotonic()
+    with pytest.raises(retry.Stopped):
+        r.run(fn, route="R")
+    assert time.monotonic() - t0 < 5.0
+
+
+def test_the_hourly_quota_wait_ends_when_stop_is_set():
+    import time
+
+    stop = _stop_soon()
+    r = retry.Retrier(sleep=lambda s: time.sleep(s), alarm=lambda c, d: None, rng=random.Random(1), stop=stop)
+
+    def fn():
+        raise refused(429, "quota_exceeded")
+
+    t0 = time.monotonic()
+    with pytest.raises(retry.Stopped):
+        r.run(fn, route="R")
+    assert time.monotonic() - t0 < 5.0

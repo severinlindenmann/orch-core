@@ -85,6 +85,8 @@ export interface Workspace {
    * it keeps no second list).
    */
   repos?: Record<string, WorkspaceRepo>
+  /** A real host only: what the click signer says about this workspace (custody, flag, can it sign now). */
+  click?: { custody: 'convenience' | 'passphrase' | 'none'; enabled: boolean; available: boolean; problem?: string } | null
 }
 
 /**
@@ -224,7 +226,7 @@ export type TaskState = 'todo' | 'doing' | 'done' | 'blocked' | 'skipped'
 export interface TaskStatus extends TaskDef {
   state: TaskState
   lease: { session: string; agent: string; since: string } | null
-  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' } | null
+  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' | 'unknown' } | null
   done_at: string | null
 }
 
@@ -941,7 +943,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number }
+  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string }
 }
 
 export class ApiError extends Error {
@@ -950,6 +952,13 @@ export class ApiError extends Error {
   readonly hint?: string
   readonly retryable: boolean
   readonly retry_after_ms?: number
+  /** `human.click_refused` and `sign.convenience_unavailable` carry the reason the UI branches on. */
+  readonly reason?: string
+  /** `click.unsettled`: the request whose signature has not settled yet (re-attach to it). */
+  readonly request_id?: string
+  readonly signed_at?: string | null
+  readonly op?: string
+  readonly summary?: string
   readonly exit?: number
   constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
     super(body.message)
@@ -959,6 +968,11 @@ export class ApiError extends Error {
     this.hint = body.hint
     this.retryable = body.retryable
     this.retry_after_ms = body.retry_after_ms
+    this.reason = body.reason
+    this.request_id = body.request_id
+    this.signed_at = body.signed_at
+    this.op = body.op
+    this.summary = body.summary
     this.exit = exit
   }
 }

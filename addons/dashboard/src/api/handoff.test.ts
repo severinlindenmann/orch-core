@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IDEM, cj, confirmWord, expiryMs, fingerprintOf, newIdem, requestIsConsistent, reviewDigestOf, signCommand, type HandoffEvent, type HandoffRequest } from './handoff'
+import { cj, confirmWord, expiryMs, fingerprintOf, requestIsConsistent, reviewDigestOf, signCommand, type HandoffEvent, type HandoffRequest } from './handoff'
 import vector from '@/test/fixtures/handoff/vector.json'
 
 const events = vector.events as unknown as HandoffEvent[]
@@ -46,14 +46,7 @@ describe('the fingerprint is the one `orch sign` computes (host contract v1.4 se
   })
 })
 
-describe('idempotency keys and the command', () => {
-  it('an idem has the host shape and is fresh each time', () => {
-    const seen = new Set(Array.from({ length: 50 }, () => newIdem()))
-    expect(seen.size).toBe(50)
-    for (const id of seen) expect(id).toMatch(IDEM)
-    expect(newIdem(() => new Uint8Array(26).fill(255))).toMatch(IDEM) // the first character stays 0..7
-  })
-
+describe('the command', () => {
   it('the command is exactly orch sign CODE', () => {
     expect(signCommand('7F3K-Q2MA')).toBe('orch sign 7F3K-Q2MA')
   })

@@ -27,6 +27,7 @@ import { displayName, useSessionState, useTodayWide, type Directory } from './sh
 import { queries } from '@/api/queries'
 import { DecidedForYou } from '../../mandates/DecidedForYou'
 import { useMandatesPreview } from '../../mandates/shared'
+import { useMe } from '@/app/useMe'
 
 function dateLine(now: string) {
   return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
@@ -87,7 +88,7 @@ export function TodayPage() {
   const ws = workspace?.id
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
-  const me = useQuery(queries.me())
+  const me = useMe()
   const decisionsQ = useQuery({ ...queries.addonDecisions(ws!), enabled: !!ws })
   // Mock only: switching the demo dataset is a fresh start for the queue, not a wave of "new" items. The queue waits
   // until Today and the decisions have been read after the switch, so it never starts from the other dataset's items.

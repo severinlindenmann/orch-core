@@ -50,7 +50,7 @@ it('changing the grant length opens the hand-off with the typed action, and show
   await user.click(screen.getByRole('button', { name: 'Save settings' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 12, idem: expect.stringMatching(/^a_/) }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 12 }])
   expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent('orch sign 7F3K-Q2MA')
   expect(dialog).toHaveTextContent('Change to the workspace settings')
   expect(dialog).toHaveTextContent('In your terminal you type DEMO~aaaaaaaa/SETTINGS to continue.')
@@ -103,7 +103,7 @@ it('Members lists the roster with devices and no last-seen, and a role change is
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Make Tom a maintainer')
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_role', person: TOM, role: 'maintainer', idem: expect.any(String) }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_role', person: TOM, role: 'maintainer' }])
   expect(dialog).toHaveTextContent('Change of a member')
   expect(dialog).toHaveTextContent(`In your terminal you type ${TOM} to continue.`)
 })
@@ -126,7 +126,7 @@ it('removing a member is a hand-off; you cannot remove yourself or the last owne
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_remove', person: TOM, idem: expect.any(String) }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_remove', person: TOM }])
 })
 
 it('a maintainer adds members and viewers, removes the same, and changes no roles', async () => {
@@ -159,7 +159,7 @@ it('adding a member takes the invitee\'s own files, checks them, and the host sh
   await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
   const dialog = await screen.findByRole('dialog', { name: /Add Nia/ }, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_add', name: 'Nia', role: 'member', pk: PK, cert: CERT, idem: expect.any(String) }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_add', name: 'Nia', role: 'member', pk: PK, cert: CERT }])
   // What the host read in the certificate is what the person is shown, with the person id to compare out of band.
   expect(dialog).toHaveTextContent('Add a member')
   expect(dialog).toHaveTextContent('p_' + 'd'.repeat(32))
@@ -201,7 +201,7 @@ it('Gates: the code review is never approved by the assignees and always indepen
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(state.host.posts().map((c) => c.body)).toEqual([
-    { action: 'policy_set', gate: 'code', policy: { approvers: ['maintainer', 'owner'], count: 1, not: ['assignees'], applies: 'all', independent: true }, idem: expect.any(String) },
+    { action: 'policy_set', gate: 'code', policy: { approvers: ['maintainer', 'owner'], count: 1, not: ['assignees'], applies: 'all', independent: true } },
   ])
   expect(dialog).toHaveTextContent('Change to a gate policy')
 })
@@ -246,7 +246,7 @@ it('Grants: an owner revokes any active grant by hand-off, with an optional reas
   await user.type(within(form).getByLabelText('Why (optional)'), 'no longer needed')
   await user.click(within(form).getByRole('button', { name: 'Revoke grant' }))
   await within(await screen.findByRole('dialog')).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'grant_revoke', grant: GRANT_B, reason: 'no longer needed', idem: expect.any(String) }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'grant_revoke', grant: GRANT_B, reason: 'no longer needed' }])
   expect(screen.getByRole('dialog')).toHaveTextContent('In your terminal you type GRANT.REVOKE to continue.')
 })
 

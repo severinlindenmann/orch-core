@@ -213,26 +213,65 @@ contract with a different display and factor.
 
 ### 4.3 Request lifecycle, replay and ambiguous completion
 
+M5 final intent contract (owner decision 13 Oct ~17:20, refined by orch-d6; coordination.md 'M5 'same intent'' and 'M5 intent REFINED'):
+**one intent (op + content + gate/question version) → at most one request → at most one signature;
+a deliberate repeat only via 'Do it again'.** Content means the exact canonical host arguments and certificate bytes.
+Gate decisions use gate generation/hash; answers use question id/hash, never its answered flag or the whole ticket.
+All other ticket operations (log, set, section.set, close, reopen, move) and workspace operations
+(settings, policy, member, grant) have no base. Unrelated agent edits cannot produce a second request.
+The host retains the intent outcome for 24 h. Both panels show server-sourced signed content and signing time
+before 'Do it again' advances retry. Neither dashboard link nor signer sends `auth.session`: restarting the
+dashboard reconnects with the same binding and returns the same request, not `idem.conflict`.
+A conflict is checked against `human.pending`: prepared/bound requests of the same op+key show their expiry;
+otherwise `intent.blocked` offers explicit 'Start again', warning that an earlier request may have been signed.
+No automatic retry advances the intent. Hand-off expiry is decided by host state, never the browser clock.
+
+**Host API gap:** current `human.get`/`human.pending` expose creation/expiry but not signing time.
+The server returns `signed_at: null` and the panels say signing time is unavailable; they never call creation
+time signing time. A host `signed_at` field is required for accurate 'N min ago'. The submitted click prepare
+loses its request id in the signer error, so the server replays the identical host prepare binding/idem through
+its own link to retrieve the exact existing record, not an arbitrary op+key match. Its warning summary comes
+from that record's material review. `human.request_state` at sign reads pending/get before offering a repeat.
+
+
 The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signer.device, op, review_digest)`, valid
 10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
 person. The dashboard adds:
 
-- **A request belongs to the session that prepared it, and a lost answer is retried with the same idem.** `human.prepare`
-  honours `opts.idem` (host contract 0.7, stream A #402): the same principal, idem and arguments return the SAME request
-  (same id and code) in its current state while it is `prepared` or `bound`; other arguments are `idem.conflict`; once it
-  ended the same idem answers it in its terminal state while the record is kept (24 h), afterwards, or if the request is
-  gone, `idem.expired`; a failed commit or a host restart never produces a second request. So one click is one idem
-  (client-made, reused on a retry, new for the next click; the namespace is shared with `human.submit`, which the signer
-  fills with its own). The server sends the host a key derived from the session, the workspace and that idem, so another
-  session's identical key is another request and never hands over this session's (M1 ownership holds). After
-  `outcome.unknown` the next click retries with the same idem and **adopts** the request the host returns: it is provably
-  ours, because the host binds the idem to the principal and the arguments. There is no `outcome.get` for a prepare; a
-  prepared request is read with `human.pending {request_id}`. The panel shows what the retry returns: open (the command),
-  or already signed, cancelled or expired. `idem.conflict` is an honest error (a new key on the next click);
-  `idem.expired` says "This attempt is too old" and starts again only on the person's click, with a fresh idem. "Complete
-  details" after a `new` targets only the ticket of the `new` request this dialog prepared and watched (same request id,
-  op `new`). Requests expire after 10 minutes (4 for a grant); more than 20 pending per person is `quota.host`. Two tabs
-  are two requests.
+- **One action intent -> at most one request -> at most one signature, held by the host.** `human.prepare` honours
+  `opts.idem` (host contract 0.7, stream A #402): the same principal, idem and arguments return the SAME request (same id
+  and code) in its current state while `prepared` or `bound`, and its terminal state for 24 h after it was prepared; other
+  arguments are `idem.conflict`; afterwards `idem.expired`. The dashboard therefore derives the idem from the *action*,
+  never from a click, tab or session: `a_` + 128 bits of `sha256(cj({person, workspace_id, op, args, base}))` in the
+  host's shape (`a_[0-7]` + 25 Crockford characters; `orch_dashboard/intent.py`). `op` and `args` are exactly what is
+  sent to the host (the typed models' `host_call`, never the browser's body); `person` is the workspace's own person;
+  `base` is gate generation/hash for gate decisions, question id/hash for answers, and null for every other op. Two tabs, two sessions, a reopened dialog after a lost answer, and logout/login then retry all send the same
+  idem with the same arguments and get the same request. The browser sends no key; it sends only `retry` (0 normally),
+  which only an explicit click advances. A request obtained this way belongs to the PERSON in that workspace: any session
+  of that person may view, poll, sign and cancel it; an id nobody here prepared looks like one that never existed. The
+  per-session quota counts a shared request once. This process remembers nothing the invariant depends on.
+  What the person sees: a request that is `submitted` is **"Already done"** with an explicit **"Do it again"** (retry + 1,
+  so a second identical comment is possible, but only by that click); a `cancelled` or `expired` one offers **"Start
+  again"** (also retry + 1); a lost answer is retried with the same `retry` and returns the same request. `idem.conflict`
+  means a different path or signer binding. `human.pending` determines whether an op+key request is open:
+  if so, show its expiry; otherwise offer explicit "Start again" with a prior-signature warning.
+  Neither dashboard nor signer sends `auth.session`, so a restart preserves the host binding.
+  **One signing path per workspace (owner decision, 12 Oct 2026, via orch-d6; coordination.md line 166; host side core
+  #434).** Where click-to-sign is ON (the signer's flag for that workspace), the dashboard offers only Sign: there is no
+  "Sign in the terminal instead", and `/handoff` prepares are refused with `sign.click_only` ("This workspace signs in the
+  dashboard"; the host refuses them too once #434 is in). If the signer cannot sign there (`record_unavailable`, no key,
+  helper down) the dialog says so honestly and names `orch host convenience off --workspace W`; it never falls back to a
+  hand-off. Where it is OFF, the terminal hand-off works as before and the click routes have nothing to do. The intent
+  function is the same on both workspace types (no path offset); `retry` advances only on "Do it again" / "Start again".
+  Flag flip: before a click prepare, `human.pending` (no arguments, our link) is read for an open (prepared or bound)
+  hand-off request that has a code, with the same op and key; if one exists the prepare is refused ("An attempt from the
+  terminal is still open; it expires at ..."), as defence in depth for the host's own refusal to flip the flag with hand-offs
+  pending. Flag flipped OFF: a click request can no longer be signed (the signer refuses, reason `disabled`); the server
+  cancels it and it reads as ended. On
+  `idem.expired` (the host forgot the idem after 24 h) the server returns `intent.expired` (HTTP 409) without another
+  prepare. Only the person clicking "Start again" advances `retry` and permits a fresh request.
+  There is no `outcome.get` for a prepare; a request is read with `human.pending {request_id}`. "Complete details" after a `new` targets only the ticket of the `new` request this dialog
+  prepared and watched. Requests expire after 10 minutes (4 for a grant); more than 20 pending per person is `quota.host`.
 - **A refused submit stays open.** A refusal before any append (`gate.stale`, `members.stale`, `question.stale`,
   `sig.invalid`, `human.request_mismatch`) leaves the request `bound` until it expires, and `human.pending` shows
   `error:{code}`; the panel says "Refused: <text>. The request stays open until <time>". A failure after an event
@@ -397,7 +436,7 @@ retryable, retry_after_ms?}`. The server passes `code`, `message`, `hint`, `retr
 | `human.request_expired` | 410 | "Expired", "Prepare again" |
 | `human.request_mismatch` | 409 | shown as an internal error; never retried |
 | `idem.conflict` (a prepare) | 409 | "Could not prepare"; the next click draws a new idem |
-| `idem.expired` (a prepare) | 409 | "This attempt is too old"; "Start again" on the click, with a new idem |
+| `intent.expired` (host `idem.expired` on prepare) | 409 | "This attempt is too old"; "Start again" on the click, with a new idem |
 | `outcome.unknown`, `cancelled` (a prepare) | 503 | "Unknown outcome"; "Try again" retries with the SAME idem and adopts the request returned |
 | `op.unsupported`, `host.version_mismatch` | 501 | "host too old for this feature", feature hidden |
 | `host.unavailable`, `host.restarting`, `host.busy` | 503 | "host not running" or "restarting" banner; reads retry with backoff |

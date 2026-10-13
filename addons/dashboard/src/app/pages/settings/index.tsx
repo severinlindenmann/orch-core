@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { can, roleOf } from '@/api/permissions'
 import { SettingsSkeleton } from '../skeletons'
@@ -21,7 +20,7 @@ import { HostGeneral } from './host/General'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
-import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
 
@@ -32,7 +31,7 @@ const active = 'bg-surface-2 text-text'
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
-  const me = useQuery(queries.me())
+  const me = useMe()
 
   const failure = useLoadFailure()
   if (failure.failed) return <LoadFailed what="settings" onRetry={failure.retry} />

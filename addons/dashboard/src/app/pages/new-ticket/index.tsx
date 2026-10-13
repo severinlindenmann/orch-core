@@ -24,6 +24,7 @@ import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
 import { CompleteDetails } from './CompleteDetails'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
@@ -586,7 +587,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
 
 export function NewTicketPage() {
   const { workspace } = useWorkspace()
-  const { data: me } = useQuery(queries.me())
+  const { data: me } = useMe()
   usePageHeader('New ticket')
   if (!me || !workspace) return <Skeleton className="mx-auto h-96 max-w-[1100px]" aria-label="Loading" />
   return <NewTicketForm key={`${workspace.id}:${me.person}`} me={me} workspace={workspace} />

@@ -49,6 +49,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { PIN_ADDON_EVENT } from './pinEvent'
 import { fmtClock, fmtDateTime } from '@/lib/time'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 const RailContext = createContext(false)
 
@@ -156,7 +157,7 @@ const PEOPLE = [
 export function Sidebar() {
   const { workspace } = useWorkspace()
   const qc = useQueryClient()
-  const { data: me } = useQuery(queries.me())
+  const { data: me } = useMe()
   const navItems = useSlot('nav')
   const { data: packages } = useAddons()
   const previews = new Set(packages?.filter((a) => a.preview).map((a) => a.name))

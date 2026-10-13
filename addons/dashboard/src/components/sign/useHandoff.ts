@@ -1,11 +1,11 @@
 // One terminal hand-off from click to outcome (design 4.1, 4.3). It prepares a request once per click, follows it by
-// polling `GET /handoff/<id>` (bounded) and by the live stream (a query update triggers an early check), and never
-// prepares again on its own: a lost response is retried with the same `opts.idem`, anything else waits for the person.
+// polling `GET /handoff/<id>` and by the live stream (a query update triggers an early check), and never
+// prepares again on its own. The server derives the host's idem from the action itself, so a lost answer, a second tab
+// or a new login all reach the SAME request; only the person's explicit "Do it again" / "Start again" advances `retry`.
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { getToken } from '@/api/bootstrap'
-import { ALREADY_DONE, CHANGED, KEY_REUSED, KEY_TOO_OLD, expiryMs, newIdem, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { ALREADY_DONE, CHANGED, INTENT_OPEN, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { ApiError } from '@/api/types'
 
 export type HandoffPhase =
@@ -21,10 +21,11 @@ export type HandoffPhase =
   | 'already'
   /** The ticket changed between prepare and sign: refetched; the person prepares again. */
   | 'changed'
-  /** The answer to the prepare was lost: "Try again" asks the host for the same request with the same key (never a second). */
+  /** The answer to the prepare was lost: "Try again" asks the host for the same request (the same intent, never a second). */
   | 'unknown'
-  /** The key of this attempt is too old for the host to answer for it: the person starts again, with a new key. */
-  | 'stale'
+  /** The host confirms an open request for this op+key; no new prepare until it ends. */
+  | 'attempt_open'
+  | 'blocked'
   /** The host's answer does not recompute to its own fingerprint: never shown as valid. */
   | 'invalid'
   | 'error'
@@ -37,8 +38,6 @@ export function failedSubmit(code: string): string {
 }
 
 export const POLL_MS = 2000
-/** The poll gives up this long after the request would have expired on the host (clock skew, a slow host). */
-const GRACE_MS = 20000
 const MAX_FAILED_POLLS = 5
 
 export interface HandoffRun {
@@ -52,8 +51,6 @@ export interface HandoffRun {
   reset: (keepKey?: boolean) => void
   /** The person switched workspace while this request was open (or being prepared): it was cancelled, nothing was signed. */
   switched: boolean
-  /** The session changed after a lost answer: the earlier attempt may still be open until it expires on its own. */
-  earlierOpen: boolean
 }
 
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
@@ -67,9 +64,8 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   // The request is pinned to the workspace it was prepared in: poll, cancel and unmount use that one, whatever `ws` is now.
   const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws: undefined as string | undefined })
   const [pinned, setPinned] = useState<string | undefined>(undefined)
-  const attempt = useRef<{ sig: string; idem: string; token: string | null } | null>(null)
-  // A kept key only means something inside the session it was made in (the server binds it to the session token).
-  const [earlierOpen, setEarlierOpen] = useState(false)
+  // `retry` is the explicit "do it again" counter of this action; `lost` is a prepare whose answer may have been lost.
+  const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -94,18 +90,10 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       setError(null)
       setPhase('preparing')
       const sig = JSON.stringify(action)
-      // The same click retried (after a lost answer) reuses its idem; another action draws a new one.
-      const token = getToken()
-      if (attempt.current && attempt.current.token !== token) {
-        // New login or a restarted dashboard: the host cannot match the old key. The earlier attempt may still be open.
-        attempt.current = null
-        setEarlierOpen(true)
-      }
-      const idem = attempt.current?.sig === sig ? attempt.current.idem : newIdem()
-      attempt.current = { sig, idem, token }
+      if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
+      const { retry } = attempt.current
       try {
-        const got = await api.prepareHandoff(ws, action, idem)
-        // The key stays: a retry after a lost poll returns this same request (host contract 0.7), never a second.
+        const got = await api.prepareHandoff(ws, action, retry)
         if (!mounted.current) {
           void api.cancelHandoff(ws, got.id).catch(() => {}) // closed while preparing: nobody will see this code
           return
@@ -127,43 +115,45 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         live.current.ws = ws
         setPinned(ws)
         setRequest(got)
-        // A retry returns the request in its current state: it may have been signed or ended while the answer was lost.
+        // The same action returns the same request in its current state (the host's idem record). A signed one is
+        // "Already done" with an explicit "Do it again" - unless this very click lost its answer, then it IS the result.
+        const lost = attempt.current?.lost ?? false
+        if (attempt.current) attempt.current.lost = false
         const ended = (next: HandoffPhase) => {
           setPhase(next)
           refetch()
           settled.current?.(next, null, got)
         }
-        if (got.state === 'submitted') ended('done')
-        else if (got.state === 'cancelled') ended('cancelled')
+        if (got.state === 'submitted') {
+          if (lost) ended('done')
+          else {
+            setPhase('already')
+            refetch()
+          }
+        } else if (got.state === 'cancelled') ended('cancelled')
         else if (got.state === 'expired') ended('expired')
         else setPhase('waiting')
       } catch (e) {
         if (!mounted.current) return
         const err = e instanceof ApiError ? e : new ApiError(0, { code: 'host.unavailable', message: 'Could not reach the dashboard server.', retryable: true })
         setError(err)
-        if (ALREADY_DONE.has(err.code)) {
-          attempt.current = null
+        if (ALREADY_DONE.has(err.code) || err.code === 'intent.done') {
           refetch()
           setPhase('already')
         } else if (CHANGED.has(err.code)) {
-          attempt.current = null
           refetch()
           setPhase('changed')
-        } else if (err.code === 'human.request_expired') {
-          attempt.current = null
+        } else if (err.code === 'human.request_expired' || err.code === 'intent.ended' || err.code === 'intent.expired') {
           setPhase('expired')
-        } else if (err.code === KEY_TOO_OLD) {
-          attempt.current = null // only the person's click starts again, and it draws a new key
-          setPhase('stale')
-        } else if (err.code === KEY_REUSED) {
-          // The same key with other arguments: what the action is built from (a ticket's labels) changed since the first try.
-          attempt.current = null
-          refetch()
-          setPhase('changed')
+        } else if (err.code === 'intent.blocked') {
+          setPhase('blocked')
+        } else if (err.code === INTENT_OPEN) {
+          setPhase('attempt_open') // nothing is offered that prepares again until the host's attempt settles
         } else if (err.code === 'outcome.unknown') {
-          setPhase('unknown') // the key is kept: "Try again" returns the same request if the host made one
+          if (attempt.current) attempt.current.lost = true
+          setPhase('unknown') // "Try again" returns the same request if the host made one
         } else {
-          if (!err.retryable) attempt.current = null // a retryable failure keeps its idem for "Try again"
+          if (err.retryable && attempt.current) attempt.current.lost = true
           setPhase('error')
         }
       } finally {
@@ -183,12 +173,11 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     [setPhase, refetch],
   )
 
-  // Follow an open request: poll every 2 s (bounded by its expiry), and check at once when the live stream updates the
+  // Follow an open request: poll every 2 s until the host reports its terminal state; live stream updates check the
   // ticket. The poll only reads; it never prepares and never submits.
   useEffect(() => {
     if (phase !== 'waiting' || !request || !pinned) return
     const ws = pinned
-    const deadline = (expiryMs(request.expires_at) ?? Date.now() + 600_000) + GRACE_MS
     let failed = 0
     let stopped = false
     let inflight = false
@@ -220,12 +209,6 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       }
     }
     const timer = setInterval(() => {
-      if (Date.now() > deadline) {
-        stopped = true
-        clearInterval(timer)
-        finish('expired', null)
-        return
-      }
       void check()
     }, POLL_MS)
     // The live stream refreshes the ticket when the signer's event arrives: look at the request straight away.
@@ -261,9 +244,9 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   }, [ws, setPhase])
 
   const reset = useCallback((keepKey = false) => {
-    if (!keepKey) attempt.current = null // a new request is a new click: a new key
+    // Not keeping the attempt is an explicit "Do it again" / "Start again": the next prepare is another intent.
+    if (!keepKey && attempt.current) attempt.current = { ...attempt.current, retry: attempt.current.retry + 1, lost: false }
     setSwitched(false)
-    if (!keepKey) setEarlierOpen(false)
     live.current.request = null
     setRequest(null)
     setState(null)
@@ -286,5 +269,5 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     }
   }, [])
 
-  return { phase, request, state, error, prepare, cancel, reset, switched, earlierOpen }
+  return { phase, request, state, error, prepare, cancel, reset, switched }
 }

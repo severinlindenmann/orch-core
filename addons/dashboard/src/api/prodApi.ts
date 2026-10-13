@@ -7,6 +7,7 @@ import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
 import type { HostGrant, HostSettings, RosterMember } from './settings'
 import {
   ApiError,
@@ -33,6 +34,7 @@ interface ServerWorkspace {
   needs_you: number | null
   host_state: string
   features: string[]
+  click?: Workspace['click']
 }
 interface ServerMe {
   person: string
@@ -136,6 +138,8 @@ function workspace(s: ServerWorkspace): Workspace {
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
+    // Offered only when the server lists the feature: the flag is on AND the signer can sign in this workspace.
+    ...(s.click ? { click: { ...s.click, available: s.click.available && s.features.includes('click') } } : {}),
   }
 }
 
@@ -151,8 +155,14 @@ export async function logout() {
 export const session = () => call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session')
 
 const reads = {
-  getMe: async (): Promise<Me> => {
+  /** One person has a different id in each workspace: with `ws` this is that workspace's own entry (person, name, role). */
+  getMe: async (ws?: string): Promise<Me> => {
     const all = await call<ServerMe[]>('/api/me')
+    if (ws) {
+      const own = all.find((m) => m.workspace === ws)
+      if (!own) throw new ApiError(404, { code: 'not_found', message: 'You are not a member of this workspace', retryable: false })
+      return { person: own.person, name: own.name, role: own.role }
+    }
     const first = all[0]
     if (!first) throw new ApiError(404, { code: 'not_found', message: 'No workspace is available', retryable: false })
     // The highest role across workspaces, as the mock's `Me` says.
@@ -201,12 +211,25 @@ const empty = {
  * the whole write surface of the dashboard; none of them signs, and nothing here ever submits a signature.
  */
 const handoff = {
-  prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, idem }),
+  prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
   getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
   cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff }
+/**
+ * Click-to-sign (H5c): prepare, look at the signer's View, sign, cancel. The server passes the View through unchanged;
+ * the key is in core's signer process and never here.
+ */
+const click = {
+  prepareClick: (ws: string, action: HandoffAction, retry = 0) => call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
+  viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
+  signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
+    call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
+  stateClick: (ws: string, requestId: string) => call<{ id: string; state: ClickHostState }>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
+  cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
+}
+
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

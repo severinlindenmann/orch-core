@@ -1,0 +1,341 @@
+"""R1: the workspace session and the holder generation (contract 11A.5 "Session and holder", 11A.2 "Origin").
+
+* **Login.** ``POST session/challenge``, then ``POST session/login {challenge, kind:"workspace", id, sig}`` with the
+  signature from :meth:`RelaySigner.login`. Every login draws a fresh challenge; a challenge is never signed twice in
+  this process (a relay that serves one again is misbehaving), and a login body is never resent.
+* **Token.** In memory only, never logged, never in ``repr``. Validated as a header-safe token before use.
+* **Re-login** is single-flight (one lock per session): before ``15 min - 120 s`` measured on the monotonic clock from
+  the start of the login (the relay's ``expires_ms`` is never trusted, 11A.8), or once on a 401 ``unauthenticated`` /
+  ``expired``, after which the identical request bytes are sent again once.
+* **bad_signature.** A 401 ``bad_signature`` on login is not retried within 60 s (:class:`LoginHeldOff`), and after 3
+  in a row the alarm ``origin_mismatch_suspected`` names the stored origin and :class:`OriginMismatch` stops the
+  worker (a wrong stored origin only ever shows as this).
+* **Holder.** ``POST host/hold {gen: holder.gen or null, take_over}``; 409 ``holder_conflict`` waits out the lease
+  (40 s, monotonic) and retries; ``fenced`` (on hold or on any W(g) write) alarms ``fenced``, and every later write is
+  refused locally (:class:`Fenced`). Takeover (``take_over: true``) is only the explicit operator command.
+
+Network retries of transient failures are the caller's (:class:`orch.relay.retry.Retrier`), never this module's.
+"""
+
+from __future__ import annotations
+
+import collections
+import logging
+import re
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from orch import crypto
+
+from . import wire
+from .http import Transport
+from .retry import RelayRefused
+from .sign import RelaySigner
+
+__all__ = [
+    "Fenced",
+    "Hold",
+    "HolderStore",
+    "LoginHeldOff",
+    "NotHolder",
+    "OriginMismatch",
+    "RelayMisbehaving",
+    "Session",
+    "SessionError",
+]
+
+log = logging.getLogger("orch.relay.session")
+
+TOKEN_LIFETIME_S = 900.0
+RELOGIN_MARGIN_S = 120.0
+LEASE_S = 40.0
+BAD_SIGNATURE_HOLDOFF_S = 60.0
+ORIGIN_ALARM_AFTER = 3
+SMALL_CAP = 16 * 1024
+SMALL_DEADLINE_S = 30.0
+AUX_HOLD_DEADLINE_S = 10.0
+_TOKEN = re.compile(r"[A-Za-z0-9_-]{8,512}")
+_SEEN_CHALLENGES = 64
+
+
+class SessionError(Exception):
+    """Base of the session's own refusals. Messages never carry a token, challenge or signature."""
+
+
+class Fenced(SessionError):
+    """The relay answered ``fenced``: another holder generation owns the workspace. The worker stops writing."""
+
+
+class NotHolder(SessionError):
+    """A W(g) write was attempted without a holder generation."""
+
+
+class LoginHeldOff(SessionError):
+    """A login within 60 s of a 401 ``bad_signature``."""
+
+
+class OriginMismatch(SessionError):
+    """Three 401 ``bad_signature`` logins in a row: the stored origin is probably not the relay's."""
+
+
+class RelayMisbehaving(SessionError):
+    """A success answer that is malformed or contradicts what was sent (alarm ``relay_misbehaving``)."""
+
+
+class HolderStore(Protocol):
+    """``holder.json`` (11A.3): the last holder generation, written durably before it is used."""
+
+    def load(self) -> int | None: ...
+
+    def save(self, gen: int) -> None: ...
+
+
+@dataclass(frozen=True)
+class Hold:
+    gen: int
+    lease_s: int
+    cursor: int
+
+
+def _int(v: object, low: int = 0) -> int:
+    if type(v) is not int or not low <= v <= wire.MAX_SAFE_INT:
+        raise RelayMisbehaving("integer field")
+    return v
+
+
+class Session:
+    """One workspace session against one relay origin (one per worker thread, sharing the login lock)."""
+
+    def __init__(
+        self,
+        transport: Transport,
+        signer: RelaySigner,
+        *,
+        holder: HolderStore,
+        alarm: Callable[[str, str], None],
+        mono: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+        stop: threading.Event | None = None,
+    ) -> None:
+        self._t, self._signer, self._holder, self._alarm = transport, signer, holder, alarm
+        self._mono, self._sleep, self._stop = mono, sleep, stop
+        self._login_lock = threading.Lock()
+        self._token: str | None = None
+        self._relogin_at = 0.0
+        self._bad_sig_at: float | None = None
+        self._bad_sig_count = 0
+        self._seen: collections.deque[bytes] = collections.deque(maxlen=_SEEN_CHALLENGES)
+        self._gen: int | None = None
+        self._fenced = False
+
+    def __repr__(self) -> str:
+        return f"Session(workspace={self.workspace_id}, logged_in={self._token is not None}, gen={self._gen})"
+
+    @property
+    def workspace_id(self) -> str:
+        return self._signer.link.workspace_id
+
+    @property
+    def origin(self) -> str:
+        return self._signer.link.origin
+
+    @property
+    def gen(self) -> int | None:
+        return self._gen
+
+    @property
+    def fenced(self) -> bool:
+        return self._fenced
+
+    @property
+    def logged_in(self) -> bool:
+        return self._token is not None
+
+    # -- the request primitive ------------------------------------------------------------------------------------
+
+    def call(
+        self,
+        method: str,
+        path: str,
+        route: str,
+        *,
+        body: Any = None,
+        auth: bool = True,
+        holder: bool = False,
+        cap: int = SMALL_CAP,
+        request_cap: int = SMALL_CAP,
+        deadline_s: float = SMALL_DEADLINE_S,
+        keys: frozenset[str] | set[str] | None = None,
+    ) -> dict[str, Any]:
+        """One relay call. ``body`` is built into ``cj`` bytes once; a 401 ``unauthenticated``/``expired`` re-logs in
+        once and resends the identical bytes. 2xx bodies must be an object with exactly ``keys``; anything else raises
+        :class:`RelayRefused` (or :class:`Fenced` for 409 ``fenced``)."""
+        if holder and self._fenced:
+            raise Fenced("fenced: writes stopped")
+        data = None if body is None else wire.dumps_body(body, cap=request_cap)
+        resent = False
+        while True:
+            headers: dict[str, str] = {}
+            if data is not None:
+                headers["Content-Type"] = "application/json"
+            token = None
+            if auth:
+                token = self._ensure_login()
+                headers["Authorization"] = f"Bearer {token}"
+            if holder:
+                if self._gen is None:
+                    raise NotHolder("no holder generation")
+                headers["Orch-Holder"] = str(self._gen)
+            r = self._t.request(method, path, route=route, headers=headers, body=data, deadline_s=deadline_s, cap=cap)
+            if 200 <= r.status < 300:
+                try:
+                    obj = wire.loads_body(r.body, cap=cap)
+                except wire.WireError:
+                    raise RelayMisbehaving(f"{route}: malformed success body") from None
+                if type(obj) is not dict or (keys is not None and set(obj) != set(keys)):
+                    raise RelayMisbehaving(f"{route}: success field set")
+                return obj
+            err = RelayRefused.from_response(route, r)
+            log.info("relay %s refused status=%d code=%s", route, err.status, err.code)
+            if auth and not resent and err.status == 401 and err.code in ("unauthenticated", "expired"):
+                resent = True
+                self._relogin(token)
+                continue
+            if err.status == 409 and err.code == "fenced":
+                self._set_fenced(route)
+                raise Fenced("fenced") from err
+            raise err
+
+    def _set_fenced(self, route: str) -> None:
+        if not self._fenced:
+            self._fenced = True
+            self._alarm("fenced", f"{route} gen={self._gen}")
+
+    # -- login ----------------------------------------------------------------------------------------------------
+
+    def _ensure_login(self) -> str:
+        token = self._token
+        if token is not None and self._mono() < self._relogin_at:
+            return token
+        with self._login_lock:
+            if self._token is None or self._mono() >= self._relogin_at:
+                self._login()
+            assert self._token is not None
+            return self._token
+
+    def _relogin(self, stale: str | None) -> None:
+        with self._login_lock:
+            if self._token is None or self._token == stale:
+                self._token = None
+                self._login()
+
+    def login(self) -> None:
+        """Log in now (single-flight)."""
+        with self._login_lock:
+            self._login()
+
+    def challenge(self) -> bytes:
+        obj = self.call(
+            "POST", "/v2/session/challenge", "POST /v2/session/challenge", body={}, auth=False,
+            keys={"challenge", "expires_ms"},
+        )  # fmt: skip
+        try:
+            ch = wire.b64_field(obj["challenge"], max_len=wire.CHALLENGE_LEN, exact=wire.CHALLENGE_LEN)
+        except wire.WireError:
+            raise RelayMisbehaving("challenge") from None
+        _int(obj["expires_ms"])  # shape only: relay time is never trusted
+        if any(wire.ct_equal(ch, s) for s in self._seen):
+            raise RelayMisbehaving("the relay served a challenge this host already signed")
+        self._seen.append(ch)
+        return ch
+
+    def _login(self) -> None:
+        now = self._mono()
+        if self._bad_sig_at is not None and now - self._bad_sig_at < BAD_SIGNATURE_HOLDOFF_S:
+            raise LoginHeldOff("login held off after bad_signature")
+        t0 = now
+        ch = self.challenge()
+        sig = self._signer.login(ch)
+        body = {"challenge": crypto.b64u(ch), "kind": "workspace", "id": self.workspace_id, "sig": crypto.b64u(sig)}
+        try:
+            obj = self.call(
+                "POST", "/v2/session/login", "POST /v2/session/login", body=body, auth=False,
+                keys={"token", "expires_ms"},
+            )  # fmt: skip
+        except RelayRefused as e:
+            if e.status == 401 and e.code == "bad_signature":
+                self._bad_sig_at = self._mono()
+                self._bad_sig_count += 1
+                if self._bad_sig_count >= ORIGIN_ALARM_AFTER:
+                    self._alarm("origin_mismatch_suspected", f"stored origin {self.origin}")
+                    raise OriginMismatch(
+                        f"bad_signature {self._bad_sig_count} times; stored origin {self.origin}"
+                    ) from e
+            raise
+        token = obj["token"]
+        if type(token) is not str or not _TOKEN.fullmatch(token):
+            raise RelayMisbehaving("token")
+        _int(obj["expires_ms"])
+        self._token = token
+        self._relogin_at = t0 + TOKEN_LIFETIME_S - RELOGIN_MARGIN_S
+        self._bad_sig_count = 0
+        self._bad_sig_at = None
+        log.info("relay login ok workspace=%s", self.workspace_id)
+
+    def logout(self, deadline_s: float = 5.0) -> None:
+        """Best effort; the token is forgotten whatever the answer."""
+        token, self._token = self._token, None
+        if token is None:
+            return
+        try:
+            self._t.request(
+                "POST", "/v2/session/logout", route="POST /v2/session/logout",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                body=b"{}", deadline_s=deadline_s, cap=SMALL_CAP,
+            )  # fmt: skip
+        except Exception:  # noqa: BLE001 - best effort by contract (11A.7 shutdown)
+            log.info("relay logout failed (ignored)")
+
+    # -- holder ---------------------------------------------------------------------------------------------------
+
+    def hold(self, *, take_over: bool = False, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
+        """Acquire or renew the holder generation (``host/hold``)."""
+        if self._fenced and not take_over:
+            raise Fenced("fenced: writes stopped")
+        path = f"/v2/workspaces/{self.workspace_id}/host/hold"
+        route = "POST /v2/workspaces/{ws}/host/hold"
+        while True:
+            stored = self._holder.load()
+            gen = None if take_over else stored
+            try:
+                obj = self.call(
+                    "POST", path, route, body={"gen": gen, "take_over": take_over}, deadline_s=deadline_s,
+                    keys={"gen", "lease_s", "cursor"},
+                )  # fmt: skip
+            except RelayRefused as e:
+                if e.status == 409 and e.code == "holder_conflict" and not take_over:
+                    log.info("relay holder_conflict; waiting out the lease")
+                    self._wait(LEASE_S)
+                    continue
+                raise
+            got = Hold(_int(obj["gen"], 1), _int(obj["lease_s"], 1), _int(obj["cursor"]))
+            if gen is not None and got.gen != gen:
+                raise RelayMisbehaving("hold renewed another generation")
+            if gen is None and stored is not None and got.gen <= stored:
+                raise RelayMisbehaving("a new holder generation must be above the stored one")
+            if got.gen != stored:
+                self._holder.save(got.gen)
+            self._gen = got.gen
+            if take_over:
+                self._fenced = False
+            return got
+
+    def _wait(self, seconds: float) -> None:
+        if self._stop is not None and self._stop.is_set():
+            raise SessionError("stopping")
+        self._sleep(seconds)
+        if self._stop is not None and self._stop.is_set():
+            raise SessionError("stopping")

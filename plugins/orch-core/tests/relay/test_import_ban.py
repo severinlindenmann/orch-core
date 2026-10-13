@@ -255,3 +255,4 @@ def test_signer_holds_no_key_attribute():
             except AttributeError:
                 continue
             assert v is not k, name
+            assert getattr(v, "__self__", None) is not k, f"{name} is a bound method of the key"

@@ -29,7 +29,7 @@ INSTALL_HINT = (
 )
 
 
-_PROBE = "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('orch_dashboard') else 1)"
+_PROBE = "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
 
 
 def _module_installed(env: Mapping[str, str] | None = None) -> bool:
@@ -37,7 +37,7 @@ def _module_installed(env: Mapping[str, str] | None = None) -> bool:
     environment the launch uses, so a package only in the current directory cannot satisfy discovery and then vanish."""
     try:
         res = subprocess.run(
-            [sys.executable, "-P", "-c", _PROBE],
+            [sys.executable, "-P", "-c", _PROBE, MODULE],
             env=dict(env) if env is not None else None,
             stdin=subprocess.DEVNULL,
             capture_output=True,
@@ -76,7 +76,21 @@ def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests rep
     os.execve(argv[0], argv, dict(env))
 
 
+def _launch_env(env: Mapping[str, str]) -> dict[str, str]:
+    """``env`` with ``PYTHONPATH`` reduced to its absolute entries: Python turns an empty entry into the current
+    directory at startup, which ``-P`` does not prevent (the probe and the exec use this same environment)."""
+    out = dict(env)
+    if "PYTHONPATH" in out:
+        kept = _absolute_path(out["PYTHONPATH"])
+        if kept:
+            out["PYTHONPATH"] = kept
+        else:
+            del out["PYTHONPATH"]
+    return out
+
+
 def main(args: Sequence[str], *, env: Mapping[str, str], err: TextIO) -> int:
+    env = _launch_env(env)
     command = find_entry_point(env, err)
     if command is None:
         err.write(f"orch dashboard: {INSTALL_HINT}\n")

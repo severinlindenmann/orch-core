@@ -223,8 +223,10 @@ def test_orch_dashboard_falls_back_to_the_module(tmp_path, monkeypatch):
 def test_the_module_probe_runs_with_dash_p_so_a_cwd_package_does_not_count(tmp_path, monkeypatch):
     from orch.cli import dashboard
 
-    (tmp_path / "orch_dashboard").mkdir()
-    (tmp_path / "orch_dashboard" / "__init__.py").write_text("")
+    name = "orch_dashboard_cwd_only_probe"  # a name no interpreter has installed, unlike orch_dashboard itself
+    monkeypatch.setattr(dashboard, "MODULE", name)
+    (tmp_path / name).mkdir()
+    (tmp_path / name / "__init__.py").write_text("")
     monkeypatch.chdir(tmp_path)
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     assert dashboard._module_installed(env) is False
@@ -462,3 +464,11 @@ def test_purge_releases_is_refused_while_the_runner_service_is_installed(world, 
     assert host(["disable", "--purge-releases"], env)[0] == 4
     code, out = host(["disable", "--purge-releases", "--force"], env)
     assert code == 0 and list(releases.iterdir()) == [], out
+
+
+def test_the_launch_environment_drops_empty_and_relative_pythonpath_entries():
+    from orch.cli import dashboard
+
+    env = dashboard._launch_env({"PYTHONPATH": ":rel:/abs/lib", "A": "1"})
+    assert env == {"PYTHONPATH": "/abs/lib", "A": "1"}
+    assert "PYTHONPATH" not in dashboard._launch_env({"PYTHONPATH": ":."})

@@ -295,6 +295,11 @@ class HumanOps:
             if same is not None:
                 return same  # the same request, in its current state
         try:
+            if handoff:  # §0.8.6 item 8: the flag check and the request file are one step against `convenience on`
+                svc = call.service
+                with convenience.workspace_lock(svc.state_dir, svc.workspace_id, svc.host_uid):
+                    convenience.refuse_handoff(svc)
+                    return self._prepare(call, args, dry_run, intent)
             return self._prepare(call, args, dry_run, intent)
         except BaseException:
             if intent is not None:
@@ -616,6 +621,8 @@ class HumanOps:
             raise HostError("human.request_state", f"the request is {state}")
         call.service.store.refresh()
         convenience.refuse_reader_op(call.service, record["op"], history=True)  # §0.8.6: fails early, before binding
+        if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
+            convenience.refuse_handoff(call.service)
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
             convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":
@@ -822,6 +829,8 @@ class HumanOps:
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared
             convenience.refuse_reader_op(service, record["op"], history=True)
+            if record.get("code"):  # §0.8.6 item 8
+                convenience.refuse_handoff(service)
             git = service.caps_for(call.principal).git
             self._judge(store, record, events, git)
             log = record["prepared"]["log"]

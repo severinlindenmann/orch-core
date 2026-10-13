@@ -63,14 +63,14 @@ def test_the_record_is_durable_private_and_written_before_the_submit(click, serv
     rid, vd = _ready(click, key)
     seen = {}
 
-    real = click.signer.records.create
+    real = click.signer.records.complete
 
     def create(*a, **kw):
         rec = real(*a, **kw)
         seen["record"] = json.loads(_record_path(served, rid).read_bytes())  # on disk when create returns
         return rec
 
-    click.signer.records.create = create
+    click.signer.records.complete = create
 
     click.signer.close()
     orig_connect = click.signer._connect
@@ -370,11 +370,12 @@ def test_a_crash_between_link_and_unlink_leaves_a_readable_record(click, served,
     assert path.stat().st_nlink == 2
     assert [n for n in os.listdir(path.parent) if n.startswith(".")]
     again = _restart(click, served)
-    try:
-        assert again.sign(rid, vd)["result"]["key"] == key
-        assert again.signatures == 0 and _texts(served, key) == ["x"]
+    try:  # the crash hit the claim's link: the record reads again (the claim, so no second signature)
+        refused(lambda: again.sign(rid, vd), "human.click_refused", "record_unavailable")
+        assert again.signatures == 0 and _texts(served, key) == []
         assert not [n for n in os.listdir(path.parent) if n.startswith(".")]
         assert path.stat().st_nlink == 1
+        assert "claimed_at" in json.loads(path.read_bytes())
     finally:
         again.close()
 
@@ -526,3 +527,169 @@ def test_a_signer_killed_between_the_record_and_the_reply_gives_the_identical_si
         refused(lambda: again.sign(rid, "sha256:" + "2" * 64), "human.click_refused", "already_signed")
     finally:
         again.close()
+
+
+def test_a_claim_that_cannot_be_written_never_signs(click, served, human, monkeypatch):
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+
+    def boom(*a, **kw):
+        raise records_mod.RecordError("the sign record cannot be written: OSError")
+
+    monkeypatch.setattr(click.signer.records, "claim", boom)
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    assert click.signatures == 0  # no crypto signing happened
+    assert pending(served, rid)["state"] == "bound"
+    monkeypatch.undo()
+    assert click.sign(rid, vd)["result"]["key"] == key  # nothing was claimed: signing works once writable
+    assert click.signatures == 1
+
+
+def test_a_crash_after_signing_before_the_completion_never_signs_again(click, served, human, monkeypatch):
+    """The claim is on disk, the signature exists, the completion write dies: after a restart the claim alone refuses
+    (record_unavailable), the crypto signer was called exactly once, nothing reached the host."""
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+
+    def die(*a, **kw):
+        raise Crash  # the process dies between the signing and the completed record
+
+    monkeypatch.setattr(click.signer.records, "complete", die)
+    with pytest.raises(Crash):
+        click.sign(rid, vd)
+    assert click.signatures == 1
+    on_disk = json.loads(_record_path(served, rid).read_bytes())
+    assert "events" not in on_disk and on_disk["view_digest"] == vd and "claimed_at" in on_disk
+    monkeypatch.undo()
+    again = _restart(click, served)
+    try:
+        refused(lambda: again.sign(rid, vd), "human.click_refused", "record_unavailable")
+        refused(lambda: again.sign(rid, "sha256:" + "3" * 64), "human.click_refused", "already_signed")
+        assert again.signatures == 0
+        assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
+    finally:
+        again.close()
+
+
+def test_a_transient_completion_failure_retries_the_identical_events(click, served, human, monkeypatch):
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    real = click.signer.records.complete
+    fails = [1]
+
+    def flaky(*a, **kw):
+        if fails[0]:
+            fails[0] -= 1
+            raise records_mod.RecordError("the sign record cannot be updated: OSError")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(click.signer.records, "complete", flaky)
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    assert pending(served, rid)["state"] == "bound" and click.signatures == 1
+    res = click.sign(rid, vd)  # in-process retry: the cached events, completed, then submitted
+    assert res["result"]["key"] == key and click.signatures == 1
+    rec = json.loads(_record_path(served, rid).read_bytes())
+    assert rec["events"] and rec["result"] == res["result"]
+    assert _texts(served, key) == ["x"]
+
+
+def _assert_claim_only(served, rid, vd):
+    on_disk = json.loads(_record_path(served, rid).read_bytes())
+    assert "events" not in on_disk and on_disk["view_digest"] == vd and "claimed_at" in on_disk
+
+
+def test_a_signer_that_raises_before_signing_keeps_the_claim(click, served, human, monkeypatch):
+    """An exception does not prove that no signature exists: the claim stays and the request fails closed."""
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    from orch.host import signer as host_signer
+
+    calls = []
+
+    def broken(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("keychain")
+
+    monkeypatch.setattr(host_signer, "sign", broken)
+    with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+        click.sign(rid, vd)
+    _assert_claim_only(served, rid, vd)  # kept, not released
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    refused(lambda: click.sign(rid, "sha256:" + "3" * 64), "human.click_refused", "already_signed")
+    assert len(calls) == 1  # the crypto signer was called once
+    assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
+
+
+def test_a_partial_signing_keeps_the_claim_across_a_restart(click, served, human, monkeypatch):
+    """The first event signs, the second raises: the claim stays, nothing is submitted, a retry (same process or a
+    restarted signer) is refused and never signs again."""
+    import orch.identity as identity
+    from tests.host.test_human import TwoNotes
+
+    _, key = human.ticket()
+    real = identity.sign_person_event
+    count = []
+
+    def second_fails(*a, **kw):
+        count.append(1)
+        if len(count) == 2:
+            raise RuntimeError("keychain")
+        return real(*a, **kw)
+
+    with TwoNotes():
+        rid, vd = _ready(click, key)
+        monkeypatch.setattr(identity, "sign_person_event", second_fails)
+        with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+            click.sign(rid, vd)
+        assert len(count) == 2
+        _assert_claim_only(served, rid, vd)
+        refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+        refused(lambda: click.sign(rid, "sha256:" + "3" * 64), "human.click_refused", "already_signed")
+        assert len(count) == 2  # no further crypto call in this process
+        again = _restart(click, served)
+        try:
+            refused(lambda: again.sign(rid, vd), "human.click_refused", "record_unavailable")
+            refused(lambda: again.sign(rid, "sha256:" + "3" * 64), "human.click_refused", "already_signed")
+        finally:
+            again.close()
+    assert len(count) == 2  # total crypto sign calls: the two of the first attempt
+    assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
+
+
+def test_a_returned_secret_keeps_the_claim(click, served, human, monkeypatch):
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    from orch.host import signer as host_signer
+
+    real = host_signer.sign
+    calls = []
+
+    def with_secret(*a, **kw):
+        calls.append(1)
+        out = real(*a, **kw)
+        return host_signer.Signed(out.events, "grant-secret")
+
+    monkeypatch.setattr(host_signer, "sign", with_secret)
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "terminal_only")
+    _assert_claim_only(served, rid, vd)
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    assert len(calls) == 1
+    assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
+
+
+def test_the_validator_accepts_only_a_claim_or_a_completed_record(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    rs = Records(state)
+    wid, rid = "a" * 32, "hr_" + "0" * 26
+    c = rs.claim(
+        wid, rid, view_digest="sha256:" + "0" * 64, op="log", idem="a_" + "0" * 26,
+        expires_at=records_mod._stamp(rs.wall() + 600),
+    )  # fmt: skip
+    assert set(c) == records_mod.CLAIM_KEYS and rs.get(wid, rid) == c
+    with pytest.raises(records_mod.RecordError):
+        rs.settle(c, {"x": 1})  # a claim has no result to settle
+    with pytest.raises(records_mod.RecordError):
+        records_mod._validate({**c, "events": [{"a": 1}]}, wid, rid)  # neither shape
+    done = rs.complete(c, [{"type": "log.added"}])
+    assert set(done) == records_mod.KEYS and rs.get(wid, rid) == done

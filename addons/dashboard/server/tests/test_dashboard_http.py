@@ -177,3 +177,27 @@ def test_shell_marks_foreign_even_without_document_metadata(client, extra):
 def test_duplicate_or_joined_metadata_is_foreign(client, values):
     res = client.get("/", headers=[("Sec-Fetch-Site", value) for value in values])
     assert res.status_code == 200 and '<meta name="orch-nav" content="foreign">' in res.text
+
+
+def test_a_shell_without_a_head_tag_fails_closed_for_foreign_loads(gateway, auth, tmp_path):
+    """Opus #444 re-check R-1: if the marker can't be placed, a foreign load must not get an unmarked shell."""
+    from fastapi.testclient import TestClient
+
+    from orch_dashboard.app import create_app
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><html><body>no head</body></html>", encoding="utf-8")
+    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as c:
+        assert c.get("/", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 500
+        assert c.get("/", headers={"Sec-Fetch-Site": "none"}).status_code == 200
+
+
+def test_the_real_built_shell_has_a_literal_head_tag():
+    """The Vite build must keep a literal <head> so the foreign marker can be placed (checked where the UI is built)."""
+    from pathlib import Path
+
+    built = Path(__file__).resolve().parents[1] / "src/orch_dashboard/static/index.html"
+    if not built.is_file():
+        pytest.skip("the UI is not built here")
+    assert "<head>" in built.read_text(encoding="utf-8")

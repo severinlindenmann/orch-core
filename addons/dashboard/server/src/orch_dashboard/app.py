@@ -145,8 +145,11 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             if candidate.is_file():
                 if path != "favicon.svg" and foreign:
                     html = candidate.read_text(encoding="utf-8")
-                    html = html.replace("<head>", '<head><meta name="orch-nav" content="foreign">', 1)
-                    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+                    marked = html.replace("<head>", '<head><meta name="orch-nav" content="foreign">', 1)
+                    if marked == html:
+                        # Fail closed (Opus #444 re-check R-1): without the marker a foreign tab would join sessions.
+                        return response("internal", 500)
+                    return HTMLResponse(marked, headers={"Cache-Control": "no-store"})
                 return FileResponse(candidate, headers={"Cache-Control": "no-store"})
         return response("not_found", 404)
 

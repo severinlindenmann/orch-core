@@ -1,0 +1,172 @@
+"""Regression (Opus review #439 F1, the reviewer's PoC inverted): a repo's OWN config (.git/config) defines a filter
+driver and an attribute selects it. Before the fix the runner's worktree.add checkout and the direct-mode read_git
+status ran it; now the orch.gitsafe gate refuses to run git there at all.
+
+The invariant: orch never runs git against a repository whose local/worktree config or attributes could make git
+execute a program or read config from elsewhere."""
+
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+
+import pytest
+from test_wtgit_confine import NAME, _git, world  # noqa: F401
+
+from orch import gitsafe
+from orch.runner import wtgit
+from orch.runner.supervise import SpawnError
+
+
+def _plant(repo: Path, marker: Path, *, committed: bool = True) -> None:
+    if committed:
+        (repo / ".gitattributes").write_text("* filter=evil\n")
+        _git(repo, "add", ".gitattributes")
+        _git(repo, "commit", "-qm", "attrs")
+    else:  # nothing committed: .git/info/attributes selects the driver
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text("* filter=evil\n")
+    _git(repo, "config", "filter.evil.smudge", f"sh -c 'touch {marker}; cat'")
+    _git(repo, "config", "filter.evil.clean", f"sh -c 'touch {marker}; cat'")
+
+
+@pytest.mark.parametrize("committed", [True, False])
+def test_worktree_add_refuses_a_repo_local_smudge_filter(world, committed):  # noqa: F811
+    root, repo, own, args = world
+    marker = root / "smudged"
+    _plant(repo, marker, committed=committed)
+    a = args("worktree.add")
+    a["base"] = _git(repo, "rev-parse", "HEAD")
+    with pytest.raises(SpawnError) as e:
+        wtgit.run_git(a, own)
+    assert e.value.code == "observe.unavailable"
+    assert "filter.evil" in e.value.message
+    assert not marker.exists(), "repo-local smudge filter ran"
+    assert not (Path(f"{repo}.worktrees") / NAME).exists()
+
+
+def test_read_git_status_refuses_a_repo_local_clean_filter(world):  # noqa: F811
+    root, repo, own, args = world
+    marker = root / "cleaned"
+    _plant(repo, marker)
+    marker.unlink(missing_ok=True)
+    time.sleep(1.1)
+    (repo / "f").write_text("y")  # changed stat: status would hash it through the clean filter
+    with pytest.raises(gitsafe.Unsafe):
+        wtgit.tree_dirty(str(repo), own)
+    assert not marker.exists(), "repo-local clean filter ran"
+
+
+def test_remove_checks_the_worktrees_own_config_too(world):  # noqa: F811
+    """``git worktree remove`` runs status inside the worktree: its config.worktree is gated as well."""
+    root, repo, own, args = world
+    assert wtgit.run_git(args("worktree.add"), own) == {"ok": True}
+    wt = Path(f"{repo}.worktrees") / NAME
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    _git(wt, "config", "--worktree", "diff.evil.textconv", "sh -c 'touch /nonexistent'")
+    with pytest.raises(SpawnError) as e:
+        wtgit.run_git(args("worktree.remove"), own)
+    assert e.value.code == "observe.unavailable" and "the worktree" in e.value.message
+    assert wt.exists()
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("include.path", "/elsewhere/config"),
+        ("includeIf.gitdir:/.path", "/elsewhere/config"),
+        ("core.attributesFile", "/elsewhere/attributes"),
+        ("filter.x.process", "evil"),
+        ("diff.x.textconv", "evil"),
+        ("diff.x.command", "evil"),
+        ("diff.external", "evil"),
+        ("merge.x.driver", "evil"),
+        ("core.sshCommand", "evil"),
+        ("core.gitProxy", "evil"),
+        ("core.askPass", "evil"),
+        ("credential.helper", "evil"),
+        ("credential.https://example.com.helper", "evil"),
+        ("core.fsmonitor", "/tmp/evil"),
+        ("core.pager", "evil"),
+        ("core.editor", "evil"),
+        ("sequence.editor", "evil"),
+        ("gpg.program", "evil"),
+        ("gpg.ssh.program", "evil"),
+        ("remote.origin.uploadpack", "evil"),
+        ("remote.origin.receivepack", "evil"),
+        ("uploadpack.packObjectsHook", "evil"),
+        ("lfs.customtransfer.x.path", "evil"),
+        ("lfs.extension.x.smudge", "evil"),
+        ("lfs.standalonetransferagent", "x"),
+    ],
+)
+def test_the_gate_refuses_every_program_key(world, key, value):  # noqa: F811
+    root, repo, own, args = world
+    _git(repo, "config", key, value)
+    with pytest.raises(gitsafe.Unsafe) as e:
+        gitsafe.gate(str(repo), own)
+    assert key.lower().split(".")[0] in e.value.reason.lower()
+    with pytest.raises(SpawnError) as e2:
+        wtgit.run_git(args("worktree.add"), own)
+    assert e2.value.code == "observe.unavailable"
+    assert value not in e2.value.message  # the key is named, never its value
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("core.hooksPath", ".husky"),  # overridden by -c core.hooksPath=/dev/null on every command
+        ("core.fsmonitor", "true"),  # git's built-in daemon, no program; overridden to false anyway
+        ("filter.lfs.required", "true"),  # not a program
+        ("remote.origin.url", "https://example.com/x.git"),
+        ("user.name", "x"),
+        ("alias.st", "!sh -c evil"),  # aliases run only when invoked by name; orch never does
+    ],
+)
+def test_the_gate_lets_harmless_keys_through(world, key, value):  # noqa: F811
+    root, repo, own, args = world
+    _git(repo, "config", key, value)
+    gitsafe.gate(str(repo), own)
+
+
+def test_an_overridden_hooks_path_never_runs_a_hook(world):  # noqa: F811
+    root, repo, own, args = world
+    hooks = repo / ".husky"
+    hooks.mkdir()
+    marker = root / "hooked"
+    (hooks / "post-checkout").write_text(f"#!/bin/sh\ntouch {marker}\n")
+    os.chmod(hooks / "post-checkout", 0o755)
+    _git(repo, "config", "core.hooksPath", ".husky")
+    assert wtgit.run_git(args("worktree.add"), own) == {"ok": True}
+    assert not marker.exists()
+
+
+def test_an_unlistable_config_fails_closed(world):  # noqa: F811
+    root, repo, own, args = world
+    (repo / ".git" / "config").write_text("[core\nbroken")
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.gate(str(repo), own)
+
+
+def test_exec_risk_ignores_other_scopes():
+    assert gitsafe.exec_risk([("global", "filter.lfs.smudge", "git-lfs smudge %f")]) is None
+    assert gitsafe.exec_risk([("command", "core.fsmonitor", "/x")]) is None
+    assert gitsafe.exec_risk([("worktree", "filter.x.clean", "c")]) == "filter.x.clean"
+
+
+def test_a_global_driver_still_works_in_run_git(world):  # noqa: F811
+    """The person's own global filter (LFS-like) is not the repo's config: worktree add still applies it."""
+    root, repo, own, args = world
+    marker = root / "global-smudge"
+    script = root / "smudge.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
+    os.chmod(script, 0o755)
+    (root / ".gitconfig").write_text(f'[filter "g"]\n\tsmudge = {script}\n\tclean = cat\n')
+    (repo / ".gitattributes").write_text("* filter=g\n")
+    _git(repo, "add", ".gitattributes")
+    _git(repo, "commit", "-qm", "attrs")
+    a = args("worktree.add")
+    a["base"] = _git(repo, "rev-parse", "HEAD")
+    assert wtgit.run_git(a, own) == {"ok": True}
+    assert marker.exists()

@@ -48,7 +48,9 @@ def _code(exc: pytest.ExceptionInfo[SpawnError]) -> str:
     return exc.value.code
 
 
-@pytest.mark.parametrize("name", ["../evil", "..", "/abs/x", f"{NAME}/../x", f"{NAME}\0", "a" * 8 + "-x", NAME + "/sub", ""])
+@pytest.mark.parametrize(
+    "name", ["../evil", "..", "/abs/x", f"{NAME}/../x", f"{NAME}\0", "a" * 8 + "-x", NAME + "/sub", ""]
+)
 def test_bad_names_are_refused_before_anything_is_created(world, name):
     root, repo, own, args = world
     a = args("worktree.add", "x")
@@ -97,7 +99,13 @@ def test_a_symlinked_intermediate_directory_is_refused(world):
     os.symlink(real, link)
     st = (real / "repo").stat()
     pin = {"path": str(link / "repo"), "dev": st.st_dev, "ino": st.st_ino}
-    a = {"op": "worktree.add", "repo_pin": pin, "path": f"{link}/repo.worktrees/{NAME}", "branch": "b", "base": "0" * 40}
+    a = {
+        "op": "worktree.add",
+        "repo_pin": pin,
+        "path": f"{link}/repo.worktrees/{NAME}",
+        "branch": "b",
+        "base": "0" * 40,
+    }
     with pytest.raises(SpawnError) as e:
         wtgit.run_git(a, own)
     assert _code(e) == "launch.cwd_changed"
@@ -168,6 +176,31 @@ def test_a_swap_during_git_is_detected_afterwards(world, monkeypatch):
         return out
 
     monkeypatch.setattr(wtgit, "_spawn", spawn_then_swap)
+    with pytest.raises(SpawnError) as e:
+        wtgit.run_git(args("worktree.add"), own)
+    assert _code(e) == "launch.cwd_changed"
+
+
+@pytest.mark.parametrize("which", ["parent", "worktrees"])
+@pytest.mark.parametrize("mode", [0o777, 0o775, 0o757])
+def test_a_group_or_other_writable_directory_is_refused(world, which, mode):
+    """Opus #439 F2: only the person's own account may rename entries in the repo's parent or <repo>.worktrees."""
+    root, repo, own, args = world
+    target = root if which == "parent" else Path(f"{repo}.worktrees")
+    target.mkdir(exist_ok=True)
+    os.chmod(target, mode)
+    try:
+        with pytest.raises(SpawnError) as e:
+            wtgit.run_git(args("worktree.add"), own)
+        assert _code(e) == "launch.cwd_changed"
+        assert not (Path(f"{repo}.worktrees") / NAME).exists()
+    finally:
+        os.chmod(target, 0o755)
+
+
+def test_a_directory_of_another_owner_is_refused(world, monkeypatch):
+    root, repo, own, args = world
+    monkeypatch.setattr(wtgit.os, "geteuid", lambda: os.getuid() + 1)
     with pytest.raises(SpawnError) as e:
         wtgit.run_git(args("worktree.add"), own)
     assert _code(e) == "launch.cwd_changed"

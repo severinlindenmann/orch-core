@@ -128,7 +128,13 @@ def _split_key(key: str) -> tuple[str, str | None, str]:
 
 def check_local(entries: Sequence[tuple[str, str, str]], remote: str | None) -> None:
     """Refuse a local or worktree configuration that could redirect, rewrite or execute (``records.unsafe_config``,
-    naming the key). ``entries`` are (scope, key, value)."""
+    naming the key). ``entries`` are (scope, key, value). The shared rule of :mod:`orch.gitsafe` (no key that could
+    make git execute a program) applies first; the records deny-list below is stricter (redirects, network)."""
+    from orch.gitsafe import exec_risk
+
+    risky = exec_risk(entries)
+    if risky is not None:
+        raise RecordsError("records.unsafe_config", f"the records repo's own config sets {risky}: push by hand")
     for scope, key, value in entries:
         if scope not in ("local", "worktree"):
             continue

@@ -132,7 +132,7 @@ ALLOWED: dict[str, frozenset[str] | str] = {
     }),
     "rebase": frozenset({
         "autosquash", "autostash", "stat", "updaterefs", "missingcommitscheck", "abbreviatecommands", "forkpoint",
-        "backend", "rebasemerges", "reschedulefailedexec",  # never rebase.instructionFormat (formats the todo list: can inject exec)
+        "backend", "rebasemerges", "reschedulefailedexec",  # never rebase.instructionFormat: it can inject exec
     }),
     "submodule": frozenset({"recurse", "active", "fetchjobs", "propagatebranches"}),
     "lfs": frozenset({"repositoryformatversion"}),

@@ -380,9 +380,9 @@ def tree_dirty(repo: str, own: Mapping[str, str]) -> str | None:
     """Uncommitted work in the working copy at ``repo`` (``""`` clean, lines when not, ``None`` when it cannot be told):
     the gate of :mod:`orch.gitsafe` and :func:`orch.gitsafe.submodules` first (a populated submodule is
     :class:`orch.gitsafe.Unsafe`: its state is unknown, never "clean"), then ``status --porcelain`` plus the files git
-    is told to ignore (``skip-worktree``, ``assume-unchanged``). ``--ignore-submodules=dirty`` (not ``all``: a staged gitlink
-    change, index against HEAD, must still show) stays as defence in depth: once no submodule is checked out there is
-    nothing for it to hide."""
+    is told to ignore (``skip-worktree``, ``assume-unchanged``). ``--ignore-submodules=dirty`` (not ``all``: a staged
+    gitlink change, index against HEAD, must still show) stays as defence in depth: once no submodule is checked out
+    there is nothing for it to hide."""
     _clean_abs(repo)
     gitsafe.gate(repo, own)
     gitsafe.submodules(repo, own)

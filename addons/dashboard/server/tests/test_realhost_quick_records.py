@@ -81,7 +81,7 @@ def token(world):
 
 @pytest.fixture
 def api(world, token, monkeypatch):
-    # The records child inherits only HOME, PATH, SSH_AUTH_SOCK, LANG, XDG_CONFIG_HOME and the state dir from this process.
+    # The records child inherits only HOME, PATH, SSH_AUTH_SOCK, LANG, XDG_CONFIG_HOME and the state dir.
     monkeypatch.setenv("HOME", str(world.ws.home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(world.ws.home / ".config"))
     monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
@@ -169,7 +169,9 @@ def test_a_commit_into_the_disposable_records_repository(world, api):
     log = git("log", "-1", "--format=%H %s", cwd=world.ws.root).stdout.strip()
     assert log.startswith(out["commit"]) and re.search(r"orch: records .*ws_seq \d+$", log), log
     status = api.get("/records").json()
-    assert status["configured"] is True and status["repo"]["state"] == "ok" and status["repo"]["problem_hidden"] is False
+    assert (
+        status["configured"] is True and status["repo"]["state"] == "ok" and status["repo"]["problem_hidden"] is False
+    )
     assert status["last"]["commit"] == out["commit"] and status["last"]["pushed_at"] is None
     assert status["pending"]["events"] == 0
     # The same body twice is the same answer: nothing new is pending (the host says so, the child refuses or no-ops).
@@ -191,7 +193,7 @@ def test_a_push_to_a_local_bare_remote_is_refused_and_publishes_nothing(world, a
     git("remote", "add", "origin", str(bare), cwd=world.ws.root)
     world.ws.agent("new", "Something new to commit", "--type", "chore")  # a commit needs something pending
     res = api.post("/records/commit", {"push": True})
-    # A local path is not an allowed push protocol (https and ssh only), and a first push needs the terminal's --initial:
+    # A local path is not an allowed push protocol (https and ssh only) and a first push needs --initial:
     # either way the dashboard shows a stable code and the bare repository stays empty.
     assert res.status_code >= 400, res.text
     err = res.json()["error"]

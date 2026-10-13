@@ -219,8 +219,10 @@ def _plan(call: Call, op: str, args: dict[str, Any], idem: str | None) -> dict[s
     git = _git(call)
     slot = git.reader.pins.worktree(view.uid, repo)
     reg = slot["reg"]
-    plan: dict[str, Any] = {"op": op, "uid": view.uid, "key": view.key, "repo": repo, "gen": slot["gen"],
-                            "force": bool(args.get("force")), "base": args.get("base", "default"), "idem": idem}  # fmt: skip
+    plan: dict[str, Any] = {
+        "op": op, "uid": view.uid, "key": view.key, "repo": repo, "gen": slot["gen"],
+        "force": bool(args.get("force")), "base": args.get("base", "default"), "idem": idem,
+    }  # fmt: skip
     if op == "worktree.create":
         if reg is not None:
             if idem is not None and reg.get("idem") == idem:

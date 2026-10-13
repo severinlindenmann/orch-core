@@ -122,7 +122,8 @@ def pin_repo(path: str, roots: list[str] | None) -> RepoPins:
 def verify_worktree_pins(path: str, pins: RepoPins) -> None:
     """In process (direct mode, no reader child): the registered worktree at ``path`` is still the pinned one. It is
     pinned again from the commondir's root and every pin (working copy, gitdir, commondir: device, inode, gitdir path)
-    must equal the registered one; anything else, including a ``.git`` file re-pointed elsewhere, is :class:`Unavailable`."""
+    must equal the registered one; anything else, including a ``.git`` file re-pointed elsewhere, is
+    :class:`Unavailable`."""
     common = pins.commondir.path
     if not common.endswith("/.git") or len(common) <= len("/.git"):
         raise Unavailable("the worktree's commondir is not <repo>/.git")

@@ -28,7 +28,16 @@ PeerClass = Literal["person", "agent", "worker", "control"]
 #: person_write: a host-side write only a person-class caller makes (``records.remote_private``, H11e).
 #: pg_write: a host-side side effect of P and G (``worktree.create``/``remove``, H11d; the op narrows G further).
 OpKind = Literal[
-    "read", "person_read", "pg_read", "person_write", "pg_write", "agent", "unattended", "human", "human_api", "job",
+    "read",
+    "person_read",
+    "pg_read",
+    "person_write",
+    "pg_write",
+    "agent",
+    "unattended",
+    "human",
+    "human_api",
+    "job",
     "control",
 ]
 
@@ -73,7 +82,12 @@ _MATRIX: dict[str, set[str]] = {
     "W": {"job"},
     "C": {"control"},
 }
-_WRITES = {"agent", "unattended", "human", "pg_write"}  # person_write is outside every column but P: op.not_allowed there
+_WRITES = {
+    "agent",
+    "unattended",
+    "human",
+    "pg_write",
+}  # person_write is outside every column but P: op.not_allowed there
 
 
 def refusal(column: Column, kind: OpKind) -> str | None:

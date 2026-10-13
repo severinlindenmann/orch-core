@@ -96,9 +96,9 @@ from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
 from .runners import RUN_CAPS, RUN_OPS
-from .worktrees import WORKTREE_CAPS, WORKTREE_OPS
 from .visibility import Viewer
 from .workspace import deny_append, ok_result
+from .worktrees import WORKTREE_CAPS, WORKTREE_OPS
 
 if TYPE_CHECKING:
     from orch.ops import Operation, Result

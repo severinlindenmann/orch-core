@@ -424,7 +424,9 @@ class HostGitReader:
             raise Unavailable("the repository was not pinned at registration")
         return pins
 
-    def pin_worktree(self, declared: str | os.PathLike[str], path: str, branch: str, principal: str | None = None) -> RepoPins:
+    def pin_worktree(
+        self, declared: str | os.PathLike[str], path: str, branch: str, principal: str | None = None
+    ) -> RepoPins:
         """H11d (§12.7): pin the linked worktree the runner created at ``path`` for the declared repo at ``declared``.
         Its ``.git`` file must name ``<C>/worktrees/<id>`` with ``<C>`` the declared repo's **pinned** commondir
         (device and inode compared), the back-pointer must name this worktree, and ``HEAD`` must be exactly
@@ -445,7 +447,9 @@ class HostGitReader:
         if _id(pins.gitdir) == _id(dp.gitdir) or _id(pins.worktree) == _id(dp.worktree):
             raise Unavailable("the worktree is the declared working copy itself")
         look = self.pool.call(
-            principal or self.principal, {"profile": "gitdir", "pins": pins.to_json()}, {"op": "observe", "args": {"refs": []}}
+            principal or self.principal,
+            {"profile": "gitdir", "pins": pins.to_json()},
+            {"op": "observe", "args": {"refs": []}},
         )
         if _check_observe(look, []).get("head_ref") != "refs/heads/" + branch:
             raise Unavailable("the worktree's HEAD is not the ticket's branch")

@@ -117,6 +117,7 @@ def test_records_adapter_and_role_refusal(client, token, stub, m6, monkeypatch):
 
 
 def test_records_actions_security_and_bodies(client, token, stub, m6, monkeypatch, gateway):
+    gateway.run = gateway.state / "custom-run"
     calls = []
     monkeypatch.setattr(client.app.state.records_child, "run", lambda *a, **k: calls.append((a, k)) or {"ok": True})
     base = f"/api/w/{stub.ws}/records"
@@ -132,8 +133,8 @@ def test_records_actions_security_and_bodies(client, token, stub, m6, monkeypatc
         assert client.post(path, json=body, headers=evil).status_code == 421
         assert client.post(path, json=body, headers=headers(token)).status_code == 200
     assert calls == [
-        ((stub.ws,), {"push": True, "auto_off": False, "state": gateway.state}),
-        ((stub.ws,), {"push": False, "auto_off": True, "state": gateway.state}),
+        ((stub.ws,), {"push": True, "auto_off": False, "state": gateway.state, "run_dir": gateway.run}),
+        ((stub.ws,), {"push": False, "auto_off": True, "state": gateway.state, "run_dir": gateway.run}),
     ]
     for body in ({}, {"push": "true"}, {"push": 1}, {"push": False, "argv": []}, {"push": None}):
         assert client.post(base + "/commit", json=body, headers=headers(token)).status_code == 400

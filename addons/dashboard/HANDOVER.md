@@ -1064,7 +1064,7 @@ Tests: `src/production/quick-records.test.tsx` (31 cases: states, strings, limit
 absent caps, runner line), `server/tests/test_realhost_quick_records.py` (real host: seeded `quick.list`, `records.status`, a commit into the
 workspace's own repository, a push to a LOCAL bare repo refused and nothing published), orch-dev-kit `e2e/dashboard/dashboard_quick_records.spec.ts`.
 
-**Layout coverage of the real-host-only UI (M6):** dev-only route `/__layout/<scenario>` (`src/dev/layoutPreview.tsx`, built only when
-`import.meta.env.DEV`; not in the production bundle) draws the real quick page, Records tab and runner card with fixture answers (it swaps the
+**Layout coverage of the real-host-only UI (M6):** route `/__layout/<scenario>` (`src/dev/layoutPreview.tsx`, component and fixtures included only when
+`import.meta.env.DEV`; in production the route remains registered but only redirects to `/`) draws the real quick page, Records tab and runner card with fixture answers (it swaps the
 mock api's methods per scenario). `scripts/layout-guard.mjs` checks the `real-host-*` pages: quick, many rows, limits open, normal-ticket
 and add (first signature) dialogs, records (long URLs), hidden URL, first commit, push confirm, failed push, runner on/off.

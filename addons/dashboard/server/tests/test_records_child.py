@@ -1,4 +1,4 @@
-"""Exercise actual bounded pipe reads with a fake Popen factory; no process or remote starts."""
+"""Bounded pipe reads plus a disposable Python child/grandchild; no git or remote starts."""
 
 import json
 import os
@@ -52,6 +52,7 @@ def spawn(monkeypatch):
 
     monkeypatch.setattr(rc.subprocess, "Popen", factory)
     monkeypatch.setattr(rc.os, "killpg", lambda pid, sig: kills.append((pid, sig)))
+    monkeypatch.setattr(rc.os, "waitid", lambda kind, pid, flags: object())
     return calls, processes, kills
 
 
@@ -81,20 +82,28 @@ def test_exact_spawn_environment_and_fds(spawn, monkeypatch, tmp_path, push, aut
             "ORCH_CLICK_FD": "99",
             "GIT_SSH_COMMAND": "never",
             "ORCH_RUN_DIR": "never",
+            "ORCH_HOST_RUN_DIR": "never",
         },
     )
-    assert rc.RecordsChild().run(WS, push=push, auto_off=auto_off, state=tmp_path / "state") == {"ok": True}
+    assert rc.RecordsChild().run(
+        WS, push=push, auto_off=auto_off, state=tmp_path / "state", run_dir=tmp_path / "host-run"
+    ) == {"ok": True}
     args, kwargs = calls[0]
     assert args == ([sys.executable, "-I", "-m", "orch.records", *command, "--workspace", WS, "--json"],)
     assert kwargs == {
-        "env": {**env, "ORCH_STATE_DIR": str(tmp_path / "state")},
+        "env": {
+            **{k: env[k] for k in ("HOME", "PATH", "LANG", "SSH_AUTH_SOCK")},
+            "ORCH_STATE_DIR": str(tmp_path / "state"),
+            "ORCH_HOST_RUN_DIR": str(tmp_path / "host-run"),
+        },
+        "cwd": str(tmp_path / "state"),
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "start_new_session": True,
         "close_fds": True,
     }
-    assert not kills and proc.stdout.closed and proc.stderr.closed
+    assert kills == [(proc.pid, signal.SIGKILL)] and proc.stdout.closed and proc.stderr.closed
 
 
 @pytest.mark.parametrize(
@@ -237,3 +246,67 @@ def test_quick_count_projection():
     got = addons.quick({"rows": [row], "total": 1, "next_page": "token"})
     assert got["rows"][0]["quick"] == row["quick"]
     assert got["rows"][0]["status"] == "in-progress"
+
+
+def test_success_kills_grandchild_before_reaping(monkeypatch, tmp_path):
+    # The grandchild closes output pipes but keeps a separate liveness pipe open.
+    # EOF on that pipe proves it died, even if init has not reaped its zombie yet.
+    import select
+
+    live_read, live_write = os.pipe()
+    real_popen, real_killpg = subprocess.Popen, os.killpg
+    processes, order = [], []
+
+    def spawn(argv, **kwargs):
+        proc = real_popen(argv, **kwargs, pass_fds=(live_write,))
+        processes.append(proc)
+        os.close(live_write)
+        real_wait = proc.wait
+
+        def wait(*args, **kw):
+            order.append("reap")
+            return real_wait(*args, **kw)
+
+        proc.wait = wait
+        return proc
+
+    def killpg(pid, sig):
+        assert pid == processes[0].pid
+        assert processes[0].returncode is None
+        order.append("kill")
+        real_killpg(pid, sig)
+
+    monkeypatch.setattr(rc.subprocess, "Popen", spawn)
+    monkeypatch.setattr(rc.os, "killpg", killpg)
+    code = f"""
+import os, time
+if os.fork() == 0:
+    os.close(1)
+    os.close(2)
+    time.sleep(30)
+    os._exit(0)
+os.close({live_write})
+print('{{"ok":true}}', flush=True)
+"""
+    try:
+        assert rc.RecordsChild()._execute([sys.executable, "-I", "-c", code], {"ORCH_STATE_DIR": str(tmp_path)}) == {
+            "ok": True
+        }
+        assert order == ["kill", "reap"]
+        assert select.select([live_read], [], [], 5)[0]
+        assert os.read(live_read, 1) == b""
+    finally:
+        os.close(live_read)
+
+
+def test_exit_wait_budget_keeps_leader_until_cleanup(spawn, monkeypatch, tmp_path):
+    _, processes, kills = spawn
+    proc = Process()
+    processes.append(proc)
+    monkeypatch.setattr(rc.os, "waitid", lambda *args: None)
+    monkeypatch.setattr(rc, "BUDGET", 0.01)
+    with pytest.raises(HostError) as error:
+        rc.RecordsChild().run(WS, state=tmp_path)
+    assert error.value.error["code"] == "records.budget"
+    assert kills == [(proc.pid, signal.SIGKILL)]
+    assert proc.waits == [None]

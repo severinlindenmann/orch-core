@@ -1487,3 +1487,17 @@ The records "not configured" state is "nothing noted yet" (host `configured = bo
 machinery unchanged and keep core in charge of wording. Converting would need a signed label removal the server does not allow.
 
 **Revert:** Remove the `/quick` route, the Records tab and the card section; the server routes are independent.
+
+## 2026-10-13 — M6 security review corrections
+
+**Decision:** Until core supplies the live push URL, label the status destination “Last known destination” and its private flag “Last noted as private”. In both export warnings, substitute “the remote configured in the records repository (last known: <url>)” for the URL phrase; keep the rest of the §12.11 constant verbatim. Do not show the private assurance in push confirmation: status has no current-destination field. Render failure prose separately as “Output of the records tool”.
+
+**Why:** `records.status.remote` describes the last commit/push note, not git’s current push target. This deliberate §12.11 wording deviation avoids misleading export consent while stream A supplies a live destination contract. Remote-controlled failure prose must be distinguishable from dashboard statements.
+
+**Revert:** Restore current-destination wording and the confirmation’s private assurance only when core explicitly guarantees both describe the live push destination.
+
+**Decision:** Kill the records child’s own process group before reaping on every outcome, including success. Pass the gateway’s resolved run directory as `ORCH_HOST_RUN_DIR`, pin cwd to state, and omit `XDG_CONFIG_HOME` from the child environment. Read a ticket freshly for quick conversion, show kept/removed labels, and key the handoff by action and ticket. Document the production preview route as redirect-only and restore preview API swaps after tests.
+
+**Why:** Prevent surviving ssh/git descendants, host/cwd drift, stale list label replacement, stale handoff state, and test leakage. Fresh reads reduce lost updates but do not provide atomic compare-and-swap against changes after that read.
+
+**Revert:** Only with equivalent core process/host isolation and label concurrency guarantees; preview cleanup remains necessary while tests share API objects.

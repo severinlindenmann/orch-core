@@ -93,7 +93,7 @@ function Limits({ ws, limits, onChange }: { ws: string; limits: QuickLimits; onC
  */
 export const remainingLabels = (labels: readonly string[]): string[] => labels.filter((l) => l !== QUICK_LABEL)
 
-function Row({ row, canClose, onClose, onNormal }: { row: QuickRow; canClose: boolean; onClose: (key: string) => void; onNormal: (key: string, labels: string[]) => void }) {
+function Row({ row, canClose, onClose, onNormal }: { row: QuickRow; canClose: boolean; onClose: (key: string) => void; onNormal: (key: string) => void }) {
   const over = row.quick?.over === true
   const keep = remainingLabels(row.labels ?? [])
   const finished = row.status === 'done' || row.status === 'closed'
@@ -111,7 +111,7 @@ function Row({ row, canClose, onClose, onNormal }: { row: QuickRow; canClose: bo
         {countsText(row.quick)}
       </span>
       {canClose && !finished && keep.length > 0 && (
-        <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Make ${row.key} a normal ticket`} onClick={() => onNormal(row.key, keep)}>
+        <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Make ${row.key} a normal ticket`} onClick={() => onNormal(row.key)}>
           Make a normal ticket
         </Button>
       )}
@@ -132,7 +132,27 @@ export function QuickPage() {
   const qc = useQueryClient()
   const [group, setGroup] = useState<Group>('active')
   const [limits, setLimits] = useState<QuickLimits>(() => (ws ? readQuickLimits(ws) : { max_commits: null, max_files: null }))
-  const [closing, setClosing] = useState<HandoffAction | null>(null)
+  const [closing, setClosing] = useState<Extract<HandoffAction, { action: 'close' | 'details' }> | null>(null)
+  const [reading, setReading] = useState(false)
+  const [readError, setReadError] = useState(false)
+  const makeNormal = async (key: string) => {
+    if (!ws || reading) return
+    setReading(true)
+    setReadError(false)
+    try {
+      const ticket = await qc.fetchQuery({ ...queries.ticket(ws, key), staleTime: 0 })
+      const labels = remainingLabels(ticket.labels)
+      if (!labels.length || !ticket.labels.includes(QUICK_LABEL) || ['done', 'closed'].includes(ticket.status)) {
+        setReadError(true)
+        return
+      }
+      setClosing({ action: 'details', key, labels })
+    } catch {
+      setReadError(true)
+    } finally {
+      setReading(false)
+    }
+  }
   const served = !!ws && hasFeature('quick', ws)
   const list = useQuery({ ...queries.quick(ws ?? '', group === 'active' ? ACTIVE_STATUSES : DONE_STATUSES, limits), enabled: served })
   const other = useQuery({ ...queries.quick(ws ?? '', group === 'active' ? DONE_STATUSES : ACTIVE_STATUSES, limits), enabled: served })
@@ -199,16 +219,20 @@ export function QuickPage() {
       ) : (
         <ul aria-label={group === 'active' ? 'Active quick tasks' : 'Completed quick tasks'} className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {sorted.map((r) => (
-            <Row key={r.key} row={r} canClose={mayAdd} onClose={(key) => setClosing({ action: 'close', key })} onNormal={(key, labels) => setClosing({ action: 'details', key, labels })} />
+            <Row key={r.key} row={r} canClose={mayAdd && !reading} onClose={(key) => setClosing({ action: 'close', key })} onNormal={(key) => void makeNormal(key)} />
           ))}
         </ul>
       )}
       {list.data?.next_page && <p className="text-[12px] text-text-muted">More quick tasks exist than this page lists. Open the Tickets page filtered by the label quick to see all of them.</p>}
 
+      {reading && <p role="status">Reading the ticket’s current labels…</p>}
+      {readError && <p role="alert">Could not prepare conversion from the current ticket. Reload the quick tasks and try again.</p>}
       <Limits ws={ws} limits={limits} onChange={setLimits} />
 
       {closing && (
         <HandoffDialog
+          key={closing.action + closing.key}
+          summary={closing.action === 'details' ? <div><p>Labels removed: <Inline>{QUICK_LABEL}</Inline></p><p>Labels kept: {closing.labels?.map((label) => <span key={label} className="mr-2"><Inline>{label}</Inline></span>)}</p></div> : undefined}
           title={closing.action === 'details' ? `Make ${closing.key} a normal ticket` : `Close ${'key' in closing ? closing.key : ''}`}
           ws={ws}
           action={closing}

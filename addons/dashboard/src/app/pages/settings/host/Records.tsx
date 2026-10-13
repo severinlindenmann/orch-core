@@ -4,7 +4,7 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { atLeast } from '@/api/permissions'
-import { EXPORT_WARNING, PRIVATE_REMOTE, TERMINAL_COMMANDS, type RecordsRun, type RecordsStatus } from '@/api/quickRecords'
+import { EXPORT_WARNING, TERMINAL_COMMANDS, type RecordsRun, type RecordsStatus } from '@/api/quickRecords'
 import { queries } from '@/api/queries'
 import { api } from '@/api/client'
 import { ApiError, type Workspace } from '@/api/types'
@@ -25,30 +25,21 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-/** "Push publishes every ticket in this workspace to <url>, restricted ones included." with the URL exact. */
+/** Keep §12.11 verbatim except for the destination phrase: status is only a historical note. */
 export function ExportWarning({ url }: { url: string | null }) {
-  if (url === null)
-    return (
-      <p data-testid="records-export-warning" className="text-[13px] text-warning">
-        A push publishes every ticket in this workspace, restricted ones included. The address it goes to has characters that cannot be shown here, so it is not shown.
-      </p>
-    )
   return (
     <p data-testid="records-export-warning" className="text-[13px] text-warning">
       {EXPORT_WARNING.before}
-      <Raw>{url}</Raw>
+      the remote configured in the records repository (last known: {url === null ? 'cannot be shown here' : <Raw>{url}</Raw>})
       {EXPORT_WARNING.after}
     </p>
   )
 }
 
-/** "orch trusts your word that only you read <url>." */
 export function PrivateRemoteLine({ url }: { url: string }) {
   return (
     <p data-testid="records-private-line" className="text-[13px] text-text-muted">
-      {PRIVATE_REMOTE.before}
-      <Raw>{url}</Raw>
-      {PRIVATE_REMOTE.after}
+      Last noted as private: <Raw>{url}</Raw>.
     </p>
   )
 }
@@ -68,8 +59,13 @@ export function RunFailure({ error }: { error: ApiError }) {
     <div role="alert" data-testid="records-failure" className="space-y-1 rounded-md border border-danger/40 px-3 py-2 text-[13px]">
       <p>
         <span className="font-medium text-danger">Not done.</span> <Mono>{error.code}</Mono>
-        {error.message_hidden || error.message === error.code ? '' : <>: <Inline>{error.message}</Inline></>}
       </p>
+      {!error.message_hidden && error.message !== error.code && (
+        <div className="text-text-muted" aria-label="Output of the records tool">
+          <p className="font-medium">Output of the records tool</p>
+          <p><Inline>{error.message}</Inline></p>
+        </div>
+      )}
       {error.message_hidden && <p className="text-text-muted">The records tool wrote text that cannot be shown here, so only its code is shown.</p>}
       {error.commit && (
         <p className="text-text-muted">
@@ -161,7 +157,7 @@ function Status({ data, workspace }: { data: RecordsStatus; workspace: Workspace
       <Row label="Remote">
         {remote ? (
           <div className="space-y-1">
-            {remote.url !== null ? <Raw>{remote.url}</Raw> : remote.url_hidden ? 'its address has characters that cannot be shown' : 'none'}
+            {remote.url !== null ? <>Last known destination: <Raw>{remote.url}</Raw></> : remote.url_hidden ? 'its address has characters that cannot be shown' : 'none'}
             {remote.private === true && remote.url !== null && <PrivateRemoteLine url={remote.url} />}
             {remote.export === 'blocked_convenience' && (
               <p data-testid="records-export-blocked" className="text-[12px] text-warning">
@@ -216,7 +212,7 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
   return (
     <div className="space-y-4">
       <h2 className="text-base font-semibold">Records</h2>
-      <p className="text-[13px] text-text-muted">The workspace's tickets and events as a git repository you own. Committing is local; pushing sends them to the remote below.</p>
+      <p className="text-[13px] text-text-muted">The workspace's tickets and events as a git repository you own. Committing is local; pushing sends them to the remote configured in the records repository.</p>
 
       {refused ? (
         <p role="alert" data-testid="records-refused" className="rounded-md border border-border px-3 py-2 text-[13px] text-text-muted">
@@ -293,7 +289,6 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
               <DialogDescription>Core runs the records tool on this machine. No signature is needed.</DialogDescription>
             </DialogHeader>
             <ExportWarning url={url} />
-            {data?.remote?.private === true && url !== null && <PrivateRemoteLine url={url} />}
             <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setConfirmPush(false)}>
                 Cancel

@@ -66,7 +66,7 @@ def register(app, gateway):
         if link is None:
             raise fail("op.unsupported", exit=1)
         link.call("records.status", {})  # authorize this person before any local process is started
-        return child.run(ws, push=push, auto_off=auto_off, state=gateway.state)
+        return child.run(ws, push=push, auto_off=auto_off, state=gateway.state, run_dir=gateway.run)
 
     @app.post("/api/w/{ws}/records/commit")
     def commit(body: Commit, ws: str = Depends(workspace)):

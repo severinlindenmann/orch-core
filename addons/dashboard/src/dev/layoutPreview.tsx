@@ -1,4 +1,4 @@
-// DEV ONLY (reached through the `__layout/$name` route, which the router builds only when `import.meta.env.DEV`).
+// DEV ONLY (reached through the `__layout/$name` route, whose component loads only when `import.meta.env.DEV`; production redirects to /).
 //
 // The quick tasks page, the Settings "Records" tab and the "Dashboard execution" card are drawn only on a real host
 // (features `quick`, `records`, `runner`), so the layout guard, which runs against the mock app, never sees them. This
@@ -115,6 +115,17 @@ function request(action: Record<string, unknown>): HandoffRequest {
 
 let current: LayoutScenario = 'quick-normal'
 let installed = false
+const originals = new Map<string, unknown>()
+
+/** Test cleanup: undo every mock api swap before another test uses the shared client. */
+export function resetLayoutPreview() {
+  const a = api as unknown as Record<string, unknown>
+  for (const [name, fn] of originals) a[name] = fn
+  originals.clear()
+  installed = false
+  current = 'quick-normal'
+  serial = 0
+}
 
 /** Replaces the mock api's methods that these pages call. Done once; the answers follow `current`. */
 function install() {
@@ -123,6 +134,7 @@ function install() {
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
   const original = { getIdentity: a.getIdentity }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
+    originals.set(name, a[name])
     a[name] = fn
   }
   set('getQuick', async (_ws: string, p: { status?: string[] } = {}) => {

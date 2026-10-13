@@ -67,6 +67,8 @@ export interface HandoffDialogProps {
   hint?: string | null
   /** The form, before the request exists. */
   children?: ReactNode
+  /** Exact action summary, kept visible while preparing and reviewing. */
+  summary?: ReactNode
   /** Said above the panel while it is open: a warning that the page changed under it. */
   warning?: (request: HandoffRequest) => string | null
   /** The signer's event is in the log. */
@@ -199,6 +201,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
+        {p.summary}
         {phase === 'idle' && !clickOpen && p.children}
         {phase === 'idle' && !clickOpen && canClick && <ClickRisk />}
         {phase === 'idle' && !clickOpen && clickOnly && !canClick && (

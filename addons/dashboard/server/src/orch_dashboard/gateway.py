@@ -59,7 +59,7 @@ class Gateway:
         self.state = state or state_dir()
         # The one signer child of this server (started on first use, so a dev server with no host starts none).
         self.click = click or Signer(self.state)
-        self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run")))
+        self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run"))).absolute()
         self.links = {}
         self.control = None
         self.lock = threading.RLock()

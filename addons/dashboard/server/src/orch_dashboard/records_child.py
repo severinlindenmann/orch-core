@@ -17,7 +17,7 @@ from .gateway import WORKSPACE_ID, state_dir
 
 BUDGET = 60
 OUTPUT_LIMIT = 65_536  # each pipe; stderr is drained but never returned or logged
-ENV_KEYS = ("HOME", "PATH", "SSH_AUTH_SOCK", "LANG", "ORCH_STATE_DIR", "XDG_CONFIG_HOME")
+ENV_KEYS = ("HOME", "PATH", "SSH_AUTH_SOCK", "LANG")
 
 
 class Result(BaseModel):
@@ -104,7 +104,7 @@ class RecordsChild:
         self.lock = threading.Lock()
         self.active = set()
 
-    def run(self, ws, *, push=False, auto_off=False, state=None):
+    def run(self, ws, *, push=False, auto_off=False, state=None, run_dir=None):
         if not isinstance(ws, str) or not WORKSPACE_ID.fullmatch(ws):
             raise fail("invalid.input", exit=5)
         with self.lock:
@@ -114,7 +114,8 @@ class RecordsChild:
         try:
             env = {key: os.environ[key] for key in ENV_KEYS if key in os.environ}
             # Pin the same resolved state as the gateway, including an explicitly supplied gateway state.
-            env["ORCH_STATE_DIR"] = str(state_dir({**env, **({"ORCH_STATE_DIR": str(state)} if state else {})}))
+            env["ORCH_STATE_DIR"] = str(state_dir({**os.environ, **({"ORCH_STATE_DIR": str(state)} if state else {})}))
+            env["ORCH_HOST_RUN_DIR"] = str(run_dir or os.path.join(env["ORCH_STATE_DIR"], "run"))
             argv = [sys.executable, "-I", "-m", "orch.records"]
             argv += ["auto", "off"] if auto_off else ["commit", *(["--push"] if push else [])]
             argv += ["--workspace", ws, "--json"]
@@ -129,6 +130,7 @@ class RecordsChild:
             proc = subprocess.Popen(
                 argv,
                 env=env,
+                cwd=env["ORCH_STATE_DIR"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -160,13 +162,13 @@ class RecordsChild:
                             )
                         if key.fileobj is proc.stdout:
                             output.extend(data)
-                try:
-                    code = proc.wait(timeout=max(0, deadline - time.monotonic()))
-                except subprocess.TimeoutExpired:
-                    raise child_error("records.budget") from None
-            return parse(bytes(output), code)
+                # Observe exit without reaping: the leader must reserve its process group until cleanup.
+                while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+                    if time.monotonic() >= deadline:
+                        raise child_error("records.budget")
+                    time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         finally:
-            # Do not poll/reap before killing on failure: keep the child's PID reserved until the group is killed.
+            # Do not poll/reap before killing on any outcome: keep the child's PID reserved until the group is killed.
             if proc.returncode is None:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
@@ -175,3 +177,4 @@ class RecordsChild:
                 proc.wait()
             proc.stdout.close()
             proc.stderr.close()
+        return parse(bytes(output), proc.returncode)

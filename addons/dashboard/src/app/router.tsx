@@ -22,7 +22,8 @@ const ArtifactsPage = lazyPage(() => import('./pages/artifacts'), 'ArtifactsPage
 const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
 const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
-// Dev only: the real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
+// Preview component is dev only; the production route remains registered as a redirect to /.
+// The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
 // `import.meta.env.DEV` is false in a build, so the import, its chunk and the fixtures are not in the production bundle.
 const LayoutPreview = import.meta.env.DEV ? lazyPage(() => import('../dev/layoutPreview'), 'LayoutPreview') : () => null
 const AddonPage = lazyPage(() => import('./pages/AddonPage'), 'AddonPage')

@@ -4873,7 +4873,8 @@ recommended** (PR #435 comment). Decided additions: relay-linked workspaces are 
 `decision` evidence is not served in v1.7 (orch-52 owns its F1 carriage as a later amendment); the start fence and the
 600 s hold-off after a state restore are accepted; the convenience history rule stays strict in v1.7 (a workspace that
 used click-to-sign cannot get a phone in v1.7; lifting it needs a reader-version handshake and an owner decision; flagged
-to orch-d6, see §0.8.6 item 1; the owner decided it on 13 Oct 2026, design draft in §0.8.6 item 9); every R group gets an Opus review plus an orch-52 review. Q5 is to be confirmed with
+to orch-d6, see §0.8.6 item 1; the owner decided it on 13 Oct 2026, design draft in §0.8.6 item 9); every R group gets
+an Opus review plus an orch-52 review. Q5 is to be confirmed with
 orch-mobile before R2 merges.
 
 1. **L3 (§11): the bridge in the host process?** *Recommended: accept for v1.7, with the exposure stated:* bridge code

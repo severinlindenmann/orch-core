@@ -353,5 +353,24 @@ def test_a_handoff_submit_under_a_held_workspace_lock_is_lock_busy_then_succeeds
         res = human.submit_res(rid, signed.events, idem=idem)
         assert err(res) == "lock.busy"
         assert res["error"]["retryable"] is True
-        assert res["error"].get("exit", 9) == 9
+        assert res["exit"] == 9
     ok(human.submit_res(rid, signed.events, idem=idem))
+
+
+def test_a_bad_request_record_does_not_stop_the_sweep(served, human):
+    import json
+
+    from orch.host.requests import RequestStore
+
+    _, key = human.ticket()
+    bad = ok(hand(human, key, "b"))["data"]["request"]["id"]
+    good = ok(hand(human, key, "g"))["data"]["request"]["id"]
+    store = RequestStore(served.lab.state, served.wid, UID, clock=lambda: 1e12)
+    path = next(p for p in store.dir.iterdir() if bad in p.name)
+    rec = json.loads(path.read_text())
+    del rec["expires"]
+    path.write_text(json.dumps(rec))
+    path.chmod(0o600)
+    store.sweep()  # no raise
+    assert store.read(good)["state"] == "expired"
+    assert "expires" not in store.read(bad)

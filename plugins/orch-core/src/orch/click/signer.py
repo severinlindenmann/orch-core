@@ -34,7 +34,6 @@ MAX_APPROVALS = 16
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
 PER_HOUR = 600
-ATTEMPT_MARGIN = 60.0  # seconds past the request expiry that the attempt marker is kept
 REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
@@ -122,7 +121,9 @@ class ClickSigner:
         self.busy = False
         #: ``(workspace_id, request_id)`` whose signing started in this process: defence in depth against a claim
         #: record deleted from outside after a failed or interrupted signature (the claim file alone is not trusted)
-        self._attempted: dict[tuple[str, str], tuple[float, float]] = {}  # -> (approval deadline mono, request expiry epoch)
+        #: Kept for the whole signer process lifetime, never pruned: memory is bounded by the sign budget (30/min,
+        #: 600/h) and an entry is one tiny key, while a pruned marker would reopen the second-signature window.
+        self._attempted: set[tuple[str, str]] = set()
         self.log = log
         self.records = records if records is not None else Records(self.state, wall=wall)
         self.records.prune()  # retention runs at start and at prepare, never on the sign path
@@ -446,10 +447,7 @@ class ClickSigner:
         # From here the claim is never released: an exception does not prove that no signature exists (the host signer
         # signs event by event), so any failure leaves the claim and that request fails closed.
         # before any signature can exist
-        self._attempted[(approval.workspace_id, approval.request_id)] = (
-            approval.deadline,
-            _epoch(approval.expires_at) or self.wall() + REQUEST_LIFETIME,  # unparseable: keep the longest lifetime
-        )
+        self._attempted.add((approval.workspace_id, approval.request_id))
         signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
         if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
             raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
@@ -599,15 +597,7 @@ class ClickSigner:
         for key, a in list(self.approvals.items()):
             if self._expired(a) or a.result is not None:
                 self.approvals.pop(key, None)
-        now = self.mono()
-        wall = self.wall()
-        # The marker is the only guard once the claim file is deleted from outside and the approval is swept: an idem
-        # retry of prepare would rebuild an approval for a request the host still holds open. So it outlives BOTH the
-        # approval deadline (mono) and the request's own expiry (wall, plus a margin): by then the host refuses the
-        # request itself (human.request_expired), so no sign can proceed. A wall clock that steps back only keeps it.
-        for key, (deadline, expires) in list(self._attempted.items()):
-            if now >= deadline and wall >= expires + ATTEMPT_MARGIN:
-                del self._attempted[key]
+        # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
         for c in self.conns.values():

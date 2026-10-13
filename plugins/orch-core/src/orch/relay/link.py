@@ -11,18 +11,27 @@
    publication with catch-up (R3, injected), then ``state: "linked"``.
 
 Every step is idempotent on the relay, so a crash anywhere leaves ``linking`` and the next start runs the sequence
-again from the top; the injected :class:`LinkSteps` returns the same persisted card and pin each time (a re-built card
-at the same ``card_seq`` would be ``stale_card``).
+again from the top.
+
+**Same bytes on resume (review L1).** The relay compares the whole genesis pin, signature included (a re-signed pin is a
+permanent 409 ``genesis_mismatch``), and a rebuilt card at the same ``card_seq`` is ``stale_card``. So the card and the
+pin are persisted in the relay state directory (``link-card.json``, ``link-genesis.json``, write-once) **before** their
+first PUT, and a resume re-sends the stored bytes without asking :class:`LinkSteps` again: the person is never asked
+to sign a second pin, and a different card or pin from ``LinkSteps`` is never sent.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
+from orch import canon
+
+from . import wire
 from .directory import Directory
 from .retry import Retrier
 from .session import Session
+from .state import PersistedOnce, StateDir
 
 __all__ = ["LinkRefused", "LinkSteps", "first_link"]
 
@@ -55,19 +64,37 @@ class LinkSteps(Protocol):
         ...
 
 
-def first_link(steps: LinkSteps, session: Session, directory: Directory, retrier: Retrier) -> None:
+def _kept(store: StateDir, name: str, make: Callable[[], Any]) -> Any:
+    """The persisted value of ``name``, or ``make()`` persisted durably first."""
+    once = PersistedOnce(store, name)
+    held = once.get()
+    if held is None:
+        held = once.keep(canon.dumps(make()))
+    try:
+        return wire.loads_canonical(held)
+    except wire.WireError:
+        raise LinkRefused(f"{name} is not readable; refusing to rebuild it") from None
+
+
+def first_link(steps: LinkSteps, session: Session, directory: Directory, retrier: Retrier, *, store: StateDir) -> None:
     state = steps.link_state()
     if state == "linked":
         return
     if state != "linking":
         raise LinkRefused("link.json is not in state linking: the reader reservation must come first")
-    card = steps.card()
+    card = _kept(store, "link-card.json", lambda: dict(steps.card()))
     seq = retrier.run(lambda: directory.put_card(card, first=True), route="PUT /v2/workspaces/{ws}/card")
     retrier.run(session.login, route="POST /v2/session/login")
     retrier.run(session.hold, route="POST /v2/workspaces/{ws}/host/hold")
     if seq is None:
         retrier.run(lambda: directory.put_card(card, first=False), route="PUT /v2/workspaces/{ws}/card")
-    pin, cert, genesis = steps.genesis()
+
+    def make_genesis() -> dict[str, Any]:
+        pin, cert, genesis = steps.genesis()
+        return {"pin": dict(pin), "cert": dict(cert), "genesis": genesis}
+
+    g = _kept(store, "link-genesis.json", make_genesis)
+    pin, cert, genesis = g["pin"], g["cert"], g["genesis"]
     retrier.run(lambda: directory.put_genesis(pin, cert, genesis=genesis), route="PUT /v2/workspaces/{ws}/genesis")
     steps.publish(session, directory)
     steps.mark_linked()

@@ -246,11 +246,12 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
                     ("att", "mode", "writer"),
                 ),
             },
+            "seq": _INT,
             "lease_gen": _INT,
             "cols": {"type": ["integer", "null"], "minimum": 20, "maximum": 500},
             "rows": {"type": ["integer", "null"], "minimum": 5, "maximum": 200},
         },
-        ("run", "atts", "lease_gen"),
+        ("run", "seq", "atts", "lease_gen"),
     ),
 }
 RUN_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -395,6 +396,8 @@ class RunnerHub:
         self.attachments: dict[str, dict[str, Any]] = {}
         #: the runner's last ``runner.term`` per run: {lease_gen, atts:[{att, mode, writer}]} (counts and the lease)
         self.term_state: dict[str, dict[str, Any]] = {}
+        #: the newest ``runner.term`` sequence number seen per run (this runner session); older reports are ignored
+        self._term_seq: dict[str, int] = {}
         self._pending_pub: set[str] = set()
         self._watching: asyncio.Task[None] | None = None
         #: the watcher's running check (or end) per attachment
@@ -521,6 +524,7 @@ class RunnerHub:
         previous = self.generation
         self.session, self.uid, self.generation, self.pid = session, uid, args["gen"], args["pid"]
         self.epoch += 1
+        self._term_seq.clear()  # a new runner process counts its reports from 1 again
         self.sub_id = "sub_" + secrets.token_hex(8)
         session.subscriptions += 1  # the command stream keeps the connection out of the idle close
         session.on_close.append(lambda: self.disconnected(session))
@@ -617,6 +621,9 @@ class RunnerHub:
         rec = self.store.records.get(run)
         if rec is None or rec.get("runner_uid") != session.peer.uid or rec.get("gen") != self.generation:
             raise HostError("not_found", "no such run on this runner")
+        if args["seq"] <= self._term_seq.get(run, -1):
+            return {}  # a stale snapshot overtaken by a newer one: it must never take a live attachment out (D2)
+        self._term_seq[run] = args["seq"]
         atts = args["atts"]
         listed = {a["att"] for a in atts}
         for att in listed - self.attachments.keys():  # the runner holds only what the host's table holds
@@ -626,7 +633,7 @@ class RunnerHub:
         for att, info in list(self.attachments.items()):
             if info["run"] == run and att in listed:
                 info["seen"] = True
-            elif info["run"] == run and info.get("seen"):  # the runner ended it
+            elif info["run"] == run and info.get("seen"):  # the runner ended it (this report is the newest)
                 self.attachments.pop(att, None)
                 self._audit("term.detach", run=run, att=att, person=info.get("person"))
         previous = (self.term_state.get(run) or {}).get("atts") or []
@@ -696,6 +703,7 @@ class RunnerHub:
         self.pending.clear()
         self.attachments.clear()
         self.term_state.clear()
+        self._term_seq.clear()
         LOG.warning("runner disconnected (uid %s)", self.uid)
 
     # -- commands

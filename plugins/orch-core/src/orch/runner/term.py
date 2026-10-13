@@ -243,6 +243,9 @@ class TermListener:
         self._rates: dict[str, tuple[_Bucket, _Bucket]] = {}
         #: called with a run id (outside every lock) when its attachments, lease or size changed
         self.on_change: Callable[[str], None] | None = None
+        #: ``runner.term`` sequence number, taken under ``lock`` with the snapshot: the host ignores an older report
+        #: that arrives after a newer one (two threads may send their snapshots in either order)
+        self._report_seq = 0
 
     # -- the socket
     def open(self) -> None:
@@ -397,9 +400,11 @@ class TermListener:
         with self.lock:
             atts = [{"att": a.att, "mode": a.mode, "writer": a.writer} for a in self._by_run.get(run, ())]
             lease_gen = self.leases.get(run, (None, 0))[1]
+            self._report_seq += 1
+            seq = self._report_seq
         live = self.sup.live_of(run) if self.sup is not None else None
         cols, rows = (live.cols, live.rows) if live is not None else (None, None)
-        return {"run": run, "atts": atts, "lease_gen": lease_gen, "cols": cols, "rows": rows}
+        return {"run": run, "seq": seq, "atts": atts, "lease_gen": lease_gen, "cols": cols, "rows": rows}
 
     def _remember(self, digest: str) -> None:
         self.seen[digest] = self.clock()

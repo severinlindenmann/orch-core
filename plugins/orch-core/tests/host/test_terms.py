@@ -610,6 +610,28 @@ def test_an_unconfirmed_end_drops_the_runner_session(ready):
         t.close()
 
 
+def test_a_stale_runner_report_that_arrives_late_never_takes_a_live_attachment_out(ready):
+    """PR #443 delta D2: two runner threads may send their snapshots in reverse order. The older one (without the
+    new attachment) arrives last; the host ignores it by ``seq`` and keeps watching the attachment."""
+    w = ready
+    c = w.conn()
+    uid, key = w.ticket("a restricted one")
+    run, data, t = _writer(w, c, ticket=key)
+    hub = w.h.host.runners
+    att = data["att"]
+    try:
+        wait_for(lambda: (hub.attachments.get(att) or {}).get("seen"), 5)
+        newest = hub._term_seq[run]
+        stale = {"run": run, "seq": newest - 1, "atts": [], "lease_gen": 0}  # taken before the attach registered
+        assert w.h.run(hub.term_report(hub.session, stale)) == {}
+        assert att in hub.attachments and hub._term_seq[run] == newest
+        assert [a["att"] for a in hub.term_state[run]["atts"]] == [att]
+        w.restrict(uid, [w.quinn.ref])
+        assert drain_end(t) == "not_visible"  # still watched: the revocation reaches it
+    finally:
+        t.close()
+
+
 def test_an_attachment_the_host_does_not_hold_is_ended_at_the_runner(ready):
     w = ready
     c = w.conn()

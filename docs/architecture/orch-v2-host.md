@@ -5471,7 +5471,9 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   runner confirmed `attach.end` (until then the entry is `ending` and the end is sent again on every pass). An
   `attach.end` the runner does not confirm within 5 s drops the runner session, so the runner's `host_lost` ends every
   attachment. An attachment the runner reports in `runner.term` that the host does not hold is ended there
-  (`cancelled`).
+  (`cancelled`). `runner.term` carries `seq`, taken under the runner's lock together with the snapshot; the host
+  ignores a report whose `seq` is not newer than the last one it applied for that run, so a stale snapshot that
+  arrives late never takes a live attachment out of the host's table.
 - **Ops.** `term.*` and `attach.cancel` are in `term/1`, `run.stop` in `run/1`: all P only (G and N: `op.not_allowed`
   before any run is looked at). `term.preview`/`term.open` start the person's own `$SHELL -l` (harness `shell` only;
   `claude-code` and `codex` are `blocked: harness.not_found` until H11c; a ticket is checked for visibility and becomes

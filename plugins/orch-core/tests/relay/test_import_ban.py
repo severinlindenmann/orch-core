@@ -296,6 +296,8 @@ BYPASSES = [
     "import weakref",
     "import copy\nc = copy.copy(s)",
     "from orch.relay.sign import *",
+    "from orch.relay.wire import attrgetter\nf = attrgetter('_sign_bytes')(s)",  # a re-export, not operator itself
+    "g = attrgetter('_sign_bytes')",
 ]
 
 

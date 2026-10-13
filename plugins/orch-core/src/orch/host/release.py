@@ -28,7 +28,7 @@ import stat
 import sys
 from pathlib import Path
 
-__all__ = ["ReleaseError", "default_version", "install_release", "preload", "releases_dir"]
+__all__ = ["ReleaseError", "default_version", "install_release", "preload", "purge_releases", "releases_dir"]
 
 LAUNCHER = """import sys
 from pathlib import Path
@@ -133,6 +133,33 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return final
+
+
+def purge_releases(releases: Path) -> list[str]:
+    """Remove the release copies under ``releases`` (``orch host disable --purge-releases``). They are read-only, so
+    each directory gets ``u+rwx`` before its entries go. Nothing outside ``releases`` is touched and no symlink is
+    followed (a link, ``current`` included, is unlinked itself); ``releases`` being a symlink is refused. Returns the
+    top-level entries removed."""
+    try:
+        top = os.lstat(releases)
+    except FileNotFoundError:
+        return []
+    if not stat.S_ISDIR(top.st_mode):
+        raise ReleaseError(f"{releases} is not a directory (a link or a file): nothing removed")
+
+    def clear(directory: Path) -> None:
+        os.chmod(directory, stat.S_IRWXU)  # the directory itself is a real one: lstat'd by the caller
+        for entry in os.scandir(directory):
+            path = Path(entry.path)
+            if entry.is_dir(follow_symlinks=False):
+                clear(path)
+                os.rmdir(path)
+            else:  # a file or a symlink (never followed)
+                os.unlink(path)
+
+    removed = sorted(e.name for e in os.scandir(releases))
+    clear(Path(releases))
+    return removed
 
 
 def _point_current(releases: Path, version: str) -> None:

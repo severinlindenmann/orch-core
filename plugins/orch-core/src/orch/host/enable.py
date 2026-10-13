@@ -124,6 +124,10 @@ def _default_run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(list(argv), capture_output=True, text=True, timeout=30, check=False)
 
 
+def _failed(argv: Sequence[str], res: subprocess.CompletedProcess[str]) -> str:
+    return f"{' '.join(argv)} failed ({res.returncode}): {(res.stderr or res.stdout or '').strip()}"
+
+
 def _arg_after(args: list[str], flag: str) -> str | None:
     return args[args.index(flag) + 1] if flag in args[:-1] else None
 
@@ -300,6 +304,31 @@ class Manager:
         do(["systemctl", "--user", "daemon-reload"])
         do(["systemctl", "--user", "enable", self.plan.systemd_name])
         do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
+        return ran
+
+    def stop(self) -> list[list[str]]:
+        """Stop and unload the service, then remove the unit file (``orch host disable``). A loaded service that
+        will not stop leaves the unit in place and raises. Returns the commands that ran. Never touches the state dir
+        or the releases."""
+        ran: list[list[str]] = []
+        was_loaded = self.loaded()
+        if self.plan.kind == "launchd":
+            if was_loaded:
+                argv = ["launchctl", "bootout", self._target()]
+                ran.append(argv)
+                res = self.run(argv)
+                if res.returncode != 0 and self.loaded():
+                    raise OSError(_failed(argv, res))
+        elif was_loaded:
+            argv = ["systemctl", "--user", "disable", "--now", self.plan.systemd_name]
+            ran.append(argv)
+            res = self.run(argv)
+            if res.returncode != 0:
+                raise OSError(_failed(argv, res))
+        self.plan.unit_path.unlink(missing_ok=True)
+        if self.plan.kind == "systemd":
+            ran.append(["systemctl", "--user", "daemon-reload"])
+            self.run(ran[-1])  # best effort: the unit file is gone either way
         return ran
 
     def status(self) -> dict[str, Any]:

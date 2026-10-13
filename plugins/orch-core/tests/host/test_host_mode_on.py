@@ -79,7 +79,7 @@ class FakeLaunchd:
             return done(0, "active\n" if self.host else "inactive\n") if self.loaded else done(1)
         if verb in ("bootstrap", "enable"):
             self.loaded = True
-        if verb in ("bootout",):
+        if verb in ("bootout", "disable"):
             self.loaded = False
             self.stop_host()
         if verb in ("bootstrap", "kickstart", "start", "restart"):

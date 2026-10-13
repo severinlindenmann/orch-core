@@ -1709,7 +1709,8 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 2. **Registration turns host mode on.** `orch host register DIR` first checks the control socket; a host that answers
    (the service, or a dev host from `orch host run --foreground`) is used as it is, otherwise the service is enabled as
    above (`--no-service` never touches it). `--peer` is now optional: by default this UID maps to the person whose device
-   key for the workspace is on this machine (the key `orch init` made, matched against the workspace's devices). A
+   key for the workspace is on this machine, in either custody (the passphrase key `orch init` made, or the convenience
+   key after click-to-sign: `custody.select.device_backend`, public key only), matched against the workspace's devices. A
    removed, revoked or expired key, one without `decide`, or one whose person left counts as none: then `--peer` is
    required. The host checks the mapping again (F8). From then on the thin CLI (H4b) and the dashboard serve the workspace through the
    host; `orch init` itself stays direct (see §3), and `orch init --host` remains for an empty directory.
@@ -1724,6 +1725,18 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    **Run directory, tier A:** `orch host`, the thin CLI and `orch sign` all use `--run`, else `ORCH_HOST_RUN_DIR`, else
    `<state>/run` (`enable.run_dir_for`). A path that merely exists under the tier-B `/Users/Shared/orch/run/<uid>` is
    no longer preferred: any local account can create it (H4b preferred it).
+   **`orch host disable`** is the reverse of `enable`, through the same unit plan and `Manager`: it stops and unloads the
+   service (`launchctl bootout gui/<uid>/io.orch.host`; `systemctl --user disable --now orch-host.service`, then a
+   `daemon-reload`) and removes the unit file. The state dir always stays. `--purge-releases` also deletes the release
+   copies under the release dir (the runner service runs from them too): they are read-only, so each directory gets
+   `u+rwx` first; nothing outside the release dir is touched and no symlink is followed (`current` is unlinked itself;
+   a release dir that is a link is refused). A unit installed for another state dir or run dir (or one that cannot be
+   read, or a loaded label with no unit file here) is refused with `host.busy`, as `enable` refuses to replace one,
+   unless `--force`. Nothing installed is a success (`removed: false`). Registered workspaces then answer
+   `host.unavailable` until `orch host enable`; `status` names that fix.
+   **`orch dashboard [args]`** (`orch.cli.dashboard`) replaces the process with the dashboard addon's entry point and
+   passes the arguments through (`orch dashboard open`): the `orch-dashboard` script beside this interpreter, on `PATH`,
+   else `python -m orch_dashboard`. Not installed: exit 3 and a message that names how to install it.
 4. **Parity.** Every case of the agent and person golden suites (`tests/ops/golden`, `golden_human`, `wait` included)
    runs in host mode on the same fixed workspace, built through a host from the start, and matches the same golden file
    (`tests/host/test_golden_host.py`). The one designed difference: `task done --run` in host mode names on stderr the
@@ -3549,6 +3562,10 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `phone_device` count only readers below level 1; a durable `convenience_seen` mark for records pushes. Additive
     only where `required_reader` is 0. No F1 log or certificate change; `CertRequestInner` unchanged; one new label
     `sig_reader_decl`.
+30. **First-use gaps (H7 follow-up):** `orch host register` without `--peer` finds the person's device key in either
+    custody (it failed once the key moved to convenience custody); new `orch host disable [--purge-releases]
+    [--force]`, the reverse of `enable` (service stopped and unloaded, unit file removed, state dir kept); new
+    `orch dashboard [args]` launcher for the dashboard addon. No wire, log or certificate change.
 
 ---
 

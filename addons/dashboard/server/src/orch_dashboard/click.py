@@ -331,6 +331,9 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
         except HostError as exc:
+            if exc.error.get("reason") != "uncertain":
+                # Clear before follow-up host reads, which may themselves fail.
+                handoffs.settled(rid)
             if exc.error.get("code") == "human.request_state":
                 rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
                 if len(rows) == 1 and rows[0].get("state") == "submitted":
@@ -339,8 +342,6 @@ def register(app: FastAPI, gateway: Gateway):
                     handoffs.settle_all(rid)
                     clicks.forget(rid)
                     raise done_error(prepared, rows[0]) from None
-            if exc.error.get("reason") != "uncertain":
-                handoffs.settled(rid)  # a definite refusal: nothing is in flight; an uncertain one keeps its mark
             sweep()
             if exc.error.get("reason") == "disabled":
                 ended(ws, rid)  # the flag was switched off: this request can never be signed, it reads as ended

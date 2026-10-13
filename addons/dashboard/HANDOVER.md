@@ -1029,3 +1029,23 @@ pre-check remain defence in depth; they are not a replacement for this host prer
   stale one at commit.
 - F4: the server treats an unknown signer status as "click off" (fail-open for the path choice). Core #434 (merged)
   enforces one path per workspace at the host, so a stray hand-off request can't be prepared there.
+
+
+### T3 navigation and signing cleanup — 13 Oct 2026 (#444, #447 I-6)
+
+Every HTML shell response requires `Sec-Fetch-Site: none` or `same-origin` when present.
+`same-site` (including another localhost/127.0.0.1 port), `cross-site`, and unknown/duplicate
+values receive a static script-free 403 with the same CSP/security headers and `no-store`.
+It explains `orch dashboard`/bookmarks and links to `/` for deliberate same-origin continuation.
+The gate applies regardless of `Sec-Fetch-Mode`/`Sec-Fetch-Dest`, so missing or non-document
+metadata cannot bypass it. Assets retain existing behavior. Missing `Sec-Fetch-Site` preserves
+compatibility with old browsers/non-browser clients; all supported browsers send it.
+No token is embedded in HTML or URLs. Bootstrap is unchanged: only an allowed shell loads
+its script, so a refused navigation cannot request a token over BroadcastChannel; no client
+meta marker is needed.
+
+Local signer setup exceptions before channel use are definite failures and release the
+unsettled mark immediately. Definite signer refusals release it before any follow-up host
+read, even if that read fails. Channel errors, timeouts, signer `internal` responses and unknown exceptions after dispatch
+stay uncertain and keep the mark until settlement/expiry. Existing definite refusal handling
+was already present on this branch; this pass closes those remaining cleanup gaps.

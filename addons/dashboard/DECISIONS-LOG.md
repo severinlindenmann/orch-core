@@ -1474,3 +1474,19 @@ A retained binding without an open request also caused a 24 h lockout.
 
 **Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
 never restore whole-ticket or member-role bases as an incidental refactor.
+
+
+## 2026-10-13 — T3 foreign navigation gate and definite signing failures
+
+**Decision:** Refuse shell responses with a present Fetch Metadata site other than `none`
+or `same-origin`, using a script-free 403 and a plain root link. Leave bootstrap unchanged:
+without the shell its token-request code cannot run. Preserve missing-header compatibility.
+Classify local signer setup exceptions before dispatch as definite, and clear definite
+refusal marks before follow-up reads. Preserve uncertain channel outcomes.
+
+**Why:** Foreign new tabs must not inherit the dashboard session automatically (#444),
+including tabs opened from another loopback port. Definite failures must not leave a
+720-second unsettled mark (#447 I-6); unknown outcomes still need protection.
+
+**Revert:** Remove the shell gate and restore the previous signer setup/error cleanup
+only if the navigation/session and unsettled-outcome policies are explicitly revised.

@@ -148,10 +148,18 @@ class Signer:
             if self.suspect and self.client is not None and not self.unsettled():
                 self._drop()  # hung but alive, and nothing could be mid-submit: replace it
                 self.last_spawn = -1e9  # on purpose: the respawn guard is for a signer that dies at once
-            client = self._ensure()
+            try:
+                client = self._ensure()
+            except HostError:
+                raise
+            except Exception:  # noqa: BLE001 - local failure before the sign request reaches the channel
+                raise unavailable() from None
         try:
             result = client.call(op, args, timeout=TIMEOUT[op])
         except ClickError as exc:
+            if lost is not None and exc.code == "internal":
+                # The signer can report an exception after signing, or fail to encode its result.
+                raise lost from None
             raise refusal(exc) from None
         except Exception as exc:  # noqa: BLE001 - channel loss, a frame error, a timeout
             dropped = False

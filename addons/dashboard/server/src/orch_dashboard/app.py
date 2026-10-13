@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import adapters, click, handoff, reads, settings
@@ -129,13 +129,25 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     settings.register(app, gateway)
 
     @app.get("/{path:path}")
-    def spa(path: str):
+    def spa(path: str, request: Request):
         # Closed SPA surface. Unknown APIs/auth paths can never fall through to index.html.
         if path.startswith("assets/"):
             candidate = (static / path).resolve()
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
         elif path in ("", "favicon.svg") or SPA_PATH.fullmatch(path):
+            # Gate every shell response, even if mode/destination are missing or malformed.
+            # No shell means no bootstrap and no BroadcastChannel token request.
+            sites = request.headers.getlist("sec-fetch-site")
+            if path != "favicon.svg" and sites and sites not in (["none"], ["same-origin"]):
+                return HTMLResponse(
+                    '<!doctype html><html lang="en"><meta charset="utf-8">'
+                    "<title>Open the dashboard</title><body><h1>This link came from another site</h1>"
+                    "<p>Open the dashboard from the terminal with <code>orch dashboard</code> "
+                    'or from a bookmark.</p><p><a href="/">Continue to the dashboard</a></p></body></html>',
+                    status_code=403,
+                    headers={"Cache-Control": "no-store"},
+                )
             candidate = static / ("favicon.svg" if path == "favicon.svg" else "index.html")
             if candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "no-store"})

@@ -100,3 +100,52 @@ def test_no_url_prepares_a_request(client, token, stub):
     for step in ("prepare", "view", "sign", "cancel"):
         res = client.get(f"/api/w/{stub.ws}/click/{step}?request_id=hr_x&op=approve", headers=headers)
         assert res.status_code in (404, 405)
+
+
+@pytest.mark.parametrize("site", ["none", "same-origin", "same-site", "cross-site", None, "unknown", ""])
+@pytest.mark.parametrize("path", ["/", "/w/DEMO/ticket/ACME-1", "/ticket/ACME-1"])
+def test_shell_navigation_metadata(client, site, path):
+    headers = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+    if site is not None:
+        headers["Sec-Fetch-Site"] = site
+    res = client.get(path, headers=headers)
+    allowed = site in (None, "none", "same-origin")
+    assert res.status_code == (200 if allowed else 403)
+    assert ('<script src="/assets/main-hash.js">' in res.text) == allowed
+    baseline = client.get("/")
+    for name in (
+        "content-security-policy",
+        "x-frame-options",
+        "x-content-type-options",
+        "referrer-policy",
+        "cache-control",
+    ):
+        assert res.headers[name] == baseline.headers[name]
+    if not allowed:
+        assert "<script" not in res.text and "<style" not in res.text
+        assert "orch dashboard" in res.text and '<a href="/">' in res.text
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_cross_site_new_tab_cannot_bootstrap_a_session(client, token, stub, site):
+    """#444 PoC: a foreign target=_blank/window.open deep link must not load bootstrap.
+
+    Another localhost port is same-site, so it must be refused too. An existing
+    session does not authorize the foreign navigation; only a deliberate next click does.
+    """
+    res = client.get(
+        f"/w/{stub.ws}/ticket/ACME-1",
+        headers={"Sec-Fetch-Site": site, "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"},
+    )
+    assert res.status_code == 403
+    assert "<script" not in res.text and token not in res.text
+    assert '<a href="/">' in res.text
+    continued = client.get(
+        "/", headers={"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+    )
+    assert continued.status_code == 200 and "<script" in continued.text
+
+
+@pytest.mark.parametrize("extra", [{}, {"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}])
+def test_shell_gate_cannot_be_bypassed_by_missing_or_non_document_metadata(client, extra):
+    assert client.get("/", headers={"Sec-Fetch-Site": "same-site", **extra}).status_code == 403

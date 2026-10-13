@@ -540,3 +540,15 @@ dialog (Approve, Comment, Move) offers **Sign** and **Sign in the terminal inste
 terminal review lines, fingerprint, expiry); Sign turns on after half a second and again after you switch windows; a policy or member
 change asks you to type the word shown. Try "Sign in the terminal instead" (it cancels the click request and shows an `orch sign` code), and
 `orch host convenience off --workspace DEMO` (the buttons disappear on the next refresh). Details: HANDOVER "Click-to-sign (H5c)".
+
+
+### T3 security regression checks (#444 / #447 I-6)
+
+Run `tests/test_dashboard_http.py` and `tests/test_dashboard_click.py` in the dashboard
+server pytest environment. The HTTP tests adapt the foreign-new-tab PoC: with an existing
+session, a foreign deep link receives script-free HTML, while an explicit root-link click
+with same-origin metadata receives the shell. Both same-site and cross-site are refused;
+typed/bookmarked, same-origin and missing-header requests remain supported. Signing tests
+cover immediate retry after definite local/signer failures and retained marks for timeout,
+lost channel and unknown channel errors. These tests use in-process HTTP and scripted
+signers, with no listening ports or keychain access.

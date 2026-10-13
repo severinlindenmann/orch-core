@@ -108,8 +108,17 @@ class Rig:
         self.changes: list[str] = []
         self.listener.on_change = self.changes.append
 
-    def allow(self, att: str = "att1", *, mode: str = "read", take: bool = False, person: str = "p_alice",
-              run: str = RUN, start_from: int | None = None, epoch: int | None = None) -> tuple[str, str]:
+    def allow(
+        self,
+        att: str = "att1",
+        *,
+        mode: str = "read",
+        take: bool = False,
+        person: str = "p_alice",
+        run: str = RUN,
+        start_from: int | None = None,
+        epoch: int | None = None,
+    ) -> tuple[str, str]:
         ticket = secrets.token_urlsafe(32)
         nonce = secrets.token_hex(16)
         exp = (datetime.now(UTC) + timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -121,8 +130,16 @@ class Rig:
         )  # fmt: skip
         return ticket, nonce
 
-    def attach(self, att: str = "att1", *, mode: str = "read", take: bool = False, person: str = "p_alice",
-               start_from: int | None = None, read_ready: bool = True) -> Client:
+    def attach(
+        self,
+        att: str = "att1",
+        *,
+        mode: str = "read",
+        take: bool = False,
+        person: str = "p_alice",
+        start_from: int | None = None,
+        read_ready: bool = True,
+    ) -> Client:
         ticket, nonce = self.allow(att, mode=mode, take=take, person=person, start_from=start_from)
         c = Client(self.listener.path)
         self.clients.append(c)

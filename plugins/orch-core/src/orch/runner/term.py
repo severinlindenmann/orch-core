@@ -754,6 +754,14 @@ class TermListener:
                     b.level -= n
             return wait
 
+    def _write_once(self, att: Attachment, lease_gen: int, data: bytes) -> int | None:
+        """One PTY write under the authorization check: the bytes written, ``None`` when refused."""
+        done: list[int] = []
+        sup = self.sup
+        if not self._authorized(att, lease_gen, lambda: done.append(sup.write_input(att.run, data))):
+            return None
+        return done[0]
+
     def _write_all(self, att: Attachment, data: bytes, lease_gen: int) -> bool:
         """Write every byte (partial writes retried here, never by the client); ``False`` when it cannot finish."""
         if self.sup is None:
@@ -764,14 +772,13 @@ class TermListener:
         while view:
             if att.closed:
                 return False
-            done: list[int] = []
-            chunk = bytes(view)
             try:
-                if not self._authorized(att, lease_gen, lambda: done.append(self.sup.write_input(att.run, chunk))):
-                    return False
+                done = self._write_once(att, lease_gen, bytes(view))
             except SpawnError:
                 return False
-            n = done[0]
+            if done is None:
+                return False
+            n = done
             if n == 0:
                 time.sleep(0.005)  # the PTY's input queue is full: the program is not reading yet
                 continue

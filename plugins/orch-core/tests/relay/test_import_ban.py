@@ -15,6 +15,13 @@ code can always traverse objects; this test keeps the package's own code honest)
   (``__getstate__``, ``__reduce_ex__``), ``__loader__``/``__spec__``/``__builtins__``, ``os.sys``, star imports, private
   keywords in ``match`` class patterns, and the "self trick" ``X.method(obj)`` on a plain method of a class defined in
   the module.
+* Also refused (round-3 delta, R6): ``traceback``/``code``/``codeop``/``unittest``/``mock`` imports; frame and
+  interpreter reach through allowed modules (``logging.currentframe``, ``traceback.walk_stack``, ``f_builtins``,
+  ``f_back``, ``cr_frame``, ``dataclasses.inspect``, ``threading.sys``); assigning to or deleting an attribute of
+  anything bound by an import (``wire.auth_bytes = …``, ``RelaySigner.login = …``).
+* **Defence in depth, not isolation.** Reassigning a module function and then calling the public ``login`` would sign
+  attacker bytes; same-process code owns the process, and no AST rule changes that. The real boundary is the
+  reserved out-of-process ``bridge`` class under a distinct UID (11A.2, 11A.11 Q1).
 * Honest residual: ``RelaySigner._sign_bytes`` is a callable that signs any bytes and its closure cell holds the key;
   the ban keeps ``orch.relay``'s own code from reaching it, nothing more.
 * No HTTP library but ``http.client`` (no ``urllib``, which reads proxy variables from the environment).
@@ -59,7 +66,19 @@ BANNED_MODULES = (
     "copy",
     "copyreg",
     "functools",
+    "traceback",
+    "code",
+    "codeop",
+    "unittest",
+    "mock",
 )
+# attribute names that reach a frame, an interpreter or a banned module through an allowed one
+# (logging.currentframe, traceback.walk_stack, dataclasses.inspect, threading.sys, ...)
+REACH_ATTRS = {
+    "currentframe", "walk_stack", "walk_tb", "f_builtins", "f_back", "f_code", "cr_frame", "ag_frame",
+    "inspect", "importlib", "builtins", "ctypes", "gc", "pickle", "marshal", "runpy", "pkgutil", "traceback",
+    "codeop", "unittest", "mock",
+}  # fmt: skip
 BANNED_NAMES = {"BackendSigner", "FileBackend", "KeychainBackend"}
 CRYPTO_ENTRY = {
     "sign", "generate_private_key", "private_key_from_scalar", "private_scalar", "ecdh", "_seal_with_ephemeral",
@@ -161,6 +180,8 @@ def violations(tree: ast.AST, filename: str = "<src>") -> list[str]:
                 out.append(f"attribute .{node.attr}")
             if node.attr in INTROSPECTION:
                 out.append(f"introspection .{node.attr}")
+            if node.attr in REACH_ATTRS:
+                out.append(f"reach .{node.attr}")
             if node.attr in DYNAMIC_CALLS - {"compile"}:  # re.compile is fine; builtins.compile needs builtins
                 out.append(f"dynamic .{node.attr}")
             if node.attr in CRYPTO_ENTRY:
@@ -177,6 +198,31 @@ def violations(tree: ast.AST, filename: str = "<src>") -> list[str]:
             out += [f"match class private keyword {k}" for k in node.kwd_attrs if _private(k)]
     out += _private_access(tree, filename)
     out += _unbound_calls(tree)
+    out += _module_assignments(tree)
+    return out
+
+
+def _module_assignments(tree: ast.AST) -> list[str]:
+    """Assigning to (or deleting) an attribute of anything bound by an import: ``wire.auth_bytes = …`` would make
+    the public ``login`` sign attacker bytes."""
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {(a.asname or a.name).split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            imported |= {a.asname or a.name for a in node.names}
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Delete)):
+            targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+            for t in targets:
+                for x in ast.walk(t):
+                    if isinstance(x, ast.Attribute):
+                        base = x.value
+                        while isinstance(base, ast.Attribute):
+                            base = base.value
+                        if isinstance(base, ast.Name) and base.id in imported:
+                            out.append(f"assignment to {base.id}.{x.attr}")
     return out
 
 
@@ -296,6 +342,21 @@ BYPASSES = [
     "import weakref",
     "import copy\nc = copy.copy(s)",
     "from orch.relay.sign import *",
+    # round-3 delta (R6): frames, interpreters and module patching
+    "import logging\nlogging.currentframe().f_builtins['getattr'](s, '_sign_bytes')(b'x')",
+    "import traceback\nfor f, _ in traceback.walk_stack(None):\n    f.f_builtins['__import__']('importlib')",
+    "import code\ncode.InteractiveInterpreter({}).runsource('import importlib')",
+    "import dataclasses\ndataclasses.inspect.getmembers(s)",
+    "x = frame.f_back.f_locals",
+    "x = coro.cr_frame",
+    "from . import wire\nwire.auth_bytes = lambda *a: b'attacker'",
+    "from orch.relay import wire\nwire.auth_bytes = lambda *a: b'attacker'",
+    "import orch.relay.wire\norch.relay.wire.auth_bytes = None",
+    "from . import wire\ndel wire.auth_bytes",
+    "from .sign import RelaySigner\nRelaySigner.login = evil",
+    "from unittest import mock\nmock.patch.object(wire, 'auth_bytes', evil)",
+    "import unittest.mock",
+    "x = threading.sys.modules",
     "from orch.relay.wire import attrgetter\nf = attrgetter('_sign_bytes')(s)",  # a re-export, not operator itself
     "g = attrgetter('_sign_bytes')",
 ]

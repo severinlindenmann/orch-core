@@ -3536,7 +3536,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
 
 **v1.7 → v1.8 (draft, 13 Oct 2026, H12d; revised after Codex challenge and Opus tie-break, for orch-52's decision).**
 
-26. **Reader-version handshake** (§0.8.6 item 9): a device-signed `reader_decl` (level, binding to keys, device,
+29. **Reader-version handshake** (§0.8.6 item 9): a device-signed `reader_decl` (level, binding to keys, device,
     person, workspace and pairing attempt, per-surface known-answer digests), carried by `member.add`'s argument
     `reader_decl`, the pair-request meta (protocol v2 §8.3) and `reader.declare`; `rd` in every column-R request meta
     (§8.6) binds serving to the current declaration; one invariant checked at the append choke point (host

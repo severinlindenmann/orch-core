@@ -315,6 +315,8 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle_all(rid)  # every session's slot
             handoffs.settled(rid)
             clicks.forget(rid)
+        if got == "submitted" and row.get("seq") is None:
+            raise done_error({}, row)
         return {"id": rid, "state": got}
 
     @app.post("/api/w/{ws}/click/sign")

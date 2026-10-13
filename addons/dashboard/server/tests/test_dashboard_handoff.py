@@ -588,7 +588,7 @@ def test_a_retry_after_a_signature_answers_submitted(ready, monkeypatch):
     again = post(client, token, stub, body)
     assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
     assert "hi" in again.json()["error"]["summary"]
-    assert again.json()["error"]["signed_at"] is None
+    assert again.json()["error"]["signed_at"] == signing.stub.requests.table[made]["submitted_at"]
 
 
 def test_expired_intent_requires_explicit_start_again(ready, monkeypatch, host_calls):
@@ -663,3 +663,18 @@ def test_a_section_of_only_whitespace_is_refused(ready):
     body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": " \n\t "}
     assert post(client, token, stub, body).status_code == 400
     assert states(signing) == {}  # nothing was prepared
+
+
+def test_submitted_failed_intent_never_claims_done(ready):
+    client, token, stub, rich, signing = ready
+    body = {"action": "comment", "key": "DEMO-0001", "message": "failed append"}
+    made = post(client, token, stub, body).json()["id"]
+    record = signing.stub.requests.table[made]
+    record.update(state="submitted", submitted_at="2026-10-13T15:20:00Z", error={"code": "gate.stale"})
+    again = post(client, token, stub, body)
+    assert again.status_code == 409
+    error = again.json()["error"]
+    assert error["code"] == "intent.failed" and error["reason"] == "gate.stale"
+    assert "not signed into the log" in error["message"] and "signed_at" not in error
+    fresh = post(client, token, stub, {**body, "retry": 1})
+    assert fresh.status_code == 200 and fresh.json()["id"] != made

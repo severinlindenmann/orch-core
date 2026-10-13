@@ -33,12 +33,12 @@ import re
 import signal
 import stat
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .supervise import SpawnError
 
-__all__ = ["GIT_SECONDS", "git_argv", "git_env", "run_git"]
+__all__ = ["GIT_SECONDS", "git_argv", "git_env", "read_git", "run_git", "tree_dirty"]
 
 GIT_SECONDS = 30.0
 _SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -274,3 +274,42 @@ def _spawn(
         code = _classify(op, text)
         raise SpawnError(code, f"git {op.split('.')[-1]} failed" + (" (exit %d)" % proc.returncode))
     return {"ok": True}
+
+
+def read_git(repo: str, args: Sequence[str], own: Mapping[str, str], *, timeout: float = GIT_SECONDS) -> str | None:
+    """A read-only git command for the direct-mode tool, hardened exactly as :func:`run_git` (the same ``NEUTRAL``
+    config, the same from-scratch environment, no network, own process group, 30 s) and, since nothing here needs the
+    person's filters, also with the system and global config off. Stdout stripped; ``None`` when git fails, times out
+    or is missing. ``repo`` is a verified absolute path (``-C``)."""
+    _clean_abs(repo)
+    env = git_env(own)
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - fixed argv
+            ["git", *NEUTRAL, "--no-optional-locks", "-C", repo, *args],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
+            start_new_session=True, close_fds=True,
+        )  # fmt: skip
+    except OSError:
+        return None
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(Exception):
+            proc.communicate(timeout=5)
+        return None
+    return out.decode("utf-8", "replace").strip() if proc.returncode == 0 else None
+
+
+def tree_dirty(repo: str, own: Mapping[str, str]) -> str | None:
+    """Uncommitted work in the working copy at ``repo`` (``""`` clean, lines when not, ``None`` when it cannot be told),
+    through :func:`read_git`: ``status --porcelain`` plus the files git is told to ignore (``skip-worktree``,
+    ``assume-unchanged``)."""
+    status = read_git(repo, ["status", "--porcelain=v1", "--untracked-files=normal"], own)
+    listing = read_git(repo, ["ls-files", "-v"], own)
+    if status is None or listing is None:
+        return None
+    hidden = [ln[2:] for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]
+    return status + ("\n" if status and hidden else "") + "\n".join(f"hidden change flag: {h}" for h in hidden)

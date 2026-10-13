@@ -139,3 +139,29 @@ def test_direct_d58_reads_the_registered_worktree_not_the_declared_copy(d):
     git = Git(enabled=True, worktrees=pins)
     copy = git.ticket_copy(d.ws.root, {"proj": {"path": str(d.repo)}}, d.ws.uid(d.key), "proj")
     assert copy.registered and str(copy.path) == path and copy.gen == 1 and copy.pin["path"] == path
+
+
+def test_a_repos_own_config_and_hooks_run_nothing_in_any_command(d):
+    marker = d.ws.tmp / "ran"
+    script = d.ws.tmp / "evil.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    script.chmod(0o755)
+    hooks = d.ws.tmp / "hooks"
+    hooks.mkdir()
+    for h in ("post-checkout", "pre-commit"):
+        (hooks / h).write_text(f"#!/bin/sh\ntouch {marker}\n")
+        (hooks / h).chmod(0o755)
+    d.ws.git("config", "core.fsmonitor", str(script))
+    d.ws.git("config", "core.hooksPath", str(hooks))
+    d.ws.git("config", "core.sshCommand", str(script))
+    d.ws.git("config", "credential.helper", f"!{script}")
+    # control: plain git does run the repo's fsmonitor, so the assertion below can fail
+    subprocess.run(["git", "-C", str(d.repo), "status"], capture_output=True, check=False)
+    assert marker.exists(), "the control must run the planted script"
+    marker.unlink()
+    path = doc(d.run("create", d.key))["data"]["path"]
+    assert d.run("list", "--check").code == 0
+    open(os.path.join(path, "scratch.txt"), "w").write("x\n")
+    assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
+    assert d.run("remove", d.key, "--force").code == 0
+    assert not marker.exists()

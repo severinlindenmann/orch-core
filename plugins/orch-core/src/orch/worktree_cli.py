@@ -6,9 +6,10 @@ for a workspace no host serves.
     orch worktree remove TICKET [--repo NAME] [--force] [--json]
 
 The same safety contract as the host: one worktree per (ticket, linked repo) at ``<repo path>.worktrees/<WS8>-<KEY>`` on
-the ticket's current ``links.branches`` branch (``worktree.no_branch`` without one); git runs through the runner's
-confined :func:`orch.runner.wtgit.run_git` (hooks, fsmonitor and network off, no symlink followed under
-``<repo>.worktrees``); the new worktree is pinned in process (:func:`orch.gitread.pinning.pin_repo`: ``O_NOFOLLOW``
+the ticket's current ``links.branches`` branch (``worktree.no_branch`` without one); git runs only through the runner's own helpers in :mod:`orch.runner.wtgit`
+(:func:`~orch.runner.wtgit.run_git` for add and remove, :func:`~orch.runner.wtgit.read_git` for rev-parse and status:
+hooks, fsmonitor and network off, a from-scratch environment, 30 s, no symlink followed under ``<repo>.worktrees``);
+nothing here calls ``orch.store.observe``, so a repo's own config, hooks or fsmonitor never run; the new worktree is pinned in process (:func:`orch.gitread.pinning.pin_repo`: ``O_NOFOLLOW``
 walks, git's layout checked exactly) and registered with a new generation in ``<state>/hosts/<ws>/git-pins.json``, the
 file a host reads when the workspace is registered later. A clean tree is required to remove (``--force`` skips it; in
 direct mode the person is at the terminal and could ``rm -rf`` it anyway); the branch is never deleted.
@@ -29,6 +30,8 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
+
+from orch.runner.wtgit import read_git, tree_dirty
 
 __all__ = ["main"]
 
@@ -168,12 +171,20 @@ class Direct:
         except Unavailable as exc:
             raise WtError("observe.unavailable", f"{repo}: {exc.reason}"[:300]) from None
 
+    def _own(self) -> dict[str, str]:
+        return {k: v for k, v in self.env.items() if k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME")}
+
+    def _rev(self, repo: str, rev: str) -> str | None:
+        """A commit id through the hardened reader (never ``observe.git``: the repo's own config must run nothing)."""
+        got = read_git(repo, ["rev-parse", "--verify", "-q", rev + "^{commit}"], self._own())
+        return got if got and len(got) in (40, 64) else None
+
     def _git(self, args: dict[str, Any]) -> None:
         from orch.runner.supervise import SpawnError
         from orch.runner.wtgit import run_git
 
         try:
-            run_git(args, {k: v for k, v in self.env.items() if k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME")})
+            run_git(args, self._own())
         except SpawnError as exc:
             code = exc.code if exc.code.startswith("worktree.") or exc.code == "launch.cwd_changed" else "worktree.git_failed"
             raise WtError(code, exc.message, 1 if code == "worktree.git_failed" else 3) from None
@@ -199,8 +210,6 @@ class Direct:
         return rows
 
     def _observe(self, slot: dict[str, Any]) -> dict[str, Any]:
-        from orch.store import observe
-
         reg = slot["reg"]
         out: dict[str, Any] = {"checked_at": _iso(self.clock())}
         try:
@@ -214,8 +223,8 @@ class Direct:
             return out
         if (st.st_dev, st.st_ino) != (pin["dev"], pin["ino"]):
             return {**out, "state": "moved"}
-        out["head"] = observe.head(Path(reg["path"]))
-        d = observe.dirty(Path(reg["path"]))
+        out["head"] = self._rev(reg["path"], "HEAD")
+        d = tree_dirty(reg["path"], self._own())
         out["dirty"] = None if d is None else len([ln for ln in d.splitlines() if ln])
         return out
 
@@ -225,8 +234,6 @@ class Direct:
         from orch.gitread.pinning import pin_repo
         from orch.gitread.refs import read_head
         from orch.host.worktrees import MAX_REGISTERED, worktree_path
-        from orch.store import observe
-
         self._gate()
         view = self._ticket(ref)
         repo = self._repo_of(view, repo_arg)
@@ -247,10 +254,10 @@ class Direct:
         if os.path.lexists(path) and os.path.islink(path):
             raise WtError("worktree.exists", "the worktree path is a symlink")
         start = None
-        if observe.git(Path(declared), "rev-parse", "--verify", "-q", f"refs/heads/{branch}^{{commit}}") is None:
+        if self._rev(declared, f"refs/heads/{branch}") is None:
             spec = self.store().state.workspace.repos.get(repo) or {}
             default = spec.get("default_branch") or "main"
-            start = observe.git(Path(declared), "rev-parse", "--verify", "-q", f"refs/heads/{default}^{{commit}}")
+            start = self._rev(declared, f"refs/heads/{default}")
             if not start:
                 raise WtError("worktree.no_branch", f"{branch} does not exist and there is no default commit to start it at")
         self._git({"op": "worktree.add", "repo_pin": dpins.worktree.to_json(), "path": path, "branch": branch,
@@ -277,8 +284,6 @@ class Direct:
         return self.row(view, repo, pins.worktree(view.uid, repo))
 
     def remove(self, ref: str, repo_arg: str | None, force: bool) -> dict[str, bool]:
-        from orch.store import observe
-
         self._gate()
         view = self._ticket(ref)
         repo = self._repo_of(view, repo_arg)
@@ -288,7 +293,7 @@ class Direct:
         if reg is None:
             raise WtError("worktree.none", f"{view.key} has no worktree for {repo}")
         if os.path.lexists(reg["path"]) and not force:
-            dirty = observe.dirty(Path(reg["path"]))
+            dirty = tree_dirty(reg["path"], self._own())
             if dirty is None or dirty.strip():
                 raise WtError("worktree.dirty", "the worktree has uncommitted changes (or cannot be checked); "
                               "commit them, or remove with --force")  # fmt: skip

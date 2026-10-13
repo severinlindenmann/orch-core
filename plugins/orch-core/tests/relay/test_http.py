@@ -209,14 +209,57 @@ def test_tls_hostname_is_checked(tmp_path):
     assert wire.origin_parts("https://relay.example")[0] == "https"
 
 
-def test_no_trust_store_refuses_to_start():
-    def empty_context(**_kw):
-        return ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # verifies, but trusts nothing
+def test_an_empty_trust_store_fails_closed_at_the_handshake(tls_relay):
+    """No emptiness probe (capath-only stores are valid): a context that trusts nothing simply fails verification."""
 
-    with pytest.raises(http.NoTrustStore):
-        http.tls_context(None, factory=empty_context)
-    with pytest.raises(http.NoTrustStore):
-        http.RelayConn("https://relay.example", context_factory=empty_context)
+    def empty_context(**_kw):
+        return ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+    c = http.RelayConn(tls_relay.origin("localhost"), context_factory=empty_context)
+    with pytest.raises(http.TransportError) as e:
+        call(c)
+    assert e.value.kind == "tls" and tls_relay.seen == []
+
+
+def test_tls_context_uses_the_default_store_when_no_ca_file():
+    ctx = http.tls_context(None)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+
+
+def _tls_case(tmp_path, **kw):
+    ctx, ca = make_tls(tmp_path, **kw)
+    return MockRelay(tls=ctx), ca
+
+
+def test_tls_another_ca_file_is_refused(tmp_path, tls_relay):
+    (tmp_path / "other").mkdir()
+    _ctx, other_ca = make_tls(tmp_path / "other")
+    c = http.RelayConn(tls_relay.origin("localhost"), ca_file=str(other_ca))
+    with pytest.raises(http.TransportError) as e:
+        call(c)
+    assert e.value.kind == "tls" and tls_relay.seen == []
+
+
+def test_tls_hostname_mismatch_is_refused(tmp_path):
+    m, ca = _tls_case(tmp_path, names=("relay.example",))
+    try:
+        c = http.RelayConn(m.origin("localhost"), ca_file=str(ca))
+        with pytest.raises(http.TransportError) as e:
+            call(c)
+        assert e.value.kind == "tls" and m.seen == []
+    finally:
+        m.close()
+
+
+def test_tls_expired_certificate_is_refused(tmp_path):
+    m, ca = _tls_case(tmp_path, expired=True)
+    try:
+        c = http.RelayConn(m.origin("localhost"), ca_file=str(ca))
+        with pytest.raises(http.TransportError) as e:
+            call(c)
+        assert e.value.kind == "tls" and m.seen == []
+    finally:
+        m.close()
 
 
 def test_tls_context_is_never_unverified(tmp_path):

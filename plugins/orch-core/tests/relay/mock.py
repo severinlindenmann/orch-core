@@ -203,8 +203,11 @@ class MockRelay:
 # --- a throwaway CA for TLS tests ---------------------------------------------------------------------------------
 
 
-def make_tls(tmp: Path) -> tuple[ssl.SSLContext, Path]:
-    """A server context for ``localhost``/``127.0.0.1`` signed by a fresh CA, and the CA file for the client."""
+def make_tls(
+    tmp: Path, *, names: tuple[str, ...] = ("localhost",), expired: bool = False
+) -> tuple[ssl.SSLContext, Path]:
+    """A server context for ``names`` and ``127.0.0.1`` signed by a fresh CA, and the CA file for the client;
+    ``expired`` makes the server certificate's validity end a day ago."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -233,10 +236,12 @@ def make_tls(tmp: Path) -> tuple[ssl.SSLContext, Path]:
         .issuer_name(ca_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - datetime.timedelta(minutes=5))
-        .not_valid_after(now + datetime.timedelta(days=1))
+        .not_valid_before(now - datetime.timedelta(days=2 if expired else 0, minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=-1 if expired else 1))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            x509.SubjectAlternativeName(
+                [*(x509.DNSName(n) for n in names), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+            ),
             critical=False,
         )
         .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)

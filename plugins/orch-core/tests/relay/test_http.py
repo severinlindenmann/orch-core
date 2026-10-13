@@ -431,3 +431,53 @@ def test_resolved_address_is_used_and_the_hostname_kept_for_tls(tls_relay):
     c = http.RelayConn(tls_relay.origin("localhost"), ca_file=str(tls_relay.ca_file), resolve=resolve)
     assert call(c).status == 200 and seen == ["localhost"]
     c.close()
+
+
+# --- the DNS helper: bounded threads, no busy spin, a shutdown is never lost (round 3, R4) ----------------------------
+
+
+def test_stuck_lookups_are_capped_per_connection(stuck_resolver):
+    c = http.RelayConn("https://relay.example", resolve=stuck_resolver)
+    kinds = []
+    for _ in range(200):
+        with pytest.raises(http.TransportError) as e:
+            call(c, deadline_s=0.01)
+        kinds.append(e.value.kind)
+    live = [t for t in threading.enumerate() if t.name == "orch-relay-dns"]
+    assert len(stuck_resolver.calls) <= http.MAX_LOOKUPS and len(live) <= http.MAX_LOOKUPS
+    assert "connect" in kinds  # above the cap: refused at once ("resolver stuck")
+
+
+def test_a_stale_lookup_does_not_make_the_next_one_spin():
+    """A helper from an earlier, timed-out call finishing during the next lookup must not wake it in a loop."""
+    release_first, second_started = threading.Event(), threading.Event()
+    n = [0]
+
+    def resolve(host, port, *a, **kw):
+        n[0] += 1
+        if n[0] == 1:
+            release_first.wait(30)
+            raise OSError("late")
+        second_started.set()
+        time.sleep(0.6)
+        import socket
+
+        return socket.getaddrinfo("127.0.0.1", 9, 0, socket.SOCK_STREAM)
+
+    c = http.RelayConn("https://relay.example", resolve=resolve)
+    with pytest.raises(http.TransportError):
+        call(c, deadline_s=0.05)
+    threading.Timer(0.1, release_first.set).start()  # the stale helper ends while the second lookup waits
+    with pytest.raises(http.TransportError):
+        call(c, deadline_s=5)
+    assert c._lookup_wakeups <= 4  # one wait per wake-up; a shared event would loop here
+
+
+def test_shutdown_just_before_a_call_fails_it_at_once(stuck_resolver):
+    c = http.RelayConn("https://relay.example", resolve=stuck_resolver)
+    c.shutdown()
+    t0 = time.monotonic()
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=20)
+    assert e.value.kind == "shutdown" and stuck_resolver.calls == []
+    assert time.monotonic() - t0 < 4.0

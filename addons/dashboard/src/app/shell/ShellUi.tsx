@@ -98,6 +98,9 @@ function useRailState() {
   latestViewer.current = viewer
   const [animating, setAnimating] = useState(false)
   const settle = useRef<number | undefined>(undefined)
+  // The settle timer must not outlive the shell: it would set state after unmount (and, in tests, fire after the
+  // environment is torn down: "window is not defined").
+  useEffect(() => () => window.clearTimeout(settle.current), [])
   const toggle = useCallback(() => {
     setAnimating(true)
     window.clearTimeout(settle.current)

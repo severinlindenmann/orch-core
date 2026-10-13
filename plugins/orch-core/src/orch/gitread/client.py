@@ -260,12 +260,17 @@ class PinStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path
         self._pins: dict[str, RepoPins] = {}
+        #: H11d (D-P2-32): ``{ticket uid: {repo: {"gen": int, "reg": registration | None}}}``. The generation of a
+        #: (ticket, repo) only ever grows: every create and every removal bumps it, and the slot is kept after a
+        #: removal so the next registration can never reuse an old generation
+        self._worktrees: dict[str, dict[str, dict[str, Any]]] = {}
         self._mu = threading.Lock()
         if path is not None and path.exists():
             doc = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("repos"), dict):
                 raise ValueError(f"{path}: not a pin file")
             self._pins = {k: RepoPins.from_json(v) for k, v in doc["repos"].items()}
+            self._worktrees = _load_worktrees(doc.get("worktrees", {}))
 
     def get(self, real: str) -> RepoPins | None:
         with self._mu:
@@ -282,23 +287,74 @@ class PinStore:
         with self._mu:
             pins = {k: v for k, v in self._pins.items() if k not in set(drop)}
             pins.update(put)
-            if self.path is not None:
-                doc = {"v": 1, "repos": {k: v.to_json() for k, v in sorted(pins.items())}}
-                tmp = self.path.with_name(self.path.name + ".tmp")
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(tmp)  # a leftover is never reused (its mode or owner could be another)
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(json.dumps(doc, sort_keys=True))
-                        f.flush()
-                        os.fsync(f.fileno())
-                    os.replace(tmp, self.path)
-                except BaseException:
-                    with contextlib.suppress(OSError):
-                        os.unlink(tmp)
-                    raise
+            self._write(pins, self._worktrees)
             self._pins = pins
+
+    def _write(self, pins: dict[str, RepoPins], worktrees: dict[str, dict[str, dict[str, Any]]]) -> None:
+        if self.path is None:
+            return
+        doc: dict[str, Any] = {"v": 1, "repos": {k: v.to_json() for k, v in sorted(pins.items())}}
+        if worktrees:
+            doc["worktrees"] = worktrees
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)  # a leftover is never reused (its mode or owner could be another)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(doc, sort_keys=True))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+
+    # -- H11d: worktree registrations (D-P2-32), ``worktrees.<ticket uid>.<repo>`` of the same file
+    def worktree(self, uid: str, repo: str) -> dict[str, Any]:
+        """The slot ``{"gen": int, "reg": registration | None}`` of (ticket, repo); generation 0 and no registration
+        when there never was one. A copy: changing it changes nothing."""
+        with self._mu:
+            slot = (self._worktrees.get(uid) or {}).get(repo)
+            return json.loads(json.dumps(slot)) if slot is not None else {"gen": 0, "reg": None}
+
+    def worktrees(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """Every (ticket uid, repo, slot) with a registration."""
+        with self._mu:
+            return [
+                (uid, repo, json.loads(json.dumps(slot)))
+                for uid, repos in sorted(self._worktrees.items())
+                for repo, slot in sorted(repos.items())
+                if slot.get("reg") is not None
+            ]
+
+    def set_worktree(self, uid: str, repo: str, reg: dict[str, Any] | None, *, expect: int | None = None) -> int:
+        """Register (``reg``) or remove (``None``) the worktree of (ticket, repo) and bump its generation; the file is
+        written first, then memory. ``expect``: the generation the caller read (compare-and-swap); another one raises
+        :class:`ValueError` and nothing changes. Returns the new generation."""
+        if reg is not None:
+            _check_reg(reg)
+        with self._mu:
+            cur = (self._worktrees.get(uid) or {}).get(repo) or {"gen": 0, "reg": None}
+            if expect is not None and cur["gen"] != expect:
+                raise ValueError("the worktree registration changed meanwhile")
+            gen = int(cur["gen"]) + 1
+            worktrees = json.loads(json.dumps(self._worktrees))
+            worktrees.setdefault(uid, {})[repo] = {"gen": gen, "reg": reg}
+            self._write(self._pins, worktrees)
+            self._worktrees = worktrees
+            return gen
+
+    def worktree_pins(self, path: str) -> RepoPins | None:
+        """The pins of the registered worktree whose path is exactly ``path`` (a registration without pins: none)."""
+        with self._mu:
+            for repos in self._worktrees.values():
+                for slot in repos.values():
+                    reg = slot.get("reg")
+                    if reg is not None and reg.get("path") == path and reg.get("pins") is not None:
+                        return RepoPins.from_json(reg["pins"])
+        return None
 
 
 class HostGitReader:
@@ -360,10 +416,70 @@ class HostGitReader:
         return out
 
     def _pins(self, path: str | os.PathLike[str]) -> RepoPins:
-        pins = self.pins.get(_key(path))
+        key = _key(path)
+        pins = self.pins.get(key)
+        if pins is None:
+            pins = self.pins.worktree_pins(key)  # H11d: a registered worktree, by its host-chosen path
         if pins is None:
             raise Unavailable("the repository was not pinned at registration")
         return pins
+
+    def pin_worktree(
+        self, declared: str | os.PathLike[str], path: str, branch: str, principal: str | None = None
+    ) -> RepoPins:
+        """H11d (§12.7): pin the linked worktree the runner created at ``path`` for the declared repo at ``declared``.
+        Its ``.git`` file must name ``<C>/worktrees/<id>`` with ``<C>`` the declared repo's **pinned** commondir
+        (device and inode compared), the back-pointer must name this worktree, and ``HEAD`` must be exactly
+        ``ref: refs/heads/<branch>``. Raises :class:`Unavailable` (the registration is then ``unpinned``)."""
+        dp = self.pins.get(_key(declared))
+        if dp is None:
+            raise Unavailable("the declared repository is not pinned")
+        wt = _key(path)
+        common = dp.commondir.path
+        if not common.endswith("/.git") or len(common) <= len("/.git"):
+            raise Unavailable("the declared repository's commondir is not <repo>/.git")
+        root = common[: -len("/.git")]
+        hello = {"profile": "pin", "roots": [wt, root]}
+        got = self.pool.call(principal or self.principal, hello, {"op": "pin", "args": {"path": wt}})
+        pins = RepoPins.from_json(got.get("pins"))
+        if _id(pins.commondir) != _id(dp.commondir) or pins.commondir.path != common:
+            raise Unavailable("the worktree belongs to another repository than the declared one")
+        if _id(pins.gitdir) == _id(dp.gitdir) or _id(pins.worktree) == _id(dp.worktree):
+            raise Unavailable("the worktree is the declared working copy itself")
+        look = self.pool.call(
+            principal or self.principal,
+            {"profile": "gitdir", "pins": pins.to_json()},
+            {"op": "observe", "args": {"refs": []}},
+        )
+        if _check_observe(look, []).get("head_ref") != "refs/heads/" + branch:
+            raise Unavailable("the worktree's HEAD is not the ticket's branch")
+        return pins
+
+    def verify_worktree(self, path: str, principal: str | None = None) -> None:
+        """H11d: the registered worktree at ``path`` is still the one that was pinned: its ``.git`` file, walked again
+        from the pinned commondir's root, names the same gitdir and commondir (device and inode), and the directory is
+        the same one. A re-pointed ``.git`` file, a swapped directory or a moved worktree is :class:`Unavailable`."""
+        wt = _key(path)
+        pins = self.pins.worktree_pins(wt)
+        if pins is None:
+            raise Unavailable("the worktree is not registered")
+        common = pins.commondir.path
+        if not common.endswith("/.git") or len(common) <= len("/.git"):
+            raise Unavailable("the worktree's commondir is not <repo>/.git")
+        hello = {"profile": "pin", "roots": [wt, common[: -len("/.git")]]}
+        try:
+            got = self.pool.call(principal or self.principal, hello, {"op": "pin", "args": {"path": wt}})
+            now = RepoPins.from_json(got.get("pins"))
+        except Unavailable:
+            raise Unavailable("the worktree no longer resolves to the pinned repository") from None
+        same = (
+            _id(now.worktree) == _id(pins.worktree)
+            and _id(now.gitdir) == _id(pins.gitdir)
+            and _id(now.commondir) == _id(pins.commondir)
+            and now.gitdir.path == pins.gitdir.path
+        )
+        if not same:
+            raise Unavailable("the worktree's .git file or location changed since it was registered")
 
     def _call(
         self,
@@ -529,3 +645,41 @@ def _key(path: str | os.PathLike[str]) -> str:
 def identity_of(urls: list[str], name: str) -> str:
     """F1 5.7: the canonical identity from the raw ``remote.origin.url`` values (one value, else ``local:<name>``)."""
     return canon.canonical_repo_identity(urls[0] if len(urls) == 1 else "", name)
+
+
+_REG_KEYS = {"path", "branch", "pins", "created_at", "created_by", "idem"}
+
+
+def _check_reg(reg: Any) -> None:
+    if not isinstance(reg, dict) or set(reg) != _REG_KEYS:
+        raise ValueError("malformed worktree registration")
+    if not isinstance(reg["path"], str) or not reg["path"].startswith("/") or not isinstance(reg["branch"], str):
+        raise ValueError("malformed worktree registration")
+    if reg["pins"] is not None:
+        try:
+            RepoPins.from_json(reg["pins"])
+        except Unavailable:
+            raise ValueError("malformed worktree registration pins") from None
+    if not isinstance(reg["created_at"], str) or not isinstance(reg["created_by"], dict):
+        raise ValueError("malformed worktree registration")
+    if reg["idem"] is not None and not isinstance(reg["idem"], str):
+        raise ValueError("malformed worktree registration")
+
+
+def _load_worktrees(doc: Any) -> dict[str, dict[str, dict[str, Any]]]:
+    """The ``worktrees`` section of a pin file, checked; anything malformed refuses the whole file (fail closed)."""
+    if not isinstance(doc, dict):
+        raise ValueError("not a pin file: worktrees")
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for uid, repos in doc.items():
+        if not isinstance(uid, str) or not isinstance(repos, dict):
+            raise ValueError("not a pin file: worktrees")
+        for repo, slot in repos.items():
+            if not isinstance(repo, str) or not isinstance(slot, dict) or set(slot) != {"gen", "reg"}:
+                raise ValueError("not a pin file: worktrees")
+            if type(slot["gen"]) is not int or slot["gen"] < 0:
+                raise ValueError("not a pin file: worktrees")
+            if slot["reg"] is not None:
+                _check_reg(slot["reg"])
+            out.setdefault(uid, {})[repo] = {"gen": slot["gen"], "reg": slot["reg"]}
+    return out

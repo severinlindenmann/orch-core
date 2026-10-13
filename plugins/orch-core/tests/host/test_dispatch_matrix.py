@@ -20,6 +20,7 @@ from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
 from orch.host.runners import RUN_OPS
+from orch.host.worktrees import WORKTREE_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
 from tests.host.lifecycle_helpers import REPO, Lab
@@ -73,6 +74,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host = set(HOST_OPS) | set(FILE_OPS) | set(GIT_OPS) | set(HUMAN_OPS) | set(READ_OPS) | set(HOST_PERSON_OPS)
     host |= set(RECORDS_OPS)
     host |= set(RUN_OPS)  # H11a
+    host |= set(WORKTREE_OPS)  # H11d
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
@@ -122,8 +124,8 @@ ROWS = {
     "N agent, unverified grant": ("agent", "unverified", False),
 }
 ALLOWED = {
-    "P": {"read", "person_read", "pg_read", "person_write", "unattended"},
-    "G": {"read", "pg_read", "agent", "unattended"},
+    "P": {"read", "person_read", "pg_read", "person_write", "pg_write", "unattended"},
+    "G": {"read", "pg_read", "pg_write", "agent", "unattended"},
     "N": {"read", "unattended"},
 }
 
@@ -135,7 +137,7 @@ def expected(row: str, kind: str) -> str | None:
         if row == "P":
             return None
         return "human_only" if row.startswith(("G person", "N person")) else "op.not_allowed"
-    write = kind in {"agent", "unattended"}
+    write = kind in {"agent", "unattended", "pg_write"}
     if write and "unverified" in row:
         return "grant.expired"
     if write and "malformed" in row:
@@ -164,6 +166,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == (("person_write", "write") if write else ("person_read", "read"))
         elif op in RUN_OPS:  # H11a: P and G only
             assert kind == ("pg_read", "read")
+        elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
+            assert kind == (("pg_read", "read") if op == "worktree.list" else ("pg_write", "write"))
         else:
             who = ops.get(op).who
             assert kind[0] == ("person_read" if op in PERSON_READS else who)
@@ -171,7 +175,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
             seen.add((kind[0], expected(row, kind[0])))
-    kinds = {"read", "person_read", "pg_read", "person_write", "agent", "unattended", "human", "human_api"}
+    kinds = {"read", "person_read", "pg_read", "person_write", "pg_write", "agent", "unattended", "human", "human_api"}
     assert kinds == {k for k, _ in seen}
     for op in NOT_SERVED:
         assert op_kind(op) is None
@@ -343,6 +347,12 @@ def _catalog_rows() -> list[tuple[str, int, bool, str]]:
         if m:
             rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
     assert len(rows) == len(table), [line for line in table if not re.match(r"\| `[a-z_.]+` \| \d", line)]
+    # H11d: the worktree.* rows sit in a later table of the section, after a prose paragraph
+    rest = "\n".join(lines[start + 2 + len(table) :]).split("\n### ", 1)[0]
+    for line in rest.splitlines():
+        m = re.match(r"\| `((?:worktree\.|unsupported\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
+        if m and m.group(1) not in {r[0] for r in rows}:
+            rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
     return rows
 
 

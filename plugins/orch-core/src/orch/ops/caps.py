@@ -397,6 +397,24 @@ class Exec:
 
 
 @dataclass(frozen=True)
+class WorkingCopy:
+    """The working copy of one (ticket, repo) for D58 and ``tree.check`` (H11d, :meth:`Git.ticket_copy`)."""
+
+    path: Path | None
+    #: the registration generation of (ticket, repo): every create and every removal bumps it
+    gen: int
+    #: the registered worktree's pin ``{path, dev, ino}``, ``None`` for the declared working copy
+    pin: dict[str, Any] | None
+    registered: bool
+    #: why there is no path (an unpinned registration, an undeclared repo), else ``None``
+    why: str | None
+
+    def binding(self, uid: str, name: str) -> dict[str, Any]:
+        """What a prepared request records for this repo (the binding of §12.7)."""
+        return {"repo": name, "ticket": uid, "gen": self.gen, "registered": self.registered, "pin": self.pin}
+
+
+@dataclass(frozen=True)
 class Git:
     """Reading the linked repositories.
 
@@ -415,6 +433,9 @@ class Git:
     enabled: bool
     reader: Any = field(default=None, repr=False)
     principal: str | None = None
+    #: direct mode (H11d, D-P2-38): the worktree registrations (a :class:`orch.gitread.client.PinStore` read from the
+    #: host's pin file of this workspace), or ``None``: no registration. Host mode reads ``reader.pins``.
+    worktrees: Any = field(default=None, repr=False)
 
     def _need(self) -> None:
         if not self.enabled:
@@ -434,6 +455,22 @@ class Git:
         if not spec:
             return None
         return Path(os.path.normpath(os.path.join(os.fspath(root), spec["path"])))
+
+    def ticket_copy(self, root: Path, repos: Any, uid: str, name: str) -> WorkingCopy:
+        """H11d (D-P2-32, §12.7): the working copy of ticket ``uid`` for repo ``name`` that D58 and ``tree.check``
+        read. A registered worktree is that ticket's working copy, and **only** it: an unpinned registration has no
+        path (``why`` says so) and never falls back to the declared working copy. Without a registration it is the
+        declared working copy of ``settings.repos``. ``gen`` and ``pin`` are what a prepared request binds."""
+        registry = self.reader.pins if self.reader is not None else self.worktrees
+        slot = registry.worktree(uid, name) if registry is not None else {"gen": 0, "reg": None}
+        reg = slot["reg"]
+        if reg is None:
+            return WorkingCopy(self.repo_path(root, repos, name), slot["gen"], None, False, None)
+        if not repos.get(name):
+            return WorkingCopy(None, slot["gen"], None, True, f"{name}: the repository is no longer declared")
+        if reg["pins"] is None:
+            return WorkingCopy(None, slot["gen"], None, True, f"{name}: the ticket's worktree is not pinned")
+        return WorkingCopy(Path(reg["path"]), slot["gen"], reg["pins"]["worktree"], True, None)
 
     def _look(self, path: Path, refs: list[str]) -> dict[str, Any] | None:
         from orch.gitread.errors import Unavailable

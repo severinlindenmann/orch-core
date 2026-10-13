@@ -191,8 +191,19 @@ def test_the_interrupted_idem_itself_rolls_the_submission_forward(human, served,
 
 
 class FakeGit:
+    enabled = True
+    reader = object()
+
     def __init__(self, head="a" * 40, identity="local:proj", fail=False):
         self.head_sha, self.ident, self.fail = head, identity, fail
+
+    def ticket_copy(self, root, repos, uid, name):  # H11d: the declared copy (no registration)
+        from orch.ops.caps import WorkingCopy
+
+        return WorkingCopy(root / name, 0, None, False, None)
+
+    def symbolic_head(self, path):
+        return "refs/heads/feat/x"
 
     def repo_path(self, root, repos, name):
         return root / name
@@ -209,7 +220,11 @@ class FakeGit:
 
 
 def _view(branch="feat/x"):
-    return SimpleNamespace(fields={"links": {"repos": ["proj"], "branches": {"proj": branch}}})
+    return SimpleNamespace(uid="u1", fields={"links": {"repos": ["proj"], "branches": {"proj": branch}}})
+
+
+def _copies(tmp_path):
+    return [FakeGit().ticket_copy(tmp_path, {}, "u1", "proj").binding("u1", "proj")]
 
 
 def _store(tmp_path):
@@ -218,18 +233,18 @@ def _store(tmp_path):
 
 def test_the_source_list_is_reread_through_git_at_submit(tmp_path):
     signed = [{"repo": "local:proj", "ref": "refs/heads/feat/x", "sha": "a" * 40}]
-    host_human.recheck_sources(FakeGit(), _store(tmp_path), _view(), signed)  # unchanged: passes
+    host_human.recheck_sources(FakeGit(), _store(tmp_path), _view(), signed, _copies(tmp_path))  # unchanged: passes
     with pytest.raises(HostError) as moved:
-        host_human.recheck_sources(FakeGit(head="b" * 40), _store(tmp_path), _view(), signed)
+        host_human.recheck_sources(FakeGit(head="b" * 40), _store(tmp_path), _view(), signed, _copies(tmp_path))
     assert moved.value.code == "gate.stale"
     with pytest.raises(HostError) as branch:
-        host_human.recheck_sources(FakeGit(), _store(tmp_path), _view("other"), signed)
+        host_human.recheck_sources(FakeGit(), _store(tmp_path), _view("other"), signed, _copies(tmp_path))
     assert branch.value.code == "gate.stale"
     with pytest.raises(HostError) as unreadable:  # fail closed
-        host_human.recheck_sources(FakeGit(fail=True), _store(tmp_path), _view(), signed)
+        host_human.recheck_sources(FakeGit(fail=True), _store(tmp_path), _view(), signed, _copies(tmp_path))
     assert unreadable.value.code == "observe.unavailable"
     with pytest.raises(HostError) as none:
-        host_human.recheck_sources(FakeGit(head=None), _store(tmp_path), _view(), signed)
+        host_human.recheck_sources(FakeGit(head=None), _store(tmp_path), _view(), signed, _copies(tmp_path))
     assert none.value.code == "observe.unavailable"
 
 
@@ -592,7 +607,7 @@ def test_recheck_sources_runs_under_the_store_lock(human, served, monkeypatch):
 
     seen = []
 
-    def recheck(git, st, view, signed):
+    def recheck(git, st, view, signed, copies=None):
         seen.append((depth[0], st is store, git.principal, signed))
         raise HostError("gate.stale", "moved")
 

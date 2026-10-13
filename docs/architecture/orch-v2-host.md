@@ -461,8 +461,12 @@ drops. The host never sends it.
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `worktree.none` | 3 | no | stays | `worktree.remove` for a (ticket, repo) with no registered worktree | — |
-
-| `worktree.exists`, `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned` | 3 | no | stays | §12.7 | — |
+| `worktree.exists` | 3 | no | stays | the ticket already has a worktree for that repo, or its path is not free (§12.7) | — |
+| `worktree.no_branch` | 3 | no | stays | the ticket links no branch for that repo (§12.7) | — |
+| `worktree.branch_in_use` | 3 | no | stays | the branch is checked out in another worktree (§12.7) | — |
+| `worktree.dirty` | 3 | no | stays | the worktree has changes (or its state is unknown) and `force` is not set (§12.7) | — |
+| `worktree.in_use` | 3 | no | stays | a live run has that worktree as its cwd (§12.7) | — |
+| `worktree.unpinned` | 3 | no | stays | the registration exists but could not be pinned; remove it, then create again (§12.7) | — |
 | `worktree.git_failed` | 1 | no | stays | git exited non-zero (stderr only in the runner log) | — |
 | `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
 | `records.not_dedicated`, `records.git_state`, `records.unsafe_config`, `records.not_records_only`, `records.too_large`, `records.push_rejected` | 3 | no | stays | §12.8 (client-side, the records tool) | — |
@@ -3535,6 +3539,14 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `chain=False`, the ack only after a durable result.
 28. **Signing** (§11A.2): `RelaySigner` with typed methods is the bridge's only WSK path; this is an API rule, not
     isolation (bridge code execution is WSK compromise). Genesis-pin and restore reviews bind their exact material.
+30. **Worktrees (H11d, addon #308, D-P2-32, §12.7; additive, cap `worktree/1`):** ops `worktree.list`, `worktree.create`,
+    `worktree.remove`; effective-column kind `pg_write` (P and G, never N); catalog codes `worktree.none`, `worktree.exists`,
+    `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned`,
+    `worktree.git_failed`, `unsupported.platform`; runner command `git` (runner codes add `observe.unavailable` for the
+    `orch.gitsafe` gate: an allow-list of repository config, owned config files, no populated submodule); `git-pins.json` gains `worktrees` (registrations with generations); `human.get` with a signer
+    checks the copy bindings and the current branch on every call. *(Belongs to the v1.5 → v1.6 additions; numbered
+    after item 29 (#440, H12d), the last number on develop or in flight when written. It may need renumbering at
+    merge.)*
 
 **v1.7 → v1.8 (draft, 13 Oct 2026, H12d; revised after Codex challenge and Opus tie-break, for orch-52's decision).**
 
@@ -5771,9 +5783,112 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   `worktree.in_use`; no registration is `worktree.none`; the branch is never deleted; the registration and pin go
   after the runner reports success, and the removal bumps the registration generation, so any request prepared against
   the removed worktree is invalidated (`observe.unavailable`).
-- **Filters:** `.gitattributes` only selects drivers; their commands come from the person's global or system config
-  (LFS, for example) and run as the runner's UID, which is the person in tier A, as when an agent runs git.
+- **Filters and other programs (the invariant, Opus #439 F1 and D1):** orch never runs git against a repository whose
+  local/worktree config or attributes could make git execute a program or read config from elsewhere. The rule is an
+  **allow-list**:
+  - **The gate.** Before every worktree git command, `orch.gitsafe.gate` lists the repository's local and worktree
+    config with `git config --no-includes --list --show-scope`, which executes nothing. If any key is not on the
+    allow-list (`gitsafe.ALLOWED`, `ALLOWED_SUB`), git is not started and the answer is `observe.unavailable`, naming
+    the key, never its value.
+  - **What the list holds:** exactly what an ordinary repository needs.
+    - `git init`'s `core.*` keys and the other plain `core` settings.
+    - `remote.<n>.{url,pushurl,fetch,push,tagopt,prune,mirror,…}`.
+    - `branch.<n>.{remote,merge,rebase,pushremote,description}`.
+    - `user.*`, `init.defaultBranch`, `extensions.{objectFormat,worktreeConfig,refStorage,preciousObjects,partialClone}`.
+    - The tuning keys of `gc`, `pack`, `fetch`, `pull`, `push`, `merge`, `rebase`, `submodule`, `status`, `diff`,
+      `color`, `column`, `advice`, `i18n`, `blame`, `maintenance`, `log`, `rerere`, `index`, `feature`, `checkout`,
+      `worktree` and `transfer`.
+    - The signing switches only: `commit.gpgSign`, `tag.gpgSign`, `gpg.format`.
+    - LFS's own `lfs.repositoryformatversion` and `lfs.<url>.access`.
+  - **What it never holds:** anything that names a program, a command, a driver, a hook or another config file. That
+    excludes `filter.*`, `diff.<driver>.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
+    `credential.*`, `gc.recentObjectsHook`, `remote.<n>.{vcs,uploadpack,receivepack}`, `*.cmd` tools, editors, gpg
+    programs, `core.attributesFile` and any unknown section. A non-boolean `core.fsmonitor` is refused.
+  - **Why an allow-list.** The class "a config key that runs a program" is open-ended, and each git release can add
+    one. Four slipped through one review cycle: hooks, fsmonitor, filters, then git 2.54's `hook.<name>.command`,
+    which `-c core.hooksPath` does not turn off. The deny-list of known keys stays only as documentation
+    (`gitsafe.KNOWN_EXEC`) and as tests.
+  - **Records.** The records tool's `check_local` applies the same function before its stricter rules.
+  - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
+    be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git
+    itself checks only the directory's owner.
+  - **Local filters are refused.** A repository with `git lfs install --local` or git-crypt has its filters in the
+    local config, so it is refused. Install such filters globally.
+  - **Attributes only *select* drivers.** After the gate, the repo's config defines no program. An attribute can
+    therefore select only a built-in behaviour or a driver the person configured globally (LFS after
+    `git lfs install`). That driver runs as the runner's UID, the person in tier A, as when they run git.
+  - **Overridden keys.** A local `core.hooksPath` (husky) and a boolean `core.fsmonitor` are on the list, because
+    `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false` override them on every command.
+- **Submodules (Codex #439):** orch does not inspect submodules.
+  - **Why.** A working copy with a **populated** submodule (a gitlink in the index whose directory is not empty)
+    contains a second repository with its own config. The gate does not list that config. `git status` would run the
+    submodule's filters, and `--ignore-submodules` would instead hide its changes.
+  - **What is refused.** Every cleanliness verdict refuses such a tree (`gitsafe.submodules`):
+    - direct-mode D58 on a registered worktree gives `observe.unavailable`;
+    - direct `list --check` gives `dirty: null` (unknown, never `0`);
+    - direct `remove` without `--force` gives `observe.unavailable`.
+  - **Host mode.** The host's reader (`tree.check`) already refuses a checked-out submodule.
+  - **Not checked out.** An empty gitlink directory counts as clean, as git sees it.
 - Done or closed tickets keep their worktrees; the Worktrees page offers removal.
+
+#### As built in H11d (worktrees)
+
+Where the code differs from or adds to §12.7, the code is this:
+
+- **Registrations** live in `<state>/hosts/<ws>/git-pins.json` under `worktrees.<ticket uid>.<repo>` as
+  `{gen, reg}`; `reg` is `{path, branch, pins | null, created_at, created_by, idem}` (`pins: null` is an `unpinned`
+  registration). Create and remove each bump `gen` (compare-and-swap). `Git.ticket_copy` returns the registered worktree or
+  the declared copy and **never** falls back from a registration; prepared requests carry `copies` (the binding: repo,
+  ticket, generation, registered, pin), checked at prepare, at every `human.get` binding and at the D58 precommit
+  (`human.bound_copy`), always with the ticket's **current** branch against `HEAD`.
+- **Re-pointed `.git` file.** Reads use the pins, not the `.git` file, so `bound_copy` and `worktree.list {check}` also call
+  `HostGitReader.verify_worktree`, which pins the path again from the commondir's root and compares worktree, gitdir and
+  commondir (device and inode): a re-pointed file, a swapped or moved directory is `observe.unavailable` (`moved` in the list).
+- **Runner `git`** (`orch.runner.wtgit`): the `orch.gitsafe` gate on the repo (and, on remove, on the worktree, whose
+  status git runs) before git starts; hooks, fsmonitor, network and submodule recursion off; built-from-scratch
+  environment, 30 s, own process group. A gate refusal is the runner code `observe.unavailable`. **Confinement:** the
+  path must be exactly `<repo>.worktrees/<WS8>-<KEY>` (strict regex); every directory from `/` to `<repo>.worktrees`
+  is opened with `O_NOFOLLOW|O_DIRECTORY` per component and must be owned by root or the runner's effective UID and not
+  group- or other-writable unless sticky (Opus D2); the parent of the repo and `<repo>.worktrees` must be owned by the
+  effective UID and not group- or other-writable at all (else `launch.cwd_changed`); the target is `lstat`ed through that fd, a symlink anywhere is
+  `launch.cwd_changed` and nothing behind it is touched or removed. git gets absolute paths (`-C <repo>`, `-- <path>`)
+  and runs with cwd `/`, so there is no cwd pin: the walk from `/` is repeated right before git (pre-check) and after
+  it (post-check), each comparing device and inode with the held fd. Residual race: a writer of those two directories
+  can swap names between the pre-check and git's own `mkdir` or removal; the post-check detects the swap, it cannot
+  undo git's write. The ownership and mode check of every directory on the path makes that writer the person's own
+  account (or root). D2 and D3 check POSIX mode bits only; extended ACLs (macOS `com.apple.acl`, Linux
+  `system.posix_acl_access`) are a known gap, not evaluated.
+- **Gate:** the addon view is `addons[name]["enabled"]` (a frozen mapping), `runner.disabled` names the first missing piece
+  (addon, then machine). The claim of a G caller is rechecked under the per-repo lock right before the runner runs git.
+- **Direct mode** (`orch worktree list|create|remove`, POSIX; `orch.worktree_cli`): the same rules without a host. The
+  ownership lock is held shared for the whole command; a served workspace is `host.required`; `ORCH_GRANT` is
+  `op.not_allowed`; Windows is `unsupported.platform`. `create` and `remove` hold an exclusive per-workspace `flock`
+  (`<state>/hosts/<ws>/worktrees.lock`, 10 s, then `lock.busy`) from loading `git-pins.json` through git and the write,
+  so concurrent direct commands never lose a registration. Git runs through the same gated, confined `run_git` and
+  `read_git`; `create` refuses a path that is a declared repository (as the host); the new worktree is pinned in
+  process (`pin_repo`) and registered in the same pin file, which direct-mode D58 (`orch verdict`, `approve code`)
+  reads. `list --check` observes as the host: the pins verified again (`moved`), `HEAD` read from the pinned gitdir
+  without git and the ticket's current branch (`stale_branch`). `remove` refuses a dirty tree without `--force` (the
+  person is at the terminal); the branch is never deleted. `remove` (host and direct) checks cleanliness through the
+  registration's path without re-verifying the pins first; git's own non-`--force` remove refuses a dirty or untracked
+  tree as the backstop, and G can never force.
+- **Fail closed.** `bound_copy` refuses (`observe.unavailable`) with no reader, a missing or mismatched binding, generation,
+  registration or pin, and an unpinned registration. Host mode checks the bindings (`check_bindings`: `bound_copy` for
+  every linked repo plus the ticket's **current** `links.branches`, loaded fresh, against the bound ref) on every
+  signer-bearing `human.get`, independent of the 5 s tree-check throttle, so a relink, removal or recreation after
+  prepare or binding is refused there, not only at the precommit. Direct-mode D58 records the binding (generation,
+  registration, pin) at its first look and the precommit must find the same one (a worktree removed or recreated while
+  the person decides is refused, never read in its new or the declared place); it re-pins the registered worktree in
+  process (`verify_worktree_pins`), runs the `orch.gitsafe` gate on it, and refuses a malformed pin file, a registration
+  without pins, a re-pointed `.git` file or a missing directory. Without a `git-pins.json` the declared copy is read only
+  when no directory exists at the ticket's worktree path (`<repo>.worktrees/<WS8>-<KEY>`); one on disk is refused (a
+  deleted pin file never becomes a fallback). Direct-mode D58 on the **declared** copy still uses P1's
+  `orch.store.observe` (the person's own terminal, unchanged by H11d).
+- **`git worktree prune`** (remove of a directory that is already gone) drops git's record of every stale worktree of
+  that repository, not only this ticket's; other registrations whose directory is gone then fail closed (gitdir
+  mismatch) until removed.
+- **Not built:** `worktree.in_use` is only as good as the runner's run records (a run started outside the host is not
+  seen); there is no addon check in direct mode.
 
 ### 12.8 Records commit and push (#308) [SC]
 

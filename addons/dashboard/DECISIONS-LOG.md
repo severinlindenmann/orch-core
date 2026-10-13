@@ -1488,3 +1488,4 @@ The owner must still explicitly sign the addon grant.
 
 **Revert:** Remove the custom hooks and manifest subcommand and restore manual UI build and
 manifest-copy steps; this reintroduces those packaging gaps.
+- 2026-10-13 — **Decision:** show host submitted_at only for committed pending rows (seq present); failed submissions require Start again; preserve host fixes and retry lock.busy. **Why:** submission time alone is not proof of a logged signature (#437). **Revert:** remove this dashboard mapping if the host outcome contract changes.

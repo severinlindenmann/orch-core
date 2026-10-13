@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from . import adapters
+from .adapters.addons import runner
 from .click_signer import Signer
 from .errors import fail
 from .hostlink import HostLink
@@ -96,6 +97,8 @@ class Gateway:
         link = self.enabled(ws)
         features = []
         requirements = {
+            "quick": [("quick.list", "quick/1")],
+            "records": [("records.status", "records/1")],
             "identity": [
                 ("whoami", "ops/1"),
                 ("member.list", "query/1"),
@@ -190,6 +193,9 @@ class Gateway:
                         needs_you=count,
                         features=features,
                         click=adapters.click_card(card),
+                        runner=runner(link.call("whoami"), True)
+                        if link.supports("whoami", "ops/1") and link.has("run/1")
+                        else None,
                     )
                 )
             except HostError as exc:

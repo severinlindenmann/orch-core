@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, click, handoff, reads, settings
+from . import adapters, addon_routes, click, handoff, reads, settings
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .gateway import Gateway
@@ -100,18 +100,23 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     def workspaces():
         return gateway.workspaces()
 
+    def identity_row(ws):
+        link = gateway.enabled(ws)
+        return adapters.me(
+            gateway.call(ws, "whoami"),
+            gateway.call(ws, "member.list"),
+            ws,
+            runner_supported=link.supports("whoami", "ops/1") and link.has("run/1"),
+        )
+
     @app.get("/api/me")
     def me():
-        return [
-            adapters.me(gateway.call(ws.id, "whoami"), gateway.call(ws.id, "member.list"), ws.id)
-            for ws in gateway.workspaces()
-            if "identity" in ws.features
-        ]
+        return [identity_row(ws.id) for ws in gateway.workspaces() if "identity" in ws.features]
 
     @app.get("/api/w/{ws}/identity")
     def identity(ws: str = Depends(reads.workspace)):
         show, status = gateway.call(ws, "workspace.show"), gateway.call(ws, "host.status")
-        who = adapters.me(gateway.call(ws, "whoami"), gateway.call(ws, "member.list"), ws)
+        who = identity_row(ws)
         return {
             "uuid": show["id"],
             "prefix": show["prefix"],
@@ -121,12 +126,14 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             "created_at": None,
             "tier": status["tier"],
             "me": who,
+            "runner": who.runner,
         }
 
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)
     settings.register(app, gateway)
+    addon_routes.register(app, gateway)
 
     @app.get("/{path:path}")
     def spa(path: str):

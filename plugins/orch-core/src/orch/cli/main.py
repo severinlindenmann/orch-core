@@ -253,10 +253,18 @@ def main(
         from orch.host.cli import main as host_main
 
         return host_main(args[1:], env=env, out=out)
+    if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
+        from orch.runner.cli import main as runner_main
+
+        return runner_main(args[1:], env=env, out=out)
     if args[:1] == ["keys"]:  # custody of the person's device key (H5c, orch-v2-host §0.8.6): not a registry op
         from orch.custody.cli import main as keys_main
 
         return keys_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["records"]:  # records commit and push (H11e): the person-side tool, not a registry op
+        from orch.records.cli import main as records_main
+
+        return records_main(args[1:], env=env, out=out)
     if args[:1] == ["sign"]:  # a hand-off signed at the person's terminal (H5b): a host client, not a registry op
         from orch.host.handoff import main as sign_main
 

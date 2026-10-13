@@ -89,6 +89,7 @@ class HostLimits:
         self.max_connections = min(max_connections, ceiling)
         self.connections: dict[int, int] = {}
         self.workers: set[int] = set()
+        self.runners: set[int] = set()
         self.agents: dict[int, Bucket] = {}
         self.attempts: dict[int, Bucket] = {}
 
@@ -103,11 +104,15 @@ class HostLimits:
             self.attempt(peer.uid)
         if peer.kind == "worker" and peer.uid in self.workers:
             raise frames.FrameError("peer.denied")
+        if peer.kind == "runner" and peer.uid in self.runners:  # one runner connection per runner UID (D-P2-25)
+            raise frames.FrameError("peer.denied")
         if self.connections.get(peer.uid, 0) >= 32 or sum(self.connections.values()) >= self.max_connections:
             raise frames.FrameError("quota.host")
         self.connections[peer.uid] = self.connections.get(peer.uid, 0) + 1
         if peer.kind == "worker":
             self.workers.add(peer.uid)
+        if peer.kind == "runner":
+            self.runners.add(peer.uid)
 
     def release(self, peer: Peer) -> None:
         count = self.connections[peer.uid] - 1
@@ -117,6 +122,8 @@ class HostLimits:
             del self.connections[peer.uid]
         if peer.kind == "worker":
             self.workers.remove(peer.uid)
+        if peer.kind == "runner":
+            self.runners.discard(peer.uid)
 
     def request_allowed(self, peer: Peer) -> bool:
         return peer.kind != "agent" or self.agents.setdefault(peer.uid, Bucket(20, 100, self.clock)).take()
@@ -432,18 +439,25 @@ class Server:
         *,
         protocols: tuple[int, ...] = (1,),
         worker_identity: Callable[[Credentials], bool] | None = None,
+        runner_identity: Callable[[Credentials], bool] | None = None,
         clock: Callable[[], float] = monotonic,
     ):
         self.listener, self.registry, self.limits, self.handler = listener, registry, limits, handler
         self.metadata, self.protocols, self.worker_identity, self.clock = welcome, protocols, worker_identity, clock
+        #: H11a: the runner socket's main-PID check (the runner unit's service-manager main PID); absent: denied
+        self.runner_identity = runner_identity
         self.sessions: set[Session] = set()
         self.tasks: set[asyncio.Task[None]] = set()
 
-    def classify(self, credentials: Credentials) -> Peer:
+    def classify(self, credentials: Credentials, *, runner_ok: bool = False) -> Peer:
         uid = credentials.uid
         worker = uid == self.registry.worker_uid
         kind = self.listener.kind
-        if kind == "worker":
+        if kind == "runner":
+            # tier A: the runner runs as the host UID; only the runner unit's main PID gets the class (D-P2-25)
+            if not worker and uid == self.listener.host_uid and runner_ok:
+                return Peer(uid, "runner")
+        elif kind == "worker":
             if worker and self.worker_identity is not None and self.worker_identity(credentials):
                 return Peer(uid, "worker")
         elif not worker:
@@ -501,7 +515,13 @@ class Server:
             try:
                 credentials = peer_credentials(sock)
                 self.limits.attempt(credentials.uid)
-                peer = self.classify(credentials)
+                runner_ok = False
+                if self.listener.kind == "runner" and self.runner_identity is not None:
+                    try:  # the service manager is asked off the event loop
+                        runner_ok = bool(await asyncio.to_thread(self.runner_identity, credentials))
+                    except Exception:  # noqa: BLE001 - an unanswerable check denies
+                        runner_ok = False
+                peer = self.classify(credentials, runner_ok=runner_ok)
                 self.limits.acquire(peer, count_attempt=False)
                 acquired = peer
                 session = Session(sock, peer, credentials, self, accepted_at=accepted_at)

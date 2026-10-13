@@ -70,10 +70,13 @@ class Plan:
     run: Path
     release: Path
     uid: int
+    #: the service's launchd label and systemd unit name (the host's by default; the runner's, H11a)
+    launchd_label: str = units.LAUNCHD_LABEL
+    systemd_name: str = units.SYSTEMD_NAME
 
     @property
     def label(self) -> str:
-        return units.LAUNCHD_LABEL if self.kind == "launchd" else units.SYSTEMD_NAME
+        return self.launchd_label if self.kind == "launchd" else self.systemd_name
 
 
 def run_dir_for(state: Path, given: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
@@ -203,12 +206,12 @@ class Manager:
         return f"gui/{self.plan.uid}"
 
     def _target(self) -> str:
-        return f"{self._domain()}/{units.LAUNCHD_LABEL}"
+        return f"{self._domain()}/{self.plan.launchd_label}"
 
     def loaded(self) -> bool:
         if self.plan.kind == "launchd":
             return self.run(["launchctl", "print", self._target()]).returncode == 0
-        return self.run(["systemctl", "--user", "is-enabled", units.SYSTEMD_NAME]).returncode == 0
+        return self.run(["systemctl", "--user", "is-enabled", self.plan.systemd_name]).returncode == 0
 
     def active(self) -> bool | None:
         """Whether the service manager runs the host now (``None``: it cannot tell)."""
@@ -217,7 +220,7 @@ class Manager:
             if res.returncode != 0:
                 return False
             return "state = running" in (res.stdout or "")
-        res = self.run(["systemctl", "--user", "is-active", units.SYSTEMD_NAME])
+        res = self.run(["systemctl", "--user", "is-active", self.plan.systemd_name])
         out = (res.stdout or "").strip()
         return True if out == "active" else False if out else None
 
@@ -265,8 +268,8 @@ class Manager:
                 do(["launchctl", "bootstrap", self._domain(), str(self.plan.unit_path)])
             return ran
         do(["systemctl", "--user", "daemon-reload"])
-        do(["systemctl", "--user", "enable", units.SYSTEMD_NAME])
-        do(["systemctl", "--user", "restart" if changed else "start", units.SYSTEMD_NAME])
+        do(["systemctl", "--user", "enable", self.plan.systemd_name])
+        do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
         return ran
 
     def status(self) -> dict[str, Any]:

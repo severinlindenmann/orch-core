@@ -15,19 +15,20 @@ const T = { timeout: 5000 }
 const KEY = 'DEMO-0007'
 const FEATURES = [...READS, ...DO, 'actions', 'quick', 'records']
 const URL_PUSH = 'https://git.example.test/me/records.git'
-const row = (key: string, title: string, status: string, quick: { commits: number | null; files: number | null; over: boolean | null } | null) => ({
-  key, uid: 'U' + key, title, type: 'chore', priority: null, size: null, status, labels: ['quick'], parent: null, owner: null, assignees: [], claim: null,
+const row = (key: string, title: string, status: string, quick: { commits: number | null; files: number | null; over: boolean | null } | null, labels: string[] = ['quick']) => ({
+  key, uid: 'U' + key, title, type: 'chore', priority: null, size: null, status, labels, parent: null, owner: null, assignees: [], claim: null,
   turn: { who: 'nobody', why: '' }, progress: null, open_questions: 0, blocking_questions: null, restricted: false, awaiting_gate: null, addons: {}, updated_at: '2026-10-12T09:00:00Z', quick,
 })
 const active = {
   available: true,
   rows: [
     row('DEMO-0010', 'Fix the typo in README', 'open', { commits: 1, files: 1, over: false }),
+    row('DEMO-0014', 'Also tagged docs', 'open', { commits: 1, files: 1, over: false }, ['quick', 'docs', 'web']),
     row('DEMO-0011', 'Rename the stale fixture', 'in-progress', { commits: 4, files: 7, over: true }),
     row('DEMO-0012', 'No repo linked yet', 'backlog', { commits: null, files: null, over: null }),
   ],
   next_page: null,
-  total: 3,
+  total: 4,
 }
 const finished = { available: true, rows: [row('DEMO-0013', 'Drop the old logo', 'done', { commits: 1, files: 1, over: false })], next_page: null, total: 1 }
 const quick = (q: URLSearchParams) => (q.getAll('status').includes('done') ? finished : active)
@@ -55,8 +56,8 @@ it('lists the quick tasks with counts, marks the outgrown one first and keeps un
   expect(items[0]).toHaveTextContent('outgrew')
   expect(items[0]).toHaveTextContent('4 commits, 7 files')
   expect(items[1]).toHaveTextContent('1 commit, 1 file')
-  expect(items[2]).toHaveTextContent('counts unknown')
-  expect(items[2]).not.toHaveTextContent(/0 commits|outgrew/)
+  expect(items[3]).toHaveTextContent('counts unknown')
+  expect(items[3]).not.toHaveTextContent(/0 commits|outgrew/)
   expect(await screen.findByRole('tab', { name: /^Completed\s*1/ }, T)).toBeInTheDocument()
   const asked = other('/quick')[0]
   expect(asked.path).toContain('status=backlog')
@@ -195,6 +196,27 @@ it('Close prepares the existing close hand-off for that key', async () => {
   expect(state.host.posts()[0].body).toMatchObject({ action: 'close', key: 'DEMO-0010' })
 })
 
+it('Make a normal ticket: only where a label besides quick is left, and it sets exactly those labels (replace-only)', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/quick')
+  const list = await screen.findByRole('list', { name: 'Active quick tasks' }, T)
+  // DEMO-0010 has `quick` alone: no button (core #441 will allow an empty set). DEMO-0014 keeps docs and web.
+  expect(within(list).queryByRole('button', { name: 'Make DEMO-0010 a normal ticket' })).toBeNull()
+  expect(within(list).getAllByRole('button', { name: /a normal ticket$/ })).toHaveLength(1)
+  await user.click(within(list).getByRole('button', { name: 'Make DEMO-0014 a normal ticket' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  await within(dialog).findByTestId('handoff-command', {}, T)
+  expect(state.host.posts()[0].body).toMatchObject({ action: 'details', key: 'DEMO-0014', labels: ['docs', 'web'] })
+})
+
+it('a viewer gets no Make a normal ticket button', async () => {
+  state.host.workspaces[0].role = 'viewer'
+  state.host.workspaces[0].roster = roster().map((m) => (m.person === OWNER ? { ...m, role: 'viewer' as const } : m))
+  show('/w/DEMO/quick')
+  await screen.findByRole('list', { name: 'Active quick tasks' }, T)
+  expect(screen.queryByRole('button', { name: /a normal ticket$/ })).toBeNull()
+})
+
 // ---------------------------------------------------------------- records
 
 it('records: status, the export warning and the commands for the terminal-only actions, verbatim', async () => {
@@ -294,13 +316,22 @@ it('records: no "off" button when automatic commits are not on', async () => {
   expect(screen.queryByRole('button', { name: 'Turn automatic commits off' })).toBeNull()
 })
 
-it('records: nothing noted yet says so, shows the one terminal command and still shows what is pending', async () => {
+it('records: configured false says there is no repository yet, offers Commit now and still shows what is pending', async () => {
   state.host.workspaces[0].records = status({ configured: false, repo: null, last: null, auto: null, remote: null })
   show('/w/DEMO/settings/records')
-  expect(await screen.findByTestId('records-not-configured', {}, T)).toHaveTextContent('orch records init')
+  expect(await screen.findByTestId('records-not-configured', {}, T)).toHaveTextContent('No records repository yet; the first commit creates it.')
+  expect(screen.getByTestId('records-not-configured')).not.toHaveTextContent('orch records init')
   expect(screen.getByText('12 events in 1 ticket, plus 5 workspace events')).toBeInTheDocument()
-  expect(screen.getByText('none noted')).toBeInTheDocument()
+  expect(screen.getByText('nothing noted yet')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Commit now' })).toBeEnabled()
   expect(screen.queryByRole('button', { name: 'Commit and push' })).toBeNull() // no remote to push to
+})
+
+it('records: configured true with last null keeps "nothing noted yet" and no not-configured line', async () => {
+  state.host.workspaces[0].records = status({ configured: true, last: null })
+  show('/w/DEMO/settings/records')
+  expect(await screen.findByText('nothing noted yet', {}, T)).toBeInTheDocument()
+  expect(screen.queryByTestId('records-not-configured')).toBeNull()
 })
 
 it('records: an absent cap or op is an honest "not served"', async () => {

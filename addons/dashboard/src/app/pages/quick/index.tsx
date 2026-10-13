@@ -6,7 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { hasFeature } from '@/api/features'
 import { atLeast } from '@/api/permissions'
-import { ACTIVE_STATUSES, DONE_STATUSES, LIMIT_RANGE, readQuickLimits, writeQuickLimits, type QuickLimits, type QuickRow } from '@/api/quickRecords'
+import { ACTIVE_STATUSES, DONE_STATUSES, LIMIT_RANGE, QUICK_LABEL, readQuickLimits, writeQuickLimits, type QuickLimits, type QuickRow } from '@/api/quickRecords'
 import { queries } from '@/api/queries'
 import type { HandoffAction } from '@/api/handoff'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -86,8 +86,16 @@ function Limits({ ws, limits, onChange }: { ws: string; limits: QuickLimits; onC
   )
 }
 
-function Row({ row, canClose, onClose }: { row: QuickRow; canClose: boolean; onClose: (key: string) => void }) {
+/**
+ * The labels a ticket keeps when it stops being a quick task: all but `quick`. There is no remove-label op, so "make a normal
+ * ticket" is `details` with `labels` set to these (replace-only). Empty: `quick` is the only label, and the button is hidden.
+ * TODO(#441): core will allow an empty label set; then offer the action for a sole `quick` label too (labels: []).
+ */
+export const remainingLabels = (labels: readonly string[]): string[] => labels.filter((l) => l !== QUICK_LABEL)
+
+function Row({ row, canClose, onClose, onNormal }: { row: QuickRow; canClose: boolean; onClose: (key: string) => void; onNormal: (key: string, labels: string[]) => void }) {
   const over = row.quick?.over === true
+  const keep = remainingLabels(row.labels ?? [])
   const finished = row.status === 'done' || row.status === 'closed'
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-[13px]" data-key={row.key}>
@@ -102,6 +110,11 @@ function Row({ row, canClose, onClose }: { row: QuickRow; canClose: boolean; onC
         {over && <span className="mr-1.5 rounded bg-warning-soft px-1.5 py-px font-medium text-warning">outgrew</span>}
         {countsText(row.quick)}
       </span>
+      {canClose && !finished && keep.length > 0 && (
+        <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Make ${row.key} a normal ticket`} onClick={() => onNormal(row.key, keep)}>
+          Make a normal ticket
+        </Button>
+      )}
       {canClose && !finished && (
         <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Close ${row.key}`} onClick={() => onClose(row.key)}>
           Close
@@ -186,7 +199,7 @@ export function QuickPage() {
       ) : (
         <ul aria-label={group === 'active' ? 'Active quick tasks' : 'Completed quick tasks'} className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {sorted.map((r) => (
-            <Row key={r.key} row={r} canClose={mayAdd} onClose={(key) => setClosing({ action: 'close', key })} />
+            <Row key={r.key} row={r} canClose={mayAdd} onClose={(key) => setClosing({ action: 'close', key })} onNormal={(key, labels) => setClosing({ action: 'details', key, labels })} />
           ))}
         </ul>
       )}
@@ -196,7 +209,7 @@ export function QuickPage() {
 
       {closing && (
         <HandoffDialog
-          title={`Close ${'key' in closing ? closing.key : ''}`}
+          title={closing.action === 'details' ? `Make ${closing.key} a normal ticket` : `Close ${'key' in closing ? closing.key : ''}`}
           ws={ws}
           action={closing}
           autoStart

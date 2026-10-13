@@ -147,7 +147,7 @@ function Status({ data, workspace }: { data: RecordsStatus; workspace: Workspace
             <Mono>{last.commit}</Mono> at {fmtDateTime(last.at)} by {who(last.by)}, {last.pushed_at ? `pushed ${fmtDateTime(last.pushed_at)}` : 'not pushed'}
           </>
         ) : (
-          'none noted'
+          'nothing noted yet'
         )}
         {noted && (
           <span className="block text-[12px] text-text-muted">
@@ -233,11 +233,11 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
       ) : (
         <>
           <Section title="Status">
+            {/* `configured` means "the records repository exists for you" (core #441: true after the first commit, with `repo` set). */}
             {data.configured === false && (
-              <div data-testid="records-not-configured" className="mb-3 space-y-1 text-[13px] text-text-muted">
-                <p>No commit has been noted for you in this workspace yet. The repository is made once, in your terminal:</p>
-                <code className="block rounded bg-surface-3 px-2 py-1 font-mono text-[12px] text-text">orch records init</code>
-              </div>
+              <p data-testid="records-not-configured" className="mb-3 text-[13px] text-text-muted">
+                No records repository yet; the first commit creates it.
+              </p>
             )}
             <Status data={data} workspace={workspace} />
           </Section>

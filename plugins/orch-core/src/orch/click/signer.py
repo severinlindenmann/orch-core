@@ -5,9 +5,10 @@ What it guarantees (and what not, §0.8.6 item 0): it signs only requests it pre
 after every §0.8.1 check, and only the stored immutable signing inputs whose View the caller names by ``view_digest``.
 It cannot know whether a person saw the View: the dashboard is trusted with that.
 
-Durability (§0.8.6 item 5, "Durable sign records"): before a signature leaves the signer, a record of the signed events,
-the submit idem and the ``view_digest`` is synced to disk (:mod:`orch.click.records`). Every ``sign`` consults it first,
-so a request is signed at most once per ``(request_id, view_digest)`` even across a crash and a restart.
+Durability (§0.8.6 item 5, "Durable sign records"): before the crypto signing a claim (``view_digest``, op,
+idem, expiry) is synced to disk, and before a signature leaves the signer the record of the signed events replaces it
+(:mod:`orch.click.records`). Every ``sign`` consults it first, so a request is signed at most once per
+``(request_id, view_digest)`` even across a crash and a restart; a claim that never completed is never signed again.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from orch import canon
 
 from . import view as views
 from .protocol import CONTRACT, HASH, IDEM, OP_NAME, REASONS, REQ, WS_ID, ClickError, op_class, refused
-from .records import RecordError, Records
+from .records import RecordError, Records, is_claim
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
 
@@ -417,26 +418,34 @@ class ClickSigner:
         self.budget.reserve(len(stored["events"]))
         from orch.host import signer as host_signer
 
-        signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
-        if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
-            raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
         idem = _new_idem()
-        try:  # durable before the signature leaves: a crash after this resends these events, never signs again
-            rec = self.records.create(
+        try:  # durable before the crypto signing: a failure or crash after this never signs the request again
+            claim = self.records.claim(
                 approval.workspace_id,
                 approval.request_id,
                 view_digest=approval.view_digest,
                 op=approval.op,
                 idem=idem,
-                events=signed.events,
                 expires_at=approval.expires_at,
             )
-        except RecordError as exc:  # nothing left the signer: these signatures are dropped
+        except RecordError as exc:  # nothing was signed
+            raise refused("record_unavailable", f"{exc}; nothing was signed") from None
+        if claim["idem"] != idem:  # another signer process claimed or recorded it first: never a second signature
+            self._note("adopted", workspace=approval.workspace_id, request=approval.request_id)
+            return self._replay(entry, claim, approval.view_digest)
+        try:
+            signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
+            if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
+                raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
+        except Exception:
+            self.records.release(claim)  # no signature exists: the request may be signed later
+            raise
+        approval.signed, approval.idem = signed.events, idem  # in memory at once: a retry resends, never re-signs
+        try:  # durable before the signature leaves: a crash after this resends these events, never signs again
+            rec = self.records.complete(claim, signed.events)
+        except RecordError as exc:  # nothing left the signer; a sign in this process retries the completion
             raise refused("record_unavailable", f"{exc}; nothing was submitted") from None
-        won = rec["idem"] == idem
-        self._note("signed" if won else "adopted", workspace=approval.workspace_id, request=approval.request_id)
-        if rec["view_digest"] != approval.view_digest:  # another signer process recorded it first
-            raise refused("already_signed", "this request was already signed for another review")
+        self._note("signed", workspace=approval.workspace_id, request=approval.request_id)
         return self._replay(entry, rec, approval.view_digest)
 
     def _replay(self, entry: dict[str, Any], rec: dict[str, Any], view_digest: str) -> dict[str, Any]:
@@ -444,9 +453,21 @@ class ClickSigner:
         ``view_digest`` than the recorded one is ``already_signed``: a request is never signed twice."""
         if rec["view_digest"] != view_digest:
             raise refused("already_signed", "this request was already signed for another review; prepare a new one")
+        key = (rec["workspace_id"], rec["request_id"])
+        if is_claim(rec):  # claimed, never completed
+            held = self.approvals.get(key)
+            if held is None or held.signed is None or held.idem != rec["idem"]:
+                # a crash or failure sat between the claim and the completion: unknown whether a signature exists
+                raise refused(
+                    "record_unavailable",
+                    "the request was claimed but never recorded as signed; this signer does not sign it again",
+                )
+            try:  # signed in this process: the identical events, once the completion is durable
+                rec = self.records.complete(rec, held.signed)
+            except RecordError as exc:
+                raise refused("record_unavailable", f"{exc}; nothing was submitted") from None
         if rec["result"] is not None:  # a repeated sign: the recorded answer
             return {"result": rec["result"], "duplicate": True}
-        key = (rec["workspace_id"], rec["request_id"])
         approval = self.approvals.get(key)
         if approval is None:  # after a restart: the record alone, enough to resend (never to sign)
             approval = Approval(

@@ -28,7 +28,7 @@ from . import adapters
 from .errors import HostError, fail
 from .gateway import Gateway
 from .hostlink import _pairs, _valid
-from .intent import MAX_EPOCH, gate_base, intent_idem, ticket_revision
+from .intent import gate_base, intent_idem, ticket_revision
 from .reads import Key, workspace
 from .text import clean as no_hidden
 
@@ -449,8 +449,8 @@ class Plan:
     base: object
     person: str
 
-    def idem(self, ws: str, retry: int = 0, epoch: int = 0) -> str:
-        return intent_idem(self.person, ws, self.op, self.args, self.base, self.files, retry, epoch)
+    def idem(self, ws: str, retry: int = 0) -> str:
+        return intent_idem(self.person, ws, self.op, self.args, self.base, self.files, retry)
 
 
 GATE_OF = {Approve: lambda a: a.gate, RequestChanges: lambda a: a.gate, Verdict: lambda a: "verify"}
@@ -484,30 +484,29 @@ CLICK_ONLY = (
 
 
 def send_prepare(plan_: Plan, ws: str, retry: int, call):
-    """`call(idem)` with the intent's idem. The host forgets an idem after its retention (`idem.expired`): the intent is
-    then fresh, and the next epoch is as deterministic as the first, so every tab converges on the same new request.
+    """Prepare once with the intent's idem. Retention expiry ends this attempt (`intent.expired`); only the
+    person's explicit "Start again" advances `retry` and permits a fresh request.
 
-    `idem.conflict` is NOT retried with another idem: it means the host already holds an attempt for this intent that
-    is bound to something else (another path, the signer, or a session from before a restart), and a second request
-    is exactly what the invariant forbids. It is reported as `intent.open` and nothing is prepared."""
-    for epoch in range(MAX_EPOCH):
-        try:
-            return call(plan_.idem(ws, retry, epoch))
-        except HostError as exc:
-            code = exc.error.get("code")
-            if code == "idem.conflict":
-                raise HostError(
-                    {
-                        "code": "intent.open",
-                        "message": "An attempt for this action is already open (in the terminal, or from before this "
-                        "dashboard restarted). It settles or expires by itself; nothing new was prepared.",
-                        "retryable": False,
-                    },
-                    exit=5,
-                ) from None
-            if code != "idem.expired":
-                raise
-    raise fail("idem.expired", "The host no longer keeps earlier attempts of this action. Try again later.", exit=5)
+    `idem.conflict` means the host holds an attempt bound to another path, signer or session. Report it as
+    `intent.open` without preparing another request."""
+    try:
+        return call(plan_.idem(ws, retry))
+    except HostError as exc:
+        code = exc.error.get("code")
+        if code == "idem.conflict":
+            raise fail(
+                "intent.open",
+                "An attempt for this action is already open (in the terminal, or from before this "
+                "dashboard restarted). It settles or expires by itself; nothing new was prepared.",
+                exit=5,
+            ) from None
+        if code == "idem.expired":
+            raise fail(
+                "intent.expired",
+                "This attempt is older than the host keeps records (24 h). Start again to make a new one.",
+                exit=5,
+            ) from None
+        raise
 
 
 class Handoffs:

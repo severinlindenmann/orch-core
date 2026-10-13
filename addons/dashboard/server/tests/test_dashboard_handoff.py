@@ -591,7 +591,7 @@ def test_a_retry_after_a_signature_answers_submitted(ready, monkeypatch):
     assert again.json()["code"] is None or isinstance(again.json()["code"], str)
 
 
-def test_after_the_record_is_kept_the_next_epoch_is_a_fresh_attempt(ready, monkeypatch, host_calls):
+def test_expired_intent_requires_explicit_start_again(ready, monkeypatch, host_calls):
     from orch_dashboard.errors import fail
 
     client, token, stub, rich, signing = ready
@@ -599,20 +599,25 @@ def test_after_the_record_is_kept_the_next_epoch_is_a_fresh_attempt(ready, monke
     made = post(client, token, stub, body).json()["id"]
     first = next(c[2]["idem"] for c in host_calls if c[0] == "human.prepare")
     original = HostLink.call
+    attempts = []
 
-    def tombstone(self, op, args=None, **kw):  # the host forgot this idem after its retention
-        if op == "human.prepare" and kw.get("idem") == first:
-            raise fail("idem.expired", exit=2)
+    def tombstone(self, op, args=None, **kw):
+        if op == "human.prepare":
+            attempts.append(kw.get("idem"))
+            if kw.get("idem") == first:
+                raise fail("idem.expired", exit=2)
         return original(self, op, args, **kw)
 
     monkeypatch.setattr(HostLink, "call", tombstone)
-    res = post(client, token, stub, body)  # idem.expired from the host: the intent is fresh again (epoch 1)
-    assert res.status_code == 200 and res.json()["id"] != made and len(signing.stub.requests.table) == 2
-    assert post(client, token, stub, body).json()["id"] == res.json()["id"]
-    keys = [c[2]["idem"] for c in host_calls if c[0] == "human.prepare"]
-    assert len(keys) == 3 and keys[0] == first and keys[1] == keys[2] != first
-    # Every tab converges on that same fresh request, deterministically (the dead epoch is skipped each time).
-    assert post(client, token, stub, body).json()["id"] == res.json()["id"]
+    res = post(client, token, stub, body)
+    assert res.status_code == 409 and res.json()["exit"] == 5
+    assert res.json()["error"]["code"] == "intent.expired"
+    assert res.json()["error"]["retryable"] is False
+    assert attempts == [first] and len(signing.stub.requests.table) == 1
+    again = post(client, token, stub, {**body, "retry": 1})
+    assert again.status_code == 200 and again.json()["id"] != made
+    assert len(attempts) == 2 and attempts[1] != first
+    assert len(signing.stub.requests.table) == 2
 
 
 def test_a_host_restart_never_produces_a_second_request(ready, monkeypatch):

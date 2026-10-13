@@ -1435,3 +1435,11 @@ HTTP process against passive disclosure, while the accepted risk (same-UID agent
 **Why:** A click request and a terminal request of one action could coexist, which the one-intent invariant is meant to rule out; one path per workspace removes the case instead of managing it.
 
 **Revert:** Remove `Gateway.one_path_is_click` and its refusal in the `/handoff` route, restore the terminal button and the retry floor in `HandoffDialog`/`useHandoff`.
+
+## 2026-10-13 — M5: retention expiry requires an explicit new attempt
+
+**Decision:** Return `intent.expired` (HTTP 409) after one expired prepare; remove automatic epoch renewal. Both signing dialogs offer "Start again", which advances `retry`. The retry=0 hash stays unchanged.
+
+**Why:** Host retention expiry does not prove an action was never completed; automatic renewal could sign it twice.
+
+**Revert:** Restore epoch renewal in `send_prepare` and the intent hash (reintroduces the duplicate-action risk).

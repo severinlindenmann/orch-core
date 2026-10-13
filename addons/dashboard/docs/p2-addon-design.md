@@ -250,9 +250,9 @@ person. The dashboard adds:
   terminal is still open; it expires at ..."), as defence in depth for the host's own refusal to flip the flag with hand-offs
   pending. Flag flipped OFF: a click request can no longer be signed (the signer refuses, reason `disabled`); the server
   cancels it and it reads as ended. On
-  `idem.expired` (the host forgot the idem) the server moves to the next deterministic epoch of the same intent, so
-  every tab converges on the same fresh request. There is no `outcome.get` for a prepare; a request is read with
-  `human.pending {request_id}`. "Complete details" after a `new` targets only the ticket of the `new` request this dialog
+  `idem.expired` (the host forgot the idem after 24 h) the server returns `intent.expired` (HTTP 409) without another
+  prepare. Only the person clicking "Start again" advances `retry` and permits a fresh request.
+  There is no `outcome.get` for a prepare; a request is read with `human.pending {request_id}`. "Complete details" after a `new` targets only the ticket of the `new` request this dialog
   prepared and watched. Requests expire after 10 minutes (4 for a grant); more than 20 pending per person is `quota.host`.
 - **A refused submit stays open.** A refusal before any append (`gate.stale`, `members.stale`, `question.stale`,
   `sig.invalid`, `human.request_mismatch`) leaves the request `bound` until it expires, and `human.pending` shows
@@ -418,7 +418,7 @@ retryable, retry_after_ms?}`. The server passes `code`, `message`, `hint`, `retr
 | `human.request_expired` | 410 | "Expired", "Prepare again" |
 | `human.request_mismatch` | 409 | shown as an internal error; never retried |
 | `idem.conflict` (a prepare) | 409 | "Could not prepare"; the next click draws a new idem |
-| `idem.expired` (a prepare) | 409 | "This attempt is too old"; "Start again" on the click, with a new idem |
+| `intent.expired` (host `idem.expired` on prepare) | 409 | "This attempt is too old"; "Start again" on the click, with a new idem |
 | `outcome.unknown`, `cancelled` (a prepare) | 503 | "Unknown outcome"; "Try again" retries with the SAME idem and adopts the request returned |
 | `op.unsupported`, `host.version_mismatch` | 501 | "host too old for this feature", feature hidden |
 | `host.unavailable`, `host.restarting`, `host.busy` | 503 | "host not running" or "restarting" banner; reads retry with backoff |

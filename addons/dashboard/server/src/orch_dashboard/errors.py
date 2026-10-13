@@ -36,6 +36,8 @@ def status(code: str) -> int:
         "grant."
     ):
         return 403
+    if code in {"intent.ended", "intent.done", "intent.expired"}:
+        return 409
     if code == "human.request_expired":
         return 410
     if code in {"op.unsupported", "host.version_mismatch", "click.contract"}:

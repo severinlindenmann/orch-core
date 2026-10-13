@@ -126,6 +126,8 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'}${OFF}`, next: 'terminal' }
     case 'intent.done':
       return { title: 'Already done', body: 'A request for exactly this was already signed, so there is nothing to sign now. Do it again only if you mean to make it happen a second time.', next: 'again' }
+    case 'intent.expired':
+      return { title: 'This attempt is too old; start again', body: e.message, next: 'prepare' }
     case 'intent.ended':
       return { title: 'The earlier attempt ended', body: `${e.message} Nothing was signed. Start again to make a new request.`, next: 'prepare' }
     case 'intent.open':

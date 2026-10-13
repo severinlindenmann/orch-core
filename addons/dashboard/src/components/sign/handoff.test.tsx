@@ -39,6 +39,19 @@ describe('the hand-off dialog (real host)', () => {
     expect(s.postAction).not.toHaveBeenCalled()
   })
 
+  it('retention expiry waits for Start again before preparing with retry 1', async () => {
+    const request = fakeRequest()
+    s.prepare.mockRejectedValueOnce(refusal('intent.expired')).mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    const { user } = await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    expect(await within(dialog).findByText('This attempt is too old; start again', {}, T)).toBeInTheDocument()
+    expect(s.prepare).toHaveBeenCalledTimes(1)
+    await user.click(within(dialog).getByRole('button', { name: 'Start again' }))
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(s.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
   it('draws the preview only from the host material, never from the cached ticket', async () => {
     const request = fakeRequest()
     s.prepare.mockResolvedValue(request)

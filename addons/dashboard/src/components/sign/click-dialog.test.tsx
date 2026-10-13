@@ -314,6 +314,17 @@ describe('an unknown outcome never leads to a second signature', () => {
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
   })
 
+  it('retention expiry waits for Start again before preparing with retry 1', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.expired', message: 'Start again to make a new one.', retryable: false }, 5))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    expect(await within(m.dialog).findByText('This attempt is too old; start again', {}, T)).toBeInTheDocument()
+    expect(c.prepare).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(m.dialog).getByRole('button', { name: 'Start again' }))
+    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
   it('an attempt that is open at the host (terminal, or before a restart) is named and nothing prepares again', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.open', message: 'x', retryable: false }, 5))
     const m = await open()

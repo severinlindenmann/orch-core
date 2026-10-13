@@ -12,8 +12,8 @@ body is never hashed), `person` is the workspace's own person, and `base` is the
 gate's generation and hash for a gate action, the ticket's revision for another ticket action, the member's current
 role for a role change, else none. When the base moves, the action is a new one (legitimately another request).
 
-`retry` (an explicit click on "Do it again" or "Start again") and `epoch` (the host forgot an idem after its retention:
-`idem.expired`) are folded in only when they are not zero, so the common intent hashes exactly as above.
+`retry` (an explicit click on "Do it again" or "Start again") is folded in only when nonzero, so the common intent
+hashes exactly as above. Host retention expiry (`idem.expired`) ends the attempt; it never renews it automatically.
 
 This module has no state. Nothing here, nothing in this process's memory, is what holds the invariant: the host's idem
 record is.
@@ -25,7 +25,6 @@ from . import adapters
 
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 IDEM_SHAPE = r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
-MAX_EPOCH = 8
 
 
 def intent_idem(
@@ -36,7 +35,6 @@ def intent_idem(
     base,
     files: dict | None = None,
     retry: int = 0,
-    epoch: int = 0,
 ) -> str:
     """The host idem of one action intent: `a_` + one char [0-7] (3 bits) + 25 Crockford chars (5 bits each)."""
     intent: dict = {"person": person, "workspace_id": ws, "op": op, "args": args, "base": base}
@@ -44,8 +42,6 @@ def intent_idem(
         intent["files"] = files  # the bytes of a certificate are part of what is asked for
     if retry:
         intent["retry"] = retry
-    if epoch:
-        intent["epoch"] = epoch
     n = int.from_bytes(hashlib.sha256(adapters.handoff.cj(intent)).digest()[:16], "big")  # 128 bits
     first = CROCKFORD[n >> 125]
     rest = "".join(CROCKFORD[(n >> (120 - 5 * i)) & 31] for i in range(25))

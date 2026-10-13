@@ -25,13 +25,14 @@ interface Words {
 }
 
 /** What each end state says, in core's words. */
-function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false): Words | null {
+function words(phase: HandoffPhase, title: string, error: string | null, ofWorkspace = false, code?: string): Words | null {
   switch (phase) {
     case 'done':
       return { title: 'Signed', body: `${title} is in the ${ofWorkspace ? "workspace's" : "ticket's"} log.`, tone: 'ok' }
     case 'cancelled':
       return { title: 'Cancelled', body: 'Nothing was signed.' }
     case 'expired':
+      if (code === 'intent.expired') return { title: 'This attempt is too old; start again', body: error ?? '', tone: 'warn' }
       return { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again to get a new code.', tone: 'warn' }
     case 'already':
       return { title: 'Already done', body: 'The host says this is already in place, so there is nothing to sign. The page shows the current state. If you meant to do it again, say so.' }
@@ -155,7 +156,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
-  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket)
+  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>

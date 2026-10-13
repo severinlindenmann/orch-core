@@ -144,7 +144,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         } else if (CHANGED.has(err.code)) {
           refetch()
           setPhase('changed')
-        } else if (err.code === 'human.request_expired') {
+        } else if (err.code === 'human.request_expired' || err.code === 'intent.ended' || err.code === 'intent.expired') {
           setPhase('expired')
         } else if (err.code === INTENT_OPEN) {
           setPhase('attempt_open') // nothing is offered that prepares again until the host's attempt settles

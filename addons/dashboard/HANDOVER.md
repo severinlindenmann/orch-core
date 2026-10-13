@@ -974,7 +974,8 @@ same for every tab, session and retry; the browser sends no key, only `retry`, w
 (`handoff.py` `plan()` and `send_prepare()`, used by both `click.py` and the hand-off route). Consequences, all tested: two tabs prepare one
 request; a lost answer or logout/login returns the same request; a landed action answers `intent.done` ("Already done"); cancelled/expired
 answers `intent.ended`; `idem.conflict` (other path or a session from before a restart) becomes `intent.open` and prepares nothing;
-`idem.expired` moves to the next epoch. Requests belong to the (person, workspace) (`Handoffs.owned`); any session of the person may view,
+`idem.expired` becomes `intent.expired` (HTTP 409), with no new prepare; only an explicit "Start again" advances `retry`.
+Requests belong to the (person, workspace) (`Handoffs.owned`); any session of the person may view,
 sign, poll and cancel. **What stays in memory is convenience only:** which ids this dashboard prepared (ownership, lost on restart), the
 op/body a View is checked against, the per-session quota, and an `unsettled` set (a sign in flight or with an unknown outcome) that only
 stops this process from cancelling the request or replacing the signer under it and drives the "settling" UI (`POST /click/state` reads

@@ -7,6 +7,7 @@ import re
 import threading
 import time
 
+import pytest
 from test_dashboard_click import (  # noqa: F401  # noqa: F401
     HASH,
     REQ,
@@ -31,6 +32,7 @@ ARGS = {"ref": "DEMO-0001", "message": "hi"}
 
 def test_the_idem_has_the_hosts_exact_shape_and_is_deterministic():
     one = intent_idem(P, WS, "log", ARGS, None)
+    assert one == "a_1G4FN07BN9DMNPC2W40K0HP35H"  # fixed vector from the original retry=0 derivation
     assert SHAPE.fullmatch(one) and one == intent_idem(P, WS, "log", dict(ARGS), None)
     for n in range(200):  # the shape holds for every input: first char 0-7, 25 Crockford chars
         assert SHAPE.fullmatch(intent_idem(P, WS, "log", {**ARGS, "message": str(n)}, n))
@@ -51,7 +53,6 @@ def test_every_part_of_the_intent_changes_it():
         intent_idem(P, WS, "log", {**ARGS, "message": "ho"}, "r1"),  # other args
         intent_idem(P, WS, "log", ARGS, "r2"),  # the base moved
         intent_idem(P, WS, "log", ARGS, "r1", retry=1),  # an explicit "do it again"
-        intent_idem(P, WS, "log", ARGS, "r1", epoch=1),  # the host forgot the idem
         intent_idem(P, WS, "log", ARGS, "r1", files={"cert": {"b64": "AA=="}}),
     ]
     assert len({base, *others}) == len(others) + 1
@@ -148,3 +149,25 @@ def test_logout_and_login_then_retry_never_makes_a_second_request(client, token,
     # And while the first is still open, the other session attaches to it rather than making one.
     third = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(other)).json()
     assert client.post(url(stub, "prepare"), json=comment(2), headers=hdr(other)).json() == third
+
+
+def test_send_prepare_expiry_does_not_renew_a_baseless_intent():
+    from orch_dashboard.errors import HostError, fail
+    from orch_dashboard.handoff import Plan, send_prepare
+
+    plan = Plan("new", {"title": "A ticket"}, None, None, P)
+    calls = []
+
+    def prepare(idem):
+        calls.append(idem)
+        if idem == plan.idem(WS):
+            raise fail("idem.expired", exit=2)
+        return "new request"
+
+    with pytest.raises(HostError) as caught:
+        send_prepare(plan, WS, 0, prepare)
+    assert caught.value.error["code"] == "intent.expired"
+    assert caught.value.exit == 5 and caught.value.error["retryable"] is False
+    assert calls == [plan.idem(WS)]
+    assert send_prepare(plan, WS, 1, prepare) == "new request"
+    assert calls == [plan.idem(WS), plan.idem(WS, retry=1)]

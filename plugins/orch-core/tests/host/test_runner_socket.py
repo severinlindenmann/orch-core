@@ -141,6 +141,7 @@ def test_runner_class_and_one_connection_per_uid(w):
             "runner.hello",
             "runner.report",
             "runner.exit",
+            "runner.term",
         }
         frame = _first_frame(w.h.host.runner_path)
         assert frame["t"] == "fatal" and frame["error"]["code"] == "peer.denied"

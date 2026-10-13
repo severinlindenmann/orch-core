@@ -75,6 +75,21 @@ def build_env(args: Mapping[str, Any], own: Mapping[str, str]) -> dict[str, str]
     return env
 
 
+#: POSIX-compatible login shells (§12.4.1: a person's $SHELL must be one, else ``harness.shell_unsupported``)
+POSIX_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash"})
+
+
+def resolve_shell(argv: list[Any], own: Mapping[str, str]) -> list[Any]:
+    """``["$SHELL", ...]`` becomes the runner's own ``SHELL`` (an absolute path to a POSIX shell, never anything the
+    host sent); any other argv passes through (its own checks follow in :meth:`SpawnSpec.check`)."""
+    if not argv or argv[0] != "$SHELL":
+        return argv
+    shell = own.get("SHELL") or ""
+    if not shell.startswith("/") or os.path.basename(shell) not in POSIX_SHELLS or not os.access(shell, os.X_OK):
+        raise SpawnError("harness.shell_unsupported", "the runner's $SHELL is not an executable POSIX shell")
+    return [shell, *argv[1:]]
+
+
 def new_gen() -> str:
     """The runner generation (§12.3.2 ``Gen``): 32 hex digits drawn at every runner start."""
     return secrets.token_hex(16)
@@ -318,7 +333,8 @@ class HostLink:
         if cmd == "spawn":
             spec = SpawnSpec(
                 str(args.get("run")), str(args.get("workspace_id")), str(args.get("kind")),
-                list(args.get("argv") or []), build_env(args, self.env), dict(args.get("cwd") or {}),
+                resolve_shell(list(args.get("argv") or []), self.env), build_env(args, self.env),
+                dict(args.get("cwd") or {}),
                 int(args.get("cols") or 120), int(args.get("rows") or 40),
             )  # fmt: skip
             with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot

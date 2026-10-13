@@ -74,9 +74,9 @@ __all__ = [
 
 LOG = logging.getLogger(__name__)
 
-RUNNER_OPS: dict[str, int] = {"runner.hello": 1, "runner.report": 1, "runner.exit": 1}
+RUNNER_OPS: dict[str, int] = {"runner.hello": 1, "runner.report": 1, "runner.exit": 1, "runner.term": 1}
 RUNNER_CAPS = ["runner/1"]
-RUN_OPS: dict[str, int] = {"run.list": 1, "run.sub": 1}
+RUN_OPS: dict[str, int] = {"run.list": 1, "run.sub": 1, "run.stop": 1}
 RUN_CAPS = ["run/1"]
 COMMAND_TIMEOUT = 15.0
 ATTACH_SECONDS = 30
@@ -84,8 +84,14 @@ LIVE = ("starting", "running")
 RUN_ID = r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
 #: codes a runner may report for a command; anything else becomes ``run.spawn_failed`` / ``internal``
 RUNNER_CODES = frozenset(
-    {"launch.cwd_changed", "harness.not_found", "run.spawn_failed", "invalid.input", "not_found", "term.busy"}
-)
+    {
+        "launch.cwd_changed", "harness.not_found", "harness.shell_unsupported", "run.spawn_failed", "invalid.input",
+        "not_found", "term.busy", "term.not_attachable",
+    }
+)  # fmt: skip
+#: how long an exited run's ring is kept by the runner (:data:`orch.runner.supervise.KEEP_RING_SECONDS`)
+REPLAY_SECONDS = 3600
+WATCH_SECONDS = 0.5
 KEEP_SECONDS = 7 * 24 * 3600
 KEEP_ENDED = 1000
 PER_CONNECTION = 8
@@ -219,6 +225,27 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         ("run", "code", "signal", "at", "cleanup"),
     ),
+    "runner.term": _obj(
+        {
+            "run": _RUN,
+            "atts": {
+                "type": "array",
+                "maxItems": 64,
+                "items": _obj(
+                    {
+                        "att": {"type": "string", "pattern": "^at_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+                        "mode": {"enum": ["read", "write"]},
+                        "writer": {"type": "boolean"},
+                    },
+                    ("att", "mode", "writer"),
+                ),
+            },
+            "lease_gen": _INT,
+            "cols": {"type": ["integer", "null"], "minimum": 20, "maximum": 500},
+            "rows": {"type": ["integer", "null"], "minimum": 5, "maximum": 200},
+        },
+        ("run", "atts", "lease_gen"),
+    ),
 }
 RUN_SCHEMAS: dict[str, dict[str, Any]] = {
     "run.list": _obj(
@@ -231,6 +258,7 @@ RUN_SCHEMAS: dict[str, dict[str, Any]] = {
         }
     ),
     "run.sub": _obj({}),
+    "run.stop": _obj({"run": _RUN, "grace_ms": {"type": "integer", "minimum": 0, "maximum": 30000}}, ("run",)),
 }
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in {**RUNNER_SCHEMAS, **RUN_SCHEMAS}.items()}
 
@@ -259,6 +287,8 @@ def view(rec: dict[str, Any]) -> dict[str, Any]:
     out = {k: rec.get(k, d) for k, d in VIEW_DEFAULTS.items()}
     exit_ = rec.get("exit")
     if isinstance(exit_, dict):
+        if exit_.get("reason") in ("exited", "stopped") and rec.get("ended_ts"):
+            out["replay_until"] = _iso(float(rec["ended_ts"]) + REPLAY_SECONDS)  # the runner's ring keeps 1 h
         out["exit"] = {
             "code": exit_.get("code"), "signal": exit_.get("signal"), "at": exit_.get("at"),
             "reason": exit_.get("reason") or "exited", "cleanup": rec.get("cleanup") or "unknown",
@@ -357,6 +387,12 @@ class RunnerHub:
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.subs: dict[str, RunSub] = {}
         self.attachments: dict[str, dict[str, Any]] = {}
+        #: the runner's last ``runner.term`` per run: {lease_gen, atts:[{att, mode, writer}]} (counts and the lease)
+        self.term_state: dict[str, dict[str, Any]] = {}
+        self._pending_pub: set[str] = set()
+        self._watching: asyncio.Task[None] | None = None
+        #: starts per person (§0.11: 10 per minute, burst 5): person -> [level, at]
+        self._starts: dict[str, list[float]] = {}
         self._save_lock = asyncio.Lock()
         self.ignored = 0
 
@@ -443,7 +479,12 @@ class RunnerHub:
             else:
                 if session is not self.session:
                     raise HostError("op.not_allowed", "runner.hello first")
-                result = await (self.report(args) if op == "runner.report" else self.exit(session, args))
+                if op == "runner.report":
+                    result = await self.report(args)
+                elif op == "runner.term":
+                    result = await self.term_report(session, args)
+                else:
+                    result = await self.exit(session, args)
             from .workspace import ok_result
 
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": ok_result(result)})
@@ -558,6 +599,80 @@ class RunnerHub:
             await self._save(new)
         return {}
 
+    async def term_report(self, session: Session, args: dict[str, Any]) -> dict[str, Any]:
+        """``runner.term``: a run's attachments, lease and size changed. Only for runs of this runner (UID and
+        generation). It sets ``viewers``, ``writer``, ``cols`` and ``rows`` of the run and keeps the counts the limits
+        read; it never decides authorization (the host's own table and the capability do)."""
+        run = args["run"]
+        rec = self.store.records.get(run)
+        if rec is None or rec.get("runner_uid") != session.peer.uid or rec.get("gen") != self.generation:
+            raise HostError("not_found", "no such run on this runner")
+        atts = args["atts"]
+        listed = {a["att"] for a in atts}
+        for att, info in list(self.attachments.items()):
+            if info["run"] == run and att in listed:
+                info["seen"] = True
+            elif info["run"] == run and info.get("seen"):  # the runner ended it
+                self.attachments.pop(att, None)
+                self._audit("term.detach", run=run, att=att, person=info.get("person"))
+        previous = (self.term_state.get(run) or {}).get("atts") or []
+        old_writer = next((a["att"] for a in previous if a["writer"]), None)
+        new_writer = next((a["att"] for a in atts if a["writer"]), None)
+        if new_writer is not None and old_writer is not None and new_writer != old_writer:
+            self._audit("term.takeover", run=run, old=old_writer, new=new_writer)
+        self.term_state[run] = {"lease_gen": args["lease_gen"], "atts": atts}
+        new = dict(rec)
+        new["viewers"] = len(atts)
+        new["writer"] = any(a["writer"] for a in atts)
+        for key in ("cols", "rows"):
+            if args.get(key) is not None:
+                new[key] = args[key]
+        if any(new.get(k) != rec.get(k) for k in ("viewers", "writer", "cols", "rows")):
+            await self._save(new, publish=False)
+            self._publish_later(run)  # at most one such item per run per 250 ms (§12.3.2)
+        return {}
+
+    def _publish_later(self, run: str) -> None:
+        if run in self._pending_pub:
+            return
+        self._pending_pub.add(run)
+
+        def fire() -> None:
+            self._pending_pub.discard(run)
+            rec = self.store.records.get(run)
+            if rec is not None:
+                self.publish(rec)
+
+        asyncio.get_running_loop().call_later(0.25, fire)
+
+    def _audit(self, event: str, **fields: Any) -> None:
+        """One line of the security audit (never terminal content)."""
+        from . import securitylog
+
+        securitylog.record(self.host.state_dir, self.host.host_uid, time.time(), event, **fields)
+
+    def counts(self, run: str, person: str) -> tuple[int, int, int]:
+        """Attachments the runner reported: on the run, of the person, on the runner (pending capabilities count
+        toward none, §12.6.2)."""
+        per_run = per_person = total = 0
+        for r, state in self.term_state.items():
+            for a in state["atts"]:
+                total += 1
+                per_run += r == run
+                per_person += (self.attachments.get(a["att"]) or {}).get("person") == person
+        return per_run, per_person, total
+
+    def take_start(self, person: str) -> bool:
+        """The start rate of §0.11: 10 per minute per person, burst 5."""
+        now = time.monotonic()
+        level, at = self._starts.get(person, (5.0, now))
+        level = min(5.0, level + (now - at) * (10 / 60))
+        if level < 1:
+            self._starts[person] = [level, now]
+            return False
+        self._starts[person] = [level - 1, now]
+        return True
+
     def disconnected(self, session: Session) -> None:
         if self.session is not session:
             return
@@ -568,6 +683,7 @@ class RunnerHub:
                 future.set_exception(HostError("outcome.unknown", "the runner disconnected before it answered"))
         self.pending.clear()
         self.attachments.clear()
+        self.term_state.clear()
         LOG.warning("runner disconnected (uid %s)", self.uid)
 
     # -- commands
@@ -673,9 +789,12 @@ class RunnerHub:
         lease_gen: int = 0,
         session: str | None = None,
         start_from: int | None = None,
+        who: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Mint a single-use attach capability (§12.6.2) and register its hash at the runner before answering.
-        Returns ``{att, ticket, nonce, expires_at, socket, runner:{uid, pid, gen}}``; the host keeps only the hash."""
+        Returns ``{att, ticket, nonce, expires_at, socket, runner:{uid, pid, gen}, start, offset, cols, rows,
+        lease_gen}``; the host keeps only the hash. ``who``: what the watcher needs to revalidate the person
+        (``column``, ``uid``, ``grant``, ``grant_id``)."""
         if mode not in ("read", "write"):
             raise HostError("invalid.input", "mode is read or write")
         rec = self.store.records.get(run)
@@ -685,21 +804,89 @@ class RunnerHub:
         ticket = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")  # 43 characters
         nonce = secrets.token_hex(16)
         expires_at = _iso(time.time() + ATTACH_SECONDS)
-        await self.command(
-            "attach.allow",
-            {"att": att, "ticket_hash": _hash(ticket), "workspace_id": rec["workspace_id"], "person": person,
-             "run": run, "session": session, "mode": mode, "take": take, "lease_gen": lease_gen,
-             "runner_gen": self.generation, "from": start_from, "nonce": nonce, "expires_at": expires_at},
-        )  # fmt: skip
-        self.attachments[att] = {"run": run, "person": person, "mode": mode}
+        now = time.monotonic()
+        for old, info in list(self.attachments.items()):  # minted but never presented, long gone at the runner
+            if not info.get("seen") and now - info["at"] > ATTACH_SECONDS + 10:
+                del self.attachments[old]
+        # recorded before the command: an end that races the answer still finds it (the runner remembers a cancel)
+        self.attachments[att] = {"run": run, "person": person, "mode": mode, "workspace_id": rec["workspace_id"],
+                                 "ticket": rec.get("ticket"), "at": now, **(who or {})}  # fmt: skip
+        try:
+            got = await self.command(
+                "attach.allow",
+                {"att": att, "ticket_hash": _hash(ticket), "workspace_id": rec["workspace_id"], "person": person,
+                 "run": run, "session": session, "mode": mode, "take": take, "lease_gen": lease_gen,
+                 "runner_gen": self.generation, "from": start_from, "nonce": nonce, "expires_at": expires_at},
+            )  # fmt: skip
+        except HostError:
+            self.attachments.pop(att, None)
+            raise
+        self._audit("term.attach", run=run, att=att, person=person, mode=mode, take=take)
+        self._watch_attachments()
+
+        def num(key: str, low: int, high: int | None = None) -> int:
+            v = got.get(key)
+            ok = isinstance(v, int) and not isinstance(v, bool) and v >= low and (high is None or v <= high)
+            if not ok:
+                raise HostError("outcome.unknown", f"the runner's answer to attach.allow has no valid {key}")
+            return v
+
         return {
             "att": att, "ticket": ticket, "nonce": nonce, "expires_at": expires_at, "socket": str(self.term_socket),
             "runner": {"uid": self.uid, "pid": self.pid, "gen": self.generation},
+            "start": num("start", 0), "offset": num("offset", 0), "cols": num("cols", 20, 500),
+            "rows": num("rows", 5, 200), "lease_gen": num("lease_gen", 0),
         }  # fmt: skip
 
     async def attach_end(self, att: str, reason: str) -> None:
-        self.attachments.pop(att, None)
+        info = self.attachments.pop(att, None)
+        if info is not None:
+            self._audit("term.end", run=info.get("run"), att=att, person=info.get("person"), reason=reason)
         await self.command("attach.end", {"att": att, "reason": reason})
+
+    # -- the push path: the host ends an attachment the moment its person or ticket no longer qualifies
+    def _watch_attachments(self) -> None:
+        if self._watching is None or self._watching.done():
+            self._watching = asyncio.get_running_loop().create_task(self._watch())
+
+    async def _watch(self) -> None:
+        try:
+            while self.attachments:
+                await asyncio.sleep(WATCH_SECONDS)
+                for att, info in list(self.attachments.items()):
+                    try:
+                        reason = await self._ended_reason(info)
+                        if reason is not None:
+                            await self.attach_end(att, reason)
+                    except HostError:
+                        continue  # runner unavailable: its host_lost already ends everything; the next pass retries
+        except asyncio.CancelledError:
+            pass
+
+    async def _ended_reason(self, info: dict[str, Any]) -> str | None:
+        """Why this attachment must end now (``person.removed``, ``grant.expired``, ``not_visible``), else ``None``."""
+        from types import SimpleNamespace
+
+        service = self.host.services.get(info["workspace_id"])
+        auth = getattr(service, "auth", None)
+        if service is None or auth is None:
+            return "not_visible"
+        if not auth.fresh(service.entry.root):
+            await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
+            auth = getattr(service, "auth", None)
+        if auth is None or auth.stamp is None or not auth.fresh(service.entry.root):
+            return None  # cannot tell yet: the next pass decides
+        pseudo = SimpleNamespace(column=info.get("column", "P"), person=info["person"], uid=info.get("uid", -1),
+                                 workspace_id=info["workspace_id"], grant=info.get("grant"),
+                                 grant_id=info.get("grant_id"))  # fmt: skip
+        reason = self.host.bus.principal_end(pseudo, auth, service.clock())  # type: ignore[arg-type]
+        if reason is not None:
+            return reason
+        if info.get("ticket"):
+            sub = RunSub("", None, info["workspace_id"], "P", info["person"], 0, "", None, None)  # type: ignore[arg-type]
+            if not await asyncio.wrap_future(service.submit(_ticket_visible, service, sub, info["ticket"])):
+                return "not_visible"
+        return None
 
     # -- reads
     def visible(self, rec: dict[str, Any], column: str, person: str) -> bool:
@@ -736,6 +923,8 @@ class RunnerHub:
                 sub.session.send({"t": "evt", "sub": sub.id, "cursor": str(self.store.rev), "items": [], "end": reason})
 
     def end_all(self, reason: str) -> None:
+        if self._watching is not None:
+            self._watching.cancel()
         for sub in list(self.subs.values()):
             self.end_sub(sub, reason)
 

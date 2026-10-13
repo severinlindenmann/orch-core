@@ -11,8 +11,10 @@ event loop (the runner: spawn, stop, ``attach.allow``). The machine switch is re
 
 **Only the run's own person** may attach, stop or see a run: another person's run is ``not_found`` for P (N5: not
 found, also for what the viewer may not see), G and N are refused by the matrix (``op.not_allowed``). The host ends an
-attachment by itself when the person leaves, the grant ends or the run's ticket becomes invisible
-(:meth:`orch.host.runners.RunnerHub._watch`), and on ``attach.cancel``.
+attachment by itself when the person leaves, the grant ends, the run's ticket becomes invisible, or a kill switch is
+pulled (the addon revoked or disabled, ``orch runner disable``, ``orch runner terminals off``: ``runner.disabled``)
+(:meth:`orch.host.runners.RunnerHub._watch`), and on ``attach.cancel``. ``term.attach`` is limited to 30 mints per
+minute per person (burst 10; ``rate.limited``).
 
 This is **harness ``shell`` only**: ``claude-code`` and ``codex`` as person-run harnesses come with H11c (their
 registry); asking for one is ``blocked: harness.not_found``. The working directory is the workspace root (worktrees
@@ -375,6 +377,8 @@ async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
     held = hub.term_state.get(run) or {"lease_gen": 0, "atts": []}
     if mode == "write" and not data["take"] and any(a["writer"] for a in held["atts"]):
         raise HostError("term.writer_busy", "another attachment holds the write lease: take it or attach read-only")
+    if not hub.take_mint(person):
+        raise HostError("rate.limited", "at most 30 terminal attaches per minute", retry_after_ms=2000)
     got = await hub.attach_allow(run, person, mode, take=data["take"], lease_gen=held["lease_gen"],
                                  start_from=data["from"], who=data["who"])  # fmt: skip
     return got

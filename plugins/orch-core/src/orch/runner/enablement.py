@@ -104,8 +104,8 @@ def set_enabled(
 
 def set_terminals(state_dir: Path, workspace_id: str, on: bool, uid: int, *, text: str = "") -> dict[str, Any]:
     """``orch runner terminals on|off``: only for a workspace whose dashboard execution is already on. The time and
-    the text shown are kept like the machine switch's. Turning it off ends nothing by itself (the host checks the
-    switch at every attach and open)."""
+    the text shown are kept like the machine switch's. The host checks the switch at every attach and open, and its
+    watcher ends live attachments within about a second once it is off (``runner.disabled``)."""
     doc = read(state_dir, uid)
     entry = doc["workspaces"].get(workspace_id)
     if not isinstance(entry, dict) or entry.get("enabled") is not True:

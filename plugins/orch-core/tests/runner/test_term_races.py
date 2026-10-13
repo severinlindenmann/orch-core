@@ -119,12 +119,13 @@ def _client(rig: Rig, mode: str = "write", take: bool = True) -> TermClient:
     return t
 
 
-def test_the_client_sends_one_frame_at_a_time_and_a_throttled_chunk_keeps_its_place(rig):
+def test_the_client_sends_one_frame_at_a_time_and_a_throttled_chunk_keeps_its_place(rig, monkeypatch):
+    monkeypatch.setattr(term, "RATE_SECOND", 64 * 1024)  # a reserve of one chunk: the second one is throttled
     t = _client(rig)
     try:
-        data = b"a" * (4 * 64 * 1024) + b"b" * (64 * 1024) + b"tail"  # 4 fit, the 5th is throttled, a short tail
+        data = b"a" * (64 * 1024) + b"b" * (64 * 1024) + b"tail"  # one fits, a throttled full chunk, a short tail
         ids = t.send_input(data)
-        assert ids == [1, 2, 3, 4, 5, 6]
+        assert ids == [1, 2, 3]
         assert t.inflight == 1  # only the first is on the wire
         deadline = time.monotonic() + 10
         throttled = 0

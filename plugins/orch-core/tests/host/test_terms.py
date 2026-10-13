@@ -6,6 +6,8 @@ stopped in teardown. The terminals addon is granted through the workspace's own 
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 import statistics
 import sys
@@ -14,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from orch.host.errors import HostError
 from orch.host.runners import new_run_id
 from orch.runner import enablement
 from orch.runner.termclient import RunnerChanged, TermClient
@@ -373,6 +376,212 @@ def test_host_loss_ends_attachments_and_the_client_reports_unacknowledged_input(
         assert isinstance(t.lost, list)  # whatever was unacknowledged is reported, never replayed
     finally:
         t.close()
+
+
+# -- the push path ends live attachments (PR #443 review, Opus M1 to M3, L4) ----------------------------------------
+
+
+def _writer(w, c, **kw):
+    run = open_shell(c, **kw)["run"]
+    data, t = attach(w, c, run, mode="write", take=True)
+    return run, data, t
+
+
+# -- M1: the kill switches end live attachments ---------------------------------------------------------------------
+
+
+def test_disabling_the_machine_switch_ends_a_live_writer(ready):
+    w = ready
+    c = w.conn()
+    run, data, t = _writer(w, c)
+    try:
+        enablement.set_enabled(Path(w.lab.state), w.wid, False, UID)
+        assert drain_end(t) == "runner.disabled"
+        assert err(c.call("term.attach", {"run": run})) == "runner.disabled"
+    finally:
+        t.close()
+
+
+def test_terminals_off_ends_a_live_writer(ready):
+    w = ready
+    c = w.conn()
+    run, data, t = _writer(w, c)
+    try:
+        enablement.set_terminals(Path(w.lab.state), w.wid, False, UID)
+        assert drain_end(t) == "runner.disabled"
+    finally:
+        t.close()
+
+
+# -- M2: the watcher never dies, fails closed, and is restarted -----------------------------------------------------
+
+
+def test_the_watcher_survives_a_non_host_error(ready):
+    w = ready
+    c = w.conn()
+    uid, key = w.ticket("a restricted one")
+    run, data, t = _writer(w, c, ticket=key)
+    hub = w.h.host.runners
+    real = hub._ended_reason
+    calls = {"n": 0}
+
+    async def boom(info):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient store error")
+        return await real(info)
+
+    hub._ended_reason = boom
+    try:
+        time.sleep(1.5)
+        assert calls["n"] > 1 and not hub._watching.done(), "the watcher died"
+        w.restrict(uid, [w.quinn.ref])
+        assert drain_end(t) == "not_visible"
+    finally:
+        t.close()
+
+
+class _Stale:
+    """An authentication snapshot that can never be made fresh."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+        self.stamp = real.stamp
+
+    def fresh(self, root) -> bool:
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_an_attachment_that_cannot_be_decided_is_ended(ready):
+    w = ready
+    c = w.conn()
+    run, data, t = _writer(w, c)
+    service = w.h.host.services[w.wid]
+    real_auth, real_refresh, real_sync = service.auth, service.refresh, service.sync
+    try:
+        service.refresh = lambda: None
+        service.sync = lambda **kw: None
+        service.auth = _Stale(real_auth)
+        started = time.monotonic()
+        assert drain_end(t) == "host.restarting"
+        assert time.monotonic() - started >= 1.5  # after the undecidable period, not at the first doubt
+    finally:
+        service.refresh, service.sync, service.auth = real_refresh, real_sync, real_auth
+        t.close()
+
+
+def test_a_stopped_watcher_is_restarted_by_the_next_runner_report(ready):
+    w = ready
+    c = w.conn()
+    uid, key = w.ticket("a restricted one")
+    run, data, t = _writer(w, c, ticket=key)
+    hub = w.h.host.runners
+
+    async def stop_watcher():
+        old = hub._watching
+        old.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await old
+        return old
+
+    try:
+        time.sleep(0.5)  # the attach's own runner reports have arrived
+        old = w.h.run(stop_watcher())
+        assert old.done() and hub._watching is old
+        t.resize(100, 30)  # the runner reports runner.term
+        deadline = time.monotonic() + 5
+        while hub._watching is old or hub._watching.done():
+            assert time.monotonic() < deadline, "not restarted"
+            time.sleep(0.05)
+        w.restrict(uid, [w.quinn.ref])
+        assert drain_end(t) == "not_visible"
+    finally:
+        t.close()
+
+
+# -- M3: the runner holds only attachments the host's table holds ---------------------------------------------------
+
+
+def test_the_host_entry_is_removed_only_after_the_runner_confirmed_the_end(ready):
+    w = ready
+    c = w.conn()
+    run, data, t = _writer(w, c)
+    hub = w.h.host.runners
+    real = hub.command
+    held = []
+
+    async def command(cmd, args, **kw):
+        if cmd == "attach.end":
+            held.append(args["att"] in hub.attachments and hub.attachments[args["att"]].get("ending"))
+        return await real(cmd, args, **kw)
+
+    hub.command = command
+    try:
+        w.h.run(hub.attach_end(data["att"], "cancelled"))
+        assert held == ["cancelled"]
+        assert data["att"] not in hub.attachments
+        assert drain_end(t) == "cancelled"
+    finally:
+        del hub.command
+        t.close()
+
+
+def test_an_unconfirmed_end_drops_the_runner_session(ready):
+    w = ready
+    c = w.conn()
+    run, data, t = _writer(w, c)
+    hub = w.h.host.runners
+    real = hub.command
+
+    async def command(cmd, args, **kw):
+        if cmd == "attach.end":
+            raise HostError("outcome.unknown", "no answer")
+        return await real(cmd, args, **kw)
+
+    hub.command = command
+    try:
+        with pytest.raises(HostError):
+            w.h.run(hub.attach_end(data["att"], "cancelled"))
+        assert hub.attachments == {}
+        assert drain_end(t) == "host.restarting"  # the runner lost its host: every attachment ended
+    finally:
+        del hub.command
+        t.close()
+
+
+def test_an_attachment_the_host_does_not_hold_is_ended_at_the_runner(ready):
+    w = ready
+    c = w.conn()
+    run, data, t = _writer(w, c)
+    hub = w.h.host.runners
+
+    async def forget():
+        hub.attachments.pop(data["att"], None)
+
+    try:
+        w.h.run(forget())
+        t.resize(101, 31)  # the next runner.term lists it
+        assert drain_end(t) == "cancelled"
+    finally:
+        t.close()
+
+
+# -- L4: minting is rate limited per person -------------------------------------------------------------------------
+
+
+def test_term_attach_is_rate_limited_per_person(ready):
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    codes = []
+    for _ in range(12):
+        res = c.call("term.attach", {"run": run})
+        codes.append(None if res.get("ok") else res["error"]["code"])
+    assert codes[:10] == [None] * 10
+    assert "rate.limited" in codes[10:]
 
 
 # -- whoami and the flood ------------------------------------------------------------------------------------------

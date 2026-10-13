@@ -92,6 +92,12 @@ RUNNER_CODES = frozenset(
 #: how long an exited run's ring is kept by the runner (:data:`orch.runner.supervise.KEEP_RING_SECONDS`)
 REPLAY_SECONDS = 3600
 WATCH_SECONDS = 0.5
+#: an attachment whose person, grant or ticket cannot be decided for this long is ended (fail closed)
+UNDECIDED_SECONDS = 2.0
+#: how long the host waits for the runner to confirm an ``attach.end``; unanswered, the runner session is dropped
+END_TIMEOUT = 5.0
+#: ``term.attach`` mints per person (§0.11 style): 30 per minute, burst 10
+MINT_RATE, MINT_BURST = 30 / 60, 10.0
 KEEP_SECONDS = 7 * 24 * 3600
 KEEP_ENDED = 1000
 PER_CONNECTION = 8
@@ -393,6 +399,8 @@ class RunnerHub:
         self._watching: asyncio.Task[None] | None = None
         #: starts per person (§0.11: 10 per minute, burst 5): person -> [level, at]
         self._starts: dict[str, list[float]] = {}
+        #: ``term.attach`` mints per person: person -> [level, at]
+        self._mints: dict[str, list[float]] = {}
         self._save_lock = asyncio.Lock()
         self.ignored = 0
 
@@ -609,6 +617,10 @@ class RunnerHub:
             raise HostError("not_found", "no such run on this runner")
         atts = args["atts"]
         listed = {a["att"] for a in atts}
+        for att in listed - self.attachments.keys():  # the runner holds only what the host's table holds
+            asyncio.get_running_loop().create_task(self._end_unknown(att))
+        if self.attachments:
+            self._watch_attachments()  # a watcher that stopped for any reason is started again
         for att, info in list(self.attachments.items()):
             if info["run"] == run and att in listed:
                 info["seen"] = True
@@ -664,14 +676,12 @@ class RunnerHub:
 
     def take_start(self, person: str) -> bool:
         """The start rate of §0.11: 10 per minute per person, burst 5."""
-        now = time.monotonic()
-        level, at = self._starts.get(person, (5.0, now))
-        level = min(5.0, level + (now - at) * (10 / 60))
-        if level < 1:
-            self._starts[person] = [level, now]
-            return False
-        self._starts[person] = [level - 1, now]
-        return True
+        return _take(self._starts, person, 10 / 60, 5.0)
+
+    def take_mint(self, person: str) -> bool:
+        """The ``term.attach`` rate: 30 mints per minute per person, burst 10 (each one is an audit line, a host
+        table entry and a runner capability)."""
+        return _take(self._mints, person, MINT_RATE, MINT_BURST)
 
     def disconnected(self, session: Session) -> None:
         if self.session is not session:
@@ -805,9 +815,7 @@ class RunnerHub:
         nonce = secrets.token_hex(16)
         expires_at = _iso(time.time() + ATTACH_SECONDS)
         now = time.monotonic()
-        for old, info in list(self.attachments.items()):  # minted but never presented, long gone at the runner
-            if not info.get("seen") and now - info["at"] > ATTACH_SECONDS + 10:
-                del self.attachments[old]
+        self._purge_unpresented()
         # recorded before the command: an end that races the answer still finds it (the runner remembers a cancel)
         self.attachments[att] = {"run": run, "person": person, "mode": mode, "workspace_id": rec["workspace_id"],
                                  "ticket": rec.get("ticket"), "at": now, **(who or {})}  # fmt: skip
@@ -839,10 +847,38 @@ class RunnerHub:
         }  # fmt: skip
 
     async def attach_end(self, att: str, reason: str) -> None:
-        info = self.attachments.pop(att, None)
-        if info is not None:
+        """End an attachment at the runner. The host's entry is removed only once the runner confirmed the end
+        (invariant: **the runner holds only attachments the host's table holds**); until then it is marked
+        ``ending`` and the watcher sends the end again on every pass. An end the runner does not confirm drops the
+        runner session: the runner's ``host_lost`` then ends every attachment (fail closed)."""
+        info = self.attachments.get(att)
+        if info is not None and "ending" not in info:
+            info["ending"] = reason
             self._audit("term.end", run=info.get("run"), att=att, person=info.get("person"), reason=reason)
-        await self.command("attach.end", {"att": att, "reason": reason})
+        await self._send_end(att, info["ending"] if info is not None else reason)
+        self.attachments.pop(att, None)
+
+    async def _send_end(self, att: str, reason: str) -> None:
+        session = self.session
+        try:
+            await self.command("attach.end", {"att": att, "reason": reason}, timeout=END_TIMEOUT)
+        except HostError as exc:
+            if session is not None and session is self.session and not session.closed:
+                LOG.warning("the runner did not confirm attach.end (%s): dropping its session", exc.code)
+                self.drop_session(session)
+            raise
+
+    async def _end_unknown(self, att: str) -> None:
+        """An attachment the runner reports and the host does not hold: end it there."""
+        with contextlib.suppress(HostError):
+            await self._send_end(att, "cancelled")
+
+    def drop_session(self, session: Session) -> None:
+        """Close the runner's connection (its ``host_lost`` ends every attachment and refuses capabilities until the
+        next hello); the host forgets its attachments at once."""
+        if session.failure is None:
+            session.failure = frames.FrameError("internal")
+        self.disconnected(session)
 
     # -- the push path: the host ends an attachment the moment its person or ticket no longer qualifies
     def _watch_attachments(self) -> None:
@@ -850,32 +886,76 @@ class RunnerHub:
             self._watching = asyncio.get_running_loop().create_task(self._watch())
 
     async def _watch(self) -> None:
-        try:
+        """Never dies on an item: every exception is logged (its type only) and counts as "cannot decide"; an
+        attachment undecidable for ``UNDECIDED_SECONDS`` is ended (``host.restarting``). Restarted by every mint and
+        every ``runner.term`` while attachments exist."""
+        with contextlib.suppress(asyncio.CancelledError):
             while self.attachments:
                 await asyncio.sleep(WATCH_SECONDS)
+                self._purge_unpresented()
                 for att, info in list(self.attachments.items()):
-                    try:
-                        reason = await self._ended_reason(info)
-                        if reason is not None:
-                            await self.attach_end(att, reason)
-                    except HostError:
-                        continue  # runner unavailable: its host_lost already ends everything; the next pass retries
+                    await self._watch_one(att, info)
+
+    async def _watch_one(self, att: str, info: dict[str, Any]) -> None:
+        try:
+            if "ending" in info:
+                await self.attach_end(att, info["ending"])  # an end the runner has not confirmed yet: again
+                return
+            try:
+                reason = await self._ended_reason(info)
+            except _Undecided:
+                reason = None
+                undecided = True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the watcher must outlive any single failure
+                LOG.warning("term watcher cannot decide on an attachment: %s", type(exc).__name__)
+                reason, undecided = None, True
+            else:
+                undecided = False
+            now = time.monotonic()
+            if undecided:
+                since = info.setdefault("undecided", now)
+                if now - since >= UNDECIDED_SECONDS:
+                    reason = "host.restarting"  # fail closed: nobody could confirm it may continue
+            else:
+                info.pop("undecided", None)
+            if reason is not None:
+                await self.attach_end(att, reason)
         except asyncio.CancelledError:
-            pass
+            raise
+        except HostError:
+            pass  # attach_end already dropped the runner session when the runner did not confirm
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("term watcher: %s", type(exc).__name__)
+
+    def _purge_unpresented(self) -> None:
+        """Forget capabilities minted and never presented (long expired at the runner)."""
+        now = time.monotonic()
+        for old, info in list(self.attachments.items()):
+            if not info.get("seen") and "ending" not in info and now - info["at"] > ATTACH_SECONDS + 10:
+                del self.attachments[old]
 
     async def _ended_reason(self, info: dict[str, Any]) -> str | None:
-        """Why this attachment must end now (``person.removed``, ``grant.expired``, ``not_visible``), else ``None``."""
+        """Why this attachment must end now (``runner.disabled``, ``person.removed``, ``grant.expired``,
+        ``not_visible``), else ``None``; :class:`_Undecided` when that cannot be told yet."""
         from types import SimpleNamespace
+
+        from .terms import missing
 
         service = self.host.services.get(info["workspace_id"])
         auth = getattr(service, "auth", None)
         if service is None or auth is None:
             return "not_visible"
+        # D-P2-31's kill switches end live attachments too: the addon revoked or disabled, the machine switch or
+        # the terminals switch off
+        if await asyncio.wrap_future(service.submit(missing, service, self)) is not None:
+            return "runner.disabled"
         if not auth.fresh(service.entry.root):
             await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
             auth = getattr(service, "auth", None)
         if auth is None or auth.stamp is None or not auth.fresh(service.entry.root):
-            return None  # cannot tell yet: the next pass decides
+            raise _Undecided
         pseudo = SimpleNamespace(column=info.get("column", "P"), person=info["person"], uid=info.get("uid", -1),
                                  workspace_id=info["workspace_id"], grant=info.get("grant"),
                                  grant_id=info.get("grant_id"))  # fmt: skip
@@ -997,6 +1077,22 @@ class RunnerHub:
                     return
         except asyncio.CancelledError:
             pass
+
+
+class _Undecided(Exception):
+    """The watcher cannot tell yet whether an attachment may continue (no fresh authentication snapshot)."""
+
+
+def _take(buckets: dict[str, list[float]], key: str, rate: float, burst: float) -> bool:
+    """A token bucket per key: ``rate`` per second, at most ``burst``; ``True`` when one was taken."""
+    now = time.monotonic()
+    level, at = buckets.get(key, (burst, now))
+    level = min(burst, level + (now - at) * rate)
+    if level < 1:
+        buckets[key] = [level, now]
+        return False
+    buckets[key] = [level - 1, now]
+    return True
 
 
 def _ticket_visible(service: Any, sub: RunSub, key: str) -> bool:

@@ -3574,7 +3574,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `phone_device` count only readers below level 1; a durable `convenience_seen` mark for records pushes. Additive
     only where `required_reader` is 0. No F1 log or certificate change; `CertRequestInner` unchanged; one new label
     `sig_reader_decl`.
-30. **First-use gaps (H7 follow-up):** `orch host register` without `--peer` finds the person's device key in either
+31. **First-use gaps (H7 follow-up):** `orch host register` without `--peer` finds the person's device key in either
     custody (it failed once the key moved to convenience custody); new `orch host disable [--purge-releases]
     [--force]`, the reverse of `enable` (service stopped and unloaded, unit file removed, state dir kept); new
     `orch dashboard [args]` launcher for the dashboard addon. No wire, log or certificate change.

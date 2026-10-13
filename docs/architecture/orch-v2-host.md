@@ -3040,6 +3040,37 @@ existing op changes its version.
     `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
     released; a failure fails that request closed. No new reason, no wire change.
 
+**v1.6 → v1.7 (draft, 12 Oct 2026, revised 13 Oct after the Codex challenge and Opus tie-break, §11A.13).** The host
+bridge client. On the wire it is additive: no op on any socket changes its version, and no new error code is added (an
+oversized relay answer reuses `frame.too_large`). It adds **new internal contracts**, each named here:
+
+19. **Column R, principal class `relay`** (§11A.4): principal `r:<device_id>`, viewer the device's person, built only
+    from a verified sealed request as an immutable `RelayIdentity`. Relay requests use a new relay entry over the same
+    op backends, not the socket dispatcher: `Call.authorize` keeps the relay principal, `columns.resolve_relay` and
+    `_MATRIX["R"]` are new, `resolve` fails closed for an unlisted peer class, and every `column.name` site is audited.
+    The exact device/person association, certificate and member-list scopes, and held evidence for that pair are
+    checked again inside the job. R gets the P reads, `whoami`, `outcome.get`, and device-signed events through a closed
+    event/scope table with a required idem. `decision` waits for its F1 evidence carriage.
+20. **Exactly-once over the relay** (§11A.4): a rid state machine (`admitted` → `answered` → tombstone) with a durable
+    submission journal of the device-signed events (the one stated exception to "no request plaintext persisted"),
+    roll-forward through the outcome store (`relay.submit` in `NO_PARTIAL`, `append_signed` shared with
+    `human.finish`), chunk bytes frozen at the first attempted POST, a start fence on `ts_ms`, and an explicit scope:
+    it holds while the host state is not rolled back.
+21. **State** `<state>/hosts/<ws>/relay/` (link with `max_publication_bytes`, unlink markers, holder, rid store,
+    staging resume, publication history, unpublished cursor, alarms) joins the D-P2-17 custody list; `rids.sqlite` and
+    its sidecars are opened by a checked procedure. Session tokens are never persisted.
+22. **Readers:** `READER_OPS` gains `relay.link` and `relay.pair` (`sign.convenience_readers`). The reservation is
+    written before any network exposure and is permanent: `_relay_paired` also reads `relay/link.json` and
+    `relay/unlinked-*.json`; the history is rechecked after foreign appends (§11A.6).
+23. **Publication** follows the relay's P3-D37 maximum: catch-up checkpoints minted by `Store.mint_catchup` (fresh
+    final snapshot, new numbers above every existing `n`, restore anchors untouched, exact byte counting), relay
+    rollback handled from a publication history, and the host-side permanent `relay.too_large` for an oversized restore
+    (a `host.status` alarm, never a socket error).
+24. **Evidence intake** (§11A.9): `Store.note_forwarded_revocation`, facts derived from the signed objects only,
+    `chain=False`, the ack only after a durable result.
+25. **Signing** (§11A.2): `RelaySigner` with typed methods is the bridge's only WSK path; this is an API rule, not
+    isolation (bridge code execution is WSK compromise). Genesis-pin and restore reviews bind their exact material.
+
 ---
 
 ## 1. Process model
@@ -4009,6 +4040,674 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
 - **In-host or out-of-process: a deliberate P3 choice (L3).** Running the bridge inside the host means parsing relay
   responses in the process that holds the WSK. D-P2-7 kept FastAPI out of that process for the same reason. P3 chooses
   on purpose between the in-host bridge and the reserved out-of-process `bridge` class, and records why.
+
+## 11A. Host bridge client (P3, contract v1.7 draft)
+
+Status: **decided 13 Oct 2026 by orch-52 (see PR #435 comment)**; drafted 12 Oct 2026 and revised 13 Oct 2026 after an
+independent Codex challenge and an Opus tie-break, recorded in 11A.13. Section 11 lists what the host owes the relay; this section is the design of the
+core-side client that pays it: the code that makes a served workspace reachable through orch-relay. It is numbered 11A
+so that the §12 references stay valid. Ground truth for the relay side is orch-relay `develop` @ `772d7b0`
+(`docs/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
+P3-D37 merged in relay PR #62, `7c0406a`). Where the relay and core disagree, the text says so; §11A.12 collects those
+points. "MUST" is normative for the implementation groups below.
+
+### 11A.1 Scope, layout and groups
+
+Package `orch.relay` (`plugins/orch-core/src/orch/relay/`), tests under `plugins/orch-core/tests/relay/`. The relay
+corpus is vendored under `tests/relay/vectors/` (11A.10).
+
+| Module | Contents |
+|---|---|
+| `relay/wire.py` | pure codecs: `auth_bytes`, the ORB2 header (108 bytes) and envelope parse/build, strict JSON bodies (`canon.jcs`, depth ≤ 32), staging page and manifest builders with an exact byte counter, per-route size caps; no I/O, no keys |
+| `relay/sign.py` | `RelaySigner`: the only holder of the WSK `BackendSigner` in `orch.relay`; typed, purpose-specific signing methods (11A.2) |
+| `relay/http.py` | the stdlib transport (11A.7): one `RelayConn` per thread, total deadlines |
+| `relay/session.py` | R1: challenge, login, logout, single-flight re-login, `host/hold`, the first-link sequence |
+| `relay/bridge.py` | R2: the poll thread, the responder thread, the rid store and its state machine (11A.4) |
+| `relay/submit.py` | R2: the durable remote-submission adapter (device-signed events into the store, recovery) |
+| `relay/publish.py` | R3: the publisher thread, staging, catch-up planning, final `PUT checkpoint`, publication history |
+| `relay/unpublished.py` | R4: the P3-D31 consumer (on the aux thread) |
+| `relay/state.py` | the files of 11A.3, written only through the custody helpers |
+| `relay/worker.py` | R5: `RelayWorker`, started and stopped by `WorkspaceService` |
+
+Groups (each one PR into `develop`, first commit its failing vector or test, merged on green CI):
+
+| Group | Consumes | Produces | Review |
+|---|---|---|---|
+| **R1 session and directory client** | `link.json`, `RelaySigner` (11A.2), `relay_auth` vectors, `session_*`/`host_hold`/`card_*` fixtures | a logged-in `Session` (token in memory), the holder generation, the first-link sequence (11A.5), `GET card`/`GET checkpoint`/`GET members` readers that verify what they return | Opus (auth, crypto), orch-52 |
+| **R2 bridge loop** | `Session`, the epoch keys through `BridgeKeys` (11A.2), R6's member list and certificates (read-only), the relay entry (11A.4) | the rid store and submission journal, sealed and signed response chunks, the cursor `after`, `already_done`/`rid_conflict`/`stale_epoch` answers | Opus, orch-52 |
+| **R3 checkpoint publisher** | the outbox (§11, written by the store), `.state/checkpoints/`, the logs, `HostPins`, `Store.mint_catchup` | staged sets, final publications including restores, the publication history, the startup classification and `chain.diverged` handling | Opus, orch-52 |
+| **R4 unpublished consumer** | `Session`, `notices.unpublished`, `Store.note_forwarded_revocation` | verified evidence held by the store, the ack cursor, a `needs` item for the owner | Opus, orch-52 |
+| **R5 integration hook** | R1 to R4 | `RelayWorker` lifecycle in `WorkspaceService`, column R and the relay entry (11A.4), `host.status.relay`, the reader reservation (11A.6) | Opus, orch-52 |
+
+**Not in R1 to R5:** membership publication (§11 H1 to H8, `PUT membership`, `card-keys`, WK custody), pairing
+(proto §8.3/§8.4, cert requests, baselines) and the WXK card rotation. They are group **R6**. R2 reads their state (the
+current epoch, `WK_e`, the accepted member list, device/person association, scopes, burned epochs, the reader
+reservation for a pairing) through `BridgeKeys` and an `R6View` interface, and never writes it.
+
+**R6 is a security dependency of R2, not a fixture.** R6's security contract (what `R6View` returns, how the member list
+and its scopes are verified, burned epochs, pairing-attempt binding, the reader reservation of 11A.6) MUST be designed
+and reviewed before R2 merges (11A.11 Q3). R2 may merge tested against a fixture `R6View`, but `RelayWorker` does not
+start the poll thread for a workspace until R6 is merged and its integration tests against the real relay pass.
+
+Order: R1 → R6 design → (R2 ∥ R3 ∥ R4) → R5 → R6 implementation → first real device.
+
+### 11A.2 Keys and signing
+
+**Rule (an API rule, not isolation).** Bridge code receives no raw private key and no raw `WK_e`, and it signs only
+through purpose-specific methods.
+- The WSK is used only through `relay/sign.RelaySigner`, which wraps `orch.store.store.BackendSigner` over
+  `custody.FileBackend` (`workspace` role). No other `orch.relay` module imports `BackendSigner`, `FileBackend` or
+  `orch.custody` (an import test enforces it). Each method builds its label and bytes itself and validates the context
+  first; there is no `sign(payload)`:
+
+  | Method | Checks before signing | Label |
+  |---|---|---|
+  | `login(challenge)` | origin and workspace id from `link.json`, kind `workspace`, challenge 32 bytes | `sig_relay_auth` |
+  | `response_chunk(header, body)` | ORB2 direction 2, the header's workspace id, an epoch `BridgeKeys` holds, body ≤ 256 KiB | `sig_bridge` |
+  | `card(o)` | workspace id, WSK public key = own, `card_seq` > the last signed one | `sig_card_wsk` |
+  | R6: `member_list`, `wk_grant`, `cert_request`, `wk_commit` | specified by R6 | R6 labels |
+
+  The `HOST_LABELS` role check (`custody/base.py`) stays as a backstop. It does not separate directions by itself:
+  `sig_bridge` and `sig_relay_auth` are in both `HOST_LABELS` and `DEVICE_KEY_LABELS`; the typed methods do.
+- Epoch keys are used only through `BridgeKeys`, which opens a request and seals a response and returns only
+  plaintext or envelopes.
+- Device and person signatures are made only on the person path: the click signer subprocess (`orch.click`) or the
+  terminal signer (`orch sign`, `host/signer.py`). The host holds no device key (D-P2-15).
+
+**What this is not.** It is not key isolation. `BackendSigner` keeps its backend as a Python attribute and
+`FileBackend._load` (`custody/file.py`) returns the private key, so same-process code can reach the WSK; the key file is
+readable by the host UID, so a same-UID agent can read it without any bridge bug (the §7 exposure, unchanged by the
+relay). Consequences: **code execution in the bridge (for example through a parser bug on relay bytes) is a WSK
+compromise**; a separate process under the same UID would be fault separation, not a security boundary. A boundary needs
+a distinct UID and a restricted signing service (the reserved out-of-process `bridge` class, 11A.11 Q1).
+
+| Object | Label | Key | Call | Status |
+|---|---|---|---|---|
+| relay login (`POST /v2/session/login`, kind `workspace`, id = workspace id) | `orch/v2/sig/relay-auth\|` over `auth_bytes(origin, challenge, "workspace", ws)` | WSK | `RelaySigner.login` | signer **exists**; `RelaySigner` and `relay/wire.auth_bytes` **must be added** (byte-equal to orch-relay `proto.auth_bytes`, pinned by the `relay_auth` vectors) |
+| response chunk (ORB2 direction 2) | `orch/v2/sig/bridge\|` over `header \|\| body` | WSK | `RelaySigner.response_chunk` inside `BridgeKeys.seal_response` | signer **exists**; ORB2 seal and open (`K_bridge(e)`, `K_msg`, AES-GCM with the header as AAD) **must be added** (the `crypto.hkdf` and `aes_gcm_*` primitives exist) |
+| device request (direction 1) | `orch/v2/sig/bridge\|` | the device's `dk_sig` (verified, not made) | `crypto.verify` against the certificate's `dk_sig_pub` | primitive **exists**; check order of proto §8.6 **must be added** |
+| workspace checkpoint | `orch/v2/sig/checkpoint\|` | WSK | written by the store (`store/checkpoints.py:sign_object`); R3 publishes stored bytes and never signs | **exists** |
+| catch-up checkpoints (11A.5, P3-D37) | same | WSK | `Store.mint_catchup` → `Checkpoints.sign_prefix`, under the store lock | **must be added** (`write_workspace` cannot: it refuses a prefix behind its baseline and keeps later ticket entries) |
+| card | `orch/v2/sig/card-wsk\|` | WSK | `RelaySigner.card` (first link) | **must be added** |
+| member list, WK grants, cert requests | `sig_member_list`, `sig_wk_grant`, `sig_cert_request` | WSK | R6 builders; `wk_commit` (label `h_wk_commit` exists, no function) | **must be added** (R6) |
+| genesis pin (`PUT genesis`, P3-D18) | `orch/v2/sig/genesis-pin\|` | an owner device's `dk_sig` | person path: `human.prepare` of a new non-event material kind `relay.genesis_pin`, `host/signer.check` and `render` for it, signed by the click or terminal signer | **must be added**; `sig_genesis_pin` is in **no** role list today, so it must be added to `DEVICE_KEY_LABELS` (`custody/base.py`) |
+| restore line (owner policy, P3-D23/D24) | `sig_ws_event` or `sig_ticket_event` (person), `sig_host_event` (host) | owner `dk_sig`, then WSK | person path through `human.*`; the store's transition machinery exists (`store/pins.py` `pending-transitions/`, `transitions/`) | the person op (prepare, review, submit of `restore`) is **not** in `ops/commands`: **must be added** |
+| workspace delegation | `orch/v2/sig/ws-delegation\|` | owner PK | made at `init` (`identity/certs.make_delegation`); R1 and R3 only carry the stored one | **exists** |
+| device certificate, revocation, cert challenge, cert rejection | PK labels | the person's PK | owner clients only; the host never makes them and only carries or verifies them (`identity/certs.check_cert`, `verify_cert`, `verify_revocation`, `check_delegation`) | **exists** (verify side) |
+
+**Review binding of the new person-path kinds.** A custody label alone is not enough.
+- `relay.genesis_pin`: the signer renders, and `host/signer.check` binds, the workspace id, the pinned genesis hash,
+  the WSK public key (fingerprint) and the relay origin. The signer recomputes the signed bytes from those fields; it
+  never signs bytes the host supplies.
+- `restore`: the review shows and binds the source checkpoint (`n`, hash), per log the retained `seq` and the
+  abandoned range, and every carried revocation pair.
+- `check` refuses an unknown material kind, a material kind whose label is not the one being signed (cross-kind
+  substitution: a genesis review used for a restore and the reverse), and any extra field.
+- `review_digest` (`host/signer.py`) is a consistency check of what the signer rendered, not proof of human intent: a
+  compromised phone signs as its person within that person's authority.
+
+**Origin.** `auth_bytes` covers `lp16(origin)`, and the relay compares its configured `ORCH_RELAY_ORIGIN` as a plain
+ASCII string (`directory.py` `login` and `auth_bytes`). The host therefore stores the origin **verbatim** in `link.json`
+(`scheme://host[:port]`, no path, no trailing slash, lower-case scheme and host, ASCII), signs that exact string and
+connects to that same origin. It never derives the origin from a response, a redirect or DNS. `https` is required, except
+for `http://127.0.0.1` and `http://localhost` (tests only). A wrong origin shows up only as 401 `bad_signature` on every
+login. After 3 in a row the worker stops and alarms with `origin_mismatch_suspected`, naming the stored origin.
+Origin binding separates differently configured relays only: instances that share an origin and challenge state are one
+authentication domain (`login` consumes the challenge, `directory.py`).
+
+### 11A.3 State
+
+Everything lives under `<state>/hosts/<ws>/relay/` (0700, host UID; added to the D-P2-17 custody list and to
+`check_workspace_files`). JSON files are written with `host/custody.write_private` (0600, `O_NOFOLLOW`, temp + fsync +
+rename + dir fsync) and read with `read_json`.
+
+**Opening `rids.sqlite`** (SQLite opens by path, so this is a checked open, not an fd-bound one):
+1. `ensure_private_dir` and `check_tree` on `relay/`;
+2. for `rids.sqlite`, `rids.sqlite-wal` and `rids.sqlite-shm`: `os.open(O_RDWR | O_CREAT | O_NOFOLLOW, 0o600)`, then
+   `fstat`: a regular file, owned by the host UID, mode 0600, `nlink == 1`; the fds stay open;
+3. `sqlite3.connect("file:<path>?mode=rw", uri=True)`, `journal_mode=WAL`, `synchronous=FULL`;
+4. `stat` each path again and compare `(st_dev, st_ino)` with the held fds; any mismatch refuses the start (alarm
+   `relay_state_unsafe`). Only the host UID can write `relay/`, so the remaining race is a same-UID one (§7).
+
+| File | Contents | Secret | Crash rule |
+|---|---|---|---|
+| `link.json` | `{v:1, workspace_id, origin, ca_file?, proxy?, max_publication_bytes, state:"linking"\|"linked", linked_at, card_seq}` | no | written (state `linking`) before any network write; it is the reader reservation of 11A.6 |
+| `unlinked-<linked_at>.json` | the former `link.json`, renamed at unlink | no | never deleted: the reservation is permanent (11A.6) |
+| `holder.json` | `{gen, at}`: the last holder generation | no | a restart renews with this `gen`; `fenced` stops the worker (11A.7) |
+| `rids.sqlite` | `rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem)`, `submission(device, rid, log, events)`, `chunk(device, rid, idx, epoch, bytes, state)`, `window(device, high, bitmap)`, `cursor(after)`, `meta(start_ms)` | chunk bytes are ciphertext; `submission.events` are device-signed events (below) | the state machine of 11A.4 |
+| `publish.json` | `{entry, source_hash, target_hash, pages:[{i, digest, count, put}], manifest_put, cap}` | no | staging resumes from it: pages are immutable and an identical PUT is a free 200 |
+| `published.jsonl`, `published/` | append-only: one line `{n, hash, kind, at_ms}` per accepted publication; `published/restore-<n>.json` (the full final body of every accepted restore, kept forever) and `published/last.json` (the last accepted plain checkpoint) | no | appended after a 200 and before the outbox entry is deleted; used to rebuild after a relay rollback (11A.5) |
+| `unpublished.json` | `{cursor, last_full_read_ms}` | no | the cursor is acked only after every item up to it is settled by the store (11A.9) |
+| `alarms.json` | the H8 counters and open alarms (`host.status`) | no | rewritten atomically |
+
+**Read through the host store, never copied.**
+- Per-pair revocation and binding evidence (core #397, P3-D30/D31) is `HostPins` (`store/pins.py`,
+  `revocations.jsonl`, keyed by `(device_id, person_id)`). R4 writes only through `Store.note_forwarded_revocation`
+  (11A.9), on the worker thread under the store lock (`HostPins` has no lock of its own); R2 reads only through the
+  store. `HostPins.pair()` is the key of a stored record, **not** an association lookup: the association of a device
+  with a person is model state, `store.state.device_person(device)` (as `Store._carries` uses it).
+- Accepted checkpoints and the `n` high-water mark (`HostPins.accept_checkpoint`, `high_n`) and the outbox
+  (`hosts/<ws>/outbox/`, §11) belong to the store; R3 reads and deletes outbox entries and mints catch-up entries only
+  through the store's API.
+- Membership and `WK_e` (`hosts/<ws>/membership/`, `keys/`) belong to R6.
+
+**Never persisted:** session tokens (memory only: 15 min, a login is cheap, and no bearer secret lands on disk);
+challenges; response plaintext; request plaintext **except** the one exception below; derived `K_bridge`/`K_msg`;
+`Authorization` headers; raw relay response bodies other than the verified objects R1 keeps (the held checkpoint, the
+accepted member list).
+
+**The exception (durable execution).** For an admitted write, the device-signed events it carries are persisted in
+`submission.events` (0600, host UID) in the admission transaction, so a crash can roll the write forward without the
+envelope. They are exactly what the log will hold and what every member can read once appended. They are deleted when
+the rid is answered (applied or refused). No other request field, no read request and no response plaintext is ever
+written.
+
+**Retention (wall clock, 11A.8).**
+- A rid record lives 24 h after `first_ms`, then becomes a tombstone `{device, rid, req_digest}` for 7 days (the
+  outcome-store rule of §0.7).
+- Chunk bytes are dropped at `first_ms + 960 s`: the relay refuses any re-store after 900 s (410 `expired`).
+- The seq window row of a device is **never** dropped with its rids: a replay whose rid record has expired still meets
+  a used `seq` (`stale_sequence`).
+
+### 11A.4 Host integration: the relay entry, column R, exactly-once
+
+**The hook.** `WorkspaceService.open` (on its worker thread) ends with `relay.worker.start(service)` when `link.json`
+exists. `WorkspaceService.close` calls `stop()` first (11A.7 shutdown). Nothing else in the host knows about the relay.
+- `RelayWorker` owns four daemon threads per workspace, each with its own connection: `orch-relay-poll-<id8>`,
+  `-resp-`, `-pub-` (R3) and `-aux-` (lease renewal and R4, 11A.5). None of them is the workspace's worker thread
+  (`orch-ws-<id8>`).
+- A relay thread reaches the store only through `RelayWorker.submit(job)`, a wrapper of `service.submit` that refuses
+  once `stop()` has begun. The store lock is never held across networking.
+
+**Not the socket dispatcher.** The socket path (`Dispatcher._early`, `_column`, `_work` in `host/workspace.py`) is built
+on a kernel UID: `Call.authorize()` recomputes `call.principal` as `principal(peer.uid, verified)`, and
+`columns.resolve()` has no relay branch. A relay request therefore never enters it. It enters a new
+`WorkspaceService.relay_call(identity, op, args, opts)` that builds a `Call` and runs **the same `OpBackend`** ops; the
+column, the principal and the viewer come from the relay identity alone.
+
+**Host code changes required (R5, reviewed with R2):**
+
+| Where | Change |
+|---|---|
+| `host/relayid.py` (new) | `RelayIdentity`, frozen: `workspace_id, device_id, person_id, cert_digest, epoch, list_hash` (the accepted member list the request was checked against) |
+| `host/peer.py` `Peer.kind` | gains `"relay"`; a relay `Peer` has `uid = -1` (never a kernel UID) and `person = person_id` |
+| `host/columns.py` | `Column.name` gains `"R"` (viewer `"person"`); new `resolve_relay(ok: bool) -> Column` (R, or N with every op refused); `resolve()` raises for `peer == "relay"` and for any peer class it does not list (fail closed); `_MATRIX["R"] = {"read", "device_signed"}`; `OpKind` gains `"device_signed"` (no other column has it) |
+| `host/workspace.py` `Call` | gains `relay: RelayIdentity \| None`; `authorize()` with `relay` set recomputes through `relay_columns()` and keeps `principal = "r:<device_id>"`; it never calls `principal(self.peer.uid, …)` for a relay call |
+| `host/workspace.py` `principal()`, `principal_uid()` | `principal()` raises for a relay peer; `principal_uid("r:…")` stays `None` (the held-request charge loop at open logs and skips, which cannot occur: R has no `human.prepare`) |
+| `host/outcomes.py` | `principal_of()` raises for column R; `NO_PARTIAL` gains `relay.submit`; a reconciler hook `relay_fields` (as `human.outcome_fields`) registered at open |
+| `host/human.py` | the append loop of `finish()` is extracted as `append_signed(service, log, events, extras) -> (landed, error)` and shared by `finish()` and `relay/submit.py` |
+| every `column.name` comparison (24 sites today in `host/{dispatch,sessions,runners,diff,visibility,workspace}.py`) | each site is listed in a table test, `test_column_r_sites`, stating R's answer; a new site fails the test until listed |
+| `WorkspaceService.open` | after `human.recover`, `relay.submit.recover(service)` (below), before anything is served |
+
+**Identity (proto §8.6 steps 1 to 4).** A bridge request has no kernel UID. Its identity comes only from the verified
+request:
+1. the header's `device` is in the current member list the relay accepted (`R6View`), at the request's epoch;
+2. that device's certificate verifies under its person's PK (`identity/certs.verify_cert` at the host's clock), and
+   the person is the list entry's `person_id`;
+3. the person is a member of the F1 workspace state, `store.state.device_person(device) == person` (the exact
+   association, never the device id alone), the device is neither removed nor revoked in the F1 state, and `HostPins`
+   holds no revocation for that exact pair `(device_id, person_id)`;
+4. the `dk_sig` signature over the envelope verifies.
+
+Then `RelayIdentity` is built, `principal = "r:<device_id>"` and `viewer = <person_id>`. Inside the op's own job on the
+worker thread, `relay_columns()` repeats steps 1 to 3 **and** checks the op against both the certificate's scopes and
+the current member list's scopes for that device. A device removed, revoked, expired or reduced in scope between
+receipt and run is refused there. Evidence for another pair with the same device id (a foreign self-certified pair)
+does not refuse this pair and does not authorize anything.
+
+| Class | `auth.grant` | Person mapping | Column | Viewer | Writes |
+|---|---|---|---|---|---|
+| relay (v1.7) | must be absent: an `auth` key in the sealed meta is `req.invalid`; a grant-shaped string anywhere is `grant.secret_in_args`; both before any column is resolved | the verified device's person, checked again per request | **R** | the device's person | only device-signed person events (below) |
+
+| Ops | R |
+|---|---|
+| registry `read` ops except `doctor`, `instructions.*`; `ticket.query`, `ticket.get`, `needs`, `activity.list`, `diff`, `artifact.get`, `workspace.show`, `member.list`, `ticket.text`, `artifact.query`, `commit.list`, `workspace.settings` (P fields), `quick.list` | ✓, filtered for the viewer exactly as P (F6) |
+| `whoami`, `outcome.get` | ✓ (own principal `r:<device>`) |
+| `relay.submit` (internal, kind `device_signed`): F1 person events signed by the requesting device, under a closed event/scope table in `relay/submit.py` (`new_ticket` → `ticket.created`; answers → `question.answered`; …) | ✓: every signature verified against **this** device, `actor` the device's person, the scopes checked first (§8.6 step 11), then `HumanOps._judge` under the store lock. No `human.prepare`/`get`/`pending`/`cancel`. An event type outside the table is `forbidden_scope` |
+| proto §8.7 `decision` (a detached `sig_decision` object, recorded by the host as F1 `evidence`, relay §13) | — until orch-52 defines its F1 carriage (11A.12); then a separate handler, with `decision_id` single-use forever across restores |
+| registry `unattended` ops (`ask`, `log`, `artifact.add`) | — (`op.not_allowed`: an unsigned write attributed to a phone is not P1 parity; no fallback) |
+| registry `agent` ops, `grant.*`, `session.*`, `blob.*`, `sub.*`, `doctor`, `records.*`, `run.*`, `term.*`, `worktree.*`, `agent.*`, job and control ops | — |
+
+The relay request ops map to backend ops through one closed table in `relay/bridge.py`. An op outside it is answered
+with a sealed `forbidden_scope`. Refusals use the §0.6 codes inside the sealed refusal meta.
+
+**Idempotency layers (§0.7).** Every R write requires `idem` in the sealed meta, else a sealed `idem.required`. The
+outcome key is `(ws, "r:<device>", idem)`: two devices using the same idem never collide. Three layers, in order:
+1. **The rid store.** The same `(device, rid)` is admitted once. A finished answer is replayed as the exact stored chunk
+   bytes; a rid not yet answered gets **no** answer (proto §8.6 step 5).
+2. **The seq window.** A new rid with a used `seq` gets `stale_sequence`.
+3. **The outcome store.** A new rid that carries an idem already stored gets the stored result with
+   `duplicate: true`. This covers a device resend after a host-signed "not run" refusal.
+
+**The rid state machine.** Every transition is one SQLite transaction; the store side uses the outcome store.
+
+| State | Entered by | Holds | Recovery after a crash |
+|---|---|---|---|
+| `admitted` | T1: the seq window, the rid record (`req_digest = sha256(envelope)`, epoch, seq, principal, idem) and, for a write, `submission.events`, in one transaction, after steps 1 to 11 of §8.6 | nothing has run | a write: `relay.submit.recover` looks up `(principal, idem)` in the outcome store. None, or `pending` that reconciles to nothing landed: the job runs **from the submission row** (identity rechecked, no new seq admission, no ts window). `pending` with landed events: rolled forward through `relay_fields` (`append_signed`, never judged again). Terminal: the answer is built from it. A read: answered `already_done {status:"unknown"}`; the device re-issues it |
+| `answered` | T2: the answer chunks (ciphertext, epoch, `state = stored`), the rid state, and the deletion of `submission.events`, in one transaction, before any POST | the exact answer bytes | nothing to do; posting resumes |
+| `tombstone` | retention | `{device, rid, req_digest}` | none |
+
+- An admitted rid is **never deleted** and never re-enters admission: deleting it while its `seq` stays consumed would
+  turn the device's identical resend into `stale_sequence`.
+- **Outcomes, not "no partial".** An R write ends `committed`, `refused` (nothing landed; the answer is the refusal) or
+  `failed` naming the landed `seq`s (`append_signed` can refuse after the first event landed, as `human.finish` does).
+  A `failed` write is never run again; its landed events stand. `partial` is not used.
+- **Chunk states.** `stored` → `attempted` (committed before the first byte of the first POST of that chunk) →
+  `posted` (202). **Any attempted POST, a timeout included, freezes the chunk's bytes:** that index is only ever
+  re-POSTed with identical bytes. Recovery replays persisted chunks before anything else and never rebuilds an answer
+  that has a chunk.
+- **Start fence.** `meta.start_ms` is the wall clock at worker start. A request with `ts_ms < start_ms` that has no rid
+  record is answered `already_done {status:"unknown"}` (recorded, not run): the device re-issues it under a new rid
+  (a write keeps its idem). This fences replays of requests the host may have executed before a crash or a state
+  restore (below). Cost: requests in flight across a restart, or from a device clock behind the host's for up to the
+  300 s window, are re-issued once.
+
+**rid_conflict.** The same `(device, rid)` with **other** bytes never runs (the phone re-sealed under the same rid after
+an unsigned `stale_epoch` hint; orch-mobile Q14).
+- Any chunk of the original answer `attempted`: re-POST those exact bytes. The phone keeps the original attempt.
+- The original still `admitted` (not answered): no answer now; the original's answer goes out when it exists.
+- The original `answered`, nothing attempted, and its epoch key still held: POST the original answer (it is now
+  frozen).
+- Otherwise: a sealed `LAST | REFUSAL rid_conflict` under the new copy's epoch at index 0. The original answer is then
+  superseded; a write's result stays retrievable through `outcome.get(idem)`.
+
+**Scope of exactly-once.** It holds against a hostile relay (drop, delay, reorder, replay, re-delivery) while the host's
+state directory (`rids.sqlite`, the outcome store, the logs) is not rolled back. A restore of the whole state directory
+from a backup taken before an execution loses the rid, seq, outcome and log evidence; the hostile relay cannot be the
+witness. What then prevents a re-run is the request's own `ts_ms`: the start fence refuses every request stamped before
+the restarted worker, and the ±300 s window refuses older ones. A host clock set back across a restore defeats both; the
+operator procedure after any state restore is to keep the relay worker stopped (`orch host relay stop`, a control op added with R5) until the host
+clock is past the backup's time + 600 s.
+
+### 11A.5 The bridge loop (R2) and the publisher (R3)
+
+**First link (R1).** `relay.link` runs, in order:
+1. a worker job: `refuse_reader_op(history=True)` and `link.json` with `state:"linking"` under the store lock (the
+   reader reservation, 11A.6), with the operator's `--max-publication-bytes` (required for a non-default relay; the
+   internal instance is 4 MiB, the public one 16 MiB);
+2. the owner's account and delegation on the relay (owner client, P3-D34) and the owner-signed genesis pin (person
+   path, 11A.2);
+3. `PUT card` without a session (the only unfenced workspace write, P3-D4: a workspace login needs a card);
+4. challenge, login, `host/hold`, the first publication (below, with catch-up), then `state:"linked"`.
+A crash leaves `linking`; the next start resumes at the first step not confirmed (every step is idempotent on the relay).
+
+**Session and holder (R1).**
+- Startup: `POST session/challenge`, `POST session/login {challenge, kind:"workspace", id, sig}`, then
+  `POST host/hold {gen: holder.gen or null, take_over:false}`.
+  - On 409 `holder_conflict`: wait out the lease (≤ 40 s, monotonic) and retry.
+  - On `fenced`: stop writing and alarm `fenced`. Takeover is only the explicit `orch host relay takeover --workspace W`
+    (control socket), which sends `take_over:true`.
+- Re-login is single-flight (one lock per worker): before `expires_ms - 120 s`, measured on the monotonic clock from the
+  login, or on a 401 `unauthenticated`/`expired`.
+- A 401 `bad_signature` on login is not retried within 60 s, and it counts toward the origin alarm (11A.2).
+
+**Lease renewal.** The relay renews the lease (40 s) only when a poll **starts** (`bridge.py` `host_poll`), and the poll
+thread is blocked for up to 25 s in each poll or on a full queue, so it cannot also be the heartbeat. The aux thread
+owns renewal: every 15 s (monotonic) without a poll start, it sends `host/hold {gen}`. Its other work (R4 pages) has a
+10 s total deadline per call, so a renewal is never later than 25 s after the last one. A renewal answered `fenced`
+stops the worker.
+
+**Poll and serve.**
+- The poll thread runs `GET host/poll?after=<cursor>&wait=25`. Items go to a queue bounded by 16 items **and** 4 MiB of
+  envelope bytes; while it is full the poll thread does not poll.
+- The responder applies proto §8.6 in its normative order:
+  - silence (drop) for steps 1 to 3;
+  - a sealed, WSK-signed refusal for every check after the tag, entered as `answered` before it is sent.
+  It then admits (T1), dispatches through `relay_call` with at most 2 jobs in flight per workspace, chunks the answer at
+  ≤ 256 KiB (an answer above 4 MiB of plaintext is refused `frame.too_large`), commits T2 and POSTs.
+- `after` advances only to the end of the contiguous prefix of `n`s whose rid record is durable (§11, P3-D10). A
+  `pair` item is handed to R6. Until R6 exists, it is dropped and never acknowledged out of order.
+
+**Epochs (proto §8.5, P3-D22).**
+- A lower epoch whose key `BridgeKeys` still holds, burned keys included: record, then a `stale_epoch` refusal sealed
+  under that old key.
+- A higher or deleted epoch: drop.
+- On rotation (an R6 signal): an open answer ends with `LAST | REFUSAL stale_epoch` at its **next unused** index; a
+  request that ran but has no chunk `attempted` gets `already_done {status:"unknown"}`. An `attempted` chunk is never
+  replaced (the relay checks a byte conflict before the epoch, `bridge.py`): it is re-POSTed as is.
+- **Nothing new is sealed under an old epoch, except refusals:** the `stale_epoch` refusal above and the rotation's
+  closing refusals are the only bytes sealed under an old epoch.
+
+**Chunk POST outcomes.**
+
+| Relay answer | Host action |
+|---|---|
+| 202 | mark `posted` |
+| lost response or timeout | the chunk stays `attempted`; resend the same bytes (the relay coalesces) |
+| 410 `expired` (unknown rid, or past `first_ms + 900 s`) | stop; keep the record (the device's resend is the recovery) |
+| 409 `retry_exhausted` (8 restores of this chunk, P3-D27) | stop for this chunk; terminal |
+| 409 `chunk_conflict` | a host bug or a lost store: alarm, never post other bytes |
+| 409 `stale_epoch` | the epoch moved: the rotation rule above |
+| 403 `not_eligible` / `revoked` | drop the answer; R6 learns the revocation |
+| 429 / 503 | 11A.7 |
+
+The re-store of an expired chunk happens only when the device resends: an identical resend replays the stored bytes,
+and the relay stores them again within its 900 s deadline and its 8-restore cap. The host never re-posts on a timer.
+
+**Publisher (R3).**
+- Order: outbox entries, oldest first. A restore's entry follows its source, and the normal entries behind it wait
+  (P3-D21). After a 200 `accepted` or `ignored` whose `{n, hash}` equals the entry's checkpoint, the publication history
+  is appended (11A.3), then the entry is deleted.
+- One set per entry: `PUT staging/{source_hash}/{target_hash}/pages/{i}` (≤ 4 MiB each), `PUT manifest`, then
+  `PUT checkpoint {checkpoint, source_hash[, restore:{line, cert, authz:{delegation}, log}]}`. `source_hash` is the
+  relay's held H from R1's verified `GET checkpoint`.
+- Pages are built from the logs one page at a time and streamed: at most one page plus the manifest in memory. Every
+  body is `cj` and its digest is recorded before the PUT.
+
+**Maximum publication size (P3-D37).** The relay refuses a set above `ORCH_RELAY_MAX_PUBLICATION_BYTES` (default 16 MiB;
+the internal deployment sets 4 MiB) at a page (413, running total), at the manifest (413, implied size) and at the final
+PUT (400, before any fold). The relay does not announce it, so `link.json` carries `max_publication_bytes` (the cap C).
+- **Exact size.** Before staging, R3 runs the page and manifest builders in counting mode and sums the exact `cj` bytes
+  the relay's staging caps count. The 74-bytes-per-head bound is only a fast pre-check.
+- **Catch-up (ordinary growth, mainly the first link).** When the set from H to the next plain entry exceeds C:
+  1. a worker job `Store.mint_catchup(source=H, cap=0.9·C)` takes the store lock and loads every ticket log;
+  2. it chooses prefixes Q1 ⊂ Q2 ⊂ … ⊂ Qk, each a per-log cut `(seq, head, acc)`, so that every step set (H→Q1,
+     Q1→Q2, …) fits under the cap by the exact counter; **Qk is a fresh snapshot of the current logs**, so it contains
+     every pending plain entry;
+  3. it numbers them `n = m+1 … m+k`, where `m = max(Checkpoints.highest_n(), HostPins.high_n(), every outbox n)`,
+     with one `at = max(clock, last at)` for all, and signs each with `Checkpoints.sign_prefix`;
+  4. in one store transaction it writes Q1 … Qk as outbox entries, deletes the superseded plain entries, and writes Qk
+     as `.state/checkpoints/workspace.json` (the newest checkpoint, so `write_workspace`'s baseline stays valid and the
+     next ordinary checkpoint gets `n > m+k`). Q1 … Q(k-1) exist only in the outbox.
+  The relay's `n` never exceeds the host's numbering (H7). A crash before step 4 changes nothing; after it, the
+  publisher resumes from the outbox. Appends wait on the store lock and produce later entries.
+- **Restore anchors.** A restore entry and its source are anchors: never superseded, renumbered or re-signed (the
+  restore line signs its source). Catch-up runs only over plain entries strictly before the next anchor, and needs free
+  numbers there (`anchor.n − H.n − 1 ≥ k`); without them, or across a restore, it does not synthesize anything: the
+  anchor is unpublishable, `relay.too_large` is alarmed, and the owner's exit is migration (P3-D37).
+- **A restore cannot be split.** A restore set above C is refused before staging with the permanent host code
+  `relay.too_large`, alarmed, and never sent. Where possible this is surfaced at the restore's review, before the owner
+  signs (the reviewed material includes the exact set size against C).
+- **Unexpected `too_large`** for a plain set (the relay's cap is lower than C): never retried unchanged. C becomes
+  `min(C, ½ · the refused set's bytes)` in memory and catch-up replans (planned entries not yet accepted are superseded
+  again), at most 4 times per hour; then alarm `relay_too_large` until the operator corrects `link.json`.
+
+**Startup classification** (§11, F1 §5.10). R3 verifies the held H (the WSK signature `store/checkpoints.verify_object`,
+the pinned genesis and workspace, the genesis pin's owner-device signature) and classifies it:
+
+| H is | Then |
+|---|---|
+| `n` above the host's numbering | H7 host-state loss: alarm, publication stops |
+| contained in the current logs (`find_divergence` reports nothing for H) | an ancestor: publication backlog. If H is older than `published.jsonl`'s last accepted entry, also alarm `relay_rolled_back` (a false success or a relay restore) and republish from the logs |
+| not contained, but explained by an accepted restore: H is in `published.jsonl` or `.state/checkpoints/abandoned/`, `H.n` is below an accepted restore's `n`, and H is that restore's source or an ancestor of it | a relay rolled back across the restore: not divergence. Republish the plain extension from H to the restore's source (if needed), then the restore body from `published/restore-<n>.json`, then the current entries. Missing bytes: alarm `relay_rolled_back`, no degrade |
+| anything else verified but not contained | an unexplained fork: `chain.diverged`, degraded as in D-P2-12 until an owner restore |
+
+- A mismatch with an entry still in the outbox is not divergence; the outbox rules decide it.
+- **A relay refusal is never evidence by itself.** 409 `chain_diverged` from the relay makes R3 re-read and classify H as
+  above. An unverifiable claim raises `relay_misbehaving` and the publisher backs off.
+- **Other refusals.**
+  - `restore_source_mismatch`: re-read H, then the owner signs again.
+  - `restore_missing_revocation`: R4 fetch, then the owner signs again.
+  - `checkpoint_time` (P3-D25): retry with backoff and alarm `clock_skew` after 3. The checkpoint bytes are never
+    re-signed.
+  - `staging_conflict`: drop the set (sets expire after 1 h) and restage under the same `(source, target)` only with
+    identical pages. Otherwise alarm.
+
+### 11A.6 Convenience rule
+
+A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-P2-23).
+- `READER_OPS` (`ops/readers.py`) gains `relay.link` and `relay.pair`. `relay.pair` is the host's `approved` answer to
+  a pairing and any member list that adds a device.
+- **The check.** Under the store lock, in the same critical section that writes `link.json` (link) or the R6 allocation
+  (pair), the host calls `host/convenience.refuse_reader_op(service, op, history=True)`. It refuses with
+  **`sign.convenience_readers`** (exit 3, not retryable, existing code) when `has_convenience_events(store)` finds any
+  `auth:"convenience"` event in the merged history, or the per-workspace convenience flag is on.
+- **The reservation comes first.** `link.json` (state `linking`) and R6's pairing record are written, durably, before
+  any network write that exposes the workspace (card, genesis, publication, a pair answer), and stay through pending
+  operations and crash recovery.
+- **The reservation is permanent.** Readers keep what they read, so unlink never re-opens convenience: `orch host relay
+  unlink` stops the worker and renames `link.json` to `unlinked-<linked_at>.json`. `host/convenience._relay_paired`
+  MUST return true when `relay/link.json` **or** any `relay/unlinked-*.json` exists, as well as `membership/` (today it
+  tests only `membership/`, which nothing creates yet). A relink is allowed and changes nothing for convenience.
+- **Invariant.** While `_relay_paired` is true, `sign.convenience_unavailable relay_paired` blocks every new
+  convenience event at prepare, binding and submit under the store lock. Every path that can create a convenience event
+  (host and direct mode) MUST call it.
+- **Foreign appends.** A start-up scan alone misses history added later. `RelayWorker.start` runs
+  `has_convenience_events` once, and again after every store refresh that loaded events this host did not append (the
+  `_build_journal(audit=True)` path), before R2 serves or R3 publishes anything further. A hit stops the worker and
+  alarms `convenience_events_present`.
+- **No owner exception in v1.7.** The D-P2-34 private-remote mark has no relay analogue: a relay's devices are other
+  readers by definition, and a "private relay" label cannot establish what every retained reader understands
+  (11A.11 Q4).
+
+### 11A.7 Transport
+
+**Stdlib only.**
+- `http.client.HTTPSConnection` with `ssl.create_default_context()` (`CERT_REQUIRED`, hostname check, TLS ≥ 1.2).
+  `http.client` reads no proxy variables from the environment, and the bridge never uses `urllib`.
+- A proxy is used only when `link.json` names one, through `set_tunnel`.
+- **Trust store gap on macOS.** Python's `ssl` uses OpenSSL's default paths, not the Keychain. When `get_ca_certs()`
+  is empty and `link.json` names no `ca_file`, the worker refuses to start and alarms `tls_no_trust_store`. It never
+  falls back to unverified TLS.
+
+**Deadlines and caps.** Every call has a **total** deadline on the monotonic clock, covering connect, headers and body.
+Before each bounded read the socket timeout is set to the time remaining, so a relay that drips bytes ends at the
+deadline, not after a per-read timeout per byte.
+
+| Call | Total deadline | Response body cap |
+|---|---|---|
+| small JSON routes (session, hold, card, checkpoint final, ack) | 30 s (`host/hold` on the aux thread: 10 s) | 16 KiB (card 64 KiB) |
+| long poll | `wait` + 15 s (40 s) | 4 MiB |
+| reads (`GET checkpoint`, `members`, unpublished pages) | 30 s (R4 pages: 10 s) | 4 MiB |
+| one staging page or manifest PUT | 120 s | 16 KiB |
+| one chunk POST | 30 s | 16 KiB |
+
+- Bodies are read in bounded pieces against the cap, whatever `Content-Length` or chunked framing says; over the cap
+  the connection is closed and the call counts as transient.
+- Decoded objects are bounded too: strict JSON with depth ≤ 32, a base64 field is size-checked before decoding, and a
+  request envelope is ≤ 1 MiB.
+- Request bodies are built at or under the relay's caps (11A.5), else refused locally.
+
+**Redirects and connections.**
+- No redirect is followed. Any 3xx is a permanent `relay_redirect` alarm.
+- Per workspace: 4 connections (poll, responder, publisher, aux). Relay connections are outbound and do not count
+  against the host's socket cap of 64. Instead, v1.7 caps relay-linked workspaces at **8 per host** (32 relay threads):
+  `relay.link` is refused with `host.limit` above it (decided by orch-52, 13 Oct 2026).
+- One long poll per generation (the relay cancels the older one).
+- Connections are kept alive and reopened after any error.
+
+**Retries and backoff.**
+
+| Class | Answers | Rule |
+|---|---|---|
+| Transient | connection errors, deadlines, 5xx, 503 `overloaded`, 429 `rate_limited` | exponential backoff with full jitter, 1 s to 5 min. `Retry-After` is a floor (integer seconds, monotonic, capped at 1 h). Transient answers never count toward H8 |
+| 429 `quota_exceeded` | membership | never retried unchanged: P3-D31's ever-device quota is permanent. An R6 alarm |
+| 429 `quota_exceeded` | elsewhere | the relay cannot yet tell permanent caps from transient ones (planned detail `{"quota": …}`). At most 5 retries with backoff, then alarm `relay_quota` and wait 1 h between attempts. Once `quota` names `nodes`, `workspaces` or `evidence`, it is permanent at once |
+| Permanent | 400 `too_large`, 413 | never retried unchanged (11A.5) |
+| Body | every retry | the identical `cj` bytes: exact-body idempotency (§19.6) |
+
+**Shutdown.** `stop()`:
+1. sets `stopping` under the worker lock: `RelayWorker.submit` refuses from then on, so no new store job is queued;
+2. calls `socket.shutdown(SHUT_RDWR)` on every live connection (closing a socket from another thread is not a portable
+   way to end a blocked `recv`), then sets the stop event;
+3. joins each thread with a 5 s bound and logs out best-effort. It does not release the lease: the lease runs out
+   (§11).
+A thread still alive after the join is alarmed `relay_thread_stuck`, and `WorkspaceService.close` waits for it (bounded
+by the longest total deadline, 120 s) before it queues the job that closes the store. Jobs queued before `stopping` run
+before that job (the worker FIFO). A drain (D-P2-4) stops the worker after the socket drain.
+
+**Memory bound per linked workspace** (sum of the named caps, not an estimate): poll page 4 MiB, queue 4 MiB, 2 jobs in
+flight × (4 MiB plaintext + 4 MiB sealed), publisher page 4 MiB + manifest 4 MiB, R4 page 4 MiB: **≤ 36 MiB**, so the 8-workspace cap bounds a host at ≤ 288 MiB. The
+relay's largest set is never held in memory: it is built and sent in pieces.
+
+### 11A.8 Clock
+
+- `RelayWorker` takes the host's injected `clock` (wall, as `WorkspaceService.clock`) and a `mono` (monotonic) seam.
+  Tests use fakes for both.
+- **Wall clock** is used only for:
+  - ORB2 `ts_ms` on responses;
+  - the ±300 s request window (§8.6 step 8) and the start fence (11A.4);
+  - certificate expiry (`verify_cert`) for live requests; evidence certificates are judged at their own `created_ms`
+    (11A.9);
+  - retention deadlines, stored as wall times at admission (`first_ms`). A record goes only when
+    `clock() ≥ first_ms + period`: a clock set back delays deletion; a clock set forward can delete early, which is safe
+    because the seq window is never deleted (11A.3);
+  - the store's checkpoint `at` (`max(clock, last at)`, F1 §5.10) and restore stamping (`max(clock, C.o.at, last at)`,
+    row 145).
+- **Monotonic clock** is used for leases, renewal, re-login, total deadlines, `Retry-After`, backoff and the alarm timers.
+  It is never persisted.
+- **Never trusted from the relay:** time is never taken from a relay response, its `Date` header, `expires_ms`,
+  `until_ms` or a checkpoint the relay serves (F1 C2).
+- The host is the checkpoint writer, not a receiver of advancing offers. The +300 s ceiling (C2) applies to it only
+  through the existing check of a computed restore `at` before append. The relay's `checkpoint_time` refusal is an alarm
+  about the host's clock, never a reason to change `at`.
+
+### 11A.9 Failure and threat model
+
+| Actor | Can | Cannot (what the host verifies) |
+|---|---|---|
+| Hostile or compromised relay | drop, delay, reorder, replay within its window, **withhold** notices and evidence indefinitely, answer false refusal codes, serve an old H or an abandoned-branch H, cancel polls, serve different views to different devices | forge a request (sealed under `WK_e` and signed by `dk_sig`; the §8.6 order); make a request run twice while the host's state is not rolled back (11A.4); make the host degrade (needs a verified H that is neither contained nor explained by an accepted restore); make the host hold evidence it did not verify; obtain a person-label signature through the bridge's API; learn plaintext |
+| Stale or forked relay (a restored backup, a split brain) | serve an older H or another branch | make the host lose data or degrade by itself: an ancestor H is a backlog, a pre-restore H is republished from the publication history (11A.5) |
+| Host state rolled back (a backup restore) together with a consistent relay | everything both agree on | **not detectable by the host**: no independent witness exists in v1.7. Request replays are fenced by `ts_ms` (11A.4); devices that saw later checkpoints detect the rollback on their side (relay §7.6) |
+| Compromised member device | read and act within its person's scopes until revoked; sign within its person's authority | act after the host holds verified evidence of its revocation (checked per request and again inside the job); get anything but its person's view. Before the host learns the revocation (the relay may withhold it), it is a live device |
+| Code execution in the bridge, or a same-UID process | everything the WSK signs | out of scope here: §7 and 11A.2 "What this is not" |
+
+**Unpublished evidence (R4, P3-D31 host MUSTs, relay protocol §19.5).**
+- When to read: from the start after each new holder generation, after `cursor_ahead`, and daily; otherwise when
+  `notices.unpublished` changes. R4 runs on the aux thread, never behind the publisher's staging.
+- Each item is verified on its own, and every fact is **derived from the signed objects**, never from the item's outer
+  fields:
+  - `pk_pub` parses and `person_id == id(pk_pub)`;
+  - the certificate verifies under `pk_pub` with `check_cert`, and with `verify_cert(cert, pk_pub, now_ms =
+    cert.o.created_ms)` (valid at its own creation; an expired or old certificate is still evidence);
+  - the revocation verifies under `pk_pub` against that certificate (`verify_revocation`);
+  - `device_id = cert.o.device_id = revocation.o.device_id`, `person = id(pk_pub) = revocation.o.person_id`,
+    `reason = revocation.o.reason`; the item's outer `device_id`, `person_id` and `reason` MUST equal them;
+  - `provenance.digest == "sha256:" + sha256(cj(revocation))`.
+- Holding is one worker job, `Store.note_forwarded_revocation(item) -> "held" | "pending" | "dropped"` (**must be
+  added**), under the store lock:
+  - `store.state.device_person(device) == person` (associated): `HostPins.note_revocation(device, reason, revocation,
+    at, cert, pk_pub, chain=False, is_member=state.is_member, owner=<pinned owner>)`; result `held` and a `needs` item;
+  - not associated, but the person is a current or past member: held the same way as pending forwarded evidence (it
+    refuses only that exact pair and is carried by no restore, as `Store._carries` already decides); result `pending`,
+    no `needs` item;
+  - otherwise, or when `note_revocation` returns `False` (its caps dropped it): `dropped`, logged with the pair.
+- The ack of a page is posted only after every item up to its cursor has a result. `held` and `pending` mean
+  `note_revocation` returned `True` and its write is durable; a `dropped` item is never reported as retained.
+- **Effects.** Held evidence refuses that exact pair at once on the bridge (11A.4 step 3), and for a current member R6
+  raises the rotation gate. The host **never** appends `device.revoked` or a restore by itself. It raises a `needs`
+  item for the owners ("publish this revocation"), and publication follows only F1 §5.3, through the person path.
+- A failed item is logged with its pair and the reason, and skipped. Unverified data never changes host state.
+
+**Log redaction.**
+- Never logged: the token, the `Authorization` header, a challenge, a signature, an envelope, plaintext, key material,
+  a page's heads, or an exception message that embeds any of them (exceptions from parsing are logged by class and
+  route only).
+- Logged: route, status, error code, `n`, `rid` (public), `device_id`, sizes and timings. URLs are logged as path
+  templates.
+- A test (the host's existing "no key byte in any log" pattern) asserts this for every R group.
+
+### 11A.10 Tests and conformance
+
+**Vendoring.**
+- `tests/relay/vectors/` holds `vectors_v2.json`, `http_fixtures/` with its `MANIFEST.json`, and a `SOURCE` file naming
+  the relay commit, the MANIFEST revision and the sha256 of `vectors_v2.json` (the vector file has no revision field).
+- The drift guard copies the relay's `test_http_fixtures_manifest.py` checks: the shape; every file hashed, nothing
+  added or removed; the aggregate equals the sha256 of the sorted `name\thash\n` lines; the canonical rendering.
+- **Disagreement:** core already vendors `tests/vectors/vectors_v2.json` at relay `04da0e7`, older than the relay's
+  current file. R1's first commit moves the crypto tests' loader to the one copy under `tests/relay/vectors/`. The
+  deferred sections in `tests/crypto/test_vectors.py` (`bridge`, `relay_auth`, `p3`, `checkpoints`, `unpublished`, …)
+  move to "consumed" as each group lands.
+- Updating the corpus is one PR that bumps `SOURCE` and changes nothing else.
+
+**Harness.** Two layers.
+1. **Recorded-fixture mock (every PR, T0/T1).** An in-process `http.server` on loopback replays the vendored HTTP
+   fixtures (request matched byte-exactly) and adds scripted faults.
+2. **The real relay (required CI job, T2).** `uv run orch-relay serve --host 127.0.0.1 --port 0` from the pinned
+   orch-relay commit of `SOURCE`, with `ORCH_RELAY_ORIGIN=http://127.0.0.1:<port>` and a temp `ORCH_RELAY_DATA`, run
+   **twice**: `ORCH_RELAY_MAX_PUBLICATION_BYTES=4194304` (the internal deployment) and the 16 MiB default. It runs
+   link, a device request built by the relay's reference client (`ref/`), a publication with catch-up, a restore, and
+   unpublished evidence. Mocks alone would only test core against core's reading of the relay.
+
+**Release gate: adversarial tests** (required for the group named; mock plus a proxy in front of the real relay).
+
+| Group | Tests |
+|---|---|
+| R1 | wrong origin, kind and workspace in `auth_bytes`; a consumed challenge replayed; first link interrupted after each step (11A.5); `fenced` mid-publication; a second host instance taking over |
+| R2 identity | two devices with the same idem; `outcome.get` across devices; a grant injected in the sealed meta; every forbidden op through every alias of the closed table; device removal, scope reduction (certificate and member list), certificate expiry and held evidence while the request is queued; a foreign self-certified pair for an existing device id; every `column.name` site (`test_column_r_sites`) |
+| R2 exactly-once | a crash at every boundary of the state machine (before T1, after T1, after the outcome `begin`, between two appends, after T2, after `attempted`, after the 202); a write that fails with landed events; rid-only loss versus whole-state rollback with a replay (start fence); resend after tombstone expiry; exact replay after the relay's chunk expiry; a POST accepted with its response lost; a rotation after an uncertain POST; `rid_conflict` in each of its four cases |
+| R3 | first-link histories above 4 MiB and above 16 MiB; a set crossing the cap only through framing; a crash after each intermediate publication; appends during catch-up; a queued restore (anchor); the cap lowered mid-publication; an oversized restore refused before signing where possible; a stale H before and after an authorized restore; a replayed abandoned-branch checkpoint; a false publication success followed by an empty relay; a relay returning `chain_diverged` falsely |
+| R4 | outer `device_id`, `person_id` and `reason` substituted; an expired historical certificate; a cap rejection (`note_revocation` returns `False`); an item for an unassociated pair; concurrent evidence and appends; a crash before the ack; a forged item |
+| R5 | pair versus convenience submit racing; a crash before and after the reservation; unlink and relink; a convenience event imported after the worker started; idle and busy shutdown; a stuck thread at close |
+| transport | slow-drip headers and body; deep JSON; queue saturation; disk full and WAL recovery; a symlinked `rids.sqlite` or sidecar; 429 with and without `Retry-After`; a 3xx; an oversize body; a TLS failure; secrets in exception messages |
+| signer | genesis and restore reviews swapped; an unknown material kind; a prohibited label; a permitted label in the wrong context (`RelaySigner` checks) |
+
+**Review per group.** CI green (only `SUCCESS` counts), an Opus security review of every R group (auth, crypto,
+exactly-once, evidence, the principal class), an Opus delta pass on every security fix commit before merge, and
+orch-52's review of every group.
+
+### 11A.11 Open questions (for orch-52 / orch-d6), with recommended answers
+
+The recommendations came from the tie-break (11A.13). **orch-52 decided on 13 Oct 2026: all seven are accepted as
+recommended** (PR #435 comment). Decided additions: relay-linked workspaces are capped at 8 per host (11A.4, 11A.7);
+`decision` evidence is not served in v1.7 (orch-52 owns its F1 carriage as a later amendment); the start fence and the
+600 s hold-off after a state restore are accepted; the convenience history rule stays strict in v1.7 (a workspace that
+used click-to-sign cannot get a phone in v1.7; lifting it needs a reader-version handshake and an owner decision; flagged
+to orch-d6, see §0.8.6 item 1); every R group gets an Opus review plus an orch-52 review. Q5 is to be confirmed with
+orch-mobile before R2 merges.
+
+1. **L3 (§11): the bridge in the host process?** *Recommended: accept for v1.7, with the exposure stated:* bridge code
+   execution is WSK compromise (11A.2 "What this is not"), mitigated only by the pure, size-capped codecs and the
+   adversarial parser tests. A real boundary is the reserved out-of-process `bridge` class under a distinct UID with a
+   signing service; same-UID separation would be fault isolation only.
+2. **Catch-up checkpoints?** *Recommended: yes*, as specified in 11A.5 (exact counting, fresh final snapshot, dense new
+   numbers above every existing `n`, atomic outbox replacement, anchors untouched). F1 §5.10 does not forbid
+   intermediate prefixes; `Store.mint_catchup` and `Checkpoints.sign_prefix` must be added.
+3. **R6 before R2 merges?** *Recommended: yes,* at least R6's complete security contract (11A.1), and no real device
+   before R6 is implemented and integration-tested.
+4. **Convenience exception?** *Recommended: no* in v1.7 (11A.6).
+5. **`rid_conflict` placement?** *Recommended:* once any POST of the original was attempted (a timeout included), its
+   exact bytes are replayed; silence while the original has no answer; the unattempted cases as in 11A.4. To confirm
+   with orch-mobile (Q14(2)).
+6. **Column R writes: device-signed events only?** *Recommended: yes,* through a closed event/scope table, no fallback to
+   unattended writes; `decision` evidence is a separate handler once F1 carries it (11A.12).
+7. **Real-relay CI job?** *Recommended: required,* pinned to `SOURCE`, at both 4 MiB and 16 MiB.
+
+### 11A.12 Gaps: what the relay expects that core cannot yet satisfy
+
+- **Column R in the host:** the changes listed in 11A.4 (`RelayIdentity`, `Peer.kind "relay"`, `resolve_relay`,
+  `Call.authorize`, `principal_of`, `NO_PARTIAL`, `append_signed`, the column-site audit).
+- **Durable remote submission:** `relay/submit.py`, the `submission` journal, `relay_fields`, `relay.submit.recover`.
+- **Forwarded evidence intake:** `Store.note_forwarded_revocation` (no store API takes forwarded evidence today; the two
+  `note_revocation` callers in `store/store.py` take chain evidence from the log).
+- **Catch-up:** `Store.mint_catchup`, `Checkpoints.sign_prefix`.
+- **Decision evidence:** relay §13 has the host record a verified detached `decision` verbatim as F1 `evidence`, with
+  every `decision_id` single-use forever across restores. Core's F1 model has no evidence carriage and nothing reads
+  `sig_decision`. orch-52 decides the F1 shape; until then `decision` is not served.
+- **First link:** the owner's relay account and delegation (P3-D34) come from an owner client; core has no client for
+  them.
+- **PoP on `PUT /v2/devices` and a device self-signature:** not required by the relay today (G1 recommendation). It
+  needs an F1 certificate format change, planned with orch-52.
+- **Genesis pin:** no person-path material kind exists, and `sig_genesis_pin` is in no custody role list.
+- **Restore person op:** the store's transition machinery exists, but there is no `restore` op through `human.*`.
+- **`dk_kx` private key:** it is discarded at `init` (`ops/workspace_init.py`), so the owner's existing device cannot
+  receive sealed `WK` grants or card keys. R6 needs a new device key or a re-certification.
+- **WK custody, `wk_commit`, member-list, grant, card and cert-request builders:** none exist (labels only).
+- **ORB2 codec and `auth_bytes`:** not in core.
+- **Outbox:** reserved in §11, not built. The store's append transaction needs the hook.
+- **`_relay_paired`:** probes `membership/` only (11A.6).
+- **Relay 429 detail:** permanent and transient quotas are indistinguishable until the relay adds `quota`.
+- **P3-D37:** merged (relay `7c0406a`), but `ORCH_RELAY_MAX_PUBLICATION_BYTES` is not advertised to clients, so the cap
+  is host configuration (`link.json`).
+- **Independent rollback witness:** none in v1.7 (11A.9).
+- **Q14:** the number exists only in the orch-mobile/orch-29 numbering (`docs/gaps.md`), not in the relay docs.
+
+### 11A.13 Challenge and tie-break record
+
+The first draft (Opus) was challenged by Codex (a static review, not a demonstrated exploit); an Opus tie-break checked
+each finding against the code (core `d020aea6`, relay `772d7b0`).
+
+| # | Codex finding | Verdict | Evidence and change |
+|---|---|---|---|
+| 1 | Column R does not survive the dispatcher | **Confirmed** | `Call.authorize` resets `principal(peer.uid, …)`; `columns.resolve` and `Column.name` have no R. "Same dispatcher" withdrawn: a relay entry over the same backends, with the code changes of 11A.4. Codex's "unknown peer with a valid mapping becomes P" does not hold today (`_column` maps only `person` peers); `resolve` fails closed anyway |
+| 2 | Unpublished evidence: outer-field substitution | **Confirmed** | `note_revocation` takes `device`/`reason` from the caller, defaults `chain=True`, returns a bool, has no lock; `pair()` is a record key. Facts now derived from signed objects, certificate judged at its `created_ms`, `chain=False`, new `Store.note_forwarded_revocation`, association from model state |
+| 3 | Exactly-once overstated | **Confirmed** | `human.finish` ends `failed` with landed events; roll-forward needs a durable record. New state machine, submission journal (stated exception to the plaintext rule), no rid deletion, attempted-POST freeze, scope stated. Partly disagreed: backup replay is fenced by `ts_ms` (start fence), no witness needed for that case |
+| 4 | Catch-up conflicts with high-water and outbox | **Confirmed** | `write_workspace` refuses a prefix behind its baseline; the relay refuses a lower-`n` incompatible target (`checkpoints.py`). Algorithm specified (11A.5), exact counting, `max_publication_bytes` in `link.json`, 4 MiB internal |
+| 5 | Rollback/fork claims too strong | **Confirmed** | `find_divergence` would flag an abandoned-branch H after a restore. Classification table, publication history, limits stated |
+| 6 | Key wrappers are policy | **Confirmed** | `BackendSigner._backend`, `FileBackend._load`. Claim qualified; `RelaySigner` typed methods; review binding for genesis and restore |
+| 7 | Transport does not bound time, memory, shutdown | **Confirmed** | the relay renews the lease only at a poll start; `check_tree` returns a path and closes its fds. Total deadlines, aux renewal, byte bounds (≤ 36 MiB), checked SQLite open, shutdown sequence |
+| 8 | Convenience lifecycle | **Partly** | the draft already checked in the critical section that writes `link.json`; ordering against network writes, unlink and post-start imports were missing and are added. No owner override |
+| 9 | Contract gaps | **Confirmed** | changelog no longer claims "additive" without listing the internal contracts; decision evidence, R6 dependency, first card before login (`directory.py` `login` needs a card), old-epoch refusal exception, `max_publication_bytes`, retention clock all added |
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

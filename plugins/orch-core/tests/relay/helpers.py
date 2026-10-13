@@ -35,6 +35,22 @@ class Key:
         return crypto.sign(self.priv, payload)
 
 
+class MemLedger:
+    """An in-memory :class:`orch.relay.state.SignLedger` (the file-backed one is tested in test_state)."""
+
+    def __init__(self):
+        self.entries: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def get(self, kind, key):
+        return self.entries.get((kind, key))
+
+    def keys(self, kind):
+        return sorted(k for (kd, k) in self.entries if kd == kind)
+
+    def record(self, kind, key, digest, sig):
+        self.entries[(kind, key)] = (digest, sig)
+
+
 class Holder:
     def __init__(self, gen: int | None = None):
         self.gen, self.saved = gen, []
@@ -106,7 +122,8 @@ def make_card(origin: str, *, card_seq: int = 1) -> dict[str, Any]:
     """The vector card of workspace A, re-pointed at ``origin`` and signed by its WSK."""
     base = corpus.S2["card"]["card"]
     o = {**base["o"], "relay_url": origin, "card_seq": card_seq}
-    sig = sign.RelaySigner(Key(), sign.LinkContext(workspace_id=WS, origin=origin)).card(o)
+    link = sign.LinkContext(workspace_id=WS, origin=origin)
+    sig = sign.RelaySigner(Key(), link, ledger=MemLedger()).card(o)
     return {"delegation": base["delegation"], "o": o, "sig": sig, "sealed": base["sealed"]}
 
 

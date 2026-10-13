@@ -40,9 +40,15 @@ class Epochs:
         return epoch in self.held
 
 
-def signer(key=None, *, last_card_seq=0, epochs=None, origin=ORIGIN, ws=WS):
+def signer(key=None, *, last_card_seq=0, epochs=None, origin=ORIGIN, ws=WS, ledger=None):
+    from .helpers import MemLedger
+
     return sign.RelaySigner(
-        key or Key(), sign.LinkContext(workspace_id=ws, origin=origin), epochs=epochs, last_card_seq=last_card_seq
+        key or Key(),
+        sign.LinkContext(workspace_id=ws, origin=origin),
+        epochs=epochs,
+        last_card_seq=last_card_seq,
+        ledger=ledger if ledger is not None else MemLedger(),
     )
 
 
@@ -204,8 +210,8 @@ def test_card_seq_must_rise_above_the_last_accepted():
 def test_card_seq_never_signs_two_different_cards_at_one_seq():
     s = signer()
     o = dict(CARD["o"])
-    s.card(o)
-    s.card(dict(o))  # the identical card again (a resend after a lost answer) is fine
+    first = s.card(o)
+    assert s.card(dict(o)) == first  # the identical card again returns the recorded signature, no re-sign
     with pytest.raises(sign.SignerRefused):
         s.card({**o, "issued_ms": o["issued_ms"] + 1})
     with pytest.raises(sign.SignerRefused):
@@ -224,3 +230,78 @@ def test_repr_and_errors_hold_no_secret():
         s.login(b"\x13" * 31)
     assert "13131313" not in str(e.value)
     assert "priv" not in repr(s).lower()
+
+
+# --- the durable last-signed ledger (review M2) ----------------------------------------------------------------------
+
+
+class FailingLedger:
+    """Records nothing and fails: the signature must never be returned."""
+
+    def __init__(self, inner, *, write_then_fail=False):
+        self.inner, self.write_then_fail = inner, write_then_fail
+
+    def get(self, kind, key):
+        return self.inner.get(kind, key)
+
+    def keys(self, kind):
+        return self.inner.keys(kind)
+
+    def record(self, kind, key, digest, sig):
+        if self.write_then_fail:
+            self.inner.record(kind, key, digest, sig)
+        raise OSError("disk full")
+
+
+def test_card_without_a_ledger_is_refused():
+    k = Key()
+    s = sign.RelaySigner(k, sign.LinkContext(workspace_id=WS, origin=ORIGIN))
+    with pytest.raises(sign.SignerRefused):
+        s.card(dict(CARD["o"]))
+    assert k.signed == []
+
+
+def test_ledger_failure_means_no_signature_is_returned():
+    from .helpers import MemLedger
+
+    with pytest.raises(OSError):
+        signer(ledger=FailingLedger(MemLedger())).card(dict(CARD["o"]))
+
+
+def test_crash_after_the_ledger_write_then_restart():
+    """Crash between the durable record and the return: after a restart the same card gets the recorded signature, a
+    different card at that card_seq is refused."""
+    from .helpers import MemLedger
+
+    mem = MemLedger()
+    with pytest.raises(OSError):
+        signer(ledger=FailingLedger(mem, write_then_fail=True)).card(dict(CARD["o"]))
+    recorded = mem.get("card", "1")
+    assert recorded is not None
+    k = Key()
+    restarted = signer(k, ledger=mem)
+    assert restarted.card(dict(CARD["o"])) == recorded[1] and k.signed == []
+    with pytest.raises(sign.SignerRefused):
+        restarted.card({**CARD["o"], "issued_ms": 5})
+    assert k.signed == []
+
+
+def test_no_card_below_the_highest_signed_seq():
+    from .helpers import MemLedger
+
+    mem = MemLedger()
+    mem.record("card", "3", "00" * 32, "sig")
+    with pytest.raises(sign.SignerRefused):
+        signer(ledger=mem).card(dict(CARD["o"]))  # card_seq 1 < 3
+
+
+def test_file_ledger_survives_a_restart(tmp_path):
+    from orch.relay.state import FileSignLedger, StateDir
+
+    led = FileSignLedger(StateDir(tmp_path / "relay"))
+    sig = signer(ledger=led).card(dict(CARD["o"]))
+    again = FileSignLedger(StateDir(tmp_path / "relay"))
+    k = Key()
+    assert signer(k, ledger=again).card(dict(CARD["o"])) == sig and k.signed == []
+    with pytest.raises(sign.SignerRefused):
+        signer(ledger=again).card({**CARD["o"], "issued_ms": 9})

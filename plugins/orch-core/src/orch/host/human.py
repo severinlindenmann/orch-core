@@ -628,6 +628,9 @@ class HumanOps:
         if state == "bound":
             if record["signer"] != signer:
                 raise HostError("human.request_state", "the request is bound to another device")
+            # H11d (Codex #439): the copy binding and the ticket's current branch on every signer-bearing get,
+            # independent of the tree-check throttle below
+            check_bindings(call, record)
             fresh = call.service.clock() - float(record.get("trees_checked") or 0) < RECHECK_SECONDS
             if _binds_commits(record["prepared"]) and not fresh:  # N3: tree.check re-run at binding gets
                 record = recheck_trees(call, record)
@@ -644,6 +647,7 @@ class HumanOps:
             operate=_operate([e["type"] for e in events]),
         )
         if _binds_commits(record["prepared"]):  # N3: a tree dirtied since prepare is refused here, nothing bound
+            check_bindings(call, record)
             record = recheck_trees(call, record)
         for ev in record["prepared"]["events"]:  # the one change binding makes: null -> the signer's device and auth
             ev["actor"]["device"] = signer["device"]
@@ -893,7 +897,6 @@ def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
     service = call.service
     git = service.caps_for(call.principal).git
     store = service.store
-    repos = store.state.workspace.repos
     fresh = []
     covered: set[str] = set()
     for c in prepared.get("checks") or []:
@@ -924,6 +927,35 @@ def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
             "observe.unavailable", f"{missing[0]}: the working tree of a bound repository was not checked"[:300]
         )
     return {**record, "trees_checked": service.clock(), "prepared": {**prepared, "checks": fresh}}
+
+
+def check_bindings(call: Call, record: dict[str, Any]) -> None:
+    """H11d (D-P2-32, Codex #439): on every signer-bearing ``human.get`` of a request that binds commits, whether or
+    not the tree check is due: each linked repo with a branch must still resolve to the working copy the request was
+    prepared against (:func:`bound_copy`: generation, registration, pin, the ``.git`` file), and the ticket's
+    **current** ``links.branches`` (loaded fresh) must still be the branch the request binds for that repo. A relink
+    after prepare, a removal or a recreation is ``observe.unavailable``; nothing is bound or returned."""
+    prepared = record["prepared"]
+    if not _binds_commits(prepared):
+        return
+    service = call.service
+    git = service.caps_for(call.principal).git
+    store = service.store
+    view = store.ticket(prepared["log"])
+    if view is None:
+        raise HostError("observe.unavailable", "the ticket cannot be read now; nothing was bound")
+    links = view.fields["links"]
+    signed = {e["repo"]: e for ev in prepared["events"] for e in ev.get("source_sha") or []}
+    names = {c["repo"] for c in prepared.get("checks") or []} | {n for n in links["repos"] if links["branches"].get(n)}
+    for name in sorted(names):
+        path = bound_copy(git, store, prepared["log"], name, record.get("copies"))
+        branch = links["branches"].get(name) if name in links["repos"] else None
+        entry = signed.get(git.identity(path, name))
+        if not branch or entry is None or entry.get("ref") != f"refs/heads/{branch}":
+            raise HostError(
+                "observe.unavailable",
+                f"{name}: the ticket's branch changed since the request was prepared; prepare it again",
+            )
 
 
 def _binds_commits(prepared: dict[str, Any]) -> bool:

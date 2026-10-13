@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import errno
-import json
 import os
 import subprocess
 import sys
@@ -30,14 +29,17 @@ pytestmark = [
 LINKS = 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}'
 CODE_POLICY = {"approvers": ["maintainer", "owner"], "count": 1, "not": ["assignees"], "applies": "all",
                "independent": True}  # fmt: skip
-ADDON = {"name": "worktrees", "version": "1.0.0", "package_sha256": "sha256:" + "0" * 64, "capabilities": [], "fields": {},
+ADDON = {"name": "worktrees", "version": "1.0.0", "package_sha256": "sha256:" + "0" * 64, "capabilities": [],
+         "fields": {},
          "sections": [], "artifact_kinds": []}  # fmt: skip
 
 
 def gitc(path: Path, *a: str) -> str:
     env = {"PATH": os.environ["PATH"], "HOME": str(path), "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t",
            "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}  # fmt: skip
-    return subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True, text=True, env=env).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(path), *a], check=True, capture_output=True, text=True, env=env
+    ).stdout.strip()
 
 
 @pytest.fixture
@@ -89,7 +91,8 @@ def w(tmp_path, monkeypatch):
     rstate.mkdir(mode=0o700)
     enablement.set_enabled(Path(lab.state), served.wid, True, UID, terminals=False, text="t")
     runner = Runner(SimpleNamespace(lab=lab, h=served.h), rstate)
-    ns = SimpleNamespace(served=served, human=Human(served, hws.owner), repo=repo, key=key, other=other, nob=nob, hws=hws,
+    ns = SimpleNamespace(served=served, human=Human(served, hws.owner), repo=repo, key=key, other=other, nob=nob,
+                        hws=hws,
                         c=served.client(), runner=runner, tmp=base)  # fmt: skip
     try:
         yield ns
@@ -311,3 +314,34 @@ def test_a_relinked_branch_is_observe_unavailable_never_the_old_or_declared_copy
     assert w.human.agent("set", {"ref": w.key, "pairs": ['links={"repos":["proj"],"branches":{"proj":"feat/y"}}']})
     assert err(w.human.prepare_res(*decision(w))) == "observe.unavailable"
     assert listing(w, check=True)[0]["state"] == "stale_branch"
+
+
+def test_a_bound_request_rechecks_the_copy_binding_inside_the_tree_check_window(w):
+    """Codex #439: the 5 s tree-check throttle never skips the copy binding: remove and recreate right after binding
+    and the next signer-bearing get is observe.unavailable."""
+    ok(create(w))
+    name, args = decision(w)
+    prepared = w.human.prepare(name, args, handoff=True)
+    rid = prepared["request"]["id"]
+    ok(w.human.c.req("human.get", {"request_id": rid, "signer": w.human.signer}))  # bound, trees just checked
+    ok(remove(w))
+    ok(create(w))  # well inside RECHECK_SECONDS
+    res = w.human.c.req("human.get", {"request_id": rid, "signer": w.human.signer})
+    assert err(res) == "observe.unavailable" and "registration changed" in res["error"]["message"]
+
+
+@pytest.mark.parametrize("bound_first", [False, True])
+def test_a_relink_after_prepare_is_observe_unavailable_at_binding(w, bound_first):
+    """Codex #439: binding compares with the ticket's current links.branches, loaded fresh, not the prepared ref;
+    the worktree itself is unchanged (generation and pin still match)."""
+    ok(create(w))
+    name, args = decision(w)
+    prepared = w.human.prepare(name, args, handoff=True)
+    rid = prepared["request"]["id"]
+    if bound_first:
+        ok(w.human.c.req("human.get", {"request_id": rid, "signer": w.human.signer}))
+    gitc(w.repo, "branch", "feat/y")
+    w.human.agent("show", {"ref": w.key, "full": True})
+    assert w.human.agent("set", {"ref": w.key, "pairs": ['links={"repos":["proj"],"branches":{"proj":"feat/y"}}']})
+    res = w.human.c.req("human.get", {"request_id": rid, "signer": w.human.signer})
+    assert err(res) == "observe.unavailable" and "branch changed" in res["error"]["message"]

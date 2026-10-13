@@ -519,6 +519,9 @@ class TermListener:
             if item is None or info is None:
                 _end(conn, "ticket_invalid")
                 return
+            if item.mode == "write" and info.get("state") != "running":
+                _end(conn, "ticket_invalid")  # a finished run takes no input, whatever the capability says
+                return
             new = Attachment(item.att, item.run, item.person, item.mode, conn, epoch=item.epoch)
             with self.lock:
                 if not self.accepting or item.epoch != self.epoch:

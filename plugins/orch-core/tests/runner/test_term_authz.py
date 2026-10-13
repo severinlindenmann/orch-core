@@ -222,3 +222,25 @@ def test_action_runs_under_the_check_lock(rig):
     att.revoked = True
     assert rig.listener._authorized(att, gen, lambda: ran.append(3)) is False
     assert ran == [1]
+
+
+def test_a_capability_of_an_earlier_epoch_never_registers(rig):
+    from orch.runner.term import TicketError
+
+    rig.listener.host_ready(2)
+    with pytest.raises(TicketError):
+        rig.allow("old", mode="write", take=True, epoch=1)  # arrived on the connection that ended
+    rig.allow("new", mode="read", epoch=2)
+
+
+def test_a_capability_for_a_write_to_a_finished_run_is_refused_at_redeem(rig):
+    from tests.runner.termhelp import Client
+
+    ticket, nonce = rig.allow("att20", mode="write", take=True)
+    rig.sup.exit_run(0)  # the run finished between the host's check and the redeem
+    c = Client(rig.listener.path)
+    rig.clients.append(c)
+    assert c.recv()["t"] == "hello"
+    c.send({"t": "attach", "ticket": ticket, "nonce": nonce})
+    assert c.drain() == [{"t": "end", "reason": "ticket_invalid"}]
+    assert rig.listener.leases.get(RUN, (None, 0))[0] is None

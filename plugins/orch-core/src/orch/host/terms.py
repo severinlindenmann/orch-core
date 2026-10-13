@@ -348,6 +348,11 @@ async def _stop(hub: RunnerHub, data: dict[str, Any]) -> dict[str, Any]:
 
 async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, Any]:
     run, person, mode = data["run"], data["person"], data["mode"]
+    from orch.runner import enablement
+
+    state_now = enablement.state_of(hub.host.state_dir, call.service.workspace_id, hub.host.host_uid)
+    if not state_now["enabled"] or not state_now["terminals"]:  # the switch is read again at use
+        raise HostError("runner.disabled", "terminals are not available here: machine missing")
     rec = hub.store.records.get(run)
     if rec is None or rec.get("person") != person:
         raise HostError("not_found", "no such run")
@@ -358,6 +363,8 @@ async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
         pass
     else:
         raise HostError("term.not_attachable", f"the run is {state}: nothing can be attached to it")
+    if rec.get("workspace_id") != call.service.workspace_id:
+        raise HostError("not_found", "no such run")
     if not hub.connected or rec.get("runner_uid") != hub.uid or rec.get("gen") != hub.generation:
         raise HostError("runner.unavailable", "the run's runner is not connected", retry_after_ms=1000)
     per_run, per_person, total = hub.counts(run, person)

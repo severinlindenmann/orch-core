@@ -11,6 +11,14 @@ child in its own process group with a 30 s limit that kills the group (only that
 variable of the runner reaches it. Filters (``.gitattributes`` only selects a driver; its command comes from the
 person's global or system config, e.g. LFS) still run, as the person, exactly as when an agent runs git (§12.7).
 
+**Confinement (H11d).** The worktree path must be exactly ``<repo>.worktrees/<WS8>-<KEY>`` (strict name regex, no ``..``,
+no NUL). The parent of the repo and ``<repo>.worktrees`` are opened from ``/`` one component at a time with
+``O_NOFOLLOW|O_DIRECTORY`` (a symlink anywhere is ``launch.cwd_changed``), the target is looked at with ``lstat`` through
+that fd (a symlink or file is refused, never removed), git's cwd is that verified directory after its device and inode
+were compared with the held fd, and the same check repeats after git returns. Residual: between the last check and git's
+own ``chdir``/``mkdir`` a writer of the repo's parent directory could still swap names; that writer is the person's own
+account, and the post-check detects the swap.
+
 **The repository.** The declared repo's working copy is opened component-wise with ``O_NOFOLLOW`` and compared with the
 host's pin (device and inode) before git starts; a mismatch is ``launch.cwd_changed``. git runs with ``-C`` set to
 that path; the worktree path, the branch and the base come from the host (host-chosen path, a checked branch name, a
@@ -23,6 +31,7 @@ import contextlib
 import os
 import re
 import signal
+import stat
 import subprocess
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -33,6 +42,8 @@ __all__ = ["GIT_SECONDS", "git_argv", "git_env", "run_git"]
 
 GIT_SECONDS = 30.0
 _SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+#: the host-chosen directory name: ``<WS8>-<KEY>`` (8 hex of the workspace id, a ticket key); nothing else is accepted
+_WT_NAME = re.compile(r"^[0-9a-f]{8}-[A-Z][A-Z0-9]{0,15}-[0-9]{1,6}$")
 _BRANCH = re.compile(r"^[A-Za-z0-9._/][A-Za-z0-9._/@+-]{0,199}$")
 NEUTRAL = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never"]
 
@@ -62,8 +73,9 @@ def _clean_abs(path: str) -> str:
     return path
 
 
-def git_argv(args: Mapping[str, Any], repo: str) -> list[str]:
-    """The git argv of one command (validated: defence in depth; the host computed every value)."""
+def git_argv(args: Mapping[str, Any], repo: str, *, present: bool | None = None) -> list[str]:
+    """The git argv of one command (validated: defence in depth; the host computed every value). ``present`` is
+    whether the remove target exists, as :func:`_confine` saw it through directory fds (default: ``lexists``)."""
     op = args.get("op")
     path = _clean_abs(_str(args, "path"))
     base = ["git", *NEUTRAL, "-C", repo, "worktree"]
@@ -78,7 +90,7 @@ def git_argv(args: Mapping[str, Any], repo: str) -> list[str]:
             raise SpawnError("invalid.input", "git: base must be a commit id")
         return [*base, "add", "-b", branch, "--", path, start]
     if op == "worktree.remove":
-        if not os.path.lexists(path):
+        if not (os.path.lexists(path) if present is None else present):
             return [*base, "prune"]  # the directory is gone: only git's own record of it is left
         return [*base, "remove", *(["--force"] if args.get("force") is True else []), "--", path]
     raise SpawnError("invalid.input", "git: unknown op")
@@ -98,6 +110,97 @@ def _check_repo(pin: Any) -> str:
         raise SpawnError("launch.cwd_changed", "git: the repository is not the pinned one") from None
     d.close()
     return path
+
+
+def _moved(what: str) -> SpawnError:
+    return SpawnError("launch.cwd_changed", f"git: {what}")
+
+
+class _Confined:
+    """The verified ``<repo>.worktrees`` directory: an open fd (walked from ``/`` with ``O_NOFOLLOW``, every component
+    a real directory), its identity, and whether the target exists. ``recheck()`` repeats the walk and compares."""
+
+    def __init__(self, repo: str, path: str) -> None:
+        self.repo, self.path = repo, path
+        self.parent, self.base = os.path.dirname(repo), os.path.basename(repo) + ".worktrees"
+        prefix = f"{repo}.worktrees/"
+        name = path[len(prefix):] if path.startswith(prefix) else ""
+        if not _WT_NAME.fullmatch(name) or ".." in name:
+            raise SpawnError("invalid.input", "git: the worktree path is not <repo>.worktrees/<name>")
+        self.name = name
+        self.dir_path = f"{repo}.worktrees"
+        self.fd = -1
+        self.ident: tuple[int, int] = (0, 0)
+        self.present = False
+
+    def open(self, create: bool) -> None:
+        from orch.gitread.errors import Unavailable
+        from orch.gitread.fs import open_walk
+
+        try:
+            parent, _st = open_walk(self.parent)  # every component O_NOFOLLOW|O_DIRECTORY, from "/"
+        except (Unavailable, OSError):
+            raise _moved("a component of the repository's parent path is a symlink or not a directory") from None
+        try:
+            kind = parent.kind(self.base)
+            if kind is None and create:
+                try:
+                    os.mkdir(self.base, 0o700, dir_fd=parent.fd)
+                except FileExistsError:
+                    pass
+                except OSError:
+                    raise _moved(f"{self.base} cannot be created") from None
+                kind = parent.kind(self.base)
+            if kind is None and not create:
+                self.fd, self.present = -1, False
+                return
+            if kind != "dir":
+                raise _moved(f"{self.base} is a symlink or not a directory")
+            try:
+                wt = parent.sub(self.base)
+            except Unavailable:
+                raise _moved(f"{self.base} cannot be opened without following a symlink") from None
+        finally:
+            parent.close()
+        self.fd = wt.fd
+        wt.fd = -1  # the fd now belongs to this object
+        st = os.fstat(self.fd)
+        self.ident = (st.st_dev, st.st_ino)
+        try:
+            tst = os.stat(self.name, dir_fd=self.fd, follow_symlinks=False)
+        except FileNotFoundError:
+            self.present = False
+        else:
+            if not stat.S_ISDIR(tst.st_mode):  # a symlink (or file) as the target: never followed, never removed
+                raise _moved("the worktree target is a symlink or not a directory")
+            self.present = True
+
+    def check_cwd(self) -> None:
+        """The path git will use as cwd resolves to the directory this object verified (device and inode)."""
+        try:
+            st = os.stat(self.dir_path, follow_symlinks=False)
+        except OSError:
+            raise _moved("the worktrees directory vanished") from None
+        if stat.S_ISLNK(st.st_mode) or (st.st_dev, st.st_ino) != self.ident:
+            raise _moved("the worktrees directory was replaced")
+
+    def after(self, op: str) -> None:
+        """After git: the chain is still the verified one and the target is a real directory (or gone, on remove)."""
+        self.check_cwd()
+        try:
+            tst = os.stat(self.name, dir_fd=self.fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if op == "worktree.add":
+                raise _moved("the worktree is not where it was created") from None
+            return
+        if stat.S_ISLNK(tst.st_mode):
+            raise _moved("the worktree target became a symlink")
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(self.fd)
+            self.fd = -1
 
 
 def _classify(op: str, stderr: str) -> str:
@@ -122,7 +225,27 @@ def run_git(
     stderr goes only to ``log``, the runner's own log, never to the host)."""
     op = str(args.get("op"))
     repo = _check_repo(args.get("repo_pin"))
-    argv = git_argv(args, repo)
+    if op not in ("worktree.add", "worktree.remove"):
+        raise SpawnError("invalid.input", "git: unknown op")
+    conf = _Confined(repo, _clean_abs(_str(args, "path")))
+    try:
+        conf.open(create=op == "worktree.add")
+        if op == "worktree.add" and conf.present and os.listdir(conf.fd):
+            raise SpawnError("worktree.exists", "git: the worktree path is not empty")
+        argv = git_argv(args, repo, present=conf.present)
+        if conf.fd >= 0:
+            conf.check_cwd()
+        out = _spawn(argv, own, timeout, log, op, cwd=conf.dir_path if conf.fd >= 0 else os.path.dirname(repo))
+        if conf.fd >= 0:
+            conf.after(op)
+        return out
+    finally:
+        conf.close()
+
+
+def _spawn(
+    argv: list[str], own: Mapping[str, str], timeout: float, log: Callable[[str], None] | None, op: str, *, cwd: str
+) -> dict[str, Any]:
     try:
         proc = subprocess.Popen(  # noqa: S603 - fixed argv, values checked above
             argv,
@@ -130,7 +253,7 @@ def run_git(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=git_env(own),
-            cwd="/",
+            cwd=cwd,  # the verified directory (the caller compared its device and inode with the fd it holds)
             start_new_session=True,  # its own process group: the timeout kills exactly that group
             close_fds=True,
         )

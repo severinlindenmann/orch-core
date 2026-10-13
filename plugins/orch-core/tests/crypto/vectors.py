@@ -1,4 +1,8 @@
-"""Loader for the suite-2 section of the protocol vectors (``tests/vectors/vectors_v2.json``)."""
+"""Loader for the suite-2 section of the protocol vectors: the one vendored relay corpus, ``tests/relay/vectors/``
+(contract 11A.10; relay commit, MANIFEST revision and file hash in ``tests/relay/vectors/SOURCE``).
+
+The older copy ``tests/vectors/vectors_v2.json`` (relay ``04da0e7``) stays only because ``tests/test_skeleton.py``,
+``tests/canon/test_jcs.py``, ``tests/canon/test_f1_vectors.py`` and ``scripts/sync-vectors.sh`` still read it."""
 
 from __future__ import annotations
 
@@ -9,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from orch.crypto import P256_N
 
-PATH = Path(__file__).resolve().parents[1] / "vectors" / "vectors_v2.json"
+PATH = Path(__file__).resolve().parents[1] / "relay" / "vectors" / "vectors_v2.json"
 ALL = json.loads(PATH.read_text())
 S2 = ALL["suites"]["2"]
 KEYS = S2["keys"]

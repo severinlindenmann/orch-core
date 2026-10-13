@@ -3043,6 +3043,11 @@ existing op changes its version.
     signature. A claim that never completed is refused as `record_unavailable` (`already_signed` for another
     `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
     released; a failure fails that request closed. No new reason, no wire change.
+21. **Worktrees (H11d, addon #308, D-P2-32, §12.7; additive, cap `worktree/1`):** ops `worktree.list`, `worktree.create`,
+    `worktree.remove`; effective-column kind `pg_write` (P and G, never N); catalog codes `worktree.none`, `worktree.exists`,
+    `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned`,
+    `worktree.git_failed`, `unsupported.platform`; runner command `git`; `git-pins.json` gains `worktrees` (registrations with
+    generations). *(Numbered after the last entry on develop when written; it may need renumbering at merge.)*
 
 **v1.6 → v1.7 (draft, 12 Oct 2026, revised 13 Oct after the Codex challenge and Opus tie-break, §11A.13).** The host
 bridge client. On the wire it is additive: no op on any socket changes its version, and no new error code is added (an
@@ -5291,6 +5296,36 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
 - **Filters:** `.gitattributes` only selects drivers; their commands come from the person's global or system config
   (LFS, for example) and run as the runner's UID, which is the person in tier A, as when an agent runs git.
 - Done or closed tickets keep their worktrees; the Worktrees page offers removal.
+
+#### As built in H11d (worktrees)
+
+Where the code differs from or adds to §12.7, the code is this:
+
+- **Registrations** live in `<state>/hosts/<ws>/git-pins.json` under `worktrees.<ticket uid>.<repo>` as
+  `{gen, reg}`; `reg` is `{path, branch, pins | null, created_at, created_by, idem}` (`pins: null` is an `unpinned`
+  registration). Create and remove each bump `gen` (compare-and-swap). `Git.ticket_copy` returns the registered worktree or
+  the declared copy and **never** falls back from a registration; prepared requests carry `copies` (the binding: repo,
+  ticket, generation, registered, pin), checked at prepare, at every `human.get` binding and at the D58 precommit
+  (`human.bound_copy`), always with the ticket's **current** branch against `HEAD`.
+- **Re-pointed `.git` file.** Reads use the pins, not the `.git` file, so `bound_copy` and `worktree.list {check}` also call
+  `HostGitReader.verify_worktree`, which pins the path again from the commondir's root and compares worktree, gitdir and
+  commondir (device and inode): a re-pointed file, a swapped or moved directory is `observe.unavailable` (`moved` in the list).
+- **Runner `git`** (`orch.runner.wtgit`): hooks, fsmonitor and network off, built-from-scratch environment, 30 s, own process
+  group. **Confinement:** the path must be exactly `<repo>.worktrees/<WS8>-<KEY>` (strict regex); the parent of the repo and
+  `<repo>.worktrees` are opened from `/` with `O_NOFOLLOW|O_DIRECTORY` per component, the target is `lstat`ed through that fd,
+  a symlink anywhere is `launch.cwd_changed` and nothing behind it is touched or removed; git's cwd is the verified directory
+  after its device and inode were compared with the held fd, and the check repeats after git returns. Residual race: a writer
+  of the repo's parent directory can swap names between the last check and git's own `chdir` or `mkdir`; the post-check
+  detects the swap, it cannot undo git's write. That writer is the person's own account.
+- **Gate:** the addon view is `addons[name]["enabled"]` (a frozen mapping), `runner.disabled` names the first missing piece
+  (addon, then machine). The claim of a G caller is rechecked under the per-repo lock right before the runner runs git.
+- **Direct mode** (`orch worktree list|create|remove`, POSIX; `orch.worktree_cli`): the same rules without a host. The
+  ownership lock is held shared for the whole command; a served workspace is `host.required`; `ORCH_GRANT` is
+  `op.not_allowed`; Windows is `unsupported.platform`. Git runs through the same confined `run_git`; the new worktree is
+  pinned in process (`pin_repo`) and registered in the same pin file, which direct-mode D58 (`orch verdict`, `approve code`)
+  reads. `remove` refuses a dirty tree without `--force` (the person is at the terminal); the branch is never deleted.
+- **Not built:** `worktree.in_use` is only as good as the runner's run records (a run started outside the host is not
+  seen); there is no addon check in direct mode.
 
 ### 12.8 Records commit and push (#308) [SC]
 

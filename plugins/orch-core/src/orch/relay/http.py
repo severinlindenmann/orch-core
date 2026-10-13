@@ -127,10 +127,12 @@ class RelayConn:
             if m is None or int(m.group("port")) > 65_535:
                 raise TransportError("request", "proxy")
             self.proxy = (m.group("host"), int(m.group("port")))
+            if self.scheme != "https":  # the login and the bearer token would cross the proxy in cleartext
+                raise TransportError("request", "proxy")
         self._ctx = tls_context(ca_file, factory=context_factory) if self.scheme == "https" else None
         self._mono = mono
         self._conn: http.client.HTTPConnection | None = None
-        self._fd: int | None = None
+        self._watch: socket.socket | None = None  # our own dup of the connection's socket, for the watchdog
         self._fd_lock = threading.Lock()
         self._call_lock = threading.Lock()
 
@@ -140,34 +142,42 @@ class RelayConn:
     # -- sockets ------------------------------------------------------------------------------------------------
 
     def _socket(self, address, timeout, source_address=None):  # http.client's _create_connection hook
+        """Create the connection's socket and keep a **dup** of it for :meth:`shutdown`. The dup is our own descriptor,
+        closed only by :meth:`close`, so a late watchdog never acts on a freed (and perhaps reused) fd number;
+        ``shutdown`` on the dup ends the TCP connection itself, TLS handshake included."""
         sock = socket.create_connection(address, timeout, source_address)
+        try:
+            watch = sock.dup()
+        except OSError:
+            sock.close()
+            raise
         with self._fd_lock:
-            self._fd = sock.fileno()
+            old, self._watch = self._watch, watch
+        if old is not None:
+            old.close()
         return sock
 
     def shutdown(self) -> None:
-        """End any blocked read or write on this connection (safe from another thread)."""
+        """End any blocked read or write on this connection (safe from another thread, never raises)."""
         with self._fd_lock:
-            fd = self._fd
-            if fd is None:
+            w = self._watch
+            if w is None:
                 return
-            s = socket.socket(fileno=fd)
             try:
-                s.shutdown(socket.SHUT_RDWR)
+                w.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-            finally:
-                s.detach()
 
     def close(self) -> None:
         with self._fd_lock:
-            self._fd = None
+            w, self._watch = self._watch, None
             conn, self._conn = self._conn, None
-        if conn is not None:
-            try:
-                conn.close()
-            except OSError:
-                pass
+        for x in (conn, w):
+            if x is not None:
+                try:
+                    x.close()
+                except OSError:
+                    pass
 
     def _open(self, timeout: float) -> http.client.HTTPConnection:
         host, port = self.proxy or (self.host, self.port)
@@ -179,7 +189,7 @@ class RelayConn:
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
         if self.proxy is not None:
             conn.set_tunnel(self.host, self.port)
-        conn._create_connection = self._socket  # type: ignore[attr-defined]  # record the fd for the watchdog
+        conn._create_connection = self._socket  # type: ignore[attr-defined]  # keep a dup for the watchdog
         return conn
 
     # -- one call -----------------------------------------------------------------------------------------------

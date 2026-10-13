@@ -298,6 +298,14 @@ class HolderStore(Protocol):
         """This state directory's instance id."""
         ...
 
+    def binding_problem(self) -> str | None:
+        """``None`` if the instance record is bound to this very directory; else the cause (copied or restored)."""
+        ...
+
+    def regenerate(self) -> str:
+        """A new instance id bound to this directory (the operator path only)."""
+        ...
+
     def load(self) -> HolderRecord | None: ...
 
     def save(self, rec: HolderRecord) -> None:
@@ -310,31 +318,58 @@ def new_instance_id() -> str:
     return secrets.token_hex(16)
 
 
+def _instance_record(state: StateDir, iid: str) -> bytes:
+    dev, ino = state.identity()
+    return json.dumps({"instance_id": iid, "dev": dev, "ino": ino}, sort_keys=True).encode()
+
+
 def regenerate_instance_id(state: StateDir) -> str:
-    """Give a state directory a new instance id. **A restore procedure MUST call this** on a state directory restored
-    from a backup or copied, so the copy never claims the original's holdership (takeover condition (b))."""
+    """Give a state directory a new instance id and bind it to this directory's ``(dev, ino)`` (atomic write). Only the
+    operator path calls this: ``orch host relay takeover`` and the restore procedure, which **MUST** call it on a
+    directory restored from a backup or copied, so the copy never claims the original's holdership."""
     iid = new_instance_id()
-    state.write_json(FileHolderStore.INSTANCE, {"instance_id": iid})
+    state.write(FileHolderStore.INSTANCE, _instance_record(state, iid))
     return iid
 
 
 class FileHolderStore:
-    """``holder.json`` and ``instance.json`` in the relay state directory. The instance id is created with the state
-    (claimed once with ``os.link``) and changed only by :func:`regenerate_instance_id`."""
+    """``holder.json`` and ``instance.json`` in the relay state directory. ``instance.json`` is ``{instance_id, dev,
+    ino}``: the id, created with the state (claimed once with ``os.link``), bound to the locked directory's identity.
+    A copy (``cp -r``, rsync) carries the id verbatim but not the inode, and a restore through a backup tool recreates
+    the directory: both show as a binding problem. A restart or a rename within one filesystem keeps ``(dev, ino)``.
+    A move across filesystems, or a tool that recreates the directory, needs the operator path
+    (:func:`regenerate_instance_id`)."""
 
     FILE = "holder.json"
     INSTANCE = "instance.json"
 
     def __init__(self, state: StateDir) -> None:
         self._s = state
-        state.claim(self.INSTANCE, json.dumps({"instance_id": new_instance_id()}).encode())
+        state.claim(self.INSTANCE, _instance_record(state, new_instance_id()))
+
+    def _instance(self) -> dict[str, Any]:
+        obj = self._s.read_json(self.INSTANCE)
+        if (
+            type(obj) is not dict
+            or type(obj.get("instance_id")) is not str
+            or not _INSTANCE.fullmatch(obj["instance_id"])
+            or type(obj.get("dev")) is not int
+            or type(obj.get("ino")) is not int
+        ):
+            raise StateError("instance.json shape")
+        return obj
 
     def instance_id(self) -> str:
-        obj = self._s.read_json(self.INSTANCE)
-        iid = obj.get("instance_id") if type(obj) is dict else None
-        if type(iid) is not str or not _INSTANCE.fullmatch(iid):
-            raise StateError("instance.json shape")
-        return iid
+        return self._instance()["instance_id"]
+
+    def binding_problem(self) -> str | None:
+        obj = self._instance()
+        if (obj["dev"], obj["ino"]) != self._s.identity():
+            return "this state directory was copied or restored (its instance record names another directory)"
+        return None
+
+    def regenerate(self) -> str:
+        return regenerate_instance_id(self._s)
 
     def load(self) -> HolderRecord | None:
         obj = self._s.read_json(self.FILE)

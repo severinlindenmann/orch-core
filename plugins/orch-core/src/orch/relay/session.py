@@ -307,36 +307,40 @@ class Session:
         While running, a renewal answered ``fenced`` stops the worker (alarm ``fenced``). At start, the restart rule
         decided by orch-52 (13 Oct 2026) applies, fail closed, never stealing a live lease:
 
-        1. ``pending`` in ``holder.json`` (a takeover probe was in flight when we stopped): alarm
-           ``relay_takeover_refused`` ("possibly our own interrupted takeover") and stay stopped, no probe.
-        2. Renew with the stored ``gen`` first (a renewal is not a probe); success: run.
-        3. Only if fenced (or no ``gen`` is stored): (a) ``holder.json`` says this state directory was the last holder;
-           (b) its instance id is this state directory's (a restored copy had its id regenerated). Either failing:
-           alarm and stop, no probe.
-        4. Write ``pending = gen + 1`` durably, then probe ``{gen: null, take_over: false}``; ``holder_conflict``
-           (a live lease) is waited out, never stolen.
-        5. The granted ``gen`` must be exactly ``stored + 1`` (each new hold is +1 on the relay's row): then persist it
+        Before any network call (order changed 13 Oct 2026, review R1 approved by orch-52):
+
+        1. The instance record must be bound to this very directory (``dev``/``ino``): a copied or restored directory
+           alarms ``relay_takeover_refused`` and stops.
+        2. ``pending`` in ``holder.json`` (a takeover probe was in flight when we stopped): alarm ("possibly our own
+           interrupted takeover") and stop.
+        3. (a) ``holder.json`` says this state directory was the last holder and (b) its instance id is this
+           directory's. Either failing: alarm and stop. A copied or restored directory therefore never renews into the
+           original's live lease.
+
+        Then:
+
+        4. Renew with the stored ``gen`` (a renewal is not a probe); success: run.
+        5. Only if fenced: write ``pending = gen + 1`` durably, then probe ``{gen: null, take_over: false}``;
+           ``holder_conflict`` (a live lease) is waited out, never stolen.
+        6. The granted ``gen`` must be exactly ``stored + 1`` (each new hold is +1 on the relay's row): then persist it
            and clear ``pending`` atomically before anything else. Any other value: alarm, write nothing under it, stop
            (the lease lapses in 40 s).
-        6. An answer that carries no ``gen``: alarm.
+        7. An answer that carries no ``gen``: alarm.
 
         A state directory that never held (no ``holder.json``) acquires with ``{gen: null}`` (the first link)."""
         if self._fenced:
             raise Fenced("fenced: writes stopped")
         if self._gen is not None:
             return self._renew(self._gen, deadline_s, running=True)
+        why = self._holder.binding_problem()
+        if why is not None:
+            self._refuse(f"{why}; confirm with `orch host relay takeover`")
         rec = self._holder.load()
         if rec is None:
             return self._probe(None, deadline_s)
         if rec.pending is not None:
             self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
                          "`orch host relay takeover`")  # fmt: skip
-        if rec.gen is not None and rec.last_holder:
-            try:
-                return self._renew(rec.gen, deadline_s, running=False)
-            except RelayRefused as e:
-                if not (e.status == 409 and e.code == "fenced"):
-                    raise
         if not rec.last_holder:
             self._refuse("(a) holder.json does not say this state directory was the last holder")
         if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
@@ -344,13 +348,22 @@ class Session:
         if rec.gen is None:
             self._refuse("no stored gen to check the takeover against")
         assert rec.gen is not None
+        try:
+            return self._renew(rec.gen, deadline_s, running=False)
+        except RelayRefused as e:
+            if not (e.status == 409 and e.code == "fenced"):
+                raise
+        assert rec.gen is not None
         expected = rec.gen + 1
         self._holder.save(HolderRecord(True, rec.gen, rec.instance_id, expected))  # durable before the probe
         return self._probe(expected, deadline_s)
 
     def operator_takeover(self, *, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
         """The explicit operator takeover (R5 wires it to ``orch host relay takeover``): ``take_over: true``, then the
-        new ``gen`` is recorded as ours (clearing ``pending``) and the worker may proceed."""
+        new ``gen`` is recorded as ours (clearing ``pending``) and the worker may proceed. A directory whose instance
+        record is bound elsewhere (copied or restored) gets a new instance id bound to it first."""
+        if self._holder.binding_problem() is not None:
+            self._holder.regenerate()
         got = self._hold_call({"gen": None, "take_over": True}, deadline_s, takeover=True)
         self._holder.save(HolderRecord(True, got.gen, self._holder.instance_id(), None))
         self._gen, self._fenced = got.gen, False

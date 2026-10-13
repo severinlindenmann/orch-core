@@ -160,7 +160,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
         elif op in RECORDS_OPS:
-            assert kind == (("person_write", "write") if op == "records.remote_private" else ("person_read", "read"))
+            write = op in {"records.remote_private", "records.note"}
+            assert kind == (("person_write", "write") if write else ("person_read", "read"))
         elif op in RUN_OPS:  # H11a: P and G only
             assert kind == ("pg_read", "read")
         else:

@@ -316,6 +316,7 @@ def test_declared_oversize_is_refused_before_reading_the_body(relay):
     assert e.value.kind == "too_large"
 
 
+@pytest.mark.filterwarnings("ignore:ssl.TLSVersion.TLSv1 is deprecated:DeprecationWarning")
 def test_tls_minimum_version_is_raised_to_1_2():
     def old(**kw):
         c = ssl.create_default_context(**kw)

@@ -90,6 +90,9 @@ class Clock:
             self.sim.advance(s)
 
 
+OPEN_CONNS: list[http.RelayConn] = []  # closed after each test by tests/relay/conftest.py
+
+
 def session(
     transport_origin: str,
     link_origin: str | None = None,
@@ -103,8 +106,10 @@ def session(
 ) -> Session:
     s = sign.RelaySigner(key or Key(), sign.LinkContext(workspace_id=ws, origin=link_origin or transport_origin))
     clock = clock or Clock()
+    conn = http.RelayConn(transport_origin)
+    OPEN_CONNS.append(conn)
     return Session(
-        http.RelayConn(transport_origin),
+        conn,
         s,
         holder=holder if holder is not None else Holder(),
         alarm=alarms if alarms is not None else Alarms(),

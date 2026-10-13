@@ -397,6 +397,8 @@ class RunnerHub:
         self.term_state: dict[str, dict[str, Any]] = {}
         self._pending_pub: set[str] = set()
         self._watching: asyncio.Task[None] | None = None
+        #: the watcher's running check (or end) per attachment
+        self._checks: dict[str, asyncio.Task[None]] = {}
         #: starts per person (§0.11: 10 per minute, burst 5): person -> [level, at]
         self._starts: dict[str, list[float]] = {}
         #: ``term.attach`` mints per person: person -> [level, at]
@@ -886,46 +888,58 @@ class RunnerHub:
             self._watching = asyncio.get_running_loop().create_task(self._watch())
 
     async def _watch(self) -> None:
-        """Never dies on an item: every exception is logged (its type only) and counts as "cannot decide"; an
-        attachment undecidable for ``UNDECIDED_SECONDS`` is ended (``host.restarting``). Restarted by every mint and
-        every ``runner.term`` while attachments exist."""
+        """One pass every ``WATCH_SECONDS``; the pass itself never waits on a workspace worker. Each attachment's
+        check runs as its own task, bounded by ``UNDECIDED_SECONDS`` (a timeout, an exception or an undecidable
+        snapshot all count as undecided), so one stalled workspace never delays another. An attachment whose last
+        *decided* check (``decided_at``) is older than ``UNDECIDED_SECONDS + WATCH_SECONDS`` is ended
+        (``host.restarting``, fail closed), whether its check failed, timed out or still hangs. Restarted by every mint
+        and every ``runner.term`` while attachments exist."""
         with contextlib.suppress(asyncio.CancelledError):
             while self.attachments:
                 await asyncio.sleep(WATCH_SECONDS)
-                self._purge_unpresented()
-                for att, info in list(self.attachments.items()):
-                    await self._watch_one(att, info)
+                self._watch_pass()
 
-    async def _watch_one(self, att: str, info: dict[str, Any]) -> None:
-        try:
+    def _watch_pass(self) -> None:
+        self._purge_unpresented()
+        loop = asyncio.get_running_loop()
+        now = time.monotonic()
+        for att in [a for a, t in self._checks.items() if t.done()]:
+            del self._checks[att]
+        for att, info in list(self.attachments.items()):
+            task = self._checks.get(att)
+            busy = task is not None and not task.done()
             if "ending" in info:
-                await self.attach_end(att, info["ending"])  # an end the runner has not confirmed yet: again
-                return
-            try:
-                reason = await self._ended_reason(info)
-            except _Undecided:
-                reason = None
-                undecided = True
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - the watcher must outlive any single failure
-                LOG.warning("term watcher cannot decide on an attachment: %s", type(exc).__name__)
-                reason, undecided = None, True
-            else:
-                undecided = False
-            now = time.monotonic()
-            if undecided:
-                since = info.setdefault("undecided", now)
-                if now - since >= UNDECIDED_SECONDS:
-                    reason = "host.restarting"  # fail closed: nobody could confirm it may continue
-            else:
-                info.pop("undecided", None)
-            if reason is not None:
-                await self.attach_end(att, reason)
+                if not busy:  # an end the runner has not confirmed yet: again
+                    self._checks[att] = loop.create_task(self._end_quietly(att, info["ending"]))
+            elif now - info.get("decided_at", info["at"]) > UNDECIDED_SECONDS + WATCH_SECONDS:
+                if busy:
+                    task.cancel()  # a check still hanging on its worker: nobody confirmed it may continue
+                self._checks[att] = loop.create_task(self._end_quietly(att, "host.restarting"))
+            elif not busy:
+                self._checks[att] = loop.create_task(self._check(att, info))
+
+    async def _end_quietly(self, att: str, reason: str) -> None:
+        with contextlib.suppress(HostError):  # attach_end already dropped the runner session when unconfirmed
+            await self.attach_end(att, reason)
+
+    async def _check(self, att: str, info: dict[str, Any]) -> None:
+        started = time.monotonic()
+        try:
+            reason = await asyncio.wait_for(self._ended_reason(info), UNDECIDED_SECONDS)
+        except (_Undecided, TimeoutError):
+            return  # undecided: the deadline in _watch_pass ends it if this lasts
         except asyncio.CancelledError:
             raise
-        except HostError:
-            pass  # attach_end already dropped the runner session when the runner did not confirm
+        except Exception as exc:  # noqa: BLE001 - the watcher must outlive any single failure
+            LOG.warning("term watcher cannot decide on an attachment: %s", type(exc).__name__)
+            return
+        if reason is None:
+            info["decided_at"] = max(info.get("decided_at", info["at"]), started)
+            return
+        try:
+            await self._end_quietly(att, reason)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001
             LOG.warning("term watcher: %s", type(exc).__name__)
 
@@ -1005,6 +1019,9 @@ class RunnerHub:
     def end_all(self, reason: str) -> None:
         if self._watching is not None:
             self._watching.cancel()
+        for task in self._checks.values():
+            task.cancel()
+        self._checks.clear()
         for sub in list(self.subs.values()):
             self.end_sub(sub, reason)
 

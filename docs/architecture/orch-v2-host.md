@@ -3535,10 +3535,6 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `chain=False`, the ack only after a durable result.
 28. **Signing** (§11A.2): `RelaySigner` with typed methods is the bridge's only WSK path; this is an API rule, not
     isolation (bridge code execution is WSK compromise). Genesis-pin and restore reviews bind their exact material.
-29. **Terminals (H11b, contract v1.6):** `term/1` (`term.preview`, `term.open`, `term.attach`, `attach.cancel`) and
-    `run.stop` (`run/1`) are P-only; the runner reports `runner.term`; `whoami` gains `runner` for P and G; the runner's
-    term socket re-checks its authorization at every use, and the host ends live attachments when a kill switch is
-    pulled ("As built in H11b", §12.6).
 
 **v1.7 → v1.8 (draft, 13 Oct 2026, H12d; revised after Codex challenge and Opus tie-break, for orch-52's decision).**
 
@@ -3553,6 +3549,10 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `phone_device` count only readers below level 1; a durable `convenience_seen` mark for records pushes. Additive
     only where `required_reader` is 0. No F1 log or certificate change; `CertRequestInner` unchanged; one new label
     `sig_reader_decl`.
+30. **Terminals (H11b, contract v1.6):** `term/1` (`term.preview`, `term.open`, `term.attach`, `attach.cancel`) and
+    `run.stop` (`run/1`) are P-only; the runner reports `runner.term`; `whoami` gains `runner` for P and G; the runner's
+    term socket re-checks its authorization at every use, and the host ends live attachments when a kill switch is
+    pulled ("As built in H11b", §12.6).
 
 ---
 
@@ -5461,8 +5461,10 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   was pulled (the `terminals` addon revoked or disabled, `orch runner disable`, `orch runner terminals off`:
   `runner.disabled`), the person left or lost the mapping (`person.removed`), the grant ended, or the run's ticket
   became invisible (`not_visible`); the run goes on. The watcher never dies on an item: any exception is logged (its
-  type only) and counts as undecided, and an attachment that stays undecidable (no fresh authentication snapshot, a
-  failing read) for 2 s is ended with `host.restarting` (fail closed). Every `term.attach` and every `runner.term`
+  type only) and counts as undecided. Each attachment's check runs as its own task, bounded at 2 s (a timeout counts
+  as undecided), so a slow or hung workspace worker never delays the checks of another workspace. An attachment whose
+  last decided check is older than 2.5 s (no fresh authentication snapshot, a failing read, a check still waiting on
+  its worker) is ended with `host.restarting` (fail closed). Every `term.attach` and every `runner.term`
   restarts a watcher that stopped. Attachments are recorded before `attach.allow` is sent, so an end between mint and
   redeem is caught.
 - **Invariant: the runner holds only attachments the host's table holds.** The host removes its entry only after the

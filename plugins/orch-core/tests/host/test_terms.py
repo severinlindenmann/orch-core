@@ -502,6 +502,64 @@ def test_a_stopped_watcher_is_restarted_by_the_next_runner_report(ready):
         t.close()
 
 
+def test_a_stalled_workspace_worker_ends_its_attachments_and_never_delays_other_workspaces(ready):
+    """PR #443 delta D1: a worker future that never resolves. The attachment in that workspace ends within the bound
+    (``host.restarting``); an attachment in another workspace keeps being checked meanwhile."""
+    import concurrent.futures
+
+    from orch.host.runners import UNDECIDED_SECONDS, WATCH_SECONDS
+
+    w = ready
+    c = w.conn()
+    uid, key = w.ticket("a restricted one")
+    run, data, t = _writer(w, c, ticket=key)
+    hub = w.h.host.runners
+    stalled: concurrent.futures.Future = concurrent.futures.Future()  # never resolved
+
+    class Stalled:
+        auth = object()
+
+        def submit(self, *a, **kw):
+            return stalled
+
+    fake = "at_0" + "0" * 25
+    ended: dict[str, tuple[str, float]] = {}
+    real_end = hub.attach_end
+
+    async def attach_end(att, reason):
+        ended.setdefault(att, (reason, time.monotonic()))
+        return await real_end(att, reason)
+
+    async def install():
+        w.h.host.services["ws_stalled"] = Stalled()
+        hub.attach_end = attach_end
+        hub.attachments[fake] = {"run": "r_stalled", "person": "p_stalled", "mode": "read",
+                                 "workspace_id": "ws_stalled", "ticket": None, "at": time.monotonic(),
+                                 "seen": True}  # fmt: skip
+        return time.monotonic()
+
+    async def uninstall():
+        w.h.host.services.pop("ws_stalled", None)
+        hub.__dict__.pop("attach_end", None)
+
+    try:
+        started = w.h.run(install())
+        time.sleep(WATCH_SECONDS * 2)  # the stalled check is now hanging on its worker
+        w.restrict(uid, [w.quinn.ref])
+        assert drain_end(t, timeout=UNDECIDED_SECONDS) == "not_visible"  # not held up by the stalled workspace
+        assert fake not in ended or ended[fake][1] - started >= UNDECIDED_SECONDS
+        deadline = started + UNDECIDED_SECONDS + WATCH_SECONDS * 2 + 0.5
+        while fake not in ended:
+            assert time.monotonic() < deadline, "the stalled workspace's attachment was not ended"
+            time.sleep(0.05)
+        assert ended[fake][0] == "host.restarting"
+        assert ended[fake][1] - started >= UNDECIDED_SECONDS  # after the bound, not at the first doubt
+        wait_for(lambda: fake not in hub.attachments, 5)
+    finally:
+        w.h.run(uninstall())
+        t.close()
+
+
 # -- M3: the runner holds only attachments the host's table holds ---------------------------------------------------
 
 

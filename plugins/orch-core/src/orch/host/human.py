@@ -836,7 +836,9 @@ class HumanOps:
             convenience.refuse_reader_op(service, record["op"], history=True)
             with contextlib.ExitStack() as stack:
                 if record.get("code"):  # §0.8.6 item 8: the flag read and the journal write are one step against
-                    # `convenience on` (store lock, then convenience lock: the CLI never takes the store lock)
+                    # `convenience on`. Lock order: submit takes store -> convenience, while prepare takes convenience ->
+                    # store. Safe: both run on the workspace's single worker thread, and the other processes (the CLI,
+                    # direct mode) take only one of the two; the 2 s wait is the backstop (lock.busy, never a deadlock)
                     stack.enter_context(
                         convenience.workspace_lock(service.state_dir, service.workspace_id, service.host_uid)
                     )

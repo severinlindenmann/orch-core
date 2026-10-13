@@ -641,6 +641,22 @@ def test_a_claim_deleted_from_outside_after_a_failed_signing_is_not_signed_again
     assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
 
 
+def test_the_attempt_marker_is_pruned_when_the_request_expires(click, served, human, monkeypatch):
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    from orch.host import signer as host_signer
+
+    monkeypatch.setattr(host_signer, "sign", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("keychain")))
+    with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+        click.sign(rid, vd)
+    assert len(click._attempted) == 1
+    click._sweep()
+    assert len(click._attempted) == 1  # still open: kept
+    click.mono.t += 3600
+    click._sweep()
+    assert click._attempted == {} and click.approvals == {}
+
+
 def test_a_partial_signing_keeps_the_claim_across_a_restart(click, served, human, monkeypatch):
     """The first event signs, the second raises: the claim stays, nothing is submitted, a retry (same process or a
     restarted signer) is refused and never signs again."""

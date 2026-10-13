@@ -121,7 +121,7 @@ class ClickSigner:
         self.busy = False
         #: ``(workspace_id, request_id)`` whose signing started in this process: defence in depth against a claim
         #: record deleted from outside after a failed or interrupted signature (the claim file alone is not trusted)
-        self._attempted: set[tuple[str, str]] = set()
+        self._attempted: dict[tuple[str, str], float] = {}  # -> the approval deadline (mono), then pruned
         self.log = log
         self.records = records if records is not None else Records(self.state, wall=wall)
         self.records.prune()  # retention runs at start and at prepare, never on the sign path
@@ -444,7 +444,8 @@ class ClickSigner:
             return self._replay(entry, claim, approval.view_digest)
         # From here the claim is never released: an exception does not prove that no signature exists (the host signer
         # signs event by event), so any failure leaves the claim and that request fails closed.
-        self._attempted.add((approval.workspace_id, approval.request_id))  # before any signature can exist
+        # before any signature can exist
+        self._attempted[(approval.workspace_id, approval.request_id)] = approval.deadline
         signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
         if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
             raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
@@ -594,6 +595,10 @@ class ClickSigner:
         for key, a in list(self.approvals.items()):
             if self._expired(a) or a.result is not None:
                 self.approvals.pop(key, None)
+        now = self.mono()
+        for key, deadline in list(self._attempted.items()):  # a request past its deadline is refused as expired anyway
+            if now >= deadline:
+                del self._attempted[key]
 
     def close(self) -> None:
         for c in self.conns.values():

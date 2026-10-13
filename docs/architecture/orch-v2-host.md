@@ -425,7 +425,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `human.request_mismatch` | 5 | no | stays | the submitted events differ from the prepared ones (§0.8) | — |
 | `human.request_state` | 3 | no | stays | the request is cancelled, already bound to another device, or already submitted by another call | — |
 | `host.required` | 3 | no | stays | a direct-mode CLI on a registered workspace (D-P2-18) | — |
-| `lock.busy` | 9 | yes | stays | register waited 60 s for the ownership lock, or a hand-off prepare / `orch host convenience on|off` waited 2 s for the per-workspace convenience lock (existing code; exit 9 on the socket, while P1's CLI catalog keeps exit 4 for its own store lock: H4b maps the socket's exit as sent) | yes |
+| `lock.busy` | 9 | yes | stays | register waited 60 s for the ownership lock, or a hand-off prepare or submit / `orch host convenience on|off` waited 2 s for the per-workspace convenience lock (existing code; exit 9 on the socket, while P1's CLI catalog keeps exit 4 for its own store lock: H4b maps the socket's exit as sent) | yes |
 | `host.busy` | 4 | no | stays | a second host on the same state or run directory (at start); `register` or `bootstrap` of a root or id that is already registered, has a genesis, or is being bootstrapped (N5) | — |
 | `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
@@ -528,7 +528,7 @@ state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`),
 | `outcome.get`, `host.outcome` | `outcome.unknown_idem` (no record, or another principal's), `idem.expired` (only a tombstone is left) |
 | `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors, `sign.click_only`, `lock.busy` (the workspace lock of a hand-off prepare, waited for 2 s; retryable) |
 | `human.get` | `not_found`, `human.request_expired`, `human.request_state`, `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable` (N3 re-check), `sign.click_only` |
-| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes, `sign.click_only` |
+| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes, `sign.click_only`, `lock.busy` (the workspace lock of a hand-off submit, waited for 2 s; retryable) |
 | `human.pending` | none (an unknown code gives an empty list) |
 | `human.cancel` | `not_found` |
 | `sub.open` | `not_found` (`ticket:<ref>`), `sub.reset`; `invalid.input` for `detail` on a host without `sub_ext/1` (the §0.3 unknown-key rule) |
@@ -3044,7 +3044,7 @@ existing op changes its version.
 
 21. **Click follow-ups (additive, after item 20):**
     the 2 s wait for the per-workspace lock raises `lock.busy` (exit 9, retryable) instead of `host.busy`, and is listed
-    under `human.prepare`; a hand-off `human.submit` holds the workspace lock from its flag check to its journal write
+    under `human.prepare` and (for a hand-off) `human.submit`; a hand-off `human.submit` holds the workspace lock from its flag check to its journal write
     (§0.8.6 item 8); `human.get` (in `request`) and `human.pending` carry `submitted_at:Time | null`, the host's time
     when `human.submit` was accepted for the request (null until then, and for records stored before the field).
 

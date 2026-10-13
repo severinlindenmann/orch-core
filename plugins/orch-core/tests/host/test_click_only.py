@@ -256,7 +256,7 @@ def test_an_unreadable_request_file_refuses_switching_on_and_names_it(served, hu
     assert flag(served, True)[0] == 0
 
 
-@pytest.mark.parametrize("damage", ["missing", "text", "none"])
+@pytest.mark.parametrize("damage", ["missing", "text", "none", "false", "true", "-inf", "inf", "nan"])
 def test_a_request_without_a_valid_expiry_refuses_switching_on_and_names_it(served, human, damage):
     import json
 
@@ -270,11 +270,14 @@ def test_a_request_without_a_valid_expiry_refuses_switching_on_and_names_it(serv
     if damage == "missing":
         del rec["expires"]
     else:
-        rec["expires"] = "soon" if damage == "text" else None
+        rec["expires"] = {
+            "text": "soon", "none": None, "false": False, "true": True,
+            "-inf": float("-inf"), "inf": float("inf"), "nan": float("nan"),
+        }[damage]
     path.write_text(json.dumps(rec))
     path.chmod(0o600)
     code, text = flag(served, True)
-    assert code == 5 or "custody.unsafe_mode" in text
+    assert code == 3 and "custody.unsafe_mode" in text
     assert rid in text and "Traceback" not in text
     assert not convenience.enabled(served.lab.state, served.wid, UID)
 
@@ -288,13 +291,22 @@ def test_human_get_and_pending_carry_submitted_at_null_until_submit(served, huma
     row = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]
     assert row["submitted_at"] is None
     signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
+    served.lab.ws.clock[0] += 37  # time passes between prepare and submit
     ok(human.submit_res(rid, signed.events))
-    stamp = served.lab.ws.clock[0]
     got = ok(human.get(rid))["data"]["request"]["submitted_at"]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", got)
+    created = ok(human.get(rid))["data"]["request"]["created_at"]
+    from datetime import datetime, timezone
+
+    def _t(s):
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+
+    assert _t(got) - _t(created) == 37  # exactly the host clock at submit
     row = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]
     assert row["submitted_at"] == got and row["created_at"] <= got
-    assert stamp  # the host's clock, same format as created_at/expires_at
+    served.lab.ws.clock[0] += 5
+    ok(human.submit_res(rid, signed.events))  # an idempotent replay keeps the first time
+    assert ok(human.get(rid))["data"]["request"]["submitted_at"] == got
 
 
 def test_an_old_record_without_submitted_at_reads_as_null(served, human):
@@ -308,3 +320,35 @@ def test_an_old_record_without_submitted_at_reads_as_null(served, human):
     path = next(p for p in store.dir.iterdir() if rid in p.name)
     assert "submitted_at" not in json.loads(path.read_text())
     assert ok(human.get(rid))["data"]["request"]["submitted_at"] is None
+
+
+def test_a_submitted_record_without_submitted_at_reads_as_null(served, human):
+    import json
+
+    from orch.host.requests import RequestStore
+
+    _, key = human.ticket()
+    rid = ok(hand(human, key, "legacy"))["data"]["request"]["id"]
+    signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
+    ok(human.submit_res(rid, signed.events))
+    store = RequestStore(served.lab.state, served.wid, UID, clock=lambda: 0.0)
+    path = next(p for p in store.dir.iterdir() if rid in p.name)
+    rec = json.loads(path.read_text())
+    assert rec["state"] == "submitted" and rec["submitted_at"] is not None
+    del rec["submitted_at"]
+    path.write_text(json.dumps(rec))
+    path.chmod(0o600)
+    assert ok(human.get(rid))["data"]["request"]["submitted_at"] is None
+
+
+def test_a_handoff_submit_under_a_held_workspace_lock_is_lock_busy_then_succeeds(served, human, monkeypatch):
+    monkeypatch.setattr(convenience, "LOCK_WAIT", 0.2)
+    _, key = human.ticket()
+    rid = ok(hand(human, key, "busy"))["data"]["request"]["id"]
+    signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
+    with convenience.workspace_lock(served.lab.state, served.wid, UID):  # another fd holds it
+        res = human.submit_res(rid, signed.events, idem="same")
+        assert err(res) == "lock.busy"
+        assert res["error"]["retryable"] is True
+        assert res["error"].get("exit", 9) == 9
+    ok(human.submit_res(rid, signed.events, idem="same"))

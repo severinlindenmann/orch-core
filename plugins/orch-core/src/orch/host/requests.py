@@ -25,6 +25,7 @@ states are kept 24 h. A hand-off request carries its code (H5b, :func:`orch.host
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import threading
@@ -147,8 +148,14 @@ class RequestStore:
 
     def lapsed(self, record: dict[str, Any], grace: float = 0.0) -> bool:
         """A pending request past its expiry (plus ``grace`` seconds), the one rule of :meth:`expire`. A request whose
-        signed events are being appended (``submit`` set) never lapses."""
-        return record["state"] in PENDING and not record.get("submit") and self.clock() >= record["expires"] + grace
+        signed events are being appended (``submit`` set) never lapses. ``expires`` must be a finite number (not a
+        bool): anything else is a ``ValueError``, never a silent lapse."""
+        if record["state"] not in PENDING or record.get("submit"):
+            return False
+        expires = record["expires"]
+        if type(expires) not in (int, float) or not math.isfinite(expires):
+            raise ValueError("expires is not a finite number")
+        return self.clock() >= expires + grace
 
     def expire(self, record: dict[str, Any]) -> dict[str, Any]:
         """A pending request older than 10 minutes (a grant: 4) becomes ``expired`` (written). A request whose signed

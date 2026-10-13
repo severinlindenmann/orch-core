@@ -7,10 +7,11 @@ child in its own process group with a 30 s limit that kills the group (only that
 **What git is allowed to run** (the invariant of :mod:`orch.gitsafe`: orch never runs git against a repository whose
 local/worktree config or attributes could make git execute a program or read config from elsewhere). Before **every**
 git command (:func:`orch.gitsafe.gate`, called by :func:`run_git`, :func:`read_git` and so :func:`tree_dirty`) the
-repository's own local and worktree configuration is listed and refused (``observe.unavailable``) when it sets a
-filter, diff or merge driver program, an include, ``core.attributesFile``, an ssh/proxy/askpass command, a credential
-helper, a pager, an editor, a gpg program or a non-boolean ``core.fsmonitor`` (:func:`orch.gitsafe.exec_risk`); on
-remove the worktree's own configuration is checked too. Defence in depth on every command: ``-c
+repository's config files must be owned by the person and its own local and worktree configuration is listed and
+refused (``observe.unavailable``) when any key is not on the allow-list of :func:`orch.gitsafe.exec_risk` (no filter,
+driver, hook, include, alias, pager, editor, credential, ssh/proxy/askpass or gpg program, no unknown section); on
+remove the worktree's own configuration is checked too; :func:`tree_dirty` also refuses a populated submodule
+(:func:`orch.gitsafe.submodules`: its state is unknown, never clean). Defence in depth on every command: ``-c
 core.hooksPath=/dev/null`` (no hook), ``-c core.fsmonitor=false``, ``-c protocol.allow=never`` and an empty
 ``GIT_ALLOW_PROTOCOL`` (no network), ``-c submodule.recurse=false``, no terminal prompt, no pager, no editor, and an
 environment built from scratch (``HOME``, ``PATH``, ``LANG=C``, ``TMPDIR``): no ``GIT_DIR``, ``GIT_WORK_TREE``,
@@ -20,13 +21,15 @@ the person, exactly as when they run git; :func:`read_git` turns system and glob
 
 **Confinement (H11d).** The worktree path must be exactly ``<repo>.worktrees/<WS8>-<KEY>`` (strict name regex, no
 ``..``, no NUL). The parent of the repo and ``<repo>.worktrees`` are opened from ``/`` one component at a time with
-``O_NOFOLLOW|O_DIRECTORY`` (a symlink anywhere is ``launch.cwd_changed``); both must be owned by this process's
-effective UID and writable by no group or other (``launch.cwd_changed`` otherwise), so only the person's own account
-can rename anything in them. The target is looked at with ``lstat`` through that fd (a symlink or file is refused,
-never removed). git gets absolute paths (``-C <repo>``, ``-- <path>``) and runs with cwd ``/``: the walk from ``/`` is
-repeated right before git starts (pre-check) and after it returns (post-check), each comparing device and inode with
-the held fd. Residual: between the pre-check and git's own ``mkdir``/``rmdir`` a writer of those two directories could
-swap names; that writer can only be the person's own account, and the post-check detects (cannot undo) the swap.
+``O_NOFOLLOW|O_DIRECTORY`` (a symlink anywhere is ``launch.cwd_changed``); every directory from ``/`` on must be owned
+by root or the effective UID and not group- or other-writable unless sticky (Opus #439 D2), and those two must be
+owned by this process's effective UID and writable by no group or other (``launch.cwd_changed`` otherwise), so only
+the person's own account can rename anything on the path. The target is looked at with ``lstat`` through that fd
+(a symlink or file is refused, never removed). git gets absolute paths (``-C <repo>``, ``-- <path>``) and runs with
+cwd ``/``: the walk from ``/`` is repeated right before git starts (pre-check) and after it returns (post-check),
+each comparing device and inode with the held fd. Residual: between the pre-check and git's own ``mkdir``/``rmdir`` a
+writer of a directory on the path could swap names; that writer can only be the person's own account (or root), and
+the post-check detects (cannot undo) the swap.
 
 **The repository.** The declared repo's working copy is opened component-wise with ``O_NOFOLLOW`` and compared with the
 host's pin (device and inode) before git starts; a mismatch is ``launch.cwd_changed``. git runs with ``-C`` set to
@@ -146,12 +149,8 @@ class _Confined:
 
     def open(self, create: bool) -> None:
         from orch.gitread.errors import Unavailable
-        from orch.gitread.fs import open_walk
 
-        try:
-            parent, pst = open_walk(self.parent)  # every component O_NOFOLLOW|O_DIRECTORY, from "/"
-        except (Unavailable, OSError):
-            raise _moved("a component of the repository's parent path is a symlink or not a directory") from None
+        parent, pst = _walk_safe(self.parent)  # every component O_NOFOLLOW|O_DIRECTORY, from "/", each checked
         try:
             _owned(pst, "the repository's parent directory")
             kind = parent.kind(self.base)
@@ -191,13 +190,7 @@ class _Confined:
     def check_cwd(self) -> None:
         """The path git is given still resolves, walked from ``/`` with ``O_NOFOLLOW`` per component, to the directory
         this object verified (device and inode). Not a cwd pin (git gets absolute paths): the pre- and post-check."""
-        from orch.gitread.errors import Unavailable
-        from orch.gitread.fs import open_walk
-
-        try:
-            d, st = open_walk(self.dir_path)
-        except (Unavailable, OSError):
-            raise _moved("the worktrees directory vanished or a component became a symlink") from None
+        d, st = _walk_safe(self.dir_path)
         d.close()
         if (st.st_dev, st.st_ino) != self.ident:
             raise _moved("the worktrees directory was replaced")
@@ -219,6 +212,44 @@ class _Confined:
             with contextlib.suppress(OSError):
                 os.close(self.fd)
             self.fd = -1
+
+
+def _walk_safe(path: str) -> tuple[Any, os.stat_result]:
+    """``path`` walked from ``/`` one component at a time with ``O_NOFOLLOW|O_DIRECTORY`` (a symlink anywhere is
+    ``launch.cwd_changed``), and **every** directory on the way, ``/`` included, owned by root or this process's
+    effective UID and not writable by group or other unless sticky (Opus #439 D2): no other account can rename a
+    component of the path between the checks and git. Returns the open :class:`orch.gitread.fs.Dir` and its stat."""
+    from orch.gitread.errors import Unavailable
+    from orch.gitread.fs import Dir, abs_parts
+
+    try:
+        parts = abs_parts(path)
+        cur = Dir(os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)), "/")
+    except (Unavailable, OSError):
+        raise _moved("the path cannot be walked from /") from None
+    try:
+        st = os.fstat(cur.fd)
+        _ancestor(st, "/")
+        for comp in parts:
+            try:
+                nxt = cur.sub(comp)
+            except (Unavailable, OSError):
+                raise _moved("a component of the path is a symlink, not a directory, or gone") from None
+            cur.close()
+            cur = nxt
+            st = os.fstat(cur.fd)
+            _ancestor(st, cur.path)
+    except BaseException:
+        cur.close()
+        raise
+    return cur, st
+
+
+def _ancestor(st: os.stat_result, what: str) -> None:
+    if st.st_uid not in (0, os.geteuid()):
+        raise _moved(f"{what} is owned by another user")
+    if stat.S_IMODE(st.st_mode) & 0o022 and not st.st_mode & stat.S_ISVTX:
+        raise _moved(f"{what} is writable by group or others and not sticky")
 
 
 def _owned(st: os.stat_result, what: str) -> None:
@@ -312,15 +343,18 @@ def _spawn(
     return {"ok": True}
 
 
-def read_git(repo: str, args: Sequence[str], own: Mapping[str, str], *, timeout: float = GIT_SECONDS) -> str | None:
+def read_git(
+    repo: str, args: Sequence[str], own: Mapping[str, str], *, timeout: float = GIT_SECONDS, gated: bool = False
+) -> str | None:
     """A read-only git command for the direct-mode tool, hardened exactly as :func:`run_git` (the gate of
     :mod:`orch.gitsafe` first, the same ``NEUTRAL`` config, the same from-scratch environment, no network, own process
     group, 30 s) and, since nothing here needs the person's filters, also with the system and global config off.
     Stdout stripped; ``None`` when git fails, times out or is missing. Raises :class:`orch.gitsafe.Unsafe` when the
     repository's own config could make git run a program (git is then not started). ``repo`` is a verified absolute
-    path (``-C``)."""
+    path (``-C``). ``gated``: the caller ran :func:`orch.gitsafe.gate` on ``repo`` right before (``tree_dirty``)."""
     _clean_abs(repo)
-    gitsafe.gate(repo, own)
+    if not gated:
+        gitsafe.gate(repo, own)
     env = git_env(own)
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
     try:
@@ -343,12 +377,17 @@ def read_git(repo: str, args: Sequence[str], own: Mapping[str, str], *, timeout:
 
 
 def tree_dirty(repo: str, own: Mapping[str, str]) -> str | None:
-    """Uncommitted work in the working copy at ``repo`` (``""`` clean, lines when not, ``None`` when it cannot be told),
-    through :func:`read_git` (so :class:`orch.gitsafe.Unsafe` propagates): ``status --porcelain`` (submodules
-    ignored: their own config is not gated) plus the files git is told to ignore (``skip-worktree``,
-    ``assume-unchanged``)."""
-    status = read_git(repo, ["status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all"], own)
-    listing = read_git(repo, ["ls-files", "-v"], own)
+    """Uncommitted work in the working copy at ``repo`` (``""`` clean, lines when not, ``None`` when it cannot be told):
+    the gate of :mod:`orch.gitsafe` and :func:`orch.gitsafe.submodules` first (a populated submodule is
+    :class:`orch.gitsafe.Unsafe`: its state is unknown, never "clean"), then ``status --porcelain`` plus the files git
+    is told to ignore (``skip-worktree``, ``assume-unchanged``). ``--ignore-submodules=all`` stays as defence in depth
+    only: once no submodule is checked out there is nothing for it to hide."""
+    _clean_abs(repo)
+    gitsafe.gate(repo, own)
+    gitsafe.submodules(repo, own)
+    status = read_git(repo, ["status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all"], own,
+                      gated=True)  # fmt: skip
+    listing = read_git(repo, ["ls-files", "-v"], own, gated=True)
     if status is None or listing is None:
         return None
     hidden = [ln[2:] for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]

@@ -99,6 +99,8 @@ def test_remove_checks_the_worktrees_own_config_too(world):  # noqa: F811
         ("lfs.customtransfer.x.path", "evil"),
         ("lfs.extension.x.smudge", "evil"),
         ("lfs.standalonetransferagent", "x"),
+        ("filter.lfs.required", "true"),  # the filter section is not on the allow-list at all (install LFS globally)
+        ("alias.st", "!sh -c evil"),  # refused since the allow-list (round 2); orch never invokes an alias anyway
     ],
 )
 def test_the_gate_refuses_every_program_key(world, key, value):  # noqa: F811
@@ -118,10 +120,8 @@ def test_the_gate_refuses_every_program_key(world, key, value):  # noqa: F811
     [
         ("core.hooksPath", ".husky"),  # overridden by -c core.hooksPath=/dev/null on every command
         ("core.fsmonitor", "true"),  # git's built-in daemon, no program; overridden to false anyway
-        ("filter.lfs.required", "true"),  # not a program
         ("remote.origin.url", "https://example.com/x.git"),
         ("user.name", "x"),
-        ("alias.st", "!sh -c evil"),  # aliases run only when invoked by name; orch never does
     ],
 )
 def test_the_gate_lets_harmless_keys_through(world, key, value):  # noqa: F811

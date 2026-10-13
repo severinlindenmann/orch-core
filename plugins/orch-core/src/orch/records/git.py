@@ -4,8 +4,8 @@
 settings) is read **once**, with includes expanded, when the repo is opened; every later call runs with
 ``GIT_CONFIG_NOSYSTEM=1``, ``GIT_CONFIG_GLOBAL=/dev/null`` and those entries passed as command-scope configuration, so
 an edit of ``~/.gitconfig`` between the check and the push changes nothing. The repo's own (local and worktree)
-configuration is checked against a deny-list (:func:`check_local`) and its digest is checked again right before the
-push.
+configuration is checked against the shared allow-list of :mod:`orch.gitsafe` and then a stricter deny-list
+(:func:`check_local`), and its digest is checked again right before the push.
 
 **One destination.** The effective push URL is resolved once by git itself (``git remote get-url --push`` under the
 frozen configuration: ``pushurl``, ``insteadOf`` and ``pushInsteadOf`` applied) and must be exactly one URL. The
@@ -128,8 +128,9 @@ def _split_key(key: str) -> tuple[str, str | None, str]:
 
 def check_local(entries: Sequence[tuple[str, str, str]], remote: str | None) -> None:
     """Refuse a local or worktree configuration that could redirect, rewrite or execute (``records.unsafe_config``,
-    naming the key). ``entries`` are (scope, key, value). The shared rule of :mod:`orch.gitsafe` (no key that could
-    make git execute a program) applies first; the records deny-list below is stricter (redirects, network)."""
+    naming the key). ``entries`` are (scope, key, value). The shared allow-list of :mod:`orch.gitsafe` (only keys that
+    cannot make git execute a program or read config elsewhere; config-based ``hook.*`` included, Opus #439 D1)
+    applies first; the records deny-list below is stricter (redirects, network)."""
     from orch.gitsafe import exec_risk
 
     risky = exec_risk(entries)

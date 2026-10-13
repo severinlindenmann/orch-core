@@ -299,6 +299,8 @@ class Human:
 
                 try:  # the invariant of orch.gitsafe before P1's git reads the registered worktree
                     gitsafe.gate(os.fspath(path), self.ctx.caps.env)
+                    # a populated submodule (Codex #439): its own config is not gated and status would hide or run it
+                    gitsafe.submodules(os.fspath(path), self.ctx.caps.env)
                 except gitsafe.Unsafe as exc:
                     out.append(f"{name}: {exc.reason}"[:300])
                     continue

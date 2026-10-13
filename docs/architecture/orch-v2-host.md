@@ -3042,7 +3042,7 @@ existing op changes its version.
     `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
     released; a failure fails that request closed. No new reason, no wire change.
 
-21. **Click follow-ups (additive; numbered 21 because item 20 is #436's, not yet on develop when this was written):**
+21. **Click follow-ups (additive, after item 20):**
     the 2 s wait for the per-workspace lock raises `lock.busy` (exit 9, retryable) instead of `host.busy`, and is listed
     under `human.prepare`; a hand-off `human.submit` holds the workspace lock from its flag check to its journal write
     (§0.8.6 item 8); `human.get` (in `request`) and `human.pending` carry `submitted_at:Time | null`, the host's time

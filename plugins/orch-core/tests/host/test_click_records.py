@@ -620,6 +620,27 @@ def test_a_signer_that_raises_before_signing_keeps_the_claim(click, served, huma
     assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
 
 
+def test_a_claim_deleted_from_outside_after_a_failed_signing_is_not_signed_again(click, served, human, monkeypatch):
+    """Defence in depth: the process remembers that it attempted the signature, whatever the files say."""
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    from orch.host import signer as host_signer
+
+    calls = []
+
+    def broken(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("keychain")
+
+    monkeypatch.setattr(host_signer, "sign", broken)
+    with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+        click.sign(rid, vd)
+    _record_path(served, rid).unlink()  # an outside deletion of the claim
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    assert len(calls) == 1
+    assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
+
+
 def test_a_partial_signing_keeps_the_claim_across_a_restart(click, served, human, monkeypatch):
     """The first event signs, the second raises: the claim stays, nothing is submitted, a retry (same process or a
     restarted signer) is refused and never signs again."""

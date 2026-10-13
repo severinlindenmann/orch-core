@@ -119,6 +119,9 @@ class ClickSigner:
         self.approvals: dict[tuple[str, str], Approval] = {}
         self.conns: dict[str, Any] = {}
         self.busy = False
+        #: ``(workspace_id, request_id)`` whose signing started in this process: defence in depth against a claim
+        #: record deleted from outside after a failed or interrupted signature (the claim file alone is not trusted)
+        self._attempted: set[tuple[str, str]] = set()
         self.log = log
         self.records = records if records is not None else Records(self.state, wall=wall)
         self.records.prune()  # retention runs at start and at prepare, never on the sign path
@@ -396,6 +399,12 @@ class ClickSigner:
                 return {"result": approval.result, "duplicate": True}
             self._rerecord(approval)
             return self._submit(entry, approval, None)  # the identical events and idem, never a new signature
+        if (approval.workspace_id, approval.request_id) in self._attempted:
+            # signing started here, and neither a record nor cached events exist: the claim was removed from outside
+            raise refused(
+                "record_unavailable",
+                "signing this request was attempted but no record of it exists; this signer does not sign it again",
+            )
         if self._expired(approval):
             self.approvals.pop((approval.workspace_id, approval.request_id), None)
             raise refused("expired", "the request expired; prepare it again")
@@ -435,6 +444,7 @@ class ClickSigner:
             return self._replay(entry, claim, approval.view_digest)
         # From here the claim is never released: an exception does not prove that no signature exists (the host signer
         # signs event by event), so any failure leaves the claim and that request fails closed.
+        self._attempted.add((approval.workspace_id, approval.request_id))  # before any signature can exist
         signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
         if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
             raise refused("terminal_only", "a request that draws a secret is signed in the terminal")

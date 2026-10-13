@@ -2640,8 +2640,9 @@ integration (R6, orch-f1 pairing). Inputs: orch-f1 (orch-mobile `aa13ca6`), orch
   - The digest is `"sha256:" + hex(sha256(cj(results)))`, results in corpus order. The construction is normative in
     F1 §11.5 (core-owned) and pinned by vectors.
 - **Which surfaces:** a reader declares a digest for every surface it parses. The host requires `log` from a core
-  (`member.add`) and `view` from a phone (pairing). A phone that also verifies F1 events (restore evidence) MUST
-  declare `log` too (Q8).
+  (`member.add`) and `view` from a phone (pairing). Q8 answered by orch-f1 (13 Oct 2026): in phase 2 the phone verifies
+  no F1 events itself, so `view` suffices. **A reader runs the KAT variant of every code path that renders or verifies
+  `auth`; a build that adds F1 parsing must also pass `log` before it declares a level.**
 - **What it is:** signed evidence that the declaring build's production parser classified these cases, made at
   runtime. It is **not** proof of correct display, of ticket-event handling or of restore handling, and it is **not**
   independently verifiable proof of execution (a liar can copy the constant). Display and restore handling are

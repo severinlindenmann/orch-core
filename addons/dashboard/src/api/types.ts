@@ -87,6 +87,8 @@ export interface Workspace {
   repos?: Record<string, WorkspaceRepo>
   /** A real host only: what the click signer says about this workspace (custody, flag, can it sign now). */
   click?: { custody: 'convenience' | 'passphrase' | 'none'; enabled: boolean; available: boolean; problem?: string } | null
+  /** A real host only (`whoami.runner`, cap `run/1`): null or absent when the host does not say. Never guessed. */
+  runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
 }
 
 /**
@@ -618,6 +620,8 @@ export interface WorkspaceIdentity {
   created_at: string
   key_fingerprint: string
   epoch: number
+  /** A real host only: `whoami.runner`, null when the host does not say. */
+  runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
 }
 
 // ---------------------------------------------------------------- relay & devices (simulated; orch v2 P2/P3)
@@ -943,7 +947,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string }
+  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean }
 }
 
 export class ApiError extends Error {
@@ -959,9 +963,13 @@ export class ApiError extends Error {
   readonly signed_at?: string | null
   readonly op?: string
   readonly summary?: string
+  /** A failed records push: the local commit that already landed. */
+  readonly commit?: string
+  /** The records child's message had characters that are hidden: it is withheld (null) and the code stands. */
+  readonly message_hidden?: boolean
   readonly exit?: number
   constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
-    super(body.message)
+    super(body.message ?? body.code)
     this.name = 'ApiError'
     this.status = status
     this.code = body.code
@@ -973,6 +981,8 @@ export class ApiError extends Error {
     this.signed_at = body.signed_at
     this.op = body.op
     this.summary = body.summary
+    this.commit = body.commit
+    this.message_hidden = body.message_hidden
     this.exit = exit
   }
 }

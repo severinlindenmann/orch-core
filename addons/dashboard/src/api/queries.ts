@@ -7,6 +7,7 @@ import { api, type ListTicketsParams } from '@/api/client'
 import type { ArtifactQuery } from './types'
 import { running } from './workspaces'
 import type { HostGrant } from './settings'
+import type { QuickLimits } from './quickRecords'
 
 /** Query key of an addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
 export function addonStateKey(ws: string | undefined, name: string, ticket?: string): unknown[] {
@@ -49,6 +50,15 @@ export const queries = {
    */
   hostGrants: (ws: string, active: boolean) =>
     queryOptions<HostGrant[]>({ queryKey: ['settings-grants', ws, active], queryFn: () => api.listHostGrants(ws, active), refetchInterval: 30_000, refetchOnWindowFocus: true }),
+  /** Quick tasks of a real host (M6): one group of statuses, with this browser's limits (they are part of the key). */
+  quick: (ws: string, statuses: string[], limits: QuickLimits) =>
+    queryOptions({
+      queryKey: ['quick', ws, statuses.join(','), limits.max_commits, limits.max_files],
+      queryFn: () =>
+        api.getQuick(ws, { status: statuses, ...(limits.max_commits ? { max_commits: limits.max_commits } : {}), ...(limits.max_files ? { max_files: limits.max_files } : {}) }),
+    }),
+  /** Records status (owners, maintainers: the host refuses anyone else). Refused answers are not retried. */
+  records: (ws: string) => queryOptions({ queryKey: ['records', ws], queryFn: () => api.getRecords(ws), retry: false }),
   identity: (ws: string) => queryOptions({ queryKey: ['identity', ws], queryFn: () => api.getIdentity(ws) }),
   people: (ws: string) => queryOptions({ queryKey: ['people', ws], queryFn: () => api.listPeople(ws) }),
   /** The relay state with the time it was read (the page polls while something moves). */

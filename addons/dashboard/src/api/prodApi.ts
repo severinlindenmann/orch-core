@@ -9,6 +9,7 @@ import type { Api, ListTicketsParams } from './apiFactory'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
 import type { HostGrant, HostSettings, RosterMember } from './settings'
+import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import {
   ApiError,
   type ApiErrorBody,
@@ -35,6 +36,7 @@ interface ServerWorkspace {
   host_state: string
   features: string[]
   click?: Workspace['click']
+  runner?: Workspace['runner']
 }
 interface ServerMe {
   person: string
@@ -139,6 +141,7 @@ function workspace(s: ServerWorkspace): Workspace {
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
     // Offered only when the server lists the feature: the flag is on AND the signer can sign in this workspace.
+    ...(s.runner !== undefined ? { runner: s.runner } : {}),
     ...(s.click ? { click: { ...s.click, available: s.click.available && s.features.includes('click') } } : {}),
   }
 }
@@ -186,6 +189,26 @@ const reads = {
   getHostSettings: (ws: string) => call<HostSettings>(`${w(ws)}/settings`),
   getRoster: (ws: string) => call<RosterMember[]>(`${w(ws)}/members`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
+  // Quick tasks and records (M6). The limits are this browser's own setting; the server saves nothing.
+  getQuick: (ws: string, p: QuickParams = {}) => {
+    const q = new URLSearchParams()
+    for (const s of p.status ?? []) q.append('status', s)
+    if (p.max_commits !== undefined) q.set('max_commits', String(p.max_commits))
+    if (p.max_files !== undefined) q.set('max_files', String(p.max_files))
+    q.set('limit', String(p.limit ?? 200))
+    if (p.page) q.set('page', p.page)
+    return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
+  },
+  getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),
+}
+
+/**
+ * The two things the dashboard may run for records (12.11): `commit [--push]` and `auto off`, each a fixed child of the
+ * server. No signature; the host and the server decide who may. `auto-off` posts nothing at all.
+ */
+const records = {
+  recordsCommit: (ws: string, push: boolean) => call<RecordsRun>(`${w(ws)}/records/commit`, 'POST', { push }),
+  recordsAutoOff: (ws: string) => call<RecordsRun>(`${w(ws)}/records/auto-off`, 'POST'),
 }
 
 /** Reads a page needs an answer to even when the host has nothing to say yet: an empty list, never a made-up one. */
@@ -229,7 +252,7 @@ const click = {
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click }
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

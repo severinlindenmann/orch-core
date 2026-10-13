@@ -21,6 +21,7 @@ const TicketPage = lazyPage(() => import('./pages/ticket'), 'TicketPage')
 const ArtifactsPage = lazyPage(() => import('./pages/artifacts'), 'ArtifactsPage')
 const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
+const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
 const AddonPage = lazyPage(() => import('./pages/AddonPage'), 'AddonPage')
 /** The addon node renderers an addon page or a ticket's panels usually need (widgets, forms, markdown, charts). */
 const addonNodes = () => import('@/addon-ui/preloadNodes').then((m) => m.preloadAddonNodes())
@@ -89,6 +90,17 @@ const artifactsRoute = createRoute({
     const { view } = artifactsRoute.useSearch()
     return <ArtifactsSkeleton view={view ?? 'list'} />
   },
+})
+/** Quick tasks of a real host (M6): the mock keeps its own addon page, so this route is for a real host that serves `quick/1`. */
+const quickRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'quick',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('quick')()
+  },
+  loader: pageLoader(() => [], [QuickPage.preload]),
+  component: QuickPage,
 })
 const agentsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -160,7 +172,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

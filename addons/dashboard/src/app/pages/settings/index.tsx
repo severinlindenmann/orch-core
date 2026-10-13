@@ -19,6 +19,7 @@ import { HostGates } from './host/Gates'
 import { HostGeneral } from './host/General'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
+import { HostRecords } from './host/Records'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
 import { useMe } from '@/app/useMe'
 
@@ -42,11 +43,12 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   if (isRealHost()) {
     // The reduced settings of a real host (M4): what the host says, and hand-offs for every change.
     return (
-      <SettingsFrame current={tab ?? 'general'} addon={undefined}>
+      <SettingsFrame current={tab ?? 'general'} addon={undefined} ws={workspace.id}>
         {(tab ?? 'general') === 'general' && <HostGeneral workspace={workspace} />}
         {tab === 'members' && <HostMembers workspace={workspace} />}
         {tab === 'gates' && <HostGates workspace={workspace} />}
         {tab === 'grants' && <HostGrants workspace={workspace} />}
+        {tab === 'records' && <HostRecords workspace={workspace} />}
       </SettingsFrame>
     )
   }
@@ -54,7 +56,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   const current = addon ? 'addons' : (tab ?? 'general')
 
   return (
-    <SettingsFrame current={current} addon={addon}>
+    <SettingsFrame current={current} addon={addon} ws={workspace.id}>
       {!isOwner && <p className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">{ONLY_OWNERS}</p>}
       {current === 'general' && <General workspace={workspace} canEdit={isOwner} />}
       {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
@@ -68,7 +70,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
 }
 
 /** The sub-navigation and the content column, the same for the mockup's settings and the reduced ones of a real host. */
-function SettingsFrame({ current, addon, children }: { current: string; addon: string | undefined; children: React.ReactNode }) {
+function SettingsFrame({ current, addon, ws, children }: { current: string; addon: string | undefined; ws: string; children: React.ReactNode }) {
   return (
     // A narrow page area (the terminal docked on the right): the sections sit in a row above the content (N11).
     <div className="flex max-w-5xl flex-col gap-4 @[60rem]/page:flex-row @[60rem]/page:gap-8">
@@ -77,7 +79,7 @@ function SettingsFrame({ current, addon, children }: { current: string; addon: s
           <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
           <CopyLinkButton label={addon ? `Copy link to the ${addon} settings` : 'Copy link to this settings page'} />
         </div>
-        {settingsTabs().map((t) => (
+        {settingsTabs(ws).map((t) => (
           <Link key={t.id} to="/settings/$tab" params={{ tab: t.id }} className={cn(link, current === t.id && active)} aria-current={current === t.id ? 'page' : undefined}>
             <span className="flex-1">{t.label}</span>
             {t.preview && <span className="rounded-full border border-border px-1.5 py-px text-[10px] font-medium leading-4 text-text-muted">Preview</span>}

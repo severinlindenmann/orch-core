@@ -41,6 +41,7 @@ __all__ = ["RedirectRefused", "RelayConn", "Response", "Transport", "TransportEr
 log = logging.getLogger("orch.relay.http")
 
 READ_PIECE = 64 * 1024
+MAX_LOOKUPS = 4  # outstanding name lookups per connection; above it a call fails at once ("resolver stuck")
 _HEADER_VALUE = re.compile(r"[\x21-\x7e]([\x20-\x7e]*[\x21-\x7e])?")
 _HEADER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]{0,63}")
 _TARGET = re.compile(r"/[A-Za-z0-9._~%/:@!$&'()*+,;=?-]{0,2047}")
@@ -49,13 +50,18 @@ _PROXY = re.compile(r"(?P<host>[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?):(?P<port>[1-9][
 
 class TransportError(Exception):
     """A call that produced no relay answer. ``kind``: ``connect``, ``tls``, ``deadline``, ``too_large``,
-    ``truncated``, ``protocol``, ``request`` (refused locally) or ``redirect``. Transient unless stated."""
+    ``truncated``, ``protocol``, ``request`` (refused locally), ``shutdown`` (the connection was shut down; use a new
+    one) or ``redirect``. Transient unless stated."""
 
     transient = True
 
     def __init__(self, kind: str, route: str) -> None:
         super().__init__(f"relay transport {kind} on {route}")
         self.kind, self.route = kind, route
+
+
+class _ResolverStuck(OSError):
+    """``MAX_LOOKUPS`` name lookups of this connection are still outstanding."""
 
 
 class RedirectRefused(TransportError):
@@ -133,8 +139,10 @@ class RelayConn:
         self._conn: http.client.HTTPConnection | None = None
         self._resolve = resolve
         self._deadline = 0.0
-        self._wake = threading.Event()  # set by shutdown(): ends a resolution in progress
-        self._shut = False
+        self._wake = threading.Event()  # the current call's: set by its own lookup helper or by shutdown()
+        self._shut = threading.Event()  # set by shutdown(), never cleared: a shut connection stays shut
+        self._lookups = 0  # outstanding helper threads (guarded by _fd_lock)
+        self._lookup_wakeups = 0  # wait() returns in _lookup (tests: no busy spin)
         self._watch: socket.socket | None = None  # our own dup of the connection's socket, for the watchdog
         self._fd_lock = threading.Lock()
         self._call_lock = threading.Lock()
@@ -146,9 +154,16 @@ class RelayConn:
 
     def _lookup(self, host: str, port: int) -> list:
         """``getaddrinfo`` in a helper thread, bounded by the call's total deadline and by :meth:`shutdown` (review D5:
-        a stuck resolver is outside both the socket timeout and the watchdog, since no socket exists yet)."""
+        a stuck resolver is outside both the socket timeout and the watchdog, since no socket exists yet). At most
+        ``MAX_LOOKUPS`` helpers are outstanding per connection; each wakes only its own call's event, so a stale
+        helper never wakes a later call."""
         box: dict[str, object] = {}
         done = threading.Event()
+        wake = self._wake
+        with self._fd_lock:
+            if self._lookups >= MAX_LOOKUPS:
+                raise _ResolverStuck("resolver stuck")
+            self._lookups += 1
 
         def run() -> None:
             try:
@@ -156,15 +171,19 @@ class RelayConn:
             except OSError as e:
                 box["e"] = e
             finally:
+                with self._fd_lock:
+                    self._lookups -= 1
                 done.set()
-                self._wake.set()
+                wake.set()
 
         threading.Thread(target=run, name="orch-relay-dns", daemon=True).start()
         while not done.is_set():
             left = self._deadline - self._mono()
-            if left <= 0 or self._shut:
+            if left <= 0 or self._shut.is_set():
                 raise TimeoutError("name resolution")
-            self._wake.wait(left)
+            wake.wait(left)
+            wake.clear()
+            self._lookup_wakeups += 1
         if "e" in box:
             raise box["e"]  # type: ignore[misc]
         return box["r"]  # type: ignore[return-value]
@@ -200,9 +219,14 @@ class RelayConn:
         raise err or OSError("no address")
 
     def shutdown(self) -> None:
-        """End any blocked resolution, read or write on this connection (safe from another thread, never raises)."""
-        self._shut = True
+        """Stop this connection for good: end any blocked resolution, read or write, and fail every later call at once
+        (kind ``shutdown``). Safe from another thread, never raises."""
+        self._shut.set()
         self._wake.set()
+        self._kill()
+
+    def _kill(self) -> None:
+        """End blocked reads and writes of the current call (the deadline watchdog)."""
         with self._fd_lock:
             w = self._watch
             if w is None:
@@ -266,14 +290,18 @@ class RelayConn:
     def _request(self, method, target, route, headers, body, deadline_s, cap) -> Response:
         t0 = self._mono()
         deadline = t0 + deadline_s
-        self._deadline, self._shut = deadline, False
-        self._wake.clear()
+        if self._shut.is_set():
+            raise TransportError("shutdown", route)
+        self._deadline = deadline
+        self._wake = threading.Event()  # per call: a stale lookup helper sets only its own call's event
+        if self._shut.is_set():  # a shutdown() racing the line above
+            raise TransportError("shutdown", route)
         left = self._remaining(deadline, route)
         fired = threading.Event()
 
         def expire() -> None:
             fired.set()
-            self.shutdown()
+            self._kill()
 
         watchdog = threading.Timer(left, expire)
         watchdog.daemon = True
@@ -338,6 +366,10 @@ class RelayConn:
             parts.append(piece)
 
     def _kind(self, e: BaseException, deadline: float, fired: threading.Event) -> str:
+        if self._shut.is_set():
+            return "shutdown"
+        if isinstance(e, _ResolverStuck):
+            return "connect"
         if fired.is_set() or self._mono() >= deadline:
             return "deadline"
         if isinstance(e, ssl.SSLError):

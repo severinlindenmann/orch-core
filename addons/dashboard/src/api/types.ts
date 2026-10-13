@@ -943,7 +943,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string }
+  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string }
 }
 
 export class ApiError extends Error {
@@ -956,6 +956,9 @@ export class ApiError extends Error {
   readonly reason?: string
   /** `click.unsettled`: the request whose signature has not settled yet (re-attach to it). */
   readonly request_id?: string
+  readonly signed_at?: string | null
+  readonly op?: string
+  readonly summary?: string
   readonly exit?: number
   constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
     super(body.message)
@@ -967,6 +970,9 @@ export class ApiError extends Error {
     this.retry_after_ms = body.retry_after_ms
     this.reason = body.reason
     this.request_id = body.request_id
+    this.signed_at = body.signed_at
+    this.op = body.op
+    this.summary = body.summary
     this.exit = exit
   }
 }

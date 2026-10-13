@@ -858,10 +858,9 @@ branch, a remote, a one-line typed text, and checks device/auth/scope/grant-scop
 adapters is `internal`, not a 500. I-5: `PolicyBody.canonical` docstring. I-2: `idem.conflict` on a prepare shows "Changed since your first
 try" and "Start again" (new key on the click).
 
-**L4 limit (documented):** the host key is `a_` + hash(session token, workspace, browser idem). After a new login or a dashboard restart
-the token is unknown, so a kept key cannot be matched by the host. The browser drops it, prepares with a new key and says the earlier
-attempt may still be open until it expires on its own (10 minutes, 4 for a grant). Such an earlier request is not cancelled by logout
-and counts toward the host's 20 pending. "Never a second request" therefore holds within one session.
+**L4 historical limit (superseded by M5):** the intent now comes from canonical host content and gate/question
+version only. Neither the dashboard link nor the signer sends `auth.session`; a dashboard restart returns the same
+host request for the same intent. The old session-token-derived key no longer applies.
 
 Confirmation words (stream A decision): workspace `settings.set` = `<PREFIX>/SETTINGS`, `policy.set` = `<PREFIX>/POLICY` (prefix from
 the signer's own registry); the panel shows them and the stub signer asks for them. Real `orch sign` learns them with H6b. `member.add`:
@@ -969,11 +968,12 @@ for the 0600 file store of the disposable state; the keychain is never opened. T
 the host's `human.prepare` idem record (keyed by principal and idem, bound to op, args, signer, handoff, person, files and session) returns
 the same request, or its terminal state for 24 h, to every caller of the same idem; the signer child forwards the idem and signs a request
 once (its own `approval.result`/`signed` record, and the host refuses a second submit). The idem is derived in `server/src/orch_dashboard/intent.py`
-from the action (`person`, `workspace_id`, `op`, `args` exactly as sent, `base` = gate gen/hash or ticket revision or member role) and is the
+from the action (`person`, `workspace_id`, `op`, `args` exactly as sent, `base` = gate gen/hash for decisions, question id/hash for answers, null otherwise) and is the
 same for every tab, session and retry; the browser sends no key, only `retry`, which an explicit "Do it again" / "Start again" advances
 (`handoff.py` `plan()` and `send_prepare()`, used by both `click.py` and the hand-off route). Consequences, all tested: two tabs prepare one
 request; a lost answer or logout/login returns the same request; a landed action answers `intent.done` ("Already done"); cancelled/expired
-answers `intent.ended`; `idem.conflict` (other path or a session from before a restart) becomes `intent.open` and prepares nothing;
+answers `intent.ended`; `idem.conflict` (other path or signer binding) becomes `intent.open` only while a matching request is open,
+otherwise `intent.blocked` offers explicit Start again; neither case automatically prepares;
 `idem.expired` becomes `intent.expired` (HTTP 409), with no new prepare; only an explicit "Start again" advances `retry`.
 Requests belong to the (person, workspace) (`Handoffs.owned`); any session of the person may view,
 sign, poll and cancel. **What stays in memory is convenience only:** which ids this dashboard prepared (ownership, lost on restart), the
@@ -993,3 +993,29 @@ requests (the signer refuses with `disabled`; the server cancels them).
 **Open points.** The rate limit (30 per minute) is mapped and unit tested, not provoked on the real signer. The server cannot show the
 prepared events of a click request (the signer holds them and validates them), so the hand-off's `expected()` event check is replaced by the
 signer's own checks and the op comparison on `view`.
+
+
+M5 final intent contract (owner decision 13 Oct ~17:20, refined by orch-d6; coordination.md 'M5 'same intent'' and 'M5 intent REFINED'):
+**one intent (op + content + gate/question version) → at most one request → at most one signature;
+a deliberate repeat only via 'Do it again'.** Content means the exact canonical host arguments and certificate bytes.
+Gate decisions use gate generation/hash; answers use question id/hash, never its answered flag or the whole ticket.
+All other ticket operations (log, set, section.set, close, reopen, move) and workspace operations
+(settings, policy, member, grant) have no base. Unrelated agent edits cannot produce a second request.
+The host retains the intent outcome for 24 h. Both panels show server-sourced signed content and signing time
+before 'Do it again' advances retry. Neither dashboard link nor signer sends `auth.session`: restarting the
+dashboard reconnects with the same binding and returns the same request, not `idem.conflict`.
+A conflict is checked against `human.pending`: prepared/bound requests of the same op+key show their expiry;
+otherwise `intent.blocked` offers explicit 'Start again', warning that an earlier request may have been signed.
+No automatic retry advances the intent. Hand-off expiry is decided by host state, never the browser clock.
+
+**Host API gap:** current `human.get`/`human.pending` expose creation/expiry but not signing time.
+The server returns `signed_at: null` and the panels say signing time is unavailable; they never call creation
+time signing time. A host `signed_at` field is required for accurate 'N min ago'. The submitted click prepare
+loses its request id in the signer error, so the server replays the identical host prepare binding/idem through
+its own link to retrieve the exact existing record, not an arbitrary op+key match. Its warning summary comes
+from that record's material review. `human.request_state` at sign reads pending/get before offering a repeat.
+
+**F4 merge prerequisite: host PR #434 must merge before M5.** The existing local fail-open behavior is unchanged:
+when signer status is unavailable, `one_path_is_click` can permit a hand-off even on a click-enabled workspace.
+Host #434 enforces one signing path and refuses unsafe flag changes. The dashboard's shared idem and op+key
+pre-check remain defence in depth; they are not a replacement for this host prerequisite.

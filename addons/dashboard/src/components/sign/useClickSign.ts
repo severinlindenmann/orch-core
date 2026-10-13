@@ -213,7 +213,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
           settled.current?.('done', as.state, as.request)
         } else if (got.state === 'cancelled' || got.state === 'expired') {
           stopped = true
-          setProblem({ title: got.state === 'expired' ? 'Expired' : 'Cancelled', body: 'The host says it was not signed. You can sign in the terminal instead, or prepare it again.', next: 'terminal' })
+          setProblem({ title: got.state === 'expired' ? 'Expired' : 'Cancelled', body: 'The host says it was not signed. Start again to prepare a new request.', next: 'prepare' })
           setPhase('failed')
           refetch()
         } else if (last) stillOpen()

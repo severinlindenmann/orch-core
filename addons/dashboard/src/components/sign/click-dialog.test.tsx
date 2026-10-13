@@ -293,14 +293,36 @@ describe('an unknown outcome never leads to a second signature', () => {
   }, 20000)
 
   it('an action that already landed is "Already done"; Do it again is an explicit click with the next retry', async () => {
-    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.done', message: 'This is already done.', retryable: false, state: 'submitted' } as never, 5))
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.done', message: 'This is already done.', retryable: false, state: 'submitted', op: 'log', signed_at: new Date(Date.now() - 120_000).toISOString(), summary: 'HOST-SIGNED comment text' } as never, 5))
     const m = await open()
     fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
     expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(m.dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
+    expect(m.dialog).toHaveTextContent('HOST-SIGNED comment text')
     expect(c.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     expect(within(m.dialog).queryByRole('button', { name: /^Sign$|Sign in the terminal instead/ })).toBeNull()
     fireEvent.click(within(m.dialog).getByRole('button', { name: 'Do it again' }))
     await within(m.dialog).findByTestId('click-panel', {}, T).catch(() => undefined)
+    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('a submitted sign refusal shows the prior signature and Do it again', async () => {
+    const m = await toPanel()
+    c.sign.mockRejectedValueOnce(new ApiError(409, { code: 'intent.done', message: 'Already done', retryable: false, op: 'approve', signed_at: null, summary: 'HOST-SIGNED approval' }))
+    press(await armed(m.dialog))
+    expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
+    expect(m.dialog).toHaveTextContent('HOST-SIGNED approval')
+    expect(m.dialog).toHaveTextContent('signing time unavailable')
+    expect(within(m.dialog).getByRole('button', { name: 'Do it again' })).toBeInTheDocument()
+    expect(within(m.dialog).queryByRole('button', { name: 'Start again' })).toBeNull()
+  })
+
+  it('a closed binding conflict offers an explicit Start again', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.blocked', message: 'No request is open. An earlier one may have been signed.', retryable: false }))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Start again' }, T))
     await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
   })

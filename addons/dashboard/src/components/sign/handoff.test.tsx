@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/api/types'
 import { setFeatures } from '@/api/features'
 import { can } from '@/api/permissions'
 import { CODE, fakeRequest, mount, refusal, spies, state } from '@/test/handoffHarness'
@@ -50,6 +51,28 @@ describe('the hand-off dialog (real host)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Start again' }))
     await within(dialog).findByTestId('handoff-command', {}, T)
     expect(s.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('a closed binding conflict only advances retry on Start again', async () => {
+    s.prepare.mockRejectedValueOnce(refusal('intent.blocked', 409)).mockResolvedValue(fakeRequest())
+    const { user } = await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await user.click(await within(dialog).findByRole('button', { name: 'Start again' }, T))
+    await waitFor(() => expect(s.prepare).toHaveBeenCalledTimes(2), T)
+    expect(s.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('a fast browser clock never expires a request the host still holds open', async () => {
+    const request = fakeRequest()
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3600_000)
+    await waitFor(() => expect(s.get).toHaveBeenCalled(), T)
+    expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull()
+    expect(within(dialog).getByTestId('handoff-command')).toBeInTheDocument()
   })
 
   it('draws the preview only from the host material, never from the cached ticket', async () => {
@@ -147,14 +170,16 @@ describe('the hand-off dialog (real host)', () => {
   })
 
   it('a request that is already signed is "Already done", and Do it again is an explicit new intent', async () => {
-    const done = { ...fakeRequest({ code: null }), state: 'submitted' as const }
+    const done = new ApiError(409, { code: 'intent.done', message: 'Already done', retryable: false, op: 'log', signed_at: new Date(Date.now() - 120_000).toISOString(), summary: 'HOST-SIGNED comment text' })
     const fresh = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '2', code: 'AAAA-BBBB' })
-    s.prepare.mockResolvedValueOnce(done).mockResolvedValueOnce(fresh)
+    s.prepare.mockRejectedValueOnce(done).mockResolvedValueOnce(fresh)
     s.get.mockResolvedValue(state(fresh))
     const { user } = await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
     expect(await within(dialog).findByText('Already done', {}, T)).toBeInTheDocument()
     expect(within(dialog).queryByText('Signed')).toBeNull()
+    expect(dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
+    expect(dialog).toHaveTextContent('HOST-SIGNED comment text')
     expect(s.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     await user.click(within(dialog).getByRole('button', { name: 'Do it again' }))
     await within(dialog).findByTestId('handoff-command', {}, T)

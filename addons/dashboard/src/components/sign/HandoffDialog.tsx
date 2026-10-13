@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
-import { clickEligible, clickReady } from '@/api/click'
+import { alreadySigned, clickEligible, clickReady } from '@/api/click'
 import { ClickRisk, ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
@@ -35,13 +35,15 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
       if (code === 'intent.expired') return { title: 'This attempt is too old; start again', body: error ?? '', tone: 'warn' }
       return { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again to get a new code.', tone: 'warn' }
     case 'already':
-      return { title: 'Already done', body: 'The host says this is already in place, so there is nothing to sign. The page shows the current state. If you meant to do it again, say so.' }
+      return { title: 'Already done', body: code === 'intent.done' ? error ?? '' : 'The host says this is already in place, so there is nothing to sign. The page shows the current state. If you meant to do it again, say so.' }
     case 'changed':
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
+    case 'blocked':
+      return { title: 'The earlier attempt ended', body: error ?? '', tone: 'warn' }
     case 'attempt_open':
-      return { title: 'An attempt for this is already open', body: error ?? 'The host holds an earlier attempt of this action (in the terminal, or from before this dashboard restarted). It settles or expires by itself; nothing new was prepared.', tone: 'warn' }
+      return { title: 'An attempt for this is already open', body: error ?? 'The host holds an open request for this action. Wait until it ends or expires.', tone: 'warn' }
     case 'invalid':
       return { title: 'Not shown', body: 'The host sent a request whose fingerprint does not match its content, so it is not shown and was cancelled. Nothing was signed.', tone: 'warn' }
     case 'error':
@@ -156,7 +158,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
-  const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
+  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
@@ -237,7 +239,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {click.phase === 'failed' && click.problem && (
           <div role="alert" data-testid="click-problem" data-click-next={click.problem.next} className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
             <p className="font-medium text-text">{click.problem.title}</p>
-            <p className="text-text-muted">{click.problem.body}</p>
+            <p className="text-text-muted"><Raw>{click.problem.body}</Raw></p>
           </div>
         )}
 
@@ -280,7 +282,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {end && (
           <div role={end.tone === 'warn' ? 'alert' : 'status'} data-handoff-end={phase} className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
             <p className="font-medium text-text">{end.title}</p>
-            <p className="text-text-muted">{end.body}</p>
+            <p className="text-text-muted"><Raw>{end.body}</Raw></p>
             {run.error?.hint && phase === 'error' && <p className="text-text-faint">{run.error.hint}</p>}
           </div>
         )}
@@ -337,10 +339,10 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Cancel
               </Button>
             )}
-            {(phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
-              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'expired' ? 'Start again' : 'Prepare again'}</Button>
+            {(phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
+              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'expired' || phase === 'blocked' ? 'Start again' : 'Prepare again'}</Button>
             )}
-            {phase === 'already' && run.request?.state === 'submitted' && p.action && <Button onClick={again}>Do it again</Button>}
+            {phase === 'already' && (run.request?.state === 'submitted' || run.error?.code === 'intent.done') && p.action && <Button onClick={again}>Do it again</Button>}
             {end && (
               <Button ref={cancelRef} variant={phase === 'done' ? 'default' : 'ghost'} onClick={() => void close()}>
                 Close

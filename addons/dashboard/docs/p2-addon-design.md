@@ -213,6 +213,27 @@ contract with a different display and factor.
 
 ### 4.3 Request lifecycle, replay and ambiguous completion
 
+M5 final intent contract (owner decision 13 Oct ~17:20, refined by orch-d6; coordination.md 'M5 'same intent'' and 'M5 intent REFINED'):
+**one intent (op + content + gate/question version) → at most one request → at most one signature;
+a deliberate repeat only via 'Do it again'.** Content means the exact canonical host arguments and certificate bytes.
+Gate decisions use gate generation/hash; answers use question id/hash, never its answered flag or the whole ticket.
+All other ticket operations (log, set, section.set, close, reopen, move) and workspace operations
+(settings, policy, member, grant) have no base. Unrelated agent edits cannot produce a second request.
+The host retains the intent outcome for 24 h. Both panels show server-sourced signed content and signing time
+before 'Do it again' advances retry. Neither dashboard link nor signer sends `auth.session`: restarting the
+dashboard reconnects with the same binding and returns the same request, not `idem.conflict`.
+A conflict is checked against `human.pending`: prepared/bound requests of the same op+key show their expiry;
+otherwise `intent.blocked` offers explicit 'Start again', warning that an earlier request may have been signed.
+No automatic retry advances the intent. Hand-off expiry is decided by host state, never the browser clock.
+
+**Host API gap:** current `human.get`/`human.pending` expose creation/expiry but not signing time.
+The server returns `signed_at: null` and the panels say signing time is unavailable; they never call creation
+time signing time. A host `signed_at` field is required for accurate 'N min ago'. The submitted click prepare
+loses its request id in the signer error, so the server replays the identical host prepare binding/idem through
+its own link to retrieve the exact existing record, not an arbitrary op+key match. Its warning summary comes
+from that record's material review. `human.request_state` at sign reads pending/get before offering a repeat.
+
+
 The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signer.device, op, review_digest)`, valid
 10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
 person. The dashboard adds:
@@ -224,10 +245,7 @@ person. The dashboard adds:
   never from a click, tab or session: `a_` + 128 bits of `sha256(cj({person, workspace_id, op, args, base}))` in the
   host's shape (`a_[0-7]` + 25 Crockford characters; `orch_dashboard/intent.py`). `op` and `args` are exactly what is
   sent to the host (the typed models' `host_call`, never the browser's body); `person` is the workspace's own person;
-  `base` is the state the action stands on, read right before prepare: the gate's generation and hash for a gate
-  decision, a hash of the ticket document and gates for another ticket action (the host serves no head sequence on
-  `ticket.get`), the member's role for a role change, none for the rest. When the base moves the action is legitimately
-  a new one. Two tabs, two sessions, a reopened dialog after a lost answer, and logout/login then retry all send the same
+  `base` is gate generation/hash for gate decisions, question id/hash for answers, and null for every other op. Two tabs, two sessions, a reopened dialog after a lost answer, and logout/login then retry all send the same
   idem with the same arguments and get the same request. The browser sends no key; it sends only `retry` (0 normally),
   which only an explicit click advances. A request obtained this way belongs to the PERSON in that workspace: any session
   of that person may view, poll, sign and cancel it; an id nobody here prepared looks like one that never existed. The
@@ -235,9 +253,9 @@ person. The dashboard adds:
   What the person sees: a request that is `submitted` is **"Already done"** with an explicit **"Do it again"** (retry + 1,
   so a second identical comment is possible, but only by that click); a `cancelled` or `expired` one offers **"Start
   again"** (also retry + 1); a lost answer is retried with the same `retry` and returns the same request. `idem.conflict`
-  means the host holds an attempt of this intent bound to something else (the other path, the signer, or a session from
-  before a dashboard restart) - safe, because it is not a second request - and is shown as "An attempt for this is
-  already open ... it settles or expires by itself" with nothing offered that prepares again.
+  means a different path or signer binding. `human.pending` determines whether an op+key request is open:
+  if so, show its expiry; otherwise offer explicit "Start again" with a prior-signature warning.
+  Neither dashboard nor signer sends `auth.session`, so a restart preserves the host binding.
   **One signing path per workspace (owner decision, 12 Oct 2026, via orch-d6; coordination.md line 166; host side core
   #434).** Where click-to-sign is ON (the signer's flag for that workspace), the dashboard offers only Sign: there is no
   "Sign in the terminal instead", and `/handoff` prepares are refused with `sign.click_only` ("This workspace signs in the

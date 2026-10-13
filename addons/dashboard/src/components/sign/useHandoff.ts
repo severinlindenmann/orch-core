@@ -1,11 +1,11 @@
 // One terminal hand-off from click to outcome (design 4.1, 4.3). It prepares a request once per click, follows it by
-// polling `GET /handoff/<id>` (bounded) and by the live stream (a query update triggers an early check), and never
+// polling `GET /handoff/<id>` and by the live stream (a query update triggers an early check), and never
 // prepares again on its own. The server derives the host's idem from the action itself, so a lost answer, a second tab
 // or a new login all reach the SAME request; only the person's explicit "Do it again" / "Start again" advances `retry`.
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { ALREADY_DONE, CHANGED, INTENT_OPEN, expiryMs, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { ALREADY_DONE, CHANGED, INTENT_OPEN, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { ApiError } from '@/api/types'
 
 export type HandoffPhase =
@@ -23,8 +23,9 @@ export type HandoffPhase =
   | 'changed'
   /** The answer to the prepare was lost: "Try again" asks the host for the same request (the same intent, never a second). */
   | 'unknown'
-  /** The host holds an attempt of this action that this dashboard cannot reach (the terminal, or from before a restart): nothing is prepared until it settles. */
+  /** The host confirms an open request for this op+key; no new prepare until it ends. */
   | 'attempt_open'
+  | 'blocked'
   /** The host's answer does not recompute to its own fingerprint: never shown as valid. */
   | 'invalid'
   | 'error'
@@ -37,8 +38,6 @@ export function failedSubmit(code: string): string {
 }
 
 export const POLL_MS = 2000
-/** The poll gives up this long after the request would have expired on the host (clock skew, a slow host). */
-const GRACE_MS = 20000
 const MAX_FAILED_POLLS = 5
 
 export interface HandoffRun {
@@ -138,7 +137,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         if (!mounted.current) return
         const err = e instanceof ApiError ? e : new ApiError(0, { code: 'host.unavailable', message: 'Could not reach the dashboard server.', retryable: true })
         setError(err)
-        if (ALREADY_DONE.has(err.code)) {
+        if (ALREADY_DONE.has(err.code) || err.code === 'intent.done') {
           refetch()
           setPhase('already')
         } else if (CHANGED.has(err.code)) {
@@ -146,6 +145,8 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           setPhase('changed')
         } else if (err.code === 'human.request_expired' || err.code === 'intent.ended' || err.code === 'intent.expired') {
           setPhase('expired')
+        } else if (err.code === 'intent.blocked') {
+          setPhase('blocked')
         } else if (err.code === INTENT_OPEN) {
           setPhase('attempt_open') // nothing is offered that prepares again until the host's attempt settles
         } else if (err.code === 'outcome.unknown') {
@@ -172,12 +173,11 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     [setPhase, refetch],
   )
 
-  // Follow an open request: poll every 2 s (bounded by its expiry), and check at once when the live stream updates the
+  // Follow an open request: poll every 2 s until the host reports its terminal state; live stream updates check the
   // ticket. The poll only reads; it never prepares and never submits.
   useEffect(() => {
     if (phase !== 'waiting' || !request || !pinned) return
     const ws = pinned
-    const deadline = (expiryMs(request.expires_at) ?? Date.now() + 600_000) + GRACE_MS
     let failed = 0
     let stopped = false
     let inflight = false
@@ -209,12 +209,6 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       }
     }
     const timer = setInterval(() => {
-      if (Date.now() > deadline) {
-        stopped = true
-        clearInterval(timer)
-        finish('expired', null)
-        return
-      }
       void check()
     }, POLL_MS)
     // The live stream refreshes the ticket when the signer's event arrives: look at the request straight away.

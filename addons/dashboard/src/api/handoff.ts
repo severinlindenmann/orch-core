@@ -216,7 +216,7 @@ export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refuse
 /**
  * The server derives the host's idem from the action itself (one action intent -> at most one request), so the browser sends
  * no key. These are its answers about the intent: it is already done (a request of it was signed), its request ended
- * (cancelled or expired), or the host holds an attempt that cannot be reached from here (the terminal, or from before a restart).
+ * (cancelled or expired), or the host holds an attempt that cannot be reached from here (another signing path or device binding).
  * The first two are left only by an explicit click ("Do it again", "Start again"), which advances `retry`.
  */
 export const INTENT_DONE = 'intent.done'

@@ -1422,7 +1422,7 @@ HTTP process against passive disclosure, while the accepted risk (same-UID agent
 
 ## 2026-10-12 — M5 structural fix: one action intent, held by the host idem
 
-**Decision:** (1) The host idem of every prepare (click and hand-off) is derived from the action intent, `sha256(cj({person, workspace_id, op, args, base}))` in the host's `a_[0-7]`+25 Crockford shape, never from a click, tab or session; the browser sends no key, only an explicit `retry` counter. (2) A terminal result for the intent is "Already done" with an explicit "Do it again" (cancelled/expired: "Start again"), both advance `retry`. (3) A request obtained through an intent belongs to the person in that workspace; any session of that person may view/sign/poll/cancel it (approved by orch-d6, stream A orch-52). (4) `idem.conflict` across paths or after a dashboard restart is reported as an open attempt and prepares nothing; the terminal fallback after a click request is a deliberate other intent. (5) The in-memory unsettled/recently-signed records of rounds 1-3 are reduced to UI convenience; the 5-minute "recently signed" block is gone.
+**Decision:** (1) The host idem of every prepare (click and hand-off) is derived from the action intent, `sha256(cj({person, workspace_id, op, args, base}))` in the host's `a_[0-7]`+25 Crockford shape, never from a click, tab or session; the browser sends no key, only an explicit `retry` counter. (2) A terminal result for the intent is "Already done" with an explicit "Do it again" (cancelled/expired: "Start again"), both advance `retry`. (3) A request obtained through an intent belongs to the person in that workspace; any session of that person may view/sign/poll/cancel it (approved by orch-d6, stream A orch-52). (4) `idem.conflict` across paths is checked for an open request; dashboard restarts retain the binding because neither link sends `auth.session`; the terminal fallback after a click request is a deliberate other intent. (5) The in-memory unsettled/recently-signed records of rounds 1-3 are reduced to UI convenience; the 5-minute "recently signed" block is gone.
 
 **Why:** Three Opus rounds each found another way to obtain a second, different request for one action (another tab, a reopened dialog, a lost answer, logout, a race between prepare and sign). Patching paths in this process cannot close the class; the host's idem record can, once every path sends the same idem.
 
@@ -1443,3 +1443,34 @@ HTTP process against passive disclosure, while the accepted risk (same-UID agent
 **Why:** Host retention expiry does not prove an action was never completed; automatic renewal could sign it twice.
 
 **Revert:** Restore epoch renewal in `send_prepare` and the intent hash (reintroduces the duplicate-action risk).
+
+
+## 2026-10-13 — M5 final intent and repeat warning
+
+**Decision:**
+
+M5 final intent contract (owner decision 13 Oct ~17:20, refined by orch-d6; coordination.md 'M5 'same intent'' and 'M5 intent REFINED'):
+**one intent (op + content + gate/question version) → at most one request → at most one signature;
+a deliberate repeat only via 'Do it again'.** Content means the exact canonical host arguments and certificate bytes.
+Gate decisions use gate generation/hash; answers use question id/hash, never its answered flag or the whole ticket.
+All other ticket operations (log, set, section.set, close, reopen, move) and workspace operations
+(settings, policy, member, grant) have no base. Unrelated agent edits cannot produce a second request.
+The host retains the intent outcome for 24 h. Both panels show server-sourced signed content and signing time
+before 'Do it again' advances retry. Neither dashboard link nor signer sends `auth.session`: restarting the
+dashboard reconnects with the same binding and returns the same request, not `idem.conflict`.
+A conflict is checked against `human.pending`: prepared/bound requests of the same op+key show their expiry;
+otherwise `intent.blocked` offers explicit 'Start again', warning that an earlier request may have been signed.
+No automatic retry advances the intent. Hand-off expiry is decided by host state, never the browser clock.
+
+**Host API gap:** current `human.get`/`human.pending` expose creation/expiry but not signing time.
+The server returns `signed_at: null` and the panels say signing time is unavailable; they never call creation
+time signing time. A host `signed_at` field is required for accurate 'N min ago'. The submitted click prepare
+loses its request id in the signer error, so the server replays the identical host prepare binding/idem through
+its own link to retrieve the exact existing record, not an arbitrary op+key match. Its warning summary comes
+from that record's material review. `human.request_state` at sign reads pending/get before offering a repeat.
+
+**Why:** Whole-ticket hashing let unrelated agent edits split a single action into two signable requests.
+A retained binding without an open request also caused a 24 h lockout.
+
+**Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
+never restore whole-ticket or member-role bases as an incidental refactor.

@@ -116,6 +116,14 @@ const REFUSED: Record<string, ClickProblem> = {
  */
 export const unknownOutcome = (e: unknown): boolean => !(e instanceof ApiError) || (e.status >= 500 && e.exit === undefined)
 
+/** Only server-sourced record facts; never the current form's values. */
+export function alreadySigned(e: Pick<ApiError, 'signed_at' | 'op' | 'summary'>): string {
+  const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op ? `${e.op} action` : 'action'
+  const at = e.signed_at ? Date.parse(e.signed_at) : NaN
+  const when = Number.isFinite(at) ? `${Math.max(0, Math.floor((Date.now() - at) / 60_000))} min ago (${e.signed_at})` : '(signing time unavailable from this host)'
+  return `A similar ${thing} was signed ${when}. ${e.summary ?? 'Signed content unavailable from this host.'} Do it again only if you intend a second signature.`
+}
+
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */
 export function clickProblem(e: unknown): ClickProblem {
   if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again.', next: 'retry' }
@@ -125,13 +133,15 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.convenience_unavailable':
       return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'}${OFF}`, next: 'terminal' }
     case 'intent.done':
-      return { title: 'Already done', body: 'A request for exactly this was already signed, so there is nothing to sign now. Do it again only if you mean to make it happen a second time.', next: 'again' }
+      return { title: 'Already done', body: alreadySigned(e), next: 'again' }
     case 'intent.expired':
       return { title: 'This attempt is too old; start again', body: e.message, next: 'prepare' }
     case 'intent.ended':
       return { title: 'The earlier attempt ended', body: `${e.message} Nothing was signed. Start again to make a new request.`, next: 'prepare' }
+    case 'intent.blocked':
+      return { title: 'The earlier attempt ended', body: e.message, next: 'prepare' }
     case 'intent.open':
-      return { title: 'An attempt for this is already open', body: e.message || 'The host holds an earlier attempt of this action (from the terminal, or from before this dashboard restarted). It settles or expires by itself; nothing new was prepared.', next: 'open' }
+      return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.click_only':
       return { title: 'This workspace signs in the dashboard', body: e.message, next: 'open' }
     case 'sign.convenience_readers':

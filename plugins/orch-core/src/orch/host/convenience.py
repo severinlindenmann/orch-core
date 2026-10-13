@@ -151,8 +151,7 @@ def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
         raise HostError(
             "sign.convenience_readers",
             f"{op} would add a reader to a workspace whose history has convenience signatures",
-            hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)."
-            + READER_UPGRADE,
+            hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)." + READER_UPGRADE,
         )
     if enabled(service.state_dir, service.workspace_id, service.host_uid):
         raise HostError(
@@ -163,7 +162,10 @@ def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
         )
 
 
-READER_UPGRADE = " Reader-version handshake planned for phase 2; until then use click-to-sign only on workspaces that won't get a phone, relay link or other member yet."
+READER_UPGRADE = (
+    " Reader-version handshake planned for phase 2; until then use click-to-sign only on workspaces that won't get a"
+    " phone, relay link or other member yet."
+)
 
 
 # -- one signing path per workspace (§0.8.6 item 8, owner decision of 12 Oct 2026)
@@ -179,8 +181,9 @@ LOCK_WAIT = 2.0  # seconds a lock is waited for before ``lock.busy``: a stopped 
 
 @contextlib.contextmanager
 def _flock(state_dir: Path, name: str, host_uid: int) -> Iterator[None]:
-    """An exclusive ``flock`` on ``<state>/host/<name>``, waited for at most :data:`LOCK_WAIT` seconds (``lock.busy``, exit 9, retryable).
-    The file must be a regular 0600 file of the host UID, opened without following a link (``custody.unsafe_mode``)."""
+    """An exclusive ``flock`` on ``<state>/host/<name>``, waited for at most :data:`LOCK_WAIT` seconds (``lock.busy``,
+    exit 9, retryable). The file must be a regular 0600 file of the host UID, opened without following a link
+    (``custody.unsafe_mode``)."""
     ensure_private_dir(host_dir(state_dir), host_uid)
     path = host_dir(state_dir) / name
     try:
@@ -231,8 +234,8 @@ def pending_handoffs(
 ) -> list[dict[str, Any]]:
     """The workspace's pending (``prepared`` or ``bound``, not expired) hand-off requests, as stored. A bound request
     counts a minute past its expiry as defence in depth: the host's submit holds the workspace lock from its flag
-    check to its journal write, so ``on`` cannot interleave with it whatever the timing. A request file that cannot be read is
-    ``custody.unsafe_mode`` (switching on must not guess about it)."""
+    check to its journal write, so ``on`` cannot interleave with it whatever the timing. A request file that cannot be
+    read is ``custody.unsafe_mode`` (switching on must not guess about it)."""
     from .requests import PENDING, RequestStore
 
     store = RequestStore(state_dir, workspace_id, host_uid, clock=clock)

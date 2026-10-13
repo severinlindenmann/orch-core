@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import threading
+from datetime import UTC
 
 import pytest
 
@@ -271,8 +272,13 @@ def test_a_request_without_a_valid_expiry_refuses_switching_on_and_names_it(serv
         del rec["expires"]
     else:
         rec["expires"] = {
-            "text": "soon", "none": None, "false": False, "true": True,
-            "-inf": float("-inf"), "inf": float("inf"), "nan": float("nan"),
+            "text": "soon",
+            "none": None,
+            "false": False,
+            "true": True,
+            "-inf": float("-inf"),
+            "inf": float("inf"),
+            "nan": float("nan"),
         }[damage]
     path.write_text(json.dumps(rec))
     path.chmod(0o600)
@@ -296,10 +302,10 @@ def test_human_get_and_pending_carry_submitted_at_null_until_submit(served, huma
     got = ok(human.get(rid))["data"]["request"]["submitted_at"]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", got)
     created = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]["created_at"]
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     def _t(s):
-        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
 
     assert _t(got) - _t(created) == 37  # exactly the host clock at submit
     row = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]

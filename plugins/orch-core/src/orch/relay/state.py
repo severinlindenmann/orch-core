@@ -63,7 +63,12 @@ class StateDir:
     """One live owner per directory: the constructor takes an exclusive, non-blocking ``flock`` on the directory for
     the object's lifetime (review D1). A second ``StateDir`` on the same directory, in this process or another, gets
     :class:`StateError` "in use"; :meth:`close` releases it. ``lock`` serialises every read-modify-write inside the
-    owning process, so two ledgers or write-once files on one directory cannot lose an update."""
+    owning process, so two ledgers or write-once files on one directory cannot lose an update.
+
+    Every operation works relative to the locked directory fd, never by path again: if the directory is renamed and a
+    new one created at the old path, this instance keeps writing into the directory it locked (review round 3, R3).
+    The lock fd is close-on-exec, so an exec'd child never holds it; ``os.fork`` does inherit it, so the instance
+    records its pid and refuses every operation in a forked child (R2)."""
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
@@ -74,8 +79,14 @@ class StateDir:
         st = os.lstat(self.path)
         if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
             raise StateError(f"relay state directory {self.path} must be a 0700 directory owned by this user")
-        fd = self._dir()  # O_CLOEXEC: a child never inherits the lock
         try:
+            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except OSError as e:
+            raise StateError(f"cannot open {self.path}") from e
+        try:
+            held = os.fstat(fd)
+            if (held.st_dev, held.st_ino) != (st.st_dev, st.st_ino):
+                raise StateError(f"relay state directory {self.path} changed while it was opened")
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(fd)
@@ -83,15 +94,19 @@ class StateDir:
         except OSError as e:
             os.close(fd)
             raise StateError(f"cannot lock {self.path}") from e
+        except StateError:
+            os.close(fd)
+            raise
         self._held: int | None = fd
+        self._pid = os.getpid()
         self.lock = threading.RLock()
 
     def close(self) -> None:
-        """Release the directory (closing the fd drops the ``flock``)."""
+        """Release the directory (closing the fd drops the ``flock``). In a forked child this only forgets the fd."""
         with self.lock:
             fd, self._held = self._held, None
-        if fd is not None:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
 
     def __enter__(self) -> StateDir:
         return self
@@ -99,15 +114,13 @@ class StateDir:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def _live(self) -> None:
+    def _dir(self) -> int:
+        """The locked directory fd; call with ``lock`` held."""
+        if os.getpid() != self._pid:
+            raise StateError(f"relay state directory {self.path} belongs to the parent process (forked child)")
         if self._held is None:
             raise StateError(f"relay state directory {self.path} is closed")
-
-    def _dir(self) -> int:
-        try:
-            return os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        except OSError as e:
-            raise StateError(f"cannot open {self.path}") from e
+        return self._held
 
     @staticmethod
     def _name(name: str) -> str:
@@ -117,32 +130,38 @@ class StateDir:
 
     def read(self, name: str) -> bytes | None:
         name = self._name(name)
-        self._live()
-        dfd = self._dir()
+        with self.lock:
+            return self._read(name, self._dir())
+
+    def _read(self, name: str, dfd: int) -> bytes | None:
         try:
-            try:
-                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
-            except FileNotFoundError:
-                return None
-            except OSError as e:  # ELOOP: a symlink
-                raise StateError(f"{name}: not a regular file") from e
-            try:
-                st = os.fstat(fd)
-                if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
-                    raise StateError(f"{name}: must be a 0600 regular file owned by this user")
-                if st.st_size > MAX_FILE:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+        except FileNotFoundError:
+            return None
+        except OSError as e:  # ELOOP: a symlink
+            raise StateError(f"{name}: not a regular file") from e
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+                raise StateError(f"{name}: must be a 0600 regular file owned by this user")
+            if st.st_size > MAX_FILE:
+                raise StateError(f"{name}: too large")
+            chunks, n = [], 0
+            while piece := os.read(fd, 65536):
+                n += len(piece)
+                if n > MAX_FILE:
                     raise StateError(f"{name}: too large")
-                chunks, n = [], 0
-                while piece := os.read(fd, 65536):
-                    n += len(piece)
-                    if n > MAX_FILE:
-                        raise StateError(f"{name}: too large")
-                    chunks.append(piece)
-                return b"".join(chunks)
-            finally:
-                os.close(fd)
+                chunks.append(piece)
+            return b"".join(chunks)
         finally:
-            os.close(dfd)
+            os.close(fd)
+
+    def identity(self) -> tuple[int, int]:
+        """``(st_dev, st_ino)`` of the locked directory: what the instance record is bound to (a copy or a restore
+        through a backup tool is another directory)."""
+        with self.lock:
+            st = os.fstat(self._dir())
+            return st.st_dev, st.st_ino
 
     def write(self, name: str, data: bytes) -> None:
         name = self._name(name)
@@ -157,7 +176,6 @@ class StateDir:
         if len(data) > MAX_FILE:
             raise StateError(f"{name}: too large")
         with self.lock:
-            self._live()
             dfd = self._dir()
             tmp = f".{name}.{secrets.token_hex(8)}.tmp"
             try:
@@ -187,8 +205,6 @@ class StateDir:
                 except OSError:
                     pass
                 raise
-            finally:
-                os.close(dfd)
 
     def read_json(self, name: str) -> Any:
         raw = self.read(name)

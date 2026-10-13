@@ -47,7 +47,8 @@ def world(tmp_path):
 
 #: every read, the person reads (doctor, instructions.sync, instructions.hook) included: no-person is refused those
 #: by the column, and the walk shows that refusal says nothing of the ticket either
-READS = sorted(op for op in served_ops() if op_kind(op)[0] in {"read", "person_read"})
+#: (``term.preview`` is not a registry op: its ticket is checked by ``Viewer.ticket``, tests/host/test_terms.py)
+READS = sorted(op for op in served_ops() if op_kind(op)[0] in {"read", "person_read"} and op != "term.preview")
 
 
 RECORDS_ARGS = {

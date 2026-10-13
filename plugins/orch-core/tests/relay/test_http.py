@@ -378,3 +378,55 @@ def test_tls_slow_drip_headers_end_at_the_total_deadline(tls_relay):
     assert e.value.kind == "deadline"
     assert time.monotonic() - t0 < 4.0  # the drip alone takes over 10 s
     c.close()
+
+
+# --- a stuck resolver is bounded by the call's deadline and by shutdown (review D5) ---------------------------------
+
+
+@pytest.fixture
+def stuck_resolver():
+    release = threading.Event()
+    calls = []
+
+    def resolve(host, port, *a, **kw):
+        calls.append(host)
+        release.wait(60)
+        raise OSError("released")
+
+    resolve.calls = calls
+    yield resolve
+    release.set()
+
+
+def test_stuck_dns_ends_at_the_total_deadline(stuck_resolver):
+    c = http.RelayConn("https://relay.example", resolve=stuck_resolver)
+    t0 = time.monotonic()
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=0.5)
+    assert e.value.kind == "deadline" and stuck_resolver.calls == ["relay.example"]
+    assert time.monotonic() - t0 < 4.0
+
+
+def test_stuck_dns_ends_on_shutdown(stuck_resolver):
+    c = http.RelayConn("https://relay.example", resolve=stuck_resolver)
+    threading.Timer(0.3, c.shutdown).start()
+    t0 = time.monotonic()
+    with pytest.raises(http.TransportError):
+        call(c, deadline_s=30)
+    assert time.monotonic() - t0 < 4.0
+
+
+def test_resolved_address_is_used_and_the_hostname_kept_for_tls(tls_relay):
+    """Resolution goes through the injected resolver; TLS still verifies the origin's hostname (SNI unchanged)."""
+    seen = []
+
+    def resolve(host, port, *a, **kw):
+        seen.append(host)
+        import socket
+
+        return socket.getaddrinfo("127.0.0.1", port, 0, socket.SOCK_STREAM)
+
+    tls_relay.expect(Expect("POST", "/v2/x"))
+    c = http.RelayConn(tls_relay.origin("localhost"), ca_file=str(tls_relay.ca_file), resolve=resolve)
+    assert call(c).status == 200 and seen == ["localhost"]
+    c.close()

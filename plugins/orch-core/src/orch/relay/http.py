@@ -113,6 +113,7 @@ class RelayConn:
         proxy: str | None = None,
         mono: Callable[[], float] = time.monotonic,
         context_factory: Callable[..., ssl.SSLContext] = ssl.create_default_context,
+        resolve: Callable[..., list] = socket.getaddrinfo,
     ) -> None:
         try:
             self.scheme, self.host, self.port = wire.origin_parts(origin)
@@ -130,6 +131,10 @@ class RelayConn:
         self._ctx = tls_context(ca_file, factory=context_factory) if self.scheme == "https" else None
         self._mono = mono
         self._conn: http.client.HTTPConnection | None = None
+        self._resolve = resolve
+        self._deadline = 0.0
+        self._wake = threading.Event()  # set by shutdown(): ends a resolution in progress
+        self._shut = False
         self._watch: socket.socket | None = None  # our own dup of the connection's socket, for the watchdog
         self._fd_lock = threading.Lock()
         self._call_lock = threading.Lock()
@@ -139,24 +144,65 @@ class RelayConn:
 
     # -- sockets ------------------------------------------------------------------------------------------------
 
+    def _lookup(self, host: str, port: int) -> list:
+        """``getaddrinfo`` in a helper thread, bounded by the call's total deadline and by :meth:`shutdown` (review D5:
+        a stuck resolver is outside both the socket timeout and the watchdog, since no socket exists yet)."""
+        box: dict[str, object] = {}
+        done = threading.Event()
+
+        def run() -> None:
+            try:
+                box["r"] = self._resolve(host, port, 0, socket.SOCK_STREAM)
+            except OSError as e:
+                box["e"] = e
+            finally:
+                done.set()
+                self._wake.set()
+
+        threading.Thread(target=run, name="orch-relay-dns", daemon=True).start()
+        while not done.is_set():
+            left = self._deadline - self._mono()
+            if left <= 0 or self._shut:
+                raise TimeoutError("name resolution")
+            self._wake.wait(left)
+        if "e" in box:
+            raise box["e"]  # type: ignore[misc]
+        return box["r"]  # type: ignore[return-value]
+
     def _socket(self, address, timeout, source_address=None):  # http.client's _create_connection hook
-        """Create the connection's socket and keep a **dup** of it for :meth:`shutdown`. The dup is our own descriptor,
-        closed only by :meth:`close`, so a late watchdog never acts on a freed (and perhaps reused) fd number;
-        ``shutdown`` on the dup ends the TCP connection itself, TLS handshake included."""
-        sock = socket.create_connection(address, timeout, source_address)
-        try:
-            watch = sock.dup()
-        except OSError:
-            sock.close()
-            raise
-        with self._fd_lock:
-            old, self._watch = self._watch, watch
-        if old is not None:
-            old.close()
-        return sock
+        """Resolve within the deadline, connect, and keep a **dup** of the socket for :meth:`shutdown`. The dup is our
+        own descriptor, closed only by :meth:`close`, so a late watchdog never acts on a freed (and perhaps reused) fd
+        number; ``shutdown`` on the dup ends the TCP connection itself, TLS handshake included. The hostname stays
+        http.client's, so TLS still checks it (SNI and certificate)."""
+        host, port = address
+        err: OSError | None = None
+        for af, kind, proto, _canon, sa in self._lookup(host, port):
+            sock = socket.socket(af, kind, proto)
+            try:
+                sock.settimeout(max(self._deadline - self._mono(), 0.001))
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(sa)
+            except OSError as e:
+                sock.close()
+                err = e
+                continue
+            try:
+                watch = sock.dup()
+            except OSError:
+                sock.close()
+                raise
+            with self._fd_lock:
+                old, self._watch = self._watch, watch
+            if old is not None:
+                old.close()
+            return sock
+        raise err or OSError("no address")
 
     def shutdown(self) -> None:
-        """End any blocked read or write on this connection (safe from another thread, never raises)."""
+        """End any blocked resolution, read or write on this connection (safe from another thread, never raises)."""
+        self._shut = True
+        self._wake.set()
         with self._fd_lock:
             w = self._watch
             if w is None:
@@ -220,6 +266,8 @@ class RelayConn:
     def _request(self, method, target, route, headers, body, deadline_s, cap) -> Response:
         t0 = self._mono()
         deadline = t0 + deadline_s
+        self._deadline, self._shut = deadline, False
+        self._wake.clear()
         left = self._remaining(deadline, route)
         fired = threading.Event()
 

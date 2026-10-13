@@ -71,6 +71,46 @@ def _digest(ops: dict[str, int]) -> str:
     return "sha256:" + hashlib.sha256(canon.cj_checked(dict(sorted(ops.items())))).hexdigest()
 
 
+#: ``<root>/.state/host-served``: a host serves this workspace (written when it starts serving, removed at
+#: unregister). The direct-mode records tool refuses while it exists, whatever state directory it was given (H11e,
+#: Opus #433 finding 3). A host that stops without unregistering leaves it: the workspace is still registered.
+SERVED_MARKER = "host-served"
+
+
+def served_marker(root: str, on: bool, state_dir: Path) -> None:
+    """Write or remove the marker beneath the workspace's ``.state`` (no symlink followed; failures are ignored: the
+    marker is a second fence next to the registry, never a reason to stop serving)."""
+    import json as _json
+
+    del state_dir  # kept in the signature for the callers; never written into the workspace
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        dfd = os.open(Path(root) / ".state", flags)
+    except OSError:
+        return
+    try:
+        if on:
+            data = _json.dumps({"v": 1}).encode()  # presence is the signal; no path or UID in a workspace file
+            tmp = f".{SERVED_MARKER}.{secrets.token_hex(8)}"
+            excl = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(tmp, excl, 0o600, dir_fd=dfd)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+            try:
+                os.replace(tmp, SERVED_MARKER, src_dir_fd=dfd, dst_dir_fd=dfd)
+            except OSError:
+                os.unlink(tmp, dir_fd=dfd)
+                raise
+        else:
+            os.unlink(SERVED_MARKER, dir_fd=dfd)
+    except OSError:
+        pass
+    finally:
+        os.close(dfd)
+
+
 class Host:
     def __init__(
         self,
@@ -308,6 +348,7 @@ class Host:
         service.runners = self.runners  # H11a: run.list / run.sub
         await service.call(service.open)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
+        await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
             gid = self._gid(entry)
             listener = await asyncio.to_thread(
@@ -349,6 +390,7 @@ class Host:
         service = self.services.pop(workspace_id, None)
         if service is not None:
             await asyncio.to_thread(service.close)
+            await asyncio.to_thread(served_marker, service.entry.root, False, self.state_dir)
 
     def _on_loop(self, coro: Any) -> Any:
         assert self.loop is not None

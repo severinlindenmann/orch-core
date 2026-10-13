@@ -223,3 +223,71 @@ def test_urls_that_can_hide_a_secret_are_refused_and_never_stored(w, url):
         assert err(res) == "invalid.input" and "SECRET123" not in json.dumps(res)
     path = host_records.record_path(w.lab.state, w.wid)
     assert not path.exists() or "SECRET123" not in path.read_text()
+
+
+# --- records.status and records.note (H11e part 2) ------------------------------------------------------------------
+
+
+def test_status_before_any_note_counts_everything_pending(w):
+    w.ticket("one")
+    data = ok(w.client().req("records.status", {}))
+    assert data["configured"] is False and data["last"] is None and data["remote"] is None and data["repo"] is None
+    pend = data["pending"]
+    assert pend["workspace_events"] > 0 and pend["events"] > pend["workspace_events"]
+    assert pend["tickets"] and pend["tickets"][0]["key"] == "DEMO-0001" and pend["more"] is False
+
+
+def test_note_after_a_commit_makes_pending_exact(w):
+    w.ticket("one")
+    c = w.client()
+    snap = ok(c.req("records.snapshot", {}))
+    note = {"manifest": snap["manifest"], "commit": SHA, "pushed": False, "repo": {"state": "ok"},
+            "auto": {"on": True, "every_min": 15, "push": False}}  # fmt: skip
+    ok(c.req("records.note", note, idem=True))
+    data = ok(c.req("records.status", {}))
+    assert data["configured"] and data["last"]["commit"] == SHA and data["last"]["ws_seq"] == snap["ws_seq"]
+    assert data["last"]["pushed_at"] is None and data["repo"] == {"state": "ok"}
+    assert data["pending"] == {"events": 0, "tickets": [], "more": False, "workspace_events": 0}
+    assert data["auto"] == {"on": True, "every_min": 15, "push": False}
+    w.ticket("two")
+    pend = ok(c.req("records.status", {}))["pending"]
+    assert pend["events"] >= 1 and [t["key"] for t in pend["tickets"]] and pend["workspace_events"] >= 0
+    ok(c.req("records.note", {"commit": SHA, "pushed": True, "url": URL_A}, idem=True))
+    data = ok(c.req("records.status", {}))
+    assert data["last"]["pushed_at"] is not None
+    assert data["remote"] == {"url": URL_A, "private": False, "export": "ok"}
+
+
+def test_status_remote_says_blocked_without_the_mark(w):
+    c = w.client()
+    ok(c.req("records.note", {"commit": SHA, "pushed": True, "url": URL_A}, idem=True))
+    convenience.set_enabled(w.lab.state, w.wid, True, os.getuid())
+    assert ok(c.req("records.status", {}))["remote"]["export"] == "blocked_convenience"
+    ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
+    assert ok(c.req("records.status", {}))["remote"] == {"url": URL_A, "private": True, "export": "ok"}
+
+
+def test_note_needs_an_idem_a_held_manifest_and_a_commit(w):
+    c = w.client()
+    assert err(c.req("records.note", {"pushed": False})) == "idem.required"
+    bad = {"manifest": "m_" + "1" * 64, "commit": SHA, "pushed": False}
+    assert err(c.req("records.note", bad, idem=True)) == "page.expired"
+    assert err(c.req("records.note", {"pushed": True}, idem=True)) == "invalid.input"
+    assert err(c.req("records.note", {"pushed": False, "repo": {"state": "weird"}}, idem=True)) == "invalid.input"
+
+
+def test_status_never_names_a_ticket_the_caller_cannot_see(w):
+    uid, key = w.ticket("secret")
+    w.restrict(uid, [w.quinn.ref])
+    data = ok(w.client().req("records.status", {}))
+    assert key not in json.dumps(data["pending"]["tickets"]) and data["pending"]["events"] > 0
+
+
+def test_a_maintainer_may_note_and_read_status(w, monkeypatch):
+    import dataclasses
+
+    real = host_records.Viewer.of
+    monkeypatch.setattr(host_records.Viewer, "of", lambda call: dataclasses.replace(real(call), role="maintainer"))
+    c = w.client()
+    ok(c.req("records.note", {"pushed": False, "repo": {"state": "ok"}}, idem=True))
+    assert ok(c.req("records.status", {}))["repo"] == {"state": "ok"}

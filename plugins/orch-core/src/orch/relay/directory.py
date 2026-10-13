@@ -15,6 +15,13 @@
 * ``PUT genesis`` (P3-D18, W(g)): the pin from the person path, checked the same way before it is sent.
 
 A 404 on a read is ``None`` (nothing held yet). Response caps: card 64 KiB, reads 4 MiB (11A.7).
+
+**Authenticity, not currency (review L6).** These readers prove that an object was signed by the right key for this
+workspace. They do not prove it is the newest: a relay can serve an older card (a lower ``card_seq`` than
+``link.json`` holds), an older WSK-signed member list (a lower ``list_seq`` or epoch), or a replayed older checkpoint H,
+and ``transitions_head`` is an unauthenticated relay claim. The callers compare against local state: R3 classifies H
+against the logs and the publication history (11A.5), R6 compares the member list with the host's own, and the card
+reader's caller compares ``card_seq`` with ``link.json``.
 """
 
 from __future__ import annotations

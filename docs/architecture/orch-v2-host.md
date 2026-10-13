@@ -5856,7 +5856,8 @@ Where the code differs from or adds to §12.7, the code is this:
   it (post-check), each comparing device and inode with the held fd. Residual race: a writer of those two directories
   can swap names between the pre-check and git's own `mkdir` or removal; the post-check detects the swap, it cannot
   undo git's write. The ownership and mode check of every directory on the path makes that writer the person's own
-  account (or root).
+  account (or root). D2 and D3 check POSIX mode bits only; extended ACLs (macOS `com.apple.acl`, Linux
+  `system.posix_acl_access`) are a known gap, not evaluated.
 - **Gate:** the addon view is `addons[name]["enabled"]` (a frozen mapping), `runner.disabled` names the first missing piece
   (addon, then machine). The claim of a G caller is rechecked under the per-repo lock right before the runner runs git.
 - **Direct mode** (`orch worktree list|create|remove`, POSIX; `orch.worktree_cli`): the same rules without a host. The

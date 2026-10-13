@@ -249,3 +249,51 @@ def test_an_intermediate_directory_of_another_owner_is_refused(world, monkeypatc
     with pytest.raises(SpawnError) as e:
         wtgit.run_git(args("worktree.add"), own)
     assert e.value.code == "launch.cwd_changed" and "owned by another user" in e.value.message
+
+
+def test_a_staged_gitlink_change_with_an_empty_submodule_directory_is_dirty(world):  # noqa: F811
+    import shutil
+
+    root, repo, own, args = world
+    sub = _populated_submodule(repo, root / "m")
+    _git(sub, "add", ".")
+    _git(sub, "commit", "-qm", "two")
+    new = _git(sub, "rev-parse", "HEAD").strip()
+    shutil.rmtree(repo / "sub")
+    (repo / "sub").mkdir()
+    _git(repo, "update-index", "--cacheinfo", f"160000,{new},sub")  # staged: index differs from HEAD
+    assert wtgit.tree_dirty(str(repo), own).strip() != ""
+
+
+@pytest.mark.parametrize("key", ["rebase.instructionFormat", "rebase.instructionformat", "sequence.editor"])
+def test_rebase_keys_that_format_or_run_the_todo_list_are_refused(key):
+    assert gitsafe.exec_risk([(L, key, "%s%nexec touch /tmp/x")]) == key
+
+
+@pytest.mark.parametrize("key", ["rebase.autosquash", "rebase.reschedulefailedexec", "rebase.updateRefs"])
+def test_plain_rebase_switches_pass(key):
+    assert gitsafe.exec_risk([(L, key, "true")]) is None
+
+
+def test_no_lazy_fetch_in_every_scrubbed_environment():
+    from orch.store import observe
+
+    assert gitsafe.gate_env({})["GIT_NO_LAZY_FETCH"] == "1"
+    assert wtgit.git_env({})["GIT_NO_LAZY_FETCH"] == "1"
+    calls = []
+
+    def fake(argv, **kw):
+        calls.append((argv, kw["env"]))
+        raise OSError
+
+    import subprocess
+
+    orig = subprocess.run
+    subprocess.run = fake
+    try:
+        observe.git(Path("/"), "status")
+    finally:
+        subprocess.run = orig
+    argv, env = calls[0]
+    assert env["GIT_NO_LAZY_FETCH"] == "1"
+    assert "protocol.allow=never" in argv

@@ -132,7 +132,7 @@ ALLOWED: dict[str, frozenset[str] | str] = {
     }),
     "rebase": frozenset({
         "autosquash", "autostash", "stat", "updaterefs", "missingcommitscheck", "abbreviatecommands", "forkpoint",
-        "backend", "rebasemerges", "instructionformat", "rescheduledfailedexec",
+        "backend", "rebasemerges", "reschedulefailedexec",  # never rebase.instructionFormat (formats the todo list: can inject exec)
     }),
     "submodule": frozenset({"recurse", "active", "fetchjobs", "propagatebranches"}),
     "lfs": frozenset({"repositoryformatversion"}),
@@ -235,7 +235,7 @@ def gate_env(own: Mapping[str, str]) -> dict[str, str]:
     env = {k: own[k] for k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME") if k in own}
     env.setdefault("PATH", "/usr/bin:/bin:/usr/local/bin")
     env.update(LANG="C", LC_ALL="C", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0",
-               GIT_OPTIONAL_LOCKS="0", GIT_ALLOW_PROTOCOL="")  # fmt: skip
+               GIT_OPTIONAL_LOCKS="0", GIT_ALLOW_PROTOCOL="", GIT_NO_LAZY_FETCH="1")  # fmt: skip
     return env
 
 

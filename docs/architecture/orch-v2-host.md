@@ -4119,7 +4119,10 @@ through purpose-specific methods.
 - `RelaySigner` holds the key in a closure, not in an attribute, and exposes only its purpose-specific methods. An AST
   test over `orch.relay` bans private names on other objects, dynamic attribute access (`getattr`, `vars`, `globals`,
   `eval`, `importlib`, `sys.modules`, introspection attributes) and every `orch.crypto` signing entry point under any
-  alias. This is an API rule, not isolation: same-process code can always traverse objects (below).
+  alias, frame and interpreter reach (`logging.currentframe`, `traceback.walk_stack`, `f_builtins`), and assignment to
+  an attribute of an imported module or class. This is defence in depth, not isolation: same-process code can always
+  traverse objects, and reassigning a module function (say `wire.auth_bytes`) before calling the public `login` signs
+  attacker bytes. The real boundary is the reserved out-of-process `bridge` class under a distinct UID (11A.11 Q1).
 - Epoch keys are used only through `BridgeKeys`, which opens a request and seals a response and returns only
   plaintext or envelopes.
 - Device and person signatures are made only on the person path: the click signer subprocess (`orch.click`) or the
@@ -4185,12 +4188,14 @@ rename + dir fsync) and read with `read_json`.
 | `link.json` | `{v:1, workspace_id, origin, ca_file?, proxy?, max_publication_bytes, state:"linking"\|"linked", linked_at, card_seq}` | no | written (state `linking`) before any network write; it is the reader reservation of 11A.6 |
 | `unlinked-<linked_at>.json` | the former `link.json`, renamed at unlink | no | never deleted: the reservation is permanent (11A.6) |
 | `holder.json` | `{last_holder, gen, instance_id, pending}`: whether this state directory was the last holder, its `gen`, the instance id it was written under, and the expected `gen` of a takeover probe in flight (DECIDED by orch-52, 13 Oct 2026) | no | written durably: `pending` before the probe, the new `gen` with `pending` cleared before any other write; the restart rule is 11A.5 "Restart takeover" |
-| `instance.json` | the state directory's instance id (random 128 bits, created once with the state). A restore procedure MUST call `regenerate_instance_id()`, so a restored or copied state directory never claims the original's holdership | no | claimed once (`os.link`) |
+| `instance.json` | `{instance_id, dev, ino}`: the state directory's instance id (random 128 bits, created once with the state) bound to the `(st_dev, st_ino)` of the locked directory fd (decided by orch-52, 13 Oct 2026). `cp -r` or rsync copies the id but not the inode, and a restore through a backup tool recreates the directory: both show as a mismatch, which alarms `relay_takeover_refused`. A restart or a rename within one filesystem keeps it; a move across filesystems (or a tool that recreates the directory) needs the operator path. Only the operator path rebinds: `regenerate_instance_id(state)` (new id and current `dev`/`ino`), called by the restore procedure and by `orch host relay takeover` on a directory bound elsewhere | no | claimed once (`os.link`) at creation; rebinding is an atomic write |
 | `sign-ledger.json` | the last-signed ledger: `{kind: {key: {digest, sig}}}` (cards by `card_seq`) | no | written durably before a signature is returned |
 | `link-card.json`, `link-genesis.json` | the card and the genesis pin (with its certificate and genesis hash) of the first link, write-once (claimed with `os.link`, read back if another writer won) | no | persisted before their first PUT; a resume re-sends these bytes |
 
 One live instance per state directory: `StateDir` holds an exclusive non-blocking `flock` on the directory for its
-lifetime (close-on-exec); a second instance, in this process or another, is refused "in use". A ledger restored together
+lifetime (close-on-exec); a second instance, in this process or another, is refused "in use". All I/O goes through the
+locked directory fd, never the path again (a directory renamed aside keeps receiving its owner's writes), and a forked
+child refuses every operation (a fork inherits the lock; close-on-exec covers only exec). A ledger restored together
 with an older `link.json` from the same backup cannot be detected (inherent to any local state).
 | `rids.sqlite` | `rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem)`, `submission(device, rid, log, events)`, `chunk(device, rid, idx, epoch, bytes, state)`, `window(device, high, bitmap)`, `cursor(after)`, `meta(start_ms)` | chunk bytes are ciphertext; `submission.events` are device-signed events (below) | the state machine of 11A.4 |
 | `publish.json` | `{entry, source_hash, target_hash, pages:[{i, digest, count, put}], manifest_put, cap}` | no | staging resumes from it: pages are immutable and an identical PUT is a free 200 |
@@ -4367,27 +4372,35 @@ is `stale_card`.
 - Re-login is single-flight (one lock per worker): 120 s before the protocol's 15-minute token lifetime, counted on the
   monotonic clock from the start of the login (the relay's `expires_ms` is never trusted, 11A.8), or once on a 401
   `unauthenticated`/`expired`, which also covers a relay with a shorter lifetime; the identical bytes are then resent.
-- **Restart takeover (DECIDED by orch-52, 13 Oct 2026; core-only, fail closed, no relay change).** At start:
-  1. `holder.json` has `pending` (a probe was in flight when the host stopped): alarm `relay_takeover_refused`
-     ("possibly our own interrupted takeover; confirm with `orch host relay takeover`") and stay stopped; no probe.
-  2. Renew with the stored `gen` (`{gen, take_over:false}`): a renewal is not a probe. Success: run.
-  3. Only when that renewal is `fenced` (or no `gen` is stored), check (a) `holder.json` says this state directory was
-     the last holder and (b) its instance id is this state directory's. Either failing: alarm
-     `relay_takeover_refused` naming the condition and stop, without a probe (a restored copy had its instance id
-     regenerated, so it fails (b)).
-  4. Write `pending = gen + 1` durably, then probe `{gen: null, take_over: false}`. `holder_conflict` means a live
-     lease: wait it out (`stop.wait`), never steal. `take_over: true` is never sent automatically.
-  5. The granted `gen` must equal `stored + 1` (the relay's row is never deleted and each new hold is +1): persist it
+- **Restart takeover (DECIDED by orch-52, 13 Oct 2026; core-only, fail closed, no relay change).** At start, before
+  any network call:
+  1. the instance record must be bound to this very directory (`dev`/`ino`, 11A.3); else alarm
+     `relay_takeover_refused` ("this state directory was copied or restored") and stop;
+  2. `holder.json` has `pending` (a probe was in flight when the host stopped): alarm ("possibly our own interrupted
+     takeover; confirm with `orch host relay takeover`") and stay stopped;
+  3. (a) `holder.json` says this state directory was the last holder and (b) its instance id is this directory's;
+     either failing: alarm naming the condition and stop.
+  Then:
+  4. Renew with the stored `gen` (`{gen, take_over:false}`): a renewal is not a probe. Success: run.
+  5. Only when that renewal is `fenced`: write `pending = gen + 1` durably, then probe `{gen: null, take_over: false}`.
+     `holder_conflict` means a live lease: wait it out (`stop.wait`), never steal. `take_over: true` is never sent
+     automatically.
+  6. The granted `gen` must equal `stored + 1` (the relay's row is never deleted and each new hold is +1): persist it
      and clear `pending` atomically before any other write or poll. Any other value: alarm `relay_takeover_refused`
      ("relay gen X != stored+1: another holder took in between, or a restored state"), write nothing under it, poll
      nothing, stop; the lease lapses after 40 s.
-  6. A relay answer without a `gen`: alarm.
+  7. A relay answer without a `gen`: alarm.
+  **Order changed 13 Oct 2026 (review R1, approved by orch-52):** steps 1 to 3 used to follow the renewal; a copied or
+  restored directory could then renew into the original's live lease and become a second holder (both writing W(g),
+  both signing). Checking first costs nothing on a real restart (the id and the inode match).
   The explicit operator takeover (`orch host relay takeover`, R5 wires `Session.operator_takeover`) sends
   `take_over: true` and records the new `gen` as ours. A running renewal answered `fenced` still stops the worker.
   **Costs (13 Oct 2026, accepted by orch-52):** (i) a refused probe still bumps the relay's `gen`, so a stale or
   restored copy can knock the real host into the fail-closed manual-takeover state (availability only; mitigated by
   checking (a) and (b) before any probe); (ii) the probe resets the relay's `holder_delivery`, so undelivered notices
-  can drop; (iii) a relay route that exposes the current `gen` stays a later option. The relay asserts `gen` itself:
+  can drop; (iii) a relay route that exposes the current `gen` stays a later option; (iv) a transient error during the
+  probe (503, timeout, reset) leaves `pending` set, so even an in-process retry needs the operator: a probe that timed
+  out may have been granted, and failing closed is deliberate. The relay asserts `gen` itself:
   this guards against honest concurrency (a second instance, a restored backup, a relay reset), not a lying relay.
   One live instance per state directory is enforced by an exclusive `flock` on the directory (11A.3).
 - A 401 `bad_signature` on login is not retried within 60 s, and it counts toward the origin alarm (11A.2).

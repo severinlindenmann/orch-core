@@ -649,12 +649,52 @@ def test_the_attempt_marker_is_pruned_when_the_request_expires(click, served, hu
     monkeypatch.setattr(host_signer, "sign", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("keychain")))
     with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
         click.sign(rid, vd)
-    assert len(click._attempted) == 1
-    click._sweep()
-    assert len(click._attempted) == 1  # still open: kept
-    click.mono.t += 3600
-    click._sweep()
-    assert click._attempted == {} and click.approvals == {}
+    sg = click.signer
+    assert len(sg._attempted) == 1
+    sg._sweep()
+    assert len(sg._attempted) == 1  # still open: kept
+    click.mono.t += 3600  # the approval deadline passed, the request (host wall clock) did not
+    sg._sweep()
+    assert len(sg._attempted) == 1 and sg.approvals == {}
+    served.lab.ws.clock[0] += 600  # the request's own expiry, still inside the margin
+    sg._sweep()
+    assert len(sg._attempted) == 1
+    served.lab.ws.clock[0] += 120
+    sg._sweep()
+    assert sg._attempted == {} and sg.approvals == {}
+
+
+def test_a_marker_outlives_the_approval_deadline_while_the_request_is_open(click, served, human, monkeypatch):
+    """Fail closed: the claim deleted from outside, the approval swept at its deadline (mono) while the host still
+    holds the request open; an idem retry of prepare rebuilds the approval, and the sign is still refused."""
+    from orch.host import signer as host_signer
+    from orch.host.control_client import new_idem
+
+    _, key = human.ticket()
+    idem = new_idem()
+    args = {"workspace_id": served.wid, "op": "log", "args": {"ref": key, "text": "x"}, "idem": idem}
+    sg = click.signer
+    rid = sg.prepare(args)["request_id"]
+    vd = click.view(rid)["view_digest"]
+    click.mono.t += 2
+    calls = []
+
+    def broken(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("keychain")
+
+    monkeypatch.setattr(host_signer, "sign", broken)
+    with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+        click.sign(rid, vd)
+    _record_path(served, rid).unlink()
+    click.mono.t += 3600  # approval deadline long past; the host request is still open
+    sg._sweep()
+    assert sg.approvals == {} and len(sg._attempted) == 1
+    assert sg.prepare(args)["request_id"] == rid  # the idem retry rebuilds an approval, fresh deadline
+    vd = click.view(rid)["view_digest"]
+    click.mono.t += 2
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    assert len(calls) == 1
 
 
 def test_a_partial_signing_keeps_the_claim_across_a_restart(click, served, human, monkeypatch):

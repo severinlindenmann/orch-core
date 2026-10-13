@@ -295,7 +295,7 @@ def test_human_get_and_pending_carry_submitted_at_null_until_submit(served, huma
     ok(human.submit_res(rid, signed.events))
     got = ok(human.get(rid))["data"]["request"]["submitted_at"]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", got)
-    created = ok(human.get(rid))["data"]["request"]["created_at"]
+    created = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]["created_at"]
     from datetime import datetime, timezone
 
     def _t(s):
@@ -346,9 +346,12 @@ def test_a_handoff_submit_under_a_held_workspace_lock_is_lock_busy_then_succeeds
     _, key = human.ticket()
     rid = ok(hand(human, key, "busy"))["data"]["request"]["id"]
     signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
+    from orch.host.control_client import new_idem
+
+    idem = new_idem()  # the envelope validates the idem's shape
     with convenience.workspace_lock(served.lab.state, served.wid, UID):  # another fd holds it
-        res = human.submit_res(rid, signed.events, idem="same")
+        res = human.submit_res(rid, signed.events, idem=idem)
         assert err(res) == "lock.busy"
         assert res["error"]["retryable"] is True
         assert res["error"].get("exit", 9) == 9
-    ok(human.submit_res(rid, signed.events, idem="same"))
+    ok(human.submit_res(rid, signed.events, idem=idem))

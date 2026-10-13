@@ -133,6 +133,8 @@ def test_a_prepare_and_switching_on_at_the_same_time_have_exactly_one_winner(ser
 def test_a_submit_at_the_expiry_boundary_cannot_land_after_switching_on(served, human, monkeypatch):
     from orch.host.human import HumanOps
 
+    monkeypatch.setattr(convenience, "LOCK_WAIT", 0.2)
+
     _, key = human.ticket()
     rid = ok(hand(human, key, "edge"))["data"]["request"]["id"]
     signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
@@ -149,22 +151,47 @@ def test_a_submit_at_the_expiry_boundary_cannot_land_after_switching_on(served, 
 
     monkeypatch.setattr(HumanOps, "_judge", staticmethod(judge))
     ok(human.submit_res(rid, signed.events))
-    assert box["flag"][0] == 3 and CODE in box["flag"][1]  # a bound request still counts a minute past its expiry
+    assert box["flag"][0] == 9 and "lock.busy" in box["flag"][1]  # the submit holds the workspace lock
     assert not convenience.enabled(served.lab.state, served.wid, UID)
     clock[0] = t0 + 600 + 61
     monkeypatch.setattr(HumanOps, "_judge", staticmethod(orig))
     assert flag(served, True)[0] == 0  # signed and submitted: nothing pending
 
 
-def test_a_held_lock_is_host_busy_after_a_short_wait_not_forever(served, monkeypatch):
+def test_a_stalled_submit_past_the_grace_still_excludes_switching_on(served, human, monkeypatch):
+    """Opus delta finding 1: the 60 s grace is only defence in depth. The submit holds the workspace lock from its flag
+    check to its journal write, so ``on`` cannot succeed in between however long the stretch takes."""
+    from orch.host.human import HumanOps
+
+    monkeypatch.setattr(convenience, "LOCK_WAIT", 0.2)
+    _, key = human.ticket()
+    rid = ok(hand(human, key, "stall"))["data"]["request"]["id"]
+    signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
+    clock = served.lab.ws.clock
+    t0 = clock[0]
+    clock[0] = t0 + 599.999
+    orig, box = HumanOps._judge, {}
+
+    def judge(store, record, events, git):
+        clock[0] = t0 + 661  # more than the grace past the expiry
+        box["flag"] = flag(served, True)
+        return orig(store, record, events, git)
+
+    monkeypatch.setattr(HumanOps, "_judge", staticmethod(judge))
+    ok(human.submit_res(rid, signed.events))
+    assert box["flag"][0] == 9 and "lock.busy" in box["flag"][1]
+    assert not convenience.enabled(served.lab.state, served.wid, UID)
+
+
+def test_a_held_lock_is_lock_busy_after_a_short_wait_not_forever(served, monkeypatch):
     monkeypatch.setattr(convenience, "LOCK_WAIT", 0.2)
     with convenience.workspace_lock(served.lab.state, served.wid, UID):
         code, text = flag(served, True)
-        assert code == 4 and "host.busy" in text
+        assert code == 9 and "lock.busy" in text
         with pytest.raises(convenience.HostError) as exc:
             with convenience.workspace_lock(served.lab.state, served.wid, UID):
                 pass
-        assert exc.value.code == "host.busy"
+        assert exc.value.code == "lock.busy"
     assert flag(served, True)[0] == 0
 
 
@@ -227,3 +254,57 @@ def test_an_unreadable_request_file_refuses_switching_on_and_names_it(served, hu
     assert code != 0 and victim in text
     path.unlink()
     assert flag(served, True)[0] == 0
+
+
+@pytest.mark.parametrize("damage", ["missing", "text", "none"])
+def test_a_request_without_a_valid_expiry_refuses_switching_on_and_names_it(served, human, damage):
+    import json
+
+    from orch.host.requests import RequestStore
+
+    _, key = human.ticket()
+    rid = ok(hand(human, key))["data"]["request"]["id"]
+    store = RequestStore(served.lab.state, served.wid, UID, clock=lambda: 0.0)
+    path = next(p for p in store.dir.iterdir() if rid in p.name)
+    rec = json.loads(path.read_text())
+    if damage == "missing":
+        del rec["expires"]
+    else:
+        rec["expires"] = "soon" if damage == "text" else None
+    path.write_text(json.dumps(rec))
+    path.chmod(0o600)
+    code, text = flag(served, True)
+    assert code == 5 or "custody.unsafe_mode" in text
+    assert rid in text and "Traceback" not in text
+    assert not convenience.enabled(served.lab.state, served.wid, UID)
+
+
+def test_human_get_and_pending_carry_submitted_at_null_until_submit(served, human):
+    import re
+
+    _, key = human.ticket()
+    rid = ok(hand(human, key, "when"))["data"]["request"]["id"]
+    assert ok(human.get(rid))["data"]["request"]["submitted_at"] is None
+    row = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]
+    assert row["submitted_at"] is None
+    signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
+    ok(human.submit_res(rid, signed.events))
+    stamp = served.lab.ws.clock[0]
+    got = ok(human.get(rid))["data"]["request"]["submitted_at"]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", got)
+    row = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]
+    assert row["submitted_at"] == got and row["created_at"] <= got
+    assert stamp  # the host's clock, same format as created_at/expires_at
+
+
+def test_an_old_record_without_submitted_at_reads_as_null(served, human):
+    import json
+
+    from orch.host.requests import RequestStore
+
+    _, key = human.ticket()
+    rid = ok(hand(human, key, "old"))["data"]["request"]["id"]
+    store = RequestStore(served.lab.state, served.wid, UID, clock=lambda: 0.0)
+    path = next(p for p in store.dir.iterdir() if rid in p.name)
+    assert "submitted_at" not in json.loads(path.read_text())
+    assert ok(human.get(rid))["data"]["request"]["submitted_at"] is None

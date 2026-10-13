@@ -11,6 +11,12 @@ code can always traverse objects; this test keeps the package's own code honest)
   ``exec``/``compile``/``breakpoint``/``import_module``; no import of ``importlib``, ``sys``, ``builtins``,
   ``inspect``, ``gc``, ``ctypes``, ``pickle``, ``marshal``; no introspection attributes (``__dict__``,
   ``__closure__``, ``__globals__``, ``cell_contents``…).
+* Also refused: ``operator``/``pkgutil``/``runpy``/``weakref``/``copy``/``functools`` imports, pickling hooks
+  (``__getstate__``, ``__reduce_ex__``), ``__loader__``/``__spec__``/``__builtins__``, ``os.sys``, star imports, private
+  keywords in ``match`` class patterns, and the "self trick" ``X.method(obj)`` on a plain method of a class defined in
+  the module.
+* Honest residual: ``RelaySigner._sign_bytes`` is a callable that signs any bytes and its closure cell holds the key;
+  the ban keeps ``orch.relay``'s own code from reaching it, nothing more.
 * No HTTP library but ``http.client`` (no ``urllib``, which reads proxy variables from the environment).
 
 ``ALLOWED`` lists the exceptions, each with its reason.
@@ -46,6 +52,13 @@ BANNED_MODULES = (
     "ctypes",
     "pickle",
     "marshal",
+    "operator",
+    "pkgutil",
+    "runpy",
+    "weakref",
+    "copy",
+    "copyreg",
+    "functools",
 )
 BANNED_NAMES = {"BackendSigner", "FileBackend", "KeychainBackend"}
 CRYPTO_ENTRY = {
@@ -53,11 +66,13 @@ CRYPTO_ENTRY = {
 }  # fmt: skip
 DYNAMIC_CALLS = {
     "getattr", "setattr", "delattr", "vars", "globals", "locals", "__import__", "eval", "exec", "compile",
-    "breakpoint", "import_module",
+    "breakpoint", "import_module", "attrgetter", "methodcaller", "resolve_name",
 }  # fmt: skip
 INTROSPECTION = {
     "__dict__", "__closure__", "__globals__", "__code__", "__func__", "__self__", "__getattribute__", "__subclasses__",
     "__builtins__", "__mro__", "__bases__", "cell_contents", "f_globals", "f_locals", "gi_frame", "tb_frame",
+    "__getstate__", "__reduce__", "__reduce_ex__", "__loader__", "__spec__", "__defaults__", "__kwdefaults__",
+    "__wrapped__", "sys",
 }  # fmt: skip
 # (module file, private attribute on a non-self object) -> reason
 ALLOWED = {
@@ -121,6 +136,10 @@ def violations(tree: ast.AST, filename: str = "<src>") -> list[str]:
                 out.append(f"from {mod}")
             for a in node.names:
                 full = f"{mod}.{a.name}"
+                if a.name == "*":
+                    out.append(f"from {mod} import *")
+                if a.name in INTROSPECTION:
+                    out.append(f"from {mod} import {a.name}")
                 if a.name in BANNED_NAMES or _banned_module(full):
                     out.append(f"from {mod} import {a.name}")
                 if _is_crypto(mod) and a.name in CRYPTO_ENTRY:
@@ -133,6 +152,8 @@ def violations(tree: ast.AST, filename: str = "<src>") -> list[str]:
         if isinstance(node, ast.Name):
             if node.id in BANNED_NAMES:
                 out.append(f"name {node.id}")
+            if node.id in INTROSPECTION and node.id != "sys":
+                out.append(f"introspection name {node.id}")
             if node.id in DYNAMIC_CALLS:
                 out.append(f"dynamic {node.id}")
         elif isinstance(node, ast.Attribute):
@@ -144,15 +165,47 @@ def violations(tree: ast.AST, filename: str = "<src>") -> list[str]:
                 out.append(f"dynamic .{node.attr}")
             if node.attr in CRYPTO_ENTRY:
                 v: ast.AST = node.value
-                if isinstance(v, ast.Name) and v.id in crypto_aliases:
-                    out.append(f"{v.id}.{node.attr}")
                 chain = []
                 while isinstance(v, ast.Attribute):
                     chain.append(v.attr)
                     v = v.value
-                if isinstance(v, ast.Name) and v.id in orch_aliases and chain and chain[-1] == "crypto":
+                if isinstance(v, ast.Name) and v.id in crypto_aliases:
+                    out.append(f"{v.id}[...].{node.attr}")  # any nesting under an alias of orch.crypto[.x]
+                if isinstance(v, ast.Name) and v.id in orch_aliases and "crypto" in chain:
                     out.append(f"orch.crypto[...].{node.attr}")
+        elif isinstance(node, ast.MatchClass):
+            out += [f"match class private keyword {k}" for k in node.kwd_attrs if _private(k)]
     out += _private_access(tree, filename)
+    out += _unbound_calls(tree)
+    return out
+
+
+def _unbound_calls(tree: ast.AST) -> list[str]:
+    """The "self trick": ``X.method(obj)`` calls a plain method of a class defined here with ``obj`` as ``self``, so
+    ``self._private`` inside it reads ``obj``'s private state. Classmethods and staticmethods are fine."""
+    plain: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            plain[node.name] = {
+                f.name
+                for f in node.body
+                if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and not any(
+                    isinstance(d, ast.Name) and d.id in ("classmethod", "staticmethod") for d in f.decorator_list
+                )
+            }
+    out = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        ):
+            cls, meth = node.func.value.id, node.func.attr
+            if meth in plain.get(cls, ()):
+                first = node.args[0] if node.args else None
+                if not (isinstance(first, ast.Name) and first.id == "self"):
+                    out.append(f"unbound call {cls}.{meth}(non-self)")
     return out
 
 
@@ -217,6 +270,32 @@ BYPASSES = [
     "setattr(x, '_k', 1)",
     "g = globals()['signer']",
     "from orch.identity.signing import sign_person_event",
+    # the round-2 delta review's confirmed bypasses
+    "import operator\nf = operator.attrgetter('_sign_bytes')(s)",
+    "from operator import attrgetter\nf = attrgetter('_sign_bytes')(s)",
+    "from operator import methodcaller\nmethodcaller('_sign', b'x')(s)",
+    "x = s.__getstate__()[1]['_sign_bytes']",
+    "x = s.__reduce_ex__(2)",
+    "x = s.__reduce__()",
+    "match s:\n    case RelaySigner(_sign_bytes=f):\n        f(b'x')",
+    "class X:\n    _sign = None\n    def steal(self):\n        return self._sign(b'x')\nX.steal(signer)",
+    "class X:\n    def _sign(self, b):\n        pass\n    def steal(self):\n        return self._sign(b'x')\n"
+    "X.steal(signer)",
+    "import os\nm = os.sys.modules['orch.custody']",
+    "from os import sys",
+    "m = __loader__.load_module('orch.custody')",
+    "import pkgutil\npkgutil.resolve_name('orch.store.store')",
+    "from pkgutil import resolve_name",
+    "import runpy",
+    "from orch import crypto\ncrypto.suite.sign(k, b'')",
+    "from orch import crypto as c\nc.suite.generate_private_key()",
+    "x = __builtins__['getattr']",
+    "x = __spec__",
+    "f = s.login.__wrapped__",
+    "d = f.__defaults__",
+    "import weakref",
+    "import copy\nc = copy.copy(s)",
+    "from orch.relay.sign import *",
 ]
 
 
@@ -232,6 +311,9 @@ LEGAL = [
     "class A:\n    __slots__ = ('_k',)\n    def f(self):\n        return self._k",
     "class A:\n    def __init__(self):\n        self._k = 1\n    def f(self):\n        return self._k",
     "class A:\n    def _h(self):\n        pass\n    def f(self):\n        self._h()",
+    "class E(Exception):\n    @classmethod\n    def make(cls, r):\n        return cls()\ne = E.make(r)",
+    "class A:\n    def f(self):\n        pass\nclass B(A):\n    def f(self):\n        A.f(self)",
+    "import os\nos.open('x', os.O_RDONLY)",
 ]
 
 

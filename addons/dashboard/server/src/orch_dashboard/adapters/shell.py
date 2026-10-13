@@ -24,6 +24,22 @@ class Workspace(BaseModel):
     needs_you: int | None = None
     host_state: str = "ok"
     features: list[str] = []
+    # What the signer says about this workspace (custody, enabled, available, problem); null: no signer answered.
+    click: dict | None = None
+
+
+def click_card(row):
+    """The signer's per-workspace status as the card needs it. Only these fields; nothing else is passed on."""
+    if not isinstance(row, dict):
+        return None
+    out = {
+        "custody": row.get("custody") if row.get("custody") in ("convenience", "passphrase", "none") else "none",
+        "enabled": row.get("enabled") is True,
+        "available": row.get("available") is True,
+    }
+    if isinstance(row.get("problem"), str):
+        out["problem"] = row["problem"][:200]
+    return out
 
 
 class Me(BaseModel):

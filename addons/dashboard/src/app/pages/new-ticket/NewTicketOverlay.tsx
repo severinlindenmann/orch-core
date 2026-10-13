@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
 import { Maximize2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -14,7 +13,7 @@ import { EMPTY, NewTicketForm, carryDraftToPage, draftKey, readDraft, writeDraft
 import { QuickTicket } from './QuickTicket'
 import { guessType, quickTitle } from './quickRules'
 import { useCreatedToast } from './useQuickCreate'
-import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 /**
  * New ticket as an overlay: a large right-hand sheet over the current page with a Quick ticket line on top and the
@@ -24,7 +23,7 @@ import { queries } from '@/api/queries'
  */
 export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; opener: HTMLElement | null }) {
   const { workspace } = useWorkspace()
-  const { data: me } = useQuery(queries.me())
+  const { data: me } = useMe()
   const navigate = useNavigate()
   const createdToast = useCreatedToast()
   const [quick, setQuick] = useState('')

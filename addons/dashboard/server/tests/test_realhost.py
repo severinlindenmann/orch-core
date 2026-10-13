@@ -6,9 +6,9 @@ touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under
 `realhost_kit`). Skipped when the host cannot start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.
 """
 
+import itertools
 import json
 import os
-import secrets
 import shutil
 import time
 import uuid
@@ -28,10 +28,12 @@ pytestmark = [
 ]
 
 
-def new_idem() -> str:
-    """`a_` + 26 Crockford characters (the first 0-7): one per click."""
-    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-    return "a_" + secrets.choice("01234567") + "".join(secrets.choice(alphabet) for _ in range(25))
+_retries = itertools.count(1)
+
+
+def new_retry() -> int:
+    """The explicit "do it again" counter: a test that repeats an action it already did asks for a fresh intent."""
+    return next(_retries)
 
 
 @pytest.fixture(scope="module")
@@ -82,7 +84,7 @@ def api(world, token):
 
         def handoff(self, body, *, sign=True, timeout=60):
             """prepare -> `orch sign CODE` in a pty -> follow to the end. Returns (prepared, final)."""
-            body = {**body, "idem": new_idem()}
+            body = {**body, "retry": new_retry()}
             res = self.post("/handoff", body)
             assert res.status_code == 200, res.text + world.ws.log.read_text()[-3000:]
             prepared = res.json()
@@ -106,14 +108,15 @@ def test_launch_and_session(world, token):
     features = res.json()["workspaces"][world.ws.ws_id]
     for name in ("today", "board", "ticket", "evidence", "actions", "settings", "members", "grant_list", "read_ext"):
         assert name in features, features
-    assert "changes" not in features  # the host lists diff/1 but does not serve `diff` yet (stream A RH-2)
+    assert "changes" in features  # the host serves `diff` since core #417 (stream A RH-2 fixed)
 
 
 def test_shell_reads(world, api, token):
     h = {"Authorization": f"Bearer {token}"}
     spaces = world.client.get("/api/workspaces", headers=h).json()
     assert [(w["prefix"], w["host_state"], w["name"]) for w in spaces] == [("DEMO", "ok", "billing")]
-    assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 5
+    assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 3
+    # RH-6: the number is what Today counts; the no_eligible and acknowledge notices are listed but not counted
     me = world.client.get("/api/me", headers=h).json()
     assert me[0]["role"] == "owner" and me[0]["tier"] == "A"
     ident = api.get("/identity").json()
@@ -124,6 +127,8 @@ def test_shell_reads(world, api, token):
     assert (k["question"], "question") in kinds and (k["gate"], "approval") in kinds
     assert (k["verdict"], "no_eligible") in kinds  # one person: nobody else may decide verify
     assert [t["key"] for t in today["working"]] == [k["in_progress"]]
+    counted = [n for n in today["needs_you"] if n["kind"] in ("question", "approval", "verdict")]
+    assert len(counted) == spaces[0]["needs_you"] < len(today["needs_you"])
 
 
 def test_board_and_backlog_paging(world, api):
@@ -175,9 +180,29 @@ def test_settings_members_grants_reads(world, api):
     assert len(grants) == 1 and grants[0]["scope"] == "workable"
 
 
-def test_changes_are_unavailable_until_the_host_serves_diff(api, world):
+def test_changes_are_served_now_the_host_serves_diff(api, world):
+    """Core #417: `diff` is served. The seeded tickets have no linked repo branch, so the answer is an honest empty diff."""
     res = api.get(f"/tickets/{world.keys['verdict']}/changes")
-    assert res.status_code == 501  # welcome.caps has diff/1 but welcome.ops has no `diff` (stream A RH-2)
+    assert res.status_code == 200, res.text
+    got = res.json()
+    assert isinstance(got, dict) and set(got) >= {"sources", "files"}
+    assert got["files"] == [] or all("path" in f for f in got["files"])
+
+
+def test_quota_host_while_busy_is_a_retryable_503(world, api, monkeypatch):
+    """#423: a busy host (quota.host) reaches the browser as 503 retryable, which the Changes tab shows as 'busy, trying again'."""
+    from orch_dashboard.errors import fail
+
+    def busy(self, ws, op, args=None):
+        raise fail("quota.host", "busy", exit=9)
+
+    monkeypatch.setattr(type(world.gateway), "call", busy)
+    res = api.get(f"/tickets/{world.keys['verdict']}/changes")
+    assert res.status_code == 503 and res.json()["error"] == {
+        "code": "quota.host",
+        "message": "busy",
+        "retryable": True,
+    }
 
 
 def test_a_cli_write_reaches_an_open_stream_within_two_seconds(world, token):
@@ -399,8 +424,8 @@ def test_move_is_offered_and_prepares_ticket_moved_on_the_real_host(world, api, 
     ]
     assert "move" in features and "do:move" in features
     key = world.keys["changes"]
-    # core #416 fixed RH-3: a prepare with the dashboard's idem works for move
-    res = api.post("/handoff", {"action": "move", "key": key, "to": "backlog", "idem": new_idem()})
+    # core #416 fixed RH-3: a prepare with the intent idem works for move
+    res = api.post("/handoff", {"action": "move", "key": key, "to": "backlog", "retry": new_retry()})
     assert res.status_code == 200, res.text
 
 

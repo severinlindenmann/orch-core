@@ -1,6 +1,6 @@
 """#305 (M3) server: prepare, look at and cancel a hand-off. The server never signs and never calls human.submit."""
 
-import time
+import re
 
 import pytest
 from conftest import ORIGIN
@@ -53,7 +53,7 @@ def test_routes_need_authentication_and_a_same_origin_post(client, token, stub, 
     request_id = "hr_" + "0" * 26
     assert client.get(f"{base(stub)}/{request_id}").status_code == 401
     assert client.delete(f"{base(stub)}/{request_id}").status_code == 401
-    body = {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(1)}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "x"}
     assert client.post(base(stub), json=body).status_code == 401
     assert client.post(base(stub), json=body, headers=auth(token)).status_code == 403  # no Origin
     bad = {**auth(token), "Origin": "http://evil.example.test"}
@@ -106,7 +106,7 @@ def test_each_action_prepares_a_request_from_the_hosts_material(ready, action, e
     client, token, stub, rich, signing = ready
     if action["action"] == "reopen":
         rich[0].close(rich[1]["Second"])  # only a closed or done ticket reopens
-    res = post(client, token, stub, {**action, "idem": idem(2)})
+    res = post(client, token, stub, {**action})
     assert res.status_code == 200, res.text
     got = res.json()
     assert got["state"] == "prepared" and got["code"] and got["id"].startswith("hr_")
@@ -121,7 +121,7 @@ def test_each_action_prepares_a_request_from_the_hosts_material(ready, action, e
 
 def test_label_adds_to_the_labels_the_ticket_has(ready):
     client, token, stub, rich, signing = ready
-    got = post(client, token, stub, {"action": "label", "key": "DEMO-0001", "label": "zzz", "idem": idem(3)}).json()
+    got = post(client, token, stub, {"action": "label", "key": "DEMO-0001", "label": "zzz"}).json()
     assert got["events"][0]["set"] == {"ticket.labels": ["api", "ui", "zzz"]}
     assert got["material"]["before"] == {"ticket.labels": ["api", "ui"]}
 
@@ -160,44 +160,44 @@ def test_label_adds_to_the_labels_the_ticket_has(ready):
 )
 def test_typed_arguments_are_refused_without_echo(ready, body):
     client, token, stub, rich, signing = ready
-    res = post(client, token, stub, {**body, "idem": idem(4)})
+    res = post(client, token, stub, {**body})
     assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
     assert "/etc/passwd" not in res.text and "human.submit" not in res.text
     assert signing.stub.requests.table == {}
 
 
-@pytest.mark.parametrize("key", [None, "", "x", "a_" + "8" * 25, "a_" + "8" * 27, "A_" + "0" * 26, "a_" + "u" * 26])
-def test_an_idempotency_key_is_required_and_validated(ready, key):
+BAD_EXTRA = [{"idem": "a_" + "0" * 26}, {"retry": -1}, {"retry": "1"}, {"retry": 10000}, {"retry": 1.5}]
+
+
+@pytest.mark.parametrize("extra", BAD_EXTRA)
+def test_the_browser_sends_no_key_and_the_retry_counter_is_bounded(ready, extra):
     client, token, stub, rich, signing = ready
-    body = {"action": "comment", "key": "DEMO-0001", "message": "x"}
-    res = post(client, token, stub, body if key is None else {**body, "idem": key})
+    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", **extra})
     assert res.status_code == 400 and signing.stub.requests.table == {}
 
 
-def test_a_retry_with_the_same_key_answers_from_the_record_and_prepares_once(ready, host_calls):
+def test_the_same_action_twice_prepares_once_with_the_intent_idem(ready, host_calls):
     client, token, stub, rich, signing = ready
-    body = {"action": "comment", "key": "DEMO-0001", "message": "once", "idem": idem(5)}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "once"}
     first, second = post(client, token, stub, body), post(client, token, stub, body)
     assert first.status_code == second.status_code == 200 and first.json() == second.json()
     assert len(signing.stub.requests.table) == 1
-    assert [c[0] for c in host_calls].count("human.prepare") == 1
-    prepare = next(c for c in host_calls if c[0] == "human.prepare")
-    assert (
-        prepare[2]["idem"] != idem(5)
-        and prepare[2]["idem"].startswith("a_")
-        and prepare[1]["handoff"] is True
-        and "signer" not in prepare[1]
-    )
-    clash = post(client, token, stub, {**body, "message": "another"})
-    assert clash.status_code == 409 and clash.json()["error"]["code"] == "idem.conflict"
+    prepares = [c for c in host_calls if c[0] == "human.prepare"]
+    assert len(prepares) == 2 and prepares[0][2]["idem"] == prepares[1][2]["idem"]  # the host dedupes, not this process
+    assert re.fullmatch(r"a_[0-7][0-9A-HJKMNP-TV-Z]{25}", prepares[0][2]["idem"])
+    assert prepares[0][1]["handoff"] is True and "signer" not in prepares[0][1]
+    # Another text is another intent: another request, never a conflict.
+    other = post(client, token, stub, {**body, "message": "another"})
+    assert other.status_code == 200 and other.json()["id"] != first.json()["id"]
+    # A deliberate "do it again" is another intent too, and only an explicit retry counter makes it.
+    again = post(client, token, stub, {**body, "retry": 1})
+    assert again.status_code == 200 and again.json()["id"] not in (first.json()["id"], other.json()["id"])
 
 
 def test_the_signer_completes_it_and_the_server_never_submits(ready, host_calls):
     client, token, stub, rich, signing = ready
     env, ids = rich
-    got = post(
-        client, token, stub, {"action": "approve", "key": "DEMO-0001", "gate": "requirements", "idem": idem(10)}
-    ).json()
+    got = post(client, token, stub, {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}).json()
     status, shown = signing.sign(got["code"])
     assert status == 0, shown
     state = client.get(f"{base(stub)}/{got['id']}", headers=auth(token)).json()
@@ -208,10 +208,12 @@ def test_the_signer_completes_it_and_the_server_never_submits(ready, host_calls)
     assert {c[0] for c in host_calls} >= {"human.prepare", "human.pending"}
     assert "human.submit" not in {c[0] for c in host_calls}
     # A second approval of the same gate generation is refused at prepare: "Already done".
-    again = post(
-        client, token, stub, {"action": "approve", "key": "DEMO-0001", "gate": "requirements", "idem": idem(11)}
-    )
-    assert again.status_code == 409 and again.json()["error"]["code"] == "gate.already_approved"
+    # The same action again is the same intent: the host returns the same request, now submitted ("Already done").
+    again = post(client, token, stub, {"action": "approve", "key": "DEMO-0001", "gate": "requirements"})
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
+    # "Do it again" is a new intent: the host refuses a second approval of the generation.
+    repeat = post(client, token, stub, {"action": "approve", "key": "DEMO-0001", "gate": "requirements", "retry": 1})
+    assert repeat.status_code == 409 and repeat.json()["error"]["code"] == "gate.already_approved"
 
 
 def test_the_server_cannot_be_made_to_call_human_submit(ready):
@@ -223,7 +225,7 @@ def test_the_server_cannot_be_made_to_call_human_submit(ready):
         client,
         token,
         stub,
-        {"action": "approve", "key": "DEMO-0001", "gate": "plan", "op": "human.submit", "idem": idem(12)},
+        {"action": "approve", "key": "DEMO-0001", "gate": "plan", "op": "human.submit"},
     )
     assert sent.status_code == 400
     assert not [r for r in client.app.routes if "submit" in getattr(r, "path", "")]
@@ -231,15 +233,13 @@ def test_the_server_cannot_be_made_to_call_human_submit(ready):
 
 def test_host_errors_are_mapped(ready):
     client, token, stub, rich, signing = ready
-    missing = post(client, token, stub, {"action": "comment", "key": "DEMO-0999", "message": "x", "idem": idem(13)})
+    missing = post(client, token, stub, {"action": "comment", "key": "DEMO-0999", "message": "x"})
     assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_found"
-    bad_question = post(
-        client, token, stub, {"action": "answer", "key": "DEMO-0001", "question": "Q9", "option": "a", "idem": idem(14)}
-    )
+    bad_question = post(client, token, stub, {"action": "answer", "key": "DEMO-0001", "question": "Q9", "option": "a"})
     assert bad_question.status_code == 404
-    refused = post(client, token, stub, {"action": "reopen", "key": "DEMO-0001", "idem": idem(15)})
+    refused = post(client, token, stub, {"action": "reopen", "key": "DEMO-0001"})
     assert refused.status_code == 409 and refused.json()["error"]["code"] == "transition.refused"
-    extra = post(client, token, stub, {"action": "new", "title": "T", "priority": "high", "idem": idem(16)})
+    extra = post(client, token, stub, {"action": "new", "title": "T", "priority": "high"})
     assert (
         extra.status_code == 400 and extra.json()["error"]["code"] == "invalid.input"
     )  # `new` carries title and type only
@@ -250,7 +250,7 @@ def test_expiry_is_reported_and_stale_content_is_refused_when_signing(ready):
     env, ids = rich
     now = [__import__("time").time()]
     signing.stub.requests.clock = lambda: now[0]
-    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(17)}).json()
+    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x"}).json()
     now[0] += 601
     state = client.get(f"{base(stub)}/{got['id']}", headers=auth(token)).json()
     assert state["state"] == "expired"
@@ -260,19 +260,14 @@ def test_a_session_holds_at_most_eight_open_requests_and_logout_cancels_them(rea
     client, token, stub, rich, signing = ready
     ids = []
     for n in range(8):
-        res = post(
-            client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": f"note {n}", "idem": idem(20 + n)}
-        )
+        res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": f"note {n}"})
         assert res.status_code == 200
         ids.append(res.json()["id"])
-    over = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "one more", "idem": idem(40)})
+    over = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "one more"})
     assert over.status_code == 503 and over.json()["error"]["code"] == "quota.host"
     assert client.delete(f"{base(stub)}/{ids[0]}", headers=auth(token, True)).status_code == 200
     assert (
-        post(
-            client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "fits now", "idem": idem(41)}
-        ).status_code
-        == 200
+        post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "fits now"}).status_code == 200
     )
     out = client.post("/auth/logout", headers=auth(token, True))
     assert out.status_code == 200
@@ -290,7 +285,7 @@ def test_an_inconsistent_host_answer_is_refused(ready, monkeypatch):
         return out
 
     monkeypatch.setattr(signing.stub.requests, "prepare", tampered)
-    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(50)})
+    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x"})
     assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
     assert "000000000000" not in res.text
 
@@ -307,39 +302,57 @@ def second_token(client, auth):
     return client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN}).json()["token"]
 
 
-def test_a_request_belongs_to_the_session_that_prepared_it(ready, auth):
+def test_a_request_belongs_to_the_person_not_to_the_tab(ready, auth):
     client, token, stub, rich, signing = ready
-    mine = post(
-        client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(60)}
-    ).json()
+    mine = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"}).json()
     other = second_token(client, auth)
     url = f"{base(stub)}/{mine['id']}"
-    assert client.get(url, headers=auth_h(other)).status_code == 404
-    assert client.get(url + "?full=1", headers=auth_h(other)).status_code == 404
-    assert client.delete(url, headers=auth_h(other, True)).status_code == 404
-    # The same idem from another session is another click: its own request, its own code.
-    theirs = post(
-        client, other, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(60)}
-    ).json()
-    assert theirs["id"] != mine["id"] and theirs["code"] != mine["code"]
-    assert client.get(url, headers=auth_h(token)).json()["state"] == "prepared"  # nothing of mine was touched
-    assert client.get(url, headers=auth_h(token)).status_code == 200
+    # Another session of the same person follows it, and prepares the same action to the SAME request.
+    assert client.get(url, headers=auth_h(other)).json()["state"] == "prepared"
+    theirs = post(client, other, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"}).json()
+    assert theirs["id"] == mine["id"] and theirs["code"] == mine["code"]
+    assert len(signing.stub.requests.table) == 1
+    # An id nobody here prepared looks like one that never existed, for every session.
+    never = f"{base(stub)}/hr_{'0' * 25}1"
+    assert client.get(never, headers=auth_h(token)).status_code == 404
+    assert client.delete(never, headers=auth_h(other, True)).status_code == 404
 
 
-def test_two_tabs_make_two_requests_and_cancel_only_their_own(ready):
+def test_a_different_person_never_reaches_the_request(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    mine = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"}).json()
+    monkeypatch.setattr(client.app.state, "person_of", lambda ws: "p_" + "f" * 32)
+    url = f"{base(stub)}/{mine['id']}"
+    assert client.get(url, headers=auth_h(token)).status_code == 404
+    assert client.delete(url, headers=auth_h(token, True)).status_code == 404
+    assert signing.stub.requests.table[mine["id"]]["state"] == "prepared"
+
+
+def test_two_tabs_get_one_request_and_it_is_cancelled_once_for_both(ready, auth):
     client, token, stub, rich, signing = ready
     body = {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
-    a = post(client, token, stub, {**body, "idem": idem(61)}).json()
-    b = post(client, token, stub, {**body, "idem": idem(62)}).json()  # a second tab: a new click, a new idem
-    assert a["id"] != b["id"]
+    a = post(client, token, stub, body).json()
+    b = post(client, second_token(client, auth), stub, body).json()  # a second tab: the same intent
+    assert a["id"] == b["id"] and a["code"] == b["code"] and len(signing.stub.requests.table) == 1
     client.delete(f"{base(stub)}/{b['id']}", headers=auth_h(token, True))
-    assert client.get(f"{base(stub)}/{a['id']}", headers=auth_h(token)).json()["state"] == "prepared"
-    assert client.get(f"{base(stub)}/{b['id']}", headers=auth_h(token)).json()["state"] == "cancelled"
+    assert client.get(f"{base(stub)}/{a['id']}", headers=auth_h(token)).json()["state"] == "cancelled"
+
+
+def test_logout_of_one_tab_leaves_the_request_the_other_tab_holds(ready, auth):
+    client, token, stub, rich, signing = ready
+    other = second_token(client, auth)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "shared"}
+    made = post(client, token, stub, body).json()["id"]
+    assert post(client, other, stub, body).json()["id"] == made
+    client.post("/auth/logout", headers=auth_h(token, True))
+    assert states(signing) == {made: "prepared"}  # the other tab still holds it
+    client.post("/auth/logout", headers=auth_h(other, True))
+    assert states(signing) == {made: "cancelled"}  # the last holder's logout cancels it
 
 
 def test_logout_ends_the_session_even_if_a_cancel_fails(ready, monkeypatch):
     client, token, stub, rich, signing = ready
-    post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(64)})
+    post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"})
     original = HostLink.call
 
     def broken(self, op, args=None, **kw):
@@ -362,7 +375,7 @@ def test_the_answer_must_be_the_action_that_was_asked_for(ready, monkeypatch):
         return original(store, views, args, opts)
 
     monkeypatch.setattr(signing.stub.requests, "prepare", other_ticket)
-    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(65)})
+    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x"})
     assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
 
 
@@ -398,13 +411,13 @@ def test_an_inconsistent_prepared_request_fails_closed(ready, monkeypatch, mutat
         return out
 
     monkeypatch.setattr(signing.stub.requests, "prepare", tamper)
-    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(66)})
+    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x"})
     assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
 
 
 def test_a_failed_submit_code_is_passed_on_when_the_host_sends_it(ready, monkeypatch):
     client, token, stub, rich, signing = ready
-    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(67)}).json()
+    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x"}).json()
     original = signing.stub.requests.pending
 
     def with_error(args, lookups=None):
@@ -418,7 +431,7 @@ def test_a_failed_submit_code_is_passed_on_when_the_host_sends_it(ready, monkeyp
 
 def test_details_set_the_parent_and_the_fields_as_one_set_with_their_prior_values(ready):
     client, token, stub, rich, signing = ready
-    body = {"action": "details", "key": "DEMO-0001", "parent": "DEMO-0003", "priority": "high", "idem": idem(5)}
+    body = {"action": "details", "key": "DEMO-0001", "parent": "DEMO-0003", "priority": "high"}
     got = post(client, token, stub, body).json()
     event = got["events"][0]
     assert event["set"] == {"ticket.parent": "DEMO-0003", "ticket.priority": "high"}
@@ -428,7 +441,7 @@ def test_details_set_the_parent_and_the_fields_as_one_set_with_their_prior_value
 def test_details_refuse_a_parent_that_is_not_there_or_is_the_ticket_itself(ready):
     client, token, stub, rich, signing = ready
     for parent in ("DEMO-0999", "DEMO-0001"):
-        res = post(client, token, stub, {"action": "details", "key": "DEMO-0001", "parent": parent, "idem": idem(6)})
+        res = post(client, token, stub, {"action": "details", "key": "DEMO-0001", "parent": parent})
         assert res.status_code in (400, 404), res.text
     assert signing.stub.requests.table == {}
 
@@ -441,7 +454,7 @@ def test_a_section_is_prepared_with_its_text_in_the_material_and_signed_in_the_t
         client,
         token,
         stub,
-        {"action": "section", "key": "DEMO-0001", "section": "context", "text": text, "idem": idem(7)},
+        {"action": "section", "key": "DEMO-0001", "section": "context", "text": text},
     ).json()
     assert got["op"] == "section.set" and got["material"]["texts"] == {"context": text}
     assert set(got["events"][0]) >= {"sections", "base_rev"} and "set" not in got["events"][0]
@@ -455,14 +468,14 @@ def test_a_section_is_prepared_with_its_text_in_the_material_and_signed_in_the_t
 def test_a_section_the_ticket_type_does_not_have_is_refused_by_the_host(ready):
     client, token, stub, rich, signing = ready
     res = post(
-        client, token, stub, {"action": "section", "key": "DEMO-0003", "section": "plan", "text": "x", "idem": idem(8)}
+        client, token, stub, {"action": "section", "key": "DEMO-0003", "section": "plan", "text": "x"}
     )  # DEMO-0003 is an epic: no plan
     assert res.status_code == 400 and signing.stub.requests.table == {}
 
 
 def test_the_dashboard_follows_a_request_by_its_id_and_never_looks_up_a_code(ready, host_calls):
     client, token, stub, rich, signing = ready
-    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(9)}).json()
+    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x"}).json()
     assert client.get(f"{base(stub)}/{got['id']}", headers=auth(token)).status_code == 200
     assert client.delete(f"{base(stub)}/{got['id']}", headers=auth_h(token, True)).status_code == 200
     for op, args, _ in host_calls:
@@ -491,7 +504,7 @@ def lose(monkeypatch, *, drop=1, code="outcome.unknown"):
     return plan
 
 
-def second_session(client, auth):
+def second_session(client, auth):  # noqa: D103
     from conftest import PORT
 
     launch = auth.launch(PORT)
@@ -505,7 +518,7 @@ def states(signing):
 def test_a_lost_answer_then_a_retry_returns_the_same_request_and_makes_no_second(ready, monkeypatch, host_calls):
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(63)}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
     first = post(client, token, stub, body)
     assert first.status_code == 503 and first.json()["error"]["code"] == "outcome.unknown"
     assert len(signing.stub.requests.table) == 1  # the host made it; the answer was lost
@@ -523,7 +536,7 @@ def test_a_lost_answer_then_a_retry_returns_the_same_request_and_makes_no_second
 def test_the_retried_request_is_the_one_the_signer_can_sign(ready, monkeypatch):
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(64)}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
     assert post(client, token, stub, body).status_code == 503
     got = post(client, token, stub, body).json()
     status, shown = signing.sign(got["code"])
@@ -531,21 +544,31 @@ def test_the_retried_request_is_the_one_the_signer_can_sign(ready, monkeypatch):
     assert list(states(signing).values()) == ["submitted"]
 
 
-def test_other_arguments_with_the_same_idem_are_a_conflict(ready, monkeypatch):
+def test_an_idem_conflict_at_the_host_is_an_open_attempt_and_prepares_nothing_more(ready, monkeypatch):
+    """A different path or signer binding conflicts; no open request means an explicit restart is available."""
+    from orch_dashboard.errors import fail
+
     client, token, stub, rich, signing = ready
-    lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(65)}
-    assert post(client, token, stub, body).status_code == 503
-    # The server's own record is gone with the failed call: the HOST answers the conflict.
-    res = post(client, token, stub, {**body, "message": "another text"})
-    assert res.status_code == 409 and res.json()["error"]["code"] == "idem.conflict"
-    assert len(signing.stub.requests.table) == 1
+    original = HostLink.call
+    calls = []
+
+    def conflict(self, op, args=None, **kw):
+        if op == "human.prepare":
+            calls.append(kw["idem"])
+            raise fail("idem.conflict", exit=5)
+        return original(self, op, args, **kw)
+
+    monkeypatch.setattr(HostLink, "call", conflict)
+    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"})
+    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.blocked"
+    assert len(calls) == 1 and signing.stub.requests.table == {}  # not retried with another key
+    assert post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"}).status_code == 409
 
 
 def test_a_retry_after_the_request_ended_answers_its_terminal_state(ready, monkeypatch):
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(66)}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
     assert post(client, token, stub, body).status_code == 503
     (made,) = signing.stub.requests.table
     signing.stub.requests.cancel({"request_id": made})
@@ -557,28 +580,44 @@ def test_a_retry_after_the_request_ended_answers_its_terminal_state(ready, monke
 def test_a_retry_after_a_signature_answers_submitted(ready, monkeypatch):
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(67)}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
     assert post(client, token, stub, body).status_code == 503
     (made,) = signing.stub.requests.table
     status, shown = signing.sign(signing.stub.requests.table[made]["code"])
     assert status == 0, shown
     again = post(client, token, stub, body)
-    assert again.status_code == 200 and again.json()["state"] == "submitted" and again.json()["id"] == made
-    assert again.json()["code"] is None or isinstance(again.json()["code"], str)
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
+    assert "hi" in again.json()["error"]["summary"]
+    assert again.json()["error"]["signed_at"] is None
 
 
-def test_after_the_record_is_kept_no_longer_the_same_idem_is_expired(ready, monkeypatch):
+def test_expired_intent_requires_explicit_start_again(ready, monkeypatch, host_calls):
+    from orch_dashboard.errors import fail
+
     client, token, stub, rich, signing = ready
-    lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(68)}
-    assert post(client, token, stub, body).status_code == 503
-    (made,) = signing.stub.requests.table
-    signing.stub.requests.cancel({"request_id": made})
-    now = time.time()
-    monkeypatch.setattr(signing.stub.requests, "clock", lambda: now + 25 * 3600)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
+    made = post(client, token, stub, body).json()["id"]
+    first = next(c[2]["idem"] for c in host_calls if c[0] == "human.prepare")
+    original = HostLink.call
+    attempts = []
+
+    def tombstone(self, op, args=None, **kw):
+        if op == "human.prepare":
+            attempts.append(kw.get("idem"))
+            if kw.get("idem") == first:
+                raise fail("idem.expired", exit=2)
+        return original(self, op, args, **kw)
+
+    monkeypatch.setattr(HostLink, "call", tombstone)
     res = post(client, token, stub, body)
-    assert res.status_code == 409 and res.json()["error"]["code"] == "idem.expired"
-    assert len(signing.stub.requests.table) == 1  # never a second request: the person starts again with a new key
+    assert res.status_code == 409 and res.json()["exit"] == 5
+    assert res.json()["error"]["code"] == "intent.expired"
+    assert res.json()["error"]["retryable"] is False
+    assert attempts == [first] and len(signing.stub.requests.table) == 1
+    again = post(client, token, stub, {**body, "retry": 1})
+    assert again.status_code == 200 and again.json()["id"] != made
+    assert len(attempts) == 2 and attempts[1] != first
+    assert len(signing.stub.requests.table) == 2
 
 
 def test_a_host_restart_never_produces_a_second_request(ready, monkeypatch):
@@ -586,7 +625,7 @@ def test_a_host_restart_never_produces_a_second_request(ready, monkeypatch):
 
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(69)}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
     assert post(client, token, stub, body).status_code == 503
     (made,) = signing.stub.requests.table
     restarted = StubHost(stub.root, stub.state, stub.person)  # a new process: its tables are read from disk
@@ -607,33 +646,20 @@ def test_without_a_key_the_stub_makes_a_request_each_call(ready):
     one, two = (signing.stub.call("human.prepare", args, {}) for _ in range(2))
     assert one["data"]["request"]["id"] != two["data"]["request"]["id"]
     # A dry run neither stores nor looks anything up.
-    dry = signing.stub.call("human.prepare", args, {"dry_run": True, "idem": idem(70)})
+    dry = signing.stub.call("human.prepare", args, {"dry_run": True})
     assert dry["data"]["request"] is None and idem(70) not in signing.stub.requests.prepares
-
-
-def test_another_sessions_request_is_never_reachable_after_a_retry(ready, auth, monkeypatch):
-    client, token, stub, rich, signing = ready
-    other = second_session(client, auth)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "A text", "idem": idem(71)}
-    made = post(client, token, stub, body).json()["id"]
-    assert client.get(f"{base(stub)}/{made}", headers=auth_h(other)).status_code == 404
-    assert client.delete(f"{base(stub)}/{made}", headers=auth_h(other, True)).status_code == 404
-    # The other session using the same key is its own record at the server; the host binds the key to the principal
-    # (here one person), so it returns the same request, yet this server still lists it for the preparing session only.
-    assert client.get(f"{base(stub)}/{made}", headers=auth_h(token)).status_code == 200
-    assert states(signing)[made] == "prepared"
 
 
 def test_a_section_limit_counts_bytes_not_characters(ready):
     client, token, stub, rich, signing = ready
     text = "\u00e4" * 40000  # 40000 characters, 80000 bytes
-    body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": text, "idem": idem(9)}
+    body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": text}
     r = post(client, token, stub, body)
     assert r.status_code == 400
 
 
 def test_a_section_of_only_whitespace_is_refused(ready):
     client, token, stub, rich, signing = ready
-    body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": " \n\t ", "idem": idem(11)}
+    body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": " \n\t "}
     assert post(client, token, stub, body).status_code == 400
     assert states(signing) == {}  # nothing was prepared

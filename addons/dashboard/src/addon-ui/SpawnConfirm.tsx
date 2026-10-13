@@ -19,6 +19,7 @@ import { canSpawnAgent } from './capabilities'
 import { useAddons } from './slots'
 import { fmtClock, fmtExact } from '@/lib/time'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 const timeOfDay = (iso: string) => fmtClock(iso)
 const withId = (label: string, id: string) => (label === id ? label : `${label} (${id})`)
@@ -85,7 +86,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   const role = useRole()
   const signed = useSignedAction()
   const { data: addons } = useAddons()
-  const me = useQuery(queries.me())
+  const me = useMe()
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
   // The same request as the ticket panel (per ticket), or the page's (the ticket picked there).

@@ -31,5 +31,9 @@ def refuse_new_reader(store: Any, what: str) -> None:
             "sign.convenience_readers",
             f"{what} would add a reader to a workspace whose history has convenience signatures",
             hint="the new reader must understand auth convenience first; orch-core, orch-relay and orch-mobile "
-            "releases that know it are needed (orch-v2-host §0.8.6)",
+            "releases that know it are needed (orch-v2-host §0.8.6). Upgrade path (owner decision of 13 Oct 2026): "
+            "a reader-version handshake is planned for phase 2, with the relay/phone integration; a reader that "
+            "declares and proves it understands auth convenience may then be added, older readers stay refused. "
+            "Until it exists, use click-to-sign only on workspaces that won't get a phone, relay link or other "
+            "member yet",
         )

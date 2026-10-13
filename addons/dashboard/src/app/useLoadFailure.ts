@@ -1,6 +1,7 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 /**
  * A page's "could not load" state (G4 review M5): the viewer or the workspaces failed, or one of the page's own
@@ -8,7 +9,7 @@ import { queries } from '@/api/queries'
  * its skeleton for good.
  */
 export function useLoadFailure(...own: Pick<UseQueryResult, 'isError' | 'data' | 'refetch'>[]): { failed: boolean; retry: () => void } {
-  const me = useQuery(queries.me())
+  const me = useMe()
   const workspaces = useQuery(queries.workspaces())
   const all = [me, workspaces, ...own]
   return {

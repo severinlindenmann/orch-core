@@ -27,6 +27,16 @@ NO_ELIGIBLE = {
 }
 
 
+# What Today lists as "needs you" (and so what every badge counts): questions, approvals and verdicts. Notices
+# (`no_eligible`, `acknowledge`, `addon`) are shown on their own rows but are not counted (RH-6).
+ACTIONABLE = {"question", "approve"}
+
+
+def actionable_count(items: list[dict], role: str | None = None) -> int:
+    """The workspace's "needs you" number: exactly the rows Today's "N need you" counts. A viewer decides nothing."""
+    return 0 if role == "viewer" else sum(1 for n in items if n["kind"] in ACTIONABLE)
+
+
 def ask(n: dict) -> str:
     """The line a row shows. The question text is a Snip of the ticket's own (the page reads the full one)."""
     if n["kind"] == "approve":

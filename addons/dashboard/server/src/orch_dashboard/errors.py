@@ -13,7 +13,15 @@ def fail(code: str, message: str | None = None, exit: int = 9):
             "code": code,
             "message": message or code,
             "retryable": code
-            in {"host.unavailable", "sub.reset", "quota.host", "timeout", "host.restarting", "page.expired"},
+            in {
+                "host.unavailable",
+                "sub.reset",
+                "quota.host",
+                "timeout",
+                "host.restarting",
+                "page.expired",
+                "click.unavailable",
+            },
         },
         exit,
     )
@@ -28,9 +36,11 @@ def status(code: str) -> int:
         "grant."
     ):
         return 403
+    if code in {"intent.ended", "intent.done", "intent.expired"}:
+        return 409
     if code == "human.request_expired":
         return 410
-    if code in {"op.unsupported", "host.version_mismatch"}:
+    if code in {"op.unsupported", "host.version_mismatch", "click.contract"}:
         return 501
     if code in {
         "host.unavailable",
@@ -43,6 +53,7 @@ def status(code: str) -> int:
         "quota.host",
         "timeout",
         "workspace.unavailable",
+        "click.unavailable",
     }:
         return 503
     if code in {"internal", "not_implemented"}:

@@ -70,7 +70,7 @@ function settleViewer(viewer: string) {
 /** Wide or narrow (icon rail). Lives in the shell so the sidebar, the toaster and the dock agree on the rail width. */
 function useRailState() {
   const qc = useQueryClient()
-  const fetched = useQuery(queries.me()).data?.person
+  const fetched = useQuery(queries.me()).data?.person  // the rail preference is per viewer, not per workspace
   // The cache may already know the viewer before this query settles (another component asked first).
   const viewer = fetched ?? qc.getQueryData<{ person: string }>(['me'])?.person
   const [stored, setStored] = useState(() => readRailPrefs(viewer))
@@ -98,6 +98,9 @@ function useRailState() {
   latestViewer.current = viewer
   const [animating, setAnimating] = useState(false)
   const settle = useRef<number | undefined>(undefined)
+  // The settle timer must not outlive the shell: it would set state after unmount (and, in tests, fire after the
+  // environment is torn down: "window is not defined").
+  useEffect(() => () => window.clearTimeout(settle.current), [])
   const toggle = useCallback(() => {
     setAnimating(true)
     window.clearTimeout(settle.current)

@@ -30,6 +30,7 @@ import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
 import { plural } from '@/lib/time'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 const CLI_HINT = 'orch list --status open'
 
@@ -121,7 +122,7 @@ export function TicketsPage() {
   const wsId = workspace?.id
   const { data: addons = [] } = useAddons()
 
-  const meQ = useQuery(queries.me())
+  const meQ = useMe()
   const me = meQ.data
   const role = useRole()
   // A real host moves one ticket at a time, each signed in the terminal: no bulk move there.

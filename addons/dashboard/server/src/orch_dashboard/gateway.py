@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from . import adapters
+from .click_signer import Signer
 from .errors import fail
 from .hostlink import HostLink
 from .text import hidden
@@ -16,16 +17,11 @@ WORKSPACE_ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f
 
 
 def state_dir(env=None) -> Path:
-    """Core's resolution order exactly (orch.ops.runtime.state_dir; a test holds them equal): ORCH_STATE_DIR (made
-    absolute), else an absolute XDG_CONFIG_HOME/orch (a relative one is invalid per the XDG spec and ignored), else
-    HOME/.config/orch. The dashboard and the host must agree on it, or each looks in a different place."""
-    env = os.environ if env is None else env
-    if env.get("ORCH_STATE_DIR"):
-        return Path(os.path.abspath(env["ORCH_STATE_DIR"]))
-    if env.get("XDG_CONFIG_HOME", "").startswith("/"):
-        return Path(env["XDG_CONFIG_HOME"]) / "orch"
-    home = env.get("HOME") or str(Path.home())
-    return Path(home) / ".config" / "orch"
+    """The state directory exactly as core resolves it (ORCH_STATE_DIR made absolute, an absolute
+    XDG_CONFIG_HOME/orch, then HOME/.config/orch): the host and the click signer child read the same place."""
+    from orch.ops.runtime import state_dir as core_state_dir
+
+    return core_state_dir(os.environ if env is None else env)
 
 
 def read_pins(path):
@@ -58,8 +54,10 @@ WRITE_OPS = ("move", "settings.set", "policy.set", "member.add", "member.role", 
 
 
 class Gateway:
-    def __init__(self, state=None):
+    def __init__(self, state=None, click=None):
         self.state = state or state_dir()
+        # The one signer child of this server (started on first use, so a dev server with no host starts none).
+        self.click = click or Signer(self.state)
         self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run")))
         self.links = {}
         self.control = None
@@ -144,6 +142,12 @@ class Gateway:
                 features.append("move")  # the board's move action (H6b): backlog <-> open through a hand-off
         return features
 
+    def one_path_is_click(self, ws) -> bool:
+        """Is click-to-sign switched ON for this workspace (the signer's flag)? Then it is the ONE signing path: the
+        dashboard prepares no terminal hand-off there (owner decision, 12 Oct 2026)."""
+        card = self.click.status().get(ws)
+        return isinstance(card, dict) and card.get("enabled") is True
+
     def workspaces(self):
         with self.lock:
             pins = self._pins()
@@ -153,6 +157,7 @@ class Gateway:
         result = []
         from .errors import HostError
 
+        signer = self.click.status()  # custody, enabled, available, problem per workspace; empty without a signer
         for row in rows:
             ws = row["workspace_id"]
             if ws not in pins or row.get("person") != pins[ws]["peers"][str(os.getuid())]["person"]:
@@ -162,7 +167,12 @@ class Gateway:
                 show = link.call("workspace.show")
                 roster = adapters.members(link.call("member.list"))
                 features = self.features(ws)
-                count = len(link.call("needs")["items"]) if "today" in features else None
+                card = signer.get(ws)
+                if card and "actions" in features and card.get("enabled") and card.get("available"):
+                    features.append("click")  # the sign panel is offered (the signer has a key and the flag is on)
+                who = link.welcome["peer"]["person"]
+                role = next((m.role for m in roster if m.person == who), "viewer")
+                count = adapters.actionable_count(link.call("needs")["items"], role) if "today" in features else None
                 if (
                     not isinstance(show.get("name"), str)
                     or not isinstance(show.get("prefix"), str)
@@ -179,6 +189,7 @@ class Gateway:
                         members=roster,
                         needs_you=count,
                         features=features,
+                        click=adapters.click_card(card),
                     )
                 )
             except HostError as exc:
@@ -190,6 +201,7 @@ class Gateway:
         return self.enabled(ws).call(op, args)
 
     def close(self):
+        self.click.close()
         for link in [self.control, *self.links.values()]:
             if link:
                 link.close()

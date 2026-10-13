@@ -5,6 +5,7 @@ import type { AgentSession } from '@/api/types'
 import { useConnections } from './pages/settings/connectionUi'
 import { useRole } from './useRole'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 export interface Attention {
   /** Everything Today lists for the viewer: open questions, gates and verdicts, open addon decisions (both
@@ -32,7 +33,7 @@ export function groupOf(root: AgentSession, all: AgentSession[], viewer: string 
 
 /** The three nouns of the dashboard, defined once: what needs you, what waits on others, and the agent sessions. */
 export function useAttention(ws: string | undefined): Attention {
-  const me = useQuery(queries.me())
+  const me = useMe(ws)
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const decisions = useQuery({ ...queries.addonDecisions(ws!), enabled: !!ws })
   const agents = useQuery({ ...queries.agents(ws!), enabled: !!ws })

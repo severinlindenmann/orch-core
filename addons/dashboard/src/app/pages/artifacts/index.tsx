@@ -18,6 +18,7 @@ import { ArtifactPane, ArtifactPreview, openMode } from './Preview'
 import { artifactKey, previewTarget, useArtifactSelection, type View } from './selection'
 import { ArtifactGrid, ArtifactList } from './views'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 /**
  * The preview sits beside the results on a window of at least 1280 px (the Today rule) whose page area still has
@@ -38,7 +39,7 @@ const SINCE = [
 export function ArtifactsPage() {
   usePageHeader('Artifacts')
   const { workspace } = useWorkspace()
-  const me = useQuery(queries.me())
+  const me = useMe()
   const ws = workspace?.id
   const person = me.data?.person
   const [filters, setFilters] = useState<Omit<ArtifactQuery, 'page' | 'per'>>({})

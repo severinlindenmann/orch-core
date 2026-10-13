@@ -23,12 +23,13 @@ import { validateAgentsSearch, type AgentsTab } from '../../search'
 import { Pill } from '../ticket/shared'
 import { useMandatesPreview } from '../../mandates/shared'
 import { MandatesTab } from './Mandates'
+import { useMe } from '@/app/useMe'
 
 export function AgentsPage() {
   usePageHeader('Agents')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const me = useQuery(queries.me())
+  const me = useMe()
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const sessions = useQuery({ ...queries.agents(ws!), enabled: !!ws })
   const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })

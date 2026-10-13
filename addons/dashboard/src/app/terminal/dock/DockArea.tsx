@@ -3,7 +3,6 @@
 // layout prefs, the page-width context and the Ctrl+` shortcut. The open dock (and xterm with it) is a lazy chunk.
 // The dock is the terminals addon's surface, mounted by core: it shows only where that addon may use `pty`.
 
-import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronUp, SquareTerminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { TerminalSessionView } from '@/api/terminals'
@@ -19,7 +18,7 @@ import { clampDock, DOCK_BAR, dockSqueezesSidebar, readDockPrefs, rightFits, use
 import { onDockRequest } from './request'
 import { useShellState } from '../../shell/ShellUi'
 import { RAIL_SQUEEZE, SIDEBAR_RAIL, SIDEBAR_WIDE } from '../../shell/railRule'
-import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 const TerminalDock = lazy(() => import('./TerminalDock'))
 
@@ -41,7 +40,7 @@ export function useDockAllowed(): boolean {
  */
 export function useDockSqueezesNow(): boolean {
   const allowed = useDockAllowed()
-  const person = useQuery(queries.me()).data?.person
+  const person = useMe().data?.person
   // Read from storage once per viewer, not on every render of the shell.
   const prefs = useMemo(() => readDockPrefs(person), [person])
   if (!allowed || typeof window === 'undefined') return false
@@ -87,7 +86,7 @@ function useAreaWidth(ref: React.RefObject<HTMLDivElement | null>, viewWidth: nu
 
 export function DockArea({ children }: { children: ReactNode }) {
   const allowed = useDockAllowed()
-  const me = useQuery(queries.me())
+  const me = useMe()
   const [prefs, setPrefs] = useDockPrefs(me.data?.person)
   const view = useViewport()
   const root = useRef<HTMLDivElement>(null)

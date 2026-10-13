@@ -3,9 +3,10 @@
 * ``http.client`` only. It reads no proxy variable from the environment; a proxy is used only when ``link.json``
   names one (``host:port``), through ``set_tunnel``.
 * TLS: ``ssl.create_default_context()`` (``CERT_REQUIRED``, hostname check, TLS >= 1.2), or the ``ca_file`` that
-  ``link.json`` names. When the default context trusts nothing (``get_ca_certs()`` empty, the macOS python.org case)
-  and no ``ca_file`` is named, construction fails with :class:`NoTrustStore` (alarm ``tls_no_trust_store``). There is
-  no unverified fallback. Plain ``http`` is only for the loopback origins that :func:`wire.check_origin` allows.
+  ``link.json`` names (then only that CA is trusted). Decided by orch-52 (13 Oct): no emptiness probe of the default
+  store (``get_ca_certs()`` is empty for capath-only stores that verify fine); a store that trusts nothing fails
+  closed at the handshake (kind ``tls``). There is no unverified fallback and no knob to turn verification off.
+  Plain ``http`` is only for the loopback origins that :func:`wire.check_origin` allows.
 * Every call has a **total** deadline on the injected monotonic clock covering connect, TLS, headers and body: a
   watchdog shuts the socket down when it passes (so a relay that drips header bytes cannot stretch a call), and the
   socket timeout is set to the time remaining before every bounded body read.
@@ -33,7 +34,7 @@ from typing import Protocol
 
 from . import wire
 
-__all__ = ["NoTrustStore", "RedirectRefused", "RelayConn", "Response", "Transport", "TransportError", "tls_context"]
+__all__ = ["RedirectRefused", "RelayConn", "Response", "Transport", "TransportError", "tls_context"]
 
 log = logging.getLogger("orch.relay.http")
 
@@ -60,10 +61,6 @@ class RedirectRefused(TransportError):
 
     def __init__(self, route: str) -> None:
         super().__init__("redirect", route)
-
-
-class NoTrustStore(Exception):
-    """No CA is trusted and ``link.json`` names no ``ca_file``: the worker refuses to start (``tls_no_trust_store``)."""
 
 
 @dataclass(frozen=True)
@@ -93,14 +90,13 @@ class Transport(Protocol):
 
 
 def tls_context(ca_file: str | None, *, factory: Callable[..., ssl.SSLContext] = ssl.create_default_context):
-    """A verifying client context; refuses an empty trust store when no ``ca_file`` is named."""
+    """A verifying client context: ``ssl.create_default_context()`` (the platform's default paths, capath included), or
+    only ``ca_file`` when ``link.json`` names one."""
     ctx = factory(cafile=ca_file) if ca_file else factory()
     ctx.verify_mode = ssl.CERT_REQUIRED
     ctx.check_hostname = True
     if ctx.minimum_version < ssl.TLSVersion.TLSv1_2:
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    if not ca_file and not ctx.get_ca_certs():
-        raise NoTrustStore("no CA certificates are trusted and link.json names no ca_file")
     return ctx
 
 

@@ -468,9 +468,10 @@ def test_a_stale_lookup_does_not_make_the_next_one_spin():
     with pytest.raises(http.TransportError):
         call(c, deadline_s=0.05)
     threading.Timer(0.1, release_first.set).start()  # the stale helper ends while the second lookup waits
+    before = c._lookup_wakeups
     with pytest.raises(http.TransportError):
         call(c, deadline_s=5)
-    assert c._lookup_wakeups <= 4  # one wait per wake-up; a shared event would loop here
+    assert c._lookup_wakeups - before == 1  # woken only by its own helper; a shared event adds the stale wake-up
 
 
 def test_shutdown_just_before_a_call_fails_it_at_once(stuck_resolver):

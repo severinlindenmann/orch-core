@@ -460,8 +460,12 @@ drops. The host never sends it.
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `worktree.none` | 3 | no | stays | `worktree.remove` for a (ticket, repo) with no registered worktree | — |
-
-| `worktree.exists`, `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned` | 3 | no | stays | §12.7 | — |
+| `worktree.exists` | 3 | no | stays | the ticket already has a worktree for that repo, or its path is not free (§12.7) | — |
+| `worktree.no_branch` | 3 | no | stays | the ticket links no branch for that repo (§12.7) | — |
+| `worktree.branch_in_use` | 3 | no | stays | the branch is checked out in another worktree (§12.7) | — |
+| `worktree.dirty` | 3 | no | stays | the worktree has changes (or its state is unknown) and `force` is not set (§12.7) | — |
+| `worktree.in_use` | 3 | no | stays | a live run has that worktree as its cwd (§12.7) | — |
+| `worktree.unpinned` | 3 | no | stays | the registration exists but could not be pinned; remove it, then create again (§12.7) | — |
 | `worktree.git_failed` | 1 | no | stays | git exited non-zero (stderr only in the runner log) | — |
 | `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
 | `records.not_dedicated`, `records.git_state`, `records.unsafe_config`, `records.not_records_only`, `records.too_large`, `records.push_rejected` | 3 | no | stays | §12.8 (client-side, the records tool) | — |

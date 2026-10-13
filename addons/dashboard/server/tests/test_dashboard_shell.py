@@ -151,6 +151,18 @@ def test_disabled_dashboard(client, token, stub, p1):
     assert client.get(f"/api/w/{stub.ws}/tickets", headers=headers).status_code == 409
 
 
+def test_a_plain_text_fix_passes_but_a_structured_one_does_not():
+    from orch_dashboard.errors import HostError, host_response
+
+    def body(fix):
+        return host_response(
+            HostError({"code": "sign.convenience_readers", "message": "m", "retryable": False, "fix": fix})
+        ).body
+
+    assert b'"fix":"update the readers first"' in body("update the readers first")
+    assert b'"fix"' not in body({"argv": ["orch", "status"]})
+
+
 def test_error_passthrough():
     error = {
         "code": "host.restarting",

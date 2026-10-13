@@ -68,5 +68,7 @@ def response(code: str, http: int):
 
 
 def host_response(exc: HostError):
-    error = dict(exc.error)
+    # A structured `fix` (argv, paths) stays out of the browser, as since M0; a plain-text fix (e.g. the readers note
+    # of sign.convenience_readers) passes and is rendered as untrusted text.
+    error = {k: v for k, v in exc.error.items() if k != "fix" or isinstance(v, str)}
     return JSONResponse({"ok": False, "exit": exc.exit, "error": error}, status_code=status(error["code"]))

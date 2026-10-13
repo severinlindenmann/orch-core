@@ -528,3 +528,15 @@ browser console shows no CSP error (sonner's styles are in the built CSS).
    (`orch sign` signs `policy.set`; the browser cannot prepare it until stream A fixes RH-3, see HANDOVER "P2 on the real host").
 5. `.venv/bin/python tests/realhost_kit.py down ~/orch-rh-demo` stops the host by its PID and the dashboard server.
 Automatic checks: `uv run pytest -m realhost -q` (server) and the Playwright scenarios in orch-dev-kit `e2e/dashboard/`.
+
+## Try click-to-sign (M5, real host, own terminal)
+
+On a disposable workspace (never your real `~/.config/orch`), with the real signer. On macOS the convenience key lives in the **login
+keychain**; to avoid that use a Linux machine or the tests (`tests/test_realhost_click.py`, which use the 0600 file store of the throwaway
+state). Steps: bring up the demo (`tests/realhost_kit.py up BASE`), then in your terminal with the demo's environment
+`orch host convenience on --workspace DEMO` and `orch keys custody convenience --workspace DEMO` (asks the passphrase once), restart
+`python -m orch_dashboard`, open the dashboard. You should see: Settings, General shows a "Signing" card with the risk line; any action
+dialog (Approve, Comment, Move) offers **Sign** and **Sign in the terminal instead**. Sign opens the signer's review (risk line first, the
+terminal review lines, fingerprint, expiry); Sign turns on after half a second and again after you switch windows; a policy or member
+change asks you to type the word shown. Try "Sign in the terminal instead" (it cancels the click request and shows an `orch sign` code), and
+`orch host convenience off --workspace DEMO` (the buttons disappear on the next refresh). Details: HANDOVER "Click-to-sign (H5c)".

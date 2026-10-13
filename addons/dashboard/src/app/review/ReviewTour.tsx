@@ -13,6 +13,7 @@ import { restartToday } from '../todayRestart'
 import { useWorkspace } from '../workspace'
 import { PERSON_NAME, SCENARIOS, STEP_COUNT, type TourDataset, type TourScenario, type TourStep } from './scenarios'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 // Mock only: the review tour for the owner. The "Demo data" pill opens a sheet with the scenarios of REVIEW.md as
 // checklists. "Go" sets up a step (person, workspace, demo dataset) and opens its page. Ticks, the open scenarios and
@@ -50,7 +51,7 @@ export function ReviewTour() {
   const qc = useQueryClient()
   const router = useRouter()
   const { workspace, workspaces, setWorkspaceId } = useWorkspace()
-  const me = useQuery(queries.me()).data?.person
+  const me = useMe().data?.person
   const mode: TourDataset = useQuery(queries.devDataset()).data?.dataset ?? 'normal'
   const [open, setOpen] = useState(false)
   const [ticks, setTicks] = useState(() => new Set(readList<string>(TICKS_KEY, [])))

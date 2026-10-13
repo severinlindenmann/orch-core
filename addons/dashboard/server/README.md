@@ -30,8 +30,10 @@ uv build --wheel
 
 `npm run build` selects `src/main.prod.tsx`, fails if a mock module enters the module graph,
 and copies `dist/` into `server/src/orch_dashboard/static/`. Build the frontend **before** the
-wheel. The wheel includes that static tree and only `orch_dashboard`; neither `devhost` nor
-`orch-core` is a runtime dependency. Core is a uv path dependency in the dev group only.
+wheel. The wheel includes that static tree and only `orch_dashboard`, never `devhost`. **orch-core is a runtime dependency**
+(`orch-core>=2.0.0.dev0`, editable path source while it is a dev version): the click-to-sign signer child is core's own
+`python -I -m orch.click`, started by this server from its own venv. Never run the server with a `PYTHONPATH` that points at another
+core.
 
 ## Run with a dev stub (CI and the mock app; differs from the real host, see HANDOVER)
 
@@ -250,3 +252,12 @@ It resolves the code with `human.pending`, binds with `human.get`, recomputes th
 renders it on the terminal, asks for the ticket key and then the passphrase (both on `/dev/tty`), signs with the dev
 workspace's device key (`<state>/hosts/<ws>/person/dk.key.json`) and submits. Routes: `POST /api/w/<uuid>/handoff`,
 `GET|DELETE /api/w/<uuid>/handoff/<request_id>`.
+
+## Click-to-sign (H5c)
+
+One signer child per server (`orch.click.spawn.start()`), started on first use, restarted if it exits, stopped on shutdown. It holds the
+device key; this process never does. Routes: `POST /api/w/{ws}/click/{prepare,view,sign,cancel}`, `GET /api/w/{ws}/click/status`.
+Off per workspace until `orch host convenience on --workspace W`; `ORCH_DASHBOARD_CLICK=off` never starts the child. Tests use a faked
+channel (`tests/test_dashboard_click.py`) and, with `-m realhost`, the real host and signer (`tests/test_realhost_click.py`, file custody in
+a disposable state; macOS keychain never touched). Card text: "Convenience signing: agents running as you, or anything that takes over
+this dashboard, could sign." See HANDOVER "Click-to-sign (H5c)".

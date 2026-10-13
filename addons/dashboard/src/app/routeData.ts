@@ -44,7 +44,7 @@ const settle = (parts: Ensure[]) => Promise.allSettled(parts).then(() => undefin
 export const LOADER_WAIT_MS = 1500
 const atMost = (p: Promise<unknown>, ms = LOADER_WAIT_MS) => Promise.race([p, new Promise((res) => setTimeout(res, ms))]).then(() => undefined)
 
-const me = (qc: QueryClient) => qc.ensureQueryData(queries.me())
+const me = (qc: QueryClient, ws?: string) => qc.ensureQueryData(queries.me(ws))
 const workspaces = (qc: QueryClient) => qc.ensureQueryData(queries.workspaces()).then(running)
 const addons = (qc: QueryClient) => qc.ensureQueryData(queries.addons())
 
@@ -105,9 +105,11 @@ export function pageLoader(parts: (s: PageScope) => Ensure[], chunks: (() => Pro
       return
     }
     const data = async () => {
-      const [person, list, pkgs] = await Promise.all([me(qc).catch(() => undefined), workspaces(qc).catch(() => []), addons(qc).catch(() => [])])
+      const [list, pkgs] = await Promise.all([workspaces(qc).catch(() => []), addons(qc).catch(() => [])])
       const ws = pickWorkspace(list, context.urls)
       if (!ws) return
+      // The viewer's own entry in the workspace the page shows: a person has a different id in each workspace.
+      const person = await me(qc, ws.id).catch(() => undefined)
       const owner = can(roleOf(ws, person?.person), 'settings')
       await settle([...shellScoped(qc, ws, pkgs), ...parts({ qc, ws, list, pkgs, person: person?.person, owner, urls: context.urls })])
     }

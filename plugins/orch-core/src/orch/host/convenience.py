@@ -151,7 +151,7 @@ def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
         raise HostError(
             "sign.convenience_readers",
             f"{op} would add a reader to a workspace whose history has convenience signatures",
-            hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)",
+            hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)." + READER_UPGRADE,
         )
     if enabled(service.state_dir, service.workspace_id, service.host_uid):
         raise HostError(
@@ -162,6 +162,12 @@ def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
         )
 
 
+READER_UPGRADE = (
+    " Reader-version handshake planned for phase 2; until then use click-to-sign only on workspaces that won't get a"
+    " phone, relay link or other member yet."
+)
+
+
 # -- one signing path per workspace (§0.8.6 item 8, owner decision of 12 Oct 2026)
 
 CLICK_ONLY_TEXT = (
@@ -170,13 +176,14 @@ CLICK_ONLY_TEXT = (
 )
 
 
-LOCK_WAIT = 2.0  # seconds a lock is waited for before ``host.busy``: a stopped process must not wedge the host
+LOCK_WAIT = 2.0  # seconds a lock is waited for before ``lock.busy``: a stopped process must not wedge the host
 
 
 @contextlib.contextmanager
 def _flock(state_dir: Path, name: str, host_uid: int) -> Iterator[None]:
-    """An exclusive ``flock`` on ``<state>/host/<name>``, waited for at most :data:`LOCK_WAIT` seconds (``host.busy``).
-    The file must be a regular 0600 file of the host UID, opened without following a link (``custody.unsafe_mode``)."""
+    """An exclusive ``flock`` on ``<state>/host/<name>``, waited for at most :data:`LOCK_WAIT` seconds (``lock.busy``,
+    exit 9, retryable). The file must be a regular 0600 file of the host UID, opened without following a link
+    (``custody.unsafe_mode``)."""
     ensure_private_dir(host_dir(state_dir), host_uid)
     path = host_dir(state_dir) / name
     try:
@@ -194,7 +201,7 @@ def _flock(state_dir: Path, name: str, host_uid: int) -> Iterator[None]:
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise HostError("host.busy", f"{path} is held by another process", hint="try again") from None
+                    raise HostError("lock.busy", f"{path} is held by another process", hint="try again") from None
                 time.sleep(0.02)
         yield
     finally:
@@ -226,9 +233,9 @@ def pending_handoffs(
     state_dir: Path, workspace_id: str, host_uid: int, *, clock: Callable[[], float] = time.time
 ) -> list[dict[str, Any]]:
     """The workspace's pending (``prepared`` or ``bound``, not expired) hand-off requests, as stored. A bound request
-    counts a minute past its expiry: a submit that passed the host's expiry check an instant before may still be
-    writing its journal, and must not land after the flag is on. A request file that cannot be read is
-    ``custody.unsafe_mode`` (switching on must not guess about it)."""
+    counts a minute past its expiry as defence in depth: the host's submit holds the workspace lock from its flag
+    check to its journal write, so ``on`` cannot interleave with it whatever the timing. A request file that cannot be
+    read is ``custody.unsafe_mode`` (switching on must not guess about it)."""
     from .requests import PENDING, RequestStore
 
     store = RequestStore(state_dir, workspace_id, host_uid, clock=clock)
@@ -240,7 +247,10 @@ def pending_handoffs(
             raise unsafe(f"request {rid} cannot be read ({exc.message}); fix or remove it first") from None
         if rec is None or not rec.get("code") or rec.get("state") not in PENDING:
             continue
-        if store.lapsed(rec, _SUBMIT_GRACE if rec.get("state") == "bound" else 0.0):
-            continue
+        try:
+            if store.lapsed(rec, _SUBMIT_GRACE if rec.get("state") == "bound" else 0.0):
+                continue
+        except (KeyError, TypeError, ValueError):  # no usable ``expires``: unreadable, switching on must not guess
+            raise unsafe(f"request {rid} has no valid expiry; fix or remove it first") from None
         out.append(rec)
     return out

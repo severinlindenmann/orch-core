@@ -1401,3 +1401,76 @@ and by-lines are escaped.
 **Why:** One fragment everywhere lets the person compare one thing. A fixed list missed U+061C and the tag characters.
 
 **Revert:** `uuid8` back to `slice(0, 8)`, the confirmation word back to `<PREFIX>/SETTINGS`, `text.py` back to the fixed `HIDDEN` list.
+
+## 2026-10-12 — M5 click-to-sign in the dashboard (phase 1; D65 amended)
+
+**Decision:** (1) In phase 1 the dashboard signs with one click through core's separate signer child (H5c, host contract 0.8.6). This
+amends D65 (the passphrase prompt in a terminal) for phase 1 only, per the owner decision of 12 Oct 2026 (coordination log "OWNER RE-PLAN
+P2", #264 comment 6121460551, and core's D65 phase-1 exception D-P2-23). (2) The dashboard is trusted with signing authority; the key stays
+in the signer child. The card and every sign panel say: "Convenience signing: agents running as you, or anything that takes over this
+dashboard, could sign." (3) Sign is offered only where the signer reports the workspace flag on and itself able to sign; "Sign in the
+terminal instead" (a separate hand-off) stays in every dialog; `grant` and every op the signer does not list are terminal only. (4) The panel
+shows only the signer's View; Sign is armed after 500 ms of visible presentation. (5) The workspace "needs you" number counts only what Today
+counts (RH-6). (6) Identity is per workspace (`queries.me(ws)`): a person has a different id in each workspace. (7) A receipt without a
+host label says "attestation unknown"; a task's `verify` command is shown as untrusted text.
+
+**Why:** The owner wants one click for daily work on a single-person, single-machine workspace; the separate signer keeps the key out of the
+HTTP process against passive disclosure, while the accepted risk (same-UID agents, a taken-over dashboard) is stated where it matters.
+
+**Revert:** Switch the flag off per workspace (`orch host convenience off --workspace W`), or `ORCH_DASHBOARD_CLICK=off` for the server; remove
+`click.py`, `click_signer.py`, `HandoffDialog`'s click branch and `ClickSignPanel`. The terminal hand-off is unchanged underneath.
+
+## 2026-10-12 — M5 structural fix: one action intent, held by the host idem
+
+**Decision:** (1) The host idem of every prepare (click and hand-off) is derived from the action intent, `sha256(cj({person, workspace_id, op, args, base}))` in the host's `a_[0-7]`+25 Crockford shape, never from a click, tab or session; the browser sends no key, only an explicit `retry` counter. (2) A terminal result for the intent is "Already done" with an explicit "Do it again" (cancelled/expired: "Start again"), both advance `retry`. (3) A request obtained through an intent belongs to the person in that workspace; any session of that person may view/sign/poll/cancel it (approved by orch-d6, stream A orch-52). (4) `idem.conflict` across paths is checked for an open request; dashboard restarts retain the binding because neither link sends `auth.session`; the terminal fallback after a click request is a deliberate other intent. (5) The in-memory unsettled/recently-signed records of rounds 1-3 are reduced to UI convenience; the 5-minute "recently signed" block is gone.
+
+**Why:** Three Opus rounds each found another way to obtain a second, different request for one action (another tab, a reopened dialog, a lost answer, logout, a race between prepare and sign). Patching paths in this process cannot close the class; the host's idem record can, once every path sends the same idem.
+
+**Revert:** Derive the idem from a browser key again (`host_idem` of the earlier commits); the per-path blocks (`refuse_if_unsettled`, `recent`) return with it.
+
+## 2026-10-12 — M5: one signing path per workspace (owner decision, ~19:45, via orch-d6)
+
+**Decision:** (1) Where click-to-sign is ON for a workspace the dashboard offers only Sign: no "Sign in the terminal instead", and `/handoff` prepares are refused (`sign.click_only`, "This workspace signs in the dashboard"; the host refuses them too, core #434). A signer that cannot sign there (`record_unavailable`, no key, helper down) is an honest error naming `orch host convenience off --workspace W`, never a hand-off. (2) Where it is OFF: the terminal hand-off as before, no click routes. (3) One intent function on both; the earlier "terminal path = retry >= 1" offset is dropped. (4) Flag flip: a click prepare is refused while a terminal hand-off (code) of the same op and key is open (`intent.open`, with its expiry); a flip OFF ends open click requests. Recorded in ~/orch-dev/state/coordination.md line 166 (20:38).
+
+**Why:** A click request and a terminal request of one action could coexist, which the one-intent invariant is meant to rule out; one path per workspace removes the case instead of managing it.
+
+**Revert:** Remove `Gateway.one_path_is_click` and its refusal in the `/handoff` route, restore the terminal button and the retry floor in `HandoffDialog`/`useHandoff`.
+
+## 2026-10-13 — M5: retention expiry requires an explicit new attempt
+
+**Decision:** Return `intent.expired` (HTTP 409) after one expired prepare; remove automatic epoch renewal. Both signing dialogs offer "Start again", which advances `retry`. The retry=0 hash stays unchanged.
+
+**Why:** Host retention expiry does not prove an action was never completed; automatic renewal could sign it twice.
+
+**Revert:** Restore epoch renewal in `send_prepare` and the intent hash (reintroduces the duplicate-action risk).
+
+
+## 2026-10-13 — M5 final intent and repeat warning
+
+**Decision:**
+
+M5 final intent contract (owner decision 13 Oct ~17:20, refined by orch-d6; coordination.md 'M5 'same intent'' and 'M5 intent REFINED'):
+**one intent (op + content + gate/question version) → at most one request → at most one signature;
+a deliberate repeat only via 'Do it again'.** Content means the exact canonical host arguments and certificate bytes.
+Gate decisions use gate generation/hash; answers use question id/hash, never its answered flag or the whole ticket.
+All other ticket operations (log, set, section.set, close, reopen, move) and workspace operations
+(settings, policy, member, grant) have no base. Unrelated agent edits cannot produce a second request.
+The host retains the intent outcome for 24 h. Both panels show server-sourced signed content and signing time
+before 'Do it again' advances retry. Neither dashboard link nor signer sends `auth.session`: restarting the
+dashboard reconnects with the same binding and returns the same request, not `idem.conflict`.
+A conflict is checked against `human.pending`: prepared/bound requests of the same op+key show their expiry;
+otherwise `intent.blocked` offers explicit 'Start again', warning that an earlier request may have been signed.
+No automatic retry advances the intent. Hand-off expiry is decided by host state, never the browser clock.
+
+**Host API gap:** current `human.get`/`human.pending` expose creation/expiry but not signing time.
+The server returns `signed_at: null` and the panels say signing time is unavailable; they never call creation
+time signing time. A host `signed_at` field is required for accurate 'N min ago'. The submitted click prepare
+loses its request id in the signer error, so the server replays the identical host prepare binding/idem through
+its own link to retrieve the exact existing record, not an arbitrary op+key match. Its warning summary comes
+from that record's material review. `human.request_state` at sign reads pending/get before offering a repeat.
+
+**Why:** Whole-ticket hashing let unrelated agent edits split a single action into two signable requests.
+A retained binding without an open request also caused a 24 h lockout.
+
+**Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
+never restore whole-ticket or member-role bases as an incidental refactor.

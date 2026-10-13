@@ -38,6 +38,7 @@ import {
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
 import type { HostGrant, HostSettings, RosterMember } from './settings'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
@@ -100,7 +101,7 @@ export function createApi(transport: Transport) {
 
   return {
     listTickets,
-    getMe: () => call<Me>('GET', '/api/me'),
+    getMe: (_ws?: string) => call<Me>('GET', '/api/me'),
     listPeople: (ws: string) => call<KnownPerson[]>('GET', `/api/workspaces/${ws}/people`),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),
@@ -121,8 +122,15 @@ export function createApi(transport: Transport) {
      * The terminal hand-off (M3, real host only): `idem` is one id per click, reused on a retry. The server prepares the
      * sign request; the person signs in a terminal. Nothing here signs.
      */
-    prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, idem }),
+    prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, ...(retry ? { retry } : {}) }),
     getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
+    /** Click-to-sign (H5c, real host only; the mock never offers it): the signer's View is shown as it is. */
+    prepareClick: (ws: string, action: HandoffAction, retry = 0) => call<ClickPrepared>('POST', `/api/w/${ws}/click/prepare`, { ...action, ...(retry ? { retry } : {}) }),
+    viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
+    signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
+      call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
+    stateClick: (ws: string, requestId: string) => call<{ id: string; state: ClickHostState }>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
+    cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),

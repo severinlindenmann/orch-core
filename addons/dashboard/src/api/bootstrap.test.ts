@@ -123,3 +123,17 @@ it('a late API 401 broadcasts its request token and preserves a newer session', 
   expect(getToken()).toBe('demo-not-a-real-new')
   expect(postMessage).toHaveBeenLastCalledWith({ type: 'logout', token: 'demo-not-a-real-old' })
 })
+
+describe('where the bearer lives (host contract 0.8.6 item 7)', () => {
+  it('only in tab memory and sessionStorage: never localStorage, a cookie or the address', async () => {
+    localStorage.clear()
+    history.replaceState(null, '', '/#launch=one-time-code&to=%2F')
+    const fetcher = vi.fn(async () => Response.json({ token: 'demo-not-a-real-token', expires_at: 'later' })) as unknown as typeof fetch
+    await bootstrap(fetcher)
+    expect(getToken()).toBe('demo-not-a-real-token')
+    expect(JSON.stringify({ ...localStorage })).not.toContain('demo-not-a-real-token')
+    expect(document.cookie).not.toContain('demo-not-a-real-token')
+    expect(location.href).not.toContain('demo-not-a-real-token')
+    expect(location.hash).toBe('')
+  })
+})

@@ -620,6 +620,99 @@ def test_a_signer_that_raises_before_signing_keeps_the_claim(click, served, huma
     assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
 
 
+def test_a_claim_deleted_from_outside_after_a_failed_signing_is_not_signed_again(click, served, human, monkeypatch):
+    """Defence in depth: the process remembers that it attempted the signature, whatever the files say."""
+    _, key = human.ticket()
+    rid, vd = _ready(click, key)
+    from orch.host import signer as host_signer
+
+    calls = []
+
+    def broken(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("keychain")
+
+    monkeypatch.setattr(host_signer, "sign", broken)
+    with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+        click.sign(rid, vd)
+    _record_path(served, rid).unlink()  # an outside deletion of the claim
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    assert len(calls) == 1
+    assert pending(served, rid)["state"] == "bound" and _texts(served, key) == []
+
+
+def test_the_attempt_marker_is_kept_for_the_process_lifetime(click, served, human, monkeypatch):
+    """Never pruned: survives sweeps past the approval deadline and past request expiry plus margin."""
+    from orch.host import signer as host_signer
+    from orch.host.control_client import new_idem
+
+    _, key = human.ticket()
+    idem = new_idem()
+    args = {"workspace_id": served.wid, "op": "log", "args": {"ref": key, "text": "x"}, "idem": idem}
+    sg = click.signer
+    rid = sg.prepare(args)["request_id"]
+    vd = click.view(rid)["view_digest"]
+    click.mono.t += 2
+    calls = []
+
+    def broken(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("keychain")
+
+    monkeypatch.setattr(host_signer, "sign", broken)
+    with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+        click.sign(rid, vd)
+    assert len(sg._attempted) == 1
+    _record_path(served, rid).unlink()
+    click.mono.t += 3600  # the approval deadline passed
+    sg._sweep()
+    assert len(sg._attempted) == 1 and sg.approvals == {}
+    served.lab.ws.clock[0] += 3600  # the request's own expiry plus any margin
+    sg._sweep()
+    assert len(sg._attempted) == 1
+    try:
+        again = sg.prepare(args)["request_id"]
+    except Exception:  # noqa: BLE001 - the host may refuse the expired request itself
+        return
+    vd = click.view(again)["view_digest"]
+    click.mono.t += 2
+    refused(lambda: click.sign(again, vd), "human.click_refused", "record_unavailable")
+    assert len(calls) == 1
+
+
+def test_a_marker_outlives_the_approval_deadline_while_the_request_is_open(click, served, human, monkeypatch):
+    """Fail closed: the claim deleted from outside, the approval swept at its deadline (mono) while the host still
+    holds the request open; an idem retry of prepare rebuilds the approval, and the sign is still refused."""
+    from orch.host import signer as host_signer
+    from orch.host.control_client import new_idem
+
+    _, key = human.ticket()
+    idem = new_idem()
+    args = {"workspace_id": served.wid, "op": "log", "args": {"ref": key, "text": "x"}, "idem": idem}
+    sg = click.signer
+    rid = sg.prepare(args)["request_id"]
+    vd = click.view(rid)["view_digest"]
+    click.mono.t += 2
+    calls = []
+
+    def broken(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("keychain")
+
+    monkeypatch.setattr(host_signer, "sign", broken)
+    with pytest.raises(Exception, match="keychain|RuntimeError|internal"):
+        click.sign(rid, vd)
+    _record_path(served, rid).unlink()
+    click.mono.t += 3600  # approval deadline long past; the host request is still open
+    sg._sweep()
+    assert sg.approvals == {} and len(sg._attempted) == 1
+    assert sg.prepare(args)["request_id"] == rid  # the idem retry rebuilds an approval, fresh deadline
+    vd = click.view(rid)["view_digest"]
+    click.mono.t += 2
+    refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
+    assert len(calls) == 1
+
+
 def test_a_partial_signing_keeps_the_claim_across_a_restart(click, served, human, monkeypatch):
     """The first event signs, the second raises: the claim stays, nothing is submitted, a retry (same process or a
     restarted signer) is refused and never signs again."""

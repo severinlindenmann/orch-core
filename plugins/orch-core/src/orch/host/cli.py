@@ -450,7 +450,7 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                         hint="let them expire (10 minutes), then switch convenience on",
                     )
             convenience.set_enabled(state, wid, args.switch == "on", uid)
-    except HostError as exc:  # host.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
+    except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
     out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
@@ -458,4 +458,5 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"
         )
+        out.write("Phone, relay link or other member later? A reader-version handshake is planned for phase 2.\n")
     return 0

@@ -3,7 +3,7 @@ import '@xterm/xterm/css/xterm.css'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { ArrowDown, ChevronDown, X } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from 'react'
@@ -22,7 +22,7 @@ import { screenDriver } from './harnessView'
 import { SessionList } from './SessionList'
 import { SessionStrip } from './SessionStrip'
 import { TerminalHeader } from './TerminalHeader'
-import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 const token = (el: HTMLElement, name: string) => getComputedStyle(el).getPropertyValue(name).trim() || undefined
 const NO_LINKS = { activate: () => {}, hover: () => {}, leave: () => {} }
@@ -60,7 +60,7 @@ export interface DockOptions {
 export default function TerminalView({ addon, session, fallback, placement = 'page', dock }: { addon: string; session: string; fallback: ReactNode; placement?: 'page' | 'rail' | 'dock'; dock?: DockOptions }) {
   const { workspace } = useWorkspace()
   const { [addon]: state } = useAddonStates(workspace?.id, [addon])
-  const me = useQuery(queries.me())
+  const me = useMe()
   const role = useRole()
   const qc = useQueryClient()
   const wide = usePageWidth() >= 1280

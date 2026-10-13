@@ -44,6 +44,7 @@ import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, ty
 import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 /** Left/right jump to the neighbouring column; up/down nudge. Without this the keyboard moves 25px per press. */
 const columnJump: KeyboardCoordinateGetter = (event, { context, currentCoordinates }) => {
@@ -181,7 +182,7 @@ export function BoardPage() {
   const refocus = useRef<{ key: string; status: Status } | null>(null)
   const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
-  const meQ = useQuery(queries.me())
+  const meQ = useMe()
   const me = meQ.data
   const [display, setDisplay] = useBoardDisplay(me?.person)
   const ticketsKey = queries.board(wsId!).queryKey

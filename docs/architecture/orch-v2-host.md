@@ -425,7 +425,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `human.request_mismatch` | 5 | no | stays | the submitted events differ from the prepared ones (§0.8) | — |
 | `human.request_state` | 3 | no | stays | the request is cancelled, already bound to another device, or already submitted by another call | — |
 | `host.required` | 3 | no | stays | a direct-mode CLI on a registered workspace (D-P2-18) | — |
-| `lock.busy` | 9 | yes | stays | register waited 60 s for the ownership lock (existing code; exit 9 on the socket, while P1's CLI catalog keeps exit 4 for its own store lock: H4b maps the socket's exit as sent) | yes |
+| `lock.busy` | 9 | yes | stays | register waited 60 s for the ownership lock, or a hand-off prepare or submit / `orch host convenience on|off` waited 2 s for the per-workspace convenience lock (existing code; exit 9 on the socket, while P1's CLI catalog keeps exit 4 for its own store lock: H4b maps the socket's exit as sent) | yes |
 | `host.busy` | 4 | no | stays | a second host on the same state or run directory (at start); `register` or `bootstrap` of a root or id that is already registered, has a genesis, or is being bootstrapped (N5) | — |
 | `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
@@ -530,9 +530,9 @@ state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`),
 | `diff` with `head`/`base` (v1.5) | as `diff`; a `head` or `base` the ticket does not allow is `not_found`; `since` with `head` or `base` is `invalid.input`; `invalid.input` for `head`/`base` without `repo`, and for either on a host without `diff_ext/1` (the §0.3 unknown-key rule) |
 | `session.refusals` (v1.5) | `page.expired`, `not_found` (`ticket`, or a `session` the viewer may not see), `invalid.input` (a `page` token with other arguments) |
 | `outcome.get`, `host.outcome` | `outcome.unknown_idem` (no record, or another principal's), `idem.expired` (only a tombstone is left) |
-| `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors, `sign.click_only` |
+| `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors, `sign.click_only`, `lock.busy` (the workspace lock of a hand-off prepare, waited for 2 s; retryable) |
 | `human.get` | `not_found`, `human.request_expired`, `human.request_state`, `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable` (N3 re-check), `sign.click_only` |
-| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes, `sign.click_only` |
+| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes, `sign.click_only`, `lock.busy` (the workspace lock of a hand-off submit, waited for 2 s; retryable) |
 | `human.pending` | none (an unknown code gives an empty list) |
 | `human.cancel` | `not_found` |
 | `sub.open` | `not_found` (`ticket:<ref>`), `sub.reset`; `invalid.input` for `detail` on a host without `sub_ext/1` (the §0.3 unknown-key rule) |
@@ -1248,10 +1248,11 @@ human.submit   {request_id:ReqHr, events:[SignedEvent]{1..16}}                  
   → the inner op's Result
 human.pending  {code?:Code, request_id?:ReqHr}                                     (at most one of the two)
   → {requests:[{id:ReqHr, code:Code | null, op:OpName, key:Key | null, created_at:Time, expires_at:Time,
-                state:State, event_ids:[ULID], seq:int | null,                     (R6; seq of the last event once submitted)
+                submitted_at:Time | null, state:State, event_ids:[ULID], seq:int | null,                     (R6; seq of the last event once submitted)
                 error?:{code:str}}]}       // H5a: the catalog code of the last failed human.submit, never the message
 human.cancel   {request_id:ReqHr} → {state:"cancelled"|"submitted"}
-Prepared = {request:{id:ReqHr, code:Code | null, expires_at:Time, state:State} | null,      // null only for dry_run
+Prepared = {request:{id:ReqHr, code:Code | null, expires_at:Time, state:State,
+                     submitted_at:Time | null} | null,   // submitted_at: when human.submit was accepted; null until then      // null only for dry_run
             result?:Result,                     // H7: dry_run only, the inner op's would-be Result (direct-mode parity)
             op:OpName, workspace_id:WsId, log:Uid | "workspace", events:[Event]{1..16}, material:Material,
             review_digest:Hash, fingerprint:str/[0-9a-f]{12}/,
@@ -2167,6 +2168,7 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
   | `reader_version` | the host's own model does not accept `auth: "convenience"` (an old install behind a new client) |
 
   `orch sign CODE` with a passphrase key stays available whatever the reason.
+- **Upgrade path (owner decision of 13 Oct 2026):** a reader-version handshake is planned for phase 2, with the relay/phone integration. A reader (phone, relay link, member's core) that declares and proves it understands `auth:"convenience"` may then be added; older readers stay refused. Until it exists, use click-to-sign only on workspaces that won't get a phone, relay link or other member yet.
 - **Adding a reader to a workspace that has convenience events is blocked** (owner decision): `member.add` (and, when
   they exist, relay pairing and any op that adds a device: one list, `orch.ops.readers.READER_OPS`) is refused with
   **`sign.convenience_readers`** (exit 3, not retryable) and a fix text, in host and direct mode alike, while any event
@@ -2559,7 +2561,7 @@ click-to-sign is on for a workspace, the only way to sign is the click. The term
   bound (`human.get` with `signer`) or submitted (`human.submit`, again under the store lock): `sign.click_only`.
 - **The race.** The host holds an exclusive `flock` on `<state>/host/convenience-<ws>.lock` from the flag check of a
   hand-off prepare to the write of its request file; `orch host convenience on|off` holds the same lock across its pending
-  scan and the flag write. A lock is waited for at most 2 s (`host.busy`), and its file must be a regular 0600 file of the host UID, opened without following a link (`custody.unsafe_mode`). `set_enabled` also takes `convenience.lock`, so concurrent flag writes for different workspaces lose nothing. A bound request counts as pending until a minute past its expiry, so a submit at the expiry boundary cannot land after the flag is on. So exactly one wins: the prepare lands first (and `on` is refused, listing it), or the flag
+  scan and the flag write. A lock is waited for at most 2 s (`lock.busy`, exit 9, retryable), and its file must be a regular 0600 file of the host UID, opened without following a link (`custody.unsafe_mode`). `set_enabled` also takes `convenience.lock`, so concurrent flag writes for different workspaces lose nothing. `human.submit` of a hand-off request holds the same lock (inside the store lock) from its flag check to the write of its journal record, so `on` cannot interleave with a submit whatever the timing; the CLI never takes the store lock, so there is no lock cycle. A bound request also counts as pending until a minute past its expiry, as defence in depth. A request record with no valid `expires` refuses `on` like an unreadable file (`custody.unsafe_mode`, naming its id). So exactly one wins: the prepare lands first (and `on` is refused, listing it), or the flag
   lands first (and the prepare is refused).
 - `orch host convenience off` removes the flag and hand-off works again: the owner's CLI fallback.
 - Direct mode has no host and no convenience flag, and is unaffected.
@@ -3035,7 +3037,7 @@ existing op changes its version.
 19. **One signing path per workspace (H5c follow-up, additive, owner decision of 12 Oct 2026):** new catalog code
     `sign.click_only` (exit 3, not retryable). With click-to-sign on, `human.prepare {handoff:true}` is refused,
     `orch host convenience on` is refused while hand-off requests are pending, and a hand-off request cannot be bound or
-    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock (2 s wait, then `host.busy`).
+    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock (2 s wait, then `lock.busy`). A hand-off submit holds that lock from its flag check to its journal write.
     No wire schema change; a client that does not use `handoff:true` sees nothing new.
 20. **Claim before signing (follow-up to item 18, client-side only):** the click signer syncs a claim record
     (`view_digest`, op, idem, expiry, no events) before the crypto signing and replaces it with the completed record
@@ -3044,35 +3046,41 @@ existing op changes its version.
     `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
     released; a failure fails that request closed. No new reason, no wire change.
 
+21. **Click follow-ups (additive, after item 20):**
+    the 2 s wait for the per-workspace lock raises `lock.busy` (exit 9, retryable) instead of `host.busy`, and is listed
+    under `human.prepare` and (for a hand-off) `human.submit`; a hand-off `human.submit` holds the workspace lock from its flag check to its journal write
+    (§0.8.6 item 8); `human.get` (in `request`) and `human.pending` carry `submitted_at:Time | null`, the host's time
+    when `human.submit` was accepted for the request (null until then, and for records stored before the field).
+
 **v1.6 → v1.7 (draft, 12 Oct 2026, revised 13 Oct after the Codex challenge and Opus tie-break, §11A.13).** The host
 bridge client. On the wire it is additive: no op on any socket changes its version, and no new error code is added (an
 oversized relay answer reuses `frame.too_large`). It adds **new internal contracts**, each named here:
 
-19. **Column R, principal class `relay`** (§11A.4): principal `r:<device_id>`, viewer the device's person, built only
+22. **Column R, principal class `relay`** (§11A.4): principal `r:<device_id>`, viewer the device's person, built only
     from a verified sealed request as an immutable `RelayIdentity`. Relay requests use a new relay entry over the same
     op backends, not the socket dispatcher: `Call.authorize` keeps the relay principal, `columns.resolve_relay` and
     `_MATRIX["R"]` are new, `resolve` fails closed for an unlisted peer class, and every `column.name` site is audited.
     The exact device/person association, certificate and member-list scopes, and held evidence for that pair are
     checked again inside the job. R gets the P reads, `whoami`, `outcome.get`, and device-signed events through a closed
     event/scope table with a required idem. `decision` waits for its F1 evidence carriage.
-20. **Exactly-once over the relay** (§11A.4): a rid state machine (`admitted` → `answered` → tombstone) with a durable
+23. **Exactly-once over the relay** (§11A.4): a rid state machine (`admitted` → `answered` → tombstone) with a durable
     submission journal of the device-signed events (the one stated exception to "no request plaintext persisted"),
     roll-forward through the outcome store (`relay.submit` in `NO_PARTIAL`, `append_signed` shared with
     `human.finish`), chunk bytes frozen at the first attempted POST, a start fence on `ts_ms`, and an explicit scope:
     it holds while the host state is not rolled back.
-21. **State** `<state>/hosts/<ws>/relay/` (link with `max_publication_bytes`, unlink markers, holder, rid store,
+24. **State** `<state>/hosts/<ws>/relay/` (link with `max_publication_bytes`, unlink markers, holder, rid store,
     staging resume, publication history, unpublished cursor, alarms) joins the D-P2-17 custody list; `rids.sqlite` and
     its sidecars are opened by a checked procedure. Session tokens are never persisted.
-22. **Readers:** `READER_OPS` gains `relay.link` and `relay.pair` (`sign.convenience_readers`). The reservation is
+25. **Readers:** `READER_OPS` gains `relay.link` and `relay.pair` (`sign.convenience_readers`). The reservation is
     written before any network exposure and is permanent: `_relay_paired` also reads `relay/link.json` and
     `relay/unlinked-*.json`; the history is rechecked after foreign appends (§11A.6).
-23. **Publication** follows the relay's P3-D37 maximum: catch-up checkpoints minted by `Store.mint_catchup` (fresh
+26. **Publication** follows the relay's P3-D37 maximum: catch-up checkpoints minted by `Store.mint_catchup` (fresh
     final snapshot, new numbers above every existing `n`, restore anchors untouched, exact byte counting), relay
     rollback handled from a publication history, and the host-side permanent `relay.too_large` for an oversized restore
     (a `host.status` alarm, never a socket error).
-24. **Evidence intake** (§11A.9): `Store.note_forwarded_revocation`, facts derived from the signed objects only,
+27. **Evidence intake** (§11A.9): `Store.note_forwarded_revocation`, facts derived from the signed objects only,
     `chain=False`, the ack only after a durable result.
-25. **Signing** (§11A.2): `RelaySigner` with typed methods is the bridge's only WSK path; this is an API rule, not
+28. **Signing** (§11A.2): `RelaySigner` with typed methods is the bridge's only WSK path; this is an API rule, not
     isolation (bridge code execution is WSK compromise). Genesis-pin and restore reviews bind their exact material.
 29. **Worktrees (H11d, addon #308, D-P2-32, §12.7; additive, cap `worktree/1`):** ops `worktree.list`, `worktree.create`,
     `worktree.remove`; effective-column kind `pg_write` (P and G, never N); catalog codes `worktree.none`, `worktree.exists`,

@@ -18,6 +18,18 @@ PORT = 43210
 ORIGIN = f"http://127.0.0.1:{PORT}"
 
 
+@pytest.fixture(autouse=True)
+def no_signer_child(monkeypatch):
+    """No test starts a signer child unless it says so: the child would read the person's own state directory."""
+    monkeypatch.setenv("ORCH_DASHBOARD_CLICK", "off")
+
+
+@pytest.fixture
+def click_start():
+    """The signer's start function for the `gateway` fixture; a test that exercises click-to-sign overrides it."""
+    return None
+
+
 @pytest.fixture
 def p1(tmp_path, monkeypatch):
     # Use core's signed-store test builder, not a dashboard mock model.
@@ -49,7 +61,7 @@ def stub(p1):
 
 
 @pytest.fixture
-def gateway(stub, p1, monkeypatch):
+def gateway(stub, p1, monkeypatch, click_start):
     directory = p1.host_state / "host"
     directory.mkdir(mode=0o700)
     path = directory / "workspaces.json"
@@ -77,7 +89,9 @@ def gateway(stub, p1, monkeypatch):
         return HostLink(client, uid, ws)
 
     monkeypatch.setattr(HostLink, "connect", connect)
-    gateway = Gateway(p1.host_state)
+    from orch_dashboard.click_signer import Signer
+
+    gateway = Gateway(p1.host_state, click=Signer(p1.host_state, start=click_start) if click_start else None)
     yield gateway
     gateway.close()
     for thread in threads:

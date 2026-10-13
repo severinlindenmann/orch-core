@@ -1,0 +1,102 @@
+"""Section 0.8.6 item 7: what this HTTP process does and refuses, one check per rule."""
+
+import pytest
+from conftest import ORIGIN, PORT
+
+CSP_DIRECTIVES = {
+    "default-src": "'self'",
+    "script-src": "'self'",
+    "object-src": "'none'",
+    "base-uri": "'none'",
+    "frame-ancestors": "'none'",
+    "form-action": "'self'",
+}
+
+
+def parse(csp):
+    return {part.split(" ", 1)[0]: part.split(" ", 1)[1] for part in csp.split("; ")}
+
+
+@pytest.mark.parametrize("path", ["/", "/assets/main-hash.js", "/api/no-such-route", "/auth/probe?n=x"])
+def test_every_response_carries_the_hardening_headers(client, path):
+    res = client.get(path)
+    directives = parse(res.headers["content-security-policy"])
+    for name, value in CSP_DIRECTIVES.items():
+        assert directives[name] == value, name
+    assert "unsafe-inline" not in res.headers["content-security-policy"] and "unsafe-eval" not in str(directives)
+    assert res.headers["x-frame-options"] == "DENY"
+    assert res.headers["x-content-type-options"] == "nosniff"
+    assert res.headers["referrer-policy"] == "no-referrer"
+
+
+def test_session_and_launch_responses_are_not_cached_and_set_no_cookie(client, auth):
+    res = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers={"Origin": ORIGIN})
+    assert res.headers["cache-control"] == "no-store" and "set-cookie" not in res.headers
+    assert (
+        client.post("/auth/session", json={"code": "x" * 43}, headers={"Origin": ORIGIN}).headers["cache-control"]
+        == "no-store"
+    )
+    assert client.get("/api/session").headers["cache-control"] == "no-store"
+
+
+def test_there_is_no_cors(client, token):
+    pre = client.options(
+        "/api/workspaces", headers={"Origin": "https://evil.test", "Access-Control-Request-Method": "GET"}
+    )
+    assert not [h for h in pre.headers if h.lower().startswith("access-control-")]
+    res = client.get("/api/workspaces", headers={"Authorization": f"Bearer {token}", "Origin": "https://evil.test"})
+    assert res.status_code == 403  # a foreign Origin is refused outright, not answered with CORS headers
+
+
+@pytest.mark.parametrize("origin", [None, "null", "http://localhost:43210", "http://127.0.0.1:1", "https://evil.test"])
+def test_a_mutation_needs_the_exact_origin(client, token, stub, origin):
+    headers = {"Authorization": f"Bearer {token}"} | ({"Origin": origin} if origin else {})
+    res = client.post(f"/api/w/{stub.ws}/click/cancel", json={"request_id": "hr_" + "0" * 26}, headers=headers)
+    assert res.status_code == 403 and res.json()["error"]["code"] == "origin.bad"
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site", "none"])
+def test_fetch_metadata_is_enforced_when_present(client, token, site):
+    headers = {"Authorization": f"Bearer {token}", "Sec-Fetch-Site": site}
+    assert client.get("/api/workspaces", headers=headers).status_code == 403
+    assert (
+        client.post("/auth/session", json={"code": "x" * 43}, headers=headers | {"Origin": ORIGIN}).status_code == 403
+    )
+    assert client.get("/api/workspaces", headers=headers | {"Sec-Fetch-Site": "same-origin"}).status_code == 200
+
+
+def test_mutations_are_bounded_json(client, token, stub):
+    headers = {"Authorization": f"Bearer {token}", "Origin": ORIGIN}
+    url = f"/api/w/{stub.ws}/click/view"
+    assert client.post(url, content="request_id=1", headers=headers).status_code == 400  # not JSON
+    assert client.post(url, content="{}", headers={**headers, "content-type": "text/plain"}).status_code == 400
+    assert (
+        client.post(url, content=b"{" * 20_000, headers={**headers, "content-type": "application/json"}).status_code
+        == 413
+    )
+    assert (
+        client.post(
+            "/auth/session", content=b"x" * 2000, headers={**headers, "content-type": "application/json"}
+        ).status_code
+        == 413
+    )
+
+
+def test_the_bearer_is_only_taken_from_the_authorization_header(client, token):
+    assert client.get(f"/api/workspaces?token={token}").status_code == 401
+    assert client.get("/api/workspaces", cookies={"orch-session": token, "token": token}).status_code == 401
+    assert client.get("/api/workspaces", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+
+def test_launch_codes_are_single_use(client, auth):
+    code = auth.launch(PORT)["code"]
+    assert client.post("/auth/session", json={"code": code}, headers={"Origin": ORIGIN}).status_code == 200
+    assert client.post("/auth/session", json={"code": code}, headers={"Origin": ORIGIN}).status_code != 200
+
+
+def test_no_url_prepares_a_request(client, token, stub):
+    """A GET never prepares or opens anything: the click routes are POST only."""
+    headers = {"Authorization": f"Bearer {token}"}
+    for step in ("prepare", "view", "sign", "cancel"):
+        res = client.get(f"/api/w/{stub.ws}/click/{step}?request_id=hr_x&op=approve", headers=headers)
+        assert res.status_code in (404, 405)

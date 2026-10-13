@@ -3078,6 +3078,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `chain=False`, the ack only after a durable result.
 28. **Signing** (§11A.2): `RelaySigner` with typed methods is the bridge's only WSK path; this is an API rule, not
     isolation (bridge code execution is WSK compromise). Genesis-pin and restore reviews bind their exact material.
+29. **Terminals (H11b, contract v1.6):** `term/1` (`term.preview`, `term.open`, `term.attach`, `attach.cancel`) and
+    `run.stop` (`run/1`) are P-only; the runner reports `runner.term`; `whoami` gains `runner` for P and G; the runner's
+    term socket re-checks its authorization at every use ("As built in H11b", §12.6).
 
 ---
 
@@ -4955,7 +4958,52 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
   ticket must be exactly 43 characters; at most 32 term-socket connections are handled at once; the lockout is per
   runner, so one client replaying seen tickets locks every attachment out for 60 s.
-  The byte path after `ready` (`out`, `in`, `ack`, `gap`, `throttle`) is H11b.
+  The byte path after `ready` is H11b (below).
+
+**As built in H11b** (terminals). Where the code differs from §12.3 and §12.6 above, the code is this:
+
+- **Authorization is checked at use, not only at consumption** (`orch.runner.term.TermListener._authorized`, the one
+  function every privileged action calls: each output frame, each input write and each retry of a partial write, each
+  resize; the take is checked under the same lock as its registration). An attachment must still be in the runner's
+  table, not revoked, not closed, in the current host epoch with the host present; for a write action it must also hold
+  the lease at the generation the frame names. The PTY write and the resize run *inside* the check, under the lock that
+  `attach.end`, `end_run`, `host_lost`, a new epoch and `downgrade` take to revoke, so no revocation falls between the
+  check and the byte. A revoked attachment is ended by whoever notices first (`end` with the reason, queued output
+  discarded); a lease that only moved gives `writer:false` and keeps the viewer. An `attach.cancel`/`attach.end` that
+  arrives between the consumption of a ticket and the registration of the attachment is remembered and the attachment
+  never registers (`cancelled`). A write capability for a run that is no longer running is `ticket_invalid` at redeem.
+  The capability stays a bearer secret between the host and the dashboard server (single use, 10 s, bound to run, mode,
+  epoch and generation); it is not bound to the redeeming principal, which the runner cannot see.
+- **The host ends attachments by itself** (`RunnerHub._watch`, every 0.5 s while any exists): the person left or lost
+  the mapping (`person.removed`), the grant ended, or the run's ticket became invisible (`not_visible`); the run goes on.
+  Attachments are recorded before `attach.allow` is sent, so an end between mint and redeem is caught.
+- **Ops.** `term.*` and `attach.cancel` are in `term/1`, `run.stop` in `run/1`: all P only (G and N: `op.not_allowed`
+  before any run is looked at). `term.preview`/`term.open` start the person's own `$SHELL -l` (harness `shell` only;
+  `claude-code` and `codex` are `blocked: harness.not_found` until H11c; a ticket is checked for visibility and becomes
+  `ORCH_TICKET`; cwd is the workspace root until H11d). The runner replaces `argv[0] == "$SHELL"` by its own `SHELL`
+  (absolute path to a POSIX shell, else `harness.shell_unsupported`). The run id is derived from `opts.idem`
+  (`r_` + the idem's ULID), so a retry returns the same run. Order of `blocked`/`runner.disabled`: addon, machine,
+  terminals, then the runner connection. `term.attach` answers `nonce` as well (the dashboard server presents it with
+  the ticket); `runner.disabled` carries what is missing in its message (no `detail` field in `Error`).
+  Another person's run, or a run on a ticket the person cannot see, is `not_found`. The machine switch is read again on
+  the event loop at `term.open` and `term.attach`; `run.stop` and `attach.cancel` never need it.
+- **Limits.** The host refuses `attach.limit` from the runner's `runner.term` counts (pending capabilities count
+  toward none) and `run.limit` (16 shells per person, 64 runs per runner), `rate.limited` (10 starts per minute,
+  burst 5). The runner's connection cap is 96 (64 attachments plus handshakes).
+- **`Run`.** `viewers`, `writer`, `cols` and `rows` come from `runner.term` (items coalesced to one per run per 250 ms);
+  `replay_until` is the end time plus one hour for `exited`/`stopped` runs. Attach to an exited run is read-only.
+- **Client.** `orch.runner.termclient.TermClient` does the §12.6.1 checks before a ticket is sent (path computed from
+  the client's own run directory, directory owner and mode, peer UID and PID, `hello.gen`), owns `input_id` and
+  `lease_gen`, resends on `throttle` with the same id and reports unacknowledged ids as `lost`.
+- **Terminals addon.** `addons/terminals/orch-addon.json` (capability `pty`, no fields); the host requires it granted
+  and enabled. `orch runner terminals on|off --workspace W`: `on` needs the person's own terminal and the prefix (never
+  under `ORCH_GRANT`), `off` needs none; both only with dashboard execution already on.
+- **Audit** (`audit-security.jsonl`): `term.attach`, `term.end`, `term.detach`, `term.takeover`, `run.stop`; never
+  terminal content.
+- **Not built here.** The flood acceptance measures `run.list` round trips (a workspace-worker read) instead of
+  `human.prepare`, with the runner as a separate process: p99 under 50 ms with 8 flooding runs and two silent
+  viewers (120 ms when pytest runs in parallel). The browser-facing parts (WebSocket `Security`, xterm, close codes)
+  are orch-fa's.
 
 ### 12.4 Start an agent (#307)
 

@@ -280,3 +280,45 @@ def test_tls_minimum_version_is_raised_to_1_2():
         return c
 
     assert http.tls_context(None, factory=old).minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+# --- the watchdog never touches a freed fd (review L3) ----------------------------------------------------------------
+
+
+def test_shutdown_after_the_socket_was_freed_never_hits_a_reused_fd(relay):
+    """http.client frees the socket at EOF of a will_close response before RelayConn.close runs. If the freed fd
+    number is reused (here by a socketpair), a late watchdog must not shut that unrelated socket down."""
+    import socket
+
+    c = conn(relay)
+    sock = c._socket(("127.0.0.1", relay.port), 5)
+    sock.close()  # freed by http.client
+    a, b = socket.socketpair()
+    try:
+        c.shutdown()  # the late watchdog
+        a.sendall(b"x")
+        assert b.recv(1) == b"x"
+        b.sendall(b"y")
+        assert a.recv(1) == b"y"
+    finally:
+        a.close()
+        b.close()
+        c.close()
+
+
+def test_shutdown_and_close_are_idempotent_and_never_raise(relay):
+    c = conn(relay)
+    c.shutdown()
+    c.close()
+    c.shutdown()
+    c.close()
+
+
+# --- no proxy for a cleartext origin (review L4) ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:8101", "http://localhost"])
+def test_http_origin_with_a_proxy_is_refused(origin):
+    with pytest.raises(http.TransportError) as e:
+        http.RelayConn(origin, proxy="proxy.example:3128")
+    assert e.value.kind == "request"

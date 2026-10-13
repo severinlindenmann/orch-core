@@ -23,10 +23,22 @@ import re
 import secrets
 import stat
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-__all__ = ["FileSignLedger", "PersistedOnce", "SignLedger", "StateDir", "StateError"]
+__all__ = [
+    "FileHolderStore",
+    "FileSignLedger",
+    "HolderRecord",
+    "HolderStore",
+    "PersistedOnce",
+    "SignLedger",
+    "StateDir",
+    "StateError",
+    "new_instance_id",
+    "regenerate_instance_id",
+]
 
 MAX_FILE = 1 << 20
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
@@ -247,3 +259,84 @@ class PersistedOnce:
         if held is None:
             raise StateError(f"{self._name}: claimed but unreadable")
         return held
+
+
+# --- holder.json and the instance id (11A.3; restart takeover decided by orch-52, 13 Oct 2026) ------------------
+
+_INSTANCE = re.compile(r"[0-9a-f]{32}")
+
+
+@dataclass(frozen=True)
+class HolderRecord:
+    """``holder.json``: whether this state directory was the last holder, its ``gen``, the instance id it was written
+    under, and ``pending`` (the expected ``gen`` of a takeover probe in flight, written before the probe is sent)."""
+
+    last_holder: bool
+    gen: int | None
+    instance_id: str
+    pending: int | None = None
+
+
+class HolderStore(Protocol):
+    def instance_id(self) -> str:
+        """This state directory's instance id."""
+        ...
+
+    def load(self) -> HolderRecord | None: ...
+
+    def save(self, rec: HolderRecord) -> None:
+        """Durable before it returns."""
+        ...
+
+
+def new_instance_id() -> str:
+    """A fresh random 128-bit instance id (32 lower-case hex)."""
+    return secrets.token_hex(16)
+
+
+def regenerate_instance_id(state: StateDir) -> str:
+    """Give a state directory a new instance id. **A restore procedure MUST call this** on a state directory restored
+    from a backup or copied, so the copy never claims the original's holdership (takeover condition (b))."""
+    iid = new_instance_id()
+    state.write_json(FileHolderStore.INSTANCE, {"instance_id": iid})
+    return iid
+
+
+class FileHolderStore:
+    """``holder.json`` and ``instance.json`` in the relay state directory. The instance id is created with the state
+    (claimed once with ``os.link``) and changed only by :func:`regenerate_instance_id`."""
+
+    FILE = "holder.json"
+    INSTANCE = "instance.json"
+
+    def __init__(self, state: StateDir) -> None:
+        self._s = state
+        state.claim(self.INSTANCE, json.dumps({"instance_id": new_instance_id()}).encode())
+
+    def instance_id(self) -> str:
+        obj = self._s.read_json(self.INSTANCE)
+        iid = obj.get("instance_id") if type(obj) is dict else None
+        if type(iid) is not str or not _INSTANCE.fullmatch(iid):
+            raise StateError("instance.json shape")
+        return iid
+
+    def load(self) -> HolderRecord | None:
+        obj = self._s.read_json(self.FILE)
+        if obj is None:
+            return None
+        try:
+            rec = HolderRecord(obj["last_holder"], obj["gen"], obj["instance_id"], obj["pending"])
+        except (KeyError, TypeError):
+            raise StateError("holder.json shape") from None
+        ok_int = lambda v: v is None or (type(v) is int and v >= 0)  # noqa: E731
+        if type(rec.last_holder) is not bool or not ok_int(rec.gen) or not ok_int(rec.pending):
+            raise StateError("holder.json shape")
+        if type(rec.instance_id) is not str:
+            raise StateError("holder.json shape")
+        return rec
+
+    def save(self, rec: HolderRecord) -> None:
+        self._s.write_json(
+            self.FILE,
+            {"last_holder": rec.last_holder, "gen": rec.gen, "instance_id": rec.instance_id, "pending": rec.pending},
+        )

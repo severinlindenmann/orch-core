@@ -26,7 +26,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from orch import crypto
 
@@ -34,6 +34,7 @@ from . import wire
 from .http import Transport
 from .retry import RelayRefused
 from .sign import RelaySigner
+from .state import HolderRecord, HolderStore
 
 __all__ = [
     "Fenced",
@@ -45,6 +46,7 @@ __all__ = [
     "RelayMisbehaving",
     "Session",
     "SessionError",
+    "TakeoverRefused",
 ]
 
 log = logging.getLogger("orch.relay.session")
@@ -81,16 +83,13 @@ class OriginMismatch(SessionError):
     """Three 401 ``bad_signature`` logins in a row: the stored origin is probably not the relay's."""
 
 
+class TakeoverRefused(Fenced):
+    """The restart takeover's conditions failed (alarm ``relay_takeover_refused``); stopped until an operator
+    takeover."""
+
+
 class RelayMisbehaving(SessionError):
     """A success answer that is malformed or contradicts what was sent (alarm ``relay_misbehaving``)."""
-
-
-class HolderStore(Protocol):
-    """``holder.json`` (11A.3): the last holder generation, written durably before it is used."""
-
-    def load(self) -> int | None: ...
-
-    def save(self, gen: int) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -169,6 +168,7 @@ class Session:
         request_cap: int = SMALL_CAP,
         deadline_s: float = SMALL_DEADLINE_S,
         keys: frozenset[str] | set[str] | None = None,
+        fenced_stops: bool = True,
     ) -> dict[str, Any]:
         """One relay call. ``body`` is built into ``cj`` bytes once; a 401 ``unauthenticated``/``expired`` re-logs in
         once and resends the identical bytes. 2xx bodies must be an object with exactly ``keys``; anything else raises
@@ -204,7 +204,7 @@ class Session:
                 resent = True
                 self._relogin(token)
                 continue
-            if err.status == 409 and err.code == "fenced":
+            if err.status == 409 and err.code == "fenced" and fenced_stops:
                 self._set_fenced(route)
                 raise Fenced("fenced") from err
             raise err
@@ -301,37 +301,107 @@ class Session:
 
     # -- holder ---------------------------------------------------------------------------------------------------
 
-    def hold(self, *, take_over: bool = False, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
-        """Acquire or renew the holder generation (``host/hold``)."""
-        if self._fenced and not take_over:
+    def hold(self, *, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
+        """Acquire (at start) or renew (while running) the holder generation (``host/hold``).
+
+        While running, a renewal answered ``fenced`` stops the worker (alarm ``fenced``). At start, the restart rule
+        decided by orch-52 (13 Oct 2026) applies, fail closed, never stealing a live lease:
+
+        1. ``pending`` in ``holder.json`` (a takeover probe was in flight when we stopped): alarm
+           ``relay_takeover_refused`` ("possibly our own interrupted takeover") and stay stopped, no probe.
+        2. Renew with the stored ``gen`` first (a renewal is not a probe); success: run.
+        3. Only if fenced (or no ``gen`` is stored): (a) ``holder.json`` says this state directory was the last holder;
+           (b) its instance id is this state directory's (a restored copy had its id regenerated). Either failing:
+           alarm and stop, no probe.
+        4. Write ``pending = gen + 1`` durably, then probe ``{gen: null, take_over: false}``; ``holder_conflict``
+           (a live lease) is waited out, never stolen.
+        5. The granted ``gen`` must be exactly ``stored + 1`` (each new hold is +1 on the relay's row): then persist it
+           and clear ``pending`` atomically before anything else. Any other value: alarm, write nothing under it, stop
+           (the lease lapses in 40 s).
+        6. An answer that carries no ``gen``: alarm.
+
+        A state directory that never held (no ``holder.json``) acquires with ``{gen: null}`` (the first link)."""
+        if self._fenced:
             raise Fenced("fenced: writes stopped")
+        if self._gen is not None:
+            return self._renew(self._gen, deadline_s, running=True)
+        rec = self._holder.load()
+        if rec is None:
+            return self._probe(None, deadline_s)
+        if rec.pending is not None:
+            self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
+                         "`orch host relay takeover`")  # fmt: skip
+        if rec.gen is not None and rec.last_holder:
+            try:
+                return self._renew(rec.gen, deadline_s, running=False)
+            except RelayRefused as e:
+                if not (e.status == 409 and e.code == "fenced"):
+                    raise
+        if not rec.last_holder:
+            self._refuse("(a) holder.json does not say this state directory was the last holder")
+        if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
+            self._refuse("(b) holder.json was written under another instance id (a restored or copied state directory)")
+        if rec.gen is None:
+            self._refuse("no stored gen to check the takeover against")
+        assert rec.gen is not None
+        expected = rec.gen + 1
+        self._holder.save(HolderRecord(True, rec.gen, rec.instance_id, expected))  # durable before the probe
+        return self._probe(expected, deadline_s)
+
+    def operator_takeover(self, *, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
+        """The explicit operator takeover (R5 wires it to ``orch host relay takeover``): ``take_over: true``, then the
+        new ``gen`` is recorded as ours (clearing ``pending``) and the worker may proceed."""
+        got = self._hold_call({"gen": None, "take_over": True}, deadline_s, takeover=True)
+        self._holder.save(HolderRecord(True, got.gen, self._holder.instance_id(), None))
+        self._gen, self._fenced = got.gen, False
+        return got
+
+    def _refuse(self, why: str) -> None:
+        self._fenced = True
+        self._alarm("relay_takeover_refused", why)
+        raise TakeoverRefused(why)
+
+    def _hold_call(self, body: dict[str, Any], deadline_s: float, *, takeover: bool, fenced_stops: bool = True) -> Hold:
         path = f"/v2/workspaces/{self.workspace_id}/host/hold"
         route = "POST /v2/workspaces/{ws}/host/hold"
+        try:
+            obj = self.call(
+                "POST", path, route, body=body, deadline_s=deadline_s, keys={"gen", "lease_s", "cursor"},
+                fenced_stops=fenced_stops,
+            )  # fmt: skip
+            return Hold(_int(obj["gen"], 1), _int(obj["lease_s"], 1), _int(obj["cursor"]))
+        except RelayMisbehaving as e:
+            if takeover:
+                self._refuse(f"the relay's hold answer carried no valid gen ({e})")
+            raise
+
+    def _renew(self, gen: int, deadline_s: float, *, running: bool) -> Hold:
+        got = self._hold_call({"gen": gen, "take_over": False}, deadline_s, takeover=False, fenced_stops=running)
+        if got.gen != gen:
+            raise RelayMisbehaving("hold renewed another generation")
+        self._gen = gen
+        return got
+
+    def _probe(self, expected: int | None, deadline_s: float) -> Hold:
         while True:
-            stored = self._holder.load()
-            gen = None if take_over else stored
             try:
-                obj = self.call(
-                    "POST", path, route, body={"gen": gen, "take_over": take_over}, deadline_s=deadline_s,
-                    keys={"gen", "lease_s", "cursor"},
-                )  # fmt: skip
+                got = self._hold_call({"gen": None, "take_over": False}, deadline_s, takeover=expected is not None)
             except RelayRefused as e:
-                if e.status == 409 and e.code == "holder_conflict" and not take_over:
-                    log.info("relay holder_conflict; waiting out the lease")
+                if e.status == 409 and e.code == "holder_conflict":
+                    log.info("relay holder_conflict; waiting out the lease (never stolen)")
                     self._wait(LEASE_S)
                     continue
                 raise
-            got = Hold(_int(obj["gen"], 1), _int(obj["lease_s"], 1), _int(obj["cursor"]))
-            if gen is not None and got.gen != gen:
-                raise RelayMisbehaving("hold renewed another generation")
-            if gen is None and stored is not None and got.gen <= stored:
-                raise RelayMisbehaving("a new holder generation must be above the stored one")
-            if got.gen != stored:
-                self._holder.save(got.gen)
-            self._gen = got.gen
-            if take_over:
-                self._fenced = False
-            return got
+            break
+        iid = self._holder.instance_id()
+        if expected is not None and got.gen != expected:
+            self._holder.save(HolderRecord(False, expected - 1, iid, None))
+            self._refuse(
+                f"relay gen {got.gen} != stored+1 ({expected}): another holder took in between, or a restored state"
+            )
+        self._holder.save(HolderRecord(True, got.gen, iid, None))  # before any other write or poll
+        self._gen = got.gen
+        return got
 
     def _wait(self, seconds: float) -> None:
         """Wait ``seconds``; with a stop event, the wait ends as soon as stop is set (11A.7: join within 5 s)."""

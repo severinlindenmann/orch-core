@@ -5324,6 +5324,12 @@ Where the code differs from or adds to §12.7, the code is this:
   `op.not_allowed`; Windows is `unsupported.platform`. Git runs through the same confined `run_git`; the new worktree is
   pinned in process (`pin_repo`) and registered in the same pin file, which direct-mode D58 (`orch verdict`, `approve code`)
   reads. `remove` refuses a dirty tree without `--force` (the person is at the terminal); the branch is never deleted.
+- **Fail closed.** `bound_copy` refuses (`observe.unavailable`) with no reader, a missing or mismatched binding, generation,
+  registration or pin, and an unpinned registration. Direct-mode D58 re-pins the registered worktree in process
+  (`verify_worktree_pins`) and refuses a malformed pin file, a registration without pins, a re-pointed `.git` file or a
+  missing directory. The one open case is a direct-mode workspace with **no** `git-pins.json`: nothing was ever registered
+  there, so the declared copy is read (a deleted file is indistinguishable from none; a host's registrations are guarded by
+  the file's presence only because the host refuses to start without a readable one).
 - **Not built:** `worktree.in_use` is only as good as the runner's run records (a run started outside the host is not
   seen); there is no addon check in direct mode.
 

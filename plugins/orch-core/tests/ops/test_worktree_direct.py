@@ -165,3 +165,105 @@ def test_a_repos_own_config_and_hooks_run_nothing_in_any_command(d):
     assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
     assert d.run("remove", d.key, "--force").code == 0
     assert not marker.exists()
+
+
+# -- D58 fails closed on the registration (direct mode here; host mode through bound_copy) -----------------------------
+
+
+@pytest.fixture
+def problems(d):
+    import time
+    from types import SimpleNamespace
+
+    from orch.ops.caps import Git
+    from orch.ops.human import Human
+
+    uid = d.ws.uid(d.key)
+    wid = _wid(d)
+    store = SimpleNamespace(root=d.ws.root, workspace_id=wid,
+                            state=SimpleNamespace(workspace=SimpleNamespace(repos={"proj": {"path": str(d.repo)}})))  # fmt: skip
+    h = Human.__new__(Human)
+    h.ctx = SimpleNamespace(caps=SimpleNamespace(git=Git(enabled=True), clock=time.time), prepare=None)
+    h.call = SimpleNamespace(ws=SimpleNamespace(state_dir=d.ws.host_state), store=store)
+    view = SimpleNamespace(uid=uid, fields={"links": {"repos": ["proj"], "branches": {"proj": "feat/x"}}})
+    pinfile = d.ws.host_state / "hosts" / wid / "git-pins.json"
+    return SimpleNamespace(run=lambda: h._tree_problems(view, []), pinfile=pinfile, d=d, uid=uid)
+
+
+def test_d58_direct_accepts_an_intact_registration(problems):
+    path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
+    got = problems.run()
+    assert not any("registered" in p or "pinned" in p or "missing" in p or "cannot be read" in p for p in got), got
+    assert any("not recorded" in p for p in got)  # judged on the worktree's own HEAD (nothing is signed here)
+    assert path
+
+
+def test_d58_direct_without_a_pin_file_uses_the_declared_copy_only_when_nothing_was_ever_registered(problems):
+    assert not problems.pinfile.exists()
+    got = problems.run()  # the declared copy is on main, not the ticket's branch: refused on its own merits
+    assert got and not any("registered" in p or "pinned" in p for p in got), got  # refused on its own merits
+
+
+def test_d58_direct_refuses_a_malformed_pin_file(problems):
+    problems.d.run("create", problems.d.key)
+    problems.pinfile.write_text("{not json")
+    assert any("registrations cannot be read" in p for p in problems.run())
+    problems.pinfile.write_text(json.dumps({"v": 1, "repos": {}, "worktrees": {"u": {"r": {"gen": "x", "reg": None}}}}))
+    assert any("registrations cannot be read" in p for p in problems.run())
+
+
+def test_d58_direct_refuses_a_registration_without_pins(problems):
+    problems.d.run("create", problems.d.key)
+    doc_ = json.loads(problems.pinfile.read_text())
+    doc_["worktrees"][problems.uid]["proj"]["reg"]["pins"] = None
+    problems.pinfile.write_text(json.dumps(doc_))
+    got = problems.run()
+    assert any("not pinned" in p for p in got), got
+    assert not any("working tree is on refs" in p for p in got)  # and never the declared copy
+
+
+def test_d58_direct_refuses_a_repointed_git_file(problems):
+    path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
+    other = problems.d.ws.tmp / "elsewhere-gitdir"
+    other.mkdir()
+    (open(os.path.join(path, ".git"), "w")).write(f"gitdir: {other}\n")
+    got = problems.run()
+    assert any(p.startswith("proj:") and ("changed since" in p or "gitdir" in p or ".git" in p) for p in got), got
+
+
+def test_d58_direct_refuses_a_swapped_or_missing_worktree_directory(problems):
+    import shutil
+
+    path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
+    shutil.rmtree(path)
+    assert any("worktree is missing" in p for p in problems.run())
+
+
+def test_bound_copy_fails_closed_on_every_branch(tmp_path):
+    from types import SimpleNamespace
+
+    from orch.host.errors import HostError
+    from orch.host.human import bound_copy
+    from orch.ops.caps import WorkingCopy
+
+    def git(copy, *, enabled=True, reader=object()):
+        return SimpleNamespace(enabled=enabled, reader=reader, principal="p", ticket_copy=lambda *a: copy)
+
+    store = SimpleNamespace(root=tmp_path, state=SimpleNamespace(workspace=SimpleNamespace(repos={})))
+    declared = WorkingCopy(tmp_path / "r", 0, None, False, None)
+    want = [declared.binding("u", "proj")]
+    assert bound_copy(git(declared), store, "u", "proj", want) == tmp_path / "r"  # the one open case
+    for g, copies, why in (
+        (git(declared, enabled=False), want, "git disabled"),
+        (git(declared, reader=None), want, "no reader"),
+        (git(declared), None, "no binding recorded"),
+        (git(declared), [], "empty bindings"),
+        (git(declared), [{**want[0], "gen": 5}], "generation mismatch"),
+        (git(declared), [{**want[0], "registered": True}], "registration mismatch"),
+        (git(declared), [{**want[0], "pin": {"path": "/x", "dev": 1, "ino": 2}}], "pin mismatch"),
+        (git(WorkingCopy(None, 1, None, True, "proj: the ticket's worktree is not pinned")), want, "unpinned"),
+        (git(WorkingCopy(tmp_path, 1, {"path": "/x", "dev": 1, "ino": 2}, True, None)), want, "removed registration"),
+    ):
+        with pytest.raises(HostError) as e:
+            bound_copy(g, store, "u", "proj", copies)
+        assert e.value.code == "observe.unavailable", why

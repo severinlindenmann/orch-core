@@ -255,6 +255,19 @@ class Human:
                 where = "the ticket's worktree is missing" if copy.registered else "no working copy in settings.repos"
                 out.append(f"{name}: {where}")
                 continue
+            if copy.registered and git.reader is None:  # direct mode: the pin must still hold (host mode: bound_copy)
+                from orch.gitread.errors import Unavailable
+                from orch.gitread.fs import RepoPins
+                from orch.gitread.pinning import verify_worktree_pins
+
+                reg = git.worktrees.worktree(view.uid, name)["reg"] if git.worktrees is not None else None
+                try:
+                    if reg is None or reg.get("pins") is None:
+                        raise Unavailable("the worktree registration has no pins")
+                    verify_worktree_pins(os.fspath(path), RepoPins.from_json(reg["pins"]))
+                except Unavailable as exc:
+                    out.append(f"{name}: {exc.reason}"[:300])
+                    continue
             if self.ctx.prepare is not None:
                 self.ctx.prepare.copies.append(copy.binding(view.uid, name))
             ref = f"refs/heads/{branch}"

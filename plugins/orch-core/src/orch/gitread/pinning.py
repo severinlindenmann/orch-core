@@ -22,7 +22,7 @@ from .errors import Unavailable
 from .fs import Dir, DirPin, RepoPins, abs_parts, open_walk
 from .repo import resolve_named
 
-__all__ = ["pin_repo", "under"]
+__all__ = ["pin_repo", "under", "verify_worktree_pins"]
 
 
 def under(path: str, root: str) -> bool:
@@ -117,3 +117,20 @@ def pin_repo(path: str, roots: list[str] | None) -> RepoPins:
     finally:
         for d in opened:
             d.close()
+
+
+def verify_worktree_pins(path: str, pins: RepoPins) -> None:
+    """In process (direct mode, no reader child): the registered worktree at ``path`` is still the pinned one. It is
+    pinned again from the commondir's root and every pin (working copy, gitdir, commondir: device, inode, gitdir path)
+    must equal the registered one; anything else, including a ``.git`` file re-pointed elsewhere, is :class:`Unavailable`."""
+    common = pins.commondir.path
+    if not common.endswith("/.git") or len(common) <= len("/.git"):
+        raise Unavailable("the worktree's commondir is not <repo>/.git")
+    now = pin_repo(path, [path, common[: -len("/.git")]])
+    same = (
+        (now.worktree.dev, now.worktree.ino) == (pins.worktree.dev, pins.worktree.ino)
+        and (now.gitdir.dev, now.gitdir.ino, now.gitdir.path) == (pins.gitdir.dev, pins.gitdir.ino, pins.gitdir.path)
+        and (now.commondir.dev, now.commondir.ino) == (pins.commondir.dev, pins.commondir.ino)
+    )
+    if not same:
+        raise Unavailable("the worktree's .git file or location changed since it was registered")

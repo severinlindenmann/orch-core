@@ -1,5 +1,7 @@
 from fastapi.responses import JSONResponse
 
+from .text import hidden
+
 
 class HostError(Exception):
     def __init__(self, error: dict, exit: int = 9):
@@ -67,8 +69,24 @@ def response(code: str, http: int):
     return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
 
 
+FIX_COMMAND_CODES = ("sign.convenience_readers", "sign.click_only")
+
+
+def plain_argv(fix) -> bool:
+    argv = fix.get("argv") if isinstance(fix, dict) and set(fix) == {"argv"} else None
+    return (
+        isinstance(argv, list)
+        and 0 < len(argv) <= 16
+        and all(isinstance(a, str) and 0 < len(a) <= 200 and a.isprintable() and not hidden(a) for a in argv)
+    )
+
+
 def host_response(exc: HostError):
-    # A structured `fix` (argv, paths) stays out of the browser, as since M0; a plain-text fix (e.g. the readers note
-    # of sign.convenience_readers) passes and is rendered as untrusted text.
-    error = {k: v for k, v in exc.error.items() if k != "fix" or isinstance(v, str)}
+    # The host's `fix` stays out of the browser, as since M0 (it can carry argv and paths), except: a plain-text fix,
+    # and the command a person runs to leave a signing-path refusal (`orch host convenience off --workspace …`), only
+    # for those codes and only when every argv word is plain. Both are rendered as untrusted text.
+    error = {k: v for k, v in exc.error.items() if k != "fix"}
+    fix = exc.error.get("fix")
+    if isinstance(fix, str) or (exc.error.get("code") in FIX_COMMAND_CODES and plain_argv(fix)):
+        error["fix"] = fix
     return JSONResponse({"ok": False, "exit": exc.exit, "error": error}, status_code=status(error["code"]))

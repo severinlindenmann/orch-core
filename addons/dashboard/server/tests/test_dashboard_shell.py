@@ -160,7 +160,17 @@ def test_a_plain_text_fix_passes_but_a_structured_one_does_not():
         ).body
 
     assert b'"fix":"update the readers first"' in body("update the readers first")
-    assert b'"fix"' not in body({"argv": ["orch", "status"]})
+    # a command passes only for the signing-path codes, and only when every word is plain
+    assert b'"argv"' in body({"argv": ["orch", "host", "convenience", "off", "--workspace", "DEMO"]})
+    assert b'"fix"' not in body({"argv": ["orch", "x\u202e"]})
+    assert b'"fix"' not in body({"argv": ["orch"], "extra": 1})
+
+    def other(fix):
+        return host_response(
+            HostError({"code": "host.unavailable", "message": "m", "retryable": True, "fix": fix})
+        ).body
+
+    assert b'"fix"' not in other({"argv": ["orch", "status"]})
 
 
 def test_error_passthrough():

@@ -97,15 +97,17 @@ def verify_card(c: object, owner_pk_pub: bytes) -> dict[str, Any]:
             if type(o[key]) is not int or not low <= o[key] <= MAX_SAFE_INT:
                 raise CardRefused("malformed")
         crypto.unb64u(o["ck_commit"], 32)
-        crypto.unb64u(o["sealed_hash"], 32)
         sealed = crypto.unb64u(c["sealed"])
         if o["owner_person_id"] != crypto.person_id(owner_pk_pub).hex():
             raise CardRefused("other_person")
         d = _delegation(c["delegation"], owner_pk_pub)
         if any(d[k] != o[k] for k in ("workspace_id", "wsk_pub", "owner_person_id")):
             raise CardRefused("delegation_mismatch")
-        sig = crypto.unb64u(c["sig"], crypto.SIG_LEN)
-        if not crypto.verify(wsk, sig, signed_bytes(o)) or crypto.unb64u(o["sealed_hash"]) != crypto.sha256(sealed):
+        # The relay's last step, in its order: the signature first (bad_signature), and only then sealed_hash, whose
+        # decoding error is malformed (orch-relay proto verify_card).
+        if not crypto.verify(wsk, crypto.unb64u(c["sig"], crypto.SIG_LEN), signed_bytes(o)):
+            raise CardRefused("bad_signature")
+        if crypto.unb64u(o["sealed_hash"], 32) != crypto.sha256(sealed):
             raise CardRefused("bad_signature")
         return o
     except (crypto.EncodingError, crypto.CryptoError, canon.JcsError, KeyError, TypeError):

@@ -744,8 +744,10 @@ class TermListener:
     # -- the reader: input and resize from the dashboard server
     def _serve(self, att: Attachment) -> None:
         """Handle the inbox frame by frame, then read again (never while frames wait: backpressure). Of a run of
-        consecutive ``resize`` frames only the last is applied (each is still checked for its shape), so a burst costs
+        consecutive ``resize`` frames only the last eligible one (shape, range, write mode, lease) is applied; a frame
+        that could not apply never discards a valid one (each is still checked for its shape), so a burst costs
         one PTY resize, one note per viewer and one ``runner.term``, not one per frame."""
+        pending: dict[str, Any] | None = None  # the last eligible resize of the run being coalesced
         while not att.closed and not att.stop_reading:
             while att.inbox:
                 frame = att.inbox.popleft()
@@ -753,11 +755,17 @@ class TermListener:
                     self._finish(att, "protocol")
                     return
                 kind = frame.get("t")
-                if kind == "resize" and att.inbox and isinstance(att.inbox[0], dict) and att.inbox[0].get("t") == kind:
+                if kind == "resize":
                     if not all(_int(frame.get(k)) for k in ("cols", "rows", "lease_gen")):
                         self._finish(att, "protocol")
                         return
-                    continue  # superseded by the next resize
+                    if self._resize_eligible(att, frame):
+                        pending = frame  # an ineligible frame never supersedes a valid one
+                    if att.inbox and isinstance(att.inbox[0], dict) and att.inbox[0].get("t") == kind:
+                        continue  # the run goes on: only its last eligible resize is applied
+                    frame, pending = pending, None
+                    if frame is None:
+                        continue
                 if kind == "in":
                     ok = self._input(att, frame)
                 elif kind == "resize":
@@ -915,6 +923,12 @@ class TermListener:
                 continue
             view = view[n:]
         return True
+
+    def _resize_eligible(self, att: Attachment, frame: dict[str, Any]) -> bool:
+        cols, rows = frame["cols"], frame["rows"]
+        return (
+            att.mode == "write" and 20 <= cols <= 500 and 5 <= rows <= 200 and self._authorized(att, frame["lease_gen"])
+        )
 
     def _resize(self, att: Attachment, frame: dict[str, Any]) -> bool:
         cols, rows, lease_gen = frame.get("cols"), frame.get("rows"), frame.get("lease_gen")

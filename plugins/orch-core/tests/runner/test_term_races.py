@@ -199,6 +199,24 @@ def test_a_coalesced_burst_of_small_frames_never_ends_a_healthy_attachment(rig):
     assert len(rig.sup.sizes) < n  # a run of resizes in one read is applied once
 
 
+@pytest.mark.parametrize(
+    "bad", [{"cols": 19, "rows": 30}, {"cols": 100, "rows": 201}, {"cols": 90, "rows": 25, "stale": True}]
+)
+def test_an_ineligible_resize_never_supersedes_a_valid_one_in_the_same_read(rig, bad):
+    """PR #443 Codex delta 2: (100,30) then an out-of-range or stale-lease resize in one read applies the valid one."""
+    c, gen = writer(rig)
+    bad = dict(bad)
+    lease = gen + 1000 if bad.pop("stale", False) else gen
+    c.sock.sendall(
+        frames.encode({"t": "resize", "lease_gen": gen, "cols": 100, "rows": 30})
+        + frames.encode({"t": "resize", "lease_gen": lease, **bad})
+    )
+    type_(c, gen, 1, b"after")
+    assert c.until("ack")["input_id"] == 1
+    assert rig.sup.sizes == [(100, 30)]
+    assert "att1" in rig.listener.attachments
+
+
 def test_a_flood_of_small_frames_without_a_stall_stays_bounded(rig, monkeypatch):
     """Commit-scan follow-up to D3: a peer that floods small frames with no stalled write. The runner buffers at most
     one read's frames (it reads again only once they are handled), applies each run of resizes once, and keeps

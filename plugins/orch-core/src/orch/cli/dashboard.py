@@ -2,8 +2,9 @@
 
 The addon is a separate package with its own entry point; this subcommand only finds it and replaces the process with
 it, passing every argument through (``orch dashboard open``, ``orch dashboard serve --help``). Nothing of core's state
-is read or written here. Lookup order: the ``orch-dashboard`` console script next to this interpreter, the one on
-``PATH``, then the ``orch_dashboard`` module of this interpreter (``python -m orch_dashboard``). Not installed: a clear
+is read or written here. Lookup order: the ``orch-dashboard`` console script next to this interpreter, the
+``orch_dashboard`` module of this interpreter (``python -P -m orch_dashboard``), then the one on ``PATH`` (absolute
+entries only). Not installed: a clear
 error that names how to install it.
 """
 
@@ -28,19 +29,33 @@ INSTALL_HINT = (
 )
 
 
-def find_entry_point(env: Mapping[str, str]) -> list[str] | None:
-    """The command that starts the dashboard addon, or ``None`` when it is not installed."""
+def _module_installed() -> bool:
+    try:
+        return importlib.util.find_spec(MODULE) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _absolute_path(value: str | None) -> str:
+    """``PATH`` without its empty and relative entries (they mean the current directory, which is a workspace an
+    agent can write to: it must never be an exec source)."""
+    return os.pathsep.join(p for p in (value or "").split(os.pathsep) if p and os.path.isabs(p))
+
+
+def find_entry_point(env: Mapping[str, str], err: TextIO | None = None) -> list[str] | None:
+    """The command that starts the dashboard addon, or ``None`` when it is not installed. Order: the console script
+    beside this interpreter, the module of this interpreter (``python -P -m``: the current directory is not put on
+    ``sys.path``), then ``PATH`` (absolute entries only; the resolved path is written to ``err``)."""
     beside = Path(sys.executable).parent / SCRIPT
     if beside.is_file() and os.access(beside, os.X_OK):
         return [str(beside)]
-    found = shutil.which(SCRIPT, path=env.get("PATH"))
+    if _module_installed():
+        return [sys.executable, "-P", "-m", MODULE]
+    found = shutil.which(SCRIPT, path=_absolute_path(env.get("PATH")))
     if found:
+        if err is not None:
+            err.write(f"orch dashboard: using {found} (found on PATH)\n")
         return [found]
-    try:
-        if importlib.util.find_spec(MODULE) is not None:
-            return [sys.executable, "-m", MODULE]
-    except (ImportError, ValueError):
-        pass
     return None
 
 
@@ -49,7 +64,7 @@ def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests rep
 
 
 def main(args: Sequence[str], *, env: Mapping[str, str], err: TextIO) -> int:
-    command = find_entry_point(env)
+    command = find_entry_point(env, err)
     if command is None:
         err.write(f"orch dashboard: {INSTALL_HINT}\n")
         return 3

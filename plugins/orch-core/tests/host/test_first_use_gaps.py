@@ -192,10 +192,11 @@ def test_orch_dashboard_execs_the_addon_entry_point_with_the_args(tmp_path, monk
     script.write_text("#!/bin/sh\n")
     script.chmod(0o755)
     monkeypatch.setattr(dashboard.sys, "executable", str(tmp_path / "nowhere" / "python"))
+    monkeypatch.setattr(dashboard.importlib.util, "find_spec", lambda name: None)
     env = {"PATH": str(bindir), "HOME": str(tmp_path)}
     code, err, calls = _main(["open", "--print-url"], env, monkeypatch)
-    assert code == 0 and err == ""
-    assert calls == [([str(script), "open", "--print-url"], env)]
+    assert code == 0 and calls == [([str(script), "open", "--print-url"], env)]
+    assert str(script) in err and "PATH" in err  # the resolved path is printed when it came from PATH
 
 
 def test_orch_dashboard_without_the_addon_names_how_to_install_it(tmp_path, monkeypatch):
@@ -217,4 +218,222 @@ def test_orch_dashboard_falls_back_to_the_module(tmp_path, monkeypatch):
         dashboard.importlib.util, "find_spec", lambda name: object() if name == "orch_dashboard" else None
     )
     code, err, calls = _main(["serve"], {"PATH": str(tmp_path / "empty")}, monkeypatch)
-    assert code == 0 and calls[0][0] == [py, "-m", "orch_dashboard", "serve"]
+    assert code == 0 and calls[0][0] == [py, "-P", "-m", "orch_dashboard", "serve"]  # -P: no cwd on sys.path
+
+
+@pytest.mark.parametrize("entry", ["", ".", "rel/bin"])
+def test_orch_dashboard_ignores_empty_and_relative_path_entries(tmp_path, monkeypatch, entry):
+    from orch.cli import dashboard
+
+    work = tmp_path / "work"
+    (work / "rel" / "bin").mkdir(parents=True)
+    for d in (work, work / "rel" / "bin"):
+        planted = d / "orch-dashboard"
+        planted.write_text("#!/bin/sh\n")
+        planted.chmod(0o755)
+    monkeypatch.chdir(work)
+    monkeypatch.setattr(dashboard.sys, "executable", str(tmp_path / "nowhere" / "python"))
+    monkeypatch.setattr(dashboard.importlib.util, "find_spec", lambda name: None)
+    path = os.pathsep.join(["/usr/nonexistent", entry, "/also/nonexistent"])
+    code, err, calls = _main(["open"], {"PATH": path}, monkeypatch)
+    assert code == 3 and calls == [] and "not installed" in err
+
+
+def test_orch_dashboard_prefers_the_module_over_path(tmp_path, monkeypatch):
+    from orch.cli import dashboard
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "orch-dashboard").write_text("#!/bin/sh\n")
+    (bindir / "orch-dashboard").chmod(0o755)
+    py = str(tmp_path / "nowhere" / "python")
+    monkeypatch.setattr(dashboard.sys, "executable", py)
+    monkeypatch.setattr(dashboard.importlib.util, "find_spec", lambda name: object())
+    code, err, calls = _main(["x"], {"PATH": str(bindir)}, monkeypatch)
+    assert code == 0 and calls[0][0][:3] == [py, "-P", "-m"]
+
+
+# --- 4. review round: running vs enabled, peer key presence, fd-based purge, runner guard --------------------------
+
+
+def test_disable_stops_a_disabled_but_active_systemd_unit(world, monkeypatch):  # noqa: F811
+    env, fk = world["env"], world["fake"]
+    real_plan = svc.plan
+    monkeypatch.setattr(svc, "plan", lambda *a, **k: real_plan(*a, **{**k, "platform": "linux"}))
+    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert host(["enable", "--dev"], env)[0] == 0
+    fk.enabled, fk.active = False, True  # `systemctl disable` without --now: still running
+    fk.ran.clear()
+    code, out = host(["disable"], env)
+    assert code == 0, out
+    assert ["systemctl", "--user", "disable", "--now", "orch-host.service"] in fk.ran
+    assert fk.active is None and not fk.host and not fk.plan.unit_path.exists()
+
+
+def test_disable_stops_an_active_unit_whose_file_is_gone(world, monkeypatch):  # noqa: F811
+    env, fk = world["env"], world["fake"]
+    real_plan = svc.plan
+    monkeypatch.setattr(svc, "plan", lambda *a, **k: real_plan(*a, **{**k, "platform": "linux"}))
+    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert host(["enable", "--dev"], env)[0] == 0
+    fk.plan.unit_path.unlink()  # the file is gone, the unit still runs and is not enabled
+    fk.enabled, fk.active = False, True
+    code, out = host(["disable"], env)
+    assert code == 4 and json.loads(out)["error"]["code"] == "host.busy"  # loaded from elsewhere: refused ...
+    fk.ran.clear()
+    code, out = host(["disable", "--force"], env)  # ... and stopped when forced
+    assert code == 0, out
+    assert any(a[:3] == ["systemctl", "--user", "stop"] or "--now" in a for a in fk.ran)
+    assert fk.active is None and not fk.host
+
+
+def test_a_stubborn_active_unit_is_an_error_and_keeps_the_unit_file(tmp_path):
+    env = {"HOME": str(tmp_path)}
+    unit = svc.plan(env, tmp_path / "s", tmp_path / "s/run", tmp_path / "r", platform="linux", uid=501)
+    unit.unit_path.parent.mkdir(parents=True)
+    unit.unit_path.write_bytes(unit.content)
+
+    def run(argv):  # disabled, active, and nothing stops it
+        if "is-active" in argv:
+            return subprocess.CompletedProcess([], 0, "active\n", "")
+        return subprocess.CompletedProcess([], 1 if "is-enabled" in argv else 5, "", "denied")
+
+    with pytest.raises(OSError, match="failed"):
+        svc.Manager(unit, run=run).stop()
+    assert unit.unit_path.exists()
+
+
+def test_the_peer_default_needs_the_key_itself_not_only_the_selection(world, monkeypatch):  # noqa: F811
+    from orch.custody import convenience as conv
+    from orch.custody import select
+    from orch.custody.convenience import FakeStore
+
+    env, root = world["env"], world["root"]
+    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    state, wid = Path(env["ORCH_STATE_DIR"]), _wid(root)
+    store = FakeStore()
+    monkeypatch.setattr(conv, "open_store", lambda s: store)
+    select.convert_to_convenience(state, wid, store=store)
+    assert list(host_cli.default_peers(state, root, env)) == [str(UID)]
+    backend, _ = select.device_backend(state, wid)
+    backend.delete("human")  # the key goes, custody.json (the selection) stays
+    assert not backend.exists("human")
+    with pytest.raises(host_cli.HostError) as e:
+        host_cli.default_peers(state, root, env)
+    assert "no device key" in e.value.message
+
+
+def _tree(base: Path, link_to: Path | None = None) -> Path:
+    releases = base / "releases"
+    (releases / "v1" / "bin").mkdir(parents=True)
+    if link_to is not None:
+        (releases / "v1" / "link").symlink_to(link_to)
+    (releases / "v1" / "bin" / "orch-host").write_text("x")
+    (releases / "v1" / "bin" / "orch-host").chmod(0o555)
+    (releases / "v1" / "bin").chmod(0o555)
+    (releases / "v1").chmod(0o555)
+    (releases / "current").symlink_to("v1")
+    return releases
+
+
+def test_purge_removes_a_read_only_tree_and_the_current_link(tmp_path):
+    from orch.host.release import purge_releases
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("k")
+    outside.chmod(0o500)
+    releases = _tree(tmp_path, outside)
+    assert purge_releases(releases) == ["current", "v1"]
+    assert list(releases.iterdir()) == [] and (outside / "keep").read_text() == "k"
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o500
+    outside.chmod(0o700)
+
+
+def test_purge_refuses_a_symlink_swapped_in_for_a_subdirectory(tmp_path, monkeypatch):
+    from orch.host import release
+    from orch.host.release import ReleaseError, purge_releases
+
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    (outside / "keep").write_text("k")
+    outside.chmod(0o500)
+    releases = _tree(tmp_path)
+    real_open = os.open
+
+    def swap(path, flags, *a, **kw):  # the subdirectory is replaced by a link between the scan and the open
+        if path == "v1" and kw.get("dir_fd") is not None:
+            os.chmod(releases, 0o700)
+            os.chmod(releases / "v1", 0o700)
+            os.rename(releases / "v1", tmp_path / "moved")
+            os.symlink(outside, releases / "v1")
+        return real_open(path, flags, *a, **kw)
+
+    monkeypatch.setattr(release.os, "open", swap)
+    with pytest.raises(ReleaseError, match="changed while"):
+        purge_releases(releases)
+    assert (outside / "keep").read_text() == "k" and stat.S_IMODE(outside.stat().st_mode) == 0o500
+    assert (outside / "inner").is_dir()
+    outside.chmod(0o700)
+    (tmp_path / "moved").chmod(0o700)
+    (tmp_path / "moved" / "bin").chmod(0o700)
+
+
+def test_purge_refuses_a_directory_of_another_user(tmp_path, monkeypatch):
+    from orch.host import release
+    from orch.host.release import ReleaseError, purge_releases
+
+    releases = _tree(tmp_path)
+    real_fstat = os.fstat
+    seen = []
+
+    def fstat(fd):
+        st = real_fstat(fd)
+        seen.append(fd)
+        if len(seen) == 2:  # the first subdirectory (v1) belongs to someone else
+            return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, os.geteuid() + 1, *st[5:]))
+        return st
+
+    monkeypatch.setattr(release.os, "fstat", fstat)
+    with pytest.raises(ReleaseError, match="another user"):
+        purge_releases(releases)
+    assert (releases / "v1" / "bin" / "orch-host").exists()
+
+
+def test_purge_refuses_a_releases_dir_of_another_user(tmp_path, monkeypatch):
+    from orch.host import release
+    from orch.host.release import ReleaseError, purge_releases
+
+    releases = _tree(tmp_path)
+    monkeypatch.setattr(release.os, "geteuid", lambda: os.getuid() + 1)
+    with pytest.raises(ReleaseError, match="another user"):
+        purge_releases(releases)
+    assert (releases / "current").is_symlink()
+
+
+def test_purge_releases_is_refused_while_the_runner_service_is_installed(world, monkeypatch):  # noqa: F811
+    from orch.runner import service as runner_service
+
+    env, fk = world["env"], world["fake"]
+    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert host(["enable", "--dev"], env)[0] == 0
+    releases = Path(env["HOME"]) / ".local/share/orch/releases"
+    rplan = runner_service.plan(
+        env, Path(env["ORCH_STATE_DIR"]), Path(env["ORCH_STATE_DIR"]) / "run", releases / "current"
+    )
+    rplan.unit_path.parent.mkdir(parents=True, exist_ok=True)
+    rplan.unit_path.write_bytes(rplan.content)
+    code, out = host(["disable", "--purge-releases"], env)
+    doc = json.loads(out)
+    assert (code, doc["error"]["code"]) == (4, "host.busy") and "orch runner disable" in doc["error"]["message"]
+    assert (releases / "current").is_symlink() and fk.loaded  # nothing stopped, nothing removed
+    rplan.unit_path.unlink()
+    # a loaded runner without its unit file here counts too
+    monkeypatch.setattr(
+        host_cli,
+        "RUNNER_SERVICE_MANAGER",
+        lambda u: svc.Manager(u, run=lambda a: subprocess.CompletedProcess(a, 0, "state = running\n", "")),
+    )
+    assert host(["disable", "--purge-releases"], env)[0] == 4
+    code, out = host(["disable", "--purge-releases", "--force"], env)
+    assert code == 0 and list(releases.iterdir()) == [], out

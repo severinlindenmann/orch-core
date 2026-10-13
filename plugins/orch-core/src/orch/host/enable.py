@@ -245,7 +245,11 @@ class Manager:
     def loaded(self) -> bool:
         if self.plan.kind == "launchd":
             return self.run(["launchctl", "print", self._target()]).returncode == 0
-        return self.run(["systemctl", "--user", "is-enabled", self.plan.systemd_name]).returncode == 0
+        # systemd: enabled and running are independent (a disabled unit can be active, a unit file can be gone while
+        # the unit still runs), so either one counts as "there is a service here"
+        if self.run(["systemctl", "--user", "is-enabled", self.plan.systemd_name]).returncode == 0:
+            return True
+        return self.active() is True
 
     def active(self) -> bool | None:
         """Whether the service manager runs the host now (``None``: it cannot tell)."""
@@ -256,7 +260,9 @@ class Manager:
             return "state = running" in (res.stdout or "")
         res = self.run(["systemctl", "--user", "is-active", self.plan.systemd_name])
         out = (res.stdout or "").strip()
-        return True if out == "active" else False if out else None
+        if out in ("active", "activating", "reloading", "deactivating"):
+            return True
+        return False if out else None
 
     def installed(self) -> bool:
         try:
@@ -319,12 +325,15 @@ class Manager:
                 res = self.run(argv)
                 if res.returncode != 0 and self.loaded():
                     raise OSError(_failed(argv, res))
-        elif was_loaded:
+        elif was_loaded:  # enabled or running (or both): stop it whatever the unit file says
             argv = ["systemctl", "--user", "disable", "--now", self.plan.systemd_name]
             ran.append(argv)
             res = self.run(argv)
-            if res.returncode != 0:
-                raise OSError(_failed(argv, res))
+            if res.returncode != 0:  # e.g. the unit file is gone but the unit still runs: stop it by name
+                ran.append(["systemctl", "--user", "stop", self.plan.systemd_name])
+                self.run(ran[-1])
+                if self.loaded():
+                    raise OSError(_failed(argv, res))
         self.plan.unit_path.unlink(missing_ok=True)
         if self.plan.kind == "systemd":
             ran.append(["systemctl", "--user", "daemon-reload"])

@@ -53,6 +53,9 @@ class FakeLaunchd:
         self.pins = AgentPins(tmp / "pins", owner=UID)
         (tmp / "pins").mkdir(exist_ok=True)
         self.plan: svc.Plan | None = None
+        #: systemd only: enabled and active are separate answers; ``None`` follows ``loaded`` / the host
+        self.enabled: bool | None = None
+        self.active: bool | None = None
 
     def manager(self, unit: svc.Plan) -> svc.Manager:
         self.plan = unit
@@ -75,12 +78,23 @@ class FakeLaunchd:
         verb = argv[1] if argv[0] == "launchctl" else argv[2]
         if verb == "print":
             return done(0, "state = running\n") if self.loaded else done(113)
-        if verb in ("is-enabled", "is-active"):
-            return done(0, "active\n" if self.host else "inactive\n") if self.loaded else done(1)
+        if verb == "is-enabled":
+            on = self.loaded if self.enabled is None else self.enabled
+            return done(0, "enabled\n") if on else done(1, "disabled\n")
+        if verb == "is-active":
+            on = bool(self.host) if self.active is None else self.active
+            return done(0, "active\n") if on else done(3, "inactive\n")
         if verb in ("bootstrap", "enable"):
             self.loaded = True
         if verb in ("bootout", "disable"):
             self.loaded = False
+            if verb == "bootout" or "--now" in argv:
+                self.enabled = self.active = None
+                self.stop_host()
+            else:
+                self.enabled = False
+        if verb == "stop":
+            self.active = False
             self.stop_host()
         if verb in ("bootstrap", "kickstart", "start", "restart"):
             self.start_host()

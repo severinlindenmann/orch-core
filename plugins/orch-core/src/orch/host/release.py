@@ -137,29 +137,44 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
 
 def purge_releases(releases: Path) -> list[str]:
     """Remove the release copies under ``releases`` (``orch host disable --purge-releases``). They are read-only, so
-    each directory gets ``u+rwx`` before its entries go. Nothing outside ``releases`` is touched and no symlink is
-    followed (a link, ``current`` included, is unlinked itself); ``releases`` being a symlink is refused. Returns the
+    each directory gets ``u+rwx`` before its entries go. The walk is by file descriptor: every directory is opened
+    relative to its parent with ``O_NOFOLLOW | O_DIRECTORY`` and checked to be this user's before it is changed, so no
+    link is followed at any level (a link, ``current`` included, is unlinked itself) and nothing outside ``releases``
+    is touched. ``releases`` being a symlink or a file, or a directory of another user, is refused. Returns the
     top-level entries removed."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     try:
-        top = os.lstat(releases)
+        top = os.open(releases, flags)
     except FileNotFoundError:
         return []
-    if not stat.S_ISDIR(top.st_mode):
-        raise ReleaseError(f"{releases} is not a directory (a link or a file): nothing removed")
+    except OSError as exc:  # ELOOP (a link), ENOTDIR (a file), EACCES
+        raise ReleaseError(f"{releases} is not a directory of yours (a link or a file): nothing removed") from exc
 
-    def clear(directory: Path) -> None:
-        os.chmod(directory, stat.S_IRWXU)  # the directory itself is a real one: lstat'd by the caller
-        for entry in os.scandir(directory):
-            path = Path(entry.path)
-            if entry.is_dir(follow_symlinks=False):
-                clear(path)
-                os.rmdir(path)
+    def clear(fd: int, where: str) -> list[str]:
+        if os.fstat(fd).st_uid != os.geteuid():
+            raise ReleaseError(f"{where} is owned by another user: nothing more removed")
+        os.fchmod(fd, stat.S_IRWXU)  # on the open directory itself, never on a path
+        with os.scandir(fd) as it:
+            entries = [(e.name, e.is_dir(follow_symlinks=False)) for e in it]
+        for name, is_dir in entries:
+            if is_dir:
+                try:
+                    sub = os.open(name, flags, dir_fd=fd)
+                except OSError as exc:  # swapped for a link or a file since the scan
+                    raise ReleaseError(f"{where}/{name} changed while it was removed: nothing more removed") from exc
+                try:
+                    clear(sub, f"{where}/{name}")
+                finally:
+                    os.close(sub)
+                os.rmdir(name, dir_fd=fd)
             else:  # a file or a symlink (never followed)
-                os.unlink(path)
+                os.unlink(name, dir_fd=fd)
+        return [n for n, _ in entries]
 
-    removed = sorted(e.name for e in os.scandir(releases))
-    clear(Path(releases))
-    return removed
+    try:
+        return sorted(clear(top, str(releases)))
+    finally:
+        os.close(top)
 
 
 def _point_current(releases: Path, version: str) -> None:

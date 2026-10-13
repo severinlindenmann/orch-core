@@ -343,6 +343,15 @@ def disable(
         return {"ok": True, "result": {"data": {"mode": "direct", "service": None, "reason": str(exc)}}}
     except ValueError as exc:
         return _failure("invalid.input", f"the unit cannot hold this path: {exc}", 5)
+    if purge and not force:  # L2: the runner service runs from these release copies
+        busy = _runner_service_busy(state, env, run_dir, releases)
+        if busy:
+            return _failure(
+                "host.busy",
+                f"the runner service ({busy}) runs from the release copies that --purge-releases deletes; "
+                "run orch runner disable first, or pass --force",
+                4,
+            )
     manager = SERVICE_MANAGER(unit)
     differs = svc.differences(unit)
     other = [k for k in (differs or []) if k in ("state", "run")] if differs is not None else []
@@ -372,6 +381,24 @@ def disable(
     return {"ok": True, "result": {"data": data}}
 
 
+def _runner_service_busy(state: Path, env: Mapping[str, str], run_dir: Path, releases: Path) -> str | None:
+    """The runner's service label when its unit is installed or loaded/active here (``None``: it is not)."""
+    from orch.runner import service as runner_service
+
+    from . import enable as svc
+
+    try:
+        unit = runner_service.plan(env, state, run_dir, releases / "current")
+    except (svc.Unsupported, ValueError):
+        return None
+    try:
+        if unit.unit_path.exists():
+            return unit.label
+    except OSError:
+        return unit.label
+    return unit.label if _loaded(RUNNER_SERVICE_MANAGER(unit)) else None
+
+
 def _loaded(manager: Any) -> bool:
     try:
         return bool(manager.loaded())
@@ -381,6 +408,13 @@ def _loaded(manager: Any) -> bool:
 
 #: the service manager of a plan (tests replace it with a fake that never runs launchctl or systemctl)
 def SERVICE_MANAGER(unit: Any) -> Any:  # noqa: N802 - a module-level seam, named like the class it builds
+    from .enable import Manager
+
+    return Manager(unit)
+
+
+#: the runner's service manager (a seam like :data:`SERVICE_MANAGER`, so a fake host manager is never asked about it)
+def RUNNER_SERVICE_MANAGER(unit: Any) -> Any:  # noqa: N802
     from .enable import Manager
 
     return Manager(unit)
@@ -426,6 +460,8 @@ def default_peers(state: Path, root: Path, env: Mapping[str, str]) -> dict[str, 
 
     try:  # either custody (passphrase key file or convenience selection); only the public key is read
         backend, _sel = device_backend(state, wid)
+        if not backend.exists(human.KEY_ID):  # the selection is metadata: the key itself must still be there
+            raise KeyNotFound(human.KEY_ID)
         device = device_ref(backend.public_key(human.KEY_ID))
     except KeyNotFound:
         raise refuse("no device key of yours for this workspace on this machine") from None

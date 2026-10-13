@@ -6,6 +6,8 @@
   ``link.json`` names (then only that CA is trusted). Decided by orch-52 (13 Oct): no emptiness probe of the default
   store (``get_ca_certs()`` is empty for capath-only stores that verify fine); a store that trusts nothing fails
   closed at the handshake (kind ``tls``). There is no unverified fallback and no knob to turn verification off.
+  OpenSSL's ``SSL_CERT_FILE``/``SSL_CERT_DIR`` environment variables are honoured by the default context; that is
+  acceptable, because controlling the host process's environment already means being the host user.
   Plain ``http`` is only for the loopback origins that :func:`wire.check_origin` allows.
 * Every call has a **total** deadline on the injected monotonic clock covering connect, TLS, headers and body: a
   watchdog shuts the socket down when it passes (so a relay that drips header bytes cannot stretch a call), and the

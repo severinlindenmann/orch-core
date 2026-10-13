@@ -81,3 +81,31 @@ def test_open_card_part_refuses_another_seq_or_key():
 def test_card_signed_bytes_match_the_vector():
     assert card.signed_bytes(V["card"]["o"]) == bytes.fromhex(V["signed_bytes_wsk"])
     assert canon.dumps(V["card"]["o"]) == bytes.fromhex(V["signed_bytes_wsk"])[len(b"orch/v2/sig/card-wsk|") :]
+
+
+# --- the relay's code order for a malformed sealed_hash (review L5) ---------------------------------------------------
+
+BAD_HASH = "!!not-b64u!!"
+
+
+def _with_bad_hash(c):
+    return {**c, "o": {**c["o"], "sealed_hash": BAD_HASH}}
+
+
+def test_bad_sealed_hash_with_another_owner_is_other_person():
+    with pytest.raises(card.CardRefused) as e:
+        card.verify_card(_with_bad_hash(V["card"]), corpus.pub("person_bob.sig"))
+    assert e.value.code == "other_person"
+
+
+def test_bad_sealed_hash_with_a_mismatched_delegation_is_delegation_mismatch():
+    case = next(c for c in V["cases"] if c["name"] == "delegation_for_another_wsk")
+    with pytest.raises(card.CardRefused) as e:
+        card.verify_card(_with_bad_hash(case["card"]), bytes.fromhex(case["owner_pk_pub"]))
+    assert e.value.code == "delegation_mismatch"
+
+
+def test_bad_sealed_hash_under_a_bad_signature_is_bad_signature():
+    with pytest.raises(card.CardRefused) as e:  # the changed o no longer matches the signature
+        card.verify_card(_with_bad_hash(V["card"]), corpus.pub("person_alice.sig"))
+    assert e.value.code == "bad_signature"

@@ -433,13 +433,11 @@ class ClickSigner:
         if claim["idem"] != idem:  # another signer process claimed or recorded it first: never a second signature
             self._note("adopted", workspace=approval.workspace_id, request=approval.request_id)
             return self._replay(entry, claim, approval.view_digest)
-        try:
-            signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
-            if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
-                raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
-        except Exception:
-            self.records.release(claim)  # no signature exists: the request may be signed later
-            raise
+        # From here the claim is never released: an exception does not prove that no signature exists (the host signer
+        # signs event by event), so any failure leaves the claim and that request fails closed.
+        signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
+        if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
+            raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
         approval.signed, approval.idem = signed.events, idem  # in memory at once: a retry resends, never re-signs
         try:  # durable before the signature leaves: a crash after this resends these events, never signs again
             rec = self.records.complete(claim, signed.events)

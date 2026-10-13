@@ -198,24 +198,6 @@ class Records:
         rec.update(events=events, signed_at=_stamp(self.wall()), result=None)
         return self._put(rec, replace=True, what="updated")
 
-    def release(self, claim: dict[str, Any]) -> None:
-        """Best effort: remove our own claim when the signing failed before any signature existed, so the request can
-        be signed later. A claim that stays (or is not ours any more) only fails closed."""
-        try:
-            cur = self.get(claim["workspace_id"], claim["request_id"])
-            if cur is None or not is_claim(cur) or cur["idem"] != claim["idem"]:
-                return
-            fd = self._dir(claim["workspace_id"], create=False)
-            if fd is None:
-                return
-            try:
-                os.unlink(self._name(claim["request_id"]), dir_fd=fd)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-        except (RecordError, OSError):
-            pass
-
     def _put(self, rec: dict[str, Any], *, replace: bool, what: str) -> dict[str, Any]:
         from orch.custody.base import CustodyError, KeyExists
         from orch.custody.convenience import write_private

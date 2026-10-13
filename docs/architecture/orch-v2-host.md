@@ -2422,8 +2422,8 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
     signer process of the same person won the race) wins: a completed one's events are used, a claim refuses. A claim
     with no completed record and no in-memory events (a crash or failure sat between the claim and the completion)
     is `record_unavailable` for that `view_digest` and `already_signed` for another: the request is never signed
-    again. A signing that fails with no signature produced removes its own claim, best effort. After the commit the
-    record is replaced (temporary file, `fsync`, rename, directory `fsync`) by one that holds the result; failing that
+    again. Once signing has started the claim is never released; a failure fails that request closed (the person
+    prepares a new request). After the commit the record is replaced (temporary file, `fsync`, rename, directory `fsync`) by one that holds the result; failing that
     only costs a resubmit under the same idem.
   - **Every `sign` reads the record first**, before the in-memory registry, and **the in-memory guard stays as
     well**: a request this process signed answers its cached result or resends the identical events and idem from
@@ -2546,7 +2546,7 @@ member, policy or addon operations.
    `python -I -m orch.click --fd N`; the dashboard imports only `spawn`, `client` and `protocol`.
 2. **Durable sign records (H5c follow-up, changelog item 18)** are `orch.click.records.Records`, as item 5 specifies:
    `claim` (exclusive, before the signing), `complete` (the signed events, before `human.submit`), `create`
-   (exclusive, a complete record at once), `release` (drop our own claim), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
+   (exclusive, a complete record at once), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
    (the result, after the commit) and `prune`. They reuse the custody helpers `secure_dir`, `read_private` and
    `write_private` (`orch.custody.convenience`). A record is at most 8 MiB. Two `human.click_refused` reasons are new:
    `already_signed` and `record_unavailable`; the log gains `adopted` (another signer process's record was used) and
@@ -3010,7 +3010,8 @@ existing op changes its version.
     (`view_digest`, op, idem, expiry, no events) before the crypto signing and replaces it with the completed record
     before the submit, so a crash or write failure between signing and recording can no longer lead to a second
     signature. A claim that never completed is refused as `record_unavailable` (`already_signed` for another
-    `view_digest`); an in-process retry resends the identical in-memory events. No new reason, no wire change.
+    `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
+    released; a failure fails that request closed. No new reason, no wire change.
 
 ---
 

@@ -521,7 +521,8 @@ def send_prepare(plan_: Plan, ws: str, retry: int, call, pending=None):
         if code == "idem.expired":
             raise fail(
                 "intent.expired",
-                "This attempt is older than the host keeps records (24 h). Start again to make a new one.",
+                "This attempt is older than the host keeps records (24 h). Start again only if you intend another "
+                "attempt; an earlier one may have been signed.",
                 exit=5,
             ) from None
         raise

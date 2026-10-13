@@ -1019,3 +1019,13 @@ from that record's material review. `human.request_state` at sign reads pending/
 when signer status is unavailable, `one_path_is_click` can permit a hand-off even on a click-enabled workspace.
 Host #434 enforces one signing path and refuses unsafe flag changes. The dashboard's shared idem and op+key
 pre-check remain defence in depth; they are not a replacement for this host prerequisite.
+
+**Known limits after the final Opus re-check (13 Oct, all LOW, none can produce a second signature):**
+- N1: "Already done" is also shown when the state was reverted in between (role B→A→B, close→reopen→close). The
+  wording reads as if nothing changed since; "Do it again" is offered, so nothing is blocked. A future host
+  `submitted_at` (stream A follow-up to #434) lets the screen say when it was signed.
+- N5: a label add sends the full label set, so a concurrent label change in another tab is different content and
+  therefore a different intent (by the owner's definition). The host's `base_rev` on `ticket.updated` refuses the
+  stale one at commit.
+- F4: the server treats an unknown signer status as "click off" (fail-open for the path choice). Core #434 (merged)
+  enforces one path per workspace at the host, so a stray hand-off request can't be prepared there.

@@ -191,13 +191,32 @@ def register(app: FastAPI, gateway: Gateway):
                 device = signer.status().get(ws, {}).get("device")
                 if not device:
                     raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
-                prepared = app.state.human(
-                    ws,
-                    "human.prepare",
-                    {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
-                    idem=planned.idem(ws, body.retry),
-                    files=files,
-                )
+                try:
+                    prepared = app.state.human(
+                        ws,
+                        "human.prepare",
+                        {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
+                        idem=planned.idem(ws, body.retry),
+                        files=files,
+                    )
+                except HostError as exc:
+                    # The same mapping as send_prepare: never a raw idem code to the browser (Opus re-check N3).
+                    code = exc.error.get("code")
+                    if code == "idem.expired":
+                        raise fail(
+                            "intent.expired",
+                            "This attempt is older than the host keeps records (24 h). Start again only if you intend "
+                            "another attempt; an earlier one may have been signed.",
+                            exit=5,
+                        ) from None
+                    if code == "idem.conflict":
+                        raise fail(
+                            "intent.blocked",
+                            "The earlier attempt was signed, but its record can't be read here. Start again only if "
+                            "you intend another attempt; an earlier one may have been signed.",
+                            exit=5,
+                        ) from None
+                    raise
                 if prepared.get("request", {}).get("state") != "submitted":
                     raise fail("internal", "The host did not return the submitted intent.")
                 raise read_done(human, ws, prepared["request"]["id"]) from None

@@ -168,6 +168,7 @@ def test_send_prepare_expiry_does_not_renew_a_baseless_intent():
     with pytest.raises(HostError) as caught:
         send_prepare(plan, WS, 0, prepare)
     assert caught.value.error["code"] == "intent.expired"
+    assert "may have been signed" in caught.value.error["message"]  # Opus re-check N2
     assert caught.value.exit == 5 and caught.value.error["retryable"] is False
     assert calls == [plan.idem(WS)]
     assert send_prepare(plan, WS, 1, prepare) == "new request"

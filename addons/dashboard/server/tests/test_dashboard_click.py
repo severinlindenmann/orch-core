@@ -128,8 +128,13 @@ class HostCheck:
         self.reads, self.checks, self.cancelled, self.pending = [], [], [], {}
         self.mismatch = False
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
+        self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
 
     def human(self, ws, op, args, **kw):
+        if op == "human.prepare" and self.replay_error:
+            from orch_dashboard.errors import fail
+
+            raise fail(self.replay_error, exit=2)
         if op in ("human.get", "human.prepare"):
             self.reads.append(args)
             return {
@@ -1083,6 +1088,22 @@ def test_n15_after_a_landed_signature_the_same_action_is_already_done_and_only_a
     # "Do it again" is an explicit click and a new intent.
     repeat = client.post(url(stub, "prepare"), json={**comment(1), "retry": 1}, headers=hdr(token))
     assert repeat.status_code == 200 and repeat.json()["request_id"] != REQ and script.prepared == 2
+
+
+@pytest.mark.parametrize("host_code, mapped", [("idem.conflict", "intent.blocked"), ("idem.expired", "intent.expired")])
+def test_already_done_replay_maps_idem_codes_like_send_prepare(
+    client, token, stub, script, host_check, rich, host_code, mapped
+):
+    """Opus re-check N3: an idem error from the "Already done" replay reaches the browser mapped, never as a raw host
+    code, and with the warning that an earlier attempt may have been signed (N2)."""
+    prepare(client, token, stub, comment(1))
+    assert sign_lost(client, token, stub).status_code == 200
+    host_check.replay_error = host_code
+    again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    err = again.json()["error"]
+    assert again.status_code == 409 and err["code"] == mapped
+    assert "may have been signed" in err["message"]
+    assert script.prepared == 1  # still no second request
 
 
 def test_n15_a_cancelled_or_expired_attempt_is_ended_and_start_again_is_explicit(client, token, stub, script, rich):

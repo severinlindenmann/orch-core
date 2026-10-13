@@ -142,10 +142,12 @@ def test_input_is_written_acked_and_a_repeat_is_not_typed_again(rig):
     assert c.until("ack")["input_id"] == 1
     type_(c, gen, 1, b"one")  # a retry of the same id
     assert c.until("ack")["input_id"] == 1
-    type_(c, gen, 5, b"two")  # ids may skip ahead, never back
-    assert c.until("ack")["input_id"] == 5
-    type_(c, gen, 3, b"old")
-    assert c.until("ack")["input_id"] == 3
+    type_(c, gen, 5, b"gap")  # past a gap: refused (throttle), never acknowledged, never typed
+    assert c.until("throttle")["retry_ms"] >= 1
+    type_(c, gen, 2, b"two")  # the next id
+    assert c.until("ack")["input_id"] == 2
+    type_(c, gen, 1, b"old")
+    assert c.until("ack")["input_id"] == 1
     assert rig.sup.typed == b"onetwo"
 
 

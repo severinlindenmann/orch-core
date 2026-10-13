@@ -14,15 +14,25 @@ per client: one client replaying seen tickets locks every attachment out for 60 
 capability holds nothing: **the ticket never holds the lease**; the lease is taken only when it is consumed.
 
 **Authorization is checked at use, not only at consumption** (one function, ``TermListener._authorized``, called
-before every privileged action: each output frame, each input write (and each retry of a partial write), each take
-and each resize): the attachment must still be in the table, not revoked, not closed, in the current host epoch with
-the host still there, and for a write action it must still hold the lease at the generation the frame names. An
-attachment found revoked is ended (``{t:"end"}``) and nothing more flows in either direction; ``attach.end``,
-``end_run``, ``host_lost`` and a new epoch revoke under the same lock that removes it, so there is no window
-between the capability check and the byte. A lease that moved only refuses the write action (``writer:false``).
+before every privileged action: each non-blocking ``send`` of an output frame, each input write (and each retry of a
+partial write), each take and each resize): the attachment must still be in the table, not revoked, not closed, in
+the current host epoch with the host still there, and for a write action it must still hold the lease at the
+generation the frame names. The action itself (the ``send``, the PTY write, the resize) runs non-blocking under the
+same lock as the check, and ``attach.end``, ``end_run``, ``host_lost``, a new epoch and an overflow revoke under that
+lock, so no output byte is sent, and no input byte or resize is applied, after the revocation. An output frame that
+a revocation cuts short is never completed: the socket is shut without another byte. An attachment found revoked is
+otherwise ended (``{t:"end"}``). A lease that moved only refuses the write action (``writer:false``).
 
 **Limits** at consumption (§12.6.5): 4 attachments per run, 16 per person, 64 per runner; over one the connection ends
-with ``{t:"end", reason:"attach.limit"}`` (the host refuses earlier from the counts the runner reports).
+with ``{t:"end", reason:"attach.limit"}`` (the host refuses earlier from the counts the runner reports). At most 256
+capabilities wait to be presented (``attach.allow`` beyond is ``attach.limit``). Per attachment at most 4 096 control
+frames wait to be sent and 64 frames are read ahead while a PTY write waits for room; beyond either the attachment is
+revoked and ends with ``{t:"end", reason:"overflow"}``.
+
+**The socket** is non-blocking once the attachment exists, with separate deadlines: the sender waits for write
+readiness and gives up after ``SEND_TIMEOUT`` (30 s) without progress; the reader waits for read readiness with no
+deadline (an idle viewer stays attached). While a PTY write waits for room the reader keeps watching the socket, so a
+viewer that disconnects cancels the pending write at once.
 
 **The lease** (§12.6.2): ``take:false`` is refused with ``{t:"end", reason:"writer_busy"}`` when the lease is held or
 its generation moved since the capability was registered; ``take:true`` takes it; either way the generation increments,
@@ -37,8 +47,10 @@ redraw. Closing the holder's connection releases the lease at once (generation +
   ahead and gets one ``{t:"gap", from, to}``. **Control frames are never dropped**: ``gap``, ``resize``, ``writer``,
   ``exit``, ``ack``, ``throttle`` and ``end`` wait in their own queue, sent before any further output.
 * **Input** ``{t:"in", input_id, lease_gen, b64}`` (at most 64 KiB) only from the lease holder with the current lease
-  generation (otherwise ``{t:"writer", writer:false, lease_gen}`` and nothing is written). An ``input_id`` at or below
-  the last one written is never written again (it is acknowledged again). Each frame is written to the PTY in full,
+  generation (otherwise ``{t:"writer", writer:false, lease_gen}`` and nothing is written). Input ids are consecutive:
+  only ``last + 1`` is written; an ``input_id`` at or below the last one written is never written again (it is
+  acknowledged again); a higher one (a gap) is refused with ``{t:"throttle", retry_ms}`` and never acknowledged, so a
+  frame that was throttled can never be skipped by a later one. Each frame is written to the PTY in full,
   partial writes retried here, then ``{t:"ack", input_id}``. Over 256 KiB/s or 1 MiB per 10 s per run the frame is not
   written and the runner answers ``{t:"throttle", retry_ms}``; the server resends it with the same id.
 * **Resize** ``{t:"resize", lease_gen, cols, rows}`` applies only from the current writer; every viewer then gets
@@ -62,6 +74,7 @@ import errno
 import hashlib
 import logging
 import os
+import select
 import socket
 import stat
 import threading
@@ -94,8 +107,17 @@ CHUNK = 64 * 1024
 QUEUE = 512 * 1024
 RATE_SECOND = 256 * 1024
 RATE_WINDOW, RATE_WINDOW_BYTES = 10.0, 1024 * 1024
-#: a viewer that does not read for this long is disconnected (its sender would otherwise wait forever)
+#: a viewer that does not read for this long is disconnected (its sender would otherwise wait forever); an idle
+#: reader (one that sends nothing) is never disconnected: reading and writing have separate deadlines
 SEND_TIMEOUT = 30.0
+#: control frames waiting for one attachment; over it the attachment ends with ``overflow``
+CTL_MAX = 4096
+#: frames read ahead while a PTY write waits for room; over it the attachment ends with ``overflow``
+INBOX_MAX = 64
+#: capabilities registered and not yet presented, per runner
+MAX_ALLOWS = 256
+#: what an ``in`` frame past a gap is answered with: ``throttle`` (resend the missing one first)
+GAP_RETRY_MS = 50
 #: how long an ending attachment may take to deliver its last frames before its socket is shut
 END_GRACE = 2.0
 WAKE = 0.1
@@ -149,6 +171,13 @@ class Attachment:
     revoked: bool = False
     #: set when the sender thread is done (the ``end`` frame was written, or the socket failed)
     sent: threading.Event = field(default_factory=threading.Event)
+    #: frames read but not handled yet (read ahead while a PTY write waits for room)
+    inbox: collections.deque[Any] = field(default_factory=collections.deque)
+    decoder: frames.Decoder = field(default_factory=frames.Decoder)
+    #: the peer closed, the socket failed or the read-ahead overflowed: the reader stops
+    stop_reading: bool = False
+    #: an output frame was cut short by a revocation: nothing more may be written to the socket
+    broken: bool = False
 
 
 class _Bucket:
@@ -328,6 +357,8 @@ class TermListener:
             if not self.accepting or item.epoch != self.epoch:
                 raise TicketError("no host epoch, or one that ended")
             self._expire(now)
+            if len(self.allows) >= MAX_ALLOWS:
+                raise TicketError("too many capabilities waiting to be presented", "attach.limit")
             item.lease_gen = self.leases.get(item.run, (None, 0))[1]
             self.allows[item.ticket_hash] = item
         return {"start": info["start"], "offset": info["offset"], "cols": info["cols"], "rows": info["rows"],
@@ -453,8 +484,22 @@ class TermListener:
     def _queue(self, att: Attachment, frame: dict[str, Any]) -> None:
         if att.closed:
             return
+        if len(att.ctl) >= CTL_MAX and frame.get("t") != "end":
+            self._overflow(att)
+            return
         att.ctl.append(frame)
         att.wake.set()
+
+    def _overflow(self, att: Attachment) -> None:
+        """Too much waits for a viewer that does not read: the attachment is revoked (nothing more is authorized) and
+        ends with ``overflow`` (its queued frames are discarded; the socket is shut after the grace)."""
+        with self.lock:  # never called with the lock held
+            att.revoked = True
+            att.writer = False
+        if att.ending:
+            return
+        att.ctl.clear()
+        self._finish(att, "overflow")
 
     def _finish(self, att: Attachment, reason: str) -> None:
         """Queue ``end`` (after the control frames already queued; queued output is discarded) and make sure the
@@ -542,19 +587,24 @@ class TermListener:
                 info = self.info(item.run) or info  # the offsets at the moment the attachment exists
                 start, offset = int(info["start"]), int(info["offset"])
                 new.pos = start if item.start_from is None else max(int(item.start_from), 0)
+                lease_gen = self.leases.get(item.run, (None, 0))[1]
+                # the immutable snapshot is queued before the attachment is visible: no takeover, resize or lease note
+                # of another thread can reach this attachment ahead of its ``ready``
+                new.ctl.append({"t": "ready", "start": start, "offset": offset, "cols": info["cols"],
+                                "rows": info["rows"], "writer": new.writer, "lease_gen": lease_gen,
+                                "state": info["state"]})  # fmt: skip
+                new.decoder = decoder
+                new.inbox.extend(rest)
+                conn.setblocking(False)  # from here on: readiness waits with separate read and write deadlines
                 self.attachments[item.att] = att = new
                 self._index(new)
-                lease_gen = self.leases.get(item.run, (None, 0))[1]
-            ready = {"t": "ready", "start": start, "offset": offset, "cols": info["cols"], "rows": info["rows"],
-                     "writer": new.writer, "lease_gen": lease_gen, "state": info["state"]}  # fmt: skip
-            new.ctl.append(ready)
             for other, note in notes:
                 self._queue(other, note)
             if new.writer and self.sup is not None:
                 self.sup.nudge(item.run)  # the new writer sees a fresh screen (§12.6.2, dashboard G9)
             threading.Thread(target=self._pump, args=(new,), name="orch-runner-term-out", daemon=True).start()
             self._changed(item.run)
-            self._serve(new, decoder, rest)
+            self._serve(new)
         except OSError:
             pass
         finally:
@@ -585,12 +635,11 @@ class TermListener:
     def _pump(self, att: Attachment) -> None:
         conn = att.conn
         try:
-            conn.settimeout(SEND_TIMEOUT)
             while not att.closed:
                 att.wake.clear()
                 while att.ctl:
                     frame = att.ctl.popleft()
-                    conn.sendall(frames.encode(frame))
+                    self._send_bytes(att, frames.encode(frame), guarded=False)
                     if frame.get("t") == "end":
                         _shut(conn)
                         return
@@ -598,6 +647,8 @@ class TermListener:
                     att.wake.wait(WAKE)
                     continue
                 if self._step(att):
+                    if att.broken:
+                        return  # an output frame was cut short by a revocation: nothing more may follow it
                     continue
                 att.wake.wait(WAKE)
         except (OSError, frames.FrameError):
@@ -606,6 +657,36 @@ class TermListener:
             att.closed = True
             att.sent.set()
             _shut(conn)
+
+    def _send_bytes(self, att: Attachment, data: bytes, *, guarded: bool) -> bool:
+        """Write one encoded frame to the (non-blocking) socket. ``guarded`` (terminal output): every ``send`` runs
+        under the authorization check's lock (:meth:`_authorized` with an action), so a revocation is either before
+        a send (nothing of it leaves) or after it; once revoked mid-frame the rest is never written and the attachment
+        is ``broken``. ``False`` when refused. ``TimeoutError`` when the viewer reads nothing for ``SEND_TIMEOUT``."""
+        conn = att.conn
+        view = memoryview(data)
+        idle_since = time.monotonic()
+        while view:
+            if guarded:
+                sent: list[int] = []
+                if not self._authorized(att, act=lambda v=view, out=sent: out.append(_try_send(conn, v))):
+                    if len(view) != len(data):
+                        att.broken = True
+                    return False
+                n = sent[0]
+            else:
+                n = _try_send(conn, view)
+            if n:
+                view = view[n:]
+                idle_since = time.monotonic()
+                continue
+            if att.closed:
+                raise OSError(errno.EPIPE, "the attachment closed")
+            left = SEND_TIMEOUT - (time.monotonic() - idle_since)
+            if left <= 0:
+                raise TimeoutError("the viewer does not read")
+            select.select([], [conn], [], min(left, WAKE))
+        return True
 
     def _step(self, att: Attachment) -> bool:
         """Queue or send what is next for one attachment; ``True`` when something was done."""
@@ -631,8 +712,9 @@ class TermListener:
                 att.pos = begin
                 return True
             att.pos = begin + len(data)
-            if data and self._authorized(att):
-                att.conn.sendall(frames.encode({"t": "out", "off": begin, "b64": base64.b64encode(data).decode()}))
+            if data:
+                frame = frames.encode({"t": "out", "off": begin, "b64": base64.b64encode(data).decode()})
+                self._send_bytes(att, frame, guarded=True)
             return True
         if live.exit is not None and live.pty_closed and not att.ending:
             exit_ = live.exit
@@ -642,13 +724,10 @@ class TermListener:
         return False
 
     # -- the reader: input and resize from the dashboard server
-    def _serve(self, att: Attachment, decoder: frames.Decoder, pending: list[Any]) -> None:
-        conn = att.conn
-        conn.settimeout(None)
-        queue = list(pending)
-        while not att.closed:
-            while queue:
-                frame = queue.pop(0)
+    def _serve(self, att: Attachment) -> None:
+        while not att.closed and not att.stop_reading:
+            while att.inbox:
+                frame = att.inbox.popleft()
                 if isinstance(frame, frames.FrameError) or not isinstance(frame, dict):
                     self._finish(att, "protocol")
                     return
@@ -662,13 +741,34 @@ class TermListener:
                 if not ok:
                     self._finish(att, "protocol")
                     return
-            try:
-                data = conn.recv(65536)
-            except OSError:
-                return
-            if not data:
-                return
-            queue = decoder.feed(data)
+                if att.stop_reading:
+                    return
+            self._read_some(att, WAKE)
+
+    def _read_some(self, att: Attachment, wait: float) -> bool:
+        """Wait up to ``wait`` for the socket to be readable and read what is there into ``att.inbox``. ``False`` (and
+        ``stop_reading``) when the peer closed, the socket failed or too much was read ahead (``overflow``). There is
+        no read deadline: a viewer that sends nothing stays attached."""
+        conn = att.conn
+        try:
+            readable, _, _ = select.select([conn], [], [], wait)
+            if not readable:
+                return True
+            data = conn.recv(65536)
+        except (BlockingIOError, InterruptedError):
+            return True
+        except (OSError, ValueError):
+            att.stop_reading = True
+            return False
+        if not data:
+            att.stop_reading = True
+            return False
+        att.inbox.extend(att.decoder.feed(data))
+        if len(att.inbox) > INBOX_MAX:
+            att.stop_reading = True
+            self._overflow(att)
+            return False
+        return True
 
     def _authorized(self, att: Attachment, lease_gen: Any = None, act: Callable[[], Any] | None = None) -> bool:
         """The one authorization check, called before every privileged action (§12.6.2, N5). Without ``lease_gen``:
@@ -698,39 +798,26 @@ class TermListener:
         self._queue(att, {"t": "writer", "writer": False, "lease_gen": gen})
         return False
 
-    def downgrade(self, att_id: str) -> bool:
-        """Take the lease from an attachment without ending it (it keeps reading): the next write or resize it sends
-        is refused. ``True`` when it held the lease."""
-        with self.lock:
-            att = self.attachments.get(att_id)
-            if att is None or not att.writer:
-                return False
-            notes = self._release(att)
-            run = att.run
-            gen = self.leases.get(run, (None, 0))[1]
-        self._queue(att, {"t": "writer", "writer": False, "lease_gen": gen})
-        for other, note in notes:
-            self._queue(other, note)
-        self._changed(run)
-        return True
-
     def _input(self, att: Attachment, frame: dict[str, Any]) -> bool:
         """One ``in`` frame; ``False`` for a malformed one (the attachment ends with ``protocol``)."""
         iid, lease_gen, b64 = frame.get("input_id"), frame.get("lease_gen"), frame.get("b64")
         if not (_int(iid) and iid >= 1 and _int(lease_gen) and isinstance(b64, str)) or len(b64) > CHUNK * 4 // 3 + 4:
             return False
+        if att.mode != "write":
+            return True  # a read attachment's input is dropped, not even decoded (the server should not send it)
         try:
             data = base64.b64decode(b64, validate=True)
         except (binascii.Error, ValueError):
             return False
         if len(data) > CHUNK:
             return False
-        if att.mode != "write":
-            return True  # a read attachment's input is dropped (the server should not send it)
         if not self._authorized(att, lease_gen):
             return True
         if iid <= att.last_input:  # a repeated or lower id is never typed again
             self._queue(att, {"t": "ack", "input_id": iid})
+            return True
+        if iid != att.last_input + 1:  # past a gap: refused, never acknowledged; the missing frame comes first
+            self._queue(att, {"t": "throttle", "retry_ms": GAP_RETRY_MS})
             return True
         retry = self._rate(att.run, len(data))
         if retry > 0:
@@ -773,7 +860,7 @@ class TermListener:
 
         view = memoryview(data)
         while view:
-            if att.closed:
+            if att.closed or att.stop_reading:
                 return False
             try:
                 done = self._write_once(att, lease_gen, bytes(view))
@@ -783,7 +870,10 @@ class TermListener:
                 return False
             n = done
             if n == 0:
-                time.sleep(0.005)  # the PTY's input queue is full: the program is not reading yet
+                # the PTY's input queue is full (the program is not reading yet): meanwhile watch the socket, so a
+                # viewer that disconnects cancels this write at once (frames that arrive are handled after it)
+                if not self._read_some(att, 0.005):
+                    return False
                 continue
             view = view[n:]
         return True
@@ -829,6 +919,14 @@ def _read_frame(conn: socket.socket, wait: float, decoder: frames.Decoder) -> tu
         got = decoder.feed(part)
         if got:
             return (None, []) if isinstance(got[0], frames.FrameError) else (got[0], got[1:])
+
+
+def _try_send(conn: socket.socket, view: memoryview) -> int:
+    """One non-blocking ``send``: the bytes taken, ``0`` when the socket's buffer is full."""
+    try:
+        return conn.send(view)
+    except (BlockingIOError, InterruptedError):
+        return 0
 
 
 def _send(conn: socket.socket, frame: dict[str, Any]) -> None:

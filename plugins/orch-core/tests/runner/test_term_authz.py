@@ -1,5 +1,5 @@
-"""Authorization is re-checked at use (H11b security): after the host ends, downgrades or restarts an attachment, the
-next byte in either direction is refused and the attachment closes."""
+"""Authorization is re-checked at use (H11b security): after the host ends or restarts an attachment, the next byte in
+either direction is refused and the attachment closes; after its lease moves, its writes and resizes are refused."""
 
 from __future__ import annotations
 
@@ -140,12 +140,12 @@ def test_cancel_between_consume_and_take_never_registers(rig):
     assert rig.listener.leases.get(RUN, (None, 0))[0] is None
 
 
-def test_resize_after_downgrade_is_refused(rig):
+def test_resize_after_the_lease_moved_is_refused(rig):
     c, gen = writer(rig)
     c.send({"t": "resize", "lease_gen": gen, "cols": 100, "rows": 30})
     c.until("resize")
     assert rig.sup.sizes == [(100, 30)]
-    assert rig.listener.downgrade("att1")
+    other = rig.attach("att2", mode="write", take=True)  # the lease moves (there is no downgrade in place)
     note = c.until("writer")
     assert note["writer"] is False
     c.send({"t": "resize", "lease_gen": gen, "cols": 90, "rows": 20})
@@ -156,6 +156,7 @@ def test_resize_after_downgrade_is_refused(rig):
     # still attached, read-only: output keeps flowing
     rig.sup.emit(b"hello")
     assert b"hello" in out_bytes([c.until("out")])
+    other.close()
 
 
 def test_lease_taken_by_another_refuses_old_writer_but_keeps_it_attached(rig):

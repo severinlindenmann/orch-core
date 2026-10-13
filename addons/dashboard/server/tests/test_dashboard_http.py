@@ -110,8 +110,9 @@ def test_shell_navigation_metadata(client, site, path):
         headers["Sec-Fetch-Site"] = site
     res = client.get(path, headers=headers)
     allowed = site in (None, "none", "same-origin")
-    assert res.status_code == (200 if allowed else 403)
-    assert ('<script src="/assets/main-hash.js">' in res.text) == allowed
+    assert res.status_code == 200
+    assert '<script src="/assets/main-hash.js">' in res.text
+    assert ('<meta name="orch-nav" content="foreign">' in res.text) == (not allowed)
     baseline = client.get("/")
     for name in (
         "content-security-policy",
@@ -121,31 +122,58 @@ def test_shell_navigation_metadata(client, site, path):
         "cache-control",
     ):
         assert res.headers[name] == baseline.headers[name]
-    if not allowed:
-        assert "<script" not in res.text and "<style" not in res.text
-        assert "orch dashboard" in res.text and '<a href="/">' in res.text
 
 
 @pytest.mark.parametrize("site", ["cross-site", "same-site"])
 def test_cross_site_new_tab_cannot_bootstrap_a_session(client, token, stub, site):
-    """#444 PoC: a foreign target=_blank/window.open deep link must not load bootstrap.
-
-    Another localhost port is same-site, so it must be refused too. An existing
-    session does not authorize the foreign navigation; only a deliberate next click does.
-    """
+    """The PoC gets a marked shell, but no server session without a launch code."""
     res = client.get(
         f"/w/{stub.ws}/ticket/ACME-1",
         headers={"Sec-Fetch-Site": site, "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"},
     )
-    assert res.status_code == 403
-    assert "<script" not in res.text and token not in res.text
-    assert '<a href="/">' in res.text
-    continued = client.get(
-        "/", headers={"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+    assert res.status_code == 200
+    assert '<meta name="orch-nav" content="foreign">' in res.text and token not in res.text
+    assert client.get("/api/session", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 401
+    assert (
+        client.post(
+            "/auth/session",
+            json={"code": "demo-not-a-real-code".ljust(43, "x")},
+            headers={"Origin": ORIGIN, "Sec-Fetch-Site": "same-origin"},
+        ).status_code
+        == 401
     )
-    assert continued.status_code == 200 and "<script" in continued.text
+
+
+def test_file_launcher_foreign_shell_can_exchange_its_fragment_code(client, auth):
+    code = auth.launch(PORT)["code"]
+    res = client.get(
+        f"/#launch={code}&to=%2F",
+        headers={"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"},
+    )
+    assert res.status_code == 200 and '<meta name="orch-nav" content="foreign">' in res.text
+    assert code not in res.text
+    exchanged = client.post(
+        "/auth/session",
+        json={"code": code},
+        headers={
+            "Origin": ORIGIN,
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+        },
+    )
+    assert exchanged.status_code == 200
+    token = exchanged.json()["token"]
+    assert client.get("/api/session", headers={"Authorization": f"Bearer {token}"}).status_code == 200
 
 
 @pytest.mark.parametrize("extra", [{}, {"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}])
-def test_shell_gate_cannot_be_bypassed_by_missing_or_non_document_metadata(client, extra):
-    assert client.get("/", headers={"Sec-Fetch-Site": "same-site", **extra}).status_code == 403
+def test_shell_marks_foreign_even_without_document_metadata(client, extra):
+    res = client.get("/", headers={"Sec-Fetch-Site": "same-site", **extra})
+    assert res.status_code == 200 and '<meta name="orch-nav" content="foreign">' in res.text
+
+
+@pytest.mark.parametrize("values", [["none", "none"], ["same-origin", "cross-site"], ["none, same-origin"]])
+def test_duplicate_or_joined_metadata_is_foreign(client, values):
+    res = client.get("/", headers=[("Sec-Fetch-Site", value) for value in values])
+    assert res.status_code == 200 and '<meta name="orch-nav" content="foreign">' in res.text

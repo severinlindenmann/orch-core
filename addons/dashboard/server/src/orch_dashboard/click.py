@@ -324,6 +324,7 @@ def register(app: FastAPI, gateway: Gateway):
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)
+        prior = handoffs.is_unsettled(rid)
         handoffs.mark_unsettled(ws, rid, handoffs.clock() + TTL + 60)
         args = {"view_digest": body.view_digest}
         if body.word is not None:
@@ -331,8 +332,9 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
         except HostError as exc:
-            if exc.error.get("reason") != "uncertain":
-                # Clear before follow-up host reads, which may themselves fail.
+            if exc.error.get("reason") != "uncertain" and prior is None:
+                # A definite retry failure must not clear an earlier unknown outcome.
+                # Clear new marks before follow-up host reads, which may themselves fail.
                 handoffs.settled(rid)
             if exc.error.get("code") == "human.request_state":
                 rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])

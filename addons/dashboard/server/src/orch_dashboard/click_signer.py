@@ -104,6 +104,8 @@ class Signer:
             raise unavailable() from None
         try:
             status = client.call("status", {}, timeout=TIMEOUT["status"])
+            if not isinstance(status, dict):
+                raise unavailable()
         except Exception:  # noqa: BLE001
             try:
                 client.close()

@@ -2,6 +2,7 @@ const STORAGE = 'orch-session'
 let currentToken: string | null = null
 let channel: BroadcastChannel | null = null
 const listeners = new Set<() => void>()
+export const isForeignNavigation = () => document.querySelector('meta[name="orch-nav"][content="foreign"]') !== null
 export const getToken = () => currentToken
 export function onSessionChange(listener: () => void) {
   listeners.add(listener)
@@ -29,9 +30,14 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
   const code = fragment.get('launch')
   const destination = safeDestination(fragment.get('to'))
   history.replaceState(null, '', code ? destination : location.pathname + location.search)
+  const foreign = isForeignNavigation()
   currentToken = sessionStorage.getItem(STORAGE)
-  if (typeof BroadcastChannel !== 'undefined') {
-    channel?.close()
+  if (foreign) clearSession(false) // sessionStorage may have been copied from an opener.
+  channel?.close()
+  channel = null
+  // The server marker governs this document: never request or receive shared tokens,
+  // even after a successful launch exchange. Other tabs cannot verify our marker.
+  if (!foreign && typeof BroadcastChannel !== 'undefined') {
     channel = new BroadcastChannel('orch-session')
     channel.onmessage = ({ data }) => {
       if (data?.type === 'request' && currentToken) channel?.postMessage({ type: 'token', token: currentToken })

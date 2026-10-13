@@ -1287,3 +1287,35 @@ def test_binding_conflict_with_open_request_keeps_expiry(client, token, stub, sc
     ]
     got = prepare(client, token, stub, comment(1)).json()["error"]
     assert got["code"] == "intent.open" and "15:30:00Z" in got["message"]
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_definite_retry_failure_preserves_prior_unknown_outcome(
+    client, token, stub, script, gateway, monkeypatch, local
+):
+    prepare(client, token, stub, comment(1))
+    script.refuse["sign"] = ClickError("internal", "unknown outcome")
+    assert sign_lost(client, token, stub).json()["error"]["reason"] == "uncertain"
+    if local:
+
+        def failed_setup():
+            raise ValueError("before dispatch")
+
+        monkeypatch.setattr(gateway.click, "_ensure", failed_setup)
+    else:
+        script.refuse["sign"] = ClickError("human.click_refused", "short", reason="too_soon")
+    assert sign_lost(client, token, stub).status_code != 200
+    assert client.app.state.handoffs.is_unsettled(REQ) == stub.ws
+
+
+@pytest.mark.parametrize("status", [None, [], "invalid", 1])
+def test_non_dict_status_closes_new_signer(gateway, monkeypatch, status):
+    from orch_dashboard.errors import HostError
+
+    child = Fake(lambda op, args: status)
+    monkeypatch.setattr(gateway.click, "_spawn", lambda: child)
+    with pytest.raises(HostError) as exc:
+        gateway.click.call("sign", {})
+    assert exc.value.error["code"] == "click.unavailable"
+    assert child.closed and gateway.click.client is None
+    assert [op for op, _ in child.calls] == ["status"]

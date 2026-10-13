@@ -136,20 +136,17 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
         elif path in ("", "favicon.svg") or SPA_PATH.fullmatch(path):
-            # Gate every shell response, even if mode/destination are missing or malformed.
-            # No shell means no bootstrap and no BroadcastChannel token request.
+            # The file:// launcher is cross-site too: serve its shell, but forbid
+            # automatic session sharing in foreign documents. Missing metadata keeps
+            # old-browser compatibility (and cannot protect their foreign loads).
             sites = request.headers.getlist("sec-fetch-site")
-            if path != "favicon.svg" and sites and sites not in (["none"], ["same-origin"]):
-                return HTMLResponse(
-                    '<!doctype html><html lang="en"><meta charset="utf-8">'
-                    "<title>Open the dashboard</title><body><h1>This link came from another site</h1>"
-                    "<p>Open the dashboard from the terminal with <code>orch dashboard</code> "
-                    'or from a bookmark.</p><p><a href="/">Continue to the dashboard</a></p></body></html>',
-                    status_code=403,
-                    headers={"Cache-Control": "no-store"},
-                )
+            foreign = bool(sites) and sites not in (["none"], ["same-origin"])
             candidate = static / ("favicon.svg" if path == "favicon.svg" else "index.html")
             if candidate.is_file():
+                if path != "favicon.svg" and foreign:
+                    html = candidate.read_text(encoding="utf-8")
+                    html = html.replace("<head>", '<head><meta name="orch-nav" content="foreign">', 1)
+                    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
                 return FileResponse(candidate, headers={"Cache-Control": "no-store"})
         return response("not_found", 404)
 

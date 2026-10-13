@@ -1478,15 +1478,19 @@ never restore whole-ticket or member-role bases as an incidental refactor.
 
 ## 2026-10-13 — T3 foreign navigation gate and definite signing failures
 
-**Decision:** Refuse shell responses with a present Fetch Metadata site other than `none`
-or `same-origin`, using a script-free 403 and a plain root link. Leave bootstrap unchanged:
-without the shell its token-request code cannot run. Preserve missing-header compatibility.
-Classify local signer setup exceptions before dispatch as definite, and clear definite
-refusal marks before follow-up reads. Preserve uncertain channel outcomes.
+**Decision:** Always serve the shell. A present Fetch Metadata site other than exactly
+one `none` or `same-origin` injects `<meta name="orch-nav" content="foreign">` per request.
+Keep CSP unchanged and shells `no-store`. The authoritative server marker prevents the
+document from opening BroadcastChannel or retaining inherited session storage; only its
+own launch fragment can establish a session. Without one, show terminal/bookmark guidance.
+Absent headers remain untagged for old-browser compatibility; those browsers lack this
+foreign-navigation protection. No client-provided assertion can override the marker.
 
-**Why:** Foreign new tabs must not inherit the dashboard session automatically (#444),
-including tabs opened from another loopback port. Definite failures must not leave a
-720-second unsettled mark (#447 I-6); unknown outcomes still need protection.
+**Why:** The private file launcher itself arrives cross-site (#444 B-1); refusing its
+shell prevents sign-in. A client marker is required to preserve launch exchange while
+preventing automatic token sharing. Definite signing failures clear only new unsettled
+marks, preserving earlier unknown outcomes across retries (#447 I-6 L-1). Non-dict signer
+status closes the new child before reporting unavailable (L-2).
 
-**Revert:** Remove the shell gate and restore the previous signer setup/error cleanup
-only if the navigation/session and unsettled-outcome policies are explicitly revised.
+**Revert:** Revisit the navigation/session and unsettled-outcome policies explicitly before
+removing these controls; do not restore the launcher-breaking shell refusal.

@@ -544,11 +544,12 @@ change asks you to type the word shown. Try "Sign in the terminal instead" (it c
 
 ### T3 security regression checks (#444 / #447 I-6)
 
-Run `tests/test_dashboard_http.py` and `tests/test_dashboard_click.py` in the dashboard
-server pytest environment. The HTTP tests adapt the foreign-new-tab PoC: with an existing
-session, a foreign deep link receives script-free HTML, while an explicit root-link click
-with same-origin metadata receives the shell. Both same-site and cross-site are refused;
-typed/bookmarked, same-origin and missing-header requests remain supported. Signing tests
-cover immediate retry after definite local/signer failures and retained marks for timeout,
-lost channel and unknown channel errors. These tests use in-process HTTP and scripted
-signers, with no listening ports or keychain access.
+Run the targeted dashboard HTTP, click and auth pytest files, plus bootstrap and foreign
+navigation vitests. Foreign shell loads must be 200 with the marker (including empty,
+duplicate and unknown site values); absent/none/same-origin loads remain untagged.
+The launcher's actual cross-site navigate/document headers plus its fragment code must
+produce a session through a subsequent same-origin auth exchange. A foreign PoC tab with
+no code has no server session and cannot join the token channel, even with inherited storage
+or token offers. Check the terminal/bookmark guidance. Untagged bootstrap behavior remains
+covered. Signing regressions cover uncertain-then-definite retries and non-dict status child
+cleanup. These checks use in-process HTTP, jsdom and fake signers: no ports, browser or keychain.

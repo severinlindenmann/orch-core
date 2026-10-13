@@ -210,7 +210,7 @@ def test_the_signer_completes_it_and_the_server_never_submits(ready, host_calls)
     # A second approval of the same gate generation is refused at prepare: "Already done".
     # The same action again is the same intent: the host returns the same request, now submitted ("Already done").
     again = post(client, token, stub, {"action": "approve", "key": "DEMO-0001", "gate": "requirements"})
-    assert again.status_code == 200 and again.json()["id"] == got["id"] and again.json()["state"] == "submitted"
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
     # "Do it again" is a new intent: the host refuses a second approval of the generation.
     repeat = post(client, token, stub, {"action": "approve", "key": "DEMO-0001", "gate": "requirements", "retry": 1})
     assert repeat.status_code == 409 and repeat.json()["error"]["code"] == "gate.already_approved"
@@ -545,8 +545,7 @@ def test_the_retried_request_is_the_one_the_signer_can_sign(ready, monkeypatch):
 
 
 def test_an_idem_conflict_at_the_host_is_an_open_attempt_and_prepares_nothing_more(ready, monkeypatch):
-    """The host binds an idem to the signer, the path and the session it was made in: another path (the terminal or
-    click) or a dashboard from before a restart gets `idem.conflict`. That is safe, and it is reported honestly."""
+    """A different path or signer binding conflicts; no open request means an explicit restart is available."""
     from orch_dashboard.errors import fail
 
     client, token, stub, rich, signing = ready
@@ -561,7 +560,7 @@ def test_an_idem_conflict_at_the_host_is_an_open_attempt_and_prepares_nothing_mo
 
     monkeypatch.setattr(HostLink, "call", conflict)
     res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"})
-    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.open"
+    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.blocked"
     assert len(calls) == 1 and signing.stub.requests.table == {}  # not retried with another key
     assert post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"}).status_code == 409
 
@@ -587,8 +586,9 @@ def test_a_retry_after_a_signature_answers_submitted(ready, monkeypatch):
     status, shown = signing.sign(signing.stub.requests.table[made]["code"])
     assert status == 0, shown
     again = post(client, token, stub, body)
-    assert again.status_code == 200 and again.json()["state"] == "submitted" and again.json()["id"] == made
-    assert again.json()["code"] is None or isinstance(again.json()["code"], str)
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
+    assert "hi" in again.json()["error"]["summary"]
+    assert again.json()["error"]["signed_at"] is None
 
 
 def test_expired_intent_requires_explicit_start_again(ready, monkeypatch, host_calls):

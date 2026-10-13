@@ -129,10 +129,14 @@ class HostCheck:
         self.mismatch = False
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
 
-    def human(self, ws, op, args):
-        if op == "human.get":
+    def human(self, ws, op, args, **kw):
+        if op in ("human.get", "human.prepare"):
             self.reads.append(args)
-            return {"op": "x"}
+            return {
+                "op": "log",
+                "request": {"id": REQ, "state": "submitted", "signed_at": "2026-10-13T15:20:00Z"},
+                "material": {"review": [{"type": "log.added", "payload": {"message": "host text"}}]},
+            }
         if op == "human.cancel":
             self.cancelled.append(args["request_id"])
             return {"state": "cancelled"}
@@ -1097,7 +1101,7 @@ def test_n15_an_idem_conflict_from_the_signer_is_an_open_attempt_not_a_second_re
     script.refuse["prepare"] = ClickError("idem.conflict", "bound to another session")
     res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
     err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "intent.open" and "already open" in err["message"]
+    assert res.status_code == 409 and err["code"] == "intent.blocked" and "no request is open" in err["message"]
     assert len([c for c in script.clients[0].calls if c[0] == "prepare"]) == 1  # not retried under another key
     assert script.prepared == 0
 
@@ -1188,3 +1192,23 @@ def test_flip_on_with_an_open_terminal_attempt_of_the_same_action_is_refused_wit
     assert other.status_code == 200
     host_check.listing[0]["state"] = "expired"
     assert client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token)).status_code == 200
+
+
+def test_submitted_sign_refusal_uses_host_record_warning(client, token, stub, script, host_check):
+    prepare(client, token, stub, comment(1))
+    script.refuse["sign"] = ClickError("human.request_state", "the request is submitted")
+    host_check.pending[REQ] = "submitted"
+    got = sign_lost(client, token, stub)
+    err = got.json()["error"]
+    assert err["code"] == "intent.done"
+    assert err["signed_at"] == "2026-10-13T15:20:00Z"
+    assert err["op"] == "log" and "host text" in err["summary"]
+
+
+def test_binding_conflict_with_open_request_keeps_expiry(client, token, stub, script, host_check):
+    script.refuse["prepare"] = ClickError("idem.conflict", "different device")
+    host_check.listing = [
+        {"id": REQ, "op": "log", "key": "DEMO-0001", "state": "bound", "expires_at": "2026-10-13T15:30:00Z"}
+    ]
+    got = prepare(client, token, stub, comment(1)).json()["error"]
+    assert got["code"] == "intent.open" and "15:30:00Z" in got["message"]

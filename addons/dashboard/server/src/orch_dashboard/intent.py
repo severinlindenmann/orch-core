@@ -9,8 +9,8 @@ click:
 
 `op` and `args` are exactly what this server sends to the host (built by the typed models' `host_call`; the browser's
 body is never hashed), `person` is the workspace's own person, and `base` is the state the action is based on: the
-gate's generation and hash for a gate action, the ticket's revision for another ticket action, the member's current
-role for a role change, else none. When the base moves, the action is a new one (legitimately another request).
+gate's generation and hash for a gate decision, the question's id and hash for an answer, else none.
+Unrelated agent edits never move the base.
 
 `retry` (an explicit click on "Do it again" or "Start again") is folded in only when nonzero, so the common intent
 hashes exactly as above. Host retention expiry (`idem.expired`) ends the attempt; it never renews it automatically.
@@ -48,13 +48,14 @@ def intent_idem(
     return "a_" + first + rest
 
 
-def ticket_revision(data: dict) -> str:
-    """The ticket's revision as `ticket.get` serves it: the host offers no head sequence there, so the revision is a
-    hash of the document (without the claim and waiting flags, which flap while agents work) and of every gate's
-    generation and hash. A write lands in one of these; an agent merely working does not move it."""
-    doc = {k: v for k, v in data.get("doc", {}).items() if k not in ("claim", "waiting")}
-    gates = {name: [g.get("gen"), g.get("hash")] for name, g in (data.get("gates") or {}).items()}
-    return hashlib.sha256(adapters.handoff.cj({"doc": doc, "status": data.get("status"), "gates": gates})).hexdigest()
+def question_base(data: dict, question: str) -> dict:
+    """Only the question's identity and content hash, never its answered flag or the rest of the ticket."""
+    q = next((q for q in data.get("questions", []) if q.get("id") == question), None)
+    if q is None or not q.get("hash"):
+        from .errors import fail
+
+        raise fail("not_found", "The host did not provide this question's version.", exit=2)
+    return {"id": question, "hash": q["hash"]}
 
 
 def gate_base(data: dict, gate: str) -> dict:

@@ -6,7 +6,8 @@ passed on unchanged: **this server never builds a preview for a click request, n
 credential, and never signs.** It also never calls the signer from an addon route: only these four handlers do.
 
 **One action intent -> at most one request -> at most one signature.** The idem handed to the signer's `prepare` is
-derived from the action (`intent.py`), not from the click or the session; the signer forwards it to `human.prepare`
+derived from canonical content plus only the gate/question version (`intent.py`), not the click or session;
+the signer forwards it to `human.prepare`
 and the host answers every tab, retry and re-login with the SAME request (or its terminal state). The records below are
 a convenience (which ids this dashboard prepared, what a View is checked against, a settling display), never the guard.
 
@@ -26,7 +27,7 @@ from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
-from .handoff import PrepareBody, RequestId, expected, plan, send_prepare
+from .handoff import PrepareBody, RequestId, done_error, expected, plan, read_done, send_prepare
 from .reads import workspace
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
@@ -175,7 +176,7 @@ def register(app: FastAPI, gateway: Gateway):
             return signer.call("prepare", sent)
 
         try:
-            got = send_prepare(planned, ws, body.retry, call)
+            got = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
         except HostError as exc:
             sweep()
             said = str(exc.error.get("message", "")) if exc.error["code"] == "human.request_state" else ""
@@ -184,17 +185,35 @@ def register(app: FastAPI, gateway: Gateway):
                 raise
             # The host returned this intent's request, and it has ended: say how, and offer an explicit new attempt.
             state = ended_as.group(1)
+            if state == "submitted":
+                # The signer drops the terminal request id. Replay the exact binding through our link to obtain
+                # the host record; opts.idem guarantees this cannot create another request.
+                device = signer.status().get(ws, {}).get("device")
+                if not device:
+                    raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
+                prepared = app.state.human(
+                    ws,
+                    "human.prepare",
+                    {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
+                    idem=planned.idem(ws, body.retry),
+                    files=files,
+                )
+                if prepared.get("request", {}).get("state") != "submitted":
+                    raise fail("internal", "The host did not return the submitted intent.")
+                raise read_done(human, ws, prepared["request"]["id"]) from None
+
             raise HostError(
                 {
-                    "code": "intent.done" if state == "submitted" else "intent.ended",
-                    "message": "This is already done." if state == "submitted" else f"The earlier attempt is {state}.",
+                    "code": "intent.ended",
+                    "message": f"The earlier attempt is {state}.",
                     "retryable": False,
                     "state": state,
                 },
                 exit=5,
             ) from None
-        sweep()  # this call may have started a new signer: the old one's orphans are cancelled now
         rid = got["request_id"]
+        clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
+        sweep()
         clicks.add(ws, rid, planned.op, body, signer.restarts)
         handoffs.own(planned.person, ws, rid, TTL)
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
@@ -293,6 +312,14 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
         except HostError as exc:
+            if exc.error.get("code") == "human.request_state":
+                rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
+                if len(rows) == 1 and rows[0].get("state") == "submitted":
+                    prepared = human(ws, "human.get", {"request_id": rid})
+                    handoffs.settled(rid)
+                    handoffs.settle_all(rid)
+                    clicks.forget(rid)
+                    raise done_error(prepared, rows[0]) from None
             if exc.error.get("reason") != "uncertain":
                 handoffs.settled(rid)  # a definite refusal: nothing is in flight; an uncertain one keeps its mark
             sweep()

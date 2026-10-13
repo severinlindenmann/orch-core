@@ -8,8 +8,8 @@ Every route has a typed model that forbids extras; the host op and its arguments
 never names an op, a path or a raw event.
 
 **One action intent -> at most one request.** `opts.idem` is derived here from the action itself (`intent.py`): the
-person, the workspace, the op and arguments exactly as sent to the host, and the state of the ticket the action is based
-on. The browser sends no key. Two tabs, a reopened dialog, a lost answer or a new login all send the same idem with the
+person, the workspace, the op and arguments exactly as sent to the host, and only the gate or question version.
+The browser sends no key. Two tabs, a reopened dialog, a lost answer or a new login all send the same idem with the
 same arguments, and the host (contract 0.7, section 0.8.1) answers each with the SAME request, or its terminal state.
 This process remembers nothing that the invariant depends on.
 """
@@ -28,7 +28,7 @@ from . import adapters
 from .errors import HostError, fail
 from .gateway import Gateway
 from .hostlink import _pairs, _valid
-from .intent import gate_base, intent_idem, ticket_revision
+from .intent import gate_base, intent_idem, question_base
 from .reads import Key, workspace
 from .text import clean as no_hidden
 
@@ -457,8 +457,7 @@ GATE_OF = {Approve: lambda a: a.gate, RequestChanges: lambda a: a.gate, Verdict:
 
 
 def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
-    """The op, arguments, files and base of an action, with the state it is based on read right now: the ticket
-    (`ticket.get`) for an action about one, the member's role for a role change; none for the rest."""
+    """Canonical host content, plus a gate or question version only; other actions have no base."""
     link = gateway.link(ws)
     key = getattr(body, "key", None)
     data = gateway.call(ws, "ticket.get", {"ref": key}) if key is not None else None
@@ -470,10 +469,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     base = None
     if data is not None:
         gate = GATE_OF.get(type(body))
-        base = gate_base(data, gate(body)) if gate else ticket_revision(data)
-    elif isinstance(body, MemberRole | MemberRemove):
-        members = gateway.call(ws, "member.list").get("members", [])
-        base = next((m.get("role") for m in members if m.get("person") == body.person), None)
+        if gate:
+            base = gate_base(data, gate(body))
+        elif isinstance(body, Answer):
+            base = question_base(data, body.question)
     return Plan(op, args, host_files(body), base, link.welcome["peer"]["person"])
 
 
@@ -483,21 +482,40 @@ CLICK_ONLY = (
 )
 
 
-def send_prepare(plan_: Plan, ws: str, retry: int, call):
+def send_prepare(plan_: Plan, ws: str, retry: int, call, pending=None):
     """Prepare once with the intent's idem. Retention expiry ends this attempt (`intent.expired`); only the
     person's explicit "Start again" advances `retry` and permits a fresh request.
 
-    `idem.conflict` means the host holds an attempt bound to another path, signer or session. Report it as
-    `intent.open` without preparing another request."""
+    `idem.conflict` means the host holds an attempt bound to another path or signer. Report it as
+    `intent.open` while a matching op+key is open, otherwise `intent.blocked`. Neither prepares another request."""
     try:
         return call(plan_.idem(ws, retry))
     except HostError as exc:
         code = exc.error.get("code")
         if code == "idem.conflict":
+            rows = pending().get("requests", []) if pending else None
+            open_ = next(
+                (
+                    r
+                    for r in rows or []
+                    if r.get("op") == plan_.op
+                    and r.get("key") == plan_.args.get("ref")
+                    and r.get("state") in ("prepared", "bound")
+                ),
+                None,
+            )
+            if open_ or rows is None:
+                raise fail(
+                    "intent.open",
+                    "An earlier attempt is still open; wait until it ends or expires at "
+                    + str((open_ or {}).get("expires_at", "the host"))
+                    + ".",
+                    exit=5,
+                ) from None
             raise fail(
-                "intent.open",
-                "An attempt for this action is already open (in the terminal, or from before this "
-                "dashboard restarted). It settles or expires by itself; nothing new was prepared.",
+                "intent.blocked",
+                "The earlier binding is retained for 24 h, but no request is open. "
+                "Start again only if you intend another attempt; an earlier one may have been signed.",
                 exit=5,
             ) from None
         if code == "idem.expired":
@@ -507,6 +525,37 @@ def send_prepare(plan_: Plan, ws: str, retry: int, call):
                 exit=5,
             ) from None
         raise
+
+
+def done_error(prepared: dict, row: dict | None = None) -> HostError:
+    """Prior signed content comes only from the host record. Older hosts do not expose signing time."""
+    info = prepared.get("request") or {}
+    row = row or {}
+    op = prepared.get("op") or row.get("op")
+    summary = json.dumps((prepared.get("material") or {}).get("review", []), ensure_ascii=False, sort_keys=True)
+    signed_at = info.get("signed_at") or row.get("signed_at")
+    return HostError(
+        {
+            "code": "intent.done",
+            "message": "This is already done.",
+            "retryable": False,
+            "state": "submitted",
+            "signed_at": signed_at,
+            "op": op,
+            "summary": summary,
+        },
+        exit=5,
+    )
+
+
+def read_done(human, ws: str, rid: str) -> HostError:
+    """Use the host's full request and terminal summary, including signing time when that host exposes it."""
+    prepared = human(ws, "human.get", {"request_id": rid})
+    rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
+    row = next((r for r in rows if r.get("id") == rid), {})
+    if prepared.get("request", {}).get("state") != "submitted":
+        raise fail("internal", "The host did not return the submitted request.")
+    return done_error(prepared, row)
 
 
 class Handoffs:
@@ -662,13 +711,16 @@ def register(app: FastAPI, gateway: Gateway):
                     files=planned.files,
                 )
 
-            prepared = send_prepare(planned, ws, body.retry, call)
+            prepared = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
             response = adapters.handoff.request(
                 prepared, ws, expect_op=op, expect_key=getattr(body, "key", None), expect_events=expected(body)
             )
         except BaseException:
             handoffs.release(token)
             raise
+        if response["state"] == "submitted":
+            handoffs.release(token)
+            raise read_done(human, ws, response["id"])
         handoffs.own(planned.person, ws, response["id"], TTL)
         if response["state"] in ("prepared", "bound"):
             handoffs.commit(token, ws, response["id"], until=handoffs.clock() + TTL)

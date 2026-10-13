@@ -23,7 +23,7 @@ from test_dashboard_click import (  # noqa: F401  # noqa: F401
     url,
 )
 
-from orch_dashboard.intent import gate_base, intent_idem, ticket_revision
+from orch_dashboard.intent import gate_base, intent_idem, question_base
 
 SHAPE = re.compile(r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 P, WS = "p_" + "1" * 32, "2" * 32
@@ -64,9 +64,10 @@ def test_bases():
         "status": "open",
         "gates": {"plan": {"gen": 2, "hash": "sha256:ab"}},
     }
-    flap = {**data, "doc": {**data["doc"], "claim": {"live": False}, "waiting": "x"}}
-    assert ticket_revision(data) == ticket_revision(flap)  # an agent working does not move the revision
-    assert ticket_revision(data) != ticket_revision({**data, "doc": {**data["doc"], "title": "u"}})
+    data["questions"] = [{"id": "Q2", "hash": "sha256:ab", "state": "open"}]
+    assert question_base(data, "Q2") == {"id": "Q2", "hash": "sha256:ab"}
+    data["questions"][0]["state"] = "answered"
+    assert question_base(data, "Q2") == {"id": "Q2", "hash": "sha256:ab"}
     assert gate_base(data, "plan") == {"gate": "plan", "gen": 2, "hash": "sha256:ab"}
     moved = {**data, "gates": {"plan": {"gen": 3, "hash": "sha256:cd"}}}
     assert gate_base(data, "plan") != gate_base(moved, "plan")
@@ -171,3 +172,86 @@ def test_send_prepare_expiry_does_not_renew_a_baseless_intent():
     assert calls == [plan.idem(WS)]
     assert send_prepare(plan, WS, 1, prepare) == "new request"
     assert calls == [plan.idem(WS), plan.idem(WS, retry=1)]
+
+
+@pytest.mark.parametrize("click", [True, False])
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"action": "comment", "message": "same comment"},
+        {"action": "label", "label": "new-label"},
+        {"action": "answer", "question": "Q2", "option": "csv"},
+    ],
+)
+def test_agent_edits_between_tabs_keep_one_request(client, token, stub, script, rich, auth, click, action):
+    env, _ = rich
+    script.enabled = click
+    body = {"key": "DEMO-0001", **action}
+    endpoint = url(stub, "prepare") if click else f"/api/w/{stub.ws}/handoff"
+    one = client.post(endpoint, json=body, headers=hdr(token))
+    assert one.status_code == 200, one.json()
+    uid = next(t.uid for t in env.store.state.tickets.values() if t.key == "DEMO-0001")
+    env.tick()
+    env.update(uid, body={"current_state": "agent working on T1"})
+    env.tick()
+    env.update(uid, {"ticket.priority": "low"})
+    two = client.post(endpoint, json=body, headers=hdr(other_session(client, auth)))
+    assert two.status_code == 200, two.json()
+    field = "request_id" if click else "id"
+    assert one.json()[field] == two.json()[field]
+    if click:
+        assert script.prepared == 1
+
+
+def test_reprepare_after_signer_restart_adopts_request_before_sweep(client, token, stub, script, gateway, host_check):
+    first = prepare(client, token, stub, comment(1)).json()
+
+    class Dead:
+        def poll(self):
+            return 1
+
+    script.clients[0].proc = Dead()
+    gateway.click.last_spawn -= 10
+    second = prepare(client, token, stub, comment(1))
+    assert second.status_code == 200, second.json()
+    assert second.json()["request_id"] == first["request_id"]
+    assert first["request_id"] not in host_check.cancelled
+    assert script.prepared == 1
+
+
+def test_new_dashboard_link_keeps_same_host_request_without_auth_session(
+    client, token, stub, script, gateway, rich, monkeypatch
+):
+    from conftest import ORIGIN, PORT
+    from fastapi.testclient import TestClient
+
+    from orch_dashboard.app import create_app
+    from orch_dashboard.auth import Auth
+    from orch_dashboard.hostlink import HostLink
+
+    sent = []
+    send = HostLink.send
+
+    def capture(self, frame):
+        sent.append(frame)
+        return send(self, frame)
+
+    monkeypatch.setattr(HostLink, "send", capture)
+    script.enabled = False
+    endpoint = f"/api/w/{stub.ws}/handoff"
+    one = client.post(endpoint, json=comment(1), headers=hdr(token))
+    assert one.status_code == 200
+    gateway.links.pop(stub.ws).close()
+    # A fresh app, authentication and all request tracking; only the host keeps the idem record.
+    auth = Auth()
+    restarted = TestClient(create_app(PORT, gateway, auth), base_url=ORIGIN)
+    try:
+        new_token = other_session(restarted, auth)
+        two = restarted.post(endpoint, json=comment(1), headers=hdr(new_token))
+        assert two.status_code == 200, two.json()
+        assert two.json()["id"] == one.json()["id"]
+        prepares = [f for f in sent if f.get("op") == "human.prepare"]
+        assert len(prepares) == 2
+        assert all("session" not in (f.get("auth") or {}) for f in prepares)
+    finally:
+        restarted.close()

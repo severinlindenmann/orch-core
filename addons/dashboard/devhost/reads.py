@@ -653,6 +653,7 @@ def get(host, store, views, args, person):
         answer = q.answer or {}
         item = {
             "id": q.id,
+            "hash": q.hash,
             "state": "answered" if q.answered else "open",
             "to": [p for p in q.addressees if can_see(v, p)] or _managers(ws, v),
             "blocking": q.blocking,

@@ -3028,18 +3028,17 @@ existing op changes its version.
     `human.click_refused` reasons `already_signed` (another `view_digest` for a signed request) and
     `record_unavailable` (the record cannot be written, or exists but cannot be read: fail closed). A repeated `sign`
     after a signer restart needs no new `prepare` or `view`. No host change and no wire change on the workspace socket.
+19. **One signing path per workspace (H5c follow-up, additive, owner decision of 12 Oct 2026):** new catalog code
+    `sign.click_only` (exit 3, not retryable). With click-to-sign on, `human.prepare {handoff:true}` is refused,
+    `orch host convenience on` is refused while hand-off requests are pending, and a hand-off request cannot be bound or
+    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock (2 s wait, then `host.busy`).
+    No wire schema change; a client that does not use `handoff:true` sees nothing new.
 20. **Claim before signing (follow-up to item 18, client-side only):** the click signer syncs a claim record
     (`view_digest`, op, idem, expiry, no events) before the crypto signing and replaces it with the completed record
     before the submit, so a crash or write failure between signing and recording can no longer lead to a second
     signature. A claim that never completed is refused as `record_unavailable` (`already_signed` for another
     `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
     released; a failure fails that request closed. No new reason, no wire change.
-
-19. **One signing path per workspace (H5c follow-up, additive, owner decision of 12 Oct 2026):** new catalog code
-    `sign.click_only` (exit 3, not retryable). With click-to-sign on, `human.prepare {handoff:true}` is refused,
-    `orch host convenience on` is refused while hand-off requests are pending, and a hand-off request cannot be bound or
-    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock (2 s wait, then `host.busy`).
-    No wire schema change; a client that does not use `handoff:true` sees nothing new.
 
 ---
 

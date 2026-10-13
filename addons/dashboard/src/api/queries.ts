@@ -14,7 +14,8 @@ export function addonStateKey(ws: string | undefined, name: string, ticket?: str
 }
 
 export const queries = {
-  me: () => queryOptions({ queryKey: ['me'], queryFn: api.getMe }),
+  /** Who the viewer is in `ws` (a person has a different id, name and role in each workspace); without `ws`, the first. */
+  me: (ws?: string) => queryOptions({ queryKey: ws ? ['me', ws] : ['me'], queryFn: () => api.getMe(ws) }),
   /** The workspaces whose host answers. One cache entry: `workspacesAll` reads the same one and keeps the others. */
   workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running }),
   workspacesAll: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),

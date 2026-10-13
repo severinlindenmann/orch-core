@@ -31,6 +31,7 @@ import { describePath, loadRecent, recordRecent, type RecentItem } from './recen
 import { toastApiError } from '@/app/toast'
 import { useCopyLink } from '../../copyLink'
 import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 type Mode = null | 'comment' | 'label' | 'move' | 'move-pick' | 'ask-to' | 'quick' | { ask: string }
 
@@ -64,7 +65,7 @@ export function CommandPalette() {
   const focusedCard = useRef<{ key: string; status: Status } | null>(null)
   const { data: addons = [] } = useAddons()
   const addonNav = useSlot('nav')
-  const { data: me } = useQuery(queries.me())
+  const { data: me } = useMe()
   const person = me?.person
   const role = useRole()
   const runAddon = useRunAddonAction(ticketKey)

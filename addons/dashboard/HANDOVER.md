@@ -858,10 +858,9 @@ branch, a remote, a one-line typed text, and checks device/auth/scope/grant-scop
 adapters is `internal`, not a 500. I-5: `PolicyBody.canonical` docstring. I-2: `idem.conflict` on a prepare shows "Changed since your first
 try" and "Start again" (new key on the click).
 
-**L4 limit (documented):** the host key is `a_` + hash(session token, workspace, browser idem). After a new login or a dashboard restart
-the token is unknown, so a kept key cannot be matched by the host. The browser drops it, prepares with a new key and says the earlier
-attempt may still be open until it expires on its own (10 minutes, 4 for a grant). Such an earlier request is not cancelled by logout
-and counts toward the host's 20 pending. "Never a second request" therefore holds within one session.
+**L4 historical limit (superseded by M5):** the intent now comes from canonical host content and gate/question
+version only. Neither the dashboard link nor the signer sends `auth.session`; a dashboard restart returns the same
+host request for the same intent. The old session-token-derived key no longer applies.
 
 Confirmation words (stream A decision): workspace `settings.set` = `<PREFIX>/SETTINGS`, `policy.set` = `<PREFIX>/POLICY` (prefix from
 the signer's own registry); the panel shows them and the stub signer asks for them. Real `orch sign` learns them with H6b. `member.add`:
@@ -907,11 +906,11 @@ Not changed, noted below (RH-6).
 | # | Gap | Effect here |
 |---|---|---|
 | RH-1 | `welcome.caps` lacks `human/1` although `human.prepare/get/submit/cancel/pending` are in `welcome.ops` (contract section 0.3 lists the cap) | Worked around (a listed human op counts); remove the exception when the cap is listed — **fixed in core #416** (welcome lists `human/1`); the exception stays harmless (bounded to `human.*` ops) and can go |
-| RH-2 | `diff/1` is listed but `diff` is not served (known: "H4a2 lists diff/1 for artifact.get before diff is served") | No Changes tab; 501 on `/changes`. The tab returns with the op |
+| RH-2 | `diff/1` is listed but `diff` is not served (known: "H4a2 lists diff/1 for artifact.get before diff is served") | **Fixed in core #417** (the host serves `diff`; the Changes tab and `/changes` work). Was: no Changes tab, 501 on `/changes` |
 | RH-3 | `human.prepare` with an `idem` for `move`, `policy.set` and `settings.set` raises `KeyError: unknown operation` in the host (`human.py _begin_idem` looks the op up in the ops registry, which does not hold the three host person ops): the caller sees 500 `internal` "Request handler failed". Without an idem the same prepare works and the real signer signs it | The dashboard always sends an idem, so Settings (grant length, policy) and Move cannot be prepared from the browser on this host. Strict xfails in `test_realhost.py` (`HOST_PERSON_OPS_IDEM`) flip when it is fixed. Direct prepares without an idem prove the rest — **fixed in core #416**: the realhost tests prepare settings, policy and move through the dashboard (xfails removed) |
 | RH-4 | No op changes a ticket's visibility (`visibility.changed` is a person event with no CLI or host op) | A hiding that purges a tab cannot be produced from a single person on a real host; covered with fakes in `test_live_updates.py` |
 | RH-5 | A host cannot stop one workspace: there is no per-workspace "stopped" state; a disabled addon is the nearest (`addon.disabled`), a stopped host takes everything | S13's "one host stopped" is exercised as addon disabled plus the whole host stopped |
-| RH-6 | `member.list` carries the same names the dashboard shows; the workspace `needs_you` count includes `no_eligible` notices | The switcher badge can differ from Today's count; counting only actionable kinds needs the kind list from the host |
+| RH-6 | `member.list` carries the same names the dashboard shows; the workspace `needs_you` count includes `no_eligible` notices | The switcher badge can differ from Today's count; counting only actionable kinds needs the kind list from the host | **Fixed (M5):** the server sums only `question` and `approve` items (viewer: 0), exactly Today's count; `no_eligible`, `acknowledge`, `addon` notices are excluded.
 | RH-7 | `orch task done` in host mode answers not_implemented (H3b2 #412) | Seeding done tasks happens before the host starts |
 | RH-8 | `workspace.show` has no `created_at`; the workspace name is the directory name | Shown empty |
 
@@ -920,3 +919,113 @@ workspace's git state and so shows a Changes tab; it has no `move`, no `workspac
 the real host cannot prepare with an idem (the stub accepts the idem), keeps requests in memory, signs with its own `devhost sign`, uses a
 registry that pins no name or prefix, and its `needs`/`ticket.query` snapshots are simulated. Treat the stub as a development adapter only:
 acceptance is the real-host suite and the Playwright scenarios in orch-dev-kit (`e2e/dashboard/`).
+
+## Click-to-sign (H5c, M5, 12 Oct)
+
+Owner decision of 12 Oct 2026 (coordination log "OWNER RE-PLAN P2", #264 comment 6121460551): in phase 1 the dashboard signs with one click.
+Source of truth is `docs/architecture/orch-v2-host.md` section 0.8.6; this is how the dashboard meets it.
+
+**Trust model.** The dashboard (this server and the browser) is trusted with signing authority; core's separate signer child holds the key
+(never this HTTP process, never the browser). Card text, also the first line of every sign panel, verbatim: "Convenience signing: agents
+running as you, or anything that takes over this dashboard, could sign."
+
+**Pieces.**
+- `server/src/orch_dashboard/click_signer.py`: one signer child per server (`orch.click.spawn.start()`), started on first use, restarted
+  if it exits (open approvals become terminal-only), stopped with the server (`ClickClient.close()`, which kills only that child's PID).
+  Refuses a signer whose `status.contract != 1` ("update orch-core"). The child gets our environment without `PYTHONPATH` and with
+  `ORCH_STATE_DIR` set to the registry this server reads. `ORCH_DASHBOARD_CLICK=off` never starts one (the tests use it).
+  Never run the dashboard with a `PYTHONPATH` pointing at another core: the child runs `python -I -m orch.click` from the dashboard
+  venv's own orch-core, and orch-core is a runtime dependency (`orch-core>=2.0.0.dev0`, editable path source).
+- `server/src/orch_dashboard/click.py`: the closed routes `POST /api/w/{ws}/click/{prepare,view,sign,cancel}` and `GET .../click/status`.
+  `prepare` takes the same typed actions as the hand-off (`PrepareBody`); the op is chosen server-side (`host_call`), the idem is the
+  action intent's (see "The invariant" below), files for `member_add`. `view`, `sign` and `cancel` work on requests the PERSON prepared in this
+  workspace, from any of their sessions (otherwise `not_found`). `view` passes the signer's View through unchanged (the server only checks that it names the
+  op it prepared). `sign` answers `{state, duplicate, key?, seq?}`, never the host's result. The open-request quota is one per session,
+  shared with the hand-off (reserve, commit, release under one lock). Views, words and credentials are never logged.
+  Only these handlers call the signer (a test greps for it); no addon path reaches `prepare`.
+- The per-workspace flag: `GET /api/workspaces` carries `click` (custody, enabled, available, problem) from the signer's `status`, and the
+  feature `click` when the flag is on and the signer can sign there. The UI offers Sign only then (`clickReady`).
+- UI: `HandoffDialog` (all signed actions) offers **Sign** only where click is on (no terminal button; flag on but the signer unable: an honest message, nothing prepared). An action with nothing to fill in no longer starts the terminal
+  request by itself when Sign is offered. `ClickSignPanel` shows ONLY the View: the risk line first, op, WS8 badge, prefix and name through
+  `visible()`, fingerprint, `lines` as text, checks with their time, artifacts, expiry; word ops show the View's word and a field (sent
+  exactly as typed). Sign is armed after 500 ms of visible presentation (the timer restarts on blur and when the page is hidden); a
+  press that began before it was armed, an auto-repeat and a bare script click are ignored; a new View resets everything. No URL or query
+  opens a panel. `api/click.ts` maps every code and reason of 0.8.6 to one honest message and one next step; a refusal never cancels, only
+  Cancel does (and closing after `uncertain` does not cancel either). The workspace card (Settings, General) shows the risk line when
+  the custody is `convenience`.
+- HTTP (item 7): CSP with `object-src 'none'`, `form-action 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, `X-Frame-Options: DENY`,
+  `nosniff`, `Referrer-Policy: no-referrer`, `no-store` on `/api` and `/auth`; exact Host and Origin, `null`/missing Origin refused on
+  mutations; `Sec-Fetch-Site` enforced when present on API calls; every POST is `application/json` and bounded (16 KiB on view, sign and
+  cancel); no CORS; the bearer only in tab memory and `sessionStorage`.
+
+**Tests.** `tests/test_dashboard_click.py` (faked channel: lifecycle, routes, error mapping, parity with the hand-off gates, the quota under
+concurrency), `tests/test_dashboard_http.py`, and `tests/test_realhost_click.py`: a REAL host and the REAL signer child. On macOS core's
+convenience store is the login keychain, so `tests/click_child.py` swaps core's documented test seam (`orch.custody.convenience.open_store`)
+for the 0600 file store of the disposable state; the keychain is never opened. The key is moved with the real
+`orch keys custody convenience` in a pty. Frontend: `components/sign/click-*.test.tsx`, `production/click.test.tsx`.
+
+**The invariant: one action intent -> at most one request -> at most one signature.** It is held by the HOST, not by this process:
+the host's `human.prepare` idem record (keyed by principal and idem, bound to op, args, signer, handoff, person, files and session) returns
+the same request, or its terminal state for 24 h, to every caller of the same idem; the signer child forwards the idem and signs a request
+once (its own `approval.result`/`signed` record, and the host refuses a second submit). The idem is derived in `server/src/orch_dashboard/intent.py`
+from the action (`person`, `workspace_id`, `op`, `args` exactly as sent, `base` = gate gen/hash for decisions, question id/hash for answers, null otherwise) and is the
+same for every tab, session and retry; the browser sends no key, only `retry`, which an explicit "Do it again" / "Start again" advances
+(`handoff.py` `plan()` and `send_prepare()`, used by both `click.py` and the hand-off route). Consequences, all tested: two tabs prepare one
+request; a lost answer or logout/login returns the same request; a landed action answers `intent.done` ("Already done"); cancelled/expired
+answers `intent.ended`; `idem.conflict` (other path or signer binding) becomes `intent.open` only while a matching request is open,
+otherwise `intent.blocked` offers explicit Start again; neither case automatically prepares;
+`idem.expired` becomes `intent.expired` (HTTP 409), with no new prepare; only an explicit "Start again" advances `retry`.
+Requests belong to the (person, workspace) (`Handoffs.owned`); any session of the person may view,
+sign, poll and cancel. **What stays in memory is convenience only:** which ids this dashboard prepared (ownership, lost on restart), the
+op/body a View is checked against, the per-session quota, and an `unsettled` set (a sign in flight or with an unknown outcome) that only
+stops this process from cancelling the request or replacing the signer under it and drives the "settling" UI (`POST /click/state` reads
+the host through our link). A sign whose answer is lost is retried through the signer (identical events, never a new signature);
+`already_signed` (signed with another View) and `record_unavailable` (the signer's record is unreadable, fail closed: use the terminal path)
+are mapped. A dashboard restart loses the in-memory parts and the session binding of the host's idem: a repeat prepare is then `intent.open`
+until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed. **One signing path per workspace** (owner decision
+12 Oct ~19:45 via orch-d6, coordination.md line 166, host side core #434): with the signer's flag ON the dashboard offers only Sign; `/handoff`
+prepares are refused (`sign.click_only`, `Gateway.one_path_is_click`), the dialog has no terminal button, and a signer that cannot sign
+(record_unavailable, no key) is an honest error naming `orch host convenience off --workspace W`, never a hand-off. Flag OFF: the terminal
+hand-off as before. The intent function is identical on both (no path offset). A click prepare first lists `human.pending` and refuses if a
+terminal hand-off (it has a code) of the same op and key is still open (`intent.open`, with its expiry); a flag flipped off ends open click
+requests (the signer refuses with `disabled`; the server cancels them).
+
+**Open points.** The rate limit (30 per minute) is mapped and unit tested, not provoked on the real signer. The server cannot show the
+prepared events of a click request (the signer holds them and validates them), so the hand-off's `expected()` event check is replaced by the
+signer's own checks and the op comparison on `view`.
+
+
+M5 final intent contract (owner decision 13 Oct ~17:20, refined by orch-d6; coordination.md 'M5 'same intent'' and 'M5 intent REFINED'):
+**one intent (op + content + gate/question version) → at most one request → at most one signature;
+a deliberate repeat only via 'Do it again'.** Content means the exact canonical host arguments and certificate bytes.
+Gate decisions use gate generation/hash; answers use question id/hash, never its answered flag or the whole ticket.
+All other ticket operations (log, set, section.set, close, reopen, move) and workspace operations
+(settings, policy, member, grant) have no base. Unrelated agent edits cannot produce a second request.
+The host retains the intent outcome for 24 h. Both panels show server-sourced signed content and signing time
+before 'Do it again' advances retry. Neither dashboard link nor signer sends `auth.session`: restarting the
+dashboard reconnects with the same binding and returns the same request, not `idem.conflict`.
+A conflict is checked against `human.pending`: prepared/bound requests of the same op+key show their expiry;
+otherwise `intent.blocked` offers explicit 'Start again', warning that an earlier request may have been signed.
+No automatic retry advances the intent. Hand-off expiry is decided by host state, never the browser clock.
+
+**Host API gap:** current `human.get`/`human.pending` expose creation/expiry but not signing time.
+The server returns `signed_at: null` and the panels say signing time is unavailable; they never call creation
+time signing time. A host `signed_at` field is required for accurate 'N min ago'. The submitted click prepare
+loses its request id in the signer error, so the server replays the identical host prepare binding/idem through
+its own link to retrieve the exact existing record, not an arbitrary op+key match. Its warning summary comes
+from that record's material review. `human.request_state` at sign reads pending/get before offering a repeat.
+
+**F4 merge prerequisite: host PR #434 must merge before M5.** The existing local fail-open behavior is unchanged:
+when signer status is unavailable, `one_path_is_click` can permit a hand-off even on a click-enabled workspace.
+Host #434 enforces one signing path and refuses unsafe flag changes. The dashboard's shared idem and op+key
+pre-check remain defence in depth; they are not a replacement for this host prerequisite.
+
+**Known limits after the final Opus re-check (13 Oct, all LOW, none can produce a second signature):**
+- N1: "Already done" is also shown when the state was reverted in between (role B→A→B, close→reopen→close). The
+  wording reads as if nothing changed since; "Do it again" is offered, so nothing is blocked. A future host
+  `submitted_at` (stream A follow-up to #434) lets the screen say when it was signed.
+- N5: a label add sends the full label set, so a concurrent label change in another tab is different content and
+  therefore a different intent (by the owner's definition). The host's `base_rev` on `ticket.updated` refuses the
+  stale one at commit.
+- F4: the server treats an unknown signer status as "click off" (fail-open for the path choice). Core #434 (merged)
+  enforces one path per workspace at the host, so a stray hand-off request can't be prepared there.

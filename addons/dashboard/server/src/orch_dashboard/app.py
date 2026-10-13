@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, handoff, reads, settings
+from . import adapters, click, handoff, reads, settings
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .gateway import Gateway
@@ -70,6 +70,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     def logout(request: Request):
         try:
             app.state.cancel_session(request.state.token)  # an open sign request is cancelled with its session
+            app.state.cancel_clicks(request.state.token)
         finally:
             auth.logout(request.state.token)  # the session ends even if a cancel failed
         return {"ok": True}
@@ -124,6 +125,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
 
     reads.register(app, gateway)
     handoff.register(app, gateway)
+    click.register(app, gateway)
     settings.register(app, gateway)
 
     @app.get("/{path:path}")

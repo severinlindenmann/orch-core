@@ -11,6 +11,7 @@ import { fmtDateTime, plural } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
 import { Raw } from '@/components/sign/visible'
+import { ClickRisk } from '@/components/sign/ClickSignPanel'
 import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
@@ -79,6 +80,19 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           )}
         </dl>
       </Section>
+
+      {workspace.click?.custody === 'convenience' && (
+        <Section title="Signing">
+          <div data-testid="workspace-card-signing" className="space-y-2">
+            <ClickRisk />
+            <p className="text-[13px] text-text-muted">
+              {workspace.click.enabled && workspace.click.available
+                ? 'Sign with one click is on for this workspace. "Sign in the terminal instead" stays in every dialog.'
+                : `Sign with one click is not available now${workspace.click.problem ? ` (${workspace.click.problem})` : ''}. Sign in the terminal.`}
+            </p>
+          </div>
+        </Section>
+      )}
 
       <Section title="Timing">
         {!data ? (

@@ -2,7 +2,6 @@
 // Sessions, ticket info and a menu — then the session browser when asked for, the terminal (core's TerminalView in
 // its dock placement) and its strip. The terminals addon's rules hold unchanged: TerminalView decides who may type.
 
-import { useQuery } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { List, MoreHorizontal, PanelBottomClose, PanelRightClose, SquareTerminal } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent, type MutableRefObject, type PointerEvent } from 'react'
@@ -24,7 +23,7 @@ import { DOCK_LIMITS, dockMax, type DockPrefs, type DockSide } from './prefs'
 import { SessionBrowser } from './SessionBrowser'
 import { SessionTabs, type DockWindow } from './SessionTabs'
 import { TicketInfo } from './TicketInfo'
-import { queries } from '@/api/queries'
+import { useMe } from '@/app/useMe'
 
 const STEP = 16
 const BIG_STEP = 64
@@ -72,7 +71,7 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
 }) {
   const { workspace } = useWorkspace()
   const router = useRouter()
-  const me = useQuery(queries.me())
+  const me = useMe()
   const { [DOCK_ADDON]: state } = useAddonStates(workspace?.id, [DOCK_ADDON])
   const inTicket = useRunAddonAction(ticket)
   const inWorkspace = useRunAddonAction()

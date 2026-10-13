@@ -173,11 +173,49 @@ def test_too_much_read_ahead_during_a_stalled_write_ends_with_overflow(rig, monk
     c, gen = writer(rig)
     rig.sup.stall = 10**9
     type_(c, gen, 1, b"stuck")
+    time.sleep(0.1)  # the write is stalled: what arrives now is read-ahead
     for _ in range(10):
         c.send({"t": "resize", "lease_gen": gen, "cols": 100, "rows": 30})
     assert c.drain()[-1] == {"t": "end", "reason": "overflow"}
     wait_until(lambda: "att1" not in rig.listener.attachments)
     assert rig.sup.typed == b"" and rig.sup.sizes == []
+
+
+def _burst(n: int, gen: int) -> bytes:
+    """``n`` small resize frames in one ``sendall`` (one or a few ``recv`` at the runner), each a new size."""
+    return b"".join(frames.encode({"t": "resize", "lease_gen": gen, "cols": 100 + i % 2, "rows": 30}) for i in range(n))
+
+
+def test_a_coalesced_burst_of_small_frames_never_ends_a_healthy_attachment(rig):
+    """PR #443 delta D3: more than INBOX_MAX frames in one read, nothing stalled: handled one by one, no overflow."""
+    c, gen = writer(rig)
+    n = term.INBOX_MAX + 6
+    c.sock.sendall(_burst(n, gen))
+    type_(c, gen, 1, b"after")
+    assert c.until("ack")["input_id"] == 1
+    assert "att1" in rig.listener.attachments
+    assert len(rig.sup.sizes) == n and rig.sup.typed == b"after"
+
+
+def test_a_coalesced_burst_during_a_stalled_write_ends_with_overflow(rig):
+    c, gen = writer(rig)
+    rig.sup.stall = 10**9
+    type_(c, gen, 1, b"stuck")
+    time.sleep(0.1)  # the write is stalled: what arrives now is read-ahead
+    c.sock.sendall(_burst(term.INBOX_MAX + 6, gen))
+    assert c.drain()[-1] == {"t": "end", "reason": "overflow"}
+    assert rig.sup.typed == b"" and rig.sup.sizes == []
+
+
+def test_an_overflow_releases_the_write_lease_at_once(rig, monkeypatch):
+    c, gen = writer(rig)
+    v = rig.attach("v1")
+    att = rig.listener.attachments["att1"]
+    monkeypatch.setattr(rig.listener, "_finish", lambda a, reason: None)  # the end and the drop do not happen here
+    rig.listener._overflow(att)
+    assert rig.listener.leases[RUN][0] is None and att.writer is False
+    assert "att1" in rig.listener.attachments  # still registered: released before the drop, not by it
+    assert v.until("writer")["writer"] is False
 
 
 # -- Codex 4: separate read and write deadlines on one non-blocking socket ------------------------------------------
@@ -330,3 +368,38 @@ def _raw(value) -> bytes:
 
     body = json.dumps(value).encode()
     return len(body).to_bytes(4, "big") + body
+
+
+def test_the_client_raises_term_ended_on_send_after_a_protocol_error():
+    from orch.runner.termclient import TermEnded
+
+    ours, theirs = socket.socketpair()
+    try:
+        t = TermClient("/nonexistent", {"lease_gen": 0})
+        t.sock, t.writer = ours, True
+        theirs.sendall(frames.encode({"t": "ack"}))
+        assert t.recv(2) is None and t.ended == "protocol"
+        with pytest.raises(TermEnded):
+            t.resize(100, 30)
+        with pytest.raises(TermEnded):
+            t.send({"t": "resize", "lease_gen": 0, "cols": 100, "rows": 30})
+        assert t.send_input(b"x") == [1]  # queued, never sent (and reported as lost)
+        assert t.lost == [1]
+    finally:
+        theirs.close()
+        ours.close()
+
+
+def test_a_stream_cut_mid_frame_ends_the_client_with_closed():
+    """A revocation that cuts an output frame short: the runner shuts the socket (the frame cannot be completed
+    without more of the revoked output, and nothing can follow a partial frame). The client ends with ``closed``."""
+    ours, theirs = socket.socketpair()
+    try:
+        t = TermClient("/nonexistent", {"lease_gen": 0})
+        t.sock = ours
+        theirs.sendall(frames.encode({"t": "out", "off": 0, "b64": "c2VjcmV0"})[:7])
+        theirs.close()
+        assert t.recv(2) is None
+        assert t.ended == "closed"
+    finally:
+        ours.close()

@@ -11,8 +11,9 @@ attachment, and ``lease_gen`` follows the ``ready`` and ``writer`` frames. **One
 the next is sent only after the ``ack`` of the one before, so frames reach the PTY in order and none can be skipped. A
 ``throttle`` makes :meth:`pump` resend the same frame with the same ``input_id`` after ``retry_ms``; input that was
 never acknowledged when the stream ends is reported by :attr:`lost` (it is never replayed on a new attachment). A
-runner frame of the wrong shape ends the stream with ``protocol`` (its content is never put into an exception).
-Terminal bytes are never logged here.
+runner frame of the wrong shape ends the stream with ``protocol`` (its content is never put into an exception); a
+stream that closes without an ``end`` frame ends with ``closed``. ``send``/``resize`` after the end raise
+:class:`TermEnded`. Terminal bytes are never logged here.
 """
 
 from __future__ import annotations
@@ -36,6 +37,11 @@ CHUNK = 64 * 1024
 
 class RunnerChanged(Exception):
     """The runner is not the one the host named (§12.6.1): nothing was sent."""
+
+
+class TermEnded(ConnectionError):
+    """``send``/``resize`` on a stream that already ended (``ended`` says why: an ``end`` reason, ``protocol`` or
+    ``closed``)."""
 
 
 class TermClient:
@@ -105,12 +111,17 @@ class TermClient:
 
     # -- frames
     def send(self, frame: dict[str, Any]) -> None:
-        assert self.sock is not None
+        if self.sock is None:
+            raise TermEnded(f"the terminal stream ended ({self.ended or 'closed'})")
         self.sock.sendall(frames.encode(frame))
 
     def recv(self, timeout: float | None = None) -> dict[str, Any] | None:
-        """The next frame (state updated), ``None`` at the end of the stream; ``TimeoutError`` when none arrives."""
-        assert self.sock is not None
+        """The next frame (state updated), ``None`` at the end of the stream; ``TimeoutError`` when none arrives. A
+        stream that closes without an ``end`` frame (the runner shut it, e.g. after a revocation cut an output frame
+        short, which cannot be completed without more of the revoked output) ends with ``closed``."""
+        if self.sock is None:
+            self.ended = self.ended or "closed"
+            return None
         deadline = None if timeout is None else time.monotonic() + timeout
         while not self.buf:
             if deadline is not None and deadline - time.monotonic() <= 0:
@@ -121,8 +132,10 @@ class TermClient:
             except TimeoutError:
                 raise
             except OSError:
+                self.ended = self.ended or "closed"
                 return None
             if not data:
+                self.ended = self.ended or "closed"
                 return None
             self.buf.extend(self.decoder.feed(data))
         frame = self.buf.pop(0)

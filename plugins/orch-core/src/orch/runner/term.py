@@ -497,10 +497,17 @@ class TermListener:
 
     def _overflow(self, att: Attachment) -> None:
         """Too much waits for a viewer that does not read: the attachment is revoked (nothing more is authorized) and
-        ends with ``overflow`` (its queued frames are discarded; the socket is shut after the grace)."""
+        ends with ``overflow`` (its queued frames are discarded; the socket is shut after the grace). Its write lease
+        is released at once, not only when the connection is dropped after the grace."""
         with self.lock:  # never called with the lock held
             att.revoked = True
+            held = self.leases.get(att.run, (None, 0))[0] == att.att
+            notes = self._release(att)
             att.writer = False
+        for other, note in notes:
+            self._queue(other, note)
+        if held:
+            self._changed(att.run)
         if att.ending:
             return
         att.ctl.clear()
@@ -750,10 +757,13 @@ class TermListener:
                     return
             self._read_some(att, WAKE)
 
-    def _read_some(self, att: Attachment, wait: float) -> bool:
+    def _read_some(self, att: Attachment, wait: float, limit: int | None = None) -> bool:
         """Wait up to ``wait`` for the socket to be readable and read what is there into ``att.inbox``. ``False`` (and
-        ``stop_reading``) when the peer closed, the socket failed or too much was read ahead (``overflow``). There is
-        no read deadline: a viewer that sends nothing stays attached."""
+        ``stop_reading``) when the peer closed or the socket failed. ``limit`` (only the read-ahead while a PTY write
+        waits, :meth:`_write_all`): more frames than that in the inbox revoke the attachment (``overflow``). An
+        ordinary read has no frame cap: :meth:`_serve` handles the frames of one ``recv`` one by one before it reads
+        again, so a burst of small frames (a coalesced run of resizes) never ends a healthy attachment. There is no
+        read deadline: a viewer that sends nothing stays attached."""
         conn = att.conn
         try:
             readable, _, _ = select.select([conn], [], [], wait)
@@ -769,7 +779,7 @@ class TermListener:
             att.stop_reading = True
             return False
         att.inbox.extend(att.decoder.feed(data))
-        if len(att.inbox) > INBOX_MAX:
+        if limit is not None and len(att.inbox) > limit:
             att.stop_reading = True
             self._overflow(att)
             return False
@@ -864,6 +874,7 @@ class TermListener:
         from .supervise import SpawnError
 
         view = memoryview(data)
+        ahead = len(att.inbox) + INBOX_MAX  # the frames already read are not read-ahead of this write
         while view:
             if att.closed or att.stop_reading:
                 return False
@@ -877,7 +888,7 @@ class TermListener:
             if n == 0:
                 # the PTY's input queue is full (the program is not reading yet): meanwhile watch the socket, so a
                 # viewer that disconnects cancels this write at once (frames that arrive are handled after it)
-                if not self._read_some(att, 0.005):
+                if not self._read_some(att, 0.005, ahead):
                     return False
                 continue
             view = view[n:]

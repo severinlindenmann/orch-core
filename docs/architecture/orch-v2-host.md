@@ -5449,7 +5449,9 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   action it must also hold the lease at the generation the frame names. The output `send`, the PTY write and the resize
   run non-blocking *inside* the check, under the lock that `attach.end`, `end_run`, `host_lost`, a new epoch and an
   overflow take to revoke, so no output byte leaves and no input byte or resize is applied after a revocation. An output
-  frame that a revocation cuts short is never completed (the socket is shut without another byte). There is no
+  frame that a revocation cuts short is never completed (the socket is shut without another byte). That client gets
+  no `end` reason: the frame's length prefix already commits to the revoked bytes, so nothing can follow it;
+  `TermClient` reports such a stream as ended `closed` (the page shows "ended"). There is no
   in-place downgrade: a lease moves only by a take or by the holder's close. A revoked attachment is ended by whoever
   notices first (`end` with the reason, queued output discarded); a lease that only moved gives `writer:false` and
   keeps the viewer. An `attach.cancel`/`attach.end` that
@@ -5489,7 +5491,9 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   burst 5; 30 `term.attach` mints per minute per person, burst 10). The runner's connection cap is 96 (64 attachments
   plus handshakes); at most 256 capabilities wait to be presented (`attach.allow` beyond: `attach.limit`). Per
   attachment the runner queues at most 4 096 control frames and reads ahead at most 64 frames while a PTY write waits
-  for room; beyond either the attachment is revoked and ends with `overflow`.
+  for room; beyond either the attachment is revoked, its write lease is released at once, and it ends with
+  `overflow`. Outside a stalled write there is no frame cap: the frames of one read are handled one by one before the
+  next read, so a coalesced burst of small frames (resizes during a window drag) never ends a healthy attachment.
 - **Term socket I/O.** The socket is non-blocking once the attachment exists, with separate deadlines: the sender
   gives up after 30 s without write progress, the reader has no deadline (an idle viewer stays attached). While a PTY
   write waits for room the reader keeps watching the socket, so a disconnect cancels the pending write and releases the
@@ -5504,7 +5508,8 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - **Client.** `orch.runner.termclient.TermClient` does the §12.6.1 checks before a ticket is sent (path computed from
   the client's own run directory, directory owner and mode, peer UID and PID, `hello.gen`), owns `input_id` and
   `lease_gen`, keeps one input frame in flight, resends on `throttle` with the same id and reports unacknowledged ids
-  as `lost`. A runner frame of the wrong shape ends the stream with `protocol`.
+  as `lost`. A runner frame of the wrong shape ends the stream with `protocol`; a stream that closes without `end`
+  ends with `closed`; `send`/`resize` after the end raise `TermEnded`.
 - **Terminals addon.** `addons/terminals/orch-addon.json` (capability `pty`, no fields); the host requires it granted
   and enabled. `orch runner terminals on|off --workspace W`: `on` needs the person's own terminal and the prefix (never
   under `ORCH_GRANT`), `off` needs none; both only with dashboard execution already on.

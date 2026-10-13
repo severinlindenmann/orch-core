@@ -52,15 +52,32 @@ class MemLedger:
 
 
 class Holder:
-    def __init__(self, gen: int | None = None):
-        self.gen, self.saved = gen, []
+    """An in-memory :class:`orch.relay.state.HolderStore`. ``Holder()`` never held; ``Holder(gen=g)`` was the last
+    holder at ``g`` under this instance id. ``saved`` lists the saved gens, ``records`` the saved records."""
+
+    def __init__(self, gen=None, *, last_holder=True, instance_id=None, pending=None, iid="0" * 32):
+        from orch.relay.state import HolderRecord
+
+        self.iid = iid
+        self.rec = (
+            None if gen is None and pending is None else HolderRecord(last_holder, gen, instance_id or iid, pending)
+        )
+        self.saved, self.records = [], []
+
+    @property
+    def gen(self):
+        return None if self.rec is None else self.rec.gen
+
+    def instance_id(self):
+        return self.iid
 
     def load(self):
-        return self.gen
+        return self.rec
 
-    def save(self, gen):
-        self.gen = gen
-        self.saved.append(gen)
+    def save(self, rec):
+        self.rec = rec
+        self.records.append(rec)
+        self.saved.append(rec.gen)
 
 
 class Alarms(list):

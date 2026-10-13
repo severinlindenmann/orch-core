@@ -274,7 +274,7 @@ def test_second_host_takes_over_and_the_first_is_fenced(env):
     a, clock = new(m, sim, holder=Holder(), alarms=alarms_a)
     assert a.hold().gen == 1
     b, _ = new(m, sim, holder=Holder(gen=1), clock=clock)
-    assert b.hold(take_over=True).gen == 2
+    assert b.operator_takeover().gen == 2
     with pytest.raises(Fenced):
         directory(a).put_card(make_card(m.origin(), card_seq=2), first=False)
     assert alarms_a.codes() == ["fenced"] and a.fenced
@@ -295,9 +295,8 @@ def test_holder_conflict_waits_and_then_holds(env):
     assert 40.0 in clock.slept
 
 
-def test_restart_after_the_lease_ran_out_is_fenced(env):
-    """11A.5 as specified: a restart renews with the stored generation; past the lease the relay answers fenced and
-    the worker stops until an explicit takeover (see the R1 report: an ambiguity for orch-52)."""
+def test_restart_after_the_lease_ran_out_takes_over_at_g_plus_1(env):
+    """orch-52's restart rule (13 Oct 2026): renew fenced, (a) and (b) hold, probe {gen:null} returns stored+1."""
     m, sim = env
     seed_card(m, sim)
     h = Holder()
@@ -306,10 +305,8 @@ def test_restart_after_the_lease_ran_out_is_fenced(env):
     clock.advance(41)
     alarms = Alarms()
     restarted, _ = new(m, sim, holder=h, alarms=alarms, clock=clock)
-    with pytest.raises(Fenced):
-        restarted.hold()
-    assert alarms.codes() == ["fenced"]
-    assert restarted.hold(take_over=True).gen == 2
+    assert restarted.hold().gen == 2
+    assert alarms == [] and h.rec.pending is None and h.rec.gen == 2
 
 
 # --- first link -----------------------------------------------------------------------------------------------------
@@ -414,7 +411,7 @@ def test_fenced_mid_publication_stops_the_link(env):
 
     def publish(session, d):
         o, _ = new(m, sim, holder=Holder(gen=session.gen), clock=other["clock"])
-        o.hold(take_over=True)  # a second host instance takes over mid-publication
+        o.operator_takeover()  # a second host instance takes over mid-publication
         d.put_card(make_card(m.origin(), card_seq=2), first=False)  # the next W(g) write
 
     alarms = Alarms()

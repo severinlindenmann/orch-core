@@ -335,6 +335,7 @@ def test_shutdown_after_the_socket_was_freed_never_hits_a_reused_fd(relay):
     import socket
 
     c = conn(relay)
+    c._deadline = time.monotonic() + 5  # as a call sets it
     sock = c._socket(("127.0.0.1", relay.port), 5)
     sock.close()  # freed by http.client
     a, b = socket.socketpair()

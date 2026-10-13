@@ -156,17 +156,24 @@ def test_hold_renew_fixture(relay):
 def test_explicit_takeover_fixture(relay):
     relay.expect(*login_expects(), fixture_expect("host_hold", "explicit_takeover"))
     h = Holder(gen=1)
-    assert sess(relay, holder=h).hold(take_over=True).gen == 2
+    assert sess(relay, holder=h).operator_takeover().gen == 2
     assert h.saved == [2]
 
 
-def test_hold_fenced_fixture_alarms_and_stops_writes(relay):
-    relay.expect(*login_expects(), fixture_expect("host_hold", "refusal_409_fenced"))
+def test_running_renewal_fenced_alarms_and_stops_writes(relay):
+    """While running, a renewal answered ``fenced`` stops the worker (the restart rule applies only at start)."""
+    relay.expect(
+        *login_expects(),
+        fixture_expect("host_hold", "success"),
+        fixture_expect("host_hold", "refusal_409_fenced", body=None),
+    )
     alarms = Alarms()
-    s = sess(relay, holder=Holder(gen=0), alarms=alarms)
+    h = Holder()
+    s = sess(relay, holder=h, alarms=alarms)
+    assert s.hold().gen == 1
     with pytest.raises(Fenced):
         s.hold()
-    assert alarms.codes() == ["fenced"] and s.fenced
+    assert alarms.codes() == ["fenced"] and s.fenced and h.saved == [1]
     n = len(relay.seen)
     with pytest.raises(Fenced):
         s.call("PUT", f"/v2/workspaces/{WS}/card", "R", body={}, holder=True)

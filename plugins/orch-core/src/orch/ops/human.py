@@ -212,6 +212,39 @@ class Human:
             raise OrchError("invalid.input", f"the {gate} gate cannot be hashed right now (see orch show)")
         return {"gate_gen": g.gen, "hash": g.hash, "policy_hash": g.policy_hash}
 
+    def _direct_registrations(self, git: Any) -> Any:
+        """Direct mode (D-P2-38): ``git`` with the workspace's worktree registrations (``git-pins.json`` next to the
+        host's state of this workspace, written by ``orch worktree``), when the file exists."""
+        import dataclasses
+
+        from orch.gitread.client import PinStore
+
+        path = self.call.ws.state_dir / "hosts" / self.store.workspace_id / "git-pins.json"
+        if not path.exists():
+            return git
+        return dataclasses.replace(git, worktrees=PinStore(path))
+
+    def _direct_binding(self, git: Any, view: Any, name: str, copy: Any) -> str | None:
+        """Direct mode (D58, D-P2-38): the first look records the working copy's binding (generation, registration,
+        pin); every later look (the precommit, under the workspace lock) must find the same one, so a worktree removed
+        or recreated while the person was deciding is refused, never read in its new or the declared place. Without a
+        pin file, a worktree directory on disk at the ticket's path is refused too (Opus #439 F3): the file was
+        deleted, or the worktree was made by hand."""
+        binding = copy.binding(view.uid, name)
+        bound: dict[str, Any] = self.__dict__.setdefault("_direct_bound", {})
+        key = (view.uid, name)
+        if key in bound and bound[key] != binding:
+            return f"{name}: the ticket's worktree registration changed while you were deciding; look again"
+        bound.setdefault(key, binding)
+        if git.worktrees is None and not copy.registered:
+            from orch.host.worktrees import worktree_path
+
+            declared = git.repo_path(self.store.root, self.store.state.workspace.repos, name)
+            if declared is not None and os.path.lexists(worktree_path(os.fspath(declared), self.store.workspace_id,
+                                                                      view.key)):  # fmt: skip
+                return f"{name}: the ticket has a worktree on disk but no registration (git-pins.json is missing)"
+        return None
+
     def _tree_problems(self, view: Any, signed: list[dict[str, str]]) -> list[str]:
         """Read-only: for each linked repository with a branch, is the working copy **on the bound branch, at the bound
         commit, with nothing uncommitted**? The decision binds a commit; a person who ran or read the files must have
@@ -223,15 +256,57 @@ class Human:
             branch = links["branches"].get(name)
             if not branch:
                 continue
-            path = self.ctx.caps.git.repo_path(self.store.root, self.store.state.workspace.repos, name)
-            if path is None or not path.is_dir():
-                out.append(f"{name}: no working copy in settings.repos")
-                continue
-            ref = f"refs/heads/{branch}"
             git = self.ctx.caps.git
             if not git.enabled:  # git denied (an unreadable pin file in host mode): refused, never an internal error
                 out.append(f"{name}: git cannot be read here")
                 continue
+            # H11d: the ticket's registered worktree when it has one (never a fallback), else the declared copy
+            if git.reader is None and git.worktrees is None:  # direct mode: the registrations `orch worktree` wrote
+                try:
+                    git = self._direct_registrations(git)
+                except (ValueError, OSError) as exc:  # a pin file that cannot be read: fail closed
+                    out.append(f"{name}: the worktree registrations cannot be read ({exc})")
+                    continue
+            copy = git.ticket_copy(self.store.root, self.store.state.workspace.repos, view.uid, name)
+            path = copy.path
+            if self.ctx.prepare is None and git.reader is None:
+                # direct mode (Codex #439): the copy the person was shown is the one the precommit reads
+                problem = self._direct_binding(git, view, name, copy)
+                if problem is not None:
+                    out.append(problem)
+                    continue
+            if copy.why is not None:
+                out.append(copy.why)
+                continue
+            if path is None or not path.is_dir():
+                where = "the ticket's worktree is missing" if copy.registered else "no working copy in settings.repos"
+                out.append(f"{name}: {where}")
+                continue
+            if copy.registered and git.reader is None:  # direct mode: the pin must still hold (host mode: bound_copy)
+                from orch.gitread.errors import Unavailable
+                from orch.gitread.fs import RepoPins
+                from orch.gitread.pinning import verify_worktree_pins
+
+                reg = git.worktrees.worktree(view.uid, name)["reg"] if git.worktrees is not None else None
+                try:
+                    if reg is None or reg.get("pins") is None:
+                        raise Unavailable("the worktree registration has no pins")
+                    verify_worktree_pins(os.fspath(path), RepoPins.from_json(reg["pins"]))
+                except Unavailable as exc:
+                    out.append(f"{name}: {exc.reason}"[:300])
+                    continue
+                from orch import gitsafe
+
+                try:  # the invariant of orch.gitsafe before P1's git reads the registered worktree
+                    gitsafe.gate(os.fspath(path), self.ctx.caps.env)
+                    # a populated submodule (Codex #439): its own config is not gated and status would hide or run it
+                    gitsafe.submodules(os.fspath(path), self.ctx.caps.env)
+                except gitsafe.Unsafe as exc:
+                    out.append(f"{name}: {exc.reason}"[:300])
+                    continue
+            if self.ctx.prepare is not None:
+                self.ctx.prepare.copies.append(copy.binding(view.uid, name))
+            ref = f"refs/heads/{branch}"
             head = git.head(path)
             on = git.symbolic_head(path)
             identity = git.identity(path, name)

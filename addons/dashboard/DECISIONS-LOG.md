@@ -1494,3 +1494,4 @@ status closes the new child before reporting unavailable (L-2).
 
 **Revert:** Revisit the navigation/session and unsettled-outcome policies explicitly before
 removing these controls; do not restore the launcher-breaking shell refusal.
+- 2026-10-13 — **Decision:** show host submitted_at only for committed pending rows (seq present); failed submissions require Start again; preserve host fixes and retry lock.busy. **Why:** submission time alone is not proof of a logged signature (#437). **Revert:** remove this dashboard mapping if the host outcome contract changes.

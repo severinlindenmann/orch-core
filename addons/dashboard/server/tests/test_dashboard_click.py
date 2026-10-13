@@ -139,7 +139,7 @@ class HostCheck:
             self.reads.append(args)
             return {
                 "op": "log",
-                "request": {"id": REQ, "state": "submitted", "signed_at": "2026-10-13T15:20:00Z"},
+                "request": {"id": REQ, "state": "submitted", "submitted_at": "2026-10-13T15:20:00Z"},
                 "material": {"review": [{"type": "log.added", "payload": {"message": "host text"}}]},
             }
         if op == "human.cancel":
@@ -148,7 +148,11 @@ class HostCheck:
         if op == "human.pending":
             if "request_id" not in args:
                 return {"requests": list(self.listing)}
-            return {"requests": [{"id": args["request_id"], "state": self.pending.get(args["request_id"], "bound")}]}
+            return {
+                "requests": [
+                    {"id": args["request_id"], "state": self.pending.get(args["request_id"], "bound"), "seq": 7}
+                ]
+            }
         raise AssertionError(op)
 
     def request(self, prepared, ws, **kw):
@@ -371,6 +375,7 @@ def test_logout_cancels_what_the_session_left_open(client, token, stub, script):
         (ClickError("sign.convenience_unavailable", "other_member: x", reason="other_member"), 409),
         (ClickError("sign.convenience_readers", "update the readers: relay"), 409),
         (ClickError("rate.limited", "slow down", retry_after_ms=4200, retryable=True), 503),
+        (ClickError("lock.busy", "busy, try again shortly", retryable=True), 503),
         (ClickError("custody.no_key", "no key"), 409),
         (ClickError("custody.unavailable", "locked"), 409),
         (ClickError("host.version_mismatch", "differs"), 501),
@@ -392,6 +397,8 @@ def test_every_refusal_keeps_its_code_reason_and_wait(client, token, stub, scrip
     got = res.json()["error"]
     assert got["code"] == error.code and got.get("reason") == error.reason
     assert got.get("retry_after_ms") == error.retry_after_ms
+    if error.code == "lock.busy":
+        assert res.json()["exit"] == 9 and got["retryable"] is True
     # A refusal never cancels: the request stays this session's, to try again or to cancel itself. (One that can
     # never be signed again, because it ended, is forgotten and frees its quota slot.)
     ended = (error.reason or error.code) in {
@@ -1319,3 +1326,29 @@ def test_non_dict_status_closes_new_signer(gateway, monkeypatch, status):
     assert exc.value.error["code"] == "click.unavailable"
     assert child.closed and gateway.click.client is None
     assert [op for op, _ in child.calls] == ["status"]
+
+
+def test_failed_submit_state_never_reports_signed(client, token, stub, script, host_check, monkeypatch):
+    prepare(client, token, stub)
+    original = host_check.human
+
+    def failed(ws, op, args, **kw):
+        if op == "human.pending" and "request_id" in args:
+            return {
+                "requests": [
+                    {
+                        "id": REQ,
+                        "state": "submitted",
+                        "seq": None,
+                        "submitted_at": "2026-10-13T15:20:00Z",
+                        "error": {"code": "gate.stale"},
+                    }
+                ]
+            }
+        return original(ws, op, args, **kw)
+
+    monkeypatch.setattr(client.app.state, "human", failed)
+    response = client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token))
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "intent.failed"
+    assert response.json()["error"]["reason"] == "gate.stale"

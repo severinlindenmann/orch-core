@@ -80,12 +80,13 @@ class Plan:
 
 
 def run_dir_for(state: Path, given: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
-    """The run directory of a tier-A host: ``--run``, else ``ORCH_HOST_RUN_DIR`` (dev, tests), else ``<state>/run``."""
+    """The run directory of a tier-A host: ``--run``, else ``ORCH_HOST_RUN_DIR`` (dev, tests), else ``<state>/run``;
+    always absolute, so a unit file never carries a path relative to the directory ``enable`` ran in."""
     if given is not None:
-        return Path(given)
+        return Path(given).absolute()
     if env and env.get("ORCH_HOST_RUN_DIR"):
-        return Path(env["ORCH_HOST_RUN_DIR"])
-    return Path(state) / "run"
+        return Path(env["ORCH_HOST_RUN_DIR"]).absolute()
+    return (Path(state) / "run").absolute()
 
 
 def plan(
@@ -166,9 +167,27 @@ def differences(unit: Plan) -> list[str] | None:
     return [k for k in ("python", "state", "run") if old[k] != new[k]]
 
 
-def _in_checkout(path: Path) -> bool:
+_INSTALLED = frozenset({"site-packages", "dist-packages"})
+
+
+def _in_checkout(path: Path, stop: frozenset[Path] = frozenset(), *, git_alone: bool = False) -> bool:
+    """Inside a ``.worktrees`` checkout, or inside a git work tree with a Python project between it and ``path`` (a
+    ``pyproject.toml`` or ``setup.py`` on the way up). A git work tree alone is not enough: Homebrew's prefix is one,
+    and so is a home directory kept in git; an installed copy (under ``site-packages``) is never a checkout. The walk
+    ends before ``stop`` (the home directory, for an interpreter's environment: pipx and uv tool environments live
+    under it, and a home directory kept in git with a ``pyproject.toml`` must not make them checkouts). With
+    ``git_alone`` (a virtual environment, judged as the interpreter) a git work tree is enough: a venv inside a
+    checkout runs that checkout's changing dependencies even when orch itself was installed without ``-e``."""
+    if _INSTALLED & set(path.parts):
+        return False
+    project = False
     for d in [path, *path.parents]:
-        if d.name == ".worktrees" or (d / ".git").exists():
+        if d in stop:
+            return False
+        if d.name == ".worktrees":
+            return True
+        project = project or (d / "pyproject.toml").is_file() or (d / "setup.py").is_file()
+        if (project or git_alone) and (d / ".git").exists():
             return True
     return False
 
@@ -177,13 +196,24 @@ def dev_source(python: Path, package: Path, roots: Sequence[str] = ()) -> str | 
     """Why the interpreter or the ``orch`` package is development code that must not become the service (``None``:
     it is not): inside a git work tree or a ``.worktrees`` checkout (a ``.venv`` of a checkout included), or inside a
     registered workspace."""
-    for what, path in (("the interpreter", Path(sys.prefix if python == Path(sys.executable) else python)),
-                       ("the interpreter", Path(python)), ("the orch package", Path(package))):  # fmt: skip
+    # The interpreter is judged by its environment (a venv's bin/python links to its base interpreter, so the link is
+    # not followed): ``sys.prefix`` for the running one, else the directory above ``bin``.
+    env = Path(sys.prefix) if python == Path(sys.executable) else Path(python).parent.parent
+    try:  # the home directory as written and resolved (a symlinked home must still end the walk)
+        home = frozenset({Path(os.path.abspath(Path.home())), Path.home().resolve()})
+    except (OSError, RuntimeError):
+        home = frozenset()
+    for what, path, stop in (("the interpreter", env, home), ("the interpreter", Path(python), home),
+                             ("the orch package", Path(package), frozenset())):  # fmt: skip
         try:
-            real = path.resolve()
+            if path is env or what == "the orch package":
+                real = path.resolve()
+            else:  # the interpreter file itself: resolve its directory, never its own link
+                real = path.parent.resolve() / path.name
         except OSError:
             continue
-        if _in_checkout(real):
+        venv = what == "the interpreter" and (real / "pyvenv.cfg").is_file()
+        if _in_checkout(real, stop, git_alone=venv):
             return f"{what} ({path}) is in a source checkout"
         for root in roots:
             try:

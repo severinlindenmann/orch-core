@@ -221,6 +221,18 @@ describe('the action dialog with click-to-sign', () => {
     expect(onClose).not.toHaveBeenCalled()
   }, 15000)
 
+  it('an uncertain submission that failed never becomes Signed', async () => {
+    vi.spyOn(api, 'stateClick').mockRejectedValue(new ApiError(409, { code: 'intent.failed', message: 'The earlier attempt was submitted but did not land (internal). It was not signed into the log.', retryable: false }))
+    const { dialog } = await toPanel()
+    c.sign.mockRejectedValueOnce(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'uncertain' }))
+    press(await armed(dialog))
+    await within(dialog).findByText('The earlier attempt did not land', {}, T)
+    expect(dialog).not.toHaveTextContent('Already done')
+    expect(within(dialog).queryByText('Signed')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Start again' })).toBeInTheDocument()
+    expect(c.sign).toHaveBeenCalledTimes(1)
+  })
+
   it('closing while the outcome is unknown does not cancel; an expired request then offers no terminal path', async () => {
     const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
     const { dialog } = await toPanel()
@@ -299,10 +311,24 @@ describe('an unknown outcome never leads to a second signature', () => {
     expect(await within(m.dialog).findByText('Already done', {}, T)).toBeInTheDocument()
     expect(m.dialog).toHaveTextContent('A similar comment with the same text was signed 2 min ago')
     expect(m.dialog).toHaveTextContent('HOST-SIGNED comment text')
+    expect(within(m.dialog).getByText(/A similar comment/).closest('p')).toHaveAttribute('title', expect.stringMatching(/^202/))
     expect(c.prepare).toHaveBeenCalledTimes(1) // nothing starts again by itself
     expect(within(m.dialog).queryByRole('button', { name: /^Sign$|Sign in the terminal instead/ })).toBeNull()
     fireEvent.click(within(m.dialog).getByRole('button', { name: 'Do it again' }))
     await within(m.dialog).findByTestId('click-panel', {}, T).catch(() => undefined)
+    await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
+    expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
+  })
+
+  it('a submitted failure needs an explicit Start again and advances retry', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.failed', message: 'The earlier attempt was submitted but did not land (gate.stale). It was not signed into the log.', retryable: false }))
+    const m = await open()
+    fireEvent.click(await within(m.dialog).findByRole('button', { name: 'Sign' }, T))
+    await within(m.dialog).findByText('The earlier attempt did not land', {}, T)
+    expect(m.dialog).toHaveTextContent('not signed into the log')
+    expect(m.dialog).not.toHaveTextContent('Already done')
+    expect(c.prepare).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(m.dialog).getByRole('button', { name: 'Start again' }))
     await waitFor(() => expect(c.prepare).toHaveBeenCalledTimes(2), T)
     expect(c.prepare.mock.calls.map((call) => call[2])).toEqual([0, 1])
   })
@@ -421,6 +447,10 @@ describe('every error code and reason has an honest message', () => {
     expect(`${p.title} ${p.body}`).toMatch(text)
     expect(p.next).toBe(next)
   })
+  it('preserves the host reader fix', () => {
+    const problem = clickProblem(new ApiError(409, { code: 'sign.convenience_readers', message: 'Reader refused', retryable: false, fix: 'HOST FIX \u202ehere' }))
+    expect(problem.body).toContain('HOST FIX \u202ehere')
+  })
   it('a rate limit names how long to wait', () => {
     expect(clickProblem(err('rate.limited', undefined, { retry_after_ms: 4200 })).waitMs).toBe(4200)
   })
@@ -434,6 +464,8 @@ describe('every error code and reason has an honest message', () => {
   })
   it('intent answers: done offers Do it again, ended offers Start again, open offers nothing', () => {
     expect(clickProblem(err('intent.done')).next).toBe('again')
+    expect(clickProblem(err('intent.failed')).next).toBe('prepare')
+    expect(clickProblem(err('lock.busy'))).toMatchObject({ title: 'Busy', next: 'retry' })
     expect(clickProblem(err('intent.ended')).next).toBe('prepare')
     expect(clickProblem(err('intent.open')).next).toBe('open')
   })

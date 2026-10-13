@@ -171,6 +171,7 @@ class Requests:
                 "code": request["code"],
                 "expires_at": stamp(request["expires"]),
                 "state": self.state(request),
+                "submitted_at": request.get("submitted_at"),
             },
             "op": request["op"],
             "workspace_id": request["workspace_id"],
@@ -352,6 +353,7 @@ class Requests:
                     "op": r["op"],
                     "key": r["key"],
                     "created_at": stamp(r["created"]),
+                    "submitted_at": r.get("submitted_at"),
                     "expires_at": stamp(r["expires"]),
                     "state": self.state(r),
                     "event_ids": [e["id"] for e in r["events"]] if r["state"] == "submitted" else [],
@@ -391,6 +393,8 @@ class Requests:
         request = self.find(args["request_id"])
         state = self.state(request)
         if state == "submitted" and request["signed"] == canonical(events):
+            if request.get("error"):
+                raise fail(request["error"]["code"], exit=5)
             answer = request["answer"]
             self.idems[idem] = {"binding": binding, "answer": answer}
             return self.replay(answer)
@@ -401,14 +405,25 @@ class Requests:
         try:
             self.append(store, request, events)
         except (HostError, OrchError) as exc:
-            # A refusal before any append leaves the request bound (not terminal) until it expires; the catalog code
-            # shows in human.pending (host 0.8.1, H5a).
-            request["error"] = {"code": exc.error["code"] if isinstance(exc, HostError) else exc.code}
+            code = exc.error["code"] if isinstance(exc, HostError) else exc.code
+            # Validation refusals stay bound. An accepted submit whose append fails is terminal, as in §0.8.1.
+            if code == "sig.invalid":
+                request.pop("submitted_at", None)  # the store also validates the actual signature
+            elif request.get("submitted_at"):
+                request.update(state="submitted", signed=canonical(events))
+            request["error"] = {"code": code}
+            self.save()
             raise
         appended = request["appended"]
         seq = appended[-1].event["seq"]
         answer = {"data": {"op": request["op"]}, "key": request["key"], "seq": seq}
-        request.update(state="submitted", signed=canonical(events), result={"seq": seq}, answer=answer, error=None)
+        request.update(
+            state="submitted",
+            signed=canonical(events),
+            result={"seq": seq},
+            answer=answer,
+            error=None,
+        )
         self.save()
         self.idems[idem] = {"binding": binding, "answer": answer}
         return self.replay(answer, duplicate=False)
@@ -422,6 +437,10 @@ class Requests:
                 signed.get("sig"), str
             ):
                 raise fail("human.request_mismatch", "the events differ from the prepared ones", exit=5)
+        for event in events:
+            judge(store, event, request["log"])
+        request["submitted_at"] = stamp(self.clock())
+        self.save()  # accepted before the first append, never synthesized at read time
         try:
             texts = (request["material"].get("texts") or {}) if request["op"] == "section.set" else {}
             request["appended"] = [

@@ -209,7 +209,7 @@ def refusal(exc) -> HostError:
         error["reason"] = exc.reason
     if exc.retry_after_ms is not None:
         error["retry_after_ms"] = int(exc.retry_after_ms)
-    return HostError(error, exit=3)
+    return HostError(error, exit=9 if exc.code in {"lock.busy", "host.busy"} else 3)
 
 
 #: The outcome of a `sign` whose answer was lost is unknown, not "the helper is gone": the person must not sign again.

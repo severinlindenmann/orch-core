@@ -420,9 +420,36 @@ def test_enable_refuses_development_code_as_the_service_unless_dev(tmp_path, fak
     venv = tmp_path / "proj" / ".venv" / "bin"
     venv.mkdir(parents=True)
     (tmp_path / "proj" / ".git").mkdir()
+    (tmp_path / "proj" / "pyproject.toml").write_text("[project]\nname = 'x'\n")
     assert "checkout" in svc.dev_source(venv / "python", tmp_path / "pkg")
+    assert "checkout" in svc.dev_source(tmp_path / "usr" / "python", tmp_path / "proj" / "src" / "orch")
     assert "workspace" in svc.dev_source(tmp_path / "ws" / "py", tmp_path / "pkg", [str(tmp_path / "ws")])
     assert svc.dev_source(tmp_path / "usr" / "bin" / "python", tmp_path / "lib" / "orch") is None
+
+
+def test_a_homebrew_or_pipx_install_is_not_a_checkout(tmp_path):
+    """T3 L-3 (#446): Homebrew's prefix is a git work tree and a home directory may be one too; neither makes an
+    installed interpreter or an installed orch development code."""
+    brew = tmp_path / "opt" / "homebrew"
+    (brew / ".git").mkdir(parents=True)
+    python = brew / "Cellar" / "python@3.13" / "3.13.1" / "bin" / "python3.13"
+    python.parent.mkdir(parents=True)
+    home = tmp_path / "home"
+    (home / ".git").mkdir(parents=True)
+    (home / "pyproject.toml").write_text("[project]\nname = 'dotfiles'\n")
+    pipx = home / ".local" / "pipx" / "venvs" / "orch"
+    package = pipx / "lib" / "python3.13" / "site-packages" / "orch"
+    package.mkdir(parents=True)
+    assert svc.dev_source(python, brew / "lib" / "python3.13" / "site-packages" / "orch") is None
+    assert svc.dev_source(python, package) is None
+
+
+def test_a_relative_run_directory_becomes_absolute(tmp_path, monkeypatch):
+    """T3 L-4 (#446): a unit file never carries a path relative to the directory enable ran in."""
+    monkeypatch.chdir(tmp_path)
+    assert svc.run_dir_for(tmp_path / "s", Path("rel")) == tmp_path / "rel"
+    assert svc.run_dir_for(tmp_path / "s", None, {"ORCH_HOST_RUN_DIR": "r2"}) == tmp_path / "r2"
+    assert svc.run_dir_for(Path("s"), None, {}) == tmp_path / "s" / "run"
 
 
 def test_a_service_for_another_setup_is_never_replaced_silently(world):

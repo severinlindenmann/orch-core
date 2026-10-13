@@ -80,12 +80,13 @@ class Plan:
 
 
 def run_dir_for(state: Path, given: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
-    """The run directory of a tier-A host: ``--run``, else ``ORCH_HOST_RUN_DIR`` (dev, tests), else ``<state>/run``."""
+    """The run directory of a tier-A host: ``--run``, else ``ORCH_HOST_RUN_DIR`` (dev, tests), else ``<state>/run``;
+    always absolute, so a unit file never carries a path relative to the directory ``enable`` ran in."""
     if given is not None:
-        return Path(given)
+        return Path(given).absolute()
     if env and env.get("ORCH_HOST_RUN_DIR"):
-        return Path(env["ORCH_HOST_RUN_DIR"])
-    return Path(state) / "run"
+        return Path(env["ORCH_HOST_RUN_DIR"]).absolute()
+    return (Path(state) / "run").absolute()
 
 
 def plan(
@@ -166,9 +167,21 @@ def differences(unit: Plan) -> list[str] | None:
     return [k for k in ("python", "state", "run") if old[k] != new[k]]
 
 
+_INSTALLED = frozenset({"site-packages", "dist-packages"})
+
+
 def _in_checkout(path: Path) -> bool:
+    """Inside a ``.worktrees`` checkout, or inside a git work tree with a Python project between it and ``path`` (a
+    ``pyproject.toml`` or ``setup.py`` on the way up). A git work tree alone is not enough: Homebrew's prefix is one,
+    and so is a home directory kept in git; an installed copy (under ``site-packages``) is never a checkout."""
+    if _INSTALLED & set(path.parts):
+        return False
+    project = False
     for d in [path, *path.parents]:
-        if d.name == ".worktrees" or (d / ".git").exists():
+        if d.name == ".worktrees":
+            return True
+        project = project or (d / "pyproject.toml").is_file() or (d / "setup.py").is_file()
+        if project and (d / ".git").exists():
             return True
     return False
 

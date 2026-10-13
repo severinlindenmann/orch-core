@@ -3082,13 +3082,14 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `chain=False`, the ack only after a durable result.
 28. **Signing** (§11A.2): `RelaySigner` with typed methods is the bridge's only WSK path; this is an API rule, not
     isolation (bridge code execution is WSK compromise). Genesis-pin and restore reviews bind their exact material.
-29. **Worktrees (H11d, addon #308, D-P2-32, §12.7; additive, cap `worktree/1`):** ops `worktree.list`, `worktree.create`,
+30. **Worktrees (H11d, addon #308, D-P2-32, §12.7; additive, cap `worktree/1`):** ops `worktree.list`, `worktree.create`,
     `worktree.remove`; effective-column kind `pg_write` (P and G, never N); catalog codes `worktree.none`, `worktree.exists`,
     `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned`,
     `worktree.git_failed`, `unsupported.platform`; runner command `git` (runner codes add `observe.unavailable` for the
-    `orch.gitsafe` gate); `git-pins.json` gains `worktrees` (registrations with generations); `human.get` with a signer
+    `orch.gitsafe` gate: an allow-list of repository config, owned config files, no populated submodule); `git-pins.json` gains `worktrees` (registrations with generations); `human.get` with a signer
     checks the copy bindings and the current branch on every call. *(Belongs to the v1.5 → v1.6 additions; numbered
-    after item 28, the last number on develop or in flight when written. It may need renumbering at merge.)*
+    after item 29 (#440, H12d), the last number on develop or in flight when written. It may need renumbering at
+    merge.)*
 
 ---
 
@@ -5303,18 +5304,52 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   `worktree.in_use`; no registration is `worktree.none`; the branch is never deleted; the registration and pin go
   after the runner reports success, and the removal bumps the registration generation, so any request prepared against
   the removed worktree is invalidated (`observe.unavailable`).
-- **Filters and other programs (the invariant, Opus #439 F1):** orch never runs git against a repository whose
-  local/worktree config or attributes could make git execute a program or read config from elsewhere. Before every
-  worktree git command (`orch.gitsafe.gate`) the repository's local and worktree config is listed (`git config
-  --no-includes --list --show-scope`, which executes nothing) and git is not started (`observe.unavailable`) when it sets
-  a filter, diff or merge driver program, `include.*`/`includeIf.*`, `core.attributesFile`, an ssh/proxy/askpass
-  command, `credential.*`, `core.pager`, an editor, a gpg program, `remote.*.uploadpack|receivepack`, LFS custom
-  transfers or extensions, or a non-boolean `core.fsmonitor`. A repository with `git lfs install --local` or git-crypt
-  (filters in the local config) is therefore refused; install such filters globally. Attributes only *select* drivers:
-  after the gate the repo's config defines no program, so an attribute selects a built-in behaviour or a driver the
-  person configured globally (LFS after `git lfs install`), which runs as the runner's UID, the person in tier A, as
-  when they run git. A local `core.hooksPath` (husky) and a boolean `core.fsmonitor` are not refused: `-c
-  core.hooksPath=/dev/null` and `-c core.fsmonitor=false` override them on every command.
+- **Filters and other programs (the invariant, Opus #439 F1 and D1):** orch never runs git against a repository whose
+  local/worktree config or attributes could make git execute a program or read config from elsewhere. The rule is an
+  **allow-list**:
+  - **The gate.** Before every worktree git command, `orch.gitsafe.gate` lists the repository's local and worktree
+    config with `git config --no-includes --list --show-scope`, which executes nothing. If any key is not on the
+    allow-list (`gitsafe.ALLOWED`, `ALLOWED_SUB`), git is not started and the answer is `observe.unavailable`, naming
+    the key, never its value.
+  - **What the list holds:** exactly what an ordinary repository needs.
+    - `git init`'s `core.*` keys and the other plain `core` settings.
+    - `remote.<n>.{url,pushurl,fetch,push,tagopt,prune,mirror,…}`.
+    - `branch.<n>.{remote,merge,rebase,pushremote,description}`.
+    - `user.*`, `init.defaultBranch`, `extensions.{objectFormat,worktreeConfig,refStorage,preciousObjects,partialClone}`.
+    - The tuning keys of `gc`, `pack`, `fetch`, `pull`, `push`, `merge`, `rebase`, `submodule`, `status`, `diff`,
+      `color`, `column`, `advice`, `i18n`, `blame`, `maintenance`, `log`, `rerere`, `index`, `feature`, `checkout`,
+      `worktree` and `transfer`.
+    - The signing switches only: `commit.gpgSign`, `tag.gpgSign`, `gpg.format`.
+    - LFS's own `lfs.repositoryformatversion` and `lfs.<url>.access`.
+  - **What it never holds:** anything that names a program, a command, a driver, a hook or another config file. That
+    excludes `filter.*`, `diff.<driver>.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
+    `credential.*`, `gc.recentObjectsHook`, `remote.<n>.{vcs,uploadpack,receivepack}`, `*.cmd` tools, editors, gpg
+    programs, `core.attributesFile` and any unknown section. A non-boolean `core.fsmonitor` is refused.
+  - **Why an allow-list.** The class "a config key that runs a program" is open-ended, and each git release can add
+    one. Four slipped through one review cycle: hooks, fsmonitor, filters, then git 2.54's `hook.<name>.command`,
+    which `-c core.hooksPath` does not turn off. The deny-list of known keys stays only as documentation
+    (`gitsafe.KNOWN_EXEC`) and as tests.
+  - **Records.** The records tool's `check_local` applies the same function before its stricter rules.
+  - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
+    be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git
+    itself checks only the directory's owner.
+  - **Local filters are refused.** A repository with `git lfs install --local` or git-crypt has its filters in the
+    local config, so it is refused. Install such filters globally.
+  - **Attributes only *select* drivers.** After the gate, the repo's config defines no program. An attribute can
+    therefore select only a built-in behaviour or a driver the person configured globally (LFS after
+    `git lfs install`). That driver runs as the runner's UID, the person in tier A, as when they run git.
+  - **Overridden keys.** A local `core.hooksPath` (husky) and a boolean `core.fsmonitor` are on the list, because
+    `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false` override them on every command.
+- **Submodules (Codex #439):** orch does not inspect submodules.
+  - **Why.** A working copy with a **populated** submodule (a gitlink in the index whose directory is not empty)
+    contains a second repository with its own config. The gate does not list that config. `git status` would run the
+    submodule's filters, and `--ignore-submodules` would instead hide its changes.
+  - **What is refused.** Every cleanliness verdict refuses such a tree (`gitsafe.submodules`):
+    - direct-mode D58 on a registered worktree gives `observe.unavailable`;
+    - direct `list --check` gives `dirty: null` (unknown, never `0`);
+    - direct `remove` without `--force` gives `observe.unavailable`.
+  - **Host mode.** The host's reader (`tree.check`) already refuses a checked-out submodule.
+  - **Not checked out.** An empty gitlink directory counts as clean, as git sees it.
 - Done or closed tickets keep their worktrees; the Worktrees page offers removal.
 
 #### As built in H11d (worktrees)
@@ -5333,14 +5368,16 @@ Where the code differs from or adds to §12.7, the code is this:
 - **Runner `git`** (`orch.runner.wtgit`): the `orch.gitsafe` gate on the repo (and, on remove, on the worktree, whose
   status git runs) before git starts; hooks, fsmonitor, network and submodule recursion off; built-from-scratch
   environment, 30 s, own process group. A gate refusal is the runner code `observe.unavailable`. **Confinement:** the
-  path must be exactly `<repo>.worktrees/<WS8>-<KEY>` (strict regex); the parent of the repo and `<repo>.worktrees` are
-  opened from `/` with `O_NOFOLLOW|O_DIRECTORY` per component and must be owned by the runner's effective UID and not
-  group- or other-writable (else `launch.cwd_changed`); the target is `lstat`ed through that fd, a symlink anywhere is
+  path must be exactly `<repo>.worktrees/<WS8>-<KEY>` (strict regex); every directory from `/` to `<repo>.worktrees`
+  is opened with `O_NOFOLLOW|O_DIRECTORY` per component and must be owned by root or the runner's effective UID and not
+  group- or other-writable unless sticky (Opus D2); the parent of the repo and `<repo>.worktrees` must be owned by the
+  effective UID and not group- or other-writable at all (else `launch.cwd_changed`); the target is `lstat`ed through that fd, a symlink anywhere is
   `launch.cwd_changed` and nothing behind it is touched or removed. git gets absolute paths (`-C <repo>`, `-- <path>`)
   and runs with cwd `/`, so there is no cwd pin: the walk from `/` is repeated right before git (pre-check) and after
   it (post-check), each comparing device and inode with the held fd. Residual race: a writer of those two directories
   can swap names between the pre-check and git's own `mkdir` or removal; the post-check detects the swap, it cannot
-  undo git's write. The ownership and mode check makes that writer the person's own account (or root).
+  undo git's write. The ownership and mode check of every directory on the path makes that writer the person's own
+  account (or root).
 - **Gate:** the addon view is `addons[name]["enabled"]` (a frozen mapping), `runner.disabled` names the first missing piece
   (addon, then machine). The claim of a G caller is rechecked under the per-repo lock right before the runner runs git.
 - **Direct mode** (`orch worktree list|create|remove`, POSIX; `orch.worktree_cli`): the same rules without a host. The

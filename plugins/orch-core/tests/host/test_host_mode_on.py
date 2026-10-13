@@ -427,7 +427,7 @@ def test_enable_refuses_development_code_as_the_service_unless_dev(tmp_path, fak
     assert svc.dev_source(tmp_path / "usr" / "bin" / "python", tmp_path / "lib" / "orch") is None
 
 
-def test_a_homebrew_or_pipx_install_is_not_a_checkout(tmp_path):
+def test_a_homebrew_or_pipx_install_is_not_a_checkout(tmp_path, monkeypatch):
     """T3 L-3 (#446): Homebrew's prefix is a git work tree and a home directory may be one too; neither makes an
     installed interpreter or an installed orch development code."""
     brew = tmp_path / "opt" / "homebrew"
@@ -441,7 +441,17 @@ def test_a_homebrew_or_pipx_install_is_not_a_checkout(tmp_path):
     package = pipx / "lib" / "python3.13" / "site-packages" / "orch"
     package.mkdir(parents=True)
     assert svc.dev_source(python, brew / "lib" / "python3.13" / "site-packages" / "orch") is None
-    assert svc.dev_source(python, package) is None
+    tool = pipx / "bin" / "python"  # a tool venv's interpreter, whose environment lies under a git home
+    tool.parent.mkdir(parents=True)
+    tool.symlink_to(python)
+    (pipx / "pyvenv.cfg").write_text("home = x\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert svc.dev_source(tool, package) is None
+    project = home / "code" / "orch"  # but a checkout under the home directory is still one
+    (project / ".git").mkdir(parents=True)
+    (project / "setup.py").write_text("")
+    (project / ".venv" / "bin").mkdir(parents=True)
+    assert "checkout" in svc.dev_source(project / ".venv" / "bin" / "python", package)
 
 
 def test_a_relative_run_directory_becomes_absolute(tmp_path, monkeypatch):

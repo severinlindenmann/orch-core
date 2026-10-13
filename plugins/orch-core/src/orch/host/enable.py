@@ -170,14 +170,18 @@ def differences(unit: Plan) -> list[str] | None:
 _INSTALLED = frozenset({"site-packages", "dist-packages"})
 
 
-def _in_checkout(path: Path) -> bool:
+def _in_checkout(path: Path, stop: Path | None = None) -> bool:
     """Inside a ``.worktrees`` checkout, or inside a git work tree with a Python project between it and ``path`` (a
     ``pyproject.toml`` or ``setup.py`` on the way up). A git work tree alone is not enough: Homebrew's prefix is one,
-    and so is a home directory kept in git; an installed copy (under ``site-packages``) is never a checkout."""
+    and so is a home directory kept in git; an installed copy (under ``site-packages``) is never a checkout. The walk
+    ends before ``stop`` (the home directory, for an interpreter's environment: pipx and uv tool environments live
+    under it, and a home directory kept in git with a ``pyproject.toml`` must not make them checkouts)."""
     if _INSTALLED & set(path.parts):
         return False
     project = False
     for d in [path, *path.parents]:
+        if stop is not None and d == stop:
+            return False
         if d.name == ".worktrees":
             return True
         project = project or (d / "pyproject.toml").is_file() or (d / "setup.py").is_file()
@@ -190,13 +194,20 @@ def dev_source(python: Path, package: Path, roots: Sequence[str] = ()) -> str | 
     """Why the interpreter or the ``orch`` package is development code that must not become the service (``None``:
     it is not): inside a git work tree or a ``.worktrees`` checkout (a ``.venv`` of a checkout included), or inside a
     registered workspace."""
-    for what, path in (("the interpreter", Path(sys.prefix if python == Path(sys.executable) else python)),
-                       ("the interpreter", Path(python)), ("the orch package", Path(package))):  # fmt: skip
+    # The interpreter is judged by its environment (a venv's bin/python links to its base interpreter, so the link is
+    # not followed): ``sys.prefix`` for the running one, else the directory above ``bin``.
+    env = Path(sys.prefix) if python == Path(sys.executable) else Path(python).parent.parent
+    try:
+        home: Path | None = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    for what, path, stop in (("the interpreter", env, home), ("the interpreter", Path(python), home),
+                             ("the orch package", Path(package), None)):  # fmt: skip
         try:
-            real = path.resolve()
+            real = path.resolve() if what == "the orch package" else Path(os.path.abspath(path))
         except OSError:
             continue
-        if _in_checkout(real):
+        if _in_checkout(real, stop):
             return f"{what} ({path}) is in a source checkout"
         for root in roots:
             try:

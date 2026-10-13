@@ -1049,16 +1049,22 @@ real host they are native pages in the same style (the mock's pages are declarat
   Counts the host cannot read are "unknown", never zero; `over` null is not "outgrew".
 - **Add a quick task** (a person): `new` (chore) then a second signed change setting the label `quick` (`details` with `labels:["quick"]`,
   follow-up through `CompleteDetails`). Both use `HandoffDialog`, so click-to-sign where it is on and the terminal where it is off; the UI says
-  "two signatures". Close uses the existing `close` hand-off. There is no "Make a ticket" button: a quick task already is a ticket, and
-  removing the label has no signed op the server allows (`details` needs at least one label). Open the ticket instead.
+  "two signatures". Close uses the existing `close` hand-off. "Make a normal ticket" (orch-52): there is no
+  remove-label op, so it is `details` with `labels` set to the remaining labels (replace-only), offered only when a label besides `quick`
+  is left; with `quick` alone the button is hidden (TODO #441: core will allow an empty set).
 - **Records strings, verbatim:** the export warning (shown on the page whenever a push is configured, and again in the confirm dialog before
   "Commit and push") and the private-remote line, each with the exact URL drawn through `Raw`. A URL the server withheld (hidden characters) is
   said to be withheld; no URL is invented. Child failures show the stable code, the child's message only when it was safe (`message_hidden`),
   and the local commit that landed when only the push failed (`error.commit`).
-- **`records.status` is the caller's last note, not live git.** `configured` is "something was noted for you": before the first commit it is
-  false and `repo`, `remote`, `last` are null even though the repository exists. The page says so and still offers Commit now.
+- **`records.status.configured`** means "the records repository exists for you" (core #441: true after the first commit, with `repo` set).
+  false reads "No records repository yet; the first commit creates it." with Commit now; `last == null` reads "nothing noted yet".
 - **What was dropped from the mock honestly:** own Q-001 keys and statuses, the "agents may add" setting, records settings and pull.
 
 Tests: `src/production/quick-records.test.tsx` (31 cases: states, strings, limits, two-signature add on click and terminal workspaces, role,
 absent caps, runner line), `server/tests/test_realhost_quick_records.py` (real host: seeded `quick.list`, `records.status`, a commit into the
 workspace's own repository, a push to a LOCAL bare repo refused and nothing published), orch-dev-kit `e2e/dashboard/dashboard_quick_records.spec.ts`.
+
+**Layout coverage of the real-host-only UI (M6):** dev-only route `/__layout/<scenario>` (`src/dev/layoutPreview.tsx`, built only when
+`import.meta.env.DEV`; not in the production bundle) draws the real quick page, Records tab and runner card with fixture answers (it swaps the
+mock api's methods per scenario). `scripts/layout-guard.mjs` checks the `real-host-*` pages: quick, many rows, limits open, normal-ticket
+and add (first signature) dialogs, records (long URLs), hidden URL, first commit, push confirm, failed push, runner on/off.

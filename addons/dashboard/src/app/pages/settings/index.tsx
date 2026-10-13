@@ -70,7 +70,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
 }
 
 /** The sub-navigation and the content column, the same for the mockup's settings and the reduced ones of a real host. */
-function SettingsFrame({ current, addon, ws, children }: { current: string; addon: string | undefined; ws: string; children: React.ReactNode }) {
+export function SettingsFrame({ current, addon, ws, tabs, children }: { current: string; addon: string | undefined; ws: string; tabs?: readonly { id: string; label: string; preview?: boolean }[]; children: React.ReactNode }) {
   return (
     // A narrow page area (the terminal docked on the right): the sections sit in a row above the content (N11).
     <div className="flex max-w-5xl flex-col gap-4 @[60rem]/page:flex-row @[60rem]/page:gap-8">
@@ -79,7 +79,7 @@ function SettingsFrame({ current, addon, ws, children }: { current: string; addo
           <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
           <CopyLinkButton label={addon ? `Copy link to the ${addon} settings` : 'Copy link to this settings page'} />
         </div>
-        {settingsTabs(ws).map((t) => (
+        {(tabs ?? settingsTabs(ws)).map((t) => (
           <Link key={t.id} to="/settings/$tab" params={{ tab: t.id }} className={cn(link, current === t.id && active)} aria-current={current === t.id ? 'page' : undefined}>
             <span className="flex-1">{t.label}</span>
             {t.preview && <span className="rounded-full border border-border px-1.5 py-px text-[10px] font-medium leading-4 text-text-muted">Preview</span>}

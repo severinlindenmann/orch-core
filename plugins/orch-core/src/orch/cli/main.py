@@ -253,6 +253,10 @@ def main(
         from orch.host.cli import main as host_main
 
         return host_main(args[1:], env=env, out=out)
+    if args[:1] == ["dashboard"]:  # the dashboard addon's entry point (orch.cli.dashboard): not a registry op
+        from orch.cli.dashboard import main as dashboard_main
+
+        return dashboard_main(args[1:], env=env, err=err)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 

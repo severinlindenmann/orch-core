@@ -175,7 +175,7 @@ def _claim_ok(call: Call, view: Any) -> bool:
 def _gate(call: Call) -> None:
     service = call.service
     addon = service.store.state.workspace.addons.get(ADDON)
-    if addon is None or not addon.enabled or addon.purged:
+    if addon is None or not addon["enabled"] or addon["purged"]:
         raise HostError("runner.disabled", "dashboard execution: the worktrees addon is not granted (missing: addon)")
     hub = getattr(service, "runners", None)
     if hub is None or not hub.runner_state(service.workspace_id)["enabled"]:
@@ -442,6 +442,7 @@ def _observe(call: Call, git: Any, view: Any, repo: str, slot: dict[str, Any]) -
     if (st.st_dev, st.st_ino) != (pin["dev"], pin["ino"]):
         return {**out, "state": "moved"}
     try:
+        git.reader.verify_worktree(reg["path"], principal=git.principal)  # the .git file is still the pinned one
         got = git.reader.observe(reg["path"], [], principal=git.principal)
     except Unavailable:
         return {**out, "state": "moved"}

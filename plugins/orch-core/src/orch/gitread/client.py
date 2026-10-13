@@ -451,6 +451,32 @@ class HostGitReader:
             raise Unavailable("the worktree's HEAD is not the ticket's branch")
         return pins
 
+    def verify_worktree(self, path: str, principal: str | None = None) -> None:
+        """H11d: the registered worktree at ``path`` is still the one that was pinned: its ``.git`` file, walked again
+        from the pinned commondir's root, names the same gitdir and commondir (device and inode), and the directory is
+        the same one. A re-pointed ``.git`` file, a swapped directory or a moved worktree is :class:`Unavailable`."""
+        wt = _key(path)
+        pins = self.pins.worktree_pins(wt)
+        if pins is None:
+            raise Unavailable("the worktree is not registered")
+        common = pins.commondir.path
+        if not common.endswith("/.git") or len(common) <= len("/.git"):
+            raise Unavailable("the worktree's commondir is not <repo>/.git")
+        hello = {"profile": "pin", "roots": [wt, common[: -len("/.git")]]}
+        try:
+            got = self.pool.call(principal or self.principal, hello, {"op": "pin", "args": {"path": wt}})
+            now = RepoPins.from_json(got.get("pins"))
+        except Unavailable:
+            raise Unavailable("the worktree no longer resolves to the pinned repository") from None
+        same = (
+            _id(now.worktree) == _id(pins.worktree)
+            and _id(now.gitdir) == _id(pins.gitdir)
+            and _id(now.commondir) == _id(pins.commondir)
+            and now.gitdir.path == pins.gitdir.path
+        )
+        if not same:
+            raise Unavailable("the worktree's .git file or location changed since it was registered")
+
     def _call(
         self,
         path: str | os.PathLike[str],

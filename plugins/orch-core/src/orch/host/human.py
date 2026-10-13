@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import os
 import secrets
 import time
 import weakref
@@ -936,6 +937,13 @@ def bound_copy(git: Any, store: Any, log: str, name: str, copies: list[dict[str,
         )
     if copy.path is None:
         raise HostError("observe.unavailable", (copy.why or f"{name}: no working copy")[:300])
+    if copy.registered:  # the .git file and the directory are what was pinned (a re-pointed one never falls back)
+        from orch.gitread.errors import Unavailable
+
+        try:
+            git.reader.verify_worktree(os.fspath(copy.path), principal=git.principal)
+        except Unavailable as exc:
+            raise HostError("observe.unavailable", f"{name}: {exc.reason}"[:300]) from None
     return copy.path
 
 

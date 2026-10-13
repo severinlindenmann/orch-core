@@ -16,7 +16,10 @@ Method             Checks before signing                                        
 The key comes in as a :class:`WorkspaceKey`, a structural interface (``public_key``, ``sign(payload)``) that
 ``orch.store.store.BackendSigner`` satisfies; this module does not import it, ``FileBackend`` or ``orch.custody``
 (``tests/relay/test_import_ban.py``). The custody label backstop (``HOST_LABELS``) stays with the backend. This is an
-API rule, not key isolation: same-process code can reach the key (11A.2 "What this is not").
+API rule, not key isolation (11A.2 "What this is not"): the key is captured in a closure and the signer exposes only
+its purpose-specific methods, and ``tests/relay/test_import_ban.py`` keeps ``orch.relay`` from reaching private names,
+dynamic attribute access or ``orch.crypto`` signing entry points; but same-process code can always traverse objects
+(closures included), and the key file is readable by the host UID.
 
 Epoch keys come in as an :class:`EpochKeys` view (R2's ``BridgeKeys``); without one, ``response_chunk`` refuses.
 """
@@ -24,7 +27,7 @@ Epoch keys come in as an :class:`EpochKeys` view (R2's ``BridgeKeys``); without 
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -93,10 +96,19 @@ class LinkContext:
             raise SignerRefused("link context") from None
 
 
+def _bind(key: WorkspaceKey) -> Callable[[bytes], bytes]:
+    """The key's ``sign`` captured in a closure: the signer keeps no attribute that names the key object."""
+
+    def sign_bytes(payload: bytes) -> bytes:
+        return key.sign(payload)
+
+    return sign_bytes
+
+
 class RelaySigner:
     """Purpose-specific WSK signatures for the relay client (11A.2)."""
 
-    __slots__ = ("_cards", "_epochs", "_key", "_last_card_seq", "_lock", "link")
+    __slots__ = ("_cards", "_epochs", "_last_card_seq", "_lock", "_pub", "_sign_bytes", "link")
 
     def __init__(
         self,
@@ -108,7 +120,9 @@ class RelaySigner:
     ) -> None:
         if type(last_card_seq) is not int or last_card_seq < 0:
             raise SignerRefused("last card_seq")
-        self._key, self.link, self._epochs = key, link, epochs
+        self.link, self._epochs = link, epochs
+        self._pub = bytes(key.public_key)
+        self._sign_bytes = _bind(key)
         self._last_card_seq = last_card_seq
         self._cards: dict[int, bytes] = {}  # card_seq -> cj(o) signed in this process
         self._lock = threading.Lock()
@@ -118,10 +132,10 @@ class RelaySigner:
 
     @property
     def public_key(self) -> bytes:
-        return self._key.public_key
+        return self._pub
 
     def _sign(self, payload: bytes) -> bytes:
-        sig = self._key.sign(payload)
+        sig = self._sign_bytes(payload)
         if type(sig) is not bytes or len(sig) != crypto.SIG_LEN:
             raise SignerRefused("the key returned a malformed signature")
         return sig
@@ -159,7 +173,7 @@ class RelaySigner:
             raise SignerRefused("card v, suite or kind")
         if o["workspace_id"] != self.link.workspace_id:
             raise SignerRefused("card workspace")
-        if o["wsk_pub"] != crypto.b64u(self._key.public_key):
+        if o["wsk_pub"] != crypto.b64u(self._pub):
             raise SignerRefused("card wsk_pub is not this workspace's key")
         if o["relay_url"] != self.link.origin:
             raise SignerRefused("card relay_url is not the stored origin")

@@ -51,6 +51,9 @@ class Capture:
     checks: list[dict[str, Any]] = field(default_factory=list)
     #: a ``dry_run`` prepare: nothing is stored and no ``tree.check`` job runs (section 0.8.1)
     dry_run: bool = False
+    #: H11d (D-P2-32): the working copy each linked repo was checked in, ``{repo, ticket, gen, registered, pin}``;
+    #: binding and ``precommit`` require the same registration (generation and pin), never a fallback
+    copies: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def actor(self) -> dict[str, Any]:

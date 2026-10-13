@@ -90,11 +90,26 @@ def test_old_node_or_build_without_output(source, monkeypatch, result):
         hook.ensure_ui(source)
 
 
+def node_24() -> bool:
+    node = shutil.which("node")
+    if node is None:
+        return False
+    try:
+        out = subprocess.run([node, "--version"], capture_output=True, text=True, check=True).stdout
+        return int(out.strip().removeprefix("v").split(".")[0]) >= 24
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return False
+
+
 @pytest.fixture(scope="module")
 def packaged_manifest(tmp_path_factory):
     uv = shutil.which("uv")
     if uv is None:
         pytest.skip("uv unavailable for offline wheel build")
+    if not (SERVER / "src/orch_dashboard/static/index.html").is_file() and not node_24():
+        # A real wheel needs the UI; CI's Python jobs have neither a built UI nor Node 24 (the hook then fails, as
+        # it must). The build is covered where the UI exists (locally after `npm run build`).
+        pytest.skip("no built UI and no Node >= 24 here: a real wheel build is not possible")
     out = tmp_path_factory.mktemp("wheel")
     env = {**os.environ, "UV_OFFLINE": "1"}
     env.pop("ORCH_DASHBOARD_SKIP_UI", None)

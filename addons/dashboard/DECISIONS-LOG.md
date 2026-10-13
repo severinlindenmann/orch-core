@@ -1474,3 +1474,16 @@ A retained binding without an open request also caused a 24 h lockout.
 
 **Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
 never restore whole-ticket or member-role bases as an incidental refactor.
+
+## M6: quick tasks and records as native pages on the real host (13 Oct 2026)
+
+**Decision:** On a real host quick tasks (`/quick`) and records (Settings, Records) are native React pages wired to the four M6 server routes;
+the mock keeps its declarative addon pages. Adding a quick task is `new` then a `details` label `quick` through the one signing path
+(`HandoffDialog`), said as "two signatures". Quick limits are local (flat `max_commits`/`max_files`). No "Make a ticket" button. The records
+page runs only `commit [--push]` and `auto off`; everything else is a command to type. A push is confirmed after the export warning is shown.
+The records "not configured" state is "nothing noted yet" (host `configured = bool(last)`), not "no repository".
+
+**Why:** The mock addon pages are node trees bound to mock state; the real host has no addon state to bind. Native pages reuse M5's signing
+machinery unchanged and keep core in charge of wording. Converting would need a signed label removal the server does not allow.
+
+**Revert:** Remove the `/quick` route, the Records tab and the card section; the server routes are independent.

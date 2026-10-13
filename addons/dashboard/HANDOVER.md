@@ -1029,3 +1029,36 @@ pre-check remain defence in depth; they are not a replacement for this host prer
   stale one at commit.
 - F4: the server treats an unknown signer status as "click off" (fail-open for the path choice). Core #434 (merged)
   enforces one path per workspace at the host, so a stray hand-off request can't be prepared there.
+
+## P2 addons: quick tasks and records (M6, 13 Oct)
+
+Stream B M6 on the real host (host contract 12.8, 12.9, 12.11 "Rules and strings"). Server by Codex (routes and the records child,
+commits 12208b39, 3e76f013), UI and tests here. The mockup's addon pages for quick tasks and records stay as they are in the mock; on a
+real host they are native pages in the same style (the mock's pages are declarative node trees with no host route behind them).
+
+| Page | Gate | Reads / runs |
+|---|---|---|
+| `/quick` (sidebar "Quick tasks", real host only) | feature `quick` (host caps `quick/1` and `quick.list`) | `GET /api/w/{ws}/quick?status=..&max_commits=..&max_files=..&limit=..&page=..` (flat limits, per the H11f as-built contract) |
+| Settings, Records tab | feature `records` (`records/1` and `records.status`); owners and maintainers only | `GET /records`; `POST /records/commit {push}`; `POST /records/auto-off` with no body |
+| Settings, General, "Dashboard execution" | `runner` from `/api/workspaces`, `/api/me`, identity (`whoami.runner`, cap `run/1`) | draws the D-P2-31 line verbatim whenever `runner.enabled`; nothing when the host says nothing |
+
+- **Per-workspace switch:** nothing here is a dashboard setting. The pages exist only where the host advertises the caps and ops, which the
+  host does per workspace and off by default. The dashboard has no way to turn them on; `orch runner enable`, `orch records auto on`
+  (`--push`), `orch records remote private`, `orch records push --initial` are shown as exact commands, never as buttons.
+- **Quick limits** are a local browser setting (`orch.quick.limits.<ws>`, try/catch around storage; unset means the host's defaults).
+  Counts the host cannot read are "unknown", never zero; `over` null is not "outgrew".
+- **Add a quick task** (a person): `new` (chore) then a second signed change setting the label `quick` (`details` with `labels:["quick"]`,
+  follow-up through `CompleteDetails`). Both use `HandoffDialog`, so click-to-sign where it is on and the terminal where it is off; the UI says
+  "two signatures". Close uses the existing `close` hand-off. There is no "Make a ticket" button: a quick task already is a ticket, and
+  removing the label has no signed op the server allows (`details` needs at least one label). Open the ticket instead.
+- **Records strings, verbatim:** the export warning (shown on the page whenever a push is configured, and again in the confirm dialog before
+  "Commit and push") and the private-remote line, each with the exact URL drawn through `Raw`. A URL the server withheld (hidden characters) is
+  said to be withheld; no URL is invented. Child failures show the stable code, the child's message only when it was safe (`message_hidden`),
+  and the local commit that landed when only the push failed (`error.commit`).
+- **`records.status` is the caller's last note, not live git.** `configured` is "something was noted for you": before the first commit it is
+  false and `repo`, `remote`, `last` are null even though the repository exists. The page says so and still offers Commit now.
+- **What was dropped from the mock honestly:** own Q-001 keys and statuses, the "agents may add" setting, records settings and pull.
+
+Tests: `src/production/quick-records.test.tsx` (31 cases: states, strings, limits, two-signature add on click and terminal workspaces, role,
+absent caps, runner line), `server/tests/test_realhost_quick_records.py` (real host: seeded `quick.list`, `records.status`, a commit into the
+workspace's own repository, a push to a LOCAL bare repo refused and nothing published), orch-dev-kit `e2e/dashboard/dashboard_quick_records.spec.ts`.

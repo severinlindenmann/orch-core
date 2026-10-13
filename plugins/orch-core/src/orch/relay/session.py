@@ -334,8 +334,9 @@ class Session:
             return got
 
     def _wait(self, seconds: float) -> None:
-        if self._stop is not None and self._stop.is_set():
-            raise SessionError("stopping")
-        self._sleep(seconds)
-        if self._stop is not None and self._stop.is_set():
+        """Wait ``seconds``; with a stop event, the wait ends as soon as stop is set (11A.7: join within 5 s)."""
+        if self._stop is None:
+            self._sleep(seconds)
+            return
+        if self._stop.wait(seconds):
             raise SessionError("stopping")

@@ -130,11 +130,11 @@ class Retrier:
         self._sleep, self._alarm, self._rng, self._stop = sleep, alarm, rng or random.SystemRandom(), stop
 
     def _wait(self, seconds: float) -> None:
-        if self._stop is not None:
-            if self._stop.is_set() or self._stop.wait(0):
-                raise Stopped()
-        self._sleep(seconds)
-        if self._stop is not None and self._stop.is_set():
+        """Wait ``seconds``; with a stop event, the wait itself ends when stop is set (11A.7: join within 5 s)."""
+        if self._stop is None:
+            self._sleep(seconds)
+            return
+        if self._stop.wait(seconds):
             raise Stopped()
 
     def run(self, fn: Callable[[], T], *, route: str, membership: bool = False, max_attempts: int | None = None) -> T:

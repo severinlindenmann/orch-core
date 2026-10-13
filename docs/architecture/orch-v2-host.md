@@ -4001,8 +4001,8 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
 
 ## 11A. Host bridge client (P3, contract v1.7 draft)
 
-Status: **draft for orch-52** (stream A, 12 Oct 2026; revised 13 Oct 2026 after an independent Codex challenge and an
-Opus tie-break, recorded in 11A.13). Section 11 lists what the host owes the relay; this section is the design of the
+Status: **decided 13 Oct 2026 by orch-52 (see PR #435 comment)**; drafted 12 Oct 2026 and revised 13 Oct 2026 after an
+independent Codex challenge and an Opus tie-break, recorded in 11A.13. Section 11 lists what the host owes the relay; this section is the design of the
 core-side client that pays it: the code that makes a served workspace reachable through orch-relay. It is numbered 11A
 so that the §12 references stay valid. Ground truth for the relay side is orch-relay `develop` @ `772d7b0`
 (`docs/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
@@ -4458,8 +4458,9 @@ deadline, not after a per-read timeout per byte.
 
 **Redirects and connections.**
 - No redirect is followed. Any 3xx is a permanent `relay_redirect` alarm.
-- Per workspace: 4 connections (poll, responder, publisher, aux). Per host: at most 64 relay connections; a workspace
-  that cannot get its 4 does not start and is alarmed.
+- Per workspace: 4 connections (poll, responder, publisher, aux). Relay connections are outbound and do not count
+  against the host's socket cap of 64. Instead, v1.7 caps relay-linked workspaces at **8 per host** (32 relay threads):
+  `relay.link` is refused with `host.limit` above it (decided by orch-52, 13 Oct 2026).
 - One long poll per generation (the relay cancels the older one).
 - Connections are kept alive and reopened after any error.
 
@@ -4484,7 +4485,7 @@ by the longest total deadline, 120 s) before it queues the job that closes the s
 before that job (the worker FIFO). A drain (D-P2-4) stops the worker after the socket drain.
 
 **Memory bound per linked workspace** (sum of the named caps, not an estimate): poll page 4 MiB, queue 4 MiB, 2 jobs in
-flight × (4 MiB plaintext + 4 MiB sealed), publisher page 4 MiB + manifest 4 MiB, R4 page 4 MiB: **≤ 36 MiB**. The
+flight × (4 MiB plaintext + 4 MiB sealed), publisher page 4 MiB + manifest 4 MiB, R4 page 4 MiB: **≤ 36 MiB**, so the 8-workspace cap bounds a host at ≤ 288 MiB. The
 relay's largest set is never held in memory: it is built and sent in pieces.
 
 ### 11A.8 Clock
@@ -4595,7 +4596,13 @@ orch-52's review of every group.
 
 ### 11A.11 Open questions (for orch-52 / orch-d6), with recommended answers
 
-The recommendations are proposals from the tie-break (11A.13), for orch-52's decision.
+The recommendations came from the tie-break (11A.13). **orch-52 decided on 13 Oct 2026: all seven are accepted as
+recommended** (PR #435 comment). Decided additions: relay-linked workspaces are capped at 8 per host (11A.4, 11A.7);
+`decision` evidence is not served in v1.7 (orch-52 owns its F1 carriage as a later amendment); the start fence and the
+600 s hold-off after a state restore are accepted; the convenience history rule stays strict in v1.7 (a workspace that
+used click-to-sign cannot get a phone in v1.7; lifting it needs a reader-version handshake and an owner decision; flagged
+to orch-d6, see §0.8.6 item 1); every R group gets an Opus review plus an orch-52 review. Q5 is to be confirmed with
+orch-mobile before R2 merges.
 
 1. **L3 (§11): the bridge in the host process?** *Recommended: accept for v1.7, with the exposure stated:* bridge code
    execution is WSK compromise (11A.2 "What this is not"), mitigated only by the pure, size-capped codecs and the

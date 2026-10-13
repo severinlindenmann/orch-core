@@ -5493,8 +5493,11 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   plus handshakes); at most 256 capabilities wait to be presented (`attach.allow` beyond: `attach.limit`). Per
   attachment the runner queues at most 4 096 control frames and reads ahead at most 64 frames while a PTY write waits
   for room; beyond either the attachment is revoked, its write lease is released at once, and it ends with
-  `overflow`. Outside a stalled write there is no frame cap: the frames of one read are handled one by one before the
-  next read, so a coalesced burst of small frames (resizes during a window drag) never ends a healthy attachment.
+  `overflow`. Outside a stalled write there is no frame-count cap but a bound by backpressure: the runner reads at most
+  64 KiB at a time and reads again only once every frame of the last read was handled, so a coalesced burst of small
+  frames (resizes during a window drag) never ends a healthy attachment; of a run of consecutive `resize` frames only
+  the last is applied (one PTY resize, one note per viewer, one `runner.term`). A length prefix above 128 KiB (longer
+  than any valid frame) ends the attachment with `protocol` before the body is buffered.
 - **Term socket I/O.** The socket is non-blocking once the attachment exists, with separate deadlines: the sender
   gives up after 30 s without write progress, the reader has no deadline (an idle viewer stays attached). While a PTY
   write waits for room the reader keeps watching the socket, so a disconnect cancels the pending write and releases the

@@ -194,7 +194,47 @@ def test_a_coalesced_burst_of_small_frames_never_ends_a_healthy_attachment(rig):
     type_(c, gen, 1, b"after")
     assert c.until("ack")["input_id"] == 1
     assert "att1" in rig.listener.attachments
-    assert len(rig.sup.sizes) == n and rig.sup.typed == b"after"
+    assert rig.sup.typed == b"after"
+    assert rig.sup.sizes and rig.sup.sizes[-1] == (100 + (n - 1) % 2, 30)  # the last size wins
+    assert len(rig.sup.sizes) < n  # a run of resizes in one read is applied once
+
+
+def test_a_flood_of_small_frames_without_a_stall_stays_bounded(rig, monkeypatch):
+    """Commit-scan follow-up to D3: a peer that floods small frames with no stalled write. The runner buffers at most
+    one read's frames (it reads again only once they are handled), applies each run of resizes once, and keeps
+    serving: no crash, no overflow of a healthy attachment."""
+    c, gen = writer(rig)
+    v = rig.attach("v1")  # a viewer that reads: gets the resize notes
+    listener = rig.listener
+    real = listener._read_some
+    seen = {"max": 0, "reads": 0}
+
+    def read_some(att, wait, limit=None):
+        ok = real(att, wait, limit)
+        seen["reads"] += 1
+        seen["max"] = max(seen["max"], len(att.inbox))
+        return ok
+
+    monkeypatch.setattr(listener, "_read_some", read_some)
+    total = 0
+    for _ in range(40):
+        c.sock.sendall(_burst(500, gen))
+        total += 500
+    type_(c, gen, 1, b"done")
+    assert c.until("ack", timeout=10)["input_id"] == 1
+    smallest = len(frames.encode({"t": "resize", "lease_gen": gen, "cols": 100, "rows": 30}))
+    assert seen["max"] <= term.READ_BYTES // smallest + 1  # never more than one read's frames
+    assert len(rig.sup.sizes) <= seen["reads"] < total  # at most one resize per read
+    assert "att1" in listener.attachments and "v1" in listener.attachments
+    assert len(listener.attachments["v1"].ctl) <= term.CTL_MAX
+    assert v.until("resize")["t"] == "resize"
+
+
+def test_a_frame_longer_than_any_valid_one_ends_with_protocol_before_it_is_buffered(rig):
+    c, gen = writer(rig)
+    c.sock.sendall((10 * 1024 * 1024).to_bytes(4, "big") + b"{" * 1000)  # a 10 MiB frame announced
+    assert c.drain()[-1] == {"t": "end", "reason": "protocol"}
+    wait_until(lambda: "att1" not in rig.listener.attachments)
 
 
 def test_a_coalesced_burst_during_a_stalled_write_ends_with_overflow(rig):

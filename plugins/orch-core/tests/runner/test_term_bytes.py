@@ -104,7 +104,7 @@ def test_control_frames_are_never_dropped_while_output_overruns(rig):
     v = rig.attach("v")  # reads nothing while the writer works and the ring overruns
     for i in range(5):
         w.send({"t": "resize", "lease_gen": gen, "cols": 100 + i, "rows": 30})
-    wait_until(lambda: len(rig.sup.sizes) == 5)
+    wait_until(lambda: rig.sup.sizes[-1:] == [(104, 30)])  # a run of resizes in one read is applied once
     for _ in range(30):
         rig.sup.emit(b"q" * 60_000)
     rig.listener.end("v", "not_visible")

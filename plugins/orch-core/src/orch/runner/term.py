@@ -114,6 +114,12 @@ SEND_TIMEOUT = 30.0
 CTL_MAX = 4096
 #: frames read ahead while a PTY write waits for room; over it the attachment ends with ``overflow``
 INBOX_MAX = 64
+#: bytes per read from a viewer's socket; outside a stalled write the next read waits until every frame of the last one
+#: was handled (backpressure), so at most one read's frames are buffered
+READ_BYTES = 64 * 1024
+#: the largest frame a viewer may send (an ``in`` frame of CHUNK bytes is about 87 KiB); a longer length prefix ends
+#: the attachment with ``protocol`` before its body is buffered
+FRAME_MAX = 128 * 1024
 #: capabilities registered and not yet presented, per runner
 MAX_ALLOWS = 256
 #: what an ``in`` frame past a gap is answered with: ``throttle`` (resend the missing one first)
@@ -737,6 +743,9 @@ class TermListener:
 
     # -- the reader: input and resize from the dashboard server
     def _serve(self, att: Attachment) -> None:
+        """Handle the inbox frame by frame, then read again (never while frames wait: backpressure). Of a run of
+        consecutive ``resize`` frames only the last is applied (each is still checked for its shape), so a burst costs
+        one PTY resize, one note per viewer and one ``runner.term``, not one per frame."""
         while not att.closed and not att.stop_reading:
             while att.inbox:
                 frame = att.inbox.popleft()
@@ -744,6 +753,11 @@ class TermListener:
                     self._finish(att, "protocol")
                     return
                 kind = frame.get("t")
+                if kind == "resize" and att.inbox and isinstance(att.inbox[0], dict) and att.inbox[0].get("t") == kind:
+                    if not all(_int(frame.get(k)) for k in ("cols", "rows", "lease_gen")):
+                        self._finish(att, "protocol")
+                        return
+                    continue  # superseded by the next resize
                 if kind == "in":
                     ok = self._input(att, frame)
                 elif kind == "resize":
@@ -763,13 +777,17 @@ class TermListener:
         waits, :meth:`_write_all`): more frames than that in the inbox revoke the attachment (``overflow``). An
         ordinary read has no frame cap: :meth:`_serve` handles the frames of one ``recv`` one by one before it reads
         again, so a burst of small frames (a coalesced run of resizes) never ends a healthy attachment. There is no
-        read deadline: a viewer that sends nothing stays attached."""
+        read deadline: a viewer that sends nothing stays attached. Memory is bounded in every state: an ordinary read
+        happens only with an empty inbox (at most one read of ``READ_BYTES`` is buffered), the read-ahead of a stall
+        adds at most ``INBOX_MAX`` frames, and the decoder holds at most one partial frame of ``FRAME_MAX`` bytes."""
+        if limit is None and att.inbox:
+            return True  # backpressure: the frames already read are handled first
         conn = att.conn
         try:
             readable, _, _ = select.select([conn], [], [], wait)
             if not readable:
                 return True
-            data = conn.recv(65536)
+            data = conn.recv(READ_BYTES)
         except (BlockingIOError, InterruptedError):
             return True
         except (OSError, ValueError):
@@ -779,6 +797,10 @@ class TermListener:
             att.stop_reading = True
             return False
         att.inbox.extend(att.decoder.feed(data))
+        if att.decoder.body_started and (att.decoder.body_length or 0) > FRAME_MAX:
+            att.stop_reading = True  # a frame longer than any valid one: never buffered to its end
+            self._finish(att, "protocol")
+            return False
         if limit is not None and len(att.inbox) > limit:
             att.stop_reading = True
             self._overflow(att)

@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { RouterProvider } from '@tanstack/react-router'
 import { OrbitMark } from '../brand/OrbitMark'
 import { createAppRouter } from '../app/router'
-import { getToken, onSessionChange } from '../api/bootstrap'
+import { getToken, isForeignNavigation, onSessionChange } from '../api/bootstrap'
 import { setFeatures } from '../api/features'
 import { session } from '../api/prodApi'
 import './shell.css'
@@ -30,6 +30,7 @@ function App() {
 export function Shell() {
   const [token, setToken] = useState(getToken)
   useEffect(() => onSessionChange(() => { queryClient.clear(); setToken(getToken()) }), [])
+  if (!token && isForeignNavigation()) return <main className="prod-login"><OrbitMark /><h1>This page was opened from another site.</h1><p>Open the dashboard from the terminal (<code>orch-dashboard open</code>) or a bookmark.</p></main>
   if (!token) return <main className="prod-login"><OrbitMark /><h1>Open your dashboard</h1><p>Run <code>orch dashboard</code> in your terminal.</p><p>Addon launcher: <code>python -m orch_dashboard open</code></p></main>
   return <App />
 }

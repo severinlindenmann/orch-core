@@ -1033,3 +1033,25 @@ pre-check remain defence in depth; they are not a replacement for this host prer
   stale one at commit.
 - F4: the server treats an unknown signer status as "click off" (fail-open for the path choice). Core #434 (merged)
   enforces one path per workspace at the host, so a stray hand-off request can't be prepared there.
+
+
+### T3 navigation and signing cleanup — 13 Oct 2026 (#444, #447 I-6)
+
+Every shell route serves HTML with unchanged CSP and `no-store`. Present Fetch Metadata
+other than a single exact `none`/`same-origin` value (including empty, same-site, cross-site,
+unknown, duplicate or comma-joined values) adds `<meta name="orch-nav" content="foreign">`
+in the head per request, regardless of mode/destination. Assets are unchanged. Absent
+metadata stays untagged for compatibility; older browsers or header-stripping clients
+therefore lack this protection.
+
+The server marker is authoritative for the document's bootstrap: foreign tabs clear any
+inherited session storage and never open BroadcastChannel, request tokens or receive offers.
+There is no requester assertion that can override it. Untagged tabs share sessions as before.
+Foreign tabs may exchange their own launch fragment via the same-origin auth API, supporting
+the private file launcher's cross-site navigation. Without a session they show terminal
+(`orch-dashboard open`) / bookmark guidance. Tokens are never embedded in HTML or URLs.
+
+Definite pre-dispatch/signer failures clear newly created unsettled marks before follow-up
+reads, but retain prior unknown-outcome marks on retry. Channel loss/timeouts/internal errors
+remain uncertain until settlement/expiry. A non-dict initial signer status closes the newly
+spawned child before reporting unavailable.

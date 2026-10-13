@@ -1038,8 +1038,62 @@ def test_n12_a_definite_refusal_clears_the_in_flight_mark_and_success_clears_it_
     assert sign_lost(client, token, stub).json()["error"]["reason"] == "too_soon"
     assert handoffs.is_unsettled(REQ) is None and not handoffs.any_unsettled()  # retry is allowed
     script.refuse.clear()
+    assert prepare(client, token, stub, comment(1)).status_code == 200
     assert sign_lost(client, token, stub).status_code == 200
     assert not handoffs.any_unsettled()
+
+
+def test_local_non_host_error_before_sign_clears_mark(client, token, stub, script, gateway, monkeypatch):
+    prepare(client, token, stub, comment(1))
+    original = gateway.click._ensure
+
+    def local_failure():
+        raise ValueError("local validation failed before using the channel")
+
+    monkeypatch.setattr(gateway.click, "_ensure", local_failure)
+    assert sign_lost(client, token, stub).json()["error"]["code"] == "click.unavailable"
+    assert not client.app.state.handoffs.any_unsettled()
+    assert not [call for call in script.clients[0].calls if call[0] == "sign"]
+    monkeypatch.setattr(gateway.click, "_ensure", original)
+    assert prepare(client, token, stub, comment(1)).status_code == 200
+    assert sign_lost(client, token, stub).status_code == 200
+
+
+def test_definite_refusal_clears_mark_even_when_follow_up_host_read_fails(client, token, stub, script, monkeypatch):
+    from orch_dashboard.errors import fail
+
+    prepare(client, token, stub, comment(1))
+    script.refuse["sign"] = ClickError("human.request_state", "the request is cancelled")
+    original = client.app.state.human
+
+    def unavailable(*args, **kwargs):
+        raise fail("host.unavailable")
+
+    monkeypatch.setattr(client.app.state, "human", unavailable)
+    assert sign_lost(client, token, stub).json()["error"]["code"] == "host.unavailable"
+    assert not client.app.state.handoffs.any_unsettled()
+    monkeypatch.setattr(client.app.state, "human", original)
+    script.refuse.clear()
+    assert prepare(client, token, stub, comment(1)).status_code == 200
+
+
+@pytest.mark.parametrize("error", [TimeoutError, ConnectionError, RuntimeError])
+def test_unknown_channel_outcome_keeps_unsettled_mark(client, token, stub, script, error):
+    prepare(client, token, stub, comment(1))
+
+    def failed_channel(op, args):
+        raise error("answer lost or unknown")
+
+    script.clients[0].handler = failed_channel
+    assert sign_lost(client, token, stub).json()["error"]["reason"] == "uncertain"
+    assert client.app.state.handoffs.is_unsettled(REQ) == stub.ws
+
+
+def test_signer_internal_error_is_unknown_not_a_definite_refusal(client, token, stub, script):
+    prepare(client, token, stub, comment(1))
+    script.refuse["sign"] = ClickError("internal", "failed after signing or encoding the result")
+    assert sign_lost(client, token, stub).json()["error"]["reason"] == "uncertain"
+    assert client.app.state.handoffs.is_unsettled(REQ) == stub.ws
 
 
 def test_n13_a_second_session_of_the_person_may_view_sign_and_poll_the_same_request(
@@ -1240,6 +1294,38 @@ def test_binding_conflict_with_open_request_keeps_expiry(client, token, stub, sc
     ]
     got = prepare(client, token, stub, comment(1)).json()["error"]
     assert got["code"] == "intent.open" and "15:30:00Z" in got["message"]
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_definite_retry_failure_preserves_prior_unknown_outcome(
+    client, token, stub, script, gateway, monkeypatch, local
+):
+    prepare(client, token, stub, comment(1))
+    script.refuse["sign"] = ClickError("internal", "unknown outcome")
+    assert sign_lost(client, token, stub).json()["error"]["reason"] == "uncertain"
+    if local:
+
+        def failed_setup():
+            raise ValueError("before dispatch")
+
+        monkeypatch.setattr(gateway.click, "_ensure", failed_setup)
+    else:
+        script.refuse["sign"] = ClickError("human.click_refused", "short", reason="too_soon")
+    assert sign_lost(client, token, stub).status_code != 200
+    assert client.app.state.handoffs.is_unsettled(REQ) == stub.ws
+
+
+@pytest.mark.parametrize("status", [None, [], "invalid", 1])
+def test_non_dict_status_closes_new_signer(gateway, monkeypatch, status):
+    from orch_dashboard.errors import HostError
+
+    child = Fake(lambda op, args: status)
+    monkeypatch.setattr(gateway.click, "_spawn", lambda: child)
+    with pytest.raises(HostError) as exc:
+        gateway.click.call("sign", {})
+    assert exc.value.error["code"] == "click.unavailable"
+    assert child.closed and gateway.click.client is None
+    assert [op for op, _ in child.calls] == ["status"]
 
 
 def test_failed_submit_state_never_reports_signed(client, token, stub, script, host_check, monkeypatch):

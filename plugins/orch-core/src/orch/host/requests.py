@@ -145,10 +145,15 @@ class RequestStore:
             raise HostError("not_found", "no such request")
         return self.expire(record)
 
+    def lapsed(self, record: dict[str, Any], grace: float = 0.0) -> bool:
+        """A pending request past its expiry (plus ``grace`` seconds), the one rule of :meth:`expire`. A request whose
+        signed events are being appended (``submit`` set) never lapses."""
+        return record["state"] in PENDING and not record.get("submit") and self.clock() >= record["expires"] + grace
+
     def expire(self, record: dict[str, Any]) -> dict[str, Any]:
         """A pending request older than 10 minutes (a grant: 4) becomes ``expired`` (written). A request whose signed
         events are being appended (``submit`` set) never expires: it is rolled forward."""
-        if record["state"] in PENDING and not record.get("submit") and self.clock() >= record["expires"]:
+        if self.lapsed(record):
             record = {**record, "state": "expired", "done_at": self.clock()}
             self.write(record)
         return record

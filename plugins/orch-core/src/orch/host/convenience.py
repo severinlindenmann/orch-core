@@ -20,7 +20,7 @@ import fcntl
 import os
 import stat
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -37,13 +37,13 @@ __all__ = [
     "check",
     "enabled",
     "flag_path",
+    "pending_handoffs",
     "read",
     "reason",
-    "pending_handoffs",
     "refuse_handoff",
     "refuse_reader_op",
-    "workspace_lock",
     "set_enabled",
+    "workspace_lock",
 ]
 
 REASONS = ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
@@ -220,26 +220,27 @@ def refuse_handoff(service: Any) -> None:
 
 
 _SUBMIT_GRACE = 60.0
-_now = time.time  # the CLI's clock for request expiry (tests set it to the lab's clock)
 
 
-def pending_handoffs(state_dir: Path, workspace_id: str, host_uid: int) -> list[dict[str, Any]]:
-    """The workspace's pending (``prepared`` or ``bound``, not expired) hand-off requests, as stored."""
+def pending_handoffs(
+    state_dir: Path, workspace_id: str, host_uid: int, *, clock: Callable[[], float] = time.time
+) -> list[dict[str, Any]]:
+    """The workspace's pending (``prepared`` or ``bound``, not expired) hand-off requests, as stored. A bound request
+    counts a minute past its expiry: a submit that passed the host's expiry check an instant before may still be
+    writing its journal, and must not land after the flag is on. A request file that cannot be read is
+    ``custody.unsafe_mode`` (switching on must not guess about it)."""
     from .requests import PENDING, RequestStore
 
-    store = RequestStore(state_dir, workspace_id, host_uid, clock=_now)
-    now, out = _now(), []
+    store = RequestStore(state_dir, workspace_id, host_uid, clock=clock)
+    out = []
     for rid in store.ids():
         try:
             rec = store.read(rid)
-        except HostError:
-            continue
+        except HostError as exc:
+            raise unsafe(f"request {rid} cannot be read ({exc.message}); fix or remove it first") from None
         if rec is None or not rec.get("code") or rec.get("state") not in PENDING:
             continue
-        # a bound request counts a minute past its expiry: a submit that passed the host's expiry check an instant
-        # before may still be writing its journal, and must not land after the flag is on
-        grace = _SUBMIT_GRACE if rec.get("state") == "bound" else 0.0
-        if not rec.get("submit") and now >= float(rec.get("expires", 0)) + grace:
+        if store.lapsed(rec, _SUBMIT_GRACE if rec.get("state") == "bound" else 0.0):
             continue
         out.append(rec)
     return out

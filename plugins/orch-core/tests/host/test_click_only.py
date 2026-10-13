@@ -8,6 +8,7 @@ import threading
 import pytest
 
 from orch.cli.main import main
+from orch.host import cli as host_cli
 from orch.host import convenience
 from tests.host import human_helpers
 from tests.host.human_helpers import err, ok
@@ -20,7 +21,7 @@ CODE = "sign.click_only"
 
 @pytest.fixture(autouse=True)
 def _lab_clock(served, monkeypatch):
-    monkeypatch.setattr(convenience, "_now", lambda: served.lab.ws.clock[0])
+    monkeypatch.setattr(host_cli, "_clock", lambda: served.lab.ws.clock[0])
 
 
 def run(*argv):
@@ -75,7 +76,7 @@ def test_switching_on_is_refused_while_handoff_requests_are_pending(served, huma
     assert convenience.enabled(served.lab.state, served.wid, UID)
 
 
-def test_an_expired_handoff_does_not_block_switching_on(served, human, monkeypatch):
+def test_an_expired_handoff_does_not_block_switching_on(served, human):
     _, key = human.ticket()
     ok(hand(human, key))
     served.lab.ws.clock[0] += 3600
@@ -110,7 +111,6 @@ def test_a_prepare_and_switching_on_at_the_same_time_have_exactly_one_winner(ser
     assert err(box["res"]) == CODE
     flag(served, False)
     # and the real race: whichever order, exactly one wins
-    flag(served, False)
     for i in range(5):
         res: dict = {}
         a = threading.Thread(target=lambda i=i, res=res: res.update(p=hand(human, key, f"r{i}")))
@@ -210,3 +210,20 @@ def test_concurrent_flag_updates_for_different_workspaces_lose_nothing(served, m
     [t.join(10) for t in ts]
     monkeypatch.setattr(convenience, "_doc", real)
     assert set(convenience.read(state, UID)["workspaces"]) == {"ws_a", "ws_b"}
+
+
+def test_an_unreadable_request_file_refuses_switching_on_and_names_it(served, human):
+    from orch.host.requests import RequestStore
+
+    _, key = human.ticket()
+    rid = ok(hand(human, key))["data"]["request"]["id"]
+    ok(human.c.req("human.cancel", {"request_id": rid}))
+    store = RequestStore(served.lab.state, served.wid, UID, clock=lambda: 0.0)
+    victim = ok(hand(human, key, "v"))["data"]["request"]["id"]
+    ok(human.c.req("human.cancel", {"request_id": victim}))
+    path = next(p for p in store.dir.iterdir() if victim in p.name)
+    path.write_bytes(b"not json")
+    code, text = flag(served, True)
+    assert code != 0 and victim in text
+    path.unlink()
+    assert flag(served, True)[0] == 0

@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
@@ -406,6 +407,9 @@ def _dead_device(device: Any, person: str | None, ws: Any) -> str | None:
     return None
 
 
+_clock = time.time  # the clock of request expiry for `convenience on` (tests set it to the lab's clock)
+
+
 def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
     """``orch host convenience on|off|show [--workspace W]``: the per-workspace click-to-sign flag in the host state dir
     (host UID only). Switching it on is an operator decision: every reader of the workspace must know auth
@@ -435,7 +439,7 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     try:
         with convenience.workspace_lock(state, wid, uid):  # against a hand-off prepare in the host (§0.8.6 item 8)
             if args.switch == "on":
-                waiting = convenience.pending_handoffs(state, wid, uid)
+                waiting = convenience.pending_handoffs(state, wid, uid, clock=_clock)
                 if waiting:
                     lines = ", ".join(f"{r['id']} ({r['op']}, code {r['code']})" for r in waiting)
                     return write_error(
@@ -443,7 +447,7 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                         False,
                         "sign.click_only",
                         f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
-                        hint="cancel them or let them expire (10 minutes), then switch convenience on",
+                        hint="let them expire (10 minutes), then switch convenience on",
                     )
             convenience.set_enabled(state, wid, args.switch == "on", uid)
     except HostError as exc:  # host.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)

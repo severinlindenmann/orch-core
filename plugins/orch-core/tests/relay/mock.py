@@ -66,6 +66,8 @@ def fixture_expect(name: str, case_name: str, *, body: Any = "exact", reply: Rep
     req, resp = c["request"], c["response"]
     rb: Any = corpus.request_body(req) if body == "exact" else body
     out = reply or json_reply(resp["status"], resp.get("json"), {k: v for k, v in resp["headers"].items()})
+    if body is None:  # reply-only: the recorded refusal is replayed for whatever the client sends on that route
+        return Expect(req["method"], req["path"], None, None, None, out)
     return Expect(req["method"], req["path"], req["query"], dict(req["headers"]), rb, out)
 
 
@@ -149,6 +151,7 @@ class MockRelay:
         self.script: deque[Expect] = deque()
         self.seen: list[Seen] = []
         self.errors: list[str] = []
+        self.fallback: Callable[[Seen], Reply] | None = None  # answers when the script is empty (a simulated relay)
         self._srv = _Server((host, 0), _Handler)
         self._srv.mock = self
         if tls is not None:
@@ -166,6 +169,8 @@ class MockRelay:
         return self
 
     def match(self, s: Seen) -> Reply:
+        if not self.script and self.fallback is not None:
+            return self.fallback(s)
         if not self.script:
             self.errors.append(f"unexpected {s.method} {s.path}")
             return json_reply(599, {"error": "unexpected"})

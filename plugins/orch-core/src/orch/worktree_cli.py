@@ -6,16 +6,24 @@ for a workspace no host serves.
     orch worktree remove TICKET [--repo NAME] [--force] [--json]
 
 The same safety contract as the host: one worktree per (ticket, linked repo) at ``<repo path>.worktrees/<WS8>-<KEY>`` on
-the ticket's current ``links.branches`` branch (``worktree.no_branch`` without one); git runs only through the runner's own helpers in :mod:`orch.runner.wtgit`
-(:func:`~orch.runner.wtgit.run_git` for add and remove, :func:`~orch.runner.wtgit.read_git` for rev-parse and status:
-hooks, fsmonitor and network off, a from-scratch environment, 30 s, no symlink followed under ``<repo>.worktrees``);
-nothing here calls ``orch.store.observe``, so a repo's own config, hooks or fsmonitor never run; the new worktree is pinned in process (:func:`orch.gitread.pinning.pin_repo`: ``O_NOFOLLOW``
-walks, git's layout checked exactly) and registered with a new generation in ``<state>/hosts/<ws>/git-pins.json``, the
-file a host reads when the workspace is registered later. A clean tree is required to remove (``--force`` skips it; in
-direct mode the person is at the terminal and could ``rm -rf`` it anyway); the branch is never deleted.
+the ticket's current ``links.branches`` branch (``worktree.no_branch`` without one). git runs only through the runner's
+own helpers in :mod:`orch.runner.wtgit` (:func:`~orch.runner.wtgit.run_git` for add and remove,
+:func:`~orch.runner.wtgit.read_git` for rev-parse and status), each behind the gate of :mod:`orch.gitsafe`: orch never
+runs git against a repository whose local/worktree config or attributes could make git execute a program or read
+config from elsewhere (such a repo is ``observe.unavailable``, git is not started); hooks, fsmonitor and network are
+off on every command, the environment is built from scratch, 30 s, no symlink followed under ``<repo>.worktrees``.
+Nothing here calls ``orch.store.observe``. The new worktree is pinned in process
+(:func:`orch.gitread.pinning.pin_repo`: ``O_NOFOLLOW`` walks, git's layout checked exactly) and registered with a new
+generation in ``<state>/hosts/<ws>/git-pins.json``, the file a host reads when the workspace is registered later.
+A clean tree is required to remove (``--force`` skips it; in direct mode the person is at the terminal and could
+``rm -rf`` it anyway); the branch is never deleted.
 
 The ownership lock is held **shared** for the whole command and the registration is checked under it, so the tool never
-works underneath a host (``host.required``), as the records tool (:mod:`orch.records.direct`). Windows answers
+works underneath a host (``host.required``), as the records tool (:mod:`orch.records.direct`). ``create`` and
+``remove`` also hold an **exclusive** per-workspace ``flock`` (``<state>/hosts/<ws>/worktrees.lock``, 10 s, then
+``lock.busy``) from loading the pin file through git and the write of the registration, so two direct commands never
+lose each other's registrations (Codex #439). ``list --check`` observes as the host does: the pins verified again
+(``moved``), ``HEAD`` read from the pinned gitdir (``stale_branch``), the tree through the gated reader. Windows answers
 ``unsupported.platform`` (exit 3): no reparse-point-safe resolution yet. A call under ``ORCH_GRANT`` is refused
 (``op.not_allowed``): agents ask the host's ``worktree.*`` ops, never this person-side tool.
 """
@@ -31,11 +39,16 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import gitsafe
 from orch.runner.wtgit import read_git, tree_dirty
 
 __all__ = ["main"]
 
-_USAGE = "usage: orch worktree {list [TICKET] [--check] | create TICKET [--repo NAME] | remove TICKET [--repo NAME] [--force]} [--json]"
+LOCK_WAIT = 10.0
+_USAGE = (
+    "usage: orch worktree {list [TICKET] [--check] | create TICKET [--repo NAME] | remove TICKET [--repo NAME] "
+    "[--force]} [--json]"
+)
 
 
 class WtError(Exception):
@@ -106,6 +119,36 @@ class Direct:
             except OrchError as exc:
                 raise WtError(exc.code, str(exc.message), hint=exc.hint) from None
         return self._store
+
+    @contextlib.contextmanager
+    def mutating(self, wait: float | None = None) -> Any:
+        """The exclusive cross-process lock of a direct mutation: the pin file is (re)loaded under it and it is held
+        through git and the write of the registration."""
+        import fcntl
+
+        d = self.state / "hosts" / self.wid
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            fd = os.open(d / "worktrees.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        except OSError as exc:
+            raise WtError(
+                "observe.unavailable", f"the worktree lock cannot be opened ({exc.strerror or exc})"
+            ) from None
+        try:
+            deadline = time.monotonic() + (LOCK_WAIT if wait is None else wait)
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise WtError("lock.busy", "another orch worktree command runs in this workspace", 4,
+                                      hint="retry in a moment") from None  # fmt: skip
+                    time.sleep(0.02)
+            self._pins = None  # never a copy loaded before the lock
+            yield
+        finally:
+            os.close(fd)  # closing releases the lock
 
     def pins(self) -> Any:
         if self._pins is None:
@@ -186,7 +229,11 @@ class Direct:
         try:
             run_git(args, self._own())
         except SpawnError as exc:
-            code = exc.code if exc.code.startswith("worktree.") or exc.code == "launch.cwd_changed" else "worktree.git_failed"
+            code = (
+                exc.code
+                if exc.code.startswith("worktree.") or exc.code == "launch.cwd_changed"
+                else "worktree.git_failed"
+            )
             raise WtError(code, exc.message, 1 if code == "worktree.git_failed" else 3) from None
 
     # -- the commands
@@ -206,37 +253,63 @@ class Direct:
             view = store.ticket(uid)
             if view is None:
                 continue
-            rows.append(self.row(view, repo, slot, self._observe(slot) if check else None))
+            rows.append(self.row(view, repo, slot, self._observe(view, repo, slot) if check else None))
         return rows
 
-    def _observe(self, slot: dict[str, Any]) -> dict[str, Any]:
+    def _observe(self, view: Any, repo: str, slot: dict[str, Any]) -> dict[str, Any]:
+        """One check, as the host's ``worktree.list {check}``: the pins verified again in process (a re-pointed ``.git``
+        file or a swapped directory is ``moved``), ``HEAD`` read from the pinned gitdir without git (another branch, or
+        a relinked ticket, is ``stale_branch``), the tree through the gated reader."""
+        from orch.gitread.errors import Unavailable
+        from orch.gitread.fs import RepoPins, open_pin
+        from orch.gitread.pinning import verify_worktree_pins
+        from orch.gitread.refs import read_head
+
         reg = slot["reg"]
         out: dict[str, Any] = {"checked_at": _iso(self.clock())}
+        if reg["pins"] is None:
+            return out
+        pin = reg["pins"]["worktree"]
         try:
             st = os.lstat(reg["path"])
         except FileNotFoundError:
             return {**out, "state": "missing"}
         except OSError:
             return {**out, "state": "moved"}
-        pin = (reg.get("pins") or {}).get("worktree")
-        if pin is None:
-            return out
         if (st.st_dev, st.st_ino) != (pin["dev"], pin["ino"]):
             return {**out, "state": "moved"}
-        out["head"] = self._rev(reg["path"], "HEAD")
-        d = tree_dirty(reg["path"], self._own())
+        try:
+            pins = RepoPins.from_json(reg["pins"])
+            verify_worktree_pins(reg["path"], pins)
+            with open_pin(pins.gitdir) as gd:
+                head_ref = read_head(gd)
+        except Unavailable:
+            return {**out, "state": "moved"}
+        current = ((view.fields.get("links") or {}).get("branches") or {}).get(repo)
+        if head_ref != f"refs/heads/{reg['branch']}" or current != reg["branch"]:
+            out["state"] = "stale_branch"
+        try:
+            out["head"] = self._rev(reg["path"], "HEAD")
+            d = tree_dirty(reg["path"], self._own())
+        except gitsafe.Unsafe:
+            return out  # the repo's own config could run a program: git is not started, nothing is known
         out["dirty"] = None if d is None else len([ln for ln in d.splitlines() if ln])
         return out
 
     def create(self, ref: str, repo_arg: str | None) -> dict[str, Any]:
+        self._gate()
+        view = self._ticket(ref)
+        repo = self._repo_of(view, repo_arg)
+        with self.mutating():
+            return self._create(view, repo)
+
+    def _create(self, view: Any, repo: str) -> dict[str, Any]:
         from orch.gitread.errors import Unavailable
         from orch.gitread.fs import open_pin
         from orch.gitread.pinning import pin_repo
         from orch.gitread.refs import read_head
         from orch.host.worktrees import MAX_REGISTERED, worktree_path
-        self._gate()
-        view = self._ticket(ref)
-        repo = self._repo_of(view, repo_arg)
+
         pins = self.pins()
         slot = pins.worktree(view.uid, repo)
         if slot["reg"] is not None:
@@ -251,6 +324,12 @@ class Direct:
                 raise WtError("worktree.branch_in_use", f"{branch} is checked out in another ticket's worktree")
         declared, dpins = self._declared(repo)
         path = worktree_path(declared, self.wid, view.key)
+        repos = self.store().state.workspace.repos
+        declared_paths = {
+            os.path.realpath(p) for n in repos if (p := self.git.repo_path(self.root, repos, n)) is not None
+        }
+        if path in declared_paths or os.path.realpath(path) in declared_paths:  # parity with the host (Opus #439 F4)
+            raise WtError("worktree.exists", "the worktree path is a declared repository")
         if os.path.lexists(path) and os.path.islink(path):
             raise WtError("worktree.exists", "the worktree path is a symlink")
         start = None
@@ -259,7 +338,9 @@ class Direct:
             default = spec.get("default_branch") or "main"
             start = self._rev(declared, f"refs/heads/{default}")
             if not start:
-                raise WtError("worktree.no_branch", f"{branch} does not exist and there is no default commit to start it at")
+                raise WtError(
+                    "worktree.no_branch", f"{branch} does not exist and there is no default commit to start it at"
+                )
         self._git({"op": "worktree.add", "repo_pin": dpins.worktree.to_json(), "path": path, "branch": branch,
                    "base": start, "force": False, "generation": slot["gen"] + 1})  # fmt: skip
         pinned, reason = None, None
@@ -278,7 +359,9 @@ class Direct:
         try:
             pins.set_worktree(view.uid, repo, reg, expect=slot["gen"])
         except (ValueError, OSError) as exc:
-            raise WtError("worktree.unpinned", f"the worktree was created but could not be registered ({exc})") from None
+            raise WtError(
+                "worktree.unpinned", f"the worktree was created but could not be registered ({exc})"
+            ) from None
         if reason is not None:
             raise WtError("worktree.unpinned", f"the worktree was created but could not be pinned: {reason}"[:400])
         return self.row(view, repo, pins.worktree(view.uid, repo))
@@ -287,6 +370,10 @@ class Direct:
         self._gate()
         view = self._ticket(ref)
         repo = self._repo_of(view, repo_arg)
+        with self.mutating():
+            return self._remove(view, repo, force)
+
+    def _remove(self, view: Any, repo: str, force: bool) -> dict[str, bool]:
         pins = self.pins()
         slot = pins.worktree(view.uid, repo)
         reg = slot["reg"]
@@ -314,7 +401,9 @@ def _text(cmd: str, data: Any) -> str:
     rows = data if cmd == "list" else [data]
     if not rows:
         return "no worktrees"
-    return "\n".join(f"{r['ticket']} {r['repo']} {r['branch']} {r['state']} gen={r['generation']} {r['path']}" for r in rows)
+    return "\n".join(
+        f"{r['ticket']} {r['repo']} {r['branch']} {r['state']} gen={r['generation']} {r['path']}" for r in rows
+    )
 
 
 def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO | None = None, err: TextIO | None = None,
@@ -360,6 +449,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO | None = No
         return 0
     except WtError as exc:
         return fail(exc)
+    except gitsafe.Unsafe as exc:  # the invariant of orch.gitsafe: git was not started
+        return fail(WtError("observe.unavailable", exc.reason[:300]))
     except Exception as exc:  # the guard's host.required (an OrchError) when a host registered the workspace meanwhile
         from orch.ops.errors import OrchError
 

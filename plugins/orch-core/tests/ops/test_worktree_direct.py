@@ -44,12 +44,15 @@ def d(ws, cli, monkeypatch):
         return person(*["worktree", *argv, "--json"], **env)
 
     return type("D", (), {"ws": ws, "repo": repo, "key": key, "other": other, "nob": nob, "run": staticmethod(run),
-                          "person": person})  # fmt: skip
+                          "person": person, "agent": cli})  # fmt: skip
 
 
 def wt(d):
-    wid8 = json.loads((d.ws.root / ".orch" / "config.json").read_text())["workspace"]["id"][:8] if (
-        d.ws.root / ".orch" / "config.json").exists() else None
+    wid8 = (
+        json.loads((d.ws.root / ".orch" / "config.json").read_text())["workspace"]["id"][:8]
+        if (d.ws.root / ".orch" / "config.json").exists()
+        else None
+    )
     return wid8
 
 
@@ -142,6 +145,8 @@ def test_direct_d58_reads_the_registered_worktree_not_the_declared_copy(d):
 
 
 def test_a_repos_own_config_and_hooks_run_nothing_in_any_command(d):
+    """The orch.gitsafe invariant: a repo whose own config names a program is refused before git starts; a local
+    hooksPath (husky) is allowed because -c core.hooksPath=/dev/null overrides it on every command."""
     marker = d.ws.tmp / "ran"
     script = d.ws.tmp / "evil.sh"
     script.write_text(f"#!/bin/sh\ntouch {marker}\n")
@@ -152,19 +157,116 @@ def test_a_repos_own_config_and_hooks_run_nothing_in_any_command(d):
         (hooks / h).write_text(f"#!/bin/sh\ntouch {marker}\n")
         (hooks / h).chmod(0o755)
     d.ws.git("config", "core.fsmonitor", str(script))
-    d.ws.git("config", "core.hooksPath", str(hooks))
-    d.ws.git("config", "core.sshCommand", str(script))
-    d.ws.git("config", "credential.helper", f"!{script}")
     # control: plain git does run the repo's fsmonitor, so the assertion below can fail
     subprocess.run(["git", "-C", str(d.repo), "status"], capture_output=True, check=False)
     assert marker.exists(), "the control must run the planted script"
     marker.unlink()
+    d.ws.git("config", "--unset-all", "core.fsmonitor")
+    for key, value in (("core.fsmonitor", str(script)), ("core.sshCommand", str(script)),
+                       ("credential.helper", f"!{script}"), ("filter.x.smudge", str(script))):  # fmt: skip
+        d.ws.git("config", key, value)
+        got = doc(d.run("create", d.key))
+        assert got["code"] == "observe.unavailable" and key.split(".")[0] in got["message"].lower(), got
+        assert value not in got["message"]
+        d.ws.git("config", "--unset-all", key)
+    assert not marker.exists()
+    d.ws.git("config", "core.hooksPath", str(hooks))
     path = doc(d.run("create", d.key))["data"]["path"]
     assert d.run("list", "--check").code == 0
     open(os.path.join(path, "scratch.txt"), "w").write("x\n")
     assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
+    d.ws.git("config", "filter.x.clean", str(script))  # planted after create: remove and list --check refuse git
+    assert doc(d.run("remove", d.key))["code"] == "observe.unavailable"
+    listed = doc(d.run("list", "--check"))["data"][0]
+    assert listed["dirty"] is None and listed["head"] is None
+    d.ws.git("config", "--unset-all", "filter.x.clean")
     assert d.run("remove", d.key, "--force").code == 0
     assert not marker.exists()
+
+
+def test_a_held_workspace_lock_is_lock_busy(d, monkeypatch):
+    import fcntl
+
+    monkeypatch.setattr(worktree_cli, "LOCK_WAIT", 0.1)
+    lock = d.ws.host_state / "hosts" / _wid(d) / "worktrees.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        got = doc(d.run("create", d.key))
+        assert got["code"] == "lock.busy"
+        assert doc(d.run("remove", d.key))["code"] == "lock.busy"
+    finally:
+        os.close(fd)
+    assert d.run("create", d.key).code == 0
+
+
+def test_concurrent_direct_commands_never_lose_a_registration(d, monkeypatch):
+    """Codex #439: two direct creates (another process each, in practice) are serialized by the workspace lock and
+    the pin file is loaded under it: both registrations survive, and a remove racing a create keeps the other one."""
+    import threading
+    import time as _time
+
+    from orch.runner import wtgit
+
+    assert d.agent("set", d.nob, 'links={"repos":["proj"],"branches":{"proj":"feat/y"}}').code == 0  # nob is claimed
+    real = wtgit.run_git
+
+    def slow(args, own, **kw):
+        _time.sleep(0.3)  # both commands are inside their git step at once unless the lock serializes them
+        return real(args, own, **kw)
+
+    monkeypatch.setattr(wtgit, "run_git", slow)
+    codes: dict[str, int] = {}
+
+    def go(ref):
+        codes[ref] = d.run("create", ref).code
+
+    ts = [threading.Thread(target=go, args=(k,)) for k in (d.key, d.nob)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert codes == {d.key: 0, d.nob: 0}, codes
+    pins = PinStore(d.ws.host_state / "hosts" / _wid(d) / "git-pins.json")
+    assert {uid for uid, _r, _s in pins.worktrees()} == {d.ws.uid(d.key), d.ws.uid(d.nob)}
+    t = threading.Thread(target=lambda: codes.__setitem__("rm", d.run("remove", d.key).code))
+    t.start()
+    codes["again"] = d.run("create", d.nob).code  # worktree.exists, read under the lock
+    t.join()
+    assert codes["rm"] == 0 and codes["again"] != 0
+    pins = PinStore(d.ws.host_state / "hosts" / _wid(d) / "git-pins.json")
+    assert [uid for uid, _r, _s in pins.worktrees()] == [d.ws.uid(d.nob)]
+
+
+def test_direct_create_refuses_a_path_that_is_a_declared_repository(d, monkeypatch):
+    """Opus #439 F4: parity with the host's "the worktree path is a declared repository"."""
+    from orch.host import worktrees
+
+    monkeypatch.setattr(worktrees, "worktree_path", lambda declared, wid, key: declared)
+    got = doc(d.run("create", d.key))
+    assert got["code"] == "worktree.exists" and "declared repository" in got["message"]
+
+
+def test_list_check_reports_moved_and_stale_branch_as_the_host_does(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    assert doc(d.run("list", "--check"))["data"][0]["state"] == "ok"
+    subprocess.run(["git", "-C", path, "checkout", "-q", "-b", "elsewhere"], check=True, capture_output=True,
+                   env={"PATH": os.environ["PATH"], "HOME": str(d.ws.tmp), "GIT_CONFIG_NOSYSTEM": "1"})  # fmt: skip
+    assert doc(d.run("list", "--check"))["data"][0]["state"] == "stale_branch"
+    subprocess.run(["git", "-C", path, "checkout", "-q", "feat/x"], check=True, capture_output=True,
+                   env={"PATH": os.environ["PATH"], "HOME": str(d.ws.tmp), "GIT_CONFIG_NOSYSTEM": "1"})  # fmt: skip
+    assert doc(d.run("list", "--check"))["data"][0]["state"] == "ok"
+    gitfile = os.path.join(path, ".git")
+    saved = open(gitfile).read()
+    other = d.ws.tmp / "elsewhere-gitdir"
+    other.mkdir()
+    open(gitfile, "w").write(f"gitdir: {other}\n")
+    assert doc(d.run("list", "--check"))["data"][0]["state"] == "moved"
+    open(gitfile, "w").write(saved)
+    assert d.agent("release").code == 0 and d.agent("claim", d.key).code == 0
+    assert d.agent("set", d.key, 'links={"repos":["proj"],"branches":{"proj":"feat/z"}}').code == 0
+    assert doc(d.run("list", "--check"))["data"][0]["state"] == "stale_branch"
 
 
 # -- D58 fails closed on the registration (direct mode here; host mode through bound_copy) -----------------------------
@@ -181,13 +283,16 @@ def problems(d):
     uid = d.ws.uid(d.key)
     wid = _wid(d)
     store = SimpleNamespace(root=d.ws.root, workspace_id=wid,
-                            state=SimpleNamespace(workspace=SimpleNamespace(repos={"proj": {"path": str(d.repo)}})))  # fmt: skip
+                            state=SimpleNamespace(
+                                workspace=SimpleNamespace(repos={"proj": {"path": str(d.repo)}})))  # fmt: skip
     h = Human.__new__(Human)
-    h.ctx = SimpleNamespace(caps=SimpleNamespace(git=Git(enabled=True), clock=time.time), prepare=None)
+    h.ctx = SimpleNamespace(
+        caps=SimpleNamespace(git=Git(enabled=True), clock=time.time, env=dict(os.environ)), prepare=None
+    )
     h.call = SimpleNamespace(ws=SimpleNamespace(state_dir=d.ws.host_state), store=store)
-    view = SimpleNamespace(uid=uid, fields={"links": {"repos": ["proj"], "branches": {"proj": "feat/x"}}})
+    view = SimpleNamespace(uid=uid, key=d.key, fields={"links": {"repos": ["proj"], "branches": {"proj": "feat/x"}}})
     pinfile = d.ws.host_state / "hosts" / wid / "git-pins.json"
-    return SimpleNamespace(run=lambda: h._tree_problems(view, []), pinfile=pinfile, d=d, uid=uid)
+    return SimpleNamespace(run=lambda: h._tree_problems(view, []), pinfile=pinfile, d=d, uid=uid, h=h)
 
 
 def test_d58_direct_accepts_an_intact_registration(problems):
@@ -246,7 +351,9 @@ def test_bound_copy_fails_closed_on_every_branch(tmp_path):
     from orch.host.human import bound_copy
     from orch.ops.caps import WorkingCopy
 
-    def git(copy, *, enabled=True, reader=object()):
+    some_reader = object()
+
+    def git(copy, *, enabled=True, reader=some_reader):
         return SimpleNamespace(enabled=enabled, reader=reader, principal="p", ticket_copy=lambda *a: copy)
 
     store = SimpleNamespace(root=tmp_path, state=SimpleNamespace(workspace=SimpleNamespace(repos={})))
@@ -267,3 +374,33 @@ def test_bound_copy_fails_closed_on_every_branch(tmp_path):
         with pytest.raises(HostError) as e:
             bound_copy(g, store, "u", "proj", copies)
         assert e.value.code == "observe.unavailable", why
+
+
+def test_d58_direct_refuses_a_worktree_on_disk_without_a_pin_file(problems):
+    """Opus #439 F3: a deleted git-pins.json never turns into a fallback to the declared copy."""
+    problems.d.run("create", problems.d.key)
+    problems.pinfile.unlink()
+    got = problems.run()
+    assert any("on disk but no registration" in p for p in got), got
+
+
+@pytest.mark.parametrize("interleaving", ["remove", "remove-recreate"])
+def test_d58_direct_precommit_refuses_a_registration_changed_since_the_first_look(problems, interleaving):
+    """Codex #439: the copy the person was shown (generation, registration, pin) is the copy the precommit reads."""
+    problems.d.run("create", problems.d.key)
+    first = problems.run()
+    assert not any("changed while you were deciding" in p for p in first), first
+    assert problems.d.run("remove", problems.d.key).code == 0
+    if interleaving == "remove-recreate":
+        assert problems.d.run("create", problems.d.key).code == 0
+    got = problems.run()  # the precommit's look, same Human
+    assert any("changed while you were deciding" in p for p in got), got
+    assert not any("working tree is on refs/heads/main" in p for p in got)  # never judged on the declared copy
+
+
+def test_d58_direct_refuses_a_registered_worktree_whose_config_names_a_program(problems):
+    path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
+    problems.d.ws.git("config", "filter.x.clean", "/bin/false")
+    got = problems.run()
+    assert any("filter.x.clean" in p for p in got), got
+    assert path

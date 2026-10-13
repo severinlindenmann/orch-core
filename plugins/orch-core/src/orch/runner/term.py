@@ -13,6 +13,14 @@ unknown hash closes without counting, so random tickets cannot lock terminals ou
 per client: one client replaying seen tickets locks every attachment out for 60 s (§12.6.2, by design). A pending
 capability holds nothing: **the ticket never holds the lease**; the lease is taken only when it is consumed.
 
+**Authorization is checked at use, not only at consumption** (one function, ``TermListener._authorized``, called
+before every privileged action: each output frame, each input write (and each retry of a partial write), each take
+and each resize): the attachment must still be in the table, not revoked, not closed, in the current host epoch with
+the host still there, and for a write action it must still hold the lease at the generation the frame names. An
+attachment found revoked is ended (``{t:"end"}``) and nothing more flows in either direction; ``attach.end``,
+``end_run``, ``host_lost`` and a new epoch revoke under the same lock that removes it, so there is no window
+between the capability check and the byte. A lease that moved only refuses the write action (``writer:false``).
+
 **Limits** at consumption (§12.6.5): 4 attachments per run, 16 per person, 64 per runner; over one the connection ends
 with ``{t:"end", reason:"attach.limit"}`` (the host refuses earlier from the counts the runner reports).
 
@@ -133,6 +141,11 @@ class Attachment:
     #: ``end`` queued: no more output, the socket closes after the control queue
     ending: bool = False
     closed: bool = False
+    #: the host epoch the capability was consumed in (an attachment never outlives it)
+    epoch: int = 0
+    #: set under the lock by whoever takes the attachment out of the table (``end``, ``host_lost``, a new epoch):
+    #: from then on :meth:`TermListener._authorized` refuses everything, in both directions
+    revoked: bool = False
 
 
 class _Bucket:
@@ -187,6 +200,8 @@ class TermListener:
         self.accepting = False
         self.epoch = 0
         self.seen: dict[str, float] = {}  # hashes of consumed or expired capabilities
+        #: attachments the host ended before their connection was registered (a cancel between consume and take)
+        self.cancelled: dict[str, float] = {}
         self.strikes: list[float] = []
         self.locked_until = 0.0
         self.sock: socket.socket | None = None
@@ -254,8 +269,18 @@ class TermListener:
     # -- the host's side
     def host_ready(self, epoch: int) -> None:
         with self.lock:
+            moved = epoch != self.epoch
+            stale = list(self.attachments.values()) if moved else []
+            if moved:
+                for att in stale:
+                    att.revoked = True
+                    del self.attachments[att.att]
+                    self._unindex(att)
+                self.leases.clear()
             self.epoch = epoch
             self.accepting = True
+        for att in stale:
+            self._finish(att, "host.restarting")
 
     def host_lost(self, reason: str = "host.restarting") -> None:
         with self.lock:
@@ -264,6 +289,8 @@ class TermListener:
                 self._remember(item.ticket_hash)
             self.allows.clear()
             ended = list(self.attachments.values())
+            for att in ended:
+                att.revoked = True
             self.attachments.clear()
             self._by_run.clear()
             self.leases.clear()
@@ -309,7 +336,12 @@ class TermListener:
             for key in [k for k, a in self.allows.items() if a.att == att]:
                 self._remember(key)
                 del self.allows[key]
-            if found is not None:
+            if found is None:
+                self.cancelled[att] = self.clock()  # it may be consumed but not registered yet: it must not register
+                if len(self.cancelled) > SEEN_KEEP:
+                    del self.cancelled[next(iter(self.cancelled))]
+            else:
+                found.revoked = True
                 self._unindex(found)
             others = self._release(found) if found is not None else []
         if found is not None:
@@ -484,10 +516,13 @@ class TermListener:
             if item is None or info is None:
                 _end(conn, "ticket_invalid")
                 return
-            new = Attachment(item.att, item.run, item.person, item.mode, conn)
+            new = Attachment(item.att, item.run, item.person, item.mode, conn, epoch=item.epoch)
             with self.lock:
                 if not self.accepting or item.epoch != self.epoch:
                     _end(conn, "ticket_invalid")
+                    return
+                if self.cancelled.pop(item.att, None) is not None:
+                    _end(conn, "cancelled")
                     return
                 if self._over_limit(item):
                     _end(conn, "attach.limit")
@@ -565,6 +600,8 @@ class TermListener:
 
     def _step(self, att: Attachment) -> bool:
         """Queue or send what is next for one attachment; ``True`` when something was done."""
+        if not self._authorized(att):
+            return False
         live = self.sup.live_of(att.run) if self.sup is not None else None
         if live is None:
             if self.sup is not None:
@@ -585,7 +622,7 @@ class TermListener:
                 att.pos = begin
                 return True
             att.pos = begin + len(data)
-            if data:
+            if data and self._authorized(att):
                 att.conn.sendall(frames.encode({"t": "out", "off": begin, "b64": base64.b64encode(data).decode()}))
             return True
         if live.exit is not None and live.pty_closed and not att.ending:
@@ -624,13 +661,45 @@ class TermListener:
                 return
             queue = decoder.feed(data)
 
-    def _lease_ok(self, att: Attachment, lease_gen: Any) -> bool:
+    def _authorized(self, att: Attachment, lease_gen: Any = None) -> bool:
+        """The one authorization check, called before every privileged action (§12.6.2, N5). Without ``lease_gen``:
+        may this attachment still see output (it is registered, not revoked or closed, in the current epoch, with the
+        host there)? With it: may it also write, i.e. is it a write attachment holding the lease at ``lease_gen``?
+        A revoked attachment is ended here, whoever noticed first; a lease that moved only refuses the write
+        (``writer:false``)."""
         with self.lock:
+            live = (
+                self.attachments.get(att.att) is att and not att.revoked and not att.closed
+                and self.accepting and att.epoch == self.epoch
+            )  # fmt: skip
             holder, gen = self.leases.get(att.run, (None, 0))
-        if att.writer and holder == att.att and lease_gen == gen:
+            leased = att.mode == "write" and att.writer and holder == att.att and lease_gen == gen
+            if not live:
+                att.revoked = True
+                att.writer = False
+        if not live:
+            self._finish(att, "host.restarting" if not self.accepting or att.epoch != self.epoch else "cancelled")
+            return False
+        if lease_gen is None or leased:
             return True
         self._queue(att, {"t": "writer", "writer": False, "lease_gen": gen})
         return False
+
+    def downgrade(self, att_id: str) -> bool:
+        """Take the lease from an attachment without ending it (it keeps reading): the next write or resize it sends
+        is refused. ``True`` when it held the lease."""
+        with self.lock:
+            att = self.attachments.get(att_id)
+            if att is None or not att.writer:
+                return False
+            notes = self._release(att)
+            run = att.run
+            gen = self.leases.get(run, (None, 0))[1]
+        self._queue(att, {"t": "writer", "writer": False, "lease_gen": gen})
+        for other, note in notes:
+            self._queue(other, note)
+        self._changed(run)
+        return True
 
     def _input(self, att: Attachment, frame: dict[str, Any]) -> bool:
         """One ``in`` frame; ``False`` for a malformed one (the attachment ends with ``protocol``)."""
@@ -645,7 +714,7 @@ class TermListener:
             return False
         if att.mode != "write":
             return True  # a read attachment's input is dropped (the server should not send it)
-        if not self._lease_ok(att, lease_gen):
+        if not self._authorized(att, lease_gen):
             return True
         if iid <= att.last_input:  # a repeated or lower id is never typed again
             self._queue(att, {"t": "ack", "input_id": iid})
@@ -654,7 +723,7 @@ class TermListener:
         if retry > 0:
             self._queue(att, {"t": "throttle", "retry_ms": max(1, int(retry * 1000 + 0.999))})
             return True
-        if not self._write_all(att, data):
+        if not self._write_all(att, data, lease_gen):
             return True  # the run ended or the attachment closed mid-write: no ack (the input may not have arrived)
         att.last_input = iid
         self._queue(att, {"t": "ack", "input_id": iid})
@@ -675,7 +744,7 @@ class TermListener:
                     b.level -= n
             return wait
 
-    def _write_all(self, att: Attachment, data: bytes) -> bool:
+    def _write_all(self, att: Attachment, data: bytes, lease_gen: int) -> bool:
         """Write every byte (partial writes retried here, never by the client); ``False`` when it cannot finish."""
         if self.sup is None:
             return False
@@ -683,7 +752,7 @@ class TermListener:
 
         view = memoryview(data)
         while view:
-            if att.closed:
+            if att.closed or not self._authorized(att, lease_gen):
                 return False
             try:
                 n = self.sup.write_input(att.run, bytes(view))
@@ -701,7 +770,7 @@ class TermListener:
             return False
         if att.mode != "write" or not (20 <= cols <= 500 and 5 <= rows <= 200):
             return True  # a read viewer's resize, or a size out of range: ignored (§12.6.4)
-        if not self._lease_ok(att, lease_gen) or self.sup is None:
+        if not self._authorized(att, lease_gen) or self.sup is None:
             return True
         live = self.sup.live_of(att.run)
         if live is None or (live.cols, live.rows) == (cols, rows):

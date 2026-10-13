@@ -432,19 +432,22 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     if len(match) != 1:
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
-    with convenience.workspace_lock(state, wid, uid):  # against a hand-off prepare in the host (§0.8.6 item 8)
-        if args.switch == "on":
-            waiting = convenience.pending_handoffs(state, wid, uid)
-            if waiting:
-                lines = ", ".join(f"{r['id']} ({r['op']}, code {r['code']})" for r in waiting)
-                return write_error(
-                    out,
-                    False,
-                    "sign.click_only",
-                    f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
-                    hint="cancel them or let them expire (10 minutes), then switch convenience on",
-                )
-        convenience.set_enabled(state, wid, args.switch == "on", uid)
+    try:
+        with convenience.workspace_lock(state, wid, uid):  # against a hand-off prepare in the host (§0.8.6 item 8)
+            if args.switch == "on":
+                waiting = convenience.pending_handoffs(state, wid, uid)
+                if waiting:
+                    lines = ", ".join(f"{r['id']} ({r['op']}, code {r['code']})" for r in waiting)
+                    return write_error(
+                        out,
+                        False,
+                        "sign.click_only",
+                        f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
+                        hint="cancel them or let them expire (10 minutes), then switch convenience on",
+                    )
+            convenience.set_enabled(state, wid, args.switch == "on", uid)
+    except HostError as exc:  # host.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
+        return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
     out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
     if args.switch == "on":

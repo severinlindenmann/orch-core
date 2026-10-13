@@ -431,7 +431,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
-| `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them); the fix is `orch host convenience off --workspace W` (§0.8.6 item 8) | — |
+| `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to cancel the pending requests or let them expire (a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
 | `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
@@ -2547,7 +2547,7 @@ click-to-sign is on for a workspace, the only way to sign is the click. The term
   bound (`human.get` with `signer`) or submitted (`human.submit`, again under the store lock): `sign.click_only`.
 - **The race.** The host holds an exclusive `flock` on `<state>/host/convenience-<ws>.lock` from the flag check of a
   hand-off prepare to the write of its request file; `orch host convenience on|off` holds the same lock across its pending
-  scan and the flag write. So exactly one wins: the prepare lands first (and `on` is refused, listing it), or the flag
+  scan and the flag write. A lock is waited for at most 2 s (`host.busy`), and its file must be a regular 0600 file of the host UID, opened without following a link (`custody.unsafe_mode`). `set_enabled` also takes `convenience.lock`, so concurrent flag writes for different workspaces lose nothing. A bound request counts as pending until a minute past its expiry, so a submit at the expiry boundary cannot land after the flag is on. So exactly one wins: the prepare lands first (and `on` is refused, listing it), or the flag
   lands first (and the prepare is refused).
 - `orch host convenience off` removes the flag and hand-off works again: the owner's CLI fallback.
 - Direct mode has no host and no convenience flag, and is unaffected.
@@ -3023,7 +3023,7 @@ existing op changes its version.
 19. **One signing path per workspace (H5c follow-up, additive, owner decision of 12 Oct 2026):** new catalog code
     `sign.click_only` (exit 3, not retryable). With click-to-sign on, `human.prepare {handoff:true}` is refused,
     `orch host convenience on` is refused while hand-off requests are pending, and a hand-off request cannot be bound or
-    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock.
+    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock (2 s wait, then `host.busy`).
     No wire schema change; a client that does not use `handoff:true` sees nothing new.
 
 ---

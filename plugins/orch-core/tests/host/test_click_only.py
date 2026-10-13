@@ -128,3 +128,85 @@ def test_a_prepare_and_switching_on_at_the_same_time_have_exactly_one_winner(ser
             assert res["f"][0] == 3 and CODE in res["f"][1]
             ok(human.c.req("human.cancel", {"request_id": ok(res["p"])["data"]["request"]["id"]}))
         flag(served, False)
+
+
+def test_a_submit_at_the_expiry_boundary_cannot_land_after_switching_on(served, human, monkeypatch):
+    from orch.host.human import HumanOps
+
+    _, key = human.ticket()
+    rid = ok(hand(human, key, "edge"))["data"]["request"]["id"]
+    signed = human.sign(ok(human.get(rid, signer=human.signer))["data"])
+    clock = served.lab.ws.clock
+    t0 = clock[0]
+    clock[0] = t0 + 599.999
+    orig, box = HumanOps._judge, {}
+
+    def judge(store, record, events, git):
+        # the host already passed its expiry and flag checks; the clock crosses `expires`, the operator switches on
+        clock[0] = t0 + 600.5
+        box["flag"] = flag(served, True)
+        return orig(store, record, events, git)
+
+    monkeypatch.setattr(HumanOps, "_judge", staticmethod(judge))
+    ok(human.submit_res(rid, signed.events))
+    assert box["flag"][0] == 3 and CODE in box["flag"][1]  # a bound request still counts a minute past its expiry
+    assert not convenience.enabled(served.lab.state, served.wid, UID)
+    clock[0] = t0 + 600 + 61
+    monkeypatch.setattr(HumanOps, "_judge", staticmethod(orig))
+    assert flag(served, True)[0] == 0  # signed and submitted: nothing pending
+
+
+def test_a_held_lock_is_host_busy_after_a_short_wait_not_forever(served, monkeypatch):
+    monkeypatch.setattr(convenience, "LOCK_WAIT", 0.2)
+    with convenience.workspace_lock(served.lab.state, served.wid, UID):
+        code, text = flag(served, True)
+        assert code == 4 and "host.busy" in text
+        with pytest.raises(convenience.HostError) as exc:
+            with convenience.workspace_lock(served.lab.state, served.wid, UID):
+                pass
+        assert exc.value.code == "host.busy"
+    assert flag(served, True)[0] == 0
+
+
+@pytest.mark.parametrize("kind", ["fifo", "dir", "loose", "link"])
+def test_an_unsafe_lock_file_is_refused_as_custody_unsafe_mode(served, kind):
+    import os
+
+    path = convenience.host_dir(served.lab.state) / f"convenience-{served.wid}.lock"
+    path.unlink(missing_ok=True)
+    if kind == "fifo":
+        os.mkfifo(path, 0o600)
+    elif kind == "dir":
+        path.mkdir(mode=0o700)
+    elif kind == "loose":
+        path.touch(mode=0o644)
+        path.chmod(0o644)
+    else:
+        path.symlink_to(path.parent / "elsewhere")
+    with pytest.raises(convenience.HostError) as exc:
+        with convenience.workspace_lock(served.lab.state, served.wid, UID):
+            pass
+    assert exc.value.code == "custody.unsafe_mode"
+    code, text = flag(served, True)
+    assert code != 0 and "custody.unsafe_mode" in text
+
+
+def test_concurrent_flag_updates_for_different_workspaces_lose_nothing(served, monkeypatch):
+    # force the read-modify-write windows to overlap: every read waits for the other writer, unless the lock serializes
+    state, barrier = served.lab.state, threading.Barrier(2, timeout=0.3)
+    real = convenience._doc
+
+    def slow(*a):
+        doc = real(*a)
+        try:
+            barrier.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return doc
+
+    monkeypatch.setattr(convenience, "_doc", slow)
+    ts = [threading.Thread(target=convenience.set_enabled, args=(state, f"ws_{n}", True, UID)) for n in "ab"]
+    [t.start() for t in ts]
+    [t.join(10) for t in ts]
+    monkeypatch.setattr(convenience, "_doc", real)
+    assert set(convenience.read(state, UID)["workspaces"]) == {"ws_a", "ws_b"}

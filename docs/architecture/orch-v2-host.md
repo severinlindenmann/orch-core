@@ -431,6 +431,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
+| `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
 | `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
@@ -525,9 +526,9 @@ state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`),
 | `diff` with `head`/`base` (v1.5) | as `diff`; a `head` or `base` the ticket does not allow is `not_found`; `since` with `head` or `base` is `invalid.input`; `invalid.input` for `head`/`base` without `repo`, and for either on a host without `diff_ext/1` (the §0.3 unknown-key rule) |
 | `session.refusals` (v1.5) | `page.expired`, `not_found` (`ticket`, or a `session` the viewer may not see), `invalid.input` (a `page` token with other arguments) |
 | `outcome.get`, `host.outcome` | `outcome.unknown_idem` (no record, or another principal's), `idem.expired` (only a tombstone is left) |
-| `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors |
-| `human.get` | `not_found`, `human.request_expired`, `human.request_state`, `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable` (N3 re-check) |
-| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes |
+| `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors, `sign.click_only` |
+| `human.get` | `not_found`, `human.request_expired`, `human.request_state`, `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable` (N3 re-check), `sign.click_only` |
+| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes, `sign.click_only` |
 | `human.pending` | none (an unknown code gives an empty list) |
 | `human.cancel` | `not_found` |
 | `sub.open` | `not_found` (`ticket:<ref>`), `sub.reset`; `invalid.input` for `detail` on a host without `sub_ext/1` (the §0.3 unknown-key rule) |
@@ -2125,7 +2126,8 @@ orch-52). Owner decisions of 12 Oct 2026 (coordination log "OWNER RE-PLAN P2" an
 with one click. The person's device key sits in a store that needs no user presence (the `convenience` backend), and a
 separate **person-class signer process** next to the dashboard holds it. The host still holds no device key and never
 prompts (D-P2-15); the prepare → check and recompute → sign → submit contract of §0.8.1, the review, `review_digest`
-and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available. **Accepted risk, shown on the workspace
+and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available **while the flag is off** (one signing path per workspace, item 8).
+**Accepted risk, shown on the workspace
 card, on every sign panel and in the docs: "Convenience signing: agents running as you, or anything that takes over
 this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1; H9 (Touch ID) and tier B bring
 isolation back in phase 3, and only after migration, UID separation and removal of the old convenience devices.
@@ -2407,16 +2409,24 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
     its own descriptor. One window has two links: a crash between linking the record into place and unlinking its
     temporary file. A read that finds exactly that (the second link is the record's own `.<name>.tmp*` sibling with
     the same inode) removes the temporary file and reads again; any other second link fails closed. Under `<state>/person/`, so the host's audit hook refuses it like the rest of person custody.
-  - **What.** `{"v":1, workspace_id, request_id, view_digest, op, idem, events, expires_at, signed_at, result}`:
+  - **What.** A completed record is `{"v":1, workspace_id, request_id, view_digest, op, idem, events, expires_at, signed_at, result}`:
     `events` is the exact signed event array (its signatures are what the workspace log shows anyway), `idem` the submit
     idem, `result` null until `human.submit` answered, then its result. **Never** a key, a factor, keychain material
-    or a grant secret (`grant` is terminal-only and refused before signing).
-  - **When.** After signing and **before the signature leaves the signer** (before `human.submit`), the record is
-    written exclusively (a temporary file opened `O_CREAT|O_EXCL|O_NOFOLLOW`, written, `fsync`ed, linked into place,
-    then the directory `fsync`ed). If that fails, nothing is submitted and the signatures are dropped
-    (`record_unavailable`). A record already in place (another signer process of the same person won the race) wins:
-    its events are used, never the new ones. After the commit the record is replaced (temporary file, `fsync`,
-    rename, directory `fsync`) by one that holds the result; failing that only costs a resubmit under the same idem.
+    or a grant secret (`grant` is terminal-only and refused before signing). A **claim** is the same record without
+    `events`, `signed_at` and `result` and with `claimed_at`; a record is a claim or a completed record, anything else
+    fails closed.
+  - **When.** A claim is written and synced **before the crypto signing**: exclusively (a temporary file opened
+    `O_CREAT|O_EXCL|O_NOFOLLOW`, written, `fsync`ed, linked into place, then the directory `fsync`ed). If that fails,
+    nothing is signed (`record_unavailable`). After signing, and **before the signature leaves the signer** (before
+    `human.submit`), the claim is replaced by the completed record (temporary file, `fsync`, rename, directory
+    `fsync`); if that fails, nothing is submitted (`record_unavailable`) and a `sign` in the same process retries the
+    completion with the identical events, held in memory right after signing. A record already in place (another
+    signer process of the same person won the race) wins: a completed one's events are used, a claim refuses. A claim
+    with no completed record and no in-memory events (a crash or failure sat between the claim and the completion)
+    is `record_unavailable` for that `view_digest` and `already_signed` for another: the request is never signed
+    again. Once signing has started the claim is never released; a failure fails that request closed (the person
+    prepares a new request). After the commit the record is replaced (temporary file, `fsync`, rename, directory `fsync`) by one that holds the result; failing that
+    only costs a resubmit under the same idem.
   - **Every `sign` reads the record first**, before the in-memory registry, and **the in-memory guard stays as
     well**: a request this process signed answers its cached result or resends the identical events and idem from
     memory (and writes the record again, best effort) even when the record was lost. With the record: the same `view_digest` answers the recorded
@@ -2532,18 +2542,39 @@ member, policy or addon operations.
 | A same-UID process pre-claims a click idem | `idem.conflict`; the signer reports the request state and signs nothing again. A denial of service by an already accepted attacker. |
 | Signer crash or restart mid-sign; a dashboard retry or a second View after it | The durable sign record is synced before the signature leaves: a retry resends the identical events and idem, another View is `already_signed`. A same-UID process can delete or corrupt the record (accepted: it can sign anyway); corruption fails closed. A record can also be lost without an attacker (a cleanup of the state directory, a backup restore, a wall-clock jump of more than 24 h before a prune, file-system loss): the live signer's in-memory guard still never signs again; only after the signer has also restarted can a lost record allow one fresh signature, and the host still commits a request once. |
 
+**8. One signing path per workspace (owner decision of 12 Oct 2026, with the dashboard stream's clarification).** While
+click-to-sign is on for a workspace, the only way to sign is the click. The terminal hand-off (a request with a code,
+`human.prepare {handoff:true}`, signed with `orch sign CODE`) does not exist for that workspace:
+
+- `human.prepare` with `handoff:true` is refused with **`sign.click_only`** (exit 3, not retryable). The message says to
+  use Sign in the dashboard, or turn convenience off with `orch host convenience off --workspace W` (the `fix`).
+- `orch host convenience on` is **refused** (`sign.click_only`, the message lists each pending request's id, op and code)
+  while hand-off requests of that workspace are pending (`prepared` or `bound`, not expired). The owner lets them expire (10 minutes), then switches on. Refusing was chosen over cancelling them: nothing is
+  cancelled silently. A request file that cannot be read refuses too, naming its id. Requests prepared with a signer (not a hand-off) never block it.
+- A hand-off request that exists anyway (the flag was switched on by another path, e.g. editing the state file) cannot be
+  bound (`human.get` with `signer`) or submitted (`human.submit`, again under the store lock): `sign.click_only`.
+- **The race.** The host holds an exclusive `flock` on `<state>/host/convenience-<ws>.lock` from the flag check of a
+  hand-off prepare to the write of its request file; `orch host convenience on|off` holds the same lock across its pending
+  scan and the flag write. A lock is waited for at most 2 s (`host.busy`), and its file must be a regular 0600 file of the host UID, opened without following a link (`custody.unsafe_mode`). `set_enabled` also takes `convenience.lock`, so concurrent flag writes for different workspaces lose nothing. A bound request counts as pending until a minute past its expiry, so a submit at the expiry boundary cannot land after the flag is on. So exactly one wins: the prepare lands first (and `on` is refused, listing it), or the flag
+  lands first (and the prepare is refused).
+- `orch host convenience off` removes the flag and hand-off works again: the owner's CLI fallback.
+- Direct mode has no host and no convenience flag, and is unaffected.
+
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
 
 1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as
    `python -I -m orch.click --fd N`; the dashboard imports only `spawn`, `client` and `protocol`.
 2. **Durable sign records (H5c follow-up, changelog item 18)** are `orch.click.records.Records`, as item 5 specifies:
-   `create` (exclusive, before `human.submit`), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
+   `claim` (exclusive, before the signing), `complete` (the signed events, before `human.submit`), `create`
+   (exclusive, a complete record at once), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
    (the result, after the commit) and `prune`. They reuse the custody helpers `secure_dir`, `read_private` and
    `write_private` (`orch.custody.convenience`). A record is at most 8 MiB. Two `human.click_refused` reasons are new:
    `already_signed` and `record_unavailable`; the log gains `adopted` (another signer process's record was used) and
    `record_failed` (a record could not be written again or settled after the commit; never escapes). Tests (`tests/host/test_click_records.py`) kill a real signer process
    with `SIGKILL` after the record and before the submit, and after the host committed but before the reply, restart
    it and get the identical events and idem on retry; a second View of the same request after a restart is refused.
+
+3. **One signing path (changelog item 19, item 8 above)** is `orch.host.convenience.workspace_lock`, `refuse_handoff` and `pending_handoffs`, called from `HumanOps.prepare` (under the lock), `get` and `submit`, and from `orch host convenience on`. Tests: `tests/host/test_click_only.py`.
 
 
 ### 0.9 Subscriptions
@@ -2997,6 +3028,17 @@ existing op changes its version.
     `human.click_refused` reasons `already_signed` (another `view_digest` for a signed request) and
     `record_unavailable` (the record cannot be written, or exists but cannot be read: fail closed). A repeated `sign`
     after a signer restart needs no new `prepare` or `view`. No host change and no wire change on the workspace socket.
+19. **One signing path per workspace (H5c follow-up, additive, owner decision of 12 Oct 2026):** new catalog code
+    `sign.click_only` (exit 3, not retryable). With click-to-sign on, `human.prepare {handoff:true}` is refused,
+    `orch host convenience on` is refused while hand-off requests are pending, and a hand-off request cannot be bound or
+    submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock (2 s wait, then `host.busy`).
+    No wire schema change; a client that does not use `handoff:true` sees nothing new.
+20. **Claim before signing (follow-up to item 18, client-side only):** the click signer syncs a claim record
+    (`view_digest`, op, idem, expiry, no events) before the crypto signing and replaces it with the completed record
+    before the submit, so a crash or write failure between signing and recording can no longer lead to a second
+    signature. A claim that never completed is refused as `record_unavailable` (`already_signed` for another
+    `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
+    released; a failure fails that request closed. No new reason, no wire change.
 
 ---
 

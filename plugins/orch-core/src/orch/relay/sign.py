@@ -9,8 +9,8 @@ Method             Checks before signing                                        
 ``response_chunk`` ORB2 direction 2, the link's workspace, an epoch ``BridgeKeys`` holds,      ``sig_bridge``
                    the whole envelope within the relay's 256 KiB chunk cap
 ``card``           exact field set, the link's workspace, WSK public key = own, ``relay_url`` =  ``sig_card_wsk``
-                   the stored origin, ``card_seq`` above the last accepted one, and never two
-                   different cards at one ``card_seq``
+                   the stored origin, ``card_seq`` above the last accepted one and not below
+                   the last signed one, never two different cards at one ``card_seq``
 =================  ==========================================================================  ==================
 
 The key comes in as a :class:`WorkspaceKey`, a structural interface (``public_key``, ``sign(payload)``) that
@@ -20,6 +20,13 @@ API rule, not key isolation (11A.2 "What this is not"): the key is captured in a
 its purpose-specific methods, and ``tests/relay/test_import_ban.py`` keeps ``orch.relay`` from reaching private names,
 dynamic attribute access or ``orch.crypto`` signing entry points; but same-process code can always traverse objects
 (closures included), and the key file is readable by the host UID.
+
+**Last-signed ledger** (review M2, 11A.2 "``card_seq`` > the last signed one"). ``card`` needs a durable
+:class:`orch.relay.state.SignLedger`. Each signed card is recorded as ``("card", card_seq) -> (sha256(cj(o)), sig)``
+**before** the signature is returned, so a crash cannot leave two different WSK-signed cards at one ``card_seq``. The
+same card at a recorded ``card_seq`` gets the recorded signature back (no re-sign: the WSK is ECDSA P-256 with
+randomised signatures, so a re-sign would give other bytes); a different card there, or any card below the highest
+recorded ``card_seq``, is refused.
 
 Epoch keys come in as an :class:`EpochKeys` view (R2's ``BridgeKeys``); without one, ``response_chunk`` refuses.
 """
@@ -35,6 +42,7 @@ from orch import canon, crypto
 from orch.crypto.labels import L
 
 from . import wire
+from .state import SignLedger
 
 __all__ = ["CARD_FIELDS", "EpochKeys", "LinkContext", "RelaySigner", "SignerRefused", "WorkspaceKey"]
 
@@ -108,7 +116,7 @@ def _bind(key: WorkspaceKey) -> Callable[[bytes], bytes]:
 class RelaySigner:
     """Purpose-specific WSK signatures for the relay client (11A.2)."""
 
-    __slots__ = ("_cards", "_epochs", "_last_card_seq", "_lock", "_pub", "_sign_bytes", "link")
+    __slots__ = ("_epochs", "_last_card_seq", "_ledger", "_lock", "_pub", "_sign_bytes", "link")
 
     def __init__(
         self,
@@ -116,6 +124,7 @@ class RelaySigner:
         link: LinkContext,
         *,
         epochs: EpochKeys | None = None,
+        ledger: SignLedger | None = None,
         last_card_seq: int = 0,
     ) -> None:
         if type(last_card_seq) is not int or last_card_seq < 0:
@@ -124,7 +133,7 @@ class RelaySigner:
         self._pub = bytes(key.public_key)
         self._sign_bytes = _bind(key)
         self._last_card_seq = last_card_seq
-        self._cards: dict[int, bytes] = {}  # card_seq -> cj(o) signed in this process
+        self._ledger = ledger
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -184,10 +193,19 @@ class RelaySigner:
             body = canon.dumps(dict(o))
         except canon.JcsError:
             raise SignerRefused("card is not canonical JSON") from None
+        if self._ledger is None:
+            raise SignerRefused("card signing needs a durable sign ledger")
+        digest = crypto.sha256(body).hex()
         with self._lock:
             if seq <= self._last_card_seq:
                 raise SignerRefused("card_seq not above the last accepted card")
-            if any(s > seq for s in self._cards) or self._cards.get(seq, body) != body:
-                raise SignerRefused("another card was signed at this or a later card_seq")
-            self._cards[seq] = body
-        return crypto.b64u(self._sign(L["sig_card_wsk"] + body))
+            held = self._ledger.get("card", str(seq))
+            if held is not None:
+                if not wire.ct_equal(held[0].encode(), digest.encode()):
+                    raise SignerRefused("another card was signed at this card_seq")
+                return held[1]
+            if any(int(k) > seq for k in self._ledger.keys("card")):
+                raise SignerRefused("a card was signed at a later card_seq")
+            sig = crypto.b64u(self._sign(L["sig_card_wsk"] + body))
+            self._ledger.record("card", str(seq), digest, sig)  # durable before the signature leaves
+        return sig

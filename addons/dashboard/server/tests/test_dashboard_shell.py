@@ -105,6 +105,8 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings",
         "/w/DEMO/settings/general",
         "/w/DEMO/settings/grants",
+        "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
+        "/w/DEMO/quick",
         "/w/DEMO/ticket/DEMO-0001",
         "/ticket/DEMO-0001",
     ],

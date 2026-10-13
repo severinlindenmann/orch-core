@@ -2830,13 +2830,14 @@ retains: 11A.6's permanent reservation already counts them.
   held restore blocks every later publication, plain checkpoints included, until the relay is updated or the restore
   is resolved.** (The first draft wrongly said plain checkpoints keep flowing.)
 
-**9.9 Interaction with the readers condition (item 1).** **Recommended: relax `phone_device`, `other_member` and
-`relay_paired` to count only readers below level 1** (owner confirmation needed for `other_member`, Q2):
+**9.9 Interaction with the readers condition (item 1).** **Decided: relax `phone_device`, `other_member` and
+`relay_paired` to count only readers below level 1** (`other_member` confirmed by the owner on 13 Oct 2026, Q2: allowed
+only when every other member's devices **and** core have declared level 1; older setups still block):
 
 | Reason | Today | With H12d |
 |---|---|---|
 | `relay_paired` | any relay link, ever (the permanent reservation, 11A.6) | the relay's last verified level is below 1, or was never checked; an unlinked relay counts with its last level |
-| `other_member` | the member list holds another person | another member has a current valid device below level 1 (no record counts as 0) |
+| `other_member` | the member list holds another person | another member's core (its `member.add` declaration) or any of its current valid devices is below level 1 (no record counts as 0) |
 | `phone_device` | the signer's person has any other valid device | the signer's person has another current valid device below level 1 |
 | `disabled`, `reader_version` | unchanged | unchanged; `reader_version` qualifies the signing device itself |
 
@@ -2997,7 +2998,8 @@ against the code (`ops/readers.py`, `ops/commands/member_add.py`, `host/convenie
 **9.15 Open questions, with recommended answers.**
 1. **An interactive challenge on top of the KAT?** *No in phase 2* (9.2). Revisit if a third-party reader appears.
 2. **Relax `other_member` as well as `phone_device`?** *Yes, when every reader qualifies.* This extends the accepted
-   risk to other members' trust in decisions, so **it needs the owner's confirmation**. A member who does not accept
+   risk to other members' trust in decisions. **Owner decision of 13 Oct 2026 (~18:15): relaxed, when every other
+   member's devices and core have declared level 1; older setups still block.** A member who does not accept
    convenience decisions gets D66's policy (refuse named factors for named verbs), not a global block.
 3. **Fold `reader` into the certificate later?** *Yes,* with the PoP certificate change (11A.12), copied by the
    primary from the device's declaration; the declaration stays as the device's own evidence.

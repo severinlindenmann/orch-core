@@ -433,7 +433,6 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
 | `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
-| `reader.decl_invalid` | 3 | no | stays | (v1.8 draft) a `reader_decl` whose signature, binding (keys, device, person, workspace, pairing offer and attempt), time window or known-answer digest fails (§0.8.6 item 9) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
@@ -2895,7 +2894,8 @@ off nor grandfathered into convenience**:
 - **Codes.**
   - `sign.convenience_readers` (existing, exit 3, not retryable) gains `reason`: `no_declaration`, `reader_too_old`
     (with `required` and `declared`), `declaration_unknown`, `relay_too_old`, `unknown_readers` (a records push).
-  - New: **`reader.decl_invalid`** (exit 3, not retryable), for a bad signature, binding, time window or `kat`.
+  - New: **`reader.decl_invalid`** (exit 3, not retryable), for a bad signature, binding, time window or `kat`. It joins
+    the §0.6 table with H12d-2's implementation (the table lists only codes the host emits).
   - `sign.convenience_unavailable` keeps its reasons with the relaxed meaning and the `devices` detail.
   - The click signer passes them through; its `status` gains the problem `readers_old`.
 - **Compatibility (Codex 7).** Contract v1.8 is additive for P clients in a workspace whose `required_reader` is 0.

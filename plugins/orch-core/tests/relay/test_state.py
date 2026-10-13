@@ -186,3 +186,43 @@ def test_two_ledgers_on_one_directory_lose_no_update(tmp_path):
         t.join(30)
     assert len(a.keys("card")) == 40
     st.close()
+
+
+# --- fork and rename (review round 3, R2 and R3) --------------------------------------------------------------------
+
+
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
+def test_a_forked_child_cannot_use_the_parents_state_dir(tmp_path):
+    """os.fork inherits the flock (close-on-exec only covers exec): the child must refuse every operation."""
+    st = StateDir(tmp_path / "relay")
+    st.write("a.json", b"{}")
+    pid = os.fork()
+    if pid == 0:  # child: report through the exit code only
+        code = 0
+        for op in (lambda: st.read("a.json"), lambda: st.write("b.json", b"{}"), lambda: st.claim("c.json", b"{}")):
+            try:
+                op()
+                code = 1
+            except StateError:
+                pass
+            except BaseException:
+                code = 2
+        os._exit(code)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert st.read("a.json") == b"{}" and not (tmp_path / "relay" / "b.json").exists()
+    st.close()
+
+
+def test_io_stays_in_the_locked_directory_after_a_rename(tmp_path):
+    """``mv relay relay.old; mkdir relay``: the first instance keeps writing into the directory it locked."""
+    st = StateDir(tmp_path / "relay")
+    os.rename(tmp_path / "relay", tmp_path / "relay.old")
+    second = StateDir(tmp_path / "relay")  # a new, unlocked directory at the old path
+    st.write("a.json", b"first")
+    second.write("a.json", b"second")
+    assert (tmp_path / "relay.old" / "a.json").read_bytes() == b"first"
+    assert (tmp_path / "relay" / "a.json").read_bytes() == b"second"
+    assert st.read("a.json") == b"first"
+    st.close()
+    second.close()

@@ -15,6 +15,7 @@ from orch.relay import http, retry, wire
 from orch.relay.link import LinkRefused, first_link
 from orch.relay.session import Fenced, LoginHeldOff, OriginMismatch, RelayMisbehaving
 
+from . import corpus
 from .helpers import GENESIS, GENESIS_CERT, GENESIS_PIN, OWNER_PK, WS, Alarms, Clock, Holder, Key, directory, make_card
 from .helpers import retrier as make_retrier
 from .helpers import session as make_session
@@ -23,8 +24,11 @@ from .sim import SimRelay
 
 
 @pytest.fixture
-def env():
+def env(tmp_path):
+    from orch.relay.state import StateDir
+
     m = MockRelay()
+    m.store = StateDir(tmp_path / "relay")
     sim = SimRelay(m.origin(), owner_pk=OWNER_PK)
     m.fallback = sim
     yield m, sim
@@ -347,12 +351,12 @@ def test_first_link_happy_path(env):
     m, sim = env
     s, clock = new(m, sim)
     steps = Steps(make_card(m.origin()))
-    first_link(steps, s, directory(s), make_retrier(clock))
+    first_link(steps, s, directory(s), make_retrier(clock), store=m.store)
     assert steps.state == "linked" and WS in sim.cards and WS in sim.genesis
     routes = [(x.method, x.path.rsplit("/", 1)[-1]) for x in m.seen]
     assert routes[0] == ("PUT", "card") and "authorization" not in m.seen[0].headers
     assert routes[1:] == [("POST", "challenge"), ("POST", "login"), ("POST", "hold"), ("PUT", "genesis")]
-    first_link(steps, s, directory(s), make_retrier(clock))  # linked: nothing more
+    first_link(steps, s, directory(s), make_retrier(clock), store=m.store)  # linked: nothing more
     assert len(m.seen) == 5
 
 
@@ -363,7 +367,7 @@ def test_first_link_refuses_without_the_reservation(env):
     for state in ("", "unlinked", None):
         steps.state = state
         with pytest.raises(LinkRefused):
-            first_link(steps, s, directory(s), make_retrier(clock))
+            first_link(steps, s, directory(s), make_retrier(clock), store=m.store)
     assert m.seen == []
 
 
@@ -375,10 +379,10 @@ def test_first_link_interrupted_after_each_step_resumes(env, crash):
     s, clock = new(m, sim, holder=h)
     steps = Steps(card, fail_at=crash)
     with pytest.raises(RuntimeError):
-        first_link(steps, s, directory(s), make_retrier(clock))
+        first_link(steps, s, directory(s), make_retrier(clock), store=m.store)
     assert steps.state == "linking"
     s2, _ = new(m, sim, holder=h, clock=clock)  # a restart within the lease: new process state, same relay
-    first_link(steps, s2, directory(s2), make_retrier(clock))
+    first_link(steps, s2, directory(s2), make_retrier(clock), store=m.store)
     assert steps.state == "linked"
     assert sim.cards[WS] == card and canon.loads_strict(sim.genesis[WS])["pin"] == GENESIS_PIN
 
@@ -400,7 +404,7 @@ def test_first_link_survives_a_transient_failure_on_each_call(env, fault_route):
 
     sim._route = flaky
     steps = Steps(make_card(m.origin()))
-    first_link(steps, s, directory(s), make_retrier(clock))
+    first_link(steps, s, directory(s), make_retrier(clock), store=m.store)
     assert steps.state == "linked" and hit == [1] and any(x >= 2 for x in clock.slept)
 
 
@@ -418,7 +422,7 @@ def test_fenced_mid_publication_stops_the_link(env):
     other["clock"] = clock
     steps = Steps(make_card(m.origin()), publish=publish)
     with pytest.raises(Fenced):
-        first_link(steps, s, directory(s), make_retrier(clock))
+        first_link(steps, s, directory(s), make_retrier(clock), store=m.store)
     assert steps.state == "linking" and alarms.codes() == ["fenced"]
 
 
@@ -430,7 +434,7 @@ def test_no_token_challenge_or_signature_in_logs_or_errors(env, caplog):
     m, sim = env
     s, clock = new(m, sim)
     errors = []
-    first_link(Steps(make_card(m.origin())), s, directory(s), make_retrier(clock))
+    first_link(Steps(make_card(m.origin())), s, directory(s), make_retrier(clock), store=m.store)
     sim.expire_tokens()
     s.hold()
     sim.origin = "https://elsewhere.example"
@@ -444,3 +448,55 @@ def test_no_token_challenge_or_signature_in_logs_or_errors(env, caplog):
     text = caplog.text + " ".join(errors) + repr(s)
     assert secrets and not [x for x in secrets if x in text]
     assert "Bearer" not in text
+
+
+class ResigningSteps(Steps):
+    """A LinkSteps double that re-signs the genesis pin on every call (ECDSA signatures are randomised)."""
+
+    def genesis(self):
+        self._step("genesis")
+        o = GENESIS_PIN["o"]
+        sig = crypto.sign(corpus.priv("phone.sig"), b"orch/v2/sig/genesis-pin|" + canon.dumps(o))
+        return {"o": o, "sig": crypto.b64u(sig)}, GENESIS_CERT, GENESIS
+
+
+@pytest.mark.parametrize("crash", ["publish", "mark_linked"])
+def test_resume_resends_the_persisted_genesis_pin_bytes(env, crash):
+    """Review L1: the relay compares the whole pin, signature included; a re-signed pin would be a permanent
+    genesis_mismatch. The first link persists the pin before its PUT and re-sends those bytes on resume."""
+    m, sim = env
+    h = Holder()
+    s, clock = new(m, sim, holder=h)
+    steps = ResigningSteps(make_card(m.origin()), fail_at=crash)
+    with pytest.raises(RuntimeError):
+        first_link(steps, s, directory(s), make_retrier(clock), store=m.store)
+    sent = sim.genesis[WS]
+    s2, _ = new(m, sim, holder=h, clock=clock)
+    first_link(steps, s2, directory(s2), make_retrier(clock), store=m.store)
+    assert steps.state == "linked" and sim.genesis[WS] == sent
+    assert steps.calls.count("genesis") == 1  # never asked to sign again
+
+
+def test_without_persistence_a_resigned_pin_is_a_genesis_mismatch(env):
+    """The hazard the persistence removes, shown against the simulated relay."""
+    m, sim = env
+    s, clock = new(m, sim)
+    first_link(ResigningSteps(make_card(m.origin())), s, directory(s), make_retrier(clock), store=m.store)
+    pin, cert, genesis = ResigningSteps(None).genesis()
+    with pytest.raises(retry.RelayRefused) as e:
+        directory(s).put_genesis(pin, cert, genesis=genesis)
+    assert e.value.code == "genesis_mismatch"
+
+
+def test_resume_uses_the_persisted_card(env):
+    m, sim = env
+    h = Holder()
+    s, clock = new(m, sim, holder=h)
+    card = make_card(m.origin())
+    steps = Steps(card, fail_at="publish")
+    with pytest.raises(RuntimeError):
+        first_link(steps, s, directory(s), make_retrier(clock), store=m.store)
+    steps._card = make_card(m.origin())  # a rebuilt card (another signature) must not be sent
+    s2, _ = new(m, sim, holder=h, clock=clock)
+    first_link(steps, s2, directory(s2), make_retrier(clock), store=m.store)
+    assert sim.cards[WS] == card and steps.calls.count("card") == 1

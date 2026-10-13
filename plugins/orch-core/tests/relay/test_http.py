@@ -366,3 +366,15 @@ def test_http_origin_with_a_proxy_is_refused(origin):
     with pytest.raises(http.TransportError) as e:
         http.RelayConn(origin, proxy="proxy.example:3128")
     assert e.value.kind == "request"
+
+
+def test_tls_slow_drip_headers_end_at_the_total_deadline(tls_relay):
+    """Review D3: over TLS, wrap_socket detaches the original socket, so the watchdog must act on its own dup."""
+    tls_relay.expect(Expect("POST", "/v2/x", reply=Reply(body=b"{}", fault="drip_headers", drip_s=0.1)))
+    c = http.RelayConn(tls_relay.origin("localhost"), ca_file=str(tls_relay.ca_file))
+    t0 = time.monotonic()
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=0.5)
+    assert e.value.kind == "deadline"
+    assert time.monotonic() - t0 < 4.0  # the drip alone takes over 10 s
+    c.close()

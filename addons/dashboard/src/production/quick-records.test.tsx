@@ -242,7 +242,7 @@ it('records: a URL the server withheld says so and never invents one', async () 
 
 it('records: commit now posts exactly {push:false} and shows the result', async () => {
   const user = userEvent.setup()
-  state.host.override = (path, method, body) => (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: false }) : undefined)
+  state.host.override = (path, method) => (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: false }) : undefined)
   show('/w/DEMO/settings/records')
   await user.click(await screen.findByRole('button', { name: 'Commit now' }, T))
   expect(await screen.findByTestId('records-result', {}, T)).toHaveTextContent(`Committed ${'d'.repeat(40)}, not pushed`)

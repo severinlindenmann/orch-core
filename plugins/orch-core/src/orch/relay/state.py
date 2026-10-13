@@ -16,6 +16,7 @@ stdlib implementation of the same rules; R5 may swap it for the host helpers beh
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -47,6 +48,11 @@ class SignLedger(Protocol):
 
 
 class StateDir:
+    """One live owner per directory: the constructor takes an exclusive, non-blocking ``flock`` on the directory for
+    the object's lifetime (review D1). A second ``StateDir`` on the same directory, in this process or another, gets
+    :class:`StateError` "in use"; :meth:`close` releases it. ``lock`` serialises every read-modify-write inside the
+    owning process, so two ledgers or write-once files on one directory cannot lose an update."""
+
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
         try:
@@ -56,11 +62,38 @@ class StateDir:
         st = os.lstat(self.path)
         if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
             raise StateError(f"relay state directory {self.path} must be a 0700 directory owned by this user")
-        self._lock = threading.Lock()
+        fd = self._dir()  # O_CLOEXEC: a child never inherits the lock
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            raise StateError(f"relay state directory {self.path} is in use by another instance") from None
+        except OSError as e:
+            os.close(fd)
+            raise StateError(f"cannot lock {self.path}") from e
+        self._held: int | None = fd
+        self.lock = threading.RLock()
+
+    def close(self) -> None:
+        """Release the directory (closing the fd drops the ``flock``)."""
+        with self.lock:
+            fd, self._held = self._held, None
+        if fd is not None:
+            os.close(fd)
+
+    def __enter__(self) -> StateDir:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def _live(self) -> None:
+        if self._held is None:
+            raise StateError(f"relay state directory {self.path} is closed")
 
     def _dir(self) -> int:
         try:
-            return os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            return os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         except OSError as e:
             raise StateError(f"cannot open {self.path}") from e
 
@@ -72,6 +105,7 @@ class StateDir:
 
     def read(self, name: str) -> bytes | None:
         name = self._name(name)
+        self._live()
         dfd = self._dir()
         try:
             try:
@@ -100,9 +134,18 @@ class StateDir:
 
     def write(self, name: str, data: bytes) -> None:
         name = self._name(name)
+        self._publish(name, data, claim=False)
+
+    def claim(self, name: str, data: bytes) -> bool:
+        """Create ``name`` with ``data`` only if it does not exist (``os.link`` of a complete temp file: atomic, never
+        replaces); ``False`` when another writer claimed it first."""
+        return self._publish(self._name(name), data, claim=True)
+
+    def _publish(self, name: str, data: bytes, *, claim: bool) -> bool:
         if len(data) > MAX_FILE:
             raise StateError(f"{name}: too large")
-        with self._lock:
+        with self.lock:
+            self._live()
             dfd = self._dir()
             tmp = f".{name}.{secrets.token_hex(8)}.tmp"
             try:
@@ -115,8 +158,17 @@ class StateDir:
                     os.fsync(fd)
                 finally:
                     os.close(fd)
-                os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)  # replaces a symlink entry, never follows it
+                if claim:
+                    try:
+                        os.link(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd, follow_symlinks=False)
+                    except FileExistsError:
+                        return False
+                    finally:
+                        os.unlink(tmp, dir_fd=dfd)
+                else:
+                    os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)  # replaces a symlink entry, never follows it
                 os.fsync(dfd)
+                return True
             except BaseException:
                 try:
                     os.unlink(tmp, dir_fd=dfd)
@@ -146,7 +198,6 @@ class FileSignLedger:
 
     def __init__(self, state: StateDir) -> None:
         self._s = state
-        self._lock = threading.Lock()
 
     def _load(self) -> dict[str, dict[str, dict[str, str]]]:
         obj = self._s.read_json(self.FILE)
@@ -170,7 +221,7 @@ class FileSignLedger:
     def record(self, kind: str, key: str, digest: str, sig: str) -> None:
         if not _KEY.fullmatch(kind) or not _KEY.fullmatch(key):
             raise StateError("sign ledger key")
-        with self._lock:
+        with self._s.lock:
             obj = self._load()
             old = obj.get(kind, {}).get(key)
             if old is not None and old.get("digest") != digest:
@@ -180,19 +231,19 @@ class FileSignLedger:
 
 
 class PersistedOnce:
-    """Write-once bytes under ``name``: :meth:`keep` stores ``data`` if nothing is stored and returns what is."""
+    """Write-once bytes under ``name``: :meth:`keep` claims the file with ``os.link`` (never a rename, review D1) and
+    returns whatever is stored, so concurrent keepers all get the first value."""
 
     def __init__(self, state: StateDir, name: str) -> None:
         self._s, self._name = state, name
-        self._lock = threading.Lock()
 
     def get(self) -> bytes | None:
         return self._s.read(self._name)
 
     def keep(self, data: bytes) -> bytes:
-        with self._lock:
-            held = self._s.read(self._name)
-            if held is not None:
-                return held
-            self._s.write(self._name, data)
+        if self._s.claim(self._name, data):
             return data
+        held = self._s.read(self._name)
+        if held is None:
+            raise StateError(f"{self._name}: claimed but unreadable")
+        return held

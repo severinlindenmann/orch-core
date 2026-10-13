@@ -170,7 +170,7 @@ def differences(unit: Plan) -> list[str] | None:
 _INSTALLED = frozenset({"site-packages", "dist-packages"})
 
 
-def _in_checkout(path: Path, stop: Path | None = None, *, git_alone: bool = False) -> bool:
+def _in_checkout(path: Path, stop: frozenset[Path] = frozenset(), *, git_alone: bool = False) -> bool:
     """Inside a ``.worktrees`` checkout, or inside a git work tree with a Python project between it and ``path`` (a
     ``pyproject.toml`` or ``setup.py`` on the way up). A git work tree alone is not enough: Homebrew's prefix is one,
     and so is a home directory kept in git; an installed copy (under ``site-packages``) is never a checkout. The walk
@@ -182,7 +182,7 @@ def _in_checkout(path: Path, stop: Path | None = None, *, git_alone: bool = Fals
         return False
     project = False
     for d in [path, *path.parents]:
-        if stop is not None and d == stop:
+        if d in stop:
             return False
         if d.name == ".worktrees":
             return True
@@ -199,14 +199,17 @@ def dev_source(python: Path, package: Path, roots: Sequence[str] = ()) -> str | 
     # The interpreter is judged by its environment (a venv's bin/python links to its base interpreter, so the link is
     # not followed): ``sys.prefix`` for the running one, else the directory above ``bin``.
     env = Path(sys.prefix) if python == Path(sys.executable) else Path(python).parent.parent
-    try:
-        home: Path | None = Path.home().resolve()
+    try:  # the home directory as written and resolved (a symlinked home must still end the walk)
+        home = frozenset({Path(os.path.abspath(Path.home())), Path.home().resolve()})
     except (OSError, RuntimeError):
-        home = None
+        home = frozenset()
     for what, path, stop in (("the interpreter", env, home), ("the interpreter", Path(python), home),
-                             ("the orch package", Path(package), None)):  # fmt: skip
+                             ("the orch package", Path(package), frozenset())):  # fmt: skip
         try:
-            real = path.resolve() if what == "the orch package" else Path(os.path.abspath(path))
+            if path is env or what == "the orch package":
+                real = path.resolve()
+            else:  # the interpreter file itself: resolve its directory, never its own link
+                real = path.parent.resolve() / path.name
         except OSError:
             continue
         venv = what == "the interpreter" and (real / "pyvenv.cfg").is_file()

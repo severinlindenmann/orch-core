@@ -452,6 +452,11 @@ def test_a_homebrew_or_pipx_install_is_not_a_checkout(tmp_path, monkeypatch):
     (project / "setup.py").write_text("")
     (project / ".venv" / "bin").mkdir(parents=True)
     assert "checkout" in svc.dev_source(project / ".venv" / "bin" / "python", package)
+    linked = tmp_path / "linkhome"  # a symlinked home directory still ends the walk (Codex, #448)
+    linked.symlink_to(home)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: linked))
+    assert svc.dev_source(linked / ".local" / "pipx" / "venvs" / "orch" / "bin" / "python", package) is None
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     repo = home / "code" / "other"  # a venv at a checkout's root, orch installed into it without -e (Opus L-1)
     (repo / ".git").mkdir(parents=True)
     (repo / ".venv" / "bin").mkdir(parents=True)

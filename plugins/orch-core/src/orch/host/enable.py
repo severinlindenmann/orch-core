@@ -260,7 +260,7 @@ class Manager:
             return "state = running" in (res.stdout or "")
         res = self.run(["systemctl", "--user", "is-active", self.plan.systemd_name])
         out = (res.stdout or "").strip()
-        if out in ("active", "activating", "reloading", "deactivating"):
+        if out in ("active", "activating", "reloading", "refreshing", "deactivating"):
             return True
         return False if out else None
 

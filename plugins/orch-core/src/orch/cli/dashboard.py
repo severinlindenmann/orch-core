@@ -10,9 +10,9 @@ error that names how to install it.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -29,11 +29,24 @@ INSTALL_HINT = (
 )
 
 
-def _module_installed() -> bool:
+_PROBE = "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('orch_dashboard') else 1)"
+
+
+def _module_installed(env: Mapping[str, str] | None = None) -> bool:
+    """Whether ``python -P -m orch_dashboard`` can import the module: probed by the same interpreter, flag and
+    environment the launch uses, so a package only in the current directory cannot satisfy discovery and then vanish."""
     try:
-        return importlib.util.find_spec(MODULE) is not None
-    except (ImportError, ValueError):
+        res = subprocess.run(
+            [sys.executable, "-P", "-c", _PROBE],
+            env=dict(env) if env is not None else None,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
         return False
+    return res.returncode == 0
 
 
 def _absolute_path(value: str | None) -> str:
@@ -49,7 +62,7 @@ def find_entry_point(env: Mapping[str, str], err: TextIO | None = None) -> list[
     beside = Path(sys.executable).parent / SCRIPT
     if beside.is_file() and os.access(beside, os.X_OK):
         return [str(beside)]
-    if _module_installed():
+    if _module_installed(env):
         return [sys.executable, "-P", "-m", MODULE]
     found = shutil.which(SCRIPT, path=_absolute_path(env.get("PATH")))
     if found:

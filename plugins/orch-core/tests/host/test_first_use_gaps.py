@@ -11,6 +11,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -192,7 +193,7 @@ def test_orch_dashboard_execs_the_addon_entry_point_with_the_args(tmp_path, monk
     script.write_text("#!/bin/sh\n")
     script.chmod(0o755)
     monkeypatch.setattr(dashboard.sys, "executable", str(tmp_path / "nowhere" / "python"))
-    monkeypatch.setattr(dashboard.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(dashboard, "_module_installed", lambda env=None: False)
     env = {"PATH": str(bindir), "HOME": str(tmp_path)}
     code, err, calls = _main(["open", "--print-url"], env, monkeypatch)
     assert code == 0 and calls == [([str(script), "open", "--print-url"], env)]
@@ -203,7 +204,7 @@ def test_orch_dashboard_without_the_addon_names_how_to_install_it(tmp_path, monk
     from orch.cli import dashboard
 
     monkeypatch.setattr(dashboard.sys, "executable", str(tmp_path / "nowhere" / "python"))
-    monkeypatch.setattr(dashboard.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(dashboard, "_module_installed", lambda env=None: False)
     code, err, calls = _main(["open"], {"PATH": str(tmp_path / "empty")}, monkeypatch)
     assert code == 3 and calls == []
     assert "not installed" in err and "orch-dashboard" in err and "install" in err
@@ -214,11 +215,35 @@ def test_orch_dashboard_falls_back_to_the_module(tmp_path, monkeypatch):
 
     py = str(tmp_path / "nowhere" / "python")
     monkeypatch.setattr(dashboard.sys, "executable", py)
-    monkeypatch.setattr(
-        dashboard.importlib.util, "find_spec", lambda name: object() if name == "orch_dashboard" else None
-    )
+    monkeypatch.setattr(dashboard, "_module_installed", lambda env=None: True)
     code, err, calls = _main(["serve"], {"PATH": str(tmp_path / "empty")}, monkeypatch)
     assert code == 0 and calls[0][0] == [py, "-P", "-m", "orch_dashboard", "serve"]  # -P: no cwd on sys.path
+
+
+def test_the_module_probe_runs_with_dash_p_so_a_cwd_package_does_not_count(tmp_path, monkeypatch):
+    from orch.cli import dashboard
+
+    (tmp_path / "orch_dashboard").mkdir()
+    (tmp_path / "orch_dashboard" / "__init__.py").write_text("")
+    monkeypatch.chdir(tmp_path)
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    assert dashboard._module_installed(env) is False
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"], seen["env"] = argv, kw.get("env")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(dashboard.subprocess, "run", fake_run)
+    assert dashboard._module_installed({"A": "1"}) is True
+    assert seen["argv"][:3] == [sys.executable, "-P", "-c"] and seen["env"] == {"A": "1"}
+
+
+def test_a_systemd_refreshing_unit_counts_as_active(tmp_path):
+    env = {"HOME": str(tmp_path)}
+    unit = svc.plan(env, tmp_path / "s", tmp_path / "s/run", tmp_path / "r", platform="linux", uid=501)
+    mgr = svc.Manager(unit, run=lambda argv: subprocess.CompletedProcess([], 0, "refreshing\n", ""))
+    assert mgr.active() is True
 
 
 @pytest.mark.parametrize("entry", ["", ".", "rel/bin"])
@@ -233,7 +258,7 @@ def test_orch_dashboard_ignores_empty_and_relative_path_entries(tmp_path, monkey
         planted.chmod(0o755)
     monkeypatch.chdir(work)
     monkeypatch.setattr(dashboard.sys, "executable", str(tmp_path / "nowhere" / "python"))
-    monkeypatch.setattr(dashboard.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(dashboard, "_module_installed", lambda env=None: False)
     path = os.pathsep.join(["/usr/nonexistent", entry, "/also/nonexistent"])
     code, err, calls = _main(["open"], {"PATH": path}, monkeypatch)
     assert code == 3 and calls == [] and "not installed" in err
@@ -248,7 +273,7 @@ def test_orch_dashboard_prefers_the_module_over_path(tmp_path, monkeypatch):
     (bindir / "orch-dashboard").chmod(0o755)
     py = str(tmp_path / "nowhere" / "python")
     monkeypatch.setattr(dashboard.sys, "executable", py)
-    monkeypatch.setattr(dashboard.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(dashboard, "_module_installed", lambda env=None: True)
     code, err, calls = _main(["x"], {"PATH": str(bindir)}, monkeypatch)
     assert code == 0 and calls[0][0][:3] == [py, "-P", "-m"]
 

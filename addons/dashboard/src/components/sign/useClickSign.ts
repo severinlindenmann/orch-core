@@ -220,7 +220,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       } catch (e) {
         if (stopped) return
         // Not even the server can say: never present that as "nothing was signed".
-        if (e instanceof ApiError && e.code === 'not_found') {
+        if (e instanceof ApiError && e.code === 'intent.failed') {
+          stopped = true
+          fail(e)
+          refetch()
+        } else if (e instanceof ApiError && e.code === 'not_found') {
           stopped = true
           setSettleNote("Could not confirm what happened. Check the ticket's activity before doing anything else.")
           refetch()
@@ -244,7 +248,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       stopped = true
       clearInterval(timer)
     }
-  }, [phase, prepared, setPhase, refetch])
+  }, [phase, prepared, setPhase, refetch, fail])
 
   const cancel = useCallback(async () => {
     const { prepared: open, ws: where, phase: last } = live.current

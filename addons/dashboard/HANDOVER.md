@@ -1022,8 +1022,12 @@ pre-check remain defence in depth; they are not a replacement for this host prer
 
 **Known limits after the final Opus re-check (13 Oct, all LOW, none can produce a second signature):**
 - N1: "Already done" is also shown when the state was reverted in between (role B→A→B, close→reopen→close). The
-  wording reads as if nothing changed since; "Do it again" is offered, so nothing is blocked. A future host
-  `submitted_at` (stream A follow-up to #434) lets the screen say when it was signed.
+  warning describes the earlier signature; "Do it again" is offered, so nothing is blocked. The
+  host `submitted_at` (#437) now supplies relative signing time with an absolute-time title, only when
+  `human.pending.seq != null` confirms a committed outcome (§0.8.1). Missing times remain unavailable.
+  Submitted failures show `intent.failed`, the host catalog code, and Start again (advances retry), with a
+  warning that nothing was signed into the log. `lock.busy` is retryable and hand-off polling continues.
+  Host convenience-reader fix text is displayed verbatim through Raw.
 - N5: a label add sends the full label set, so a concurrent label change in another tab is different content and
   therefore a different intent (by the owner's definition). The host's `base_rev` on `ticket.updated` refuses the
   stale one at commit.

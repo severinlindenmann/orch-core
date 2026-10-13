@@ -84,7 +84,7 @@ CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap"
 _HUMAN_WRITES = frozenset({"human.submit"})
 #: host-side writes with an idem and an outcome record but no log event (H11e: the private-remote mark); a record
 #: with nothing planned is removed by reconciliation, and the op is idempotent, so a retry after a crash runs again
-HOST_WRITES = frozenset({"records.remote_private"})
+HOST_WRITES = frozenset({"records.remote_private", "records.note"})
 #: every other host op (§0.7 table): reads and side-effect-free ops, whose ``opts.idem`` is ignored
 _READS = frozenset(
     {
@@ -95,7 +95,8 @@ _READS = frozenset(
         "ticket.query", "ticket.get", "needs", "diff", "artifact.get",
         "workspace.show", "member.list", "session.list", "grant.list",
         "activity.list", "workspace.settings", "ticket.text",
-        "records.snapshot", "records.export_check",
+        "records.snapshot", "records.export_check", "records.status",
+        "run.list", "run.sub",
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a)

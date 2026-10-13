@@ -205,7 +205,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
-| `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` (1) (v1.6, §12.8) | workspace |
+| `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
 
 
@@ -399,7 +399,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `conn.overloaded` | 9 | yes | close | slow reader write deadline (10 s), write queue over 64 frames or 4 MiB, or connection byte budget exhausted | — |
 | `internal` | 1 | no | stays for a request whose handler failed or ended without an answer; close (as `fatal`, no request id) when the session itself failed outside any request | an unexpected host error | — |
 | `handshake.invalid` | 6 | no | close | missing, late or second `hello` | — |
-| `peer.denied` | 3 | no | close | unmapped UID; second worker connection | — |
+| `peer.denied` | 3 | no | close | unmapped UID; second worker connection; a runner that is not the runner unit's main PID, or a second runner connection (H11a) | — |
 | `host.version_mismatch` | 1 | no | close | no shared `proto` | — |
 | `req.invalid` | 6 | no | stays | malformed `req` envelope with a readable id | — |
 | `unknown_command` | 2 | no | stays | op not served (any op) | — |
@@ -433,6 +433,11 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
 | `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
+| `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
+| `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
+| `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
+| `harness.not_found` | 3 | no | stays | the program of a run does not exist (D-P2-28) | — |
+| `run.spawn_failed` | 1 | no | stays | the runner's trampoline failed; the message names the step, never an environment value | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -442,16 +447,11 @@ drops. The host never sends it.
 
 | Code | Exit | Retryable | Fate | When | `retry_after_ms` |
 |---|---|---|---|---|---|
-| `runner.unavailable` | 9 | yes | stays | no runner connected, or it is reconnecting after a host restart (§12) | yes |
-| `runner.disabled` | 3 | no | stays | the addon is not granted, or this machine has not enabled dashboard execution (or terminals) for the workspace; `detail.missing` is `addon`, `machine` or `terminals` | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
 | `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
 | `launch.invalid` | 5 | no | stays | a harness, mode, model or subagent model not allowed; the message names the field (exit 5 like `invalid.input`: the client sent a value the registry refuses) | — |
 | `launch.changed` | 5 | no | stays | `agent.start`'s recomputed `spec` differs from the preview's (exit 5 like `idem.conflict`: the request no longer matches what was shown; preview again) | — |
-| `launch.cwd_changed` | 3 | no | stays | the pinned cwd no longer matches at spawn | — |
-| `harness.not_found` | 3 | no | stays | the program is not found by the login shell (or the configured absolute path) | — |
 | `harness.shell_unsupported` | 3 | no | stays | `$SHELL` is not POSIX-compatible and `login_shell` is on | — |
-| `run.spawn_failed` | 1 | no | stays | the trampoline failed; the message names the step, never an env value | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
 | `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
 | `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
@@ -4192,6 +4192,50 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   gui/<uid>/io.orch.runner`, systemd `MainPID`); a second one is `peer.denied`. The host records `gen` and `pid`; they
   bind the term socket (§12.6.1).
 
+**As built in H11a** (#428, #432). Where the code differs from the text above, the code is this:
+
+- **Commands and reports.** A command item is `{id:"<n>.c", cmd:ULID, op, args}`: `op` names the command, `cmd` is
+  its id, and `runner.report {cmd}` names that id. The stop command is **`stop {run, grace_ms}`**, not `signal {run,
+  sig, sweep}`: the runner runs the whole §12.5 sequence itself (it holds the birth identities) and answers `{state,
+  cleanup}`; `state` stays `running` when even `SIGKILL` did not end the leader (then `cleanup:"incomplete"`, the run
+  stays supervised and is killed again on every scan; it is never reported ended or dropped).
+- **`runner.exit`** is sent once the clean-up has a result, and again when an `incomplete` clean-up completes; the host
+  sets `exit.reason` (`stopped` after a `run.stop`, else `exited`).
+- **`runner.hello`** answers `{sub, epoch}`; `gen` is drawn at every runner start (not persisted). The runner tags every
+  command with the connection it arrived on and drops, unrun and unreported, any command of a lost connection (a
+  stale `spawn` never starts after the reconnect's hello; the check and the spawn are one step against the hello's
+  snapshot). Commands that arrive before the hello's answer are held until it. The hello lists every running run
+  first, then the newest ended ones, 256 in all. A runner of another `gen` can report an older generation's run only
+  as ended (`runner_restarted`), never `running`. A successful command result is validated before it is stored.
+- **`run.sub`** answers `{sub, rev}`: it is registered first, then the visible runs are taken, so no change falls
+  between them. `rev` is one counter for the whole host (persisted, so monotonic per workspace too). Every delivery
+  revalidates the principal on a fresh authentication snapshot. Evicted records (7 days, 1 000 ended) publish `gone`. `grants` is accepted by the
+  schema and ignored until H11c. A spawn that is half-done while the hello is built cannot happen (the runner holds its
+  spawn lock); a spawn that failed after the fork is in the table with its pid and birth time.
+- **Trampoline.** The runner starts `python -I <release>/orch/runner/exec.py SPEC_FD STATUS_FD`, not `-m`: under `-I`
+  a release's `orch` is not importable, and `-I` implies `-P`, so the file imports only the standard library. The status
+  pipe is close-on-exec: EOF means `execve` happened; otherwise it names the failed step.
+- **Machine switch.** `orch runner enable` records the switch in `<state>/host/dashboard-execution.json` (0600), with
+  the time and the exact text shown; a corrupt file reads as off.
+- **macOS `cleanup:"complete"`** means: nothing of the run's group or session and no tracked descendant is left, and no
+  descendant was ever seen outside the session. The escape scan runs every 2 s and right before a stop; a descendant
+  that calls `setsid()` and whose parent exits between two scans cannot be seen. That is the stated best effort.
+- **Signals per member, never to a group.** The stop sequence signals each member by `(pid, birth)` (Linux through a
+  pidfd), never `kill(-pgid)`. Members are found over every UID; only the runner's UID is signalled, and a member of
+  another UID (`sudo`, a setuid helper) makes the clean-up `incomplete`. A session or group is matched only for a run
+  live in this runner's lifetime; an ended or crash-swept record matches exact identities only (the leader, the
+  escapees and the member set saved at each scan), and only on the boot it was recorded on (`boot_id`,
+  `kern.boottime`). With a cgroup, `complete` means nothing is left in the run's cgroup and nothing was seen leaving it.
+- **umask.** The units set none; runs start with the person's umask, captured by `orch runner enable` in
+  `<state>/runner/settings.json` (default 022). The runner's own files are written 0600 in 0700 directories.
+- **Logs.** The service manager writes the runner's output to `<state>/runner/runner.out` without rotation (the
+  rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
+  controlled stop: every managed run is stopped and verified before the runner exits.
+- **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
+  ticket must be exactly 43 characters; at most 32 term-socket connections are handled at once; the lockout is per
+  runner, so one client replaying seen tickets locks every attachment out for 60 s.
+  The byte path after `ready` (`out`, `in`, `ack`, `gap`, `throttle`) is H11b.
+
 ### 12.4 Start an agent (#307)
 
 1. `agent.preview`: the host checks the column, the ticket's visibility, the addon and the machine switch
@@ -4595,6 +4639,110 @@ records.note     {manifest:Hash, commit:Sha, pushed:bool, url?:str} → {}
   12 Oct 2026):** the terminal prompt and the Records page say "orch trusts your word that only you read <url>".
 - **Log:** `<person state>/person/records.jsonl` (0600, 1 MiB × 4): start, commit, push result, refusal codes; never
   contents or credentials. #309's hook installer never touches the records repo.
+
+#### As built in H11e (#430 and part 2)
+
+Where this differs from the text above, the code follows the tie-break (D-P2-33 Codex in full, D-P2-34) and the owner
+decision of 12 Oct 2026 on the private remote; this list is what is built.
+
+- **Cap and ops.** `records/1` with `records.snapshot`, `records.export_check`, `records.status` (reads, op kind
+  `person_read`: column P, owner or maintainer) and `records.remote_private`, `records.note` (writes, op kind
+  `person_write`, column P only: `opts.idem` required, no `dry_run`, an outcome record, a retry replays it).
+  `records.remote_private` is for **owners only**. G and N get `op.not_allowed`.
+  - `records.snapshot {page?}` → `{workspace, manifest, ws_seq, heads, taken_at, count, bytes, files, next_page}`
+    (no `for` argument; the export decision is `records.export_check`).
+  - `records.export_check {sha, url, ref}` → `{workspace, sha, url, ref, policy:"none"|"private_remote",
+    convenience, check}` or `sign.convenience_readers`; it takes no `manifest` (the push may be of an older commit).
+  - `records.remote_private {url?, on}` → `{private_remote:{url, at, by} | null, text}`.
+  - `records.note {manifest?, commit?, pushed, url?, repo?:{state, problem?}, auto?}` → `{}`; a `manifest` must be
+    one this caller took and the host still holds (`page.expired` otherwise). Notes are kept **per person**
+    (`lasts[<person>]`, at most 64), with `last_noted {by, at}` workspace-wide (#433 review, Opus finding 1).
+  - `records.status {}` → as in the block above, for **the caller's own** last note (another manager's note never
+    changes it), plus `last_noted`. `repo` and `remote.url` come from the caller's last commit or push note (the host
+    runs no git, D-P2-19). `remote.url` is **display only**: a client never passes it to `records.remote_private`
+    (the tool resolves the URL to mark from git itself). The tool's `status` adds `local {repo, url}` as it sees them
+    now and writes nothing.
+- **Limits.** 64 MiB per file, 1 GiB and 200 000 files per snapshot (`records.too_large`); pages of 2 000 files bound
+  to the manifest and the caller's principal for 10 min, at most 4 manifests per workspace; 50 export and 50 mark
+  audit entries; `pending.tickets` at most 200. Hash cache by (path, size, inode, mtime, ctime).
+- **Manifest id v1.** `m_` + SHA-256 over the canonical JSON (sorted keys, no spaces, ASCII) of `{"v":1,
+  "workspace":<id>, "ws_seq":<n>, "heads":{log: head}, "files":[[path, size, sha256], …] sorted by path}`. The tool
+  recomputes it from the pages.
+- **Two state files.** The host's `<state>/hosts/<ws>/records.json` (0600): `private_remote` (the one mark),
+  `marks` (audit: action, redacted URL, person, time), `exports` (audit of every export check), `last` (the note).
+  The person's `<state>/records.json` (0600): `validated` (per workspace and branch, the last validated tip) and
+  `auto` (per workspace `{on, every_min, push, root?, last_run?}`; `root` only for a direct-mode workspace,
+  `last_run` the timer's own clock). In tier A both live
+  in the same state directory. The mark is in the host file, not in the person's (`private_remotes:[url]` above is
+  not built): one exact URL per workspace, set through a P op.
+- **Tool flow** (`python -I -m orch.records`, also `orch records`). Resolve the workspace (host mode when the person's
+  registry names it, else direct mode); one run per workspace (`<state>/person/records-<ws>.lock`, `records.busy`);
+  60 s for the whole run, git and host calls together (`records.budget`). Commit: dedicated repo and branch checks,
+  the local config deny-list, every page of `records.snapshot` (id recomputed), each file read once beneath the root
+  fd with `O_NOFOLLOW` and streamed into one `git fast-import` as it is checked (one file in memory at a time),
+  `read-tree --empty` into a private temporary index, `ls-tree -r` must equal the manifest, `commit-tree
+  --no-gpg-sign` with the message `orch: records ws_seq <n>` + `Orch-Manifest: <id>` + `Orch-Records: <ws>`, author
+  and committer `orch records <records@orch.invalid>`, `update-ref` compare-and-swap, the real index refreshed only by
+  compare-and-swap (under `index.lock`, beneath the git-dir fd) when it equalled the old HEAD tree, then
+  `records.note`. The commit message has no `<PREFIX>` (the trailer names the workspace).
+- **History rule.** Every commit reachable from S and not from the validated tip: at most one parent, only
+  `tree`/`parent`/`author`/`committer` headers, exactly the message shape above, and changes to record paths only, as
+  mode 100644 (`records.not_records_only`, `records.history_invalid`). `GIT_NO_REPLACE_OBJECTS=1`,
+  `core.commitGraph=false`; grafts and shallow repos refused. `commit --fresh-history` makes a root commit.
+- **Push rule.** S resolved once; the effective push URL resolved once by git (`remote get-url --push`, exactly one,
+  https or ssh only, no userinfo, query or fragment); `ls-remote` and `push` run in a throwaway config-free bare repo
+  whose alternates name the records repo's objects, keeping only `credential.*`, `http.*`, `ssh.*` and
+  `core.sshCommand` of the person's frozen system and global config (no `url.*`, no `remote.*`); any `remote.<x>.*`
+  in the records repo's own config other than the remote in use is refused. T from `ls-remote` must exist locally
+  and be an ancestor of S; then the history check, `records.export_check(S, URL, ref)`, a recheck of the local config
+  and the URL, and `git push --no-verify --porcelain --no-recurse-submodules --no-follow-tags
+  --force-with-lease=<ref>:<T> <url> <S>:<ref>`. Never a non-fast-forward. A missing remote branch needs
+  `push --initial` (terminal). **The mark binds that URL string; the person's own settings (ssh config, credential
+  helpers, DNS) decide how it is reached.**
+- **Codes and exits** (`orch.records.RecordsError`; the host op passes the same code and exit):
+  `records.snapshot_changed` 9 (retryable), `records.busy` 9, `records.budget` 9, `records.snapshot_invalid` 5,
+  `records.invalid` 5, `records.timer_failed` 1, and 3 for `records.timer_conflict`, `records.not_dedicated`, `records.git_state`,
+  `records.unsafe_config`, `records.not_records_only`, `records.history_invalid`, `records.tree_mismatch`,
+  `records.too_large`, `records.unsafe_tree`, `records.push_rejected`, `records.remote_invalid`,
+  `records.remote_missing`, `records.git_failed`, `records.unsupported` (Windows and other unsupported setups; the
+  `unsupported.platform` row of §0.6 is not used), `records.unconfirmed`.
+- **CLI synopsis.**
+  ```
+  orch records init|commit [--push] [--fresh-history]|push [--initial [--yes]]|status|sync-index
+               |remote-private [--off] [--yes]|auto on [--push] [--every MIN] [--dev]|auto off|auto [--state DIR]
+               [--workspace ID] [--remote NAME] [--json]
+  ```
+  Terminal only (asked on `/dev/tty`): `auto on`, `push --initial` and `remote-private` (the last two skip the
+  question with `--yes`: the boundary is the host op, an owner-only write; the question is UX). The time spent at a
+  question does not count against the 60 s budget (it restarts after the answer). `--state` is the timer's own
+  option (`auto` without a switch); anywhere else it is `records.invalid`. Agents (`ORCH_GRANT`) get
+  `op.not_allowed`.
+- **Dashboard child.** `python -I -m orch.records commit [--push] --workspace <id> --json` and `… auto off
+  --workspace <id> --json` print exactly one JSON line valid against `orch.records.cli.CHILD_SCHEMA`:
+  `{ok:true, commit?, pushed?, url?, detail?}` or `{ok:false, code, message, hint?, commit?}` (`commit` when a push
+  failed after the commit landed); exit 0 or the code's exit. The dashboard's argv stays exactly these two.
+- **Auto mode and timer.** `auto on` asks on the terminal, writes the person's `auto` entry and installs a per-user
+  timer: LaunchAgent `io.orch.records` (`StartInterval` 300) or systemd user units `orch-records.service`
+  (`Type=oneshot`) and `orch-records.timer` (every 5 min), running `python -I -m orch.records auto --state <state>
+  --json`. A source checkout is refused as the timer's program unless `--dev`. `auto off` removes the entry and,
+  when no workspace is left, the timer, and only a timer installed for this state dir. An installed timer that
+  differs (state dir, interpreter, dev versus release) is never replaced silently: `records.timer_conflict` names
+  the fields, `auto on --replace` overrides (H7 parity). The timer's run decides on its own clock only (`last_run`
+  in the person's file, never a host note): a due workspace is committed (a no-op when nothing changed) and pushed
+  when `push` is on; one failing workspace never stops the others, and the run answers `ok:false` with the first
+  code when any failed. It rotates `records-timer.log` (launchd's stdout) like the person log. Same fences as H7: the default
+  runner refuses `launchctl`/`systemctl` under pytest or `ORCH_NO_SERVICE_MANAGER=1`, the test session guard refuses
+  units under the real home and checks the real unit paths are unchanged.
+- **Direct mode** (D-P2-38). A workspace not in the person's registry: the tool opens the store read-only under
+  `DirectGuard` and runs the same ops on the same files (`host.required` once a host serves it). The host writes
+  `<root>/.state/host-served` (content `{"v":1}`, created exclusively) when it starts serving a workspace and
+  removes it at unregister; direct mode refuses
+  while it exists, whatever state directory the tool was given. POSIX only. No role check in direct mode (the person
+  owns the files; audit entries name `direct:<uid>`); the export check still applies.
+- **Person log.** `<state>/person/records.jsonl` (0600, rotated at 1 MiB, 4 files): `start`, the command's result
+  (commit, pushed, redacted URL), `refused` with the code; never file contents or credentials.
+- **Not built.** Hashing outside the store lock (the cache bounds re-hashing; a first snapshot of a large workspace
+  still hashes under the lock); validating history at `orch records init` (it runs before the first push instead).
 
 ### 12.9 Quick tasks (#308)
 

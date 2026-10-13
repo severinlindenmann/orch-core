@@ -1,10 +1,10 @@
 """The versioned, immutable release the service runs (D-P2-4).
 
 ``orch host install`` copies the ``orch`` package to ``~/.local/share/orch/releases/<version>/`` (``$XDG_DATA_HOME``
-when set), with a launcher ``bin/orch-host`` and a manifest ``RELEASE.json`` of every file's SHA-256. Files are made
-read-only (0444, directories 0555). A version that is already installed is never changed: installing the same bytes
-again is a no-op, different bytes under the same version are refused. An upgrade is a new version, then
-``host.restart`` (or the service manager's restart).
+when set), with the launchers ``bin/orch-host`` and ``bin/orch-runner`` (H11a) and a manifest ``RELEASE.json`` of
+every file's SHA-256. Files are made read-only (0444, directories 0555). A version that is already installed is never
+changed: installing the same bytes again is a no-op, different bytes under the same version are refused. An upgrade
+is a new version, then ``host.restart`` (or the service manager's restart).
 
 At start the host imports every ``orch`` module (:func:`preload`), so a later change on disk cannot change code the
 running host has not loaded yet. ``releases/current`` points at the installed version.
@@ -38,6 +38,9 @@ from orch.host.cli import main  # noqa: E402
 
 raise SystemExit(main(sys.argv[1:]))
 """
+
+#: the runner's launcher (H11a, D-P2-24): the same release, its own entry point
+RUNNER_LAUNCHER = LAUNCHER.replace("from orch.host.cli import main", "from orch.runner.cli import main")
 
 
 class ReleaseError(Exception):
@@ -118,6 +121,7 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
             shutil.copyfile(source / rel, dest)
         (staging / "bin").mkdir()
         (staging / "bin" / "orch-host").write_text(f"#!{sys.executable} -I\n" + LAUNCHER)
+        (staging / "bin" / "orch-runner").write_text(f"#!{sys.executable} -I\n" + RUNNER_LAUNCHER)
         (staging / "RELEASE.json").write_text(json.dumps({"version": version, "files": manifest}, sort_keys=True))
         _freeze(staging)
         os.rename(staging, final)  # atomic: a release appears complete or not at all

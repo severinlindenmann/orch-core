@@ -60,6 +60,12 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "sign.convenience_unavailable": (3, False),  # H5c: with a reason first in the message (§0.8.6 item 1)
     "sign.click_only": (3, False),  # H5c follow-up: no hand-off request while click-to-sign is on (§0.8.6 item 8)
     "sign.convenience_readers": (3, False),  # H5c: also in the P1 catalog (member.add refuses it in both modes)
+    # H11a, the runner (addons design §9.2)
+    "runner.unavailable": (9, True),
+    "runner.disabled": (3, False),
+    "launch.cwd_changed": (3, False),
+    "harness.not_found": (3, False),
+    "run.spawn_failed": (1, False),
 }
 
 

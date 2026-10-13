@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import json
 import os
 import re
 import stat
@@ -57,6 +56,7 @@ from . import (
     read_exact,
 )
 from .git import EMPTY_TREE, Git
+from .person import PersonState
 
 __all__ = [
     "AUTHOR",
@@ -71,6 +71,8 @@ __all__ = [
 ]
 
 Link = Callable[[str, dict[str, Any]], dict[str, Any]]
+#: the records ops that are writes (an idem per call)
+WRITE_OPS = frozenset({"records.remote_private", "records.note"})
 AUTHOR = ("orch records", "records@orch.invalid")
 TRAILER = "Orch-Records"
 _FIXED_DATE = None  # commit dates are the clock's; tests may pin them through GIT_*_DATE in base_env
@@ -168,6 +170,79 @@ def _store_blobs(repo: Git, blobs: dict[str, bytes]) -> dict[str, str]:
         repo.run("fast-import", "--quiet", input=stream + b"done\n", timeout=60.0)  # type: ignore[arg-type]
         if _have(repo, missing) != set(missing):
             raise RecordsError("records.git_failed", "git did not store every blob")
+    return ids
+
+
+def stream_blobs(repo: Git, manifest: Manifest) -> dict[str, str] | None:
+    """Read each manifest file once (exactly ``size`` bytes, beneath the record root fd, ``O_NOFOLLOW``), check its
+    SHA-256 and stream those same bytes into one ``git fast-import`` as they are read: at most one file (64 MiB) is
+    in memory, never the whole snapshot. ``None`` when a file no longer matches the manifest (replaced after the cut;
+    the blobs already sent are unreferenced and harmless). Returns path -> blob id, every id checked in the repo.
+
+    A watchdog kills ``fast-import`` when the run's budget is spent, so a blocked write cannot outlive it; its stderr
+    goes nowhere (only the exit code is reported), so nothing can fill a pipe nobody reads."""
+    import subprocess
+    import threading
+
+    from .git import HARDEN
+
+    ids: dict[str, str] = {}
+    sent: set[str] = set()
+    proc = subprocess.Popen(
+        ["git", *HARDEN, "fast-import", "--quiet"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=repo.env(),
+        cwd=repo.root,
+    )
+    watchdog = threading.Timer(repo.remaining(60.0), proc.kill)
+    watchdog.daemon = True
+    watchdog.start()
+    ok = False
+    try:
+        root_fd = open_root(repo.root)
+        try:
+            for e in manifest.files:
+                repo.remaining(1.0)  # the run's budget, between files
+                data = read_exact(root_fd, e.path, e.size)
+                if data is None or hashlib.sha256(data).hexdigest() != e.sha256:
+                    return None
+                oid = _blob_id(data)
+                ids[e.path] = oid
+                if oid not in sent:
+                    assert proc.stdin is not None
+                    proc.stdin.write(b"blob\ndata %d\n" % len(data) + data + b"\n")
+                    sent.add(oid)
+                del data
+        finally:
+            os.close(root_fd)
+        assert proc.stdin is not None
+        proc.stdin.write(b"done\n")
+        proc.stdin.close()
+        proc.wait()
+        if proc.returncode != 0:
+            if not watchdog.is_alive():
+                raise RecordsError("records.budget", "storing the blobs used the run's budget; try again")
+            raise RecordsError("records.git_failed", f"git fast-import failed ({proc.returncode})")
+        ok = True
+    except (BrokenPipeError, ValueError):
+        if not watchdog.is_alive():
+            raise RecordsError("records.budget", "storing the blobs used the run's budget; try again") from None
+        raise RecordsError("records.git_failed", "git fast-import stopped early") from None
+    finally:
+        watchdog.cancel()
+        if proc.stdin is not None and not proc.stdin.closed:
+            try:
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
+        if not ok and proc.poll() is None:
+            proc.kill()
+        if proc.poll() is None or not ok:
+            proc.wait()
+    if _have(repo, sorted(sent)) != sent:
+        raise RecordsError("records.git_failed", "git did not store every blob")
     return ids
 
 
@@ -324,16 +399,15 @@ def commit(repo: Git, link: Link, workspace_id: str, *, fresh: bool = False) -> 
     """Commit exactly the host-named manifest on the current branch. ``fresh``: a root commit (fresh history)."""
     branch = repo.branch()
     ref = f"refs/heads/{branch}"
-    blobs: dict[str, bytes] | None = None
+    ids: dict[str, str] | None = None
     manifest: Manifest | None = None
     for _attempt in range(2):
         manifest = fetch_manifest(link, workspace_id)
-        blobs = read_manifest_bytes(repo.root, manifest)
-        if blobs is not None:
+        ids = stream_blobs(repo, manifest)
+        if ids is not None:
             break
-    if blobs is None or manifest is None:
+    if ids is None or manifest is None:
         raise RecordsError("records.snapshot_changed", "a record changed after the cut twice; try again")
-    ids = _store_blobs(repo, blobs)
     tree = build_tree(repo, manifest, ids)
     old = repo.resolve(ref)
     old_tree = repo.out("rev-parse", f"{old}^{{tree}}") if old else EMPTY_TREE
@@ -466,52 +540,7 @@ def _is_ancestor(repo: Git, a: str, b: str) -> bool:
 # --- validated tips (the person's records.json) -------------------------------------------------------------------
 
 
-class ValidatedTips:
-    """``<person state>/records.json`` (0600): per workspace and branch, the last tip whose history was validated."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def _doc(self) -> dict[str, Any]:
-        try:
-            fd = os.open(self.path, os.O_RDONLY | _NOFOLLOW)
-        except FileNotFoundError:
-            return {"v": 1, "validated": {}}
-        except OSError:
-            raise RecordsError("records.unsafe_config", "the records state file is not a regular file") from None
-        with os.fdopen(fd, "rb") as fh:
-            st = os.fstat(fh.fileno())
-            if st.st_uid != os.getuid() or st.st_mode & 0o077:
-                raise RecordsError("records.unsafe_config", "the records state file is not private to you")
-            try:
-                doc = json.loads(fh.read(1 << 20) or b"{}")
-            except ValueError:
-                raise RecordsError("records.unsafe_config", "the records state file is corrupt") from None
-        if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("validated"), dict):
-            raise RecordsError("records.unsafe_config", "the records state file is corrupt")
-        return doc
-
-    def get(self, workspace_id: str, branch: str) -> str | None:
-        v = (self._doc()["validated"].get(workspace_id) or {}).get(branch)
-        return v if isinstance(v, str) else None
-
-    def set(self, workspace_id: str, branch: str, sha: str) -> None:
-        doc = self._doc()
-        doc["validated"].setdefault(workspace_id, {})[branch] = sha
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if os.path.islink(self.path.parent):
-            raise RecordsError("records.unsafe_config", "the records state directory is a symlink")
-        fd, tmp = tempfile.mkstemp(prefix=".records.", suffix=".tmp", dir=self.path.parent)  # 0600, O_EXCL
-        try:
-            with os.fdopen(fd, "w") as fh:
-                json.dump(doc, fh, sort_keys=True)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self.path)
-        except BaseException:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(tmp)
-            raise
+ValidatedTips = PersonState  # the validated tips live in the person's records.json (orch.records.person)
 
 
 # --- push ------------------------------------------------------------------------------------------------------------

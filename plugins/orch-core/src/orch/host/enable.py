@@ -170,12 +170,14 @@ def differences(unit: Plan) -> list[str] | None:
 _INSTALLED = frozenset({"site-packages", "dist-packages"})
 
 
-def _in_checkout(path: Path, stop: Path | None = None) -> bool:
+def _in_checkout(path: Path, stop: Path | None = None, *, git_alone: bool = False) -> bool:
     """Inside a ``.worktrees`` checkout, or inside a git work tree with a Python project between it and ``path`` (a
     ``pyproject.toml`` or ``setup.py`` on the way up). A git work tree alone is not enough: Homebrew's prefix is one,
     and so is a home directory kept in git; an installed copy (under ``site-packages``) is never a checkout. The walk
     ends before ``stop`` (the home directory, for an interpreter's environment: pipx and uv tool environments live
-    under it, and a home directory kept in git with a ``pyproject.toml`` must not make them checkouts)."""
+    under it, and a home directory kept in git with a ``pyproject.toml`` must not make them checkouts). With
+    ``git_alone`` (a virtual environment, judged as the interpreter) a git work tree is enough: a venv inside a
+    checkout runs that checkout's changing dependencies even when orch itself was installed without ``-e``."""
     if _INSTALLED & set(path.parts):
         return False
     project = False
@@ -185,7 +187,7 @@ def _in_checkout(path: Path, stop: Path | None = None) -> bool:
         if d.name == ".worktrees":
             return True
         project = project or (d / "pyproject.toml").is_file() or (d / "setup.py").is_file()
-        if project and (d / ".git").exists():
+        if (project or git_alone) and (d / ".git").exists():
             return True
     return False
 
@@ -207,7 +209,8 @@ def dev_source(python: Path, package: Path, roots: Sequence[str] = ()) -> str | 
             real = path.resolve() if what == "the orch package" else Path(os.path.abspath(path))
         except OSError:
             continue
-        if _in_checkout(real, stop):
+        venv = what == "the interpreter" and (real / "pyvenv.cfg").is_file()
+        if _in_checkout(real, stop, git_alone=venv):
             return f"{what} ({path}) is in a source checkout"
         for root in roots:
             try:

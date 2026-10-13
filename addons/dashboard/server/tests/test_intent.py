@@ -256,3 +256,36 @@ def test_new_dashboard_link_keeps_same_host_request_without_auth_session(
         assert all("session" not in (f.get("auth") or {}) for f in prepares)
     finally:
         restarted.close()
+
+
+@pytest.mark.parametrize("submitted_at", [None, "2026-10-13T15:20:00Z"])
+@pytest.mark.parametrize("source", ["request", "row"])
+def test_done_time_requires_committed_pending_sequence(submitted_at, source):
+    from orch_dashboard.handoff import done_error
+
+    prepared = {"request": {"state": "submitted"}, "op": "log"}
+    row = {"state": "submitted", "seq": 7}
+    (prepared["request"] if source == "request" else row)["submitted_at"] = submitted_at
+    error = done_error(prepared, row).error
+    assert error["code"] == "intent.done"
+    assert error["signed_at"] == submitted_at
+    row.update(seq=None, error={"code": "gate.stale"})
+    error = done_error(prepared, row).error
+    assert error["code"] == "intent.failed" and error["reason"] == "gate.stale"
+    assert "did not land (gate.stale)" in error["message"]
+    assert "not signed into the log" in error["message"]
+    assert "signed_at" not in error and "Already done" not in error["message"]
+
+
+def test_busy_and_host_fix_mapping():
+    import json
+
+    from orch_dashboard.errors import HostError, fail, host_response
+
+    busy = host_response(fail("lock.busy"))
+    assert busy.status_code == 503
+    assert json.loads(busy.body)["exit"] == 9
+    assert json.loads(busy.body)["error"]["retryable"] is True
+    fix = {"argv": ["orch", "host", "convenience", "off", "--workspace", "DEMO"]}
+    response = host_response(HostError({"code": "sign.convenience_readers", "fix": fix}))
+    assert json.loads(response.body)["error"]["fix"] == fix

@@ -1475,4 +1475,17 @@ A retained binding without an open request also caused a 24 h lockout.
 **Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
 never restore whole-ticket or member-role bases as an incidental refactor.
 
+## 2026-10-13 — Dashboard wheel UI and manifest packaging
+
+**Decision:** Build missing production UI during wheel packaging, fail clearly if it cannot
+be built, and offer `ORCH_DASHBOARD_SKIP_UI=1` only for development. Include the canonical
+addon manifest at build time and export it with `orch-dashboard addon-manifest --write` using
+symlink-refusing directory descriptors. Sdists carry the manifest and any prebuilt UI; the
+full checkout is the supported route when UI compilation is needed.
+
+**Why:** First-use runbook gaps 2 and 3 exposed wheels without the UI or workspace manifest.
+The owner must still explicitly sign the addon grant.
+
+**Revert:** Remove the custom hooks and manifest subcommand and restore manual UI build and
+manifest-copy steps; this reintroduces those packaging gaps.
 - 2026-10-13 — **Decision:** show host submitted_at only for committed pending rows (seq present); failed submissions require Start again; preserve host fixes and retry lock.busy. **Why:** submission time alone is not proof of a logged signature (#437). **Revert:** remove this dashboard mapping if the host outcome contract changes.

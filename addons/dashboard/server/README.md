@@ -261,3 +261,32 @@ Off per workspace until `orch host convenience on --workspace W`; `ORCH_DASHBOAR
 channel (`tests/test_dashboard_click.py`) and, with `-m realhost`, the real host and signer (`tests/test_realhost_click.py`, file custody in
 a disposable state; macOS keychain never touched). Card text: "Convenience signing: agents running as you, or anything that takes over
 this dashboard, could sign." See HANDOVER "Click-to-sign (H5c)".
+
+## First-use packaging update (runbook gaps 2 and 3)
+
+With core already installed in the same venv, install the dashboard from a revision containing
+this packaging fix (use `develop` after merge):
+
+```sh
+python -m pip install "orch-dashboard @ git+https://github.com/severinlindenmann/orch-core.git@develop#subdirectory=addons/dashboard/server"
+orch-dashboard addon-manifest --write /absolute/path/to/workspace
+cd /absolute/path/to/workspace
+orch addon grant dashboard
+```
+
+Node >= 24 (24.15+ recommended for the locked dependencies), npm and npm registry access are
+needed at install time: the wheel hook runs `npm ci` and `npm run build` when
+`server/src/orch_dashboard/static/index.html` is absent. An existing UI build is reused.
+Missing tools, sources or failed builds now fail packaging with instructions instead of
+silently shipping no UI. Prebuilt wheels need no Node at installation time.
+The supported source route is a full checkout or the git URL above. Server sdists omit UI
+sources; build the UI before creating an sdist to carry its static output, or build the wheel
+directly from the checkout. `ORCH_DASHBOARD_SKIP_UI=1` explicitly permits UI-less development
+builds; do not use it for deployment. The manual build instructions above remain supported.
+
+The manifest is included from the repository's single `addons/dashboard/orch-addon.json`.
+`orch-dashboard addon-manifest` prints its JSON; `--write` replaces the runbook's manual copy
+into `<workspace>/addons/dashboard/orch-addon.json`. Identical files are left alone; different
+files require `--force`. Symlinks anywhere in the destination path are refused (on macOS use
+`/private/tmp`, not the `/tmp` alias). This only copies the manifest; the owner still signs the
+grant, including again after a manifest update. It does not start the dashboard or host.

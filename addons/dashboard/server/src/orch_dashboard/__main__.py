@@ -283,6 +283,10 @@ def open_dashboard(path="/", print_url=False):
 
 
 def main():
+    if sys.argv[1:2] == ["addon-manifest"]:
+        from .manifest import main as manifest_main
+
+        return manifest_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
     parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop"], default="open")
     parser.add_argument("path", nargs="?", default="/")

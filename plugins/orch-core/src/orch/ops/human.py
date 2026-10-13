@@ -212,6 +212,18 @@ class Human:
             raise OrchError("invalid.input", f"the {gate} gate cannot be hashed right now (see orch show)")
         return {"gate_gen": g.gen, "hash": g.hash, "policy_hash": g.policy_hash}
 
+    def _direct_registrations(self, git: Any) -> Any:
+        """Direct mode (D-P2-38): ``git`` with the workspace's worktree registrations (``git-pins.json`` next to the
+        host's state of this workspace, written by ``orch worktree``), when the file exists."""
+        import dataclasses
+
+        from orch.gitread.client import PinStore
+
+        path = self.call.ws.state_dir / "hosts" / self.store.workspace_id / "git-pins.json"
+        if not path.exists():
+            return git
+        return dataclasses.replace(git, worktrees=PinStore(path))
+
     def _tree_problems(self, view: Any, signed: list[dict[str, str]]) -> list[str]:
         """Read-only: for each linked repository with a branch, is the working copy **on the bound branch, at the bound
         commit, with nothing uncommitted**? The decision binds a commit; a person who ran or read the files must have
@@ -228,6 +240,12 @@ class Human:
                 out.append(f"{name}: git cannot be read here")
                 continue
             # H11d: the ticket's registered worktree when it has one (never a fallback), else the declared copy
+            if git.reader is None and git.worktrees is None:  # direct mode: the registrations `orch worktree` wrote
+                try:
+                    git = self._direct_registrations(git)
+                except (ValueError, OSError) as exc:  # a pin file that cannot be read: fail closed
+                    out.append(f"{name}: the worktree registrations cannot be read ({exc})")
+                    continue
             copy = git.ticket_copy(self.store.root, self.store.state.workspace.repos, view.uid, name)
             path = copy.path
             if copy.why is not None:

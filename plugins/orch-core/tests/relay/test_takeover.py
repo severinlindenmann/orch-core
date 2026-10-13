@@ -113,15 +113,25 @@ def test_not_the_last_holder_alarms_without_probing(env):
     assert "(a)" in alarms[0][1] and holds(m) == []
 
 
-def test_other_instance_id_renews_but_never_probes(env):
-    """orch-52's order: the renew with the stored gen comes first (not a probe); a fenced copy then fails (b)."""
+def test_other_instance_id_refuses_before_any_network_call(env):
+    """R1 approved by orch-52 (13 Oct 2026): (a) and (b) are checked before any network call, the renew included, so a
+    copied or restored directory cannot renew into the original's live lease and become a second holder."""
     m, sim = env
-    sim.holders[WS] = (3, sim.now - 1)
+    sim.holders[WS] = (3, sim.now + 40_000)  # the original's lease is live
     s, _, alarms = new(m, sim, Holder(gen=3, instance_id="1" * 32))
     with pytest.raises(TakeoverRefused):
         s.hold()
     assert "(b)" in alarms[0][1]
-    assert holds(m) == [{"gen": 3, "take_over": False}]  # the renew only, no {gen: null}
+    assert m.seen == []  # no request at all: no login, no renew, no probe
+
+
+def test_not_the_last_holder_refuses_before_any_network_call(env):
+    m, sim = env
+    sim.holders[WS] = (3, sim.now + 40_000)
+    s, _, alarms = new(m, sim, Holder(gen=3, last_holder=False))
+    with pytest.raises(TakeoverRefused):
+        s.hold()
+    assert "(a)" in alarms[0][1] and m.seen == []
 
 
 def test_restored_state_dir_alarms_before_any_probe(env, tmp_path):
@@ -134,7 +144,7 @@ def test_restored_state_dir_alarms_before_any_probe(env, tmp_path):
     s, _, alarms = new(m, sim, store)
     with pytest.raises(TakeoverRefused):
         s.hold()
-    assert "(b)" in alarms[0][1] and {"gen": None, "take_over": False} not in holds(m)
+    assert "(b)" in alarms[0][1] and m.seen == []
     st.close()
 
 
@@ -196,3 +206,104 @@ def test_file_holder_store_round_trip(tmp_path):
     assert FileHolderStore(st).instance_id() == iid  # created once
     assert regenerate_instance_id(st) != iid and store.instance_id() != iid
     st.close()
+
+
+# --- the instance record is bound to the held directory's (dev, ino) (orch-52, 13 Oct 2026) -------------------------
+
+import os  # noqa: E402
+import shutil  # noqa: E402
+
+
+def _held_once(path, gen=3):
+    st = StateDir(path)
+    store = FileHolderStore(st)
+    store.save(HolderRecord(True, gen, store.instance_id(), None))
+    return st, store
+
+
+def test_first_creation_records_the_directory_identity(tmp_path):
+    st = StateDir(tmp_path / "relay")
+    store = FileHolderStore(st)
+    obj = st.read_json("instance.json")
+    assert (obj["dev"], obj["ino"]) == st.identity() and store.binding_problem() is None
+    st.close()
+
+
+def test_plain_copy_refuses_before_any_network_call(env, tmp_path):
+    m, sim = env
+    st, _ = _held_once(tmp_path / "relay")
+    st.close()
+    shutil.copytree(tmp_path / "relay", tmp_path / "copy")  # cp -r: the instance id is copied verbatim
+    copy = StateDir(tmp_path / "copy")
+    sim.holders[WS] = (3, sim.now + 40_000)
+    s, _, alarms = new(m, sim, FileHolderStore(copy))
+    with pytest.raises(TakeoverRefused):
+        s.hold()
+    assert "copied or restored" in alarms[0][1] and m.seen == []
+    copy.close()
+
+
+def test_rename_of_the_same_directory_keeps_working(env, tmp_path):
+    m, sim = env
+    st, _ = _held_once(tmp_path / "relay")
+    st.close()
+    os.rename(tmp_path / "relay", tmp_path / "moved")
+    moved = StateDir(tmp_path / "moved")
+    sim.holders[WS] = (3, sim.now + 40_000)
+    s, _, alarms = new(m, sim, FileHolderStore(moved))
+    assert s.hold().gen == 3 and alarms == []
+    moved.close()
+
+
+def test_backup_restore_by_recreating_the_directory_refuses(env, tmp_path):
+    m, sim = env
+    st, _ = _held_once(tmp_path / "relay")
+    st.close()
+    shutil.copytree(tmp_path / "relay", tmp_path / "backup")
+    shutil.rmtree(tmp_path / "relay")
+    shutil.copytree(tmp_path / "backup", tmp_path / "relay")
+    os.chmod(tmp_path / "relay", 0o700)
+    restored = StateDir(tmp_path / "relay")
+    sim.holders[WS] = (3, sim.now - 1)
+    s, _, alarms = new(m, sim, FileHolderStore(restored))
+    with pytest.raises(TakeoverRefused):
+        s.hold()
+    assert "copied or restored" in alarms[0][1] and m.seen == []
+    restored.close()
+
+
+def test_regenerate_rebinds_and_the_operator_path_proceeds(env, tmp_path):
+    m, sim = env
+    st, _ = _held_once(tmp_path / "relay")
+    st.close()
+    shutil.copytree(tmp_path / "relay", tmp_path / "copy")
+    copy = StateDir(tmp_path / "copy")
+    store = FileHolderStore(copy)
+    old = store.instance_id()
+    assert store.binding_problem() is not None
+    assert regenerate_instance_id(copy) != old
+    assert store.binding_problem() is None  # rebound to this directory
+    obj = copy.read_json("instance.json")
+    assert (obj["dev"], obj["ino"]) == copy.identity()
+    assert sorted(p.name for p in (tmp_path / "copy").iterdir()) == ["holder.json", "instance.json"]  # atomic write
+    s, _, alarms = new(m, sim, store)
+    with pytest.raises(TakeoverRefused):
+        s.hold()  # holder.json is still the original's (b)
+    sim.holders[WS] = (3, sim.now - 1)
+    assert s.operator_takeover().gen == 4
+    assert store.load() == HolderRecord(True, 4, store.instance_id(), None)
+    copy.close()
+
+
+def test_operator_takeover_rebinds_a_copied_directory(env, tmp_path):
+    m, sim = env
+    st, _ = _held_once(tmp_path / "relay")
+    st.close()
+    shutil.copytree(tmp_path / "relay", tmp_path / "copy")
+    copy = StateDir(tmp_path / "copy")
+    store = FileHolderStore(copy)
+    sim.holders[WS] = (3, sim.now - 1)
+    s, _, _ = new(m, sim, store)
+    assert s.operator_takeover().gen == 4
+    assert store.binding_problem() is None and store.load().instance_id == store.instance_id()
+    copy.close()

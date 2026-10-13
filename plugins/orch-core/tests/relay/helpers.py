@@ -71,6 +71,13 @@ class Holder:
     def instance_id(self):
         return self.iid
 
+    def binding_problem(self):
+        return None
+
+    def regenerate(self):
+        self.iid = "f" * 32
+        return self.iid
+
     def load(self):
         return self.rec
 

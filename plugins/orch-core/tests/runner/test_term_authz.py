@@ -178,13 +178,13 @@ def test_revoke_mid_partial_write_stops_the_retry_loop(rig):
 
     def hook():
         calls.append(1)
-        if len(calls) == 2:
-            rig.listener.end("att1", "cancelled")
+        if len(calls) == 2:  # runs under the listener lock: another thread's revocation, already in effect
+            rig.listener.attachments["att1"].revoked = True
 
     rig.sup.before_write = hook
     type_(c, gen, 1, b"abcdef")
     tail = c.drain()
-    assert tail[-1] == {"t": "end", "reason": "cancelled"}
+    assert tail[-1]["t"] == "end"
     assert not any(f.get("t") == "ack" for f in tail)
     assert len(rig.sup.typed) <= 2
 
@@ -197,3 +197,28 @@ def test_end_closes_promptly_when_viewer_does_not_read(rig):
     rig.listener.end("v1", "cancelled")
     wait_until(lambda: "v1" not in rig.listener.attachments)
     assert c.drain(5)[-1] == {"t": "end", "reason": "cancelled"}
+
+
+def test_every_privileged_action_goes_through_the_one_check(rig):
+    """Structural: a revoked flag alone (no connection event) stops output, input and resize."""
+    w, gen = writer(rig)
+    v = rig.attach("v")
+    rig.listener.attachments["att1"].revoked = True
+    rig.listener.attachments["v"].revoked = True
+    rig.sup.emit(b"secret")  # the output push
+    type_(w, gen, 1, b"in")
+    w.send({"t": "resize", "lease_gen": gen, "cols": 80, "rows": 24})
+    assert out_bytes(v.drain()) == b""
+    w.drain()
+    assert rig.sup.typed == b"" and rig.sup.sizes == []
+
+
+def test_action_runs_under_the_check_lock(rig):
+    w, gen = writer(rig)
+    att = rig.listener.attachments["att1"]
+    ran = []
+    assert rig.listener._authorized(att, gen, lambda: ran.append(1)) is True
+    assert rig.listener._authorized(att, gen + 1, lambda: ran.append(2)) is False
+    att.revoked = True
+    assert rig.listener._authorized(att, gen, lambda: ran.append(3)) is False
+    assert ran == [1]

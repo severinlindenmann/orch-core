@@ -84,8 +84,9 @@ LOCKOUT_COUNT = 10
 LOCKOUT_SECONDS = 60.0
 SEEN_KEEP = 1024
 TICKET_LEN = 43  # 32 bytes, base64url without padding
-#: connections handled at once; more are closed at once (any same-UID process could otherwise exhaust threads)
-MAX_CONNECTIONS = 32
+#: connections handled at once: 64 attachments per runner plus some still in their 5 s handshake; more are closed
+#: at once (any same-UID process could otherwise exhaust threads)
+MAX_CONNECTIONS = 96
 #: §0.11 (v1.6) attachment limits
 PER_RUN, PER_PERSON, PER_RUNNER = 4, 16, 64
 #: §12.6.3: output and input frames, the per-attachment queue, the input rate per run
@@ -146,6 +147,8 @@ class Attachment:
     #: set under the lock by whoever takes the attachment out of the table (``end``, ``host_lost``, a new epoch):
     #: from then on :meth:`TermListener._authorized` refuses everything, in both directions
     revoked: bool = False
+    #: set when the sender thread is done (the ``end`` frame was written, or the socket failed)
+    sent: threading.Event = field(default_factory=threading.Event)
 
 
 class _Bucket:
@@ -553,6 +556,8 @@ class TermListener:
             pass
         finally:
             if att is not None:
+                if att.ending:  # the reader gave up (protocol error): let the sender deliver the ``end`` first
+                    att.sent.wait(END_GRACE + 1)
                 self._drop(att)
             with contextlib.suppress(OSError):
                 conn.close()
@@ -596,6 +601,7 @@ class TermListener:
             pass
         finally:
             att.closed = True
+            att.sent.set()
             _shut(conn)
 
     def _step(self, att: Attachment) -> bool:
@@ -661,12 +667,14 @@ class TermListener:
                 return
             queue = decoder.feed(data)
 
-    def _authorized(self, att: Attachment, lease_gen: Any = None) -> bool:
+    def _authorized(self, att: Attachment, lease_gen: Any = None, act: Callable[[], Any] | None = None) -> bool:
         """The one authorization check, called before every privileged action (§12.6.2, N5). Without ``lease_gen``:
         may this attachment still see output (it is registered, not revoked or closed, in the current epoch, with the
         host there)? With it: may it also write, i.e. is it a write attachment holding the lease at ``lease_gen``?
         A revoked attachment is ended here, whoever noticed first; a lease that moved only refuses the write
-        (``writer:false``)."""
+        (``writer:false``). ``act``: a non-blocking privileged action (the PTY write, the resize) run under the same
+        lock as the check, so a revocation (which takes the lock) can never fall between the check and the action;
+        its exceptions propagate after the lock is released."""
         with self.lock:
             live = (
                 self.attachments.get(att.att) is att and not att.revoked and not att.closed
@@ -677,6 +685,8 @@ class TermListener:
             if not live:
                 att.revoked = True
                 att.writer = False
+            elif act is not None and (lease_gen is None or leased):
+                act()
         if not live:
             self._finish(att, "host.restarting" if not self.accepting or att.epoch != self.epoch else "cancelled")
             return False
@@ -752,12 +762,16 @@ class TermListener:
 
         view = memoryview(data)
         while view:
-            if att.closed or not self._authorized(att, lease_gen):
+            if att.closed:
                 return False
+            done: list[int] = []
+            chunk = bytes(view)
             try:
-                n = self.sup.write_input(att.run, bytes(view))
+                if not self._authorized(att, lease_gen, lambda: done.append(self.sup.write_input(att.run, chunk))):
+                    return False
             except SpawnError:
                 return False
+            n = done[0]
             if n == 0:
                 time.sleep(0.005)  # the PTY's input queue is full: the program is not reading yet
                 continue
@@ -778,7 +792,8 @@ class TermListener:
         from .supervise import SpawnError
 
         try:
-            self.sup.resize(att.run, cols, rows)
+            if not self._authorized(att, lease_gen, lambda: self.sup.resize(att.run, cols, rows)):
+                return True
         except SpawnError:
             return True
         for other in self._by_run.get(att.run, ()):

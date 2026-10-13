@@ -404,3 +404,57 @@ def test_d58_direct_refuses_a_registered_worktree_whose_config_names_a_program(p
     got = problems.run()
     assert any("filter.x.clean" in p for p in got), got
     assert path
+
+
+def test_forced_remove_keeps_observe_unavailable_from_a_gate_refusal(d):
+    """Codex #439 low: ``remove --force`` skips the cleanliness read, so the refusal comes from the runner's gate; its
+    code must stay ``observe.unavailable`` (not ``worktree.git_failed``)."""
+    path = doc(d.run("create", d.key))["data"]["path"]
+    d.ws.git("config", "filter.x.clean", "/bin/false")
+    r = d.run("remove", d.key, "--force")
+    assert r.code == 3 and doc(r)["code"] == "observe.unavailable", r.out
+    assert os.path.exists(path)
+    d.ws.git("config", "--unset-all", "filter.x.clean")
+    assert d.run("remove", d.key, "--force").code == 0
+
+
+def _submodule_in(path: str, tmp, marker) -> None:
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp), "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t",
+           "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}  # fmt: skip
+
+    def g(cwd, *a):
+        subprocess.run(["git", *a], cwd=cwd, env=env, check=True, capture_output=True)
+
+    sub = os.path.join(path, "sub")
+    os.mkdir(sub)
+    g(sub, "init", "-q", "-b", "main")
+    open(os.path.join(sub, "a"), "w").write("a\n")
+    open(os.path.join(sub, ".gitattributes"), "w").write("* filter=m\n")
+    g(sub, "add", ".")
+    g(sub, "commit", "-qm", "s")
+    g(path, "add", "sub")
+    g(path, "commit", "-qm", "gitlink")
+    g(sub, "config", "filter.m.clean", f"touch {marker}; cat")
+    open(os.path.join(sub, "a"), "w").write("a\nchanged\n")  # a dirty submodule
+
+
+def test_a_populated_submodule_is_never_inspected_or_reported_clean(d):
+    """Codex #439 High/Medium: direct ``list --check`` and ``remove`` never run a submodule's own filter and never call
+    a tree with a checked-out submodule clean (``dirty`` null: unknown)."""
+    path = doc(d.run("create", d.key))["data"]["path"]
+    marker = d.ws.tmp / "submodule-filter-ran"
+    _submodule_in(path, d.ws.tmp, marker)
+    listed = doc(d.run("list", "--check"))["data"][0]
+    assert listed["dirty"] is None, listed
+    r = d.run("remove", d.key)
+    assert r.code == 3 and doc(r)["code"] == "observe.unavailable" and os.path.exists(path), r.out
+    assert not marker.exists()
+
+
+def test_d58_direct_refuses_a_registered_worktree_with_a_populated_submodule(problems):
+    path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
+    marker = problems.d.ws.tmp / "submodule-filter-ran"
+    _submodule_in(path, problems.d.ws.tmp, marker)
+    got = problems.run()
+    assert any("submodule" in p for p in got), got
+    assert not marker.exists()

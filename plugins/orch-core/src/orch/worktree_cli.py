@@ -231,7 +231,7 @@ class Direct:
         except SpawnError as exc:
             code = (
                 exc.code
-                if exc.code.startswith("worktree.") or exc.code == "launch.cwd_changed"
+                if exc.code.startswith("worktree.") or exc.code in ("launch.cwd_changed", "observe.unavailable")
                 else "worktree.git_failed"
             )
             raise WtError(code, exc.message, 1 if code == "worktree.git_failed" else 3) from None

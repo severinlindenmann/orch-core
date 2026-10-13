@@ -2,8 +2,11 @@
 
 ``<person state>/person/click/<workspace_id>/<request_id>.json`` (directories 0700, files 0600, person-owned). A record
 is written and synced **before** a signature leaves the signer (before ``human.submit``), so the signer signs a request
-at most once per ``(request_id, view_digest)`` even across a crash and a restart: a repeated ``sign`` with the same
-``view_digest`` resends (or answers) the identical signed events, another ``view_digest`` is
+at most once per ``(request_id, view_digest)`` even across a crash and a restart. The order is a CLAIM (the digest, op,
+idem and expiry, no events) synced **before the crypto signing**, then the signing, then the completed record (the
+signed events) replacing the claim. A claim with no completion and no in-memory copy of the events means a crash or
+failure sat between the two: that request is never signed again (``record_unavailable``). A repeated
+``sign`` with the same ``view_digest`` resends (or answers) the identical signed events, another ``view_digest`` is
 ``human.click_refused``/``already_signed``. A record that cannot be read or validated fails closed
 (``record_unavailable``): that request is not signed by this signer again.
 
@@ -41,6 +44,12 @@ TMP_AGE = 600.0  # a temporary file older than this is a crash's leftover
 KEYS = frozenset(
     {"v", "workspace_id", "request_id", "view_digest", "op", "idem", "events", "expires_at", "signed_at", "result"}
 )
+CLAIM_KEYS = (KEYS - {"events", "signed_at", "result"}) | {"claimed_at"}
+
+
+def is_claim(rec: dict[str, Any]) -> bool:
+    """A claim (written before signing) holds no events: a completed record always does."""
+    return "events" not in rec
 
 
 def _keep_seconds() -> int:
@@ -151,9 +160,6 @@ class Records:
         """Write the record durably and exclusively (a temporary file with ``O_EXCL|O_NOFOLLOW``, fsync, linked into
         place, the directory synced). A record already there (another signer process won the race) is returned
         instead: the caller then uses its events, never its own."""
-        from orch.custody.base import CustodyError, KeyExists
-        from orch.custody.convenience import write_private
-
         rec = {
             "v": 1,
             "workspace_id": workspace_id,
@@ -166,6 +172,37 @@ class Records:
             "signed_at": _stamp(self.wall()),
             "result": None,
         }
+        return self._put(rec, replace=False, what="written")
+
+    def claim(
+        self, workspace_id: str, request_id: str, *, view_digest: str, op: str, idem: str, expires_at: str
+    ) -> dict[str, Any]:
+        """Write the CLAIM durably and exclusively, **before** the crypto signing (same discipline as :meth:`create`).
+        A record already there (another signer process won the race) is returned instead: the caller never signs."""
+        rec = {
+            "v": 1,
+            "workspace_id": workspace_id,
+            "request_id": request_id,
+            "view_digest": view_digest,
+            "op": op,
+            "idem": idem,
+            "expires_at": expires_at,
+            "claimed_at": _stamp(self.wall()),
+        }
+        return self._put(rec, replace=False, what="written")
+
+    def complete(self, claim: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+        """Replace the claim with the completed record holding the signed events (temporary file, fsync, rename,
+        directory sync). The digest, op, idem and expiry never change."""
+        rec = {k: v for k, v in claim.items() if k != "claimed_at"}
+        rec.update(events=events, signed_at=_stamp(self.wall()), result=None)
+        return self._put(rec, replace=True, what="updated")
+
+    def _put(self, rec: dict[str, Any], *, replace: bool, what: str) -> dict[str, Any]:
+        from orch.custody.base import CustodyError, KeyExists
+        from orch.custody.convenience import write_private
+
+        workspace_id, request_id = rec["workspace_id"], rec["request_id"]
         _validate(rec, workspace_id, request_id)
         data = canon.dumps(rec)
         if len(data) > MAX_BYTES:
@@ -173,7 +210,7 @@ class Records:
         fd = self._dir(workspace_id, create=True)
         assert fd is not None
         try:
-            write_private(fd, self._name(request_id), data, replace=False)
+            write_private(fd, self._name(request_id), data, replace=replace)
         except KeyExists:
             os.close(fd)
             fd = -1
@@ -182,7 +219,7 @@ class Records:
                 raise RecordError("the sign record vanished") from None
             return existing
         except (CustodyError, OSError) as exc:
-            raise RecordError(f"the sign record cannot be written: {type(exc).__name__}") from None
+            raise RecordError(f"the sign record cannot be {what}: {type(exc).__name__}") from None
         finally:
             if fd >= 0:
                 os.close(fd)
@@ -318,13 +355,18 @@ def _validate(rec: Any, workspace_id: str, request_id: str) -> None:
     def bad(why: str) -> RecordError:
         return RecordError(f"the sign record is invalid: {why}")
 
-    if not isinstance(rec, dict) or set(rec) != KEYS or rec.get("v") != 1:
+    if not isinstance(rec, dict) or set(rec) not in (KEYS, CLAIM_KEYS) or rec.get("v") != 1:
         raise bad("shape")
+    claim = set(rec) == CLAIM_KEYS
     if rec["workspace_id"] != workspace_id or rec["request_id"] != request_id:
         raise bad("it names another request")
     for k, pat in (("view_digest", HASH), ("idem", IDEM), ("op", OP_NAME)):
         if type(rec[k]) is not str or not pat.fullmatch(rec[k]):
             raise bad(k)
+    if claim:
+        if _epoch(rec["expires_at"]) is None or _epoch(rec["claimed_at"]) is None:
+            raise bad("times")
+        return
     events = rec["events"]
     if type(events) is not list or not events or not all(isinstance(e, dict) for e in events):
         raise bad("events")

@@ -18,6 +18,10 @@ orch-core = { path = "../../../plugins/orch-core", editable = true }
 requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+# Added exactly once by the hooks, including when rebuilding from an sdist.
+exclude = ["src/orch_dashboard/static", "src/orch_dashboard/orch-addon.json"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/orch_dashboard"]
 
@@ -38,3 +42,9 @@ select = ["E", "F", "I", "UP"]
 "tests/realhost_kit.py" = ["E501"]
 "tests/test_realhost.py" = ["E501"]
 "tests/test_realhost_click.py" = ["E501"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "hatch_build.py"

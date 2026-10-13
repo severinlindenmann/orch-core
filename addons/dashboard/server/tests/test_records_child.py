@@ -310,3 +310,17 @@ def test_exit_wait_budget_keeps_leader_until_cleanup(spawn, monkeypatch, tmp_pat
     assert error.value.error["code"] == "records.budget"
     assert kills == [(proc.pid, signal.SIGKILL)]
     assert proc.waits == [None]
+
+
+def test_a_real_child_that_exits_normally_without_grandchildren_is_parsed_not_an_error(tmp_path):
+    """Opus M6 re-check N1: on macOS killpg of a group whose only member is the unreaped leader raises EPERM; a
+    normal run must still be parsed (and the zombie reaped, the pipes closed)."""
+    import json
+    import sys
+
+    from orch_dashboard.records_child import RecordsChild
+
+    line = json.dumps({"ok": True, "commit": "a" * 40})
+    env = {"PATH": "/usr/bin:/bin", "ORCH_STATE_DIR": str(tmp_path)}
+    out = RecordsChild()._execute([sys.executable, "-c", f"print({line!r})"], env)
+    assert out["ok"] is True

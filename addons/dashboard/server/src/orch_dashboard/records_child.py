@@ -172,9 +172,15 @@ class RecordsChild:
             if proc.returncode is None:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
+                except (ProcessLookupError, PermissionError):
+                    # macOS answers EPERM when the group's only member is the unreaped leader (a normal exit with no
+                    # grandchild left). Safe to ignore: the unreaped leader still holds the group id.
                     pass
-                proc.wait()
-            proc.stdout.close()
-            proc.stderr.close()
+                finally:
+                    proc.wait()
+                    proc.stdout.close()
+                    proc.stderr.close()
+            else:
+                proc.stdout.close()
+                proc.stderr.close()
         return parse(bytes(output), proc.returncode)

@@ -462,11 +462,17 @@ class Host:
             if service.state != "unavailable":
                 try:
                     await service.call(service.outcomes.sweep)
-                    if service.requests is not None:
-                        await service.call(service.requests.sweep)
-                    await service.call(service.blobs.sweep)
                 except Exception:  # noqa: BLE001
                     LOG.exception("outcome sweep failed")
+                if service.requests is not None:
+                    try:
+                        await service.call(service.requests.sweep)
+                    except Exception:  # noqa: BLE001
+                        LOG.exception("request sweep failed")
+                try:
+                    await service.call(service.blobs.sweep)
+                except Exception:  # noqa: BLE001
+                    LOG.exception("blob sweep failed")
 
     async def check_journals(self) -> None:
         """F11: compare every workspace's logs with its journal on its worker thread (a foreign append rebuilds the

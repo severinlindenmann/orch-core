@@ -25,6 +25,8 @@ states are kept 24 h. A hand-off request carries its code (H5b, :func:`orch.host
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 import re
 import threading
@@ -37,6 +39,7 @@ from .errors import HostError
 
 __all__ = ["EXPIRE_SECONDS", "GRANT_EXPIRE_SECONDS", "KEEP_SECONDS", "MAX_PENDING", "RequestStore", "new_request_id"]
 
+LOG = logging.getLogger(__name__)
 EXPIRE_SECONDS = 600
 #: a grant request expires sooner: F1 refuses a grant.issued whose issued_at (the prepare time) is more than 300 s
 #: away from its append
@@ -147,8 +150,14 @@ class RequestStore:
 
     def lapsed(self, record: dict[str, Any], grace: float = 0.0) -> bool:
         """A pending request past its expiry (plus ``grace`` seconds), the one rule of :meth:`expire`. A request whose
-        signed events are being appended (``submit`` set) never lapses."""
-        return record["state"] in PENDING and not record.get("submit") and self.clock() >= record["expires"] + grace
+        signed events are being appended (``submit`` set) never lapses. ``expires`` must be a finite number (not a
+        bool): anything else is a ``ValueError``, never a silent lapse."""
+        if record["state"] not in PENDING or record.get("submit"):
+            return False
+        expires = record["expires"]
+        if type(expires) not in (int, float) or not math.isfinite(expires):
+            raise ValueError("expires is not a finite number")
+        return self.clock() >= expires + grace
 
     def expire(self, record: dict[str, Any]) -> dict[str, Any]:
         """A pending request older than 10 minutes (a grant: 4) becomes ``expired`` (written). A request whose signed
@@ -194,7 +203,14 @@ class RequestStore:
                 continue
             if record is None or (record.get("submit") and record.get("outcome") is None):
                 continue  # a submission being appended: start-up recovery owns it
-            record = self.expire(record)
+            try:
+                record = self.expire(record)
+            except ValueError as exc:  # an invalid or missing expiry: skipped, so one bad record never stops the sweep
+                LOG.warning("request %s skipped by the sweep: %s", rid, exc)
+                continue
+            except KeyError:
+                LOG.warning("request %s skipped by the sweep: no expiry", rid)
+                continue
             if record["state"] in TERMINAL and now - float(record.get("done_at", now)) > KEEP_SECONDS:
                 try:
                     os.unlink(self._path(rid))

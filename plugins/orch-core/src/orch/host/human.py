@@ -33,6 +33,7 @@ failures never lock out another. ``human.get`` with ``signer`` binds the request
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import secrets
 import time
@@ -146,6 +147,13 @@ def new_code() -> str:
 
 def _iso(epoch: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch)))
+
+
+def _submitted_at(record: dict[str, Any]) -> str | None:
+    """The host's time when ``human.submit`` was accepted for the request; ``None`` until then (and for a record
+    stored before the field existed)."""
+    at = record.get("submitted_at")
+    return _iso(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None
 
 
 def _expired(record: dict[str, Any], when: str = "") -> str:
@@ -600,6 +608,7 @@ class HumanOps:
                 "code": record.get("code"),
                 "expires_at": _iso(record["expires"]),
                 "state": record["state"],
+                "submitted_at": _submitted_at(record),
             },
             **record["prepared"],
         }
@@ -717,6 +726,7 @@ class HumanOps:
             "key": ticket["key"] if ticket else None,
             "created_at": _iso(record["created"]),
             "expires_at": _iso(record["expires"]),
+            "submitted_at": _submitted_at(record),
             "state": record["state"],
             "event_ids": [e["id"] for e in prepared["events"]],
             "seq": (outcome.get("result") or {}).get("seq") if outcome.get("state") == "committed" else None,
@@ -824,17 +834,30 @@ class HumanOps:
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared
             convenience.refuse_reader_op(service, record["op"], history=True)
-            if record.get("code"):  # §0.8.6 item 8
-                convenience.refuse_handoff(service)
-            git = service.caps_for(call.principal).git
-            self._judge(store, record, events, git)
-            log = record["prepared"]["log"]
-            view = store.ticket(log) if log != "workspace" else None
-            key = view.key if view is not None else None
-            outcomes = service.outcomes
-            outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
-            record = {**record, "submit": {"events": events, "outcome_key": intent.key}}
-            requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
+            with contextlib.ExitStack() as stack:
+                if record.get("code"):  # §0.8.6 item 8: the flag read and the journal write are one step against
+                    # `convenience on`. Lock order: submit takes store -> convenience, while prepare takes
+                    # convenience -> store. Safe: both run on the workspace's single worker thread, and the other
+                    # processes (the CLI, direct mode) take only one of the two; the 2 s wait is the backstop
+                    # (lock.busy, never a deadlock)
+                    stack.enter_context(
+                        convenience.workspace_lock(service.state_dir, service.workspace_id, service.host_uid)
+                    )
+                    convenience.refuse_handoff(service)
+                git = service.caps_for(call.principal).git
+                self._judge(store, record, events, git)
+                log = record["prepared"]["log"]
+                view = store.ticket(log) if log != "workspace" else None
+                key = view.key if view is not None else None
+                outcomes = service.outcomes
+                outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
+                record = {
+                    **record,
+                    "submit": {"events": events, "outcome_key": intent.key},
+                    "submitted_at": requests.clock(),
+                }
+                requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
+                stack.close()  # the flag can no longer be read as off by a submit that is already journalled
             return finish(service, requests, record)
 
     @staticmethod

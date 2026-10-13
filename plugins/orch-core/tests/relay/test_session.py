@@ -509,3 +509,50 @@ def test_malformed_token_is_refused(relay, token):
 def test_session_constants_match_the_contract():
     assert session.TOKEN_LIFETIME_S - session.RELOGIN_MARGIN_S == 780
     assert session.LEASE_S == 40 and session.BAD_SIGNATURE_HOLDOFF_S == 60 and session.ORIGIN_ALARM_AFTER == 3
+
+
+# --- mutation-driven: checks that are only reached by correctly signed hostile objects ------------------------------
+
+
+def _resign_checkpoint(o):
+    from orch.store.checkpoints import sign_object
+
+    return sign_object(lambda b: crypto.sign(corpus.priv("wsk_a.sig"), b), o)
+
+
+def test_checkpoint_signed_by_the_wsk_for_another_genesis_is_misbehaving(relay):
+    """A WSK-signed checkpoint naming another genesis, served with the genuine pin: refused by the checkpoint check."""
+    cp = corpus.case("checkpoint_get", "success")["response"]["json"]["checkpoint"]
+    forged = _resign_checkpoint({**cp["o"], "genesis": "sha256:" + "44" * 32})
+    relay.expect(*login_expects(), _cp_reply(checkpoint=forged))
+    with pytest.raises(RelayMisbehaving):
+        directory(sess(relay)).get_checkpoint(genesis=GENESIS)
+
+
+def test_members_signed_by_the_wsk_for_another_workspace_is_misbehaving(relay):
+    o = {**ML["o"], "workspace_id": corpus.IDS["workspace_b"]}
+    sig = crypto.sign(corpus.priv("wsk_a.sig"), b"orch/v2/sig/member-list|" + canon.dumps(o))
+    ml = {"o": o, "sig": crypto.b64u(sig)}
+    relay.expect(
+        *login_expects(), Expect("GET", f"/v2/workspaces/{WS}/members", reply=json_reply(200, {"member_list": ml}))
+    )
+    with pytest.raises(RelayMisbehaving):
+        directory(sess(relay)).get_members()
+
+
+def test_card_of_another_wsk_validly_delegated_is_misbehaving(relay):
+    """The owner delegated another WSK for this workspace id (a valid card, just not ours)."""
+    from orch.identity.certs import make_delegation
+
+    alice = corpus.priv("person_alice.sig")
+    wsk_b = corpus.priv("wsk_b.sig")
+    deleg = make_delegation(
+        corpus.pub("person_alice.sig"), lambda b: crypto.sign(alice, b), workspace_id=WS,
+        wsk_pub=corpus.pub("wsk_b.sig"), client_hosted=False, issued_ms=1,
+    )  # fmt: skip
+    o = {**CARD["o"], "wsk_pub": crypto.b64u(corpus.pub("wsk_b.sig"))}
+    sig = crypto.b64u(crypto.sign(wsk_b, b"orch/v2/sig/card-wsk|" + canon.dumps(o)))
+    other = {"delegation": deleg, "o": o, "sig": sig, "sealed": CARD["sealed"]}
+    relay.expect(*login_expects(), Expect("GET", f"/v2/workspaces/{WS}/card", reply=json_reply(200, {"card": other})))
+    with pytest.raises(RelayMisbehaving):
+        directory(sess(relay)).get_card()

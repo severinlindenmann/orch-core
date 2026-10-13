@@ -263,3 +263,20 @@ def test_logs_and_errors_hold_no_token_or_body(relay, caplog):
     text = caplog.text + str(e.value) + repr(e.value) + repr(c)
     assert SECRET not in text
     assert "POST /v2/x" in caplog.text  # the route template is logged
+
+
+def test_declared_oversize_is_refused_before_reading_the_body(relay):
+    """A Content-Length over the cap ends the call at once, not after a dripped body reaches the cap."""
+    relay.expect(Expect("POST", "/v2/x", reply=Reply(body=b" " * 5000, fault="drip_body", drip_s=0.05)))
+    with pytest.raises(http.TransportError) as e:
+        call(conn(relay), cap=1024, deadline_s=10)
+    assert e.value.kind == "too_large"
+
+
+def test_tls_minimum_version_is_raised_to_1_2():
+    def old(**kw):
+        c = ssl.create_default_context(**kw)
+        c.minimum_version = ssl.TLSVersion.TLSv1
+        return c
+
+    assert http.tls_context(None, factory=old).minimum_version == ssl.TLSVersion.TLSv1_2

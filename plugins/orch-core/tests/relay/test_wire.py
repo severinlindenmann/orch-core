@@ -456,3 +456,12 @@ def test_verify_signed_member_list_fixture_under_wsk():
     assert wire.verify_signed(wsk, ml, "card") is None
     assert wire.verify_signed(wsk, {**ml, "x": 1}, "member_list") is None
     assert wire.verify_signed(wsk, {"o": {**ml["o"], "epoch": 2}, "sig": ml["sig"]}, "member_list") is None
+
+
+def test_b64_field_never_decodes_an_oversized_field(monkeypatch):
+    calls = []
+    real = crypto.unb64u
+    monkeypatch.setattr(wire.crypto, "unb64u", lambda *a, **k: calls.append(1) or real(*a, **k))
+    with pytest.raises(wire.WireError):
+        wire.b64_field(crypto.b64u(bytes(4096)), max_len=48)
+    assert calls == []

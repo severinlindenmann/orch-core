@@ -214,7 +214,7 @@ class HostLink:
                             self.ready.set()
                             held, self._held = self._held, []
                         for item, tag in held:
-                            self._pool.submit(self._command, item, tag)
+                            self._dispatch(item, tag)
                         self._resend_exits(reported_running)
                     else:
                         event = self._waiting.pop(frame.get("id"), None)
@@ -228,7 +228,7 @@ class HostLink:
                                 if not self.ready.is_set():  # held until the hello's answer
                                     self._held.append((item, conn))
                                     continue
-                            self._pool.submit(self._command, item, conn)
+                            self._dispatch(item, conn)
                 elif kind == "fatal":
                     raise ConnectionError(f"the host closed the connection: {frame.get('error')}")
 
@@ -306,6 +306,15 @@ class HostLink:
     # -- commands
     def _current(self, tag: int) -> bool:
         return tag == self._conn and self.ready.is_set()
+
+    def _dispatch(self, item: dict[str, Any], tag: int) -> None:
+        """``attach.end`` runs inline on this (the link) thread: it never blocks (the term socket's ``end`` takes its
+        lock, queues and reports), and it must not wait behind ``stop``/``spawn`` in the command pool, or the host's
+        5 s confirmation deadline would drop the whole runner session. Every other command goes to the pool."""
+        if item.get("op") == "attach.end":
+            self._command(item, tag)
+        else:
+            self._pool.submit(self._command, item, tag)
 
     def _command(self, item: dict[str, Any], tag: int) -> None:
         cmd, cid, args = item.get("op"), str(item.get("cmd")), item.get("args") or {}

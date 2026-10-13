@@ -62,6 +62,7 @@ def ready(w, rstate, monkeypatch):
     grant_addon(w)
     enable(w)
     r = Runner(w, rstate)
+    w.runner = r
     try:
         yield w
     finally:
@@ -646,6 +647,55 @@ def test_an_attachment_the_host_does_not_hold_is_ended_at_the_runner(ready):
         t.resize(101, 31)  # the next runner.term lists it
         assert drain_end(t) == "cancelled"
     finally:
+        t.close()
+
+
+def test_attach_end_is_not_delayed_by_four_concurrent_stops(ready):
+    """PR #443 delta D4: four ``stop`` commands that block the runner's command pool must not delay an
+    ``attach.end`` past its confirmation deadline (that would drop the whole runner session)."""
+    import threading
+
+    from orch.host.runners import END_TIMEOUT
+
+    w = ready
+    c = w.conn()
+    run, data, t = _writer(w, c)
+    other = open_shell(c)["run"]  # the stops target another run (a stop of this one would end its viewers first)
+    hub = w.h.host.runners
+    sup = w.runner.sup
+    release = threading.Event()
+    real_stop = sup.stop
+
+    def slow_stop(run_id, grace=10.0):
+        release.wait(END_TIMEOUT + 3)
+        return real_stop(run_id, grace=grace)
+
+    sup.stop = slow_stop
+    stops: list = []
+
+    async def scenario():
+        for _ in range(4):
+            stops.append(asyncio.ensure_future(hub.command("stop", {"run": other, "grace_ms": 100}, timeout=30)))
+        await asyncio.sleep(0.3)  # the four stops now occupy every thread of the runner's command pool
+        session = hub.session
+        started = time.monotonic()
+        await hub.attach_end(data["att"], "cancelled")
+        return time.monotonic() - started, session
+
+    try:
+        took, session = w.h.run(scenario())
+        assert took < 1.0
+        assert hub.session is session and not session.closed  # the runner session was not dropped
+        assert drain_end(t) == "cancelled"
+    finally:
+        release.set()
+        if stops:
+
+            async def settle():
+                await asyncio.gather(*stops, return_exceptions=True)
+
+            w.h.run(settle())
+        sup.__dict__.pop("stop", None)
         t.close()
 
 

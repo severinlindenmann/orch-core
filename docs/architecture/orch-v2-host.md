@@ -5471,8 +5471,9 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   redeem is caught.
 - **Invariant: the runner holds only attachments the host's table holds.** The host removes its entry only after the
   runner confirmed `attach.end` (until then the entry is `ending` and the end is sent again on every pass). An
-  `attach.end` the runner does not confirm within 5 s drops the runner session, so the runner's `host_lost` ends every
-  attachment. An attachment the runner reports in `runner.term` that the host does not hold is ended there
+  `attach.end` the runner does not confirm within 5 s drops the runner session, so the runner's `host_lost` ends
+  every attachment; the runner handles `attach.end` inline on its link thread, never behind `stop` or `spawn` in its
+  four-thread command pool. An attachment the runner reports in `runner.term` that the host does not hold is ended there
   (`cancelled`). `runner.term` carries `seq`, taken under the runner's lock together with the snapshot; the host
   ignores a report whose `seq` is not newer than the last one it applied for that run, so a stale snapshot that
   arrives late never takes a live attachment out of the host's table.

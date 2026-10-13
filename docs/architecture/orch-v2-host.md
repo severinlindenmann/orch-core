@@ -2411,16 +2411,24 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
     its own descriptor. One window has two links: a crash between linking the record into place and unlinking its
     temporary file. A read that finds exactly that (the second link is the record's own `.<name>.tmp*` sibling with
     the same inode) removes the temporary file and reads again; any other second link fails closed. Under `<state>/person/`, so the host's audit hook refuses it like the rest of person custody.
-  - **What.** `{"v":1, workspace_id, request_id, view_digest, op, idem, events, expires_at, signed_at, result}`:
+  - **What.** A completed record is `{"v":1, workspace_id, request_id, view_digest, op, idem, events, expires_at, signed_at, result}`:
     `events` is the exact signed event array (its signatures are what the workspace log shows anyway), `idem` the submit
     idem, `result` null until `human.submit` answered, then its result. **Never** a key, a factor, keychain material
-    or a grant secret (`grant` is terminal-only and refused before signing).
-  - **When.** After signing and **before the signature leaves the signer** (before `human.submit`), the record is
-    written exclusively (a temporary file opened `O_CREAT|O_EXCL|O_NOFOLLOW`, written, `fsync`ed, linked into place,
-    then the directory `fsync`ed). If that fails, nothing is submitted and the signatures are dropped
-    (`record_unavailable`). A record already in place (another signer process of the same person won the race) wins:
-    its events are used, never the new ones. After the commit the record is replaced (temporary file, `fsync`,
-    rename, directory `fsync`) by one that holds the result; failing that only costs a resubmit under the same idem.
+    or a grant secret (`grant` is terminal-only and refused before signing). A **claim** is the same record without
+    `events`, `signed_at` and `result` and with `claimed_at`; a record is a claim or a completed record, anything else
+    fails closed.
+  - **When.** A claim is written and synced **before the crypto signing**: exclusively (a temporary file opened
+    `O_CREAT|O_EXCL|O_NOFOLLOW`, written, `fsync`ed, linked into place, then the directory `fsync`ed). If that fails,
+    nothing is signed (`record_unavailable`). After signing, and **before the signature leaves the signer** (before
+    `human.submit`), the claim is replaced by the completed record (temporary file, `fsync`, rename, directory
+    `fsync`); if that fails, nothing is submitted (`record_unavailable`) and a `sign` in the same process retries the
+    completion with the identical events, held in memory right after signing. A record already in place (another
+    signer process of the same person won the race) wins: a completed one's events are used, a claim refuses. A claim
+    with no completed record and no in-memory events (a crash or failure sat between the claim and the completion)
+    is `record_unavailable` for that `view_digest` and `already_signed` for another: the request is never signed
+    again. Once signing has started the claim is never released; a failure fails that request closed (the person
+    prepares a new request). After the commit the record is replaced (temporary file, `fsync`, rename, directory `fsync`) by one that holds the result; failing that
+    only costs a resubmit under the same idem.
   - **Every `sign` reads the record first**, before the in-memory registry, and **the in-memory guard stays as
     well**: a request this process signed answers its cached result or resends the identical events and idem from
     memory (and writes the record again, best effort) even when the record was lost. With the record: the same `view_digest` answers the recorded
@@ -2559,7 +2567,8 @@ click-to-sign is on for a workspace, the only way to sign is the click. The term
 1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as
    `python -I -m orch.click --fd N`; the dashboard imports only `spawn`, `client` and `protocol`.
 2. **Durable sign records (H5c follow-up, changelog item 18)** are `orch.click.records.Records`, as item 5 specifies:
-   `create` (exclusive, before `human.submit`), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
+   `claim` (exclusive, before the signing), `complete` (the signed events, before `human.submit`), `create`
+   (exclusive, a complete record at once), `get` (fail closed: `RecordError` → `record_unavailable`), `settle`
    (the result, after the commit) and `prune`. They reuse the custody helpers `secure_dir`, `read_private` and
    `write_private` (`orch.custody.convenience`). A record is at most 8 MiB. Two `human.click_refused` reasons are new:
    `already_signed` and `record_unavailable`; the log gains `adopted` (another signer process's record was used) and
@@ -3021,12 +3030,17 @@ existing op changes its version.
     `human.click_refused` reasons `already_signed` (another `view_digest` for a signed request) and
     `record_unavailable` (the record cannot be written, or exists but cannot be read: fail closed). A repeated `sign`
     after a signer restart needs no new `prepare` or `view`. No host change and no wire change on the workspace socket.
-
 19. **One signing path per workspace (H5c follow-up, additive, owner decision of 12 Oct 2026):** new catalog code
     `sign.click_only` (exit 3, not retryable). With click-to-sign on, `human.prepare {handoff:true}` is refused,
     `orch host convenience on` is refused while hand-off requests are pending, and a hand-off request cannot be bound or
     submitted after the flag is on (§0.8.6 item 8). Prepare and the flag are serialized by a per-workspace file lock (2 s wait, then `lock.busy`). A hand-off submit holds that lock from its flag check to its journal write.
     No wire schema change; a client that does not use `handoff:true` sees nothing new.
+20. **Claim before signing (follow-up to item 18, client-side only):** the click signer syncs a claim record
+    (`view_digest`, op, idem, expiry, no events) before the crypto signing and replaces it with the completed record
+    before the submit, so a crash or write failure between signing and recording can no longer lead to a second
+    signature. A claim that never completed is refused as `record_unavailable` (`already_signed` for another
+    `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
+    released; a failure fails that request closed. No new reason, no wire change.
 
 21. **Click follow-ups (additive; numbered 21 because item 20 is #436's, not yet on develop when this was written):**
     the 2 s wait for the per-workspace lock raises `lock.busy` (exit 9, retryable) instead of `host.busy`, and is listed

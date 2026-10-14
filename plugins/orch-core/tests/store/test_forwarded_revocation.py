@@ -232,19 +232,53 @@ def test_the_record_count_is_bounded_for_every_person_including_the_owner(ws, mo
     assert results == ["pending"] * 3 + ["dropped"] * 2
 
 
-def test_the_total_is_bounded_even_for_members(ws, monkeypatch):
+def _add_member(env: Env) -> Person:
+    mara = Person()
+    env.store.append(
+        env.person_event(
+            env.owner, "workspace", "member.added", person=mara.ref, name="Mara", role="member",
+            pk_pub=crypto.b64u(mara.pk_pub), device_cert=mara.cert(created=T0 * 1000),
+        ),
+        log="workspace",
+    )  # fmt: skip
+    return mara
+
+
+def _stray() -> bytes:
+    return crypto.public_bytes(crypto.generate_private_key())
+
+
+def test_the_total_is_bounded_for_members_and_the_owner_is_exempt_from_it(ws, monkeypatch):
     env, _device, _sig_pub = ws
+    mara = _add_member(env)
     monkeypatch.setattr(pins_mod, "MAX_FORWARDED_HARD", 2)
-    results = [
-        env.store.note_forwarded_revocation(item(env.owner, crypto.public_bytes(crypto.generate_private_key())))
-        for _ in range(4)
-    ]
+    results = [env.store.note_forwarded_revocation(item(mara, _stray())) for _ in range(4)]
     assert results == ["pending"] * 2 + ["dropped"] * 2
+    # the owner's records do not count against the total and are not refused by it (only by its own 256)
+    assert [env.store.note_forwarded_revocation(item(env.owner, _stray())) for _ in range(3)] == ["pending"] * 3
+
+
+def test_revocations_are_read_without_a_size_limit(ws, monkeypatch):
+    env, _device, sig_pub = ws
+    assert env.store.note_forwarded_revocation(item(env.owner, sig_pub)) == "held"
+    seen = []
+    real = pins_mod.read_or_none
+
+    def spy(path, *a, **k):
+        if path.name == "revocations.jsonl":
+            seen.append(a[0] if a else k.get("limit", "default"))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(pins_mod, "read_or_none", spy)
+    env.store._pins.revocations()
+    assert seen == [None]
 
 
 def test_the_worst_case_file_stays_well_below_the_read_limit():
     from orch.store import fsio
     from orch.store.store import MAX_FORWARDED_ITEM_BYTES
 
-    worst = pins_mod.MAX_FORWARDED_HARD * (MAX_FORWARDED_ITEM_BYTES + 512)
-    assert worst * 2 <= fsio.MAX_READ
+    assert MAX_FORWARDED_ITEM_BYTES < pins_mod.MAX_FORWARDED_RECORD_BYTES
+    # non-owner records up to the total, plus the owner's own 256: about 10.5 MiB, below 16 MiB
+    worst = (pins_mod.MAX_FORWARDED_HARD + pins_mod.MAX_FORWARDED_PER_PERSON_HARD) * pins_mod.MAX_FORWARDED_RECORD_BYTES
+    assert worst < fsio.MAX_READ

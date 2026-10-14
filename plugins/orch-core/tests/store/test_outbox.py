@@ -257,6 +257,46 @@ def _seen_ns(env: Env) -> set[int]:
     return ns
 
 
+@pytest.fixture
+def sign_order(linked, monkeypatch):
+    """Record every reservation (after its durable write) and every checkpoint signature, in order (Codex 6a)."""
+    from orch.store import pins as pins_mod
+    from orch.store.checkpoints import LABEL
+
+    log: list[tuple[str, int]] = []
+    real_reserve = pins_mod.HostPins.reserve_n
+
+    def reserve(self, n):
+        real_reserve(self, n)  # write_atomic: temp, fsync, rename, directory fsync
+        log.append(("reserved", int((self.dir / "checkpoint-n").read_text())))
+
+    monkeypatch.setattr(pins_mod.HostPins, "reserve_n", reserve)
+    host = linked.store._host
+    real_sign = host.sign
+
+    def sign(payload: bytes) -> bytes:
+        if payload.startswith(LABEL):
+            o = json.loads(payload[len(LABEL) :])
+            if o.get("kind") == "workspace_checkpoint":
+                log.append(("sign", o["n"]))
+        return real_sign(payload)
+
+    monkeypatch.setattr(host, "sign", sign)
+    return log
+
+
+def _assert_reserved_before_signed(log: list[tuple[str, int]]) -> None:
+    mark = 0
+    signed = 0
+    for what, n in log:
+        if what == "reserved":
+            mark = max(mark, n)
+        else:
+            signed += 1
+            assert n <= mark, f"checkpoint {n} signed before it was reserved (mark {mark})"
+    assert signed
+
+
 def _drain_and_append(env: Env, uid: str) -> int:
     """R3 published and deleted every entry; one more append; its n."""
     s = env.store
@@ -280,7 +320,7 @@ def test_poc_f1_a_crash_after_a_queued_checkpoint_never_lets_its_n_be_signed_aga
 
 
 @pytest.mark.parametrize("where", ["outbox_write", "accept", "write_ws"])
-def test_kill_points_of_a_checkpoint_outside_an_append(linked, monkeypatch, where):
+def test_kill_points_of_a_checkpoint_outside_an_append(linked, sign_order, monkeypatch, where):
     env = linked
     uid = env.new_ticket()
     from orch.store import outbox as outbox_mod
@@ -296,13 +336,14 @@ def test_kill_points_of_a_checkpoint_outside_an_append(linked, monkeypatch, wher
         env.store.checkpoint()
     monkeypatch.undo()
     top = max(_seen_ns(env))
+    _assert_reserved_before_signed(sign_order)
     env.store.close()
     env.open(load="lazy")
     assert _drain_and_append(env, uid) > top
 
 
 @pytest.mark.parametrize("where", ["write_pending", "append_durable", "finish", "accept", "write_ws", "after_commit"])
-def test_kill_points_of_a_linked_append(linked, monkeypatch, where):
+def test_kill_points_of_a_linked_append(linked, sign_order, monkeypatch, where):
     env = linked
     uid = env.new_ticket()
     from orch.store import pins as pins_mod
@@ -323,7 +364,8 @@ def test_kill_points_of_a_linked_append(linked, monkeypatch, where):
     with pytest.raises(_Crash):
         env.log(uid, "dying")
     monkeypatch.undo()
-    top = max(_seen_ns(env))
+    top = max(_seen_ns(env) | {n for w, n in sign_order if w == "sign"})
+    _assert_reserved_before_signed(sign_order)
     env.store.close()
     env.open(load="lazy")
     assert _drain_and_append(env, uid) > top
@@ -623,12 +665,12 @@ def test_relay_mark_linked_without_a_link_refuses(unlinked):
 
 def test_no_append_without_its_entry_once_link_json_exists(unlinked):
     import threading
-    import time
 
     env = unlinked
     uid = env.new_ticket()
     seen: list = []
-    started = threading.Event()
+    first_done = threading.Event()
+    linked_now = threading.Event()
 
     def appends():
         other = env.other(load="lazy")  # a Store belongs to its thread (its sqlite handles)
@@ -639,17 +681,67 @@ def test_no_append_without_its_entry_once_link_json_exists(unlinked):
             return real(ev, log, line, writes, outbox=outbox)
 
         other._write_pending = watch  # type: ignore[method-assign]
-        started.set()
         for i in range(25):
             other.append({"type": "log.added", "actor": env.agent, "text": f"r{i}"}, log=uid)
+            if i == 4:
+                first_done.set()  # some appends before the link ...
+            if i == 9:
+                linked_now.wait(30)  # ... and the rest racing it or after it
         other.close()
 
     t = threading.Thread(target=appends)
     t.start()
-    started.wait(30)
-    time.sleep(0.02)
+    assert first_done.wait(30)
     env.store.relay_link(dict(LINK), guard=_ok_guard([]))
+    linked_now.set()
     t.join(60)
     assert len(seen) == 25
     assert all(entry for linked, entry in seen if linked)  # once the file exists, every append carries its entry
     assert all(not entry for linked, entry in seen if not linked)
+    assert any(not linked for linked, _ in seen) and sum(linked for linked, _ in seen) >= 15  # both sides
+
+
+def test_relay_link_fsyncs_the_new_directorys_parent_inside_the_guard(unlinked, monkeypatch):
+    env = unlinked
+    synced: list = []
+    real = store_mod.fsync_dir
+
+    def spy(path):
+        synced.append(str(path))
+        return real(path)
+
+    monkeypatch.setattr(store_mod, "fsync_dir", spy)
+    import contextlib
+
+    at_exit: list = []
+
+    @contextlib.contextmanager
+    def guard():
+        yield None
+        at_exit.append(list(synced))
+
+    env.store.relay_link(dict(LINK), guard=guard)
+    parent = str(env.host_state / "hosts" / WS)
+    assert parent in at_exit[0]  # synced while the guard (and the store lock) is still held
+    assert str(_link_path(env).parent) in at_exit[0]
+
+
+def test_mint_catchup_numbers_after_measure_runs(linked):
+    env = linked
+    s = env.store
+    uid = env.new_ticket()
+    for i in range(3):
+        env.log(uid, f"n{i}")
+    from tests.store.test_catchup import measure
+
+    bump = s._pins.high_n() + 10
+    calls = []
+
+    def sneaky(segments):
+        if not calls:
+            s._pins.reserve_n(bump)  # anything the callback does to the numbering is seen afterwards
+        calls.append(1)
+        return measure(segments)
+
+    out = s.mint_catchup(source=None, cap=400, measure=sneaky)
+    assert out and out[0].n == bump + 1

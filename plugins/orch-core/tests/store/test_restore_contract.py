@@ -11,6 +11,7 @@ from orch.model import admit, replay
 from orch.store import Store, StoreError
 from orch.store.store import _epoch
 from tests.model.f1_runner import load
+from tests.store.helpers import WS
 
 V = load("restore.json")
 C = load("checkpoint.json")
@@ -617,3 +618,68 @@ def test_malformed_checkpoint_pin_is_not_treated_as_missing(env):
     (store._pins.dir / "checkpoint.json").write_bytes(b"{}")
     with pytest.raises(StoreError, match="invalid held workspace checkpoint"):
         store.restore_facts("workspace")
+
+
+# --- #441: a cut tail holding convenience events sets the durable mark first ------------------------------------------
+
+
+def _tail_with(env, uid, line: bytes):
+    path = env.root / "tickets" / uid / "events.jsonl"
+    with open(path, "ab") as fh:
+        fh.write(line)
+    return path
+
+
+def test_abandon_tail_of_convenience_events_sets_the_mark_before_the_cut(env):
+    from orch.ops.readers import has_convenience_events, seen_path
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    _tail_with(env, uid, b'{"auth":"convenience","type":"log.added","v":2}\n')
+    assert not seen_path(env.host_state, WS).exists()
+    store.abandon_tail(uid, 1)
+    assert seen_path(env.host_state, WS).exists()
+    assert has_convenience_events(store)  # the cut tail in .state/abandoned still counts
+
+
+def test_abandon_tail_without_convenience_or_with_a_torn_line_sets_no_mark(env):
+    from orch.ops.readers import seen_path
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    _tail_with(env, uid, b'{"type":"log.added","v":2,"au')  # a torn line that does not name the value
+    store.abandon_tail(uid, 1)
+    assert not seen_path(env.host_state, WS).exists()
+
+
+def test_abandon_tail_refuses_when_the_mark_cannot_be_written(env, monkeypatch):
+    from orch.ops import readers
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    path = _tail_with(env, uid, b'{"\\u0061uth":"convenience"}\n')  # an escaped key counts too
+    before = path.read_bytes()
+
+    def boom(*_a, **_k):
+        raise OSError("no space left")
+
+    monkeypatch.setattr(readers, "ensure_convenience_mark", boom)
+    with pytest.raises(StoreError) as info:
+        store.abandon_tail(uid, 1)
+    assert "convenience_seen" in str(info.value)
+    assert path.read_bytes() == before  # nothing was cut
+
+
+def test_a_legacy_cut_tail_counts_as_convenience_history(env):
+    from orch.ops.readers import has_convenience_events
+
+    store = env.bootstrap()
+    ab = env.root / ".state" / "abandoned"
+    ab.mkdir(parents=True, exist_ok=True)
+    (ab / "workspace-9.jsonl").write_bytes(b'{"auth":"passphrase"}\n')
+    assert not has_convenience_events(store)
+    (ab / "workspace-12.jsonl").write_bytes(b'{"auth":"convenience","type":"log.added"}\n')
+    assert has_convenience_events(store)

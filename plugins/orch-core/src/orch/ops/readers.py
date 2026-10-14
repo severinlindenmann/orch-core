@@ -90,13 +90,20 @@ def lines_have_convenience(data: bytes, *, unparseable: bool = True) -> bool:
     return any(line_is_convenience(line, unparseable=unparseable) for line in data.split(b"\n"))
 
 
+def _lf_lines(data: bytes) -> list[bytes]:
+    """``data`` split after each LF, terminators kept; a last piece without its LF stays without it."""
+    parts = data.split(b"\n")
+    return [p + b"\n" for p in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
+
+
 def canonical_lines_have_convenience(data: bytes) -> bool:
     """For a cut tail or an archived one (Opus #454 L4): a line counts only when ``canon.parse_event_line`` accepts it
     (exact canonical JSON, one LF) and its ``auth`` is ``"convenience"``. A torn, unparseable or non-canonical line
     never counts there: it is not an event any reader accepted. (Verifying the signature too is a follow-up.)"""
     from orch import canon
 
-    for line in data.splitlines(keepends=True):
+    # LF only, terminators kept: a bare CR is not a line boundary in an event log (Codex #454)
+    for line in _lf_lines(data):
         if b"convenience" not in line:
             continue
         try:

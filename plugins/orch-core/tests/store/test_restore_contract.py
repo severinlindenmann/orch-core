@@ -703,3 +703,25 @@ def test_a_legacy_cut_tail_counts_as_convenience_history(env):
     assert not has_convenience_events(store)
     (ab / "workspace-12.jsonl").write_bytes(b'{"auth":"convenience","type":"log.added"}\n')
     assert has_convenience_events(store)
+
+
+def test_a_bare_cr_is_no_line_boundary_in_a_cut_tail(monkeypatch):
+    """Codex #454 delta 2: ``junk\\r{...}\\n`` is ONE line (LF only), which no reader accepts: no mark."""
+    import json
+
+    from orch import canon
+    from orch.ops.readers import canonical_lines_have_convenience
+
+    seen: list[bytes] = []
+
+    def parse(line: bytes) -> dict:
+        seen.append(line)
+        if not line.endswith(b"\n") or not line.startswith(b"{"):
+            raise ValueError("not an event line")
+        return json.loads(line)
+
+    monkeypatch.setattr(canon, "parse_event_line", parse)
+    assert not canonical_lines_have_convenience(b'junk\r{"auth":"convenience"}\n')
+    assert seen == [b'junk\r{"auth":"convenience"}\n']
+    assert canonical_lines_have_convenience(b'{"auth":"x"}\n{"auth":"convenience"}\n')
+    assert not canonical_lines_have_convenience(b'{"auth":"convenience"}')  # a torn last line keeps no LF

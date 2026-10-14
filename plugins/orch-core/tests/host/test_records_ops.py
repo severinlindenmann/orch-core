@@ -122,7 +122,7 @@ def test_records_ops_are_p_only_and_manager_only(w, wq):
     as_agent_class(w)
     for op, args in (
         ("records.snapshot", {}),
-        ("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}),
+        ("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}),
         ("records.remote_private", {"url": URL_A, "on": True}),
     ):
         assert err(w.client().req(op, args, idem=True)) == "op.not_allowed"
@@ -131,7 +131,9 @@ def test_records_ops_are_p_only_and_manager_only(w, wq):
 
 
 def test_export_check_without_convenience_is_allowed_and_audited(w):
-    data = ok(w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}))
+    data = ok(
+        w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False})
+    )
     assert data["policy"] == "none" and data["convenience"] is False
     assert data["sha"] == SHA and data["url"] == URL_A and data["ref"] == REF and data["check"].startswith("x_")
     doc = host_records.read_record(w.lab.state, w.wid, os.getuid())
@@ -141,7 +143,7 @@ def test_export_check_without_convenience_is_allowed_and_audited(w):
 def test_export_check_with_convenience_needs_the_exact_private_url(w):
     convenience.set_enabled(w.lab.state, w.wid, True, os.getuid())
     c = w.client()
-    args = {"sha": SHA, "url": URL_A, "ref": REF}
+    args = {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}
     assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
     marked = ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
     assert marked["private_remote"]["url"] == URL_A and "trusts your word" in marked["text"]
@@ -158,8 +160,44 @@ def test_export_check_with_convenience_needs_the_exact_private_url(w):
 
 def test_export_check_with_convenience_events_in_history(w, monkeypatch):
     monkeypatch.setattr(host_records, "has_convenience_events", lambda store: True)
-    e = err(w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}))
+    e = err(
+        w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False})
+    )
     assert e == "sign.convenience_readers"
+
+
+def test_the_pushed_history_report_refuses_that_push_only_and_never_sets_the_mark(w):
+    """#441 (Opus #454 M1): the tool's report refuses the push it belongs to. Only the host's own observations write
+    the durable mark, so a report (true, false or a lie) can never block member.add for good."""
+    from orch.ops.readers import seen_path
+
+    c = w.client()
+    args = {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": True}
+    res = c.req("records.export_check", args)
+    assert err(res) == "sign.convenience_readers" and "convenience-signed events" in res["error"]["message"]
+    assert not seen_path(w.lab.state, w.wid).exists()
+    assert ok(c.req("records.export_check", {**args, "history_convenience": False}))["policy"] == "none"
+    ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
+    data = ok(c.req("records.export_check", args))
+    assert data["policy"] == "private_remote" and data["convenience"] is True
+
+
+def test_the_mark_survives_a_restore(w, monkeypatch):
+    """An owner repair (abandon_tail, then restore) drops the convenience events from the merged history: an existing
+    workspace's history sets the mark at the first check, and the mark keeps refusing after the restore."""
+    from orch.ops.readers import seen_path
+
+    c = w.client()
+    args = {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}
+    monkeypatch.setattr(host_records, "has_convenience_events", lambda store: True)
+    assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
+    assert seen_path(w.lab.state, w.wid).exists()
+    monkeypatch.setattr(host_records, "has_convenience_events", lambda store: False)  # the restore
+    assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
+
+
+def test_export_check_needs_the_history_report(w):
+    assert err(w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF})) == "invalid.input"
 
 
 def test_export_check_refuses_bad_input(w):
@@ -200,7 +238,7 @@ def test_a_maintainer_reads_and_checks_but_never_sets_the_mark(w, monkeypatch):
     monkeypatch.setattr(host_records.Viewer, "of", lambda call: dataclasses.replace(real(call), role="maintainer"))
     c = w.client()
     ok(c.req("records.snapshot", {}))
-    ok(c.req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}))
+    ok(c.req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}))
     assert err(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True)) == "op.not_allowed"
     assert err(c.req("records.remote_private", {"on": False}, idem=True)) == "op.not_allowed"
     assert host_records.read_record(w.lab.state, w.wid, os.getuid())["private_remote"] is None
@@ -218,7 +256,7 @@ def test_urls_that_can_hide_a_secret_are_refused_and_never_stored(w, url):
     c = w.client()
     for res in (
         c.req("records.remote_private", {"url": url, "on": True}, idem=True),
-        c.req("records.export_check", {"sha": SHA, "url": url, "ref": REF}),
+        c.req("records.export_check", {"sha": SHA, "url": url, "ref": REF, "history_convenience": False}),
     ):
         assert err(res) == "invalid.input" and "SECRET123" not in json.dumps(res)
     path = host_records.record_path(w.lab.state, w.wid)
@@ -255,7 +293,14 @@ def test_note_after_a_commit_makes_pending_exact(w):
     ok(c.req("records.note", {"commit": SHA, "pushed": True, "url": URL_A}, idem=True))
     data = ok(c.req("records.status", {}))
     assert data["last"]["pushed_at"] is not None
-    assert data["remote"] == {"url": URL_A, "private": False, "export": "ok"}
+    assert data["remote"] == {
+        "url": URL_A,
+        "private": False,
+        "export": "ok",
+        "current_url": None,
+        "current_private": None,
+        "matches_last": None,
+    }
 
 
 def test_status_remote_says_blocked_without_the_mark(w):
@@ -264,7 +309,14 @@ def test_status_remote_says_blocked_without_the_mark(w):
     convenience.set_enabled(w.lab.state, w.wid, True, os.getuid())
     assert ok(c.req("records.status", {}))["remote"]["export"] == "blocked_convenience"
     ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
-    assert ok(c.req("records.status", {}))["remote"] == {"url": URL_A, "private": True, "export": "ok"}
+    assert ok(c.req("records.status", {}))["remote"] == {
+        "url": URL_A,
+        "private": True,
+        "export": "ok",
+        "current_url": None,
+        "current_private": None,
+        "matches_last": None,
+    }
 
 
 def test_note_needs_an_idem_a_held_manifest_and_a_commit(w):
@@ -291,3 +343,78 @@ def test_a_maintainer_may_note_and_read_status(w, monkeypatch):
     c = w.client()
     ok(c.req("records.note", {"pushed": False, "repo": {"state": "ok"}}, idem=True))
     assert ok(c.req("records.status", {}))["repo"] == {"state": "ok"}
+
+
+# --- configured: the workspace's records repo exists ----------------------------------------------------------------
+
+
+def test_configured_means_the_records_repo_exists_for_the_workspace(w, monkeypatch):
+    import dataclasses
+
+    c = w.client()
+    ok(c.req("records.note", {"pushed": False, "auto": None}, idem=True))  # a note, but no repo report
+    assert ok(c.req("records.status", {}))["configured"] is False
+    ok(c.req("records.note", {"pushed": False, "repo": {"state": "missing"}}, idem=True))
+    assert ok(c.req("records.status", {}))["configured"] is False
+    ok(c.req("records.note", {"pushed": False, "repo": {"state": "ok"}}, idem=True))
+    assert ok(c.req("records.status", {}))["configured"] is True
+    # per workspace: another manager with no note of their own sees it too
+    real = host_records.Viewer.of
+    monkeypatch.setattr(
+        host_records.Viewer, "of", lambda call: dataclasses.replace(real(call), role="maintainer", person="p_other")
+    )
+    data = ok(w.client().req("records.status", {}))
+    assert data["configured"] is True and data["last"] is None
+    ok(w.client().req("records.note", {"pushed": False, "repo": {"state": "not_dedicated"}}, idem=True))
+    assert ok(w.client().req("records.status", {}))["configured"] is False  # the latest report wins
+
+
+def test_configured_reads_a_record_from_before_the_workspace_report(w):
+    doc = host_records.read_record(w.lab.state, w.wid, os.getuid())
+    doc["lasts"] = {"p_x": {"repo": {"state": "index_differs"}}}
+    host_records._write_record(w.lab.state, w.wid, os.getuid(), doc)  # noqa: SLF001
+    assert ok(w.client().req("records.status", {}))["configured"] is True
+
+
+# --- the current push URL for the dashboard's confirmation ----------------------------------------------------------
+
+
+def test_status_names_the_current_push_url_its_mark_and_whether_it_changed(w, monkeypatch):
+    import dataclasses
+
+    c = w.client()
+    current = "ssh://git@example.org:2222/me/records-a.git"
+    data = ok(c.req("records.status", {"current_url": current}))
+    assert data["remote"] == {
+        "url": None, "private": False, "export": "ok",
+        "current_url": "ssh://example.org:2222/me/records-a.git", "current_private": False, "matches_last": False,
+    }  # fmt: skip
+    ok(c.req("records.note", {"commit": SHA, "pushed": True, "url": current}, idem=True))
+    ok(c.req("records.remote_private", {"url": current, "on": True}, idem=True))
+    remote = ok(c.req("records.status", {"current_url": current}))["remote"]
+    assert remote["current_private"] is True and remote["matches_last"] is True
+    remote = ok(c.req("records.status", {"current_url": URL_B}))["remote"]
+    assert remote["current_private"] is False and remote["matches_last"] is False and remote["private"] is True
+    convenience.set_enabled(w.lab.state, w.wid, True, os.getuid())
+    # a maintainer sees the host only
+    real = host_records.Viewer.of
+    monkeypatch.setattr(host_records.Viewer, "of", lambda call: dataclasses.replace(real(call), role="maintainer"))
+    remote = ok(w.client().req("records.status", {"current_url": current}))["remote"]
+    assert remote["current_url"] == "example.org:2222" and remote["current_private"] is True
+
+
+def test_status_refuses_a_current_url_that_can_hide_a_secret(w):
+    res = w.client().req("records.status", {"current_url": "https://tok@example.org/r.git"})
+    assert err(res) == "invalid.input" and "tok@" not in json.dumps(res)
+
+
+def test_display_url_strips_userinfo_and_shows_non_owners_the_host():
+    d = host_records.display_url
+    assert d("https://example.org/me/r.git", True) == "https://example.org/me/r.git"
+    assert d("ssh://git@example.org/me/r.git", True) == "ssh://example.org/me/r.git"
+    assert d("ssh://git@example.org/me/r.git", False) == "example.org"
+    assert d("git@example.org:me/r.git", True) == "example.org:me/r.git"
+    assert d("git@example.org:me/r.git", False) == "example.org"
+    assert d("file:///home/me/r.git", True) == "file:///home/me/r.git"
+    assert d("file:///home/me/r.git", False) == "local"
+    assert d("/home/me/r.git", False) == "local"

@@ -1073,6 +1073,23 @@ class _Stored(Exception):
         self.error = error
 
 
+def _mark_seen(service: WorkspaceService) -> HostError | None:
+    """Set the durable ``convenience_seen`` mark (:mod:`orch.ops.readers`); the error when it cannot be written, which
+    fails the submission before anything is appended (fail closed)."""
+    from pathlib import Path
+
+    from orch.ops.readers import ensure_convenience_mark
+
+    try:
+        ensure_convenience_mark(Path(service.state_dir), service.workspace_id, service.host_uid, clock=service.clock)
+    except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
+        return HostError(
+            "custody.unsafe_mode",
+            f"the convenience_seen mark could not be written ({type(exc).__name__}); nothing was appended",
+        )
+    return None
+
+
 def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, Any]) -> dict[str, Any]:
     """Append the signed events of ``record`` that are not in the log yet, in order, under the store lock, then end
     the request ``submitted`` with its outcome. Used by ``human.submit`` and by start-up recovery (roll forward). A
@@ -1095,7 +1112,9 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
 
         store.append_check = check
         try:
-            for ev, extra in zip(events, record["extras"], strict=True):
+            if any(e.get("auth") == "convenience" for e in events):
+                error = _mark_seen(service)  # #441: the durable mark, under the store lock, before the first append
+            for ev, extra in zip(events, record["extras"], strict=True) if error is None else ():
                 found = store.logged_event(log, ev["id"])
                 if found is not None:
                     landed.append(int(found["seq"]))

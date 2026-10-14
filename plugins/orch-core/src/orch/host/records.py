@@ -11,9 +11,10 @@ The host never runs git (D-P2-19). It names the bytes and decides the export pol
   re-hashed while the lock is held.
 * ``records.export_check {sha, url, ref}`` runs on **every** push path right before the push: it is bound to the
   workspace, the exact source commit, the exact effective push URL, the destination ref and the current convenience
-  policy. A records push counts as adding a reader (D-P2-34): while convenience signing is on for the workspace or its
-  history holds ``auth: "convenience"`` events, the push is refused (``sign.convenience_readers``) unless that exact
-  URL carries the owner's private-remote mark. Every answer is recorded (the export destination audit).
+  policy. A records push counts as adding a reader (D-P2-34): while convenience signing is on for the workspace, its
+  durable ``convenience_seen`` mark is set, its history holds ``auth: "convenience"`` events, or the tool's scan of the
+  pushed history found one (``history_convenience``, #441), the push is refused (``sign.convenience_readers``) unless
+  that exact URL carries the owner's private-remote mark. Every answer is recorded (the export destination audit).
 * ``records.remote_private {url, on}`` sets or clears the workspace's one private-remote mark (owner decision 12 Oct
   2026): "only I read this remote". orch trusts the owner's word; it is not proof of the remote's ACLs. The mark is
   one exact URL: a changed ``pushurl``, ``insteadOf`` rewrite or remote URL resolves to another string and is not
@@ -23,7 +24,9 @@ The host never runs git (D-P2-19). It names the bytes and decides the export pol
   audited (``marks``: action, redacted URL, person, time). A URL with credentials, a query string or a fragment is
   refused.
 * ``records.note`` (a write, owners and maintainers) and ``records.status`` (a read): the tool's last commit, push,
-  repo state, resolved URL and auto setting, and the pending counts since that commit (H11e part 2).
+  repo state, resolved URL and auto setting, and the pending counts since that commit (H11e part 2). ``configured``
+  means the workspace's records repo exists (the last repo state reported for it); with ``current_url`` the status
+  also says whether the push URL now is marked private and equals the last pushed one.
 
 All five are column P only (``person_read``, and ``person_write`` for the mark and the note: G and N get
 ``op.not_allowed``); all but the mark are for an owner or maintainer now (a push exports every ticket, restricted
@@ -33,9 +36,11 @@ can still push.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
+import re
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -46,7 +51,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from orch import records as rec
-from orch.ops.readers import has_convenience_events
+from orch.ops.readers import convenience_seen, ensure_convenience_mark, has_convenience_events
 
 from . import convenience
 from .custody import ensure_private_dir, read_json, write_private
@@ -100,8 +105,9 @@ _SCHEMAS = {
             "sha": _SHA,
             "url": _URL,
             "ref": {"type": "string", "pattern": r"^refs/heads/[A-Za-z0-9._/-]{1,200}$"},
+            "history_convenience": {"type": "boolean"},
         },
-        "required": ["sha", "url", "ref"],
+        "required": ["sha", "url", "ref", "history_convenience"],
         "additionalProperties": False,
     },
     "records.remote_private": {
@@ -110,7 +116,11 @@ _SCHEMAS = {
         "required": ["on"],
         "additionalProperties": False,
     },
-    "records.status": {"type": "object", "additionalProperties": False},
+    "records.status": {
+        "type": "object",
+        "properties": {"current_url": _URL},
+        "additionalProperties": False,
+    },
     "records.note": {
         "type": "object",
         "properties": {
@@ -156,17 +166,18 @@ def _validate(op: str, args: Any) -> None:
         where = ".".join(map(str, errors[0].absolute_path))
         raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
     # a schema ``$`` also matches before a final newline
-    for name in ("url", "ref", "sha", "page", "commit", "manifest"):
+    for name in ("url", "current_url", "ref", "sha", "page", "commit", "manifest"):
         value = args.get(name)
         if isinstance(value, str) and any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
             raise HostError("invalid.input", f"{op}: {name} is not valid")
-    url = args.get("url")
-    if isinstance(url, str):
-        from orch.records.git import url_problem
+    for name in ("url", "current_url"):
+        url = args.get(name)
+        if isinstance(url, str):
+            from orch.records.git import url_problem
 
-        problem = url_problem(url)
-        if problem is not None:  # never stored, never echoed: the mark and the audit hold no secret
-            raise HostError("invalid.input", f"{op}: url is refused: {problem}")
+            problem = url_problem(url)
+            if problem is not None:  # never stored, never echoed: the mark and the audit hold no secret
+                raise HostError("invalid.input", f"{op}: {name} is refused: {problem}")
     if op == "records.remote_private" and args["on"] and "url" not in args:
         raise HostError("invalid.input", "records.remote_private: url is required to set the mark")
     if op == "records.note" and "manifest" in args and "commit" not in args:
@@ -225,6 +236,9 @@ class Ctx:
     sees: Callable[[Any], bool]
     #: where the manifests and the hash cache live (the workspace service; a plain object in direct mode)
     holder: Any = field(default=None)
+    #: the caller is a workspace owner (direct mode: the person who owns these files); a URL is shown in full to an
+    #: owner only, to anyone else as its host
+    owner: bool = field(default=True)
 
     @property
     def actor(self) -> str:
@@ -244,6 +258,7 @@ def ctx_of(call: Call, viewer: Viewer) -> Ctx:
         person=viewer.person,
         sees=viewer.sees,
         holder=service,
+        owner=viewer.role == "owner",
     )
 
 
@@ -289,7 +304,7 @@ def run_op(ctx: Ctx, op: str, args: dict[str, Any]) -> dict[str, Any]:
     if op == "records.note":
         return _note(ctx, args)
     if op == "records.status":
-        return _status(ctx)
+        return _status(ctx, args.get("current_url"))
     raise HostError("unknown_command", f"{op} is not served")
 
 
@@ -407,18 +422,34 @@ def _snapshot(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def convenience_on(ctx: Ctx) -> bool:
-    """The convenience-readers condition (§0.8.6): the flag is on, or the history holds convenience events."""
+    """The convenience-readers condition (§0.8.6): the flag is on, the durable ``convenience_seen`` mark is set
+    (#441), or the merged history holds convenience events (which sets the mark: an existing workspace counts as
+    seen)."""
     if convenience.enabled(ctx.state_dir, ctx.workspace_id, ctx.host_uid):
+        return True
+    if convenience_seen(ctx.state_dir, ctx.workspace_id):
         return True
     store = ctx.store
     with store.locked():
-        return has_convenience_events(store)
+        found = has_convenience_events(store)
+    if found:
+        _mark_seen(ctx)
+    return found
+
+
+def _mark_seen(ctx: Ctx) -> None:
+    """A scan found convenience events: set the mark (best effort; the answer is "seen" either way)."""
+    with contextlib.suppress(Exception):
+        ensure_convenience_mark(ctx.state_dir, ctx.workspace_id, ctx.host_uid, clock=ctx.clock)
 
 
 def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     now = float(ctx.clock())
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
-    conv = convenience_on(ctx)
+    # the tool's scan of the event logs reachable from sha (#441): it refuses this push only and never writes the
+    # durable mark, which records only what the host itself observed (an append, a cut tail, its merged history)
+    pushed = args["history_convenience"]
+    conv = pushed or convenience_on(ctx)
     mark = doc.get("private_remote")
     marked = isinstance(mark, dict) and mark.get("url") == args["url"]
     policy = "none"
@@ -432,9 +463,10 @@ def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(mark, dict)
                 else "no private-remote mark for this URL"
             )
+            what = "a history with convenience-signed events" if pushed else "a workspace with convenience signing"
             raise HostError(
                 "sign.convenience_readers",
-                f"a records push adds a reader to a workspace with convenience signing ({why})",
+                f"a records push adds a reader to {what} ({why})",
                 hint="mark this exact push URL private (orch records remote-private), or keep the records local",
             )
         policy = "private_remote"
@@ -489,6 +521,8 @@ def _note(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     for name in ("url", "repo"):
         if name in args:
             last[name] = args[name]
+    if "repo" in args:  # the records repo is the workspace's (one record root): its last report, whoever made it
+        doc["repo"] = {"state": args["repo"]["state"], "at": _stamp(now), "by": ctx.actor}
     if "auto" in args:
         last["auto"] = args["auto"]
     lasts[ctx.actor] = last
@@ -498,10 +532,51 @@ def _note(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _status(ctx: Ctx) -> dict[str, Any]:
+#: repo states that mean the workspace has its own records repo (``missing``: none; ``not_dedicated``: the record root
+#: sits in another repository)
+_CONFIGURED = frozenset({"ok", "index_differs", "unsafe"})
+
+
+def _configured(doc: dict[str, Any]) -> bool:
+    """The records repo exists, per workspace: the last repo state any tool reported (``repo`` in ``records.json``),
+    else (a record from before it) any person's last report. The host runs no git and reads no repository file
+    (D-P2-19), so this is the tools' word; the tool's own ``status`` replaces it with what it sees now."""
+    repo = doc.get("repo")
+    if isinstance(repo, dict):
+        return repo.get("state") in _CONFIGURED
+    lasts = doc.get("lasts") or {}
+    return any(isinstance(v, dict) and (v.get("repo") or {}).get("state") in _CONFIGURED for v in lasts.values())
+
+
+_SCHEME_URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(?:[^/@]*@)?([^/]*)(.*)$", re.S)
+_SCP_URL = re.compile(r"^(?:[^@/:]+@)?([^:/]+):(.*)$", re.S)
+
+
+def display_url(url: str, owner: bool) -> str:
+    """A push URL for a display: without its userinfo, and for anyone but an owner only its host (``local`` for a
+    path or ``file://``)."""
+    m = _SCHEME_URL.match(url)
+    if m:
+        scheme, host, rest = m.groups()
+        if owner:
+            return f"{scheme}://{host}{rest}"
+        return host or "local"
+    m = _SCP_URL.match(url)
+    if m:
+        host, path = m.groups()
+        return f"{host}:{path}" if owner else host
+    return url if owner else "local"
+
+
+def _status(ctx: Ctx, current_url: str | None = None) -> dict[str, Any]:
     """The caller's own last note (commit, push, repo state, URL, auto) and the pending counts since that commit, plus
     who noted last workspace-wide. ``remote.url`` is **display only**: it is what the caller's tool reported, and a
-    client must never pass it to ``records.remote_private`` (the tool resolves the URL to mark from git itself)."""
+    client must never pass it to ``records.remote_private`` (the tool resolves the URL to mark from git itself).
+
+    ``current_url`` is the effective push URL the records tool resolved just now (its ``status`` passes it): the
+    answer adds ``remote.current_url`` (for a display, :func:`display_url`), ``remote.current_private`` (that exact
+    string carries the private-remote mark) and ``remote.matches_last`` (it equals the last pushed destination), for
+    the dashboard's push confirmation. Display only: the push resolves and checks its URL again."""
     from orch.model import WORKSPACE
 
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
@@ -526,11 +601,20 @@ def _status(ctx: Ctx) -> dict[str, Any]:
                     more = True
     remote = None
     url = last.get("url")
-    if isinstance(url, str):
-        mark = doc.get("private_remote")
-        private = isinstance(mark, dict) and mark.get("url") == url
+    mark = doc.get("private_remote")
+    marked_url = mark.get("url") if isinstance(mark, dict) else None
+    if isinstance(url, str) or current_url is not None:
+        shown = url if isinstance(url, str) else current_url
+        private = marked_url is not None and marked_url == shown
         blocked = convenience_on(ctx) and not private
-        remote = {"url": url, "private": private, "export": "blocked_convenience" if blocked else "ok"}
+        remote = {
+            "url": url if isinstance(url, str) else None,
+            "private": private,
+            "export": "blocked_convenience" if blocked else "ok",
+            "current_url": None if current_url is None else display_url(current_url, ctx.owner),
+            "current_private": None if current_url is None else marked_url == current_url,
+            "matches_last": None if current_url is None else (isinstance(url, str) and url == current_url),
+        }
     out_last = None
     if last.get("commit"):
         out_last = {
@@ -541,7 +625,7 @@ def _status(ctx: Ctx) -> dict[str, Any]:
             "pushed_at": last.get("pushed_at") if last.get("pushed_commit") == last["commit"] else None,
         }
     return {
-        "configured": bool(last),
+        "configured": _configured(doc),
         "repo": last.get("repo"),
         "pending": {"events": events + ws_events, "tickets": tickets, "more": more, "workspace_events": ws_events},
         "last": out_last,

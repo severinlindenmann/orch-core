@@ -11,6 +11,7 @@ from orch.model import admit, replay
 from orch.store import Store, StoreError
 from orch.store.store import _epoch
 from tests.model.f1_runner import load
+from tests.store.helpers import WS
 
 V = load("restore.json")
 C = load("checkpoint.json")
@@ -617,3 +618,110 @@ def test_malformed_checkpoint_pin_is_not_treated_as_missing(env):
     (store._pins.dir / "checkpoint.json").write_bytes(b"{}")
     with pytest.raises(StoreError, match="invalid held workspace checkpoint"):
         store.restore_facts("workspace")
+
+
+# --- #441: a cut tail holding convenience events sets the durable mark first ------------------------------------------
+
+
+def _tail_with(env, uid, line: bytes):
+    path = env.root / "tickets" / uid / "events.jsonl"
+    with open(path, "ab") as fh:
+        fh.write(line)
+    return path
+
+
+def test_abandon_tail_of_convenience_events_sets_the_mark_before_the_cut(env):
+    from orch.ops.readers import has_convenience_events, seen_path
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    _tail_with(env, uid, b'{"auth":"convenience","type":"log.added","v":2}\n')
+    assert not seen_path(env.host_state, WS).exists()
+    store.abandon_tail(uid, 1)
+    assert seen_path(env.host_state, WS).exists()
+    assert has_convenience_events(store)  # the cut tail in .state/abandoned still counts
+
+
+def test_abandon_tail_without_convenience_or_with_a_torn_line_sets_no_mark(env):
+    from orch.ops.readers import seen_path
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    _tail_with(env, uid, b'{"type":"log.added","v":2,"au')  # a torn line that does not name the value
+    store.abandon_tail(uid, 1)
+    assert not seen_path(env.host_state, WS).exists()
+
+
+def test_abandon_tail_refuses_when_the_mark_cannot_be_written(env, monkeypatch):
+    from orch.ops import readers
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    path = _tail_with(env, uid, b'{"auth":"convenience","type":"log.added","v":2}\n')
+    before = path.read_bytes()
+
+    def boom(*_a, **_k):
+        raise OSError("no space left")
+
+    monkeypatch.setattr(readers, "ensure_convenience_mark", boom)
+    with pytest.raises(StoreError) as info:
+        store.abandon_tail(uid, 1)
+    assert "convenience_seen" in str(info.value)
+    assert path.read_bytes() == before  # nothing was cut
+
+
+@pytest.mark.parametrize(
+    "line",
+    [b'{"\\u0061uth":"convenience"}\n', b'{"auth": "convenience"}\n', b'{"v":2,"auth":"convenience"}\n',
+     b'{"auth":"convenience"'],
+)  # fmt: skip
+def test_only_a_canonical_event_line_in_a_cut_tail_counts(env, line):
+    """Opus #454 L4: escaped, spaced, unsorted or torn bytes are no event any reader accepted: no mark."""
+    from orch.ops.readers import has_convenience_events, seen_path
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    _tail_with(env, uid, line)
+    store.abandon_tail(uid, 1)
+    assert not seen_path(env.host_state, WS).exists()
+    assert not has_convenience_events(store)
+
+
+def test_a_legacy_cut_tail_counts_as_convenience_history(env):
+    from orch.ops.readers import has_convenience_events
+
+    store = env.bootstrap()
+    ab = env.root / ".state" / "abandoned"
+    ab.mkdir(parents=True, exist_ok=True)
+    (ab / "workspace-9.jsonl").write_bytes(b'{"auth":"passphrase"}\n')
+    assert not has_convenience_events(store)
+    (ab / "workspace-10.jsonl").write_bytes(b'{"auth": "convenience"}\n{"auth":"convenience"')  # not canonical, torn
+    assert not has_convenience_events(store)
+    (ab / "workspace-12.jsonl").write_bytes(b'{"auth":"convenience","type":"log.added"}\n')
+    assert has_convenience_events(store)
+
+
+def test_a_bare_cr_is_no_line_boundary_in_a_cut_tail(monkeypatch):
+    """Codex #454 delta 2: ``junk\\r{...}\\n`` is ONE line (LF only), which no reader accepts: no mark."""
+    import json
+
+    from orch import canon
+    from orch.ops.readers import canonical_lines_have_convenience
+
+    seen: list[bytes] = []
+
+    def parse(line: bytes) -> dict:
+        seen.append(line)
+        if not line.endswith(b"\n") or not line.startswith(b"{"):
+            raise ValueError("not an event line")
+        return json.loads(line)
+
+    monkeypatch.setattr(canon, "parse_event_line", parse)
+    assert not canonical_lines_have_convenience(b'junk\r{"auth":"convenience"}\n')
+    assert seen == [b'junk\r{"auth":"convenience"}\n']
+    assert canonical_lines_have_convenience(b'{"auth":"x"}\n{"auth":"convenience"}\n')
+    assert not canonical_lines_have_convenience(b'{"auth":"convenience"}')  # a torn last line keeps no LF

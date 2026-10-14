@@ -38,6 +38,8 @@ def world(tmp_path):
         for op in READS:  # what the owner (column P) sees, to know each read does show the ticket to someone
             if op != "wait":  # it parks for its timeout; its visibility is the ticket_visible precondition's
                 baseline[op] = json.dumps(c.req(op, args_for(op, key), session=SESSION))
+        for op in ("records.snapshot", "records.export_check", "records.status"):  # valid arguments: a real baseline
+            assert json.loads(baseline[op])["ok"] is True, baseline[op]
         as_agent_class(s)
         yield s, key, baseline
     finally:
@@ -53,7 +55,12 @@ READS = sorted(op for op in served_ops() if op_kind(op)[0] in {"read", "person_r
 
 RECORDS_ARGS = {
     "records.snapshot": {},
-    "records.export_check": {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main"},
+    "records.export_check": {
+        "sha": "a" * 40,
+        "url": "https://example.org/r.git",
+        "ref": "refs/heads/main",
+        "history_convenience": False,
+    },
     "records.remote_private": {"on": False},
     "records.status": {},
     "records.note": {"pushed": False},

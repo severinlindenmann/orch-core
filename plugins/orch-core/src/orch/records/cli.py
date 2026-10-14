@@ -21,13 +21,15 @@ refused (``records.unsupported``).
 never contents or credentials).
 
 **Terminal only:** ``auto on`` (asks on ``/dev/tty``), ``push --initial`` and ``remote-private`` (ask on ``/dev/tty``
-unless ``--yes``). The dashboard runs only ``commit [--push]`` and ``auto off`` as a fixed-argv child.
+unless ``--yes``). The dashboard runs only ``commit [--push]``, ``auto off`` and ``status`` as a fixed-argv child;
+``status`` writes nothing to the records repo and makes no network call (no records lock file, no run log); it may
+record the host's convenience mark, and in direct mode it opens the store (its lock and recovery).
 
 ``remote-private`` marks the **one exact effective push URL** of the remote as read only by the owner. The mark binds
 that URL string; the person's own settings (ssh config, credential helpers, DNS) decide how it is reached. orch trusts
 that word; a later change of the destination resolves to another URL and is not marked. Without the mark, a workspace
-with convenience signing (the flag on, or convenience events in its history) cannot push records
-(``sign.convenience_readers``).
+with convenience signing (the flag on, the durable ``convenience_seen`` mark, convenience events in its history, or
+in the history being pushed) cannot push records (``sign.convenience_readers``).
 
 **Output** (the dashboard child contract, §12.11): text, or with ``--json`` exactly one JSON line valid against
 :data:`CHILD_SCHEMA`: ``{ok:true, commit?, pushed?, url?, detail?}`` or ``{ok:false, code, message, hint?}``; exit 0 on
@@ -248,7 +250,7 @@ def _do_push(run: _Run, r: Any) -> dict[str, Any]:
 def _do_status(run: _Run, r: Any) -> dict[str, Any]:
     """The host's ``records.status`` (the caller's own last note) plus what this tool sees locally now (``local``:
     the repo state and the URL git resolves). It writes nothing: a status read never moves the host's record."""
-    from .tool import EMPTY_TREE, _index_tree, _read_index
+    from .tool import EMPTY_TREE
 
     local: dict[str, Any] = {}
     if not os.path.lexists(Path(r.root) / ".git"):
@@ -257,9 +259,11 @@ def _do_status(run: _Run, r: Any) -> dict[str, Any]:
         try:
             repo = run.repo(r.root, run.args.remote)
             head = repo.resolve("HEAD")
-            head_tree = repo.out("rev-parse", f"{head}^{{tree}}") if head else EMPTY_TREE
-            same = _index_tree(repo, _read_index(repo)) == head_tree
-            local["repo"] = {"state": "ok" if same else "index_differs"}
+            # read-only: compares the index with HEAD's tree and writes no object (no write-tree)
+            res = repo.run("diff-index", "--cached", "--quiet", head or EMPTY_TREE, check=False)
+            if res.returncode not in (0, 1):
+                raise RecordsError("records.git_failed", "git diff-index failed")
+            local["repo"] = {"state": "ok" if res.returncode == 0 else "index_differs"}
             try:
                 local["url"] = push_url(repo, run.args.remote)
             except RecordsError:
@@ -267,8 +271,11 @@ def _do_status(run: _Run, r: Any) -> dict[str, Any]:
         except RecordsError as exc:
             kind = "not_dedicated" if exc.code == "records.not_dedicated" else "unsafe"
             local["repo"] = {"state": kind, "problem": exc.message[:300]}
-    status = dict(r.link("records.status", {}))
+    current = local.get("url")  # the effective push URL now: the host says whether it is marked, and if it changed
+    status = dict(r.link("records.status", {"current_url": current} if current else {}))
     status["local"] = local
+    # what this tool sees now replaces the host's last report: the workspace's own records repo exists
+    status["configured"] = local["repo"]["state"] in ("ok", "index_differs", "unsafe")
     return status
 
 
@@ -453,6 +460,13 @@ def main(
             return worst
         run = _Run(args, env, seams)
         r = run.open(args.workspace)
+        if args.cmd == "status":  # strictly read-only: no lock file, no run log, no fetch, no network
+            try:
+                res, text = _dispatch(run, r)
+            finally:
+                r.close()
+            emit(_flat(res), text)
+            return 0
         log = RunLog(Path(r.state) / "person" / "records.jsonl", clock or time.time)
         try:
             with run_lock(Path(r.state), r.workspace_id):
@@ -484,6 +498,9 @@ def _dispatch(run: _Run, r: Any) -> tuple[dict[str, Any], str]:
 
         res = init_repo(pinned_root(r.root), env=run.env)
         run.repo(r.root)  # the result must be a usable dedicated repo
+        failed = _note(r.link, {"pushed": False, "repo": {"state": "ok"}})  # records.status: configured
+        if failed:
+            res["note"] = failed
         return res, "records repo ready" + (" (created)" if res["created"] else "")
     if a.cmd == "commit":
         res = _do_commit(run, r, push_after=a.push, fresh=a.fresh_history, remote=a.remote)

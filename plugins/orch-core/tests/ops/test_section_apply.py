@@ -142,6 +142,19 @@ def test_set_changes_fields_and_none_clears(ws, cli):
     assert r.code == 0
 
 
+def test_an_empty_label_set_drops_every_label(ws, cli):
+    """``labels=`` (nothing after ``=``) is the empty set: how a person drops the ``quick`` label."""
+    claimed(cli)
+    assert cli("set", "1", "labels=quick").code == 0 and ws.ticket_json("1")["labels"] == ["quick"]
+    r = cli.j("set", "1", "labels=")
+    assert r.code == 0 and r.data == {"fields": ["labels"]}
+    assert ws.ticket_json("1")["labels"] == []
+    for pair in ("labels=,", "labels=a,,b", "labels= ", "title=", "priority=", "due="):  # other values still need one
+        r = cli.j("set", "1", pair)
+        assert r.code in (2, 5), pair
+        assert r.err_code in ("invalid.input", "usage"), pair
+
+
 def test_set_refusals(ws, cli):
     claimed(cli)
     for pair in (

@@ -188,6 +188,13 @@ def _children_defs(node: ast.AST) -> list[ast.AST]:
     return out
 
 
+def test_the_inventory_walks_lambda_bodies():
+    """Opus D3: a comparison inside a lambda counts in its enclosing function."""
+    tree = ast.parse("def f(call, xs):\n    return sorted(xs, key=lambda c: call.column.name == 'P')\n")
+    fn = tree.body[0]
+    assert _sites(_scope(fn)) >= 1
+
+
 def test_the_inventory_catches_getattr_aliases_and_match_arms():
     """Opus L6: the detector sees the indirect forms too."""
     code = """

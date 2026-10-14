@@ -1001,3 +1001,137 @@ def test_append_signed_appends_nothing_when_the_mark_cannot_be_written(tmp_path)
     store = FakeStore()
     landed, error = append_signed(MarkService(store, state), "L", [signed(1, auth="convenience")], [{}], signed_by=None)
     assert landed == [] and error is not None and error.code == "custody.unsafe_mode" and store.appended == []
+
+
+# --- review round 2 ---------------------------------------------------------------------------------------------------
+
+
+def test_a_repeated_stop_keeps_answering_stuck_while_the_stuck_workers_threads_live(tmp_path):
+    """Codex P2: "none" only when there is no worker at all, a retained stuck one included."""
+    import threading
+
+    svc = _service(tmp_path)
+    release = threading.Event()
+    release.set()
+    stuck = SlowWorker(release, alive_after=True)
+    svc.relay = stuck
+    svc.relay_join_seconds = 0.05
+    assert svc.relay_stop() == "stuck"
+    assert svc.relay_stop() == "stuck"  # its threads still run
+    stuck.alive_after = False  # they end
+    assert svc.relay_stop() == "none"
+    svc.executor.shutdown(wait=False)
+
+
+def test_a_stop_concurrent_with_a_stop_that_ends_stuck_answers_stuck(tmp_path):
+    import threading
+
+    svc = _service(tmp_path)
+    release = threading.Event()
+    stuck = SlowWorker(release, alive_after=True)
+    svc.relay = stuck
+    svc.relay_join_seconds = 0.05
+    results: dict[str, str] = {}
+    first = threading.Thread(target=lambda: results.__setitem__("a", svc.relay_stop()))
+    first.start()
+    for _ in range(200):
+        if svc.relay is None:
+            break
+        threading.Event().wait(0.01)
+    second = threading.Thread(target=lambda: results.__setitem__("b", svc.relay_stop()))
+    second.start()
+    threading.Event().wait(0.1)
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert results == {"a": "stuck", "b": "stuck"}
+    svc.executor.shutdown(wait=False)
+
+
+def test_close_also_joins_a_retained_stuck_worker(tmp_path):
+    """Codex P2: close() waits (bounded) for a stuck worker's threads too, before the store closes."""
+    import threading
+
+    svc = _service(tmp_path)
+    release = threading.Event()
+    release.set()
+    stuck = SlowWorker(release, alive_after=True)
+    svc.relay = stuck
+    svc.relay_join_seconds = 0.05
+    assert svc.relay_stop() == "stuck"
+    stuck.joined.clear()
+    svc.close()
+    assert stuck.joined and stuck.joined[0] == 0.05
+
+
+def test_a_start_racing_close_never_starts_a_worker(tmp_path):
+    """Opus D1 (PoC test_poc3 inverted): close() sets closing under the lock before it takes the worker."""
+    import threading
+
+    svc = _service(tmp_path)
+    _link(svc.state_dir, WS)
+    svc.state = "ok"
+    release = threading.Event()
+    svc.relay = SlowWorker(release)
+    started: list[int] = []
+    svc.relay_starter = lambda s: (started.append(1), setattr(s, "relay", "NEW"))
+    closer = threading.Thread(target=svc.close)
+    closer.start()
+    threading.Event().wait(0.1)
+    res: dict[str, Any] = {}
+
+    def start() -> None:
+        try:
+            res["s"] = svc.relay_start()
+        except HostError as exc:
+            res["s"] = exc.code
+
+    st = threading.Thread(target=start)
+    st.start()
+    threading.Event().wait(0.1)
+    release.set()
+    closer.join(10)
+    st.join(10)
+    assert svc.closing is True and started == [] and svc.relay is None
+    assert res["s"] in {"none", "workspace.unavailable"}
+
+
+def test_store_relay_link_with_the_host_guard_refuses_cap_convenience_and_an_existing_link(tmp_path):
+    """Codex P2, Opus D2: ``store.relay_link(link, guard=lambda: link_reservation(service))`` is the only writer of
+    ``link.json``; the guard's refusals and the store's own existing-link refusal, end to end."""
+    from orch.host import relaylink
+    from orch.store import StoreError
+    from orch.store.convmark import ensure_convenience_mark
+    from tests.store.helpers import WS as SWS
+    from tests.store.helpers import Env
+
+    def setup(sub: str) -> tuple[Any, Any, Path]:
+        env = Env(tmp_path / sub)
+        env.bootstrap()
+        svc = LinkService(env.host_state, SWS, env.store)
+        return env, svc, relaylink.link_path(env.host_state, SWS)
+
+    link = {"v": 1, "workspace_id": SWS, "origin": "https://relay.example", "max_publication_bytes": 4194304}
+    # the cap: eight other relay-linked workspaces on this host
+    env, svc, path = setup("cap")
+    for i in range(8):
+        _link(env.host_state, f"{i:032x}")
+    with pytest.raises(HostError) as exc:
+        env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
+    assert exc.value.code == "host.limit" and not os.path.lexists(path)
+    env.store.close()
+    # the durable convenience mark
+    env, svc, path = setup("conv")
+    ensure_convenience_mark(env.host_state, SWS, UID)
+    with pytest.raises(HostError) as exc:
+        env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
+    assert exc.value.code == "sign.convenience_readers" and not os.path.lexists(path)
+    env.store.close()
+    # an existing link: written once, the second is the store's refusal
+    env, svc, path = setup("again")
+    env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
+    assert json.loads(path.read_bytes())["state"] == "linking"
+    with pytest.raises(StoreError) as sexc:
+        env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
+    assert sexc.value.code == "relay.link_exists"
+    env.store.close()

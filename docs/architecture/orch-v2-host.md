@@ -4412,10 +4412,21 @@ is `stale_card`.
      takeover; confirm with `orch host relay takeover`") and stay stopped;
   3. (a) `holder.json` says this state directory was the last holder and (b) its instance id is this directory's;
      either failing: alarm naming the condition and stop. No `holder.json` is a first link only while `link.json`
-     is `linking` (or absent): a `link.json` already `linked` (any state but `linking`) with `holder.json` and/or
-     `instance.json` missing is a restored or copied linked directory (a selective restore, `rsync --exclude`) and is
-     refused the same way, naming `orch host relay takeover` (which rebinds the instance record and records the new
-     `gen`); it is never treated as a fresh first link (round 7, R6-3).
+     is `linking` (or absent): a `link.json` already `linked` (any state but `linking`, or not a JSON object) with
+     `holder.json` and/or `instance.json` missing is a restored or copied linked directory (a selective restore,
+     `rsync --exclude`) and is refused the same way, naming `orch host relay takeover` (which rebinds the instance
+     record and records the new `gen`); it is never treated as a fresh first link (round 7, R6-3). **Absent** means
+     only that the file does not exist: a state file that is unreadable, not JSON, or the JSON literal `null` is a
+     `StateError` (nothing is sent), never "absent" (round 8, R7-1). A `StateError` after an earlier pass is not
+     sticky, but the pass is dropped: every later call runs the preflight again and fails while the state stays
+     unreadable (round 8, R7-2).
+  The pass and the sticky refusal are **per `Session` object** (round 8, R7-4): R5 keeps ONE `Session` per state
+  directory, shared by the workspace's relay threads (poll, resp, pub, aux), or shares the refusal state between
+  them; otherwise a refusal raised by one thread's `hold()` does not stop another thread's session that already
+  passed. **R5 follow-up (round 8, R7-3, not built):** a `linking` directory copied mid-link without `holder.json`
+  and `instance.json` still passes as a first link. Proposed rule: refuse when `instance.json` was just created by
+  this open and `link-card.json`, `link-genesis.json` or `sign-ledger.json` exists (no legitimate run produces that
+  combination: `instance.json` is claimed before the first link can write any of them).
   Then:
   4. Renew with the stored `gen` (`{gen, take_over:false}`): a renewal is not a probe. Success: run.
   5. Only when that renewal is `fenced`: write `pending = gen + 1` durably, then probe `{gen: null, take_over: false}`.

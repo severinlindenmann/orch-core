@@ -474,6 +474,51 @@ def test_a_stale_lookup_does_not_make_the_next_one_spin():
     assert c._lookup_wakeups - before == 1  # woken only by its own helper; a shared event adds the stale wake-up
 
 
+def _refused_resolver(calls):
+    def resolve(host, port, *a, **kw):
+        import socket
+
+        calls.append(host)
+        return socket.getaddrinfo("127.0.0.1", 9, 0, socket.SOCK_STREAM)  # discard port: refused at once
+
+    return resolve
+
+
+def test_completed_lookups_release_their_slots():
+    """More than MAX_LOOKUPS lookups on one connection: each finished helper frees its slot (review round 4, N4)."""
+    calls: list[str] = []
+    c = http.RelayConn("https://relay.example", resolve=_refused_resolver(calls))
+    n = 3 * http.MAX_LOOKUPS
+    for _ in range(n):
+        with pytest.raises(http.TransportError) as e:
+            call(c, deadline_s=5)
+        assert e.value.kind == "connect"
+    assert len(calls) == n and c._lookups == 0
+
+
+def test_a_failed_thread_start_releases_the_lookup_slot(monkeypatch):
+    calls: list[str] = []
+    c = http.RelayConn("https://relay.example", resolve=_refused_resolver(calls))
+    real = threading.Thread
+
+    class NoDns(real):
+        def start(self):
+            if self.name == "orch-relay-dns":
+                raise RuntimeError("can't start new thread")
+            super().start()
+
+    monkeypatch.setattr(http.threading, "Thread", NoDns)
+    for _ in range(http.MAX_LOOKUPS + 2):
+        with pytest.raises(http.TransportError) as e:
+            call(c, deadline_s=5)
+        assert e.value.kind == "connect"
+    assert c._lookups == 0 and calls == []
+    monkeypatch.setattr(http.threading, "Thread", real)
+    with pytest.raises(http.TransportError):
+        call(c, deadline_s=5)
+    assert calls == ["relay.example"]  # the slots were not leaked
+
+
 def test_shutdown_just_before_a_call_fails_it_at_once(stuck_resolver):
     c = http.RelayConn("https://relay.example", resolve=stuck_resolver)
     c.shutdown()

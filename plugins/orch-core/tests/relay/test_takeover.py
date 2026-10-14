@@ -307,3 +307,57 @@ def test_operator_takeover_rebinds_a_copied_directory(env, tmp_path):
     assert s.operator_takeover().gen == 4
     assert store.binding_problem() is None and store.load().instance_id == store.instance_id()
     copy.close()
+
+
+# --- st_dev is informational; the binding is the inode (review round 4, N2) -----------------------------------------
+
+
+def _rebind(st, **change):
+    obj = st.read_json("instance.json")
+    obj.update(change)
+    st.write_json("instance.json", obj)
+
+
+def test_a_changed_dev_with_the_same_inode_is_not_an_alarm(env, tmp_path, caplog):
+    """``st_dev`` is assigned per mount and can change across a reboot: only logged, the host renews its own lease."""
+    m, sim = env
+    st, store = _held_once(tmp_path / "relay")
+    dev, _ = st.identity()
+    _rebind(st, dev=dev + 1)
+    sim.holders[WS] = (3, sim.now + 40_000)
+    s, _, alarms = new(m, sim, store)
+    with caplog.at_level("INFO", logger="orch.relay.state"):
+        assert store.binding_problem() is None
+        assert s.hold().gen == 3 and alarms == []
+    assert any("device number changed" in r.getMessage() for r in caplog.records)
+    st.close()
+
+
+def test_a_changed_inode_is_an_alarm_before_any_network_call(env, tmp_path):
+    m, sim = env
+    st, store = _held_once(tmp_path / "relay")
+    _, ino = st.identity()
+    _rebind(st, ino=ino + 1)
+    sim.holders[WS] = (3, sim.now + 40_000)
+    s, _, alarms = new(m, sim, store)
+    with pytest.raises(TakeoverRefused):
+        s.hold()
+    assert "copied or restored" in alarms[0][1] and m.seen == []
+    st.close()
+
+
+def test_an_old_format_instance_record_names_the_operator_path(env, tmp_path):
+    """A round-3 ``instance.json`` (``{instance_id}`` only) is a hard error naming the operator path, which fixes it."""
+    from orch.relay.state import StateError
+
+    m, sim = env
+    st, store = _held_once(tmp_path / "relay")
+    st.write_json("instance.json", {"instance_id": store.load().instance_id})
+    s, _, _ = new(m, sim, store)
+    with pytest.raises(StateError, match=r"orch host relay takeover.*regenerate_instance_id"):
+        s.hold()
+    assert m.seen == []
+    sim.holders[WS] = (3, sim.now - 1)
+    assert s.operator_takeover().gen == 4
+    assert store.binding_problem() is None and store.load() == HolderRecord(True, 4, store.instance_id(), None)
+    st.close()

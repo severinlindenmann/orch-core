@@ -214,6 +214,92 @@ def test_a_forked_child_cannot_use_the_parents_state_dir(tmp_path):
     st.close()
 
 
+def _fork_and_hold(fn):
+    """Fork; the child runs ``fn`` (exit code 0 = ok), reports it on a pipe, then stays alive until released."""
+    r1, w1 = os.pipe()
+    r2, w2 = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(r1)
+        os.close(w2)  # else the child's own copy of the write end keeps it waiting forever
+        try:
+            code = fn()
+        except BaseException:
+            code = 9
+        os.write(w1, bytes([code]))
+        os.read(r2, 1)  # stay alive until the parent is done checking
+        os._exit(0)
+    os.close(w1)
+    os.close(r2)
+    code = os.read(r1, 1)[0]
+    os.close(r1)
+
+    def release():
+        os.close(w2)
+        os.waitpid(pid, 0)
+
+    return code, release
+
+
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
+def test_a_live_forked_child_does_not_keep_the_lock(tmp_path):
+    """The fork hook closes the child's fd (no LOCK_UN): the parent keeps its lock while it lives, and once the parent
+    closes, a new instance gets the directory although the child is still alive (review round 4, N3)."""
+    st = StateDir(tmp_path / "relay")
+    fd = st._held
+
+    def child():
+        if st._held is not None:
+            return 1
+        try:
+            os.fstat(fd)
+            return 2  # the child's copy of the lock fd is still open
+        except OSError:
+            pass
+        try:
+            st.read("a.json")
+            return 3
+        except StateError:
+            pass
+        st.close()  # a no-op in the child
+        return 0
+
+    code, release = _fork_and_hold(child)
+    try:
+        assert code == 0
+        with pytest.raises(StateError, match="in use"):
+            StateDir(tmp_path / "relay")  # the parent still holds it
+        st.write("a.json", b"{}")
+        st.close()
+        StateDir(tmp_path / "relay").close()  # free while the forked child is still alive
+    finally:
+        release()
+
+
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
+def test_close_in_a_forked_child_leaves_the_parent_locked(tmp_path):
+    """Guards against a future ``LOCK_UN`` in ``close()`` or the fork hook: it would release the parent's lock."""
+    st = StateDir(tmp_path / "relay")
+
+    def child():
+        st.close()
+        st.close()
+        return 0
+
+    code, release = _fork_and_hold(child)
+    try:
+        assert code == 0
+        with pytest.raises(StateError, match="in use"):
+            StateDir(tmp_path / "relay")
+        st.write("a.json", b"{}")
+        assert st.read("a.json") == b"{}"
+    finally:
+        release()
+    with pytest.raises(StateError, match="in use"):
+        StateDir(tmp_path / "relay")  # still the parent's after the child exited
+    st.close()
+
+
 def test_io_stays_in_the_locked_directory_after_a_rename(tmp_path):
     """``mv relay relay.old; mkdir relay``: the first instance keeps writing into the directory it locked."""
     st = StateDir(tmp_path / "relay")

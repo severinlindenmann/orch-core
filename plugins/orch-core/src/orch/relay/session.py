@@ -34,7 +34,7 @@ from . import wire
 from .http import Transport
 from .retry import RelayRefused
 from .sign import RelaySigner
-from .state import HolderRecord, HolderStore
+from .state import HolderRecord, HolderStore, StateError
 
 __all__ = [
     "Fenced",
@@ -309,13 +309,18 @@ class Session:
 
         Before any network call (order changed 13 Oct 2026, review R1 approved by orch-52):
 
-        1. The instance record must be bound to this very directory (``dev``/``ino``): a copied or restored directory
-           alarms ``relay_takeover_refused`` and stops.
+        1. The instance record must be bound to this very directory (its inode; ``dev`` is informational since it can
+           change across a reboot): a copied or restored directory alarms ``relay_takeover_refused`` and stops.
         2. ``pending`` in ``holder.json`` (a takeover probe was in flight when we stopped): alarm ("possibly our own
            interrupted takeover") and stop.
         3. (a) ``holder.json`` says this state directory was the last holder and (b) its instance id is this
-           directory's. Either failing: alarm and stop. A copied or restored directory therefore never renews into the
-           original's live lease.
+           directory's. Either failing: alarm and stop. A copied or restored directory (``cp -r``, rsync, a backup
+           restore that recreates the directory) therefore does not renew into the original's live lease.
+
+        Residual (not detectable locally, 11A.3/11A.5): a block-level clone (VM image, ``asr``/``dd``) keeps the
+        inode and every byte, and a copy onto another volume can land on the same inode by chance. Such a clone
+        passes 1 to 3 and renews the original's live ``gen``; the relay's holder ``gen`` is the only backstop. Never
+        run a clone while the original is live.
 
         Then:
 
@@ -362,7 +367,11 @@ class Session:
         """The explicit operator takeover (R5 wires it to ``orch host relay takeover``): ``take_over: true``, then the
         new ``gen`` is recorded as ours (clearing ``pending``) and the worker may proceed. A directory whose instance
         record is bound elsewhere (copied or restored) gets a new instance id bound to it first."""
-        if self._holder.binding_problem() is not None:
+        try:
+            stale = self._holder.binding_problem() is not None
+        except StateError:  # an unreadable or older-format instance.json: the operator confirmed, so rebind it
+            stale = True
+        if stale:
             self._holder.regenerate()
         got = self._hold_call({"gen": None, "take_over": True}, deadline_s, takeover=True)
         self._holder.save(HolderRecord(True, got.gen, self._holder.instance_id(), None))

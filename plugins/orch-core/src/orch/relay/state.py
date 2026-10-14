@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import re
 import secrets
 import stat
 import threading
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -40,6 +42,8 @@ __all__ = [
     "regenerate_instance_id",
 ]
 
+log = logging.getLogger("orch.relay.state")
+
 MAX_FILE = 1 << 20
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _KEY = re.compile(r"[a-z0-9_.:-]{1,64}")
@@ -47,6 +51,14 @@ _KEY = re.compile(r"[a-z0-9_.:-]{1,64}")
 
 class StateError(Exception):
     """The state directory or a file in it is unsafe or unreadable. Messages name the file, never its contents."""
+
+
+_LIVE: weakref.WeakSet[StateDir] = weakref.WeakSet()
+
+
+def _after_fork_in_child() -> None:
+    for st in list(_LIVE):
+        st._forget_in_child()
 
 
 class SignLedger(Protocol):
@@ -68,7 +80,10 @@ class StateDir:
     Every operation works relative to the locked directory fd, never by path again: if the directory is renamed and a
     new one created at the old path, this instance keeps writing into the directory it locked (review round 3, R3).
     The lock fd is close-on-exec, so an exec'd child never holds it; ``os.fork`` does inherit it, so the instance
-    records its pid and refuses every operation in a forked child (R2)."""
+    records its pid and refuses every operation in a forked child (R2). An ``after_in_child`` fork hook also closes
+    the child's copy of the fd (a plain ``close``, never ``LOCK_UN``: the flock belongs to the open file description
+    the parent shares, so an unlock would release the parent's lock) and marks the instance unusable, so a forked
+    child that lives on never keeps the directory locked after the parent closes it (review round 4, N3)."""
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
@@ -100,9 +115,24 @@ class StateDir:
         self._held: int | None = fd
         self._pid = os.getpid()
         self.lock = threading.RLock()
+        _LIVE.add(self)
+
+    def _forget_in_child(self) -> None:
+        """Fork hook (child side): close our copy of the fd without unlocking, and make the instance unusable. The
+        lock is replaced: an RLock another parent thread held at the fork would never be released in the child."""
+        self.lock = threading.RLock()
+        fd, self._held = self._held, None
+        if fd is not None:
+            try:
+                os.close(fd)  # never flock(LOCK_UN): that would release the parent's lock too
+            except OSError:
+                pass
 
     def close(self) -> None:
-        """Release the directory (closing the fd drops the ``flock``). In a forked child this only forgets the fd."""
+        """Release the directory (closing the fd drops the ``flock``). In a forked child this does nothing: the fork
+        hook already closed the child's copy, and the parent's lock must stay."""
+        if os.getpid() != self._pid:
+            return
         with self.lock:
             fd, self._held = self._held, None
             if fd is not None:
@@ -157,8 +187,8 @@ class StateDir:
             os.close(fd)
 
     def identity(self) -> tuple[int, int]:
-        """``(st_dev, st_ino)`` of the locked directory: what the instance record is bound to (a copy or a restore
-        through a backup tool is another directory)."""
+        """``(st_dev, st_ino)`` of the locked directory. The instance record is bound to ``ino`` (a copy or a restore
+        through a backup tool is another directory); ``dev`` is recorded for information only."""
         with self.lock:
             st = os.fstat(self._dir())
             return st.st_dev, st.st_ino
@@ -217,6 +247,9 @@ class StateDir:
 
     def write_json(self, name: str, obj: Any) -> None:
         self.write(name, json.dumps(obj, sort_keys=True, separators=(",", ":")).encode())
+
+
+os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 class FileSignLedger:
@@ -334,11 +367,17 @@ def regenerate_instance_id(state: StateDir) -> str:
 
 class FileHolderStore:
     """``holder.json`` and ``instance.json`` in the relay state directory. ``instance.json`` is ``{instance_id, dev,
-    ino}``: the id, created with the state (claimed once with ``os.link``), bound to the locked directory's identity.
+    ino}``: the id, created with the state (claimed once with ``os.link``), bound to the locked directory's inode.
     A copy (``cp -r``, rsync) carries the id verbatim but not the inode, and a restore through a backup tool recreates
-    the directory: both show as a binding problem. A restart or a rename within one filesystem keeps ``(dev, ino)``.
-    A move across filesystems, or a tool that recreates the directory, needs the operator path
-    (:func:`regenerate_instance_id`)."""
+    the directory: both show as a binding problem. A process restart or a rename within one filesystem keeps the
+    inode. ``dev`` is recorded but not compared (review round 4, N2): ``st_dev`` is assigned per mount and can change
+    across a reboot or remount (APFS volume order, btrfs subvolumes, LVM, external volumes), so a changed ``dev`` is
+    only logged. A move across filesystems, or a tool that recreates the directory, needs the operator path
+    (:func:`regenerate_instance_id`).
+
+    Not detected (residuals, 11A.3): a block-level clone (VM image, ``asr``/``dd``) keeps the inode and every byte,
+    and a copy onto another volume can land on the same inode number by chance. No local check can prove a state
+    directory is unique; the relay's holder ``gen`` is the backstop."""
 
     FILE = "holder.json"
     INSTANCE = "instance.json"
@@ -353,10 +392,13 @@ class FileHolderStore:
             type(obj) is not dict
             or type(obj.get("instance_id")) is not str
             or not _INSTANCE.fullmatch(obj["instance_id"])
-            or type(obj.get("dev")) is not int
-            or type(obj.get("ino")) is not int
         ):
             raise StateError("instance.json shape")
+        if type(obj.get("dev")) is not int or type(obj.get("ino")) is not int:
+            raise StateError(
+                "instance.json has no directory binding (an older format): run `orch host relay takeover` "
+                "(operator_takeover), which regenerates it with regenerate_instance_id"
+            )
         return obj
 
     def instance_id(self) -> str:
@@ -364,8 +406,11 @@ class FileHolderStore:
 
     def binding_problem(self) -> str | None:
         obj = self._instance()
-        if (obj["dev"], obj["ino"]) != self._s.identity():
+        dev, ino = self._s.identity()
+        if obj["ino"] != ino:
             return "this state directory was copied or restored (its instance record names another directory)"
+        if obj["dev"] != dev:
+            log.info("relay state directory device number changed (remount or reboot); not a copy, inode unchanged")
         return None
 
     def regenerate(self) -> str:

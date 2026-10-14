@@ -176,7 +176,12 @@ class RelayConn:
                 done.set()
                 wake.set()
 
-        threading.Thread(target=run, name="orch-relay-dns", daemon=True).start()
+        try:
+            threading.Thread(target=run, name="orch-relay-dns", daemon=True).start()
+        except RuntimeError as e:  # thread limit: the helper never ran, so its slot must not leak (round 4, N4)
+            with self._fd_lock:
+                self._lookups -= 1
+            raise _ResolverStuck("cannot start a name lookup") from e
         while not done.is_set():
             left = self._deadline - self._mono()
             if left <= 0 or self._shut.is_set():

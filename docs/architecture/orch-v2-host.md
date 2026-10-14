@@ -4124,7 +4124,11 @@ through purpose-specific methods.
   package (`from ..crypto import sign` is `orch.crypto.sign`), and every `.py` under `orch/relay/` is scanned,
   subpackages included (round 6, orch-52 #4). This is defence in depth, not isolation: same-process code can always
   traverse objects, and reassigning a module function (say `wire.auth_bytes`) before calling the public `login` signs
-  attacker bytes. The real boundary is the reserved out-of-process `bridge` class under a distinct UID (11A.11 Q1).
+  attacker bytes. Known gaps of the AST rules (round 7, R6-6; same class, not closed): attribute chains through an
+  allowed import are not matched against the banned modules (`import orch; orch.host.custody.x`, `import orch as o;
+  o.custody.x`), and neither are value aliases (`c = crypto; c.sign(...)`, `for m in [crypto]: m.sign`, a module
+  passed as an argument). The real boundary is the reserved out-of-process `bridge` class under a distinct UID
+  (11A.11 Q1).
 - Epoch keys are used only through `BridgeKeys`, which opens a request and seals a response and returns only
   plaintext or envelopes.
 - Device and person signatures are made only on the person path: the click signer subprocess (`orch.click`) or the
@@ -4200,7 +4204,12 @@ time with `O_NOFOLLOW | O_DIRECTORY` (a symlinked ancestor is refused), and each
 and not writable by group or other unless it is a root-owned sticky directory (`/tmp`). The directory itself is then
 created (0700) and opened relative to its checked parent, never by path, and must be a 0700 directory of the host UID.
 Gap, as documented for the relay state elsewhere: ACLs are not inspected here (the host's ACL check needs `ctypes`,
-which the import ban refuses); R5 can swap in `host/custody.check_tree` behind the same interface.
+which the import ban refuses); R5 can swap in `host/custody.check_tree` behind the same interface. **R5 MUST pass a
+resolved state path** from trusted config, never one built from `$TMPDIR` (round 7, R6-4): on macOS `/tmp`, `/var`
+(so `/var/folders/...`) and the usual `$TMPDIR` sit under symlinks (`/tmp -> private/tmp`, `/var -> private/var`), so
+`StateDir("/tmp/x")` is refused ("a symlink or not a directory ...; pass the resolved path") before anything is
+created, while `/private/tmp/x` is accepted. The production default under `/Users/<u>` has no symlinked ancestor.
+`test_macos_tmp_and_tmpdir_prefixes_are_refused` documents it.
 
 One live instance per state directory: `StateDir` holds an exclusive non-blocking `flock` on the directory for its
 lifetime (close-on-exec); a second instance, in this process or another, is refused "in use". All I/O goes through the
@@ -4393,13 +4402,20 @@ is `stale_card`.
   any network call (steps 1 to 3 are `Session.preflight`, one local check that gates **every** entry point since round
   6, orch-52 #1: the first request of a session of any kind, login, challenge, the session-less `PUT card` and every
   directory read or write, runs it, `hold()` at start runs it again, and `first_link` runs it right after its
-  `link.json` check; a failure refuses every later call locally until the operator takeover):
+  `link.json` check; a failure refuses every later call locally until the operator takeover, **whatever passed
+  before**: `call()` re-runs the preflight while a refusal is recorded, so a refusal raised after an earlier pass (a
+  `pending` record found by `hold()`, a probe granted a `gen` other than stored+1) stops login, challenge, the
+  session-less `PUT card`, every directory call and the logout too (round 7, R6-1)):
   1. the instance record must be bound to this very directory (its inode; `dev` is informational, 11A.3); else alarm
      `relay_takeover_refused` ("this state directory was copied or restored") and stop;
   2. `holder.json` has `pending` (a probe was in flight when the host stopped): alarm ("possibly our own interrupted
      takeover; confirm with `orch host relay takeover`") and stay stopped;
   3. (a) `holder.json` says this state directory was the last holder and (b) its instance id is this directory's;
-     either failing: alarm naming the condition and stop.
+     either failing: alarm naming the condition and stop. No `holder.json` is a first link only while `link.json`
+     is `linking` (or absent): a `link.json` already `linked` (any state but `linking`) with `holder.json` and/or
+     `instance.json` missing is a restored or copied linked directory (a selective restore, `rsync --exclude`) and is
+     refused the same way, naming `orch host relay takeover` (which rebinds the instance record and records the new
+     `gen`); it is never treated as a fresh first link (round 7, R6-3).
   Then:
   4. Renew with the stored `gen` (`{gen, take_over:false}`): a renewal is not a probe. Success: run.
   5. Only when that renewal is `fenced`: write `pending = gen + 1` durably, then probe `{gen: null, take_over: false}`.
@@ -4580,9 +4596,14 @@ A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-
 
 - The deadline watchdog and `shutdown()` act on a dup of the connection's socket, registered **before** `connect`
   blocks (round 6, orch-52 #3); when it is installed, a deadline that already passed or a `shutdown()` that already
-  happened (both found nothing to kill) fails the call at once, so nothing is connected or sent. Platform note: Linux
-  ends a still-connecting socket on `shutdown(SHUT_RDWR)`; where the platform does not, the connect still ends at its
-  socket timeout, which is the call's remaining deadline.
+  happened (both found nothing to kill) fails the call at once, so nothing is connected or sent. A `shutdown()` (or
+  the watchdog) that lands after that check but before or during `connect` acts on a socket that is not connected
+  yet; so the flags are checked again right after `connect` returns and before any byte is sent, and the call fails
+  (kind `shutdown`, or `deadline`) with the socket closed (round 7, R6-2). Platform note: Linux ends a
+  still-connecting socket on `shutdown(SHUT_RDWR)`; on Darwin a `shutdown()` on a pending connect can instead make
+  `connect` return **success** shortly after (the socket then looks connected), and a `shutdown()` just before
+  `connect` fails with ENOTCONN and is swallowed. In both cases the post-connect recheck is what keeps the request
+  from being sent; any later `shutdown()` finds a connected socket and ends it.
 
 **Deadlines and caps.** Every call has a **total** deadline on the monotonic clock, covering connect, headers and body.
 Before each bounded read the socket timeout is set to the time remaining, so a relay that drips bytes ends at the
@@ -4715,7 +4736,8 @@ with local state (`link.json` `card_seq`, the host's own member list, the logs a
 - The vector file is committed **xz-compressed only** (~0.4 MB instead of 23 MB; round 6, orch-52 #6), so git history
   does not keep another raw copy at each corpus bump. The sha256 in `SOURCE` is over the **decompressed** bytes, which
   equal the relay's `tests/vectors_v2.json`; `tests/relay/corpus.py` decompresses it and is the only reader (the crypto,
-  canon and skeleton tests load through it). `scripts/sync-vectors.sh <ref>` regenerates the `.xz`, the fixtures and
+  canon and skeleton tests load through it). It checks that pin at every load, before any test uses a vector, and
+  bounds the decompressed size at 64 MiB (a truncated stream or trailing data is refused too; round 7). `scripts/sync-vectors.sh <ref>` regenerates the `.xz`, the fixtures and
   `SOURCE` from an orch-relay clone.
 - The drift guard copies the relay's `test_http_fixtures_manifest.py` checks: the shape; every file hashed, nothing
   added or removed; the aggregate equals the sha256 of the sorted `name\thash\n` lines; the canonical rendering.

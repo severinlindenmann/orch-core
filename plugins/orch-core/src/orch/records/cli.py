@@ -248,7 +248,7 @@ def _do_push(run: _Run, r: Any) -> dict[str, Any]:
 def _do_status(run: _Run, r: Any) -> dict[str, Any]:
     """The host's ``records.status`` (the caller's own last note) plus what this tool sees locally now (``local``:
     the repo state and the URL git resolves). It writes nothing: a status read never moves the host's record."""
-    from .tool import EMPTY_TREE, _index_tree, _read_index
+    from .tool import EMPTY_TREE
 
     local: dict[str, Any] = {}
     if not os.path.lexists(Path(r.root) / ".git"):
@@ -257,9 +257,11 @@ def _do_status(run: _Run, r: Any) -> dict[str, Any]:
         try:
             repo = run.repo(r.root, run.args.remote)
             head = repo.resolve("HEAD")
-            head_tree = repo.out("rev-parse", f"{head}^{{tree}}") if head else EMPTY_TREE
-            same = _index_tree(repo, _read_index(repo)) == head_tree
-            local["repo"] = {"state": "ok" if same else "index_differs"}
+            # read-only: compares the index with HEAD's tree and writes no object (no write-tree)
+            res = repo.run("diff-index", "--cached", "--quiet", head or EMPTY_TREE, check=False)
+            if res.returncode not in (0, 1):
+                raise RecordsError("records.git_failed", "git diff-index failed")
+            local["repo"] = {"state": "ok" if res.returncode == 0 else "index_differs"}
             try:
                 local["url"] = push_url(repo, run.args.remote)
             except RecordsError:
@@ -456,6 +458,13 @@ def main(
             return worst
         run = _Run(args, env, seams)
         r = run.open(args.workspace)
+        if args.cmd == "status":  # strictly read-only: no lock file, no run log, no fetch, no network
+            try:
+                res, text = _dispatch(run, r)
+            finally:
+                r.close()
+            emit(_flat(res), text)
+            return 0
         log = RunLog(Path(r.state) / "person" / "records.jsonl", clock or time.time)
         try:
             with run_lock(Path(r.state), r.workspace_id):

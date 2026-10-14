@@ -582,3 +582,31 @@ def test_a_failed_auto_on_restores_the_previous_entry(r):
     code, out = run_cli(r, "auto", "on", "--every", "10", "--push", timer=Broken())
     assert code == 1 and out["code"] == "records.timer_failed"
     assert r.tips.auto(r.w.wid) == {"on": True, "every_min": 30, "push": False, "last_run": 123}
+
+
+def test_status_is_strictly_read_only(r):
+    """The dashboard's bounded child: no lock file, no run log, no object written into the records repo (the index
+    is compared with diff-index, never write-tree), and the current push URL answered."""
+    r.init()
+    r.commit()
+    url = r.bare()
+    git(r.root, "remote", "add", "origin", url)
+    staged = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"y\n", capture_output=True, check=True,
+        env={"HOME": str(r.home), "PATH": os.environ["PATH"]},
+    ).stdout.decode().strip()  # fmt: skip
+    git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
+
+    def snapshot():
+        objects = sorted(str(p) for p in (r.root / ".git" / "objects").rglob("*") if p.is_file())
+        person = sorted(str(p) for p in (r.tips.path.parent / "person").rglob("*")) if (
+            r.tips.path.parent / "person").exists() else []  # fmt: skip
+        return objects, person, (r.root / ".git" / "index").read_bytes()
+
+    before = snapshot()
+    code, out = run_cli(r, "status")
+    assert code == 0, out
+    status = out["detail"]["status"]
+    assert status["local"]["repo"] == {"state": "index_differs"} and status["configured"] is True
+    assert status["remote"]["current_url"] == url and status["remote"]["current_private"] is False
+    assert snapshot() == before

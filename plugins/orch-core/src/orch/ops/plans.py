@@ -192,7 +192,7 @@ def parse_pair(c: Call, p: Projection, key: str, raw: str) -> Any:
             raise OrchError("invalid.input", f"{key} is one of {', '.join(enums[key])}")
         return raw
     if key == "labels":
-        labels = [] if _none(raw) else raw.split(",")
+        labels = [] if _none(raw) or raw == "" else raw.split(",")  # ``labels=`` is the empty set
         if any(not _LABEL.fullmatch(x) for x in labels) or len(set(labels)) != len(labels):
             raise OrchError("invalid.input", "labels: lower-case tokens, comma separated, no repeats")
         return labels

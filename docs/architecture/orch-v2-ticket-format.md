@@ -264,7 +264,7 @@ on. Defaults for a new ticket:
 | `type` | token | (required at creation) | `feature`, `bug`, `chore`, `spike`, `epic` |
 | `priority` | token | `medium` | `low`, `medium`, `high`, `urgent` |
 | `size` | token or null | `null` (unsized) | `xs`, `s`, `m`, `l`, `xl` |
-| `labels` | list of label tokens, unique | `[]` | `^[a-z0-9][a-z0-9._-]{0,31}$` |
+| `labels` | list of label tokens, unique | `[]` | `^[a-z0-9][a-z0-9._-]{0,31}$`; may be empty (`orch set REF labels=` or `labels=none` sets `[]`) |
 | `parent` | key or null | `null` | |
 | `blocked_by` | list of keys, unique | `[]` | |
 | `due` | date or null | `null` | `YYYY-MM-DD` only |

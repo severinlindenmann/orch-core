@@ -37,6 +37,10 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/settings",
         "/api/w/{ws}/members",
         "/api/w/{ws}/grants",
+        "/api/w/{ws}/quick",
+        "/api/w/{ws}/records",
+        "/api/w/{ws}/records/commit",
+        "/api/w/{ws}/records/auto-off",
         "/{path:path}",
     }
     assert {route.path for route in create_app(PORT).routes} == expected
@@ -101,6 +105,8 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings",
         "/w/DEMO/settings/general",
         "/w/DEMO/settings/grants",
+        "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
+        "/w/DEMO/quick",
         "/w/DEMO/ticket/DEMO-0001",
         "/ticket/DEMO-0001",
     ],

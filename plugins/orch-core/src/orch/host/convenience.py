@@ -24,7 +24,11 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from orch.ops.readers import READER_OPS, has_convenience_events  # one list for the host and the op handlers
+from orch.ops.readers import (  # one list for the host and the op handlers
+    READER_OPS,
+    convenience_seen,
+    seen_or_history,
+)
 
 from .custody import ensure_private_dir, read_json, unsafe, write_private
 from .errors import HostError
@@ -143,11 +147,13 @@ def check(service: Any, person: str, device: str) -> None:
 
 
 def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
-    """While the flag is on, an op that adds a reader is refused: switch convenience off first (owner decision). With
-    ``history`` (at binding and at submit, under the store lock) a history holding convenience events refuses too."""
+    """While the flag is on, an op that adds a reader is refused: switch convenience off first (owner decision). The
+    durable ``convenience_seen`` mark refuses at every step (#441); with ``history`` (at binding and at submit, under
+    the store lock) a merged history holding convenience events refuses too (and sets the mark)."""
     if op not in READER_OPS:
         return
-    if history and has_convenience_events(service.store):
+    seen = convenience_seen(service.state_dir, service.workspace_id)  # #441: the durable mark, in every check
+    if seen or (history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid)):
         raise HostError(
             "sign.convenience_readers",
             f"{op} would add a reader to a workspace whose history has convenience signatures",

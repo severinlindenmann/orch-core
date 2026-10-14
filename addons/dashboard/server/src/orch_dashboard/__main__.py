@@ -294,13 +294,19 @@ def main():
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args.stop or args.command == "stop":
-        control(state_dir() / "dashboard/ctl.sock", "stop")
-    elif args.command == "serve":
-        serve(args.launcher_lock)
-    else:
-        open_dashboard(args.path, print_url=args.print_url)
+    if args.command == "serve" and not args.stop:
+        return serve(args.launcher_lock)
+    try:
+        if args.stop or args.command == "stop":
+            control(state_dir() / "dashboard/ctl.sock", "stop")
+        else:
+            open_dashboard(args.path, print_url=args.print_url)
+    except (RuntimeError, OSError) as exc:
+        # A one-line refusal for the person at the terminal; nothing was started or minted on the refusals above.
+        print(f"orch-dashboard: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

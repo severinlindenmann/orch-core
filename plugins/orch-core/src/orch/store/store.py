@@ -2623,6 +2623,7 @@ class Store:
             if from_seq >= len(lines):
                 return 0
             keep, cut = b"".join(lines[:from_seq]), b"".join(lines[from_seq:])
+            self._mark_cut_convenience(cut)  # #441: before the events leave the merged view (fail closed)
             ab = self.state_dir / "abandoned"
             ab.mkdir(parents=True, exist_ok=True)
             target, n = ab / f"{log}-{from_seq + 1}.jsonl", 0
@@ -2634,6 +2635,24 @@ class Store:
             self._needs_reload = True
             self._load()
             return len(lines) - from_seq
+
+    def _mark_cut_convenience(self, cut: bytes) -> None:
+        """A cut tail holding a convenience event sets the workspace's durable ``convenience_seen`` mark first
+        (:mod:`orch.ops.readers`; readers may have read those events). Only a canonical event line counts
+        (``canon.parse_event_line``, Opus #454 L4); a torn or forged-looking line does not. A mark that cannot be
+        written refuses the cut."""
+        from orch.ops.readers import canonical_lines_have_convenience, ensure_convenience_mark
+
+        if not canonical_lines_have_convenience(cut):
+            return
+        if self._pins is None:
+            raise StoreError("validation.host_state", "cutting convenience events needs the host state (the mark)")
+        try:
+            ensure_convenience_mark(self._pins.dir.parent.parent, self.workspace_id, os.getuid())
+        except Exception as exc:  # noqa: BLE001 - any doubt refuses the cut
+            raise StoreError(
+                "internal", f"the convenience_seen mark could not be written ({type(exc).__name__}); nothing was cut"
+            ) from None
 
     def _enforce_revocations(self) -> None:
         if self._pins is None or self._state is None:

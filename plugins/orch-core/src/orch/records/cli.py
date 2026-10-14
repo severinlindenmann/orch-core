@@ -22,7 +22,8 @@ never contents or credentials).
 
 **Terminal only:** ``auto on`` (asks on ``/dev/tty``), ``push --initial`` and ``remote-private`` (ask on ``/dev/tty``
 unless ``--yes``). The dashboard runs only ``commit [--push]``, ``auto off`` and ``status`` as a fixed-argv child;
-``status`` is strictly read-only (no lock file, no run log, no fetch or network, no object written).
+``status`` writes nothing to the records repo and makes no network call (no records lock file, no run log); it may
+record the host's convenience mark, and in direct mode it opens the store (its lock and recovery).
 
 ``remote-private`` marks the **one exact effective push URL** of the remote as read only by the owner. The mark binds
 that URL string; the person's own settings (ssh config, credential helpers, DNS) decide how it is reached. orch trusts

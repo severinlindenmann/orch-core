@@ -2199,10 +2199,12 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
   choke point before the first convenience event is written: the host's `human.finish` (under the store lock; a mark
   that cannot be written fails the request with `custody.unsafe_mode`, nothing appended) and direct mode's `Human`
   append (in the append's `precommit`; refused with `internal`, nothing appended). `Store.abandon_tail` writes it
-  too, under the store lock and before the cut, when the cut lines hold a convenience event (a torn line counts only
-  when it names the value; a mark that cannot be written refuses the cut). The host's own scan of the merged history,
-  which also reads the cut tails kept in `<root>/.state/abandoned/` (legacy workspaces), sets it when it finds one, so
-  an existing workspace counts as seen at its first check. **Only these host-side observations write the mark**: the
+  too, under the store lock and before the cut, when the cut lines hold a convenience event (only a line
+  `canon.parse_event_line` accepts, with `auth` `"convenience"`; torn or non-canonical bytes never count; a mark that
+  cannot be written refuses the cut). The host's own scan of the merged history, which also reads the cut tails kept
+  in `<root>/.state/abandoned/` by the same canonical rule (legacy workspaces), sets it when it finds one, so an
+  existing workspace counts as seen at its first check. Verifying the signatures of cut lines, or an owner-audited
+  way to clear the mark, is follow-up #458. **Only these host-side observations write the mark**: the
   records tool's report on the pushed history refuses that one push and never writes it (#454 review: free text an
   agent writes must not block `member.add` for good). Persisting is checked separately from reading
   (`ensure_convenience_mark`: a regular file must be there, else it is written; any error refuses). Nothing clears
@@ -6093,7 +6095,9 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
   A line counts when it parses as JSON, leniently (`\u` escapes, duplicate keys, any order or spacing), with
   top-level `auth` `"convenience"`; a line that does not parse as a JSON object counts too (fail closed: agents cannot
   write raw event-log lines); any parse error, `RecursionError` included, is caught. Every records git call runs with
-  `GIT_NO_LAZY_FETCH=1`, so a partial clone never fetches behind the scan. A tip scanned clean is kept as `clean
+  `GIT_NO_LAZY_FETCH=1`, so a partial clone never fetches behind the scan; as a backstop for git older than 2.45, a
+  records repo whose own config sets `extensions.partialClone` or `remote.*.promisor`/`partialclonefilter` is
+  `records.unsafe_config`. A tip scanned clean is kept as `clean
   {sha, scanner}` per workspace and branch in the person's `records.json`; an entry of another scanner version means
   a full rescan. Never a non-fast-forward. A missing remote branch needs
   `push --initial` (terminal). **The mark binds that URL string; the person's own settings (ssh config, credential
@@ -6122,10 +6126,13 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
   failed after the commit landed); exit 0 or the code's exit. A third argv reads the status:
   `python -I -m orch.records status --workspace <id> --json` resolves the effective push URL as a push does, calls
   `records.status {current_url}` and prints `{ok:true, detail:{status}}` (the host's answer with `local` and
-  `configured` as the tool sees them now, and `remote.current_url`, `current_private`, `matches_last`). It is
-  **strictly read-only**: no fetch and no network (`ls-remote --get-url` only, `GIT_NO_LAZY_FETCH=1`), no lock file,
-  no run log, no object written (the index is compared with `diff-index --cached`, never `write-tree`); it writes
-  only a throwaway temporary transport directory, the one push uses to check the literal URL. Same gitsafe and
+  `configured` as the tool sees them now, and `remote.current_url`, `current_private`, `matches_last`). What it does
+  exactly: **no writes to the records repo and no network** (`ls-remote --get-url` only, `GIT_NO_LAZY_FETCH=1`; the
+  index is compared with `diff-index --cached`, never `write-tree`), no records lock file and no run log, and a
+  throwaway temporary transport directory (the one push uses to check the literal URL). It **may record the
+  convenience mark** (when the host's scan of the merged history or cut tails finds a convenience event: a host
+  observation, as for any `records.status`), and in direct mode it opens the store, which takes the store lock and
+  may run its recovery, like any direct-mode read. Same gitsafe and
   environment rules as push (`HOME`, `PATH`, `SSH_AUTH_SOCK` at most); it fits the dashboard's bounded child (60 s,
   minimal environment, `python -I`).
 - **Auto mode and timer.** `auto on` asks on the terminal, writes the person's `auto` entry and installs a per-user

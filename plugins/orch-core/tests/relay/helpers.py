@@ -63,6 +63,7 @@ class Holder:
             None if gen is None and pending is None else HolderRecord(last_holder, gen, instance_id or iid, pending)
         )
         self.saved, self.records = [], []
+        self.history = None  # history_problem(): None, or the cause (a linked directory missing holder.json)
 
     @property
     def gen(self):
@@ -80,6 +81,9 @@ class Holder:
 
     def load(self):
         return self.rec
+
+    def history_problem(self):
+        return self.history
 
     def save(self, rec):
         self.rec = rec

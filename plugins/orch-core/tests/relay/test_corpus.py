@@ -110,8 +110,32 @@ def test_the_vector_file_is_stored_compressed_only():
 
 
 def test_a_tampered_compressed_file_fails_the_pin(tmp_path, monkeypatch):
-    """The pin is over the decompressed bytes: a different (validly compressed) vector file fails it."""
+    """The pin is over the decompressed bytes and checked at load time (round 7): a different, validly compressed
+    vector file is refused by the loader itself."""
+    good = corpus.vectors_bytes()
     other = tmp_path / "vectors_v2.json.xz"
-    other.write_bytes(lzma.compress(corpus.vectors_bytes() + b" ", format=lzma.FORMAT_XZ))
+    other.write_bytes(lzma.compress(good + b" ", format=lzma.FORMAT_XZ, preset=0))
     monkeypatch.setattr(corpus, "VECTORS_PATH", other)
-    assert hashlib.sha256(corpus.vectors_bytes()).hexdigest() != corpus.source()["vectors_v2_sha256"]
+    with pytest.raises(corpus.CorpusError, match="vectors_v2_sha256"):
+        corpus.vectors_bytes()
+    other.write_bytes(lzma.compress(good, format=lzma.FORMAT_XZ, preset=0))  # recompressed, same bytes: accepted
+    assert corpus.vectors_bytes() == good
+
+
+def test_an_oversized_vector_file_is_refused_without_inflating_it(tmp_path, monkeypatch):
+    """A decompression bomb: 64 MiB + 1 zero bytes compress to a few KB; the loader stops at the bound."""
+    bomb = tmp_path / "vectors_v2.json.xz"
+    bomb.write_bytes(lzma.compress(bytes(corpus.MAX_VECTORS_BYTES + 1), format=lzma.FORMAT_XZ, preset=0))
+    monkeypatch.setattr(corpus, "VECTORS_PATH", bomb)
+    with pytest.raises(corpus.CorpusError, match="more than"):
+        corpus.vectors_bytes()
+    assert corpus.decompress(lzma.compress(bytes(10)), limit=10) == bytes(10)  # exactly at the bound: fine
+    with pytest.raises(corpus.CorpusError, match="more than"):
+        corpus.decompress(lzma.compress(bytes(11)), limit=10)
+
+
+def test_a_truncated_or_padded_vector_file_is_refused():
+    raw = lzma.compress(b"{}", format=lzma.FORMAT_XZ)
+    for bad in (raw[:-4], raw + b"x", b"not xz"):
+        with pytest.raises(corpus.CorpusError):
+            corpus.decompress(bad)

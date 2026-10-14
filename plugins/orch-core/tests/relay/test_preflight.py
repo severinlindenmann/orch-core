@@ -173,3 +173,181 @@ def test_hold_at_start_runs_the_preflight_again_after_an_earlier_pass(env):
     with pytest.raises(TakeoverRefused, match="pending"):
         s.hold()
     assert len(m.seen) == n
+
+
+# -- round 7, R6-1: a refusal sticks for every call kind, even after an earlier pass ------------------------------
+
+
+def _nothing_leaves(m, calls, s):
+    """Every entry point (and logout) is refused locally after a refusal: not one more request."""
+    n = len(m.seen)
+    for name in ENTRIES:
+        with pytest.raises(Fenced):
+            calls[name]()
+        assert len(m.seen) == n, name
+    s.logout()
+    assert len(m.seen) == n, "logout"
+
+
+def test_a_refusal_after_an_earlier_pass_sticks_on_every_entry_point(env):
+    """E1: ``login()`` passes the preflight; then a ``pending`` record (a probe that failed transiently) makes
+    ``hold()`` refuse. From then on login, challenge, every directory call, the session-less ``PUT card`` and the
+    logout send nothing."""
+    m, sim = env
+    clock = Clock(sim)
+    alarms = Alarms()
+    h = Holder(gen=3)
+    s = make_session(m.origin(), holder=h, clock=clock, alarms=alarms)
+    d = directory(s)
+    s.login()
+    assert s.logged_in and m.seen != []
+    h.rec = HolderRecord(True, 3, IID, 4)
+    with pytest.raises(TakeoverRefused, match="pending"):
+        s.hold()
+    h.rec = HolderRecord(True, 3, IID, None)  # even a holder.json that would pass now: the refusal sticks
+    _nothing_leaves(m, _entry_points(m, s, d, clock), s)
+    assert alarms.codes() == ["relay_takeover_refused"]
+
+
+def test_a_probe_gen_mismatch_refuses_the_same_session_for_good(env):
+    """E2: ``hold()`` is the first call and passes the preflight; the renewal is fenced and the probe is granted gen 6,
+    not stored+1 = 4 (another holder, or a restored state). The same session then sends nothing at all."""
+    m, sim = env
+    sim.holders[WS] = (5, sim.now - 1)  # someone else held 4 and 5 meanwhile; the lease lapsed
+    clock = Clock(sim)
+    alarms = Alarms()
+    s = make_session(m.origin(), holder=Holder(gen=3), clock=clock, alarms=alarms)
+    d = directory(s)
+    with pytest.raises(TakeoverRefused, match="relay gen 6 != stored"):
+        s.hold()
+    _nothing_leaves(m, _entry_points(m, s, d, clock), s)
+    assert alarms.codes() == ["relay_takeover_refused"]
+
+
+def test_logout_after_a_refusal_sends_nothing_and_forgets_the_token(env):
+    """E6: the logout bypasses ``call()``; after a refusal it sends nothing (the token is still forgotten)."""
+    m, sim = env
+    clock = Clock(sim)
+    h = Holder(gen=3)
+    s = make_session(m.origin(), holder=h, clock=clock)
+    s.login()
+    h.rec = HolderRecord(True, 3, IID, 4)
+    with pytest.raises(TakeoverRefused):
+        s.hold()
+    n = len(m.seen)
+    s.logout()
+    assert len(m.seen) == n and not s.logged_in
+
+
+def test_only_the_operator_takeover_clears_a_refusal_after_a_pass(env):
+    m, sim = env
+    clock = Clock(sim)
+    h = Holder(gen=3)
+    s = make_session(m.origin(), holder=h, clock=clock)
+    s.login()
+    h.rec = HolderRecord(True, 3, IID, 4)
+    with pytest.raises(TakeoverRefused):
+        s.hold()
+    with pytest.raises(TakeoverRefused):
+        s.preflight()
+    assert s.operator_takeover().gen == 4
+    n = len(m.seen)
+    directory(s).get_card()
+    assert len(m.seen) > n
+
+
+# -- round 7, R6-3: a linked directory without holder.json / instance.json is not a first link ---------------------
+
+
+def _linked_dir(tmp_path, name, state="linked"):
+    """A state directory that held gen 3 and whose ``link.json`` says ``state``; returns its path (closed)."""
+    path = tmp_path / name
+    with StateDir(path) as st:
+        h = FileHolderStore(st)
+        h.save(HolderRecord(True, 3, h.instance_id(), None))
+        st.write_json("link.json", {"v": 1, "state": state})
+    return path
+
+
+def _restored(tmp_path, missing):
+    """``missing``: "holder" deletes holder.json in place (a selective restore); "both" restores a copy without
+    holder.json and instance.json (``rsync --exclude``)."""
+    import os
+
+    src = _linked_dir(tmp_path, "relay-src")
+    if missing == "holder":
+        os.unlink(src / "holder.json")
+        return src
+    dst = tmp_path / "restored"
+    shutil.copytree(src, dst)
+    dst.chmod(0o700)
+    os.unlink(dst / "holder.json")
+    os.unlink(dst / "instance.json")
+    return dst
+
+
+@pytest.mark.parametrize("missing", ["holder", "both"])
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_a_linked_directory_missing_its_holder_files_sends_nothing(env, tmp_path, entry, missing):
+    """E3: ``link.json`` says ``linked`` but ``holder.json`` (and ``instance.json``) are gone: the preflight refuses on
+    every entry point, names the operator path, and nothing is sent."""
+    m, sim = env
+    with StateDir(_restored(tmp_path, missing)) as st:
+        clock = Clock(sim)
+        alarms = Alarms()
+        s = make_session(m.origin(), holder=FileHolderStore(st), clock=clock, alarms=alarms)
+        d = directory(s)
+        calls = _entry_points(m, s, d, clock)
+        calls["first_link"] = lambda: first_link(
+            Steps(make_card(m.origin())), s, d, make_retrier(clock), store=st
+        )  # the link state is the store's too: the first link resumes "linking", so the preflight decides
+        with pytest.raises(TakeoverRefused, match="link.json says state 'linked'"):
+            calls[entry]()
+        assert "orch host relay takeover" in alarms[0][1]
+        assert ("instance.json" in alarms[0][1]) == (missing == "both")
+        for other in ENTRIES:
+            with pytest.raises(Fenced):
+                calls[other]()
+        assert m.seen == [] and alarms.codes() == ["relay_takeover_refused"]
+
+
+def test_the_operator_takeover_recovers_a_linked_directory_missing_its_holder_files(env, tmp_path):
+    m, sim = env
+    with StateDir(_restored(tmp_path, "both")) as st:
+        clock = Clock(sim)
+        h = FileHolderStore(st)
+        s = make_session(m.origin(), holder=h, clock=clock)
+        with pytest.raises(TakeoverRefused):
+            s.login()
+        got = s.operator_takeover()
+        assert got.gen == 4 and h.load() == HolderRecord(True, 4, h.instance_id(), None)
+        s.login()
+    with StateDir(st.path) as again:  # a restart after the recovery passes the preflight
+        s2 = make_session(m.origin(), holder=FileHolderStore(again), clock=Clock(sim))
+        assert s2.preflight() is not None
+
+
+@pytest.mark.parametrize("state", ["linking", None])
+def test_a_true_first_link_without_holder_files_still_proceeds(env, tmp_path, state):
+    """The control: ``linking`` (or no ``link.json`` yet) with neither ``holder.json`` nor ``instance.json`` is a true
+    first link: the preflight passes and the request leaves."""
+    m, sim = env
+    path = tmp_path / "fresh"
+    with StateDir(path) as st:
+        if state is not None:
+            st.write_json("link.json", {"v": 1, "state": state})
+        s = make_session(m.origin(), holder=FileHolderStore(st), clock=Clock(sim))
+        assert s.preflight() is None
+        s.login()
+    assert m.seen != []
+
+
+@pytest.mark.parametrize("state", ["unlinked", 7, "x" * 100])
+def test_any_link_state_other_than_linking_counts_as_past_link(env, tmp_path, state):
+    m, sim = env
+    with StateDir(tmp_path / "odd") as st:
+        st.write_json("link.json", {"v": 1, "state": state})
+        s = make_session(m.origin(), holder=FileHolderStore(st), clock=Clock(sim))
+        with pytest.raises(TakeoverRefused, match="restored or copied linked"):
+            s.login()
+    assert m.seen == []

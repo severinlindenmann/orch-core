@@ -27,6 +27,9 @@ code can always traverse objects; this test keeps the package's own code honest)
 * Round 6 (orch-52 #4): relative imports are resolved with their level against the module's own package
   (``from ..crypto import sign`` is ``orch.crypto.sign``; one that climbs above ``orch`` is refused), and every ``.py``
   under the package is scanned, subpackages and plain subdirectories included (``rglob``).
+* Known gaps (round 7, R6-6; defence in depth, so documented rather than closed): attribute chains through an
+  allowed import are not matched against the banned modules (``import orch; orch.host.custody.x``), nor are value
+  aliases (``c = crypto; c.sign(...)``, ``for m in [crypto]: m.sign``, a module passed as an argument).
 * No HTTP library but ``http.client`` (no ``urllib``, which reads proxy variables from the environment).
 
 ``ALLOWED`` lists the exceptions, each with its reason.

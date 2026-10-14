@@ -215,6 +215,7 @@ class RelayConn:
                 if source_address:
                     sock.bind(source_address)
                 self._connect(sock, sa)
+                self._check_after_connect()
             except OSError as e:
                 sock.close()
                 if self._shut.is_set() or self._fired.is_set():
@@ -237,6 +238,17 @@ class RelayConn:
             raise OSError("connection shut down")
         if self._fired.is_set() or self._mono() >= self._deadline:
             raise TimeoutError("deadline passed before connect")
+
+    def _check_after_connect(self) -> None:
+        """Recheck right after ``connect`` returns, before a byte is sent (round 7, R6-2): a ``shutdown()`` (or the
+        watchdog) that landed between the install check and ``connect`` hit a socket not yet connected (ENOTCONN,
+        swallowed), and on Darwin a ``shutdown()`` during a pending connect can even make ``connect`` return success.
+        Here the socket is connected, so a later ``shutdown()`` reaches it; one that already happened fails the call
+        (the caller closes the socket)."""
+        if self._shut.is_set():
+            raise OSError("connection shut down")
+        if self._fired.is_set():
+            raise TimeoutError("deadline passed during connect")
 
     @staticmethod
     def _connect(sock: socket.socket, sa: object) -> None:

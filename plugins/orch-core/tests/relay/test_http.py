@@ -640,3 +640,60 @@ def test_a_shutdown_between_the_lookup_and_the_install_never_connects(listener):
         call(c, deadline_s=5)
     assert e.value.kind == "shutdown"
     assert not _accepted(listener)
+
+
+def test_a_shutdown_racing_connect_sends_no_byte(listener):
+    """Round 7 (R6-2): ``shutdown()`` lands after the install check and before the real ``connect`` (it hits a socket
+    not yet connected: ENOTCONN, swallowed; on Darwin a shutdown during a pending connect can even let ``connect``
+    succeed). The post-connect recheck fails the call before a byte is sent: the server sees no request."""
+
+    class ShutInConnect(http.RelayConn):
+        def _connect(self, sock, sa):
+            self.shutdown()
+            sock.connect(sa)
+
+    c = ShutInConnect(f"http://127.0.0.1:{listener.getsockname()[1]}")
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=2)
+    assert e.value.kind == "shutdown"
+    listener.settimeout(1)
+    try:
+        peer, _ = listener.accept()
+    except TimeoutError:
+        return  # the connect itself failed: nothing reached the server either
+    peer.settimeout(2)
+    try:
+        got = peer.recv(65536)
+    except ConnectionResetError:
+        got = b""
+    finally:
+        peer.close()
+    assert got == b"", got
+
+
+def test_a_deadline_firing_during_connect_sends_no_byte(listener):
+    """The watchdog's counterpart: it fired while ``connect`` ran (so its kill found an unconnected socket); the
+    recheck after ``connect`` fails the call as a deadline, with no byte sent."""
+
+    class FireInConnect(http.RelayConn):
+        def _connect(self, sock, sa):
+            self._fired.set()
+            sock.connect(sa)
+
+    c = FireInConnect(f"http://127.0.0.1:{listener.getsockname()[1]}")
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=2)
+    assert e.value.kind == "deadline"
+    listener.settimeout(1)
+    try:
+        peer, _ = listener.accept()
+    except TimeoutError:
+        return
+    peer.settimeout(2)
+    try:
+        got = peer.recv(65536)
+    except ConnectionResetError:
+        got = b""
+    finally:
+        peer.close()
+    assert got == b"", got

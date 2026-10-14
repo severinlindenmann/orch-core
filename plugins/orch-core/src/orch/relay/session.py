@@ -177,8 +177,10 @@ class Session:
         :class:`RelayRefused` (or :class:`Fenced` for 409 ``fenced``)."""
         if holder and self._fenced:
             raise Fenced("fenced: writes stopped")
-        if not self._checked:
-            self.preflight()  # no request of any kind leaves before the local checks pass (round 6, orch-52 #1)
+        if not self._checked or self._refused is not None:
+            # No request of any kind leaves before the local checks pass (round 6, orch-52 #1), and a refusal sticks
+            # even after an earlier pass (round 7, R6-1): preflight() re-raises it; only operator_takeover clears it.
+            self.preflight()
         data = None if body is None else wire.dumps_body(body, cap=request_cap)
         resent = False
         while True:
@@ -290,9 +292,10 @@ class Session:
         log.info("relay login ok workspace=%s", self.workspace_id)
 
     def logout(self, deadline_s: float = 5.0) -> None:
-        """Best effort; the token is forgotten whatever the answer."""
+        """Best effort; the token is forgotten whatever the answer. After a refusal nothing is sent, not even the logout
+        (round 7, R6-1: a refused session reaches the relay again only through :meth:`operator_takeover`)."""
         token, self._token = self._token, None
-        if token is None:
+        if token is None or self._refused is not None:
             return
         try:
             self._t.request(
@@ -338,7 +341,8 @@ class Session:
            (the lease lapses in 40 s).
         7. An answer that carries no ``gen``: alarm.
 
-        A state directory that never held (no ``holder.json``) acquires with ``{gen: null}`` (the first link)."""
+        A state directory that never held (no ``holder.json``) acquires with ``{gen: null}`` (the first link), unless
+        ``link.json`` says it was already linked (round 7, R6-3: refused, operator path)."""
         if self._fenced:
             raise Fenced("fenced: writes stopped")
         if self._gen is not None:
@@ -368,17 +372,24 @@ class Session:
         3. (a) this state directory was the last holder and (b) ``holder.json`` carries this directory's instance id,
            and a stored ``gen`` exists.
 
-        A directory that never held (no ``holder.json``) passes 1 and returns ``None`` (the first link). A failure
-        alarms ``relay_takeover_refused`` and raises :class:`TakeoverRefused`; the session then refuses every later call
-        locally until :meth:`operator_takeover`. A :class:`StateError` (unreadable or older-format state) propagates
-        and nothing is sent either. Returns the holder record that passed."""
+        A directory that never held (no ``holder.json``) passes 1 and returns ``None`` (the first link), unless its
+        history says otherwise (round 7, R6-3: :meth:`HolderStore.history_problem`; ``link.json`` already ``linked``
+        but ``holder.json`` and/or ``instance.json`` missing is a restored or copied directory, not a first link). A
+        failure alarms ``relay_takeover_refused`` and raises :class:`TakeoverRefused`; the session then refuses every
+        later call locally, whatever passed before (round 7, R6-1), until :meth:`operator_takeover`. A
+        :class:`StateError` (unreadable or older-format state) propagates and nothing is sent either. Returns the
+        holder record that passed."""
         if self._refused is not None:
             raise TakeoverRefused(self._refused)
         why = self._holder.binding_problem()
         if why is not None:
             self._refuse(f"{why}; confirm with `orch host relay takeover`")
         rec = self._holder.load()
-        if rec is not None:
+        if rec is None:
+            why = self._holder.history_problem()
+            if why is not None:
+                self._refuse(f"{why}; recover with `orch host relay takeover`")
+        else:
             if rec.pending is not None:
                 self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
                              "`orch host relay takeover`")  # fmt: skip

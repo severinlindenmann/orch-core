@@ -126,7 +126,10 @@ def _walk_to_parent(path: Path) -> int:
             except FileNotFoundError:
                 raise StateError(f"{current} does not exist") from None
             except OSError as e:  # ELOOP/ENOTDIR: a symlinked or non-directory ancestor
-                raise StateError(f"{current}: a symlink or not a directory ({e.strerror or e})") from None
+                raise StateError(
+                    f"{current}: a symlink or not a directory ({e.strerror or e}); pass the resolved path (on macOS "
+                    "/tmp, /var and $TMPDIR are symlinks: use /private/tmp/..., /private/var/...)"
+                ) from None
             os.close(fd)
             fd = nxt
             _check_ancestor(fd, current, uid)
@@ -423,6 +426,13 @@ class HolderStore(Protocol):
 
     def load(self) -> HolderRecord | None: ...
 
+    def history_problem(self) -> str | None:
+        """Asked by the preflight only when ``holder.json`` is absent: ``None`` if that is a true first link, else the
+        cause. ``link.json`` already past ``linking`` (``linked``) while ``holder.json`` and/or ``instance.json`` is
+        missing means a restored or copied linked directory, which must not pass as a fresh first link (round 7,
+        R6-3). ``linking`` with both absent stays legitimate."""
+        ...
+
     def save(self, rec: HolderRecord) -> None:
         """Durable before it returns."""
         ...
@@ -465,10 +475,12 @@ class FileHolderStore:
 
     FILE = "holder.json"
     INSTANCE = "instance.json"
+    LINK = "link.json"
 
     def __init__(self, state: StateDir) -> None:
         self._s = state
-        state.claim(self.INSTANCE, _instance_record(state, new_instance_id()))
+        # True when instance.json did not exist and this very open created it (round 7, R6-3)
+        self._fresh_instance = state.claim(self.INSTANCE, _instance_record(state, new_instance_id()))
 
     def _instance(self) -> dict[str, Any]:
         obj = self._s.read_json(self.INSTANCE)
@@ -514,6 +526,20 @@ class FileHolderStore:
         if type(rec.instance_id) is not str:
             raise StateError("holder.json shape")
         return rec
+
+    def history_problem(self) -> str | None:
+        link = self._s.read_json(self.LINK)
+        if link is None:
+            return None  # nothing linked yet (first_link refuses to start without link.json anyway)
+        state = link.get("state") if type(link) is dict else None
+        if state == "linking":
+            return None  # a true first link (or its resume): holder.json comes with the first hold
+        missing = "holder.json and instance.json are" if self._fresh_instance else "holder.json is"
+        shown = state if type(state) is str and len(state) <= 32 else "?"
+        return (
+            f"link.json says state {shown!r} but {missing} missing: a restored or copied linked state directory, "
+            "not a first link"
+        )
 
     def save(self, rec: HolderRecord) -> None:
         self._s.write_json(

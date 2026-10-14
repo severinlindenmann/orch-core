@@ -367,6 +367,35 @@ def test_a_symlinked_ancestor_is_refused(tmp_path):
         StateDir(tmp_path / "link" / "deeper" / "relay")
 
 
+def test_the_resolved_path_works_where_the_symlinked_one_is_refused(tmp_path):
+    """Round 7 (R6-4): R5 must hand ``StateDir`` a RESOLVED path from trusted config. The refusal names the fix."""
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    (tmp_path / "link").symlink_to(real)
+    with pytest.raises(StateError, match="pass the resolved path"):
+        StateDir(tmp_path / "link" / "relay")
+    with StateDir(os.path.realpath(tmp_path / "link") + "/relay") as st:
+        assert st.path == real / "relay"
+
+
+@pytest.mark.skipif(not os.path.islink("/tmp"), reason="/tmp is a symlink on macOS (to /private/tmp) only")
+def test_macos_tmp_and_tmpdir_prefixes_are_refused():
+    """Documents the macOS behaviour: ``/tmp``, ``/var/folders`` and ``$TMPDIR`` sit under symlinks (``/tmp``,
+    ``/var``), so a state path under them is refused before anything is created; ``/private/...`` is the resolved form.
+    The production default under ``/Users/<u>`` has no symlinked ancestor."""
+    import secrets
+
+    name = f"orch-r7-{secrets.token_hex(6)}"
+    candidates = [f"/tmp/{name}"]
+    tmpdir = os.environ.get("TMPDIR", "")
+    if tmpdir.startswith("/var/"):
+        candidates.append(os.path.join(tmpdir, name))
+    for path in candidates:
+        with pytest.raises(StateError, match="symlink"):
+            StateDir(path)
+        assert not os.path.exists(os.path.realpath(path))
+
+
 @pytest.mark.parametrize("mode", [0o777, 0o770, 0o757, 0o722, 0o1777])
 def test_a_too_open_ancestor_is_refused(tmp_path, mode):
     """Group or other write on an ancestor owned by this user (a sticky bit only helps a root-owned one, like /tmp)."""

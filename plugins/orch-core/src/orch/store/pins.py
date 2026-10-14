@@ -28,7 +28,9 @@ from .errors import StoreError
 from .fsio import loads, read_or_none, write_atomic
 
 __all__ = [
+    "MAX_FORWARDED_HARD",
     "MAX_FORWARDED_PER_DEVICE",
+    "MAX_FORWARDED_PER_PERSON_HARD",
     "MAX_FORWARDED_PER_PERSON",
     "MAX_FORWARDED_TOTAL",
     "HostPins",
@@ -38,7 +40,12 @@ __all__ = [
 
 MAX_FORWARDED_PER_DEVICE = 8  # forwarded (not chain) evidence records per device id
 MAX_FORWARDED_PER_PERSON = 64  # forwarded evidence records per revoking person, members included
-MAX_FORWARDED_TOTAL = 4096  # forwarded evidence records in total
+MAX_FORWARDED_TOTAL = 1024  # forwarded evidence records in total (the eviction cap; H12b review lowered it from 4096)
+# Absolute bounds (H12b review, Opus F2/D1): non-owner forwarded records never exceed MAX_FORWARDED_HARD, and every
+# person, the owner included, has at most MAX_FORWARDED_PER_PERSON_HARD: at most (1536 + 256) x 6 KiB, about 10.5 MiB.
+MAX_FORWARDED_HARD = 1536  # non-owner forwarded records in total (members over MAX_FORWARDED_TOTAL included)
+MAX_FORWARDED_PER_PERSON_HARD = 256  # forwarded records per person, the pinned owner included
+MAX_FORWARDED_RECORD_BYTES = 6144  # one forwarded record as stored (cj); a larger one is dropped
 _STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}  # compromised > lost = retired (§5.10)
 
 
@@ -112,7 +119,10 @@ class HostPins:
     def revocations(self) -> list[dict[str, Any]]:
         """The effective evidence per ``(device, person)`` pair (§5.10), sorted by the pair: another person's evidence
         for the same device id is a separate record, never merged into or replacing this one."""
-        raw = read_or_none(self._revocations)
+        # No size limit (review round 2, Opus D2): only the host writes this file, forwarded records are capped
+        # (MAX_FORWARDED_*) and chain records grow only with accepted history (one per pair, each bounded by the
+        # event line cap), so a fixed read limit could only turn a long history into store.torn_write.
+        raw = read_or_none(self._revocations, None)
         if not raw:
             return []
         out = {}
@@ -184,6 +194,8 @@ class HostPins:
             if old is not None and not stronger:
                 return True
             new["chain"] = False
+            if len(canon.cj_checked(new)) > MAX_FORWARDED_RECORD_BYTES:
+                return False  # forwarded evidence is bounded per record (H12b review, Opus F2)
             if old is None:
                 if is_member is None:
                     raise TypeError("forwarded evidence needs is_member (the current roster)")
@@ -210,6 +222,8 @@ class HostPins:
     ) -> list[dict[str, Any]] | None:
         """``records`` with room for one more forwarded record of ``(device, person)``, or None to drop it."""
         forwarded = [r for r in records if is_forwarded(r)]
+        if sum(pair(r)[1] == person for r in forwarded) >= MAX_FORWARDED_PER_PERSON_HARD:
+            return None  # the absolute per-person bound: the owner too
         if person != owner and sum(pair(r)[1] == person for r in forwarded) >= MAX_FORWARDED_PER_PERSON:
             return None  # the per-person cap; the pinned owner is exempt
         member = is_member(person)
@@ -226,6 +240,8 @@ class HostPins:
                 gone = min(victims, key=lambda r: r["at"])
                 records = [r for r in records if r is not gone]
                 forwarded = [r for r in forwarded if r is not gone]
+        if person != owner and sum(pair(r)[1] != owner for r in forwarded) >= MAX_FORWARDED_HARD:
+            return None  # the absolute total bound over non-owner records; the owner has its own 256 (review D1)
         return records
 
     def held(self) -> dict[str, Any] | None:
@@ -240,19 +256,35 @@ class HostPins:
         write_atomic(self.dir / "checkpoint.json", canon.cj_checked(cp) + b"\n", mode=0o600)
 
     def high_n(self) -> int:
-        """The highest workspace checkpoint ``n`` this host ever accepted (0 if none). Read from ``checkpoint-n`` once
-        and cached; a host that predates the file falls back to its held checkpoint, once."""
-        if self._mark is None:
-            raw = read_or_none(self.dir / "checkpoint-n")
-            try:
-                mark = int(raw) if raw else 0
-            except ValueError:
-                raise StoreError("store.torn_write", "unreadable checkpoint high-water mark") from None
-            if not raw:
-                held = self.held()
-                mark = held["o"]["n"] if held and "o" in held else 0
-            self._mark = mark
-        return self._mark
+        """The checkpoint numbering high-water mark (0 if none): the highest ``n`` ever reserved (:meth:`reserve_n`) or
+        accepted. Read from ``checkpoint-n`` on every call (one small file; another store may have reserved since); a
+        host that predates the file falls back to its held checkpoint."""
+        raw = read_or_none(self.dir / "checkpoint-n")
+        try:
+            mark = int(raw) if raw else 0
+        except ValueError:
+            raise StoreError("store.torn_write", "unreadable checkpoint high-water mark") from None
+        if not raw:
+            held = self.held()
+            mark = held["o"]["n"] if held and "o" in held else 0
+        self._mark = mark
+        return mark
+
+    def reserve_n(self, n: int) -> None:
+        """Reserve checkpoint number ``n`` durably (H12b review, Opus F1).
+
+        **Invariant: no workspace checkpoint ``n`` is signed unless it is reserved first, and a reserved ``n`` is never
+        reused.** The store calls this before it signs anything numbered ``n`` (an append's planned checkpoint, any
+        other workspace checkpoint, a restore target, catch-up prefixes), so ``high_n()`` is at least the ``n`` of
+        everything that was ever signed, wherever the bytes went (the outbox, the relay, a crashed pending
+        directory), and the next number is read from this one value. A number burned by a crash costs nothing.
+        Never lowers the mark."""
+        if type(n) is not int or n < 1:
+            raise StoreError("validation.outbox", "a checkpoint n is a positive integer")
+        if n > self.high_n():
+            self.dir.mkdir(parents=True, exist_ok=True)
+            write_atomic(self.dir / "checkpoint-n", str(n).encode() + b"\n", mode=0o600)
+            self._mark = n
 
     @contextmanager
     def _heads(self) -> Iterator[sqlite3.Connection]:

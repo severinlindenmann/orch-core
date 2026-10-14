@@ -134,6 +134,31 @@ def test_an_oversized_vector_file_is_refused_without_inflating_it(tmp_path, monk
         corpus.decompress(lzma.compress(bytes(11)), limit=10)
 
 
+def test_decompression_stays_bounded_by_the_cap(monkeypatch):
+    """Round 8 (M12): the refusal is not enough; the decompressor itself never produces more than cap + 1 bytes, so a
+    bomb is never inflated in memory (a decompress-then-check loader would produce all 8 MiB here)."""
+    produced: list[int] = []
+    real = lzma.LZMADecompressor
+
+    class Recording:
+        def __init__(self, *a, **kw):
+            self._d = real(*a, **kw)
+
+        def decompress(self, data, max_length=-1):
+            out = self._d.decompress(data, max_length)
+            produced.append(len(out))
+            return out
+
+        def __getattr__(self, name):
+            return getattr(self._d, name)
+
+    monkeypatch.setattr(corpus.lzma, "LZMADecompressor", Recording)
+    cap = 4096
+    with pytest.raises(corpus.CorpusError, match="more than"):
+        corpus.decompress(lzma.compress(bytes(8 << 20), format=lzma.FORMAT_XZ, preset=0), limit=cap)
+    assert produced and sum(produced) <= cap + 1
+
+
 def test_a_truncated_or_padded_vector_file_is_refused():
     raw = lzma.compress(b"{}", format=lzma.FORMAT_XZ)
     for bad in (raw[:-4], raw + b"x", b"not xz"):

@@ -322,13 +322,17 @@ class StateDir:
                 raise
 
     def read_json(self, name: str) -> Any:
+        """The parsed file, or ``None`` only when it does not exist; unreadable, not JSON or ``null``: StateError."""
         raw = self.read(name)
         if raw is None:
             return None
         try:
-            return json.loads(raw)
+            obj = json.loads(raw)
         except ValueError as e:
             raise StateError(f"{name}: not JSON") from e
+        if obj is None:  # None means "the file does not exist" to every caller, never "it says null" (round 8, R7-1)
+            raise StateError(f"{name}: null")
+        return obj
 
     def write_json(self, name: str, obj: Any) -> None:
         self.write(name, json.dumps(obj, sort_keys=True, separators=(",", ":")).encode())

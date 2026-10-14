@@ -106,7 +106,9 @@ def _int(v: object, low: int = 0) -> int:
 
 
 class Session:
-    """One workspace session against one relay origin (one per worker thread, sharing the login lock)."""
+    """One workspace session against one relay origin. ONE Session per state directory, shared by the workspace's relay
+    threads (poll, resp, pub, aux): the login lock, the preflight pass and the sticky refusal are fields of this object,
+    so a second Session on the same directory would not see this one's refusal (round 8, R7-4; 11A.5)."""
 
     def __init__(
         self,
@@ -378,9 +380,16 @@ class Session:
         failure alarms ``relay_takeover_refused`` and raises :class:`TakeoverRefused`; the session then refuses every
         later call locally, whatever passed before (round 7, R6-1), until :meth:`operator_takeover`. A
         :class:`StateError` (unreadable or older-format state) propagates and nothing is sent either. Returns the
-        holder record that passed."""
+        holder record that passed.
+
+        The refusal (and the pass) is per :class:`Session` object (round 8, R7-4): R5 keeps ONE Session per state
+        directory (shared by its relay threads), or shares the refusal state between them; a refusal raised in one
+        Session does not stop another Session that already passed."""
         if self._refused is not None:
             raise TakeoverRefused(self._refused)
+        # Not passed until this run passes (round 8, R7-2): a StateError raised now, after an earlier pass, makes every
+        # later call run the preflight again, and fail again while the state stays unreadable.
+        self._checked = False
         why = self._holder.binding_problem()
         if why is not None:
             self._refuse(f"{why}; confirm with `orch host relay takeover`")

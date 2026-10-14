@@ -10,7 +10,7 @@ import pytest
 
 from orch.relay.link import first_link
 from orch.relay.session import Fenced, TakeoverRefused
-from orch.relay.state import FileHolderStore, HolderRecord, StateDir
+from orch.relay.state import FileHolderStore, HolderRecord, StateDir, StateError
 
 from .helpers import GENESIS, GENESIS_CERT, GENESIS_PIN, OWNER_PK, WS, Alarms, Clock, Holder, directory, make_card
 from .helpers import retrier as make_retrier
@@ -351,3 +351,79 @@ def test_any_link_state_other_than_linking_counts_as_past_link(env, tmp_path, st
         with pytest.raises(TakeoverRefused, match="restored or copied linked"):
             s.login()
     assert m.seen == []
+
+
+@pytest.mark.parametrize("doc", [[], "linked", "linking", 3, [{"state": "linking"}]])
+def test_a_link_json_that_is_not_an_object_counts_as_past_link(env, tmp_path, doc):
+    """Round 8 (M8): a ``link.json`` that is a list, a string or a number is never ``linking``: refused, none sent."""
+    m, sim = env
+    with StateDir(tmp_path / "odd") as st:
+        st.write_json("link.json", doc)
+        s = make_session(m.origin(), holder=FileHolderStore(st), clock=Clock(sim))
+        with pytest.raises(TakeoverRefused, match="restored or copied linked"):
+            s.login()
+    assert m.seen == []
+
+
+# -- round 8, R7-1: a state file that says JSON null is unreadable, never "absent" --------------------------------
+
+
+def _null_dir(tmp_path, which):
+    path = tmp_path / f"null-{which}"
+    with StateDir(path) as st:
+        if which == "instance":
+            st.write("instance.json", b"null")  # before FileHolderStore claims it
+        FileHolderStore(st)
+        if which == "holder":
+            st.write_json("link.json", {"v": 1, "state": "linking"})
+            st.write("holder.json", b"null")
+        elif which == "link":
+            st.write("link.json", b"null")
+    return path
+
+
+@pytest.mark.parametrize("which", ["holder", "link", "instance"])
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_a_null_state_file_is_unreadable_not_absent(env, tmp_path, which, entry):
+    """``holder.json`` = ``null`` (with ``link.json`` ``linking``), ``link.json`` = ``null`` or ``instance.json`` =
+    ``null``: the preflight raises StateError on every entry point, every time, and nothing is sent."""
+    m, sim = env
+    with StateDir(_null_dir(tmp_path, which)) as st:
+        clock = Clock(sim)
+        s = make_session(m.origin(), holder=FileHolderStore(st), clock=clock)
+        d = directory(s)
+        calls = _entry_points(m, s, d, clock)
+        with pytest.raises(StateError, match="null"):
+            calls[entry]()
+        for other in ENTRIES:
+            with pytest.raises(StateError, match="null"):
+                calls[other]()
+    assert m.seen == []
+
+
+# -- round 8, R7-2: an unreadable state after an earlier pass stops every later call -------------------------------
+
+
+@pytest.mark.parametrize("bad", [b"null", b"{not json", b"[]"])
+def test_an_unreadable_holder_after_an_earlier_pass_stops_every_later_call(env, tmp_path, bad):
+    """``login()`` passes; then ``holder.json`` becomes unreadable: ``hold()`` raises StateError, and so does every
+    later entry point, with no request. Not sticky: once the file reads again, calls go out."""
+    m, sim = env
+    with StateDir(_linked_dir(tmp_path, "held")) as st:
+        clock = Clock(sim)
+        s = make_session(m.origin(), holder=FileHolderStore(st), clock=clock)
+        d = directory(s)
+        s.login()
+        good = st.read("holder.json")
+        st.write("holder.json", bad)
+        n = len(m.seen)
+        with pytest.raises(StateError):
+            s.hold()
+        calls = _entry_points(m, s, d, clock)
+        for name in ENTRIES:
+            with pytest.raises(StateError):
+                calls[name]()
+            assert len(m.seen) == n, name
+        st.write("holder.json", good)
+        d.get_card()
+        assert len(m.seen) > n

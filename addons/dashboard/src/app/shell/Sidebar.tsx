@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ShieldOff,
   SquareKanban,
+  Zap,
 } from 'lucide-react'
 import { api } from '@/api/client'
 import { hasFeature, isRealHost } from '@/api/features'
@@ -233,7 +234,7 @@ export function Sidebar() {
 
         <div className="relative flex min-h-0 flex-1 flex-col">
         <nav ref={navRef} className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
-          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id)).map(({ to, label: text, icon: Icon }) => (
+          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id) && (!('real' in n) || isRealHost())).map(({ to, label: text, icon: Icon }) => (
             <RailTip key={to} label={text}>
               <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' || to === '/tickets', includeSearch: false }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
                 <span className="relative">
@@ -421,4 +422,6 @@ const CORE_NAV = [
   { to: '/tickets', label: 'Tickets', icon: ListChecks, feature: 'tickets' },
   { to: '/artifacts', label: 'Artifacts', icon: Files, feature: 'artifacts' },
   { to: '/agents', label: 'Agents', icon: Bot, feature: 'agents' },
+  /** `real`: a real host's page (M6); the mock has quick tasks as an addon. */
+  { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick', real: true },
 ] as const

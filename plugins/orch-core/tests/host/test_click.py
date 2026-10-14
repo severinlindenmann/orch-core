@@ -800,7 +800,7 @@ def test_a_mark_that_cannot_be_written_refuses_the_convenience_append(click, ser
     def boom(*_a, **_k):
         raise OSError("no space left")
 
-    monkeypatch.setattr(readers, "mark_convenience_seen", boom)
+    monkeypatch.setattr(readers, "ensure_convenience_mark", boom)
     _, key = human.ticket()
     before = len(logged(served, key))
     with pytest.raises(ClickError) as info:

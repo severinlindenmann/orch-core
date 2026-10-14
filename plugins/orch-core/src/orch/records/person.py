@@ -95,16 +95,20 @@ class PersonState:
         self._save(doc)
 
     # -- tips scanned clean of convenience events (#441): a later scan covers only the objects added since
-    def clean(self, workspace_id: str, branch: str) -> str | None:
+    def clean(self, workspace_id: str, branch: str, scanner: int) -> str | None:
+        """The tip last scanned clean, if it was scanned under the scanner rules ``scanner`` (another version: a full
+        rescan)."""
         clean = self._doc().get("clean")
         v = ((clean if isinstance(clean, dict) else {}).get(workspace_id) or {}).get(branch)
-        return v if isinstance(v, str) else None
+        if not isinstance(v, dict) or v.get("scanner") != scanner or not isinstance(v.get("sha"), str):
+            return None
+        return v["sha"]
 
-    def set_clean(self, workspace_id: str, branch: str, sha: str) -> None:
+    def set_clean(self, workspace_id: str, branch: str, sha: str, scanner: int) -> None:
         doc = self._doc()
         if not isinstance(doc.get("clean"), dict):
             doc["clean"] = {}
-        doc["clean"].setdefault(workspace_id, {})[branch] = sha
+        doc["clean"].setdefault(workspace_id, {})[branch] = {"sha": sha, "scanner": scanner}
         self._save(doc)
 
     # -- auto mode

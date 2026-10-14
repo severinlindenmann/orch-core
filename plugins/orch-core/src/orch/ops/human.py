@@ -504,7 +504,7 @@ class Human:
     def _mark_seen(self, inner: Callable[[], None] | None) -> Callable[[], None]:
         """``precommit`` that also sets the durable ``convenience_seen`` mark (:mod:`orch.ops.readers`); a mark that
         cannot be written refuses the append (fail closed)."""
-        from orch.ops.readers import mark_convenience_seen
+        from orch.ops.readers import ensure_convenience_mark
 
         state_dir, wid = self.call.ws.state_dir, self.workspace_id
 
@@ -512,7 +512,7 @@ class Human:
             if inner is not None:
                 inner()
             try:
-                mark_convenience_seen(state_dir, wid, os.getuid())
+                ensure_convenience_mark(state_dir, wid, os.getuid())
             except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
                 raise OrchError(  # a global code: any person op may sign with convenience custody
                     "internal",

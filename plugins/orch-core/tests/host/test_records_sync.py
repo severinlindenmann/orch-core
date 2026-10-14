@@ -462,17 +462,20 @@ def test_a_pushurl_or_insteadof_change_after_marking_is_refused(r):
     assert checks[-2:] == [url_b, url_b]  # the export check saw the effective destination, not the configured one
 
 
-def _forge_convenience_commit(r) -> str:
-    """A records commit whose ``events/workspace.jsonl`` carries a convenience event the store does not have (a log
-    file outside the merged view, as after an owner repair), made with plumbing only: the store is never touched."""
+_CONV_LINE = json.dumps({"v": 2, "type": "log.added", "auth": "convenience", "text": "x"}, separators=(",", ":"))
+
+
+def _forge_convenience_commit(r, path: str = "events/workspace.jsonl", line: str = _CONV_LINE) -> str:
+    """A records commit whose ``path`` carries ``line`` beyond what the store has (for an event log: a log file outside
+    the merged view, as after an owner repair), made with plumbing only: the store is never touched."""
     env = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1",
            "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}  # fmt: skip
-    line = json.dumps({"v": 2, "type": "log.added", "auth": "convenience", "text": "x"}, separators=(",", ":"))
-    data = git(r.root, "show", "HEAD:events/workspace.jsonl").encode() + b"\n" + line.encode() + b"\n"
+    have = git(r.root, "show", f"HEAD:{path}", check=False).encode()
+    data = (have + b"\n" if have else b"") + line.encode() + b"\n"
     blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=data, capture_output=True,
                           env=env, check=True).stdout.decode().strip()  # fmt: skip
     git(r.root, "read-tree", "HEAD", env=env)
-    git(r.root, "update-index", "--cacheinfo", f"100644,{blob},events/workspace.jsonl", env=env)
+    git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}", env=env)
     tree = git(r.root, "write-tree", env=env)
     forged = git(r.root, "commit-tree", tree, "-p", "HEAD", "-m", records_message(r.w.wid, 9))
     git(r.root, "update-ref", "refs/heads/main", forged)
@@ -499,9 +502,9 @@ def test_a_convenience_event_in_a_pushed_log_outside_the_merged_view_is_refused(
         r.push(initial=True)
     assert e.value.code == "sign.convenience_readers"
     assert [a["history_convenience"] for op, a in r.calls if op == "records.export_check"] == [True]
-    assert seen_path(r.w.lab.state, r.w.wid).exists()  # the scan's report set the durable mark
+    assert not seen_path(r.w.lab.state, r.w.wid).exists()  # the tool's report never writes the durable mark
     assert git(r.tmp, "--git-dir", url[len("file://") :], "for-each-ref") == ""
-    assert r.tips.clean(r.w.wid, "main") is None  # a dirty tip is never remembered as clean
+    assert r.tips.clean(r.w.wid, "main", rtool.SCANNER_VERSION) is None  # a dirty tip is never remembered as clean
     monkeypatch.undo()
     # the owner marks this exact URL private: allowed
     assert r.cli("remote-private", "--yes")[0] == 0
@@ -511,12 +514,12 @@ def test_a_convenience_event_in_a_pushed_log_outside_the_merged_view_is_refused(
 @pytest.mark.slow
 def test_restore_then_push_is_refused(r):
     """The merged history and the pushed history are clean now, but a convenience event once landed (the mark)."""
-    from orch.ops.readers import mark_convenience_seen
+    from orch.ops.readers import ensure_convenience_mark
 
     r.init()
     r.commit()
     git(r.root, "remote", "add", "origin", r.bare())
-    mark_convenience_seen(r.w.lab.state, r.w.wid, os.getuid())
+    ensure_convenience_mark(r.w.lab.state, r.w.wid, os.getuid())
     code, out = r.cli("push", "--initial")
     assert code == 3 and out["code"] == "sign.convenience_readers"
 
@@ -543,7 +546,8 @@ def test_a_clean_tip_is_remembered_and_the_next_scan_covers_only_new_objects(r, 
     first = r.commit()
     git(r.root, "remote", "add", "origin", r.bare())
     assert r.push(initial=True)["pushed"]
-    assert r.tips.clean(r.w.wid, "main") == first["commit"]
+    assert r.tips.clean(r.w.wid, "main", rtool.SCANNER_VERSION) == first["commit"]
+    assert r.tips.clean(r.w.wid, "main", rtool.SCANNER_VERSION + 1) is None  # other rules: a full rescan
     seen: list = []
     real = rtool.history_has_convenience
     monkeypatch.setattr(rtool, "history_has_convenience", lambda repo, tip, since=None: seen.append(since) or real(
@@ -558,10 +562,53 @@ def test_the_scanner_reads_top_level_auth_only_and_fails_closed():
     has = rtool._blob_has_convenience  # noqa: SLF001
     assert has(b'{"a":1}\n{"auth":"convenience","type":"x"}\n')
     assert has(b'{"type":"x", "auth" : "convenience"}')
+    assert has(b'{"\\u0061uth":"convenience"}\n')  # an escaped key
+    assert has(b'{"auth":"\\u0063onvenience"}\n')  # an escaped value
+    assert has(b'{"auth":"convenience","auth":"passphrase"}\n')  # a duplicate key never hides it
     assert not has(b'{"auth":"passphrase","text":"\\"auth\\":\\"convenience\\""}\n')  # quoted in a text
     assert not has(b'{"auth":"passphrase","signer":{"auth":"convenience"}}\n')  # not the event's own auth
-    assert has(b'{"auth":"convenience", torn\n')  # a matching line that does not parse counts
-    assert not has(b"plain text about convenience\n")
+    assert has(b'{"auth":"passphrase", torn\n')  # a line of an event log that does not parse counts
+    assert has(b"[1, 2]\n")  # not an object
+    assert has(b"\xff\xfe\n")  # not UTF-8
+    assert has(b"[" * 100000 + b"\n")  # a nesting bomb: shaped, never an unhandled RecursionError
+    assert not has(b"\n\n")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("path", ["tickets/{uid}/body.md", "tickets/{uid}/artifacts/fixture.jsonl"])
+def test_an_agents_body_or_artifact_quoting_a_convenience_line_is_never_counted(r, path):
+    """Opus #454 M1, the PoC inverted: free text an agent writes is not an event log. Push allowed, no mark."""
+    from orch.ops.readers import seen_path
+
+    uid, _key = r.w.ticket("fixture")
+    r.init()
+    r.commit()
+    _forge_convenience_commit(r, path.format(uid=uid), '  "auth": "convenience",')
+    _forge_convenience_commit(r, path.format(uid=uid), _CONV_LINE)
+    r.commit()
+    git(r.root, "remote", "add", "origin", r.bare())
+    res = r.push(initial=True)
+    assert res["pushed"] and res["policy"] == "none"
+    assert [a["history_convenience"] for op, a in r.calls if op == "records.export_check"] == [False]
+    assert not seen_path(r.w.lab.state, r.w.wid).exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("line", ['{"\\u0061uth":"convenience","v":2}', '{"auth":"\\u0063onvenience","v":2}'])
+def test_an_escaped_convenience_event_in_a_pushed_log_is_refused(r, line):
+    r.init()
+    r.commit()
+    _forge_convenience_commit(r, "events/workspace.jsonl", line)
+    r.commit()
+    git(r.root, "remote", "add", "origin", r.bare())
+    with pytest.raises(RecordsError) as e:
+        r.push(initial=True)
+    assert e.value.code == "sign.convenience_readers"
+
+
+def test_the_records_git_never_lazy_fetches(r):
+    r.init()
+    assert r.repo().env()["GIT_NO_LAZY_FETCH"] == "1"
 
 
 def test_without_convenience_push_needs_no_mark(r):

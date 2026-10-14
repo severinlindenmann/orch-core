@@ -1078,10 +1078,10 @@ def _mark_seen(service: WorkspaceService) -> HostError | None:
     fails the submission before anything is appended (fail closed)."""
     from pathlib import Path
 
-    from orch.ops.readers import mark_convenience_seen
+    from orch.ops.readers import ensure_convenience_mark
 
     try:
-        mark_convenience_seen(Path(service.state_dir), service.workspace_id, service.host_uid, clock=service.clock)
+        ensure_convenience_mark(Path(service.state_dir), service.workspace_id, service.host_uid, clock=service.clock)
     except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
         return HostError(
             "custody.unsafe_mode",

@@ -337,6 +337,7 @@ def _base_env(env: Mapping[str, str], protocols: str) -> dict[str, str]:
         GIT_ALLOW_PROTOCOL=protocols,
         GIT_ATTR_NOSYSTEM="1",
         GIT_OPTIONAL_LOCKS="0",
+        GIT_NO_LAZY_FETCH="1",  # a partial clone never fetches a missing object behind a read (Opus #454 L2)
     )
     return base
 

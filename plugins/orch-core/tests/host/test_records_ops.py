@@ -166,17 +166,17 @@ def test_export_check_with_convenience_events_in_history(w, monkeypatch):
     assert e == "sign.convenience_readers"
 
 
-def test_export_check_refuses_on_the_pushed_history_report_and_sets_the_mark(w):
-    """#441: the tool's scan of the pushed history found a convenience event that the merged view no longer has."""
+def test_the_pushed_history_report_refuses_that_push_only_and_never_sets_the_mark(w):
+    """#441 (Opus #454 M1): the tool's report refuses the push it belongs to. Only the host's own observations write
+    the durable mark, so a report (true, false or a lie) can never block member.add for good."""
     from orch.ops.readers import seen_path
 
     c = w.client()
     args = {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": True}
     res = c.req("records.export_check", args)
     assert err(res) == "sign.convenience_readers" and "convenience-signed events" in res["error"]["message"]
-    assert seen_path(w.lab.state, w.wid).exists()
-    # the mark refuses later pushes whatever the report says
-    assert err(c.req("records.export_check", {**args, "history_convenience": False})) == "sign.convenience_readers"
+    assert not seen_path(w.lab.state, w.wid).exists()
+    assert ok(c.req("records.export_check", {**args, "history_convenience": False}))["policy"] == "none"
     ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
     data = ok(c.req("records.export_check", args))
     assert data["policy"] == "private_remote" and data["convenience"] is True

@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from orch import records as rec
-from orch.ops.readers import convenience_seen, has_convenience_events, mark_convenience_seen
+from orch.ops.readers import convenience_seen, ensure_convenience_mark, has_convenience_events
 
 from . import convenience
 from .custody import ensure_private_dir, read_json, write_private
@@ -440,15 +440,15 @@ def convenience_on(ctx: Ctx) -> bool:
 def _mark_seen(ctx: Ctx) -> None:
     """A scan found convenience events: set the mark (best effort; the answer is "seen" either way)."""
     with contextlib.suppress(Exception):
-        mark_convenience_seen(ctx.state_dir, ctx.workspace_id, ctx.host_uid, clock=ctx.clock)
+        ensure_convenience_mark(ctx.state_dir, ctx.workspace_id, ctx.host_uid, clock=ctx.clock)
 
 
 def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     now = float(ctx.clock())
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
-    pushed = args["history_convenience"]  # the tool's scan of everything reachable from sha (#441)
-    if pushed:
-        _mark_seen(ctx)
+    # the tool's scan of the event logs reachable from sha (#441): it refuses this push only and never writes the
+    # durable mark, which records only what the host itself observed (an append, a cut tail, its merged history)
+    pushed = args["history_convenience"]
     conv = pushed or convenience_on(ctx)
     mark = doc.get("private_remote")
     marked = isinstance(mark, dict) and mark.get("url") == args["url"]

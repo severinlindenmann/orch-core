@@ -79,6 +79,7 @@ def _open(root: Path, wid: str, state_dir: Path, findings: list[Finding]) -> Ins
     except StoreError as e:
         findings.append(Finding("error", "workspace", e.code, e.detail))
         return None
+    findings.extend(_pending_linked(root))
     if pin is None and s.genesis is not None:
         findings.append(
             Finding(
@@ -90,6 +91,23 @@ def _open(root: Path, wid: str, state_dir: Path, findings: list[Finding]) -> Ins
             )
         )
     return s
+
+
+def _pending_linked(root: Path) -> list[Finding]:
+    """A crashed append of a relay-linked workspace (its pending directory carries an outbox entry, H12b): named, so
+    an operator knows why a store without host state refuses to open; the next host open finishes it."""
+    out = []
+    pdir = root / ".state" / "pending"
+    for manifest in sorted(pdir.glob("*/manifest.json")) if pdir.is_dir() else []:
+        try:
+            m = json.loads(manifest.read_bytes())
+            if not isinstance(m, dict) or m.get("outbox") is None:
+                continue
+            what = f"a crashed append of event {m['id']} to {m['log']} carries a relay outbox entry"
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        out.append(Finding("warn", "workspace", "outbox.pending", what + "; the next host open finishes it", None))
+    return out
 
 
 def _label(s: InspectStore, log: str) -> str:

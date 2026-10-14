@@ -1114,7 +1114,11 @@ class Store:
         bad entry is reported (``store.torn_write``) and left out; on the append's own path it raises."""
         if self._outbox is None or self._pins is None:
             # a store without the host state dir cannot install it: keep the pending directory for one that can
-            raise StoreError("validation.host_state", "a pending append carries an outbox entry; open with host state")
+            raise StoreError(
+                "validation.host_state",
+                f"the pending append of event {m['id']} to {m['log']} carries a relay outbox entry; "
+                "the next host open finishes it (open with the host state dir)",
+            )
         pending = d / "outbox"
         data = None if pending.is_symlink() else read_or_none(pending, 16 * 1024 * 1024)
         try:
@@ -2023,6 +2027,12 @@ class Store:
         logs = self._workspace_logs(state)
         if logs is None or state.workspace.genesis is None:
             return None
+        if log in self._logs and log not in logs:
+            return None  # the post-commit rule leaves this log out (broken, diverged, missing checkpoint): no entry
+        if log != WORKSPACE:
+            old = self._checkpoints.ticket(log)
+            if old is not None and ("o" not in old or old["o"]["seq"] >= ev["seq"]):
+                return None  # write_ticket will call it diverged after the commit: certify nothing for it (Opus F5)
         info = self._logs.get(log)
         head = canon.event_head(ev)
         logs[log] = _Cut(ev["seq"], head, canon.log_acc(info.acc if info else _ZERO_ACC, head))
@@ -2962,6 +2972,9 @@ class Store:
             raise StoreError("chain.diverged", f"{d.log}: {d.detail}")
         if self._workspace_checkpoint_missing():
             raise StoreError("checkpoint.missing", "workspace: no workspace checkpoint is held")
+        for log in self._logs:  # never certify a head whose ticket checkpoint is missing (Opus F4, as _workspace_logs)
+            if self._missing_checkpoint(log):
+                raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
 
     def _catchup_source(self, source: Mapping[str, Any] | None, m: int) -> dict[str, tuple[int, str, str]]:
         """``source``'s per-log cut, after checking it is this workspace's WSK checkpoint and the logs contain it."""

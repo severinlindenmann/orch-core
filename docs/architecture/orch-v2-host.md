@@ -4188,15 +4188,20 @@ rename + dir fsync) and read with `read_json`.
 | `link.json` | `{v:1, workspace_id, origin, ca_file?, proxy?, max_publication_bytes, state:"linking"\|"linked", linked_at, card_seq}` | no | written (state `linking`) before any network write; it is the reader reservation of 11A.6 |
 | `unlinked-<linked_at>.json` | the former `link.json`, renamed at unlink | no | never deleted: the reservation is permanent (11A.6) |
 | `holder.json` | `{last_holder, gen, instance_id, pending}`: whether this state directory was the last holder, its `gen`, the instance id it was written under, and the expected `gen` of a takeover probe in flight (DECIDED by orch-52, 13 Oct 2026) | no | written durably: `pending` before the probe, the new `gen` with `pending` cleared before any other write; the restart rule is 11A.5 "Restart takeover" |
-| `instance.json` | `{instance_id, dev, ino}`: the state directory's instance id (random 128 bits, created once with the state) bound to the `(st_dev, st_ino)` of the locked directory fd (decided by orch-52, 13 Oct 2026). `cp -r` or rsync copies the id but not the inode, and a restore through a backup tool recreates the directory: both show as a mismatch, which alarms `relay_takeover_refused`. A restart or a rename within one filesystem keeps it; a move across filesystems (or a tool that recreates the directory) needs the operator path. Only the operator path rebinds: `regenerate_instance_id(state)` (new id and current `dev`/`ino`), called by the restore procedure and by `orch host relay takeover` on a directory bound elsewhere | no | claimed once (`os.link`) at creation; rebinding is an atomic write |
+| `instance.json` | `{instance_id, dev, ino}`: the state directory's instance id (random 128 bits, created once with the state) bound to the `st_ino` of the locked directory fd (decided by orch-52, 13 Oct 2026; `dev` is recorded for information only since 14 Oct, below). `cp -r` or rsync copies the id but not the inode, and a restore through a backup tool recreates the directory: both show as a mismatch, which alarms `relay_takeover_refused`. A process restart or a rename within one filesystem keeps the inode; a move across filesystems (or a tool that recreates the directory) needs the operator path. `st_dev` is not compared: it is assigned per mount and can change across a reboot or remount (APFS volume order, btrfs subvolumes, LVM, an external volume), so a changed `dev` with the same inode is logged at info level, not alarmed. Not detected (residuals, same class, inherent to local state): a block-level clone (VM image, `asr`/`dd`, a block-level disk clone booted on a second machine) keeps the inode and every byte, and a copy onto another volume can land on the same inode number by chance; no local check can prove a state directory is unique, and the relay's holder `gen` is the backstop. Never run a clone while the original is live. Only the operator path rebinds: `regenerate_instance_id(state)` (new id and current `dev`/`ino`), called by the restore procedure and by `orch host relay takeover` on a directory bound elsewhere. A round-3 `instance.json` (`{instance_id}` only, never released) is refused with a `StateError` naming `orch host relay takeover`, which regenerates it | no | claimed once (`os.link`) at creation; rebinding is an atomic write |
 | `sign-ledger.json` | the last-signed ledger: `{kind: {key: {digest, sig}}}` (cards by `card_seq`) | no | written durably before a signature is returned |
 | `link-card.json`, `link-genesis.json` | the card and the genesis pin (with its certificate and genesis hash) of the first link, write-once (claimed with `os.link`, read back if another writer won) | no | persisted before their first PUT; a resume re-sends these bytes |
 
 One live instance per state directory: `StateDir` holds an exclusive non-blocking `flock` on the directory for its
 lifetime (close-on-exec); a second instance, in this process or another, is refused "in use". All I/O goes through the
 locked directory fd, never the path again (a directory renamed aside keeps receiving its owner's writes), and a forked
-child refuses every operation (a fork inherits the lock; close-on-exec covers only exec). A ledger restored together
-with an older `link.json` from the same backup cannot be detected (inherent to any local state).
+child refuses every operation (a fork inherits the lock; close-on-exec covers only exec). An `os.register_at_fork`
+child hook closes the child's copy of the lock fd with a plain `close`, never `LOCK_UN` (the `flock` belongs to the
+open file description the parent shares, so an unlock would release the parent's lock), and marks the instance
+unusable; a long-lived forked child therefore never keeps the directory locked after the parent closes it, and its
+`close()` does nothing (14 Oct 2026, review round 4 N3). A ledger restored together with an older `link.json` from the
+same backup cannot be detected (inherent to any local state), nor can a block-level clone of the state directory (see
+`instance.json`).
 | `rids.sqlite` | `rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem)`, `submission(device, rid, log, events)`, `chunk(device, rid, idx, epoch, bytes, state)`, `window(device, high, bitmap)`, `cursor(after)`, `meta(start_ms)` | chunk bytes are ciphertext; `submission.events` are device-signed events (below) | the state machine of 11A.4 |
 | `publish.json` | `{entry, source_hash, target_hash, pages:[{i, digest, count, put}], manifest_put, cap}` | no | staging resumes from it: pages are immutable and an identical PUT is a free 200 |
 | `published.jsonl`, `published/` | append-only: one line `{n, hash, kind, at_ms}` per accepted publication; `published/restore-<n>.json` (the full final body of every accepted restore, kept forever) and `published/last.json` (the last accepted plain checkpoint) | no | appended after a 200 and before the outbox entry is deleted; used to rebuild after a relay rollback (11A.5) |
@@ -4374,7 +4379,7 @@ is `stale_card`.
   `unauthenticated`/`expired`, which also covers a relay with a shorter lifetime; the identical bytes are then resent.
 - **Restart takeover (DECIDED by orch-52, 13 Oct 2026; core-only, fail closed, no relay change).** At start, before
   any network call:
-  1. the instance record must be bound to this very directory (`dev`/`ino`, 11A.3); else alarm
+  1. the instance record must be bound to this very directory (its inode; `dev` is informational, 11A.3); else alarm
      `relay_takeover_refused` ("this state directory was copied or restored") and stop;
   2. `holder.json` has `pending` (a probe was in flight when the host stopped): alarm ("possibly our own interrupted
      takeover; confirm with `orch host relay takeover`") and stay stopped;
@@ -4392,7 +4397,9 @@ is `stale_card`.
   7. A relay answer without a `gen`: alarm.
   **Order changed 13 Oct 2026 (review R1, approved by orch-52):** steps 1 to 3 used to follow the renewal; a copied or
   restored directory could then renew into the original's live lease and become a second holder (both writing W(g),
-  both signing). Checking first costs nothing on a real restart (the id and the inode match).
+  both signing). Checking first costs nothing on a real restart or reboot (the id and the inode match; a changed
+  `st_dev` after a remount is only logged, 14 Oct 2026, review round 4 N2). It stops a file-level copy or restore,
+  not a perfect clone: see residual (v) below.
   The explicit operator takeover (`orch host relay takeover`, R5 wires `Session.operator_takeover`) sends
   `take_over: true` and records the new `gen` as ours. A running renewal answered `fenced` still stops the worker.
   **Costs (13 Oct 2026, accepted by orch-52):** (i) a refused probe still bumps the relay's `gen`, so a stale or
@@ -4400,7 +4407,12 @@ is `stale_card`.
   checking (a) and (b) before any probe); (ii) the probe resets the relay's `holder_delivery`, so undelivered notices
   can drop; (iii) a relay route that exposes the current `gen` stays a later option; (iv) a transient error during the
   probe (503, timeout, reset) leaves `pending` set, so even an in-process retry needs the operator: a probe that timed
-  out may have been granted, and failing closed is deliberate. The relay asserts `gen` itself:
+  out may have been granted, and failing closed is deliberate; (v) **14 Oct 2026 (review round 4 N1, accepted by
+  orch-52):** a block-level clone of the state directory (a cloned VM image, `asr`/`dd`, a block-level disk clone
+  booted on a second machine) keeps the same inode and bytes, and a copy onto another volume can land on the same
+  inode by chance. Steps 1 to 3 pass, the clone renews the original's live `gen`, and both hosts would write and sign
+  as one holder. Nothing local can tell a perfect clone apart; the relay's holder `gen` is the only backstop, and the
+  operator rule is: never run a clone while the original is live. The relay asserts `gen` itself:
   this guards against honest concurrency (a second instance, a restored backup, a relay reset), not a lying relay.
   One live instance per state directory is enforced by an exclusive `flock` on the directory (11A.3).
 - A 401 `bad_signature` on login is not retried within 60 s, and it counts toward the origin alarm (11A.2).

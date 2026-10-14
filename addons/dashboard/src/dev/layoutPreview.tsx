@@ -132,7 +132,7 @@ function install() {
   if (installed) return
   installed = true
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
-  const original = { getIdentity: a.getIdentity }
+  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
     originals.set(name, a[name])
     a[name] = fn
@@ -143,6 +143,13 @@ function install() {
     return { available: true, rows: done ? [quickRow(900, { status: 'done', title: 'Drop the old logo' })] : rows, next_page: current === 'quick-many' ? 'page-2' : null, total: done ? 1 : rows.length }
   })
   set('getRecords', async () => records(current))
+  // "Make a normal ticket" reads the ticket fresh: answer with the quick row's labels and status.
+  set('getTicket', async (...args: never[]) => {
+    const key = args[0] as string
+    const row = quickRows(current).find((r) => r.key === key)
+    const base = (await (original.getTicket as (...a: never[]) => Promise<object>)(...args).catch(() => ({ key }))) as object
+    return row ? { ...base, key, labels: row.labels, status: row.status } : base
+  })
   set('recordsCommit', async (_ws: string, push: boolean) => {
     if (current === 'records-push-failed' && push) throw new ApiError(502, { code: 'records.push_failed', message: `push to ${LONG_URL} was refused`, retryable: true, commit: 'c'.repeat(40) })
     return { ok: true, commit: 'd'.repeat(40), pushed: push, url: push ? LONG_URL : null }

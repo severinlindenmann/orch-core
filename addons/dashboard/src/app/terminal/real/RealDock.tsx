@@ -34,7 +34,7 @@ export function runName(run: Run): string {
   return run.ticket ? `${run.ticket} ${what}` : what
 }
 
-export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits }: TerminalDockProps) {
+export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const ticket = useDockTicket()
@@ -54,6 +54,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const region = useRef<HTMLElement>(null)
 
   useEffect(() => { setSelected(null) }, [ws])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (autoPreview && ws) void ask(false) }, [autoPreview, ws])
 
   const resize = (px: number) => setPrefs((p) => ({ ...p, [side]: Math.round(Math.min(dockMax(side, view, area), Math.max(DOCK_LIMITS[side].min, px))) }))
   const ask = async (inTicket: boolean) => {

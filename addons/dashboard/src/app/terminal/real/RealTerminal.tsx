@@ -7,7 +7,7 @@ import { ApiError } from '@/api/types'
 import { runsApi, type Run } from '@/api/runs'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
-import { BACKOFF_MS, closePolicy, connectTerm, endWords, type TermConnection, type TermEnd } from './termProtocol'
+import { BACKOFF_MS, closePolicy, endWords, termTransport, type connectTerm, type TermConnection, type TermEnd } from './termProtocol'
 import { createTermView, termOptions, type TermView } from './termView'
 
 const token = (el: HTMLElement, name: string) => getComputedStyle(el).getPropertyValue(name).trim() || undefined
@@ -22,7 +22,7 @@ export interface AttachRequest {
 
 export type LeaseState = 'reading' | 'writing' | 'busy' | 'lost'
 
-export function RealTerminal({ ws, run, initial, connect = connectTerm }: {
+export function RealTerminal({ ws, run, initial, connect = termTransport.connect }: {
   ws: string
   run: Run
   /** The first attach of this mount: read, except right after the person opened this shell (write, never take). */

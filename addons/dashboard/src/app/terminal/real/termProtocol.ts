@@ -178,3 +178,6 @@ export function endWords(code: number, end: TermEnd | null): string {
   if (code === 4401) return 'Reconnecting…'
   return 'The terminal connection ended.'
 }
+
+/** The socket factory the dock uses (the dev-only layout preview replaces it with a fixture; nothing else does). */
+export const termTransport: { connect: typeof connectTerm } = { connect: connectTerm }

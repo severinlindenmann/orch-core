@@ -510,3 +510,143 @@ def test_f6_the_doctor_names_a_pending_linked_append(linked, monkeypatch):
         store_mod.Store.open(env.root, expected_workspace_id=WS, load="lazy")
     assert exc.value.code == "validation.host_state" and uid in exc.value.detail
     assert list((env.root / ".state" / "pending").glob("*/outbox"))
+
+
+# --- review round 1: relay_link and relay_mark_linked (the link reservation under the store lock) -----------------
+
+
+def _link_path(env: Env):
+    return env.host_state / "hosts" / WS / "relay" / "link.json"
+
+
+LINK = {"v": 1, "workspace_id": WS, "origin": "https://relay.example", "max_publication_bytes": 4194304}
+
+
+def _ok_guard(log: list):
+    import contextlib
+
+    @contextlib.contextmanager
+    def guard():
+        log.append(("enter", _link_path(env_holder[0]).exists()))
+        yield None
+        log.append(("exit", _link_path(env_holder[0]).exists()))
+
+    return guard
+
+
+env_holder: list = []
+
+
+@pytest.fixture
+def unlinked(env):
+    env.bootstrap()
+    env_holder[:] = [env]
+    return env
+
+
+def test_relay_link_writes_link_json_inside_the_guard_and_turns_the_outbox_on(unlinked):
+    env = unlinked
+    s = env.store
+    order: list = []
+    s.relay_link(dict(LINK), guard=_ok_guard(order))
+    assert order == [("enter", False), ("exit", True)]  # written while the guard (the host-wide lock) is held
+    raw = json.loads(_link_path(env).read_bytes())
+    assert raw == dict(LINK, state="linking")
+    assert _link_path(env).stat().st_mode & 0o777 == 0o600
+    assert _link_path(env).parent.stat().st_mode & 0o777 == 0o700
+    assert s.outbox_active
+    uid = env.new_ticket()
+    assert s.outbox_entries()[-1].checkpoint["o"]["tickets"][uid]["seq"] == 1
+
+
+def test_a_refusing_guard_writes_nothing(unlinked):
+    env = unlinked
+    import contextlib
+
+    class Refused(Exception):
+        pass
+
+    @contextlib.contextmanager
+    def guard():
+        raise Refused()
+        yield  # pragma: no cover
+
+    with pytest.raises(Refused):
+        env.store.relay_link(dict(LINK), guard=guard)
+    assert not _link_path(env).exists() and not env.store.outbox_active
+
+
+def test_relay_link_refuses_an_existing_link_and_a_foreign_workspace(unlinked):
+    env = unlinked
+    s = env.store
+    s.relay_link(dict(LINK), guard=_ok_guard([]))
+    before = _link_path(env).read_bytes()
+    with pytest.raises(StoreError) as exc:
+        s.relay_link(dict(LINK), guard=_ok_guard([]))
+    assert exc.value.code == "relay.link_exists" and _link_path(env).read_bytes() == before
+    with pytest.raises(StoreError) as exc:
+        s.relay_link(dict(LINK, workspace_id="0" * 32), guard=_ok_guard([]))
+    assert exc.value.code in ("relay.link_exists", "validation.relay_link")
+
+
+def test_relay_link_refuses_a_bad_link(env):
+    env.bootstrap()
+    env_holder[:] = [env]
+    for bad in ({**LINK, "workspace_id": "0" * 32}, {**LINK, "state": "linked"}, []):
+        with pytest.raises(StoreError) as exc:
+            env.store.relay_link(bad, guard=_ok_guard([]))
+        assert exc.value.code == "validation.relay_link"
+    assert not _link_path(env).exists()
+
+
+def test_relay_mark_linked_compares_before_it_writes(unlinked):
+    env = unlinked
+    s = env.store
+    s.relay_link(dict(LINK), guard=_ok_guard([]))
+    linking = json.loads(_link_path(env).read_bytes())
+    with pytest.raises(StoreError) as exc:
+        s.relay_mark_linked(dict(linking, origin="https://other.example"))
+    assert exc.value.code == "relay.link_mismatch"
+    assert json.loads(_link_path(env).read_bytes()) == linking
+    s.relay_mark_linked(linking)
+    assert json.loads(_link_path(env).read_bytes()) == dict(linking, state="linked")
+    with pytest.raises(StoreError) as exc:  # already linked: the expectation no longer matches
+        s.relay_mark_linked(linking)
+    assert exc.value.code == "relay.link_mismatch"
+
+
+def test_relay_mark_linked_without_a_link_refuses(unlinked):
+    with pytest.raises(StoreError) as exc:
+        unlinked.store.relay_mark_linked(dict(LINK, state="linking"))
+    assert exc.value.code == "relay.link_mismatch"
+
+
+def test_no_append_without_its_entry_once_link_json_exists(unlinked):
+    import threading
+    import time
+
+    env = unlinked
+    uid = env.new_ticket()
+    other = env.other(load="lazy")
+    seen: list = []
+    real = other._write_pending
+
+    def watch(ev, log, line, writes, outbox=None):
+        seen.append((_link_path(env).exists(), outbox is not None))
+        return real(ev, log, line, writes, outbox=outbox)
+
+    other._write_pending = watch  # type: ignore[method-assign]
+
+    def appends():
+        for i in range(25):
+            other.append({"type": "log.added", "actor": env.agent, "text": f"r{i}"}, log=uid)
+
+    t = threading.Thread(target=appends)
+    t.start()
+    time.sleep(0.05)
+    env.store.relay_link(dict(LINK), guard=_ok_guard([]))
+    t.join(60)
+    other.close()
+    assert len(seen) == 25
+    assert all(entry for linked, entry in seen if linked)  # once the file exists, every append carries its entry
+    assert all(not entry for linked, entry in seen if not linked)

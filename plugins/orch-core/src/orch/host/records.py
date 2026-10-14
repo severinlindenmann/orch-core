@@ -11,9 +11,10 @@ The host never runs git (D-P2-19). It names the bytes and decides the export pol
   re-hashed while the lock is held.
 * ``records.export_check {sha, url, ref}`` runs on **every** push path right before the push: it is bound to the
   workspace, the exact source commit, the exact effective push URL, the destination ref and the current convenience
-  policy. A records push counts as adding a reader (D-P2-34): while convenience signing is on for the workspace or its
-  history holds ``auth: "convenience"`` events, the push is refused (``sign.convenience_readers``) unless that exact
-  URL carries the owner's private-remote mark. Every answer is recorded (the export destination audit).
+  policy. A records push counts as adding a reader (D-P2-34): while convenience signing is on for the workspace, its
+  durable ``convenience_seen`` mark is set, its history holds ``auth: "convenience"`` events, or the tool's scan of the
+  pushed history found one (``history_convenience``, #441), the push is refused (``sign.convenience_readers``) unless
+  that exact URL carries the owner's private-remote mark. Every answer is recorded (the export destination audit).
 * ``records.remote_private {url, on}`` sets or clears the workspace's one private-remote mark (owner decision 12 Oct
   2026): "only I read this remote". orch trusts the owner's word; it is not proof of the remote's ACLs. The mark is
   one exact URL: a changed ``pushurl``, ``insteadOf`` rewrite or remote URL resolves to another string and is not
@@ -23,7 +24,9 @@ The host never runs git (D-P2-19). It names the bytes and decides the export pol
   audited (``marks``: action, redacted URL, person, time). A URL with credentials, a query string or a fragment is
   refused.
 * ``records.note`` (a write, owners and maintainers) and ``records.status`` (a read): the tool's last commit, push,
-  repo state, resolved URL and auto setting, and the pending counts since that commit (H11e part 2).
+  repo state, resolved URL and auto setting, and the pending counts since that commit (H11e part 2). ``configured``
+  means the workspace's records repo exists (the last repo state reported for it); with ``current_url`` the status
+  also says whether the push URL now is marked private and equals the last pushed one.
 
 All five are column P only (``person_read``, and ``person_write`` for the mark and the note: G and N get
 ``op.not_allowed``); all but the mark are for an owner or maintainer now (a push exports every ticket, restricted

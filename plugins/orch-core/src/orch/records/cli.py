@@ -26,8 +26,8 @@ unless ``--yes``). The dashboard runs only ``commit [--push]`` and ``auto off`` 
 ``remote-private`` marks the **one exact effective push URL** of the remote as read only by the owner. The mark binds
 that URL string; the person's own settings (ssh config, credential helpers, DNS) decide how it is reached. orch trusts
 that word; a later change of the destination resolves to another URL and is not marked. Without the mark, a workspace
-with convenience signing (the flag on, or convenience events in its history) cannot push records
-(``sign.convenience_readers``).
+with convenience signing (the flag on, the durable ``convenience_seen`` mark, convenience events in its history, or
+in the history being pushed) cannot push records (``sign.convenience_readers``).
 
 **Output** (the dashboard child contract, §12.11): text, or with ``--json`` exactly one JSON line valid against
 :data:`CHILD_SCHEMA`: ``{ok:true, commit?, pushed?, url?, detail?}`` or ``{ok:false, code, message, hint?}``; exit 0 on

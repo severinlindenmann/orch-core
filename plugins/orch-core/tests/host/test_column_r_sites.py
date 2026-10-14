@@ -99,13 +99,13 @@ def _getattr_name(node: ast.AST) -> bool:
 
 
 def _scope(node: ast.AST) -> list[ast.AST]:
-    """The nodes of one function (or module) body, without nested functions and classes."""
+    """The nodes of one function (or module) body, lambda bodies included, without nested functions and classes."""
     out: list[ast.AST] = []
     todo = list(ast.iter_child_nodes(node))
     while todo:
         child = todo.pop()
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue  # a lambda's body stays in its enclosing scope (Opus D3)
         out.append(child)
         todo.extend(ast.iter_child_nodes(child))
     return out

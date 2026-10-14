@@ -51,8 +51,8 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("visibility.py", "Viewer.of"): (3, "R as P: owner and role from the device's person"),
     ("visibility.py", "Viewer.session_visible"): (2, "R as P (unreachable: session.list is not an R op)"),
     ("workspace.py", "Call.authorize"): (
-        2,
-        "a socket call whose recompute answers R is refused; principal from the UID",
+        4,
+        "R without a relay identity is refused first; a socket recompute answering R is refused",
     ),
     ("workspace.py", "Call._authorize_relay"): (
         6,

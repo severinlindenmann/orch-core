@@ -19,7 +19,7 @@ import pytest
 from orch.host.errors import HostError
 from orch.host.runners import new_run_id
 from orch.runner import enablement
-from orch.runner.termclient import RunnerChanged, TermClient
+from orch.runner.termclient import RunnerChanged, TermClient, TermEnded
 from tests.host.dispatch_helpers import err, ok
 from tests.host.lifecycle_helpers import UID
 from tests.host.live_helpers import world
@@ -644,7 +644,10 @@ def test_an_attachment_the_host_does_not_hold_is_ended_at_the_runner(ready):
 
     try:
         w.h.run(forget())
-        t.resize(101, 31)  # the next runner.term lists it
+        try:
+            t.resize(101, 31)  # the next runner.term lists it
+        except TermEnded:
+            pass  # the watcher ended it first (the stream is already shut)
         assert drain_end(t) == "cancelled"
     finally:
         t.close()

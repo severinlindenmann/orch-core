@@ -461,3 +461,25 @@ def test_a_stream_cut_mid_frame_ends_the_client_with_closed():
         assert t.ended == "closed"
     finally:
         ours.close()
+
+
+def test_a_send_to_a_stream_the_runner_already_shut_is_term_ended(tmp_path):
+    """A frame sent after the runner shut the stream raises ``TermEnded`` (not ``BrokenPipeError``), and the end
+    frame the runner sent before shutting stays readable."""
+    import socket
+
+    import pytest
+
+    from orch.host import frames
+    from orch.runner.termclient import TermClient, TermEnded
+
+    a, b = socket.socketpair()
+    t = TermClient(tmp_path, {"ticket": "x", "nonce": "y"})
+    t.sock = a
+    b.sendall(frames.encode({"t": "end", "reason": "cancelled"}))
+    b.close()
+    with pytest.raises(TermEnded):
+        for _ in range(64):  # the first sendall after the close may still be buffered by the kernel
+            t.send({"t": "resize", "lease_gen": 0, "cols": 80, "rows": 24})
+    assert t.recv(1.0) == {"t": "end", "reason": "cancelled"} or t.ended == "cancelled"
+    t.close()

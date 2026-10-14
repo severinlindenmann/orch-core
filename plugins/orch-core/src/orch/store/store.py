@@ -1107,7 +1107,9 @@ class Store:
         A plain entry's checkpoint is also adopted as the newest workspace checkpoint (as the append itself does
         after the commit), so a crash in between never leaves the outbox ahead of ``workspace.json``. In recovery a
         bad entry is reported (``store.torn_write``) and left out; on the append's own path it raises."""
-        assert self._outbox is not None and self._pins is not None
+        if self._outbox is None or self._pins is None:
+            # a store without the host state dir cannot install it: keep the pending directory for one that can
+            raise StoreError("validation.host_state", "a pending append carries an outbox entry; open with host state")
         data = read_or_none(d / "outbox", 16 * 1024 * 1024)
         try:
             if data is None or _sha(data) != m["outbox"]:
@@ -1946,7 +1948,8 @@ class Store:
             if log == WORKSPACE or self._ticket_appends_since_cp >= WORKSPACE_EVERY:
                 self._write_workspace_checkpoint(ev["at"], new)
         elif isinstance(planned, dict):
-            if self._checkpoints.workspace() != planned:
+            cur = self._checkpoints.workspace()
+            if cur is None or "o" not in cur or cur["o"]["n"] < planned["o"]["n"]:  # never move it backwards
                 self._checkpoints.write_workspace_object(planned)
                 if self._pins is not None:
                     self._pins.accept_checkpoint(planned)

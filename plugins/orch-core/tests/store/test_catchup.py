@@ -109,7 +109,7 @@ def test_a_prefix_never_lists_a_later_ticket_entry(grown):
 def test_catchup_from_a_held_source_extends_it(grown):
     env, uids = grown
     s = env.store
-    source = s.outbox_entries()[1].checkpoint  # an older checkpoint the relay holds
+    source = s.outbox_entries()[0].checkpoint  # an older checkpoint the relay holds (the lowest entry)
     out = s.mint_catchup(source=source, cap=500, measure=measure)
     for log, entry in _entries(source).items():
         assert _entries(out[0].checkpoint)[log]["seq"] >= entry["seq"]

@@ -1115,7 +1115,8 @@ class Store:
         if self._outbox is None or self._pins is None:
             # a store without the host state dir cannot install it: keep the pending directory for one that can
             raise StoreError("validation.host_state", "a pending append carries an outbox entry; open with host state")
-        data = read_or_none(d / "outbox", 16 * 1024 * 1024)
+        pending = d / "outbox"
+        data = None if pending.is_symlink() else read_or_none(pending, 16 * 1024 * 1024)
         try:
             if data is None or _sha(data) != m["outbox"]:
                 raise StoreError("store.torn_write", "the pending outbox entry is missing or changed")
@@ -1133,10 +1134,35 @@ class Store:
         self._pins.reserve_n(entry.n)  # idempotent: the append reserved it before signing
         self._outbox.write_raw(entry.n, data)
         if entry.kind == "plain":
+            self._coalesce(entry.n)
             self._adopt(entry.checkpoint)
 
     def _coalesce(self, n: int) -> None:
-        """Outbox coalescing (Opus F3): see the later definition."""
+        """Outbox coalescing (H12b review, Opus F3), right after plain entry ``n`` is written: the entry just below it
+        is deleted when it is a plain, non-catch-up entry and not the lowest entry. The relay accepts any higher
+        extension of its held checkpoint (``n`` need not be consecutive), so a middle plain entry is superseded by
+        the next one. Kept always: the lowest entry (R3 publishes oldest first, so it may be staging), every restore,
+        the plain entry just before a restore (its source: its successor is the restore, never a plain entry), every
+        catch-up entry and the newest entry. The queue therefore stays at about 2 + 2 x (queued restores) entries.
+        Idempotent: recovery may repeat it."""
+        assert self._outbox is not None
+        names = self._outbox.names()
+        ns = [k for k, _ in names]
+        if n not in ns:
+            return
+        i = ns.index(n)
+        if i < 2:
+            return  # the entry below is the lowest, or there is none
+        below, path = names[i - 1]
+        raw = None if path.is_symlink() else read_or_none(path, None)
+        if raw is None:
+            return
+        try:
+            entry = parse_entry(raw, wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin)
+        except StoreError:
+            return  # left in place: the reader stops on it
+        if entry.kind == "plain" and not entry.catchup and entry.n == below:
+            self._outbox.delete(below)
 
     def _adopt(self, cp: dict[str, Any]) -> None:
         """Make ``cp`` the newest checkpoint: the host pin and ``workspace.json``, each repaired on its own (a crash
@@ -1875,7 +1901,9 @@ class Store:
             "body_copy": next((w.body_copy for w in writes if w.body_copy), None),
         }
         if outbox is not None:
-            fd = os.open(pdir / "outbox", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(pdir / "outbox")  # a retried event id: start clean, never write through a link
+            fd = os.open(pdir / "outbox", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
             with os.fdopen(fd, "wb") as f:
                 f.write(outbox)
                 f.flush()
@@ -2764,17 +2792,26 @@ class Store:
         ``<state>/hosts/<ws>/``, written by R1 under the store lock before any network write, 11A.5)."""
         return self._pins is not None and os.path.lexists(self._pins.dir / "relay" / "link.json")
 
-    def outbox_entries(self) -> list[OutboxEntry]:
-        """Every outbox entry, oldest (lowest ``n``) first, each verified (WSK signature, workspace, genesis, ``n``
-        and hash; a restore's target holds its line). Takes the lock. Raises ``store.torn_write`` for an entry that
-        does not verify: the publisher stops rather than skip or publish it."""
+    def outbox_entries(self, limit: int | None = None) -> list[OutboxEntry]:
+        """The outbox entries, oldest (lowest ``n``) first, each verified (WSK signature, workspace, genesis, ``n``
+        and hash; a restore's target holds its line); only the first ``limit`` when given. Takes the lock. Raises
+        ``store.torn_write`` for an entry that does not verify: the publisher stops rather than skip or publish it."""
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise StoreError("validation.outbox", "limit is a positive integer")
         with self._locked():
-            return self._read_outbox()
+            return self._read_outbox(limit)
 
-    def _read_outbox(self) -> list[OutboxEntry]:
+    def outbox_first(self) -> OutboxEntry | None:
+        """The lowest entry (the one R3 publishes next), verified, or None when the outbox is empty."""
+        got = self.outbox_entries(limit=1)
+        return got[0] if got else None
+
+    def _read_outbox(self, limit: int | None = None) -> list[OutboxEntry]:
         if self._outbox is None:
             return []
-        return self._outbox.read(wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin)
+        return self._outbox.read(
+            wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin, limit=limit
+        )
 
     def outbox_delete(self, n: int, hash: str) -> bool:
         """Delete entry ``n`` after the relay accepted it (R3: after a 200 whose ``{n, hash}`` equals the entry's,
@@ -2783,7 +2820,10 @@ class Store:
         with self._locked():
             if self._outbox is None:
                 return False
-            raw = read_or_none(self._outbox.path(n), None)
+            path = self._outbox.path(n)
+            if path.is_symlink():
+                raise StoreError("store.torn_write", f"outbox entry {n} is a symlink")
+            raw = read_or_none(path, None)
             if raw is None:
                 return False
             entry = parse_entry(raw, wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin)

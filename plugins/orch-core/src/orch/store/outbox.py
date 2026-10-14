@@ -167,9 +167,15 @@ class Outbox:
     def max_n(self) -> int:
         return max((n for n, _ in self.names()), default=0)
 
-    def read(self, *, wsk_pub: bytes | None, workspace_id: str, genesis: str | None) -> list[OutboxEntry]:
-        out = []
+    def read(
+        self, *, wsk_pub: bytes | None, workspace_id: str, genesis: str | None, limit: int | None = None
+    ) -> list[OutboxEntry]:
+        """The entries, lowest ``n`` first, each verified; only the first ``limit`` when given (R3 publishes the
+        lowest entry first and need not verify the whole queue)."""
+        out: list[OutboxEntry] = []
         for n, p in self.names():
+            if limit is not None and len(out) >= limit:
+                break
             if p.is_symlink():
                 raise StoreError("store.torn_write", f"outbox entry {n} is a symlink")
             raw = read_or_none(p, None)

@@ -25,6 +25,7 @@ export const LAYOUT_SCENARIOS = [
   'records-hidden-url',
   'records-first',
   'records-push-failed',
+  'records-push-mismatch',
   'runner-on',
   'runner-off',
 ] as const
@@ -143,6 +144,7 @@ function install() {
     return { available: true, rows: done ? [quickRow(900, { status: 'done', title: 'Drop the old logo' })] : rows, next_page: current === 'quick-many' ? 'page-2' : null, total: done ? 1 : rows.length }
   })
   set('getRecords', async () => records(current))
+  set('getRecordsCurrent', async () => ({ ...records(current), remote: { ...records(current).remote!, current_url: LONG_URL + (current === 'records-push-mismatch' ? '/changed' : ''), current_url_hidden: false, current_private: true, matches_last: current !== 'records-push-mismatch' } }))
   // "Make a normal ticket" reads the ticket fresh: answer with the quick row's labels and status.
   set('getTicket', async (...args: never[]) => {
     const key = args[0] as string

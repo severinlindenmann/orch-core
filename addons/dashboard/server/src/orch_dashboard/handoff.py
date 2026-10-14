@@ -133,7 +133,7 @@ class Details(Action):
     key: Key
     priority: Literal["low", "medium", "high", "urgent"] | None = None
     size: Literal["xs", "s", "m", "l", "xl"] | None = None
-    labels: list[Label] | None = Field(default=None, min_length=1, max_length=16)
+    labels: list[Label] | None = Field(default=None, min_length=0, max_length=16)
     parent: Key | None = None
 
     @model_validator(mode="after")
@@ -371,7 +371,7 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "new", {"title": action.title, "type": action.type}
         case Details():
             pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
-            if action.labels:
+            if action.labels is not None:
                 pairs.append("labels=" + ",".join(sorted(set(action.labels))))
             if action.parent:
                 pairs.append(f"parent={action.parent}")

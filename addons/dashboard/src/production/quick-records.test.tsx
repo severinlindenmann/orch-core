@@ -1,6 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
+import { ApiError } from '@/api/types'
 import { DASHBOARD_EXECUTION_LINE, readQuickLimits, writeQuickLimits } from '@/api/quickRecords'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
 import { queryClient } from '@/production/Shell'
@@ -197,14 +199,13 @@ it('Close prepares the existing close hand-off for that key', async () => {
   expect(state.host.posts()[0].body).toMatchObject({ action: 'close', key: 'DEMO-0010' })
 })
 
-it('Make a normal ticket: fresh labels, only where a label besides quick is left, and it sets exactly those labels (replace-only)', async () => {
+it('Make a normal ticket reads fresh labels and sets exactly the remaining labels', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   const list = await screen.findByRole('list', { name: 'Active quick tasks' }, T)
   state.host.override = (path, method) => path.endsWith('/tickets/DEMO-0014') && method === 'GET' ? Response.json({ ...ticket, key: 'DEMO-0014', labels: ['quick', 'docs', 'web', 'new-label'] }) : undefined
-  // DEMO-0010 has `quick` alone: no button (core #441 will allow an empty set). DEMO-0014 keeps docs and web.
-  expect(within(list).queryByRole('button', { name: 'Make DEMO-0010 a normal ticket' })).toBeNull()
-  expect(within(list).getAllByRole('button', { name: /a normal ticket$/ })).toHaveLength(1)
+  expect(within(list).getByRole('button', { name: 'Make DEMO-0010 a normal ticket' })).toBeInTheDocument()
+  expect(within(list).getAllByRole('button', { name: /a normal ticket$/ })).toHaveLength(4)
   await user.click(within(list).getByRole('button', { name: 'Make DEMO-0014 a normal ticket' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
@@ -278,14 +279,14 @@ it('records: commit now posts exactly {push:false} and shows the result', async 
 it('records: commit and push shows the export warning first and posts {push:true} only after confirming', async () => {
   state.host.workspaces[0].records = status({ remote: { url: URL_PUSH, url_hidden: false, private: true, export: 'ok' } })
   const user = userEvent.setup()
-  state.host.override = (path, method) => (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: true, url: URL_PUSH }) : undefined)
+  state.host.override = (path, method) => path.endsWith('/records/current') ? Response.json(status({ remote: { url: URL_PUSH, current_url: URL_PUSH, current_private: true, matches_last: true } })) : (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: true, url: URL_PUSH }) : undefined)
   show('/w/DEMO/settings/records')
   await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
-  expect(within(dialog).getByTestId('records-export-warning').textContent).toBe(`Push publishes every ticket in this workspace to the remote configured in the records repository (last known: ${URL_PUSH}), restricted ones included.`)
+  expect((await within(dialog).findByTestId('records-export-warning')).textContent).toBe(`Push publishes every ticket in this workspace to ${URL_PUSH}, restricted ones included.`)
   expect(other('/records/commit')).toEqual([])
   expect(within(dialog).queryByTestId('records-private-line')).toBeNull()
-  expect(dialog).not.toHaveTextContent('orch trusts your word')
+  expect(dialog).toHaveTextContent(`orch trusts your word that only you read ${URL_PUSH}.`)
   await user.click(within(dialog).getByRole('button', { name: 'Commit and push' }))
   expect(await screen.findByTestId('records-result', {}, T)).toHaveTextContent('and pushed')
   expect(state.host.calls.find((c) => c.path.endsWith('/records/commit'))?.body).toEqual({ push: true })
@@ -425,4 +426,61 @@ it('records: hostile failure prose is isolated in a labelled tool-output block',
   expect(within(output).queryByRole('link')).toBeNull()
   expect(failure.querySelector('p')).toHaveTextContent('Not done. records.push_rejected')
   expect(failure.querySelector('p')).not.toHaveTextContent('run this')
+})
+
+
+it('quick alone becomes an empty label set', async () => {
+  const user = userEvent.setup()
+  state.host.override = (path) => path.endsWith('/tickets/DEMO-0010') ? Response.json({ ...ticket, key: 'DEMO-0010', labels: ['quick'] }) : undefined
+  show('/w/DEMO/quick')
+  await user.click(await screen.findByRole('button', { name: 'Make DEMO-0010 a normal ticket' }, T))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  await within(dialog).findByTestId('handoff-command', {}, T)
+  expect(dialog).toHaveTextContent('Labels kept: none')
+  expect(state.host.posts()[0].body).toMatchObject({ action: 'details', labels: [] })
+})
+
+it.each(['not-private', 'mismatch', 'failure', 'null', 'hidden'])('records current check: %s', async (kind) => {
+  const user = userEvent.setup()
+  const currentURL = 'https://git.example.test/current'
+  let release!: () => void
+  vi.spyOn(api, 'getRecordsCurrent').mockImplementationOnce(async () => {
+    await new Promise<void>((resolve) => { release = resolve })
+    if (kind === 'failure') throw new ApiError(409, { code: 'records.busy', message: 'busy', retryable: true })
+    return { available: true, remote: { url: URL_PUSH, url_hidden: false, private: false, export: 'ok', current_url: kind === 'null' || kind === 'hidden' ? null : currentURL, current_url_hidden: kind === 'hidden', current_private: false, matches_last: kind !== 'mismatch' } }
+  })
+  show('/w/DEMO/settings/records')
+  await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  expect(dialog).toHaveTextContent('Checking where push goes…')
+  expect(within(dialog).getByRole('button', { name: 'Commit and push' })).toBeDisabled()
+  await waitFor(() => expect(release).toBeTypeOf('function'))
+  release()
+  const warning = await within(dialog).findByTestId('records-export-warning')
+  expect(dialog).not.toHaveTextContent('orch trusts your word')
+  if (['failure', 'null', 'hidden'].includes(kind)) {
+    expect(warning).toHaveTextContent(`last known: ${URL_PUSH}`)
+    expect(dialog).toHaveTextContent("Couldn't check the current destination")
+    expect(dialog).toHaveTextContent(kind === 'failure' ? 'records.busy' : 'records.current_url_unavailable')
+  } else {
+    expect(warning.textContent).toBe(`Push publishes every ticket in this workspace to ${currentURL}, restricted ones included.`)
+    if (kind === 'mismatch') expect(dialog).toHaveTextContent(`This is not where the last push went (last: ${URL_PUSH}).`)
+  }
+})
+
+
+it.each(['ok', 'index_differs', 'unsafe'])('configured %s before the first commit has a repository', async (repoState) => {
+  state.host.workspaces[0].records = status({ configured: true, last: null, repo: { state: repoState } })
+  show('/w/DEMO/settings/records')
+  await screen.findByText('nothing noted yet', {}, T)
+  expect(screen.queryByTestId('records-not-configured')).toBeNull()
+})
+
+it.each([{ status: 'done', labels: ['quick'] }, { status: 'closed', labels: ['quick'] }, { status: 'open', labels: ['docs'] }])('fresh ticket refuses conversion: %j', async (fresh) => {
+  const user = userEvent.setup()
+  state.host.override = (path) => path.endsWith('/tickets/DEMO-0010') ? Response.json({ ...ticket, key: 'DEMO-0010', ...fresh }) : undefined
+  show('/w/DEMO/quick')
+  await user.click(await screen.findByRole('button', { name: 'Make DEMO-0010 a normal ticket' }, T))
+  await screen.findByRole('alert', {}, T)
+  expect(state.host.posts()).toEqual([])
 })

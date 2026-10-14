@@ -1534,3 +1534,12 @@ machinery unchanged and keep core in charge of wording. Converting would need a 
 **Why:** Prevent surviving ssh/git descendants, host/cwd drift, stale list label replacement, stale handoff state, and test leakage. Fresh reads reduce lost updates but do not provide atomic compare-and-swap against changes after that read.
 
 **Revert:** Only with equivalent core process/host isolation and label concurrency guarantees; preview cleanup remains necessary while tests share API objects.
+
+
+## 2026-10-14 — M6 current destination in push confirmation
+
+**Decision:** Replace the 2026-10-13 M6 wording deviation inside push confirmation: check the read-only records status child on every opening, use the current URL in the verbatim §12.11 export warning, and show the private assurance only for `current_private: true`. Show a mismatch against the last push. If the check fails or withholds the URL, retain the last-known warning and display the failure code. Outside the dialog, retain “Last known destination” and “Last noted as private”. Allow quick-only tickets to become normal tickets with `labels=`.
+
+**Why:** Core #454 supplies the current effective push destination and its exact private mark through the bounded status child, and accepts the empty label set. Historical status alone cannot establish the destination of the next push. The tool still resolves and checks the destination again when pushing.
+
+**Revert:** Restore the historical confirmation wording and hide quick-only conversion if deployed core no longer supports these contracts.

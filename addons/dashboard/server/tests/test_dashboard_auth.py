@@ -293,6 +293,10 @@ def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
     with pytest.raises(RuntimeError, match="terminal"):
         launcher.open_dashboard(print_url=True)
     assert not capsys.readouterr().out
+    monkeypatch.setattr(launcher.sys, "argv", ["orch-dashboard", "open", "--print-url"])
+    assert launcher.main() == 1  # the CLI: one line on stderr, no traceback, nothing on stdout
+    seen = capsys.readouterr()
+    assert not seen.out and seen.err == "orch-dashboard: --print-url requires a terminal\n"
     monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
     monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must print only"))

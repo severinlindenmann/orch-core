@@ -1,7 +1,7 @@
 # First use: orch core + the dashboard on your own Mac
 
-A runbook for the owner: from nothing to your first ticket, approved by a click in the dashboard. Written 13 Oct 2026
-against `develop` (456ef023). Every step says how it was checked:
+A runbook for the owner: from nothing to your first ticket, approved by a click in the dashboard. Updated 14 Oct 2026
+against `develop` (0d84f707; first written 13 Oct against 456ef023). Every step says how it was checked:
 
 - **verified**: run end to end in a throwaway setup (own venv, own `HOME`, `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`; nothing of
   your real `~/.config/orch`, login keychain or launchd was touched), output gist given.
@@ -12,44 +12,44 @@ against `develop` (456ef023). Every step says how it was checked:
 
 ## Known gaps (read first)
 
-1. **No `orch dashboard` command, and no way to install the dashboard from git.** The launch path is the addon's own
-   console script `orch-dashboard` (`server/pyproject.toml:9`, `[project.scripts]`), also `python -m orch_dashboard`.
-   `server/README.md` says it plainly: "`orch dashboard` is the intended host CLI integration; M0 deliberately adds no
-   command to `plugins/orch-core`". Smallest fix: a core `orch dashboard [open|stop]` that runs the installed
-   `orch-dashboard` (one subparser in `plugins/orch-core/src/orch/cli`; core change, not made here).
-2. **The built UI is not in git, so `pip install git+https://...#subdirectory=addons/dashboard/server` gives a server with
-   no UI.** `server/src/orch_dashboard/static/` is gitignored (`addons/dashboard/.gitignore`); `npm run build` creates it
-   and copies `dist/` there, and the wheel contains it only when the build ran before packaging. Verified: a non-editable
-   `pip install ./addons/dashboard/server` after `npm run build` ships `orch_dashboard/static/{index.html,assets,favicon.svg}`
-   and serves the real UI (`GET /` returns the app shell). Until fixed, **install the dashboard from your local checkout
-   after building the UI** (step 1). Smallest fix: build the wheel in CI and publish it as a release asset (or a hatch
-   build hook that runs `npm ci && npm run build`); then step 1 becomes one `pip install <wheel url>`.
-3. **`orch-addon.json` is not in the wheel either.** The dashboard server refuses to serve unless the workspace has the
-   addon installed and granted (`gateway.py:90-92`, `addon.disabled`). You copy the manifest from the checkout into the
-   workspace once and sign `orch addon grant dashboard` (step 4b). Smallest fix: `orch addon install` or shipping the
-   manifest inside the wheel (`orch-dashboard manifest`); not done here.
-4. **No service for the dashboard.** The host is a service (`orch host enable`); the dashboard is one detached process
-   per OS user that you start with `orch-dashboard open` and that ends at logout or reboot. Normal for now, but you will
+Fixed since the first version of this runbook (13 Oct), one line each:
+
+- `orch dashboard` did not exist: fixed by #451, `orch dashboard [args]` launches the addon (exit 3 with an install hint when
+  it is not installed).
+- The built UI was not in the wheel: fixed by #452, a hatch build hook builds it during `pip install` (Node 24 + npm needed
+  at install time; `ORCH_DASHBOARD_SKIP_UI=1` opts out and gives a server without UI, for development only).
+- `orch-addon.json` was not in the wheel: fixed by #452, `orch-dashboard addon-manifest --write <workspace>` (step 4b).
+- `orch host register` without `--peer` failed after click-to-sign custody: fixed by #451 (either custody is accepted).
+- There was no `orch host disable`: fixed by #451 (step 8).
+- `--print-url` outside a terminal stopped with a Python traceback: now a one-line refusal (this PR).
+
+Still open:
+
+1. **No service for the dashboard.** The host is a service (`orch host enable`); the dashboard is one detached process
+   per OS user that you start with `orch dashboard open` and that ends at logout or reboot. Normal for now, but you will
    re-run `open` each day.
-5. **`orch host register` (no `--peer`) fails after you move the key to convenience custody** (`no device key of yours for
-   this workspace on this machine`: `default_peers` looks for the passphrase key file, `host/cli.py:358-360`). Verified:
-   it works with an explicit `--peer 501=person:p_...`. Not a problem on the `init --host` path (the host is registered
-   at init). Smallest fix in core: let `default_peers` accept the convenience key as proof of "your device key".
-6. **There is no `orch host disable`.** Undoing the service is `launchctl bootout` plus deleting the plist (step 8).
+2. **Installing straight from git (`pip install git+https://...`) is not recommended.** With a token in the URL, macOS git
+   hands the credential to `git-credential-osxkeychain`, which tries to store your GitHub token in the login keychain
+   (the attempt hung there). Use a clone and a local path (step 1).
+
+`orch dashboard open --print-url` prints the single-use URL only to a terminal, on purpose (a launch code must not end up
+in a pipe or a log); elsewhere it refuses with one line and exit 1. `orch addon grant dashboard` asks you to type
+`dashboard` + Enter at the review before the passphrase: that is the normal signing review, not a gap (step 4b).
 
 ## Before you start
 
 - **Python 3.11 or newer** (both packages say `requires-python >=3.11`). macOS ships older; use Homebrew:
   `brew install python@3.11` (or `python@3.13`).
-- **Node 24 and npm** only to build the UI (gap 2). Check with `node -v`.
+- **Node 24 and npm** on `PATH` at install time: the dashboard's build hook runs `npm ci && npm run build` (step 1).
+  Check with `node -v`. Not needed at run time.
 - **The repo is private.** Clone it with `gh auth login` done once, or any git credential that can read
-  `severinlindenmann/orch-core`. Everything below uses a local checkout; the git+https form for core alone is in step 1.
+  `severinlindenmann/orch-core`. Everything below uses a local checkout (the git+https form is not recommended, see Known gaps).
 - Pick your own short paths. Unix socket paths are limited to about 100 bytes (`host/enable.py` refuses a longer run
   directory), so do not put the state in a deep folder. The default `~/.config/orch` is fine.
 
 ## 1. Install core and the dashboard, not editable, into a venv outside any checkout
 
-**Status: verified** (local-checkout form, Python 3.11, macOS).
+**Status: verified** (local-checkout form, Python 3.11, Node 24.21, macOS).
 
 The venv must live **outside every git work tree**: `orch host enable` refuses an interpreter or package inside a
 checkout ("the service would keep running whatever that tree holds next", `host/enable.py:181-217`). A folder in your home
@@ -62,30 +62,23 @@ python3.11 -m venv ~/orch-venv
 git clone -b develop https://github.com/severinlindenmann/orch-core.git ~/src/orch-core   # needs gh auth / a token
 cd ~/src/orch-core
 
-# build the UI first, so that the dashboard wheel contains it (gap 2)
-(cd addons/dashboard && npm ci && npm run build)      # ends with: built in ~1 s; writes server/src/orch_dashboard/static/
-
-# install core first, then the dashboard (non-editable: no -e)
+# install core first, then the dashboard (non-editable: no -e). Node 24 + npm must be on PATH: the dashboard's
+# hatch build hook (server/hatch_build.py) runs `npm ci && npm run build` and puts the UI into the wheel.
 ~/orch-venv/bin/pip install ./plugins/orch-core ./addons/dashboard/server
 ~/orch-venv/bin/pip list | grep -i orch               # orch-core 2.0.0.dev0, orch-dashboard 0.1.0
 ```
 
-Result seen: `orch-core 2.0.0.dev0`, `orch-dashboard 0.1.0`, and `site-packages/orch_dashboard/static/{index.html,assets,favicon.svg}`.
-Two console scripts appear in `~/orch-venv/bin`: `orch` and `orch-dashboard`. Put the venv's `bin` first in `PATH` for the
-rest of this runbook (`export PATH=$HOME/orch-venv/bin:$PATH`) or use the full paths.
+Result seen: `orch-core 2.0.0.dev0`, `orch-dashboard 0.1.0` (the whole install took about 15 s), and
+`site-packages/orch_dashboard/{static/index.html,static/assets,static/favicon.svg,orch-addon.json}`, no separate `npm run
+build`. Without Node 24 the install fails with "the dashboard UI could not be built: install Node >= 24 ...";
+`ORCH_DASHBOARD_SKIP_UI=1 pip install ...` skips the UI (development only, the server then has no app). The hook reuses a
+UI already built in `server/src/orch_dashboard/static/`, so after pulling UI changes reinstall with
+`pip install --force-reinstall --no-deps ./addons/dashboard/server` (delete that `static/` folder first if an old build
+sits there). Two console scripts appear in `~/orch-venv/bin`: `orch` and `orch-dashboard`. Put the venv's `bin` first in
+`PATH` for the rest of this runbook (`export PATH=$HOME/orch-venv/bin:$PATH`) or use the full paths.
 
-Core alone straight from git (**not verified**: the attempt did not finish, and it showed a trap). With a token in the URL
-(`git+https://x-access-token:<token>@github.com/...`) macOS git hands the credential to `git-credential-osxkeychain`, which
-tries to store your GitHub token in the login keychain; the attempt hung there and was killed. Prefer the clone above (it
-uses your normal `gh auth` setup) and the `./plugins/orch-core` path form; if you do want the URL form, run it once from a
-shell where `credential.helper` is empty (`git -c credential.helper= ...` does not reach pip's own git calls, so set
-`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=`):
-
-```sh
-~/orch-venv/bin/pip install "orch-core @ git+https://github.com/severinlindenmann/orch-core.git@develop#subdirectory=plugins/orch-core"
-```
-
-If you rebuild the UI later, reinstall the dashboard: `pip install --force-reinstall --no-deps ./addons/dashboard/server`.
+Do not install from `git+https://...` (see Known gaps: the keychain credential helper hung the attempt; that form was
+never completed).
 
 ## 2. Identity and first run
 
@@ -153,30 +146,36 @@ host`, and `next: orch grant ...`. Check: `orch host list` shows `TEST ... state
 person=Your Name`.
 
 Alternative, a workspace that already exists (made with plain `orch init`, no `--host`): `orch host register <dir>`.
-Verified: it answers `{"ok": true, ... "workspace_id": ...}` and `orch status` then says `host mode`. `register` takes your
-UID as the person whose passphrase device key is on this Mac (gap 5 if the key was moved to convenience).
+Verified: it answers `{"ok": true, ... "workspace_id": ...}` and `orch status` then says `host mode`. Without `--peer`, `register` maps your UID to the person whose device key for the workspace is on this Mac, in either
+custody (verified in passphrase custody; verified with the test custody seam after the key moved to convenience, same
+command). `--peer 501=person:p_...` is still required when core finds no usable key of yours: the key was removed,
+revoked or expired, it lacks `decide`, or its person left (`docs/architecture/orch-v2-host.md`, "Registration turns host
+mode on").
 
 ### 4b. Install and grant the dashboard addon in the workspace
 
-**Status: verified.** (Without it, the dashboard refuses the workspace: `addon.disabled`.)
+**Status: verified** (in the same run; the grant went through a pty). (Without it, the dashboard refuses the workspace: `addon.disabled`.)
 
 ```sh
 cd ~/orch/test
-mkdir -p addons/dashboard
-cp ~/src/orch-core/addons/dashboard/orch-addon.json addons/dashboard/   # not in the wheel, gap 3
-orch addon grant dashboard                    # prompts: passphrase (twice: review, then sign)
+orch-dashboard addon-manifest --write .       # writes addons/dashboard/orch-addon.json from the installed wheel
+orch addon grant dashboard                    # review; type "dashboard" + Enter; then the passphrase
 orch addon list                               # dashboard 0.1.0 active
 ```
 
-The grant is signed with your passphrase; it records the manifest hash and the single capability `serve_http`.
+`addon-manifest` without `--write` prints the manifest; `--write WORKSPACE` creates `addons/dashboard/` and the file (it
+refuses to replace a different file without `--force`, and never follows symlinks). Verified: a second identical run is
+a no-op; `orch addon list` shows `not granted` before and `active` after the grant. The grant is signed with your passphrase; it records the manifest hash and the single capability `serve_http`.
 If the manifest changes (a dashboard update), grant again.
 
 ## 5. Launch the dashboard against the real host
 
-**Status: verified** (non-editable install, real host, real workspace; browser launch checked with `BROWSER` stubbed).
+**Status: verified** (non-editable install, real host, real workspace; no browser was opened, the link was exchanged by
+HTTP).
 
 ```sh
-orch-dashboard open                  # same as: python -m orch_dashboard open
+orch dashboard open                  # same as: orch-dashboard open, python -m orch_dashboard open
+orch dashboard stop                  # everything after `orch dashboard` goes to the addon unchanged
 ```
 
 - Starts the dashboard server if none runs (one per OS user: `python -m orch_dashboard serve --launcher-lock`, detached,
@@ -184,12 +183,16 @@ orch-dashboard open                  # same as: python -m orch_dashboard open
   redirect file (`<state>/dashboard/launch-*.html`, deleted after use or 60 s) that carries the one-time code.
 - **One-time code flow:** the server listens on `127.0.0.1` on a random port; the code (256 bits, 30 s, single use) is
   exchanged for a bearer token (12 h idle / 24 h absolute) held in the browser tab; restart ends every session.
-- No browser available, or you want to see the link: `orch-dashboard open --print-url` in a terminal prints
+- No browser available, or you want to see the link: `orch dashboard open --print-url` in a terminal prints
   `http://127.0.0.1:<port>/#launch=<code>&to=%2F` (single use, 30 s). Observed: the page `GET /` returns the shell; the code
   exchange returns a session; `GET /api/workspaces` lists `TEST` with `host_state: ok` and your name as owner.
-- Open a path directly: `orch-dashboard open /w/TEST/tickets`. Foreground, with logs on the terminal: `orch-dashboard serve`
-  (then `orch-dashboard open` from a second terminal still opens a link).
-- Stop it: `orch-dashboard stop` (or `--stop`), through the 0600 control socket.
+- Open a path directly: `orch dashboard open /w/TEST/tickets`. Foreground, with logs on the terminal: `orch dashboard serve`
+  (then `orch dashboard open` from a second terminal still opens a link). `orch dashboard --help` shows the addon's usage.
+- Stop it: `orch dashboard stop` (or `--stop`), through the 0600 control socket.
+- `orch dashboard` finds the addon beside the interpreter that runs `orch`, then as a module, then on `PATH`; not installed:
+  exit 3 and a message that says how to install it. Checked: `GET /` on the printed port serves the app shell
+  (`<!doctype html> ... <title>orch core`), and a code exchange returns a session whose `GET /api/workspaces` lists `TEST`
+  with `host_state: ok`, you as owner, `click.custody: passphrase`.
 
 ## 6. Click-to-sign: `orch host convenience on`
 
@@ -201,7 +204,7 @@ click:
 ```sh
 orch host convenience on  --workspace TEST     # only flips a flag in ~/.config/orch/host/ (no key is touched)
 orch keys custody convenience --workspace TEST # asks the passphrase ONCE, moves the device key to convenience custody
-orch-dashboard stop; orch-dashboard open       # restart so the signer picks it up
+orch dashboard stop; orch dashboard open       # restart so the signer picks it up
 ```
 
 What was run in the throwaway setup (the seam: `python server/tests/click_child.py cli ...`, same commands, file store):
@@ -267,18 +270,19 @@ Settings changes (`settings.set`, `policy.set`) are signed with `orch sign` or b
 
 ## 8. Stop and undo everything
 
-**Status: dashboard stop, unregister, convenience off, foreground host stop: verified. Service removal: read from the
-code.**
+**Status: dashboard stop, foreground host stop: verified. `orch host disable` was run with the service manager switched off
+(`ORCH_NO_SERVICE_MANAGER=1`): it refused `launchctl` (`host.unavailable ... service manager is off`) and left the unit
+and releases alone; the removal itself is read from the code (`host/cli.py` `disable`, spec `orch-v2-host.md`).**
 
 | What | Command |
 | --- | --- |
-| Dashboard | `orch-dashboard stop` (ctl socket; the process exits, the signer child with it) |
+| Dashboard | `orch dashboard stop` (ctl socket; the process exits, the signer child with it) |
 | Click-to-sign off | `orch host convenience off --workspace TEST`; `orch keys forget --workspace TEST` removes the keychain item (macOS: item `io.orch.device-key`, account `<ws>/<device>`) |
 | Foreground host | Ctrl-C in its terminal (or `kill <its PID>`; never `pkill`) |
-| Host as a service | `launchctl bootout gui/$(id -u)/io.orch.host`, then delete `~/Library/LaunchAgents/io.orch.host.plist` (`host/enable.py:293`, `:243`) |
+| Host as a service | `orch host disable` (stops and unloads the service, removes the unit file, keeps the state dir; `--purge-releases` also deletes the release copies under `~/.local/share/orch/releases`; refuses a unit made for another state or run dir and a runner service that uses the releases, unless `--force`). Registered workspaces then answer `host.unavailable` until `orch host enable`. Fallback by hand: `launchctl bootout gui/$(id -u)/io.orch.host`, then delete `~/Library/LaunchAgents/io.orch.host.plist` |
 | Workspace off the host | `orch host unregister <workspace-id>` (id from `orch host list`); the folder and your signed history stay; the workspace is back in direct mode (`orch host status` says "direct mode (not registered)") |
 | Addon | `orch addon disable dashboard` (data stays), `orch addon purge dashboard` (deletes its data) |
-| Uninstall | `rm -rf ~/orch-venv` (after the service is gone), `chmod -R u+w ~/.local/share/orch/releases && rm -rf ~/.local/share/orch/releases` (releases are read-only) |
+| Uninstall | `rm -rf ~/orch-venv` (after `orch host disable --purge-releases`; by hand the releases are read-only: `chmod -R u+w ~/.local/share/orch/releases && rm -rf ~/.local/share/orch/releases`) |
 | Delete all state | `rm -rf ~/.config/orch` **destroys your device key; keep the recovery code**, workspace folders such as `~/orch/test` are separate |
 
 Where state lives: `~/.config/orch/` (or `$ORCH_STATE_DIR`): `hosts/<ws>/` (signed log, workspace key, your device key under
@@ -288,8 +292,14 @@ workspace itself (tickets, config) is the folder you ran `orch init` in.
 
 ## How this was checked
 
-A throwaway venv, `HOME`, `XDG_CONFIG_HOME` and `ORCH_STATE_DIR` under one short disposable folder with a `.orch-dev` marker;
-Python 3.11 non-editable installs of `plugins/orch-core` and `addons/dashboard/server` from the same checkout; one
-foreground host and one dashboard server (a `click_child.py dashboard serve` for the seam steps); no launchd, no keychain.
-The service step ran with `ORCH_NO_SERVICE_MANAGER=1`, which writes the unit and the release but refuses `launchctl`;
-the generated plist is what step 3 describes.
+Re-checked 14 Oct 2026 against `develop` 0d84f707. A throwaway venv, `HOME`, `XDG_CONFIG_HOME` and `ORCH_STATE_DIR` under one
+short disposable folder with a `.orch-dev` marker (deleted afterwards); Python 3.11 and Node 24.21 on `PATH` for the
+install; non-editable installs of `plugins/orch-core` and `addons/dashboard/server` from the same checkout (the wheel
+holds `orch_dashboard/static/index.html` and `orch_dashboard/orch-addon.json`); one foreground host and one dashboard
+server on 127.0.0.1; no browser, no launchd, no keychain. Prompts were answered through a pty. `orch init`, `orch host
+register` without `--peer` (passphrase custody, then again after `keys custody convenience` through the
+`click_child.py` file-custody seam), `orch-dashboard addon-manifest --write`, `orch addon grant`, `orch dashboard
+open --print-url`, `GET /` and the code exchange all ran. Steps 6 and 7 were not repeated (unchanged apart from the
+launch command). The service step ran with `ORCH_NO_SERVICE_MANAGER=1`: `orch host enable` wrote the unit and the release
+and refused `launchctl`; `orch host disable` and `disable --purge-releases` refused `launchctl` too, so they stopped before
+removing anything. Convenience custody on the real login keychain is read from the code.

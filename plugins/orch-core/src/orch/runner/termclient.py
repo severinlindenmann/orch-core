@@ -113,7 +113,11 @@ class TermClient:
     def send(self, frame: dict[str, Any]) -> None:
         if self.sock is None:
             raise TermEnded(f"the terminal stream ended ({self.ended or 'closed'})")
-        self.sock.sendall(frames.encode(frame))
+        try:
+            self.sock.sendall(frames.encode(frame))
+        except OSError as e:  # the runner already shut the stream (e.g. the attachment was ended): its end frame, if
+            # any, is still readable, so the socket stays open for recv
+            raise TermEnded(f"the terminal stream ended ({self.ended or 'closed'})") from e
 
     def recv(self, timeout: float | None = None) -> dict[str, Any] | None:
         """The next frame (state updated), ``None`` at the end of the stream; ``TimeoutError`` when none arrives. A

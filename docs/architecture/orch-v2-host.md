@@ -4957,10 +4957,13 @@ clock is past the backup's time + 600 s.
   `relay/unlinked-*.json`, or a `relay/` that cannot be listed.
 - `host/relaylink.py`: `MAX_LINKED = 8`; `linked_workspaces(state)` counts every `hosts/*/relay/link.json` (state
   `linking` or `linked`; (J) registered or not, and an entry that cannot be inspected counts);
-  `link_reservation(service)` is the critical section in which R1 writes `link.json`: the store lock, then a host-wide
-  `flock` (`host/relay-link.lock`), then `refuse_reader_op(service, "relay.link", history=True)`
-  (`sign.convenience_readers`: convenience history or the flag; no exception, 11A.11 Q4), then `host.limit` unless
-  the workspace is already linked. The stop marker `relay/stopped.json` (0600) is written by `mark_stopped`, cleared by
+  the only writer of `link.json` is `store.relay_link(link, guard=lambda: relaylink.link_reservation(service))`
+  (H12b), and the only rewrite `store.relay_mark_linked(expect)` (`linking` to `linked`). `link_reservation(service)`
+  is that guard: the store lock (re-entrant), then a host-wide `flock` (`host/relay-link.lock`), then
+  `refuse_reader_op(service, "relay.link", history=True)` (`sign.convenience_readers`: convenience history, the
+  durable `convenience_seen` mark or the flag; no exception, 11A.11 Q4), then `host.limit` at 8 links; an existing
+  link is the store's refusal (`relay.link_exists`), so the guard has no relink case. An integration test drives
+  `relay_link` with this guard through all three refusals. The stop marker `relay/stopped.json` (0600) is written by `mark_stopped`, cleared by
   `clear_stopped`; `is_stopped` is true when the marker exists whatever its content, when `relay/` is not a real
   directory, or when either cannot be inspected; `may_start(state, ws, uid)` (a private `relay/` checked with
   `ensure_private_dir(create=False)`, a private `link.json`, not stopped; any doubt is false) is what R5's start must
@@ -4974,11 +4977,17 @@ clock is past the backup's time + 600 s.
   host confirmed absent, and is refused under `ORCH_GRANT` (`human_only`).
 - R5 interface: register `service.outcomes.relay_fields` and run `relay.submit.recover(service)` in `open` after
   `human.recover`; start the worker through `service.relay_starter` (or in `open`) only under `service.relay_lock`
-  after `relaylink.may_start`, setting `service.relay` to a worker with `stop()` and `join(timeout) -> bool`; build
+  after `relaylink.may_start`, setting `service.relay` to a worker with `stop()` and `join(timeout) -> bool`.
+  `relay_starter(service)` runs **under** `relay_lock`: it must not take that lock, wait for a job of the workspace's
+  worker thread, or block on anything that does (`close()` and `relay_stop()` take the lock; a starter that waits
+  for the worker thread deadlocks a close queued behind it). `close()` sets `closing` under the lock before it
+  takes the worker, so a start racing a close is refused; a stop answers `stuck` while a retained stuck worker's
+  threads live, and `close()` joins that worker too (bounded by 120 s); build
   relay calls with `Call(service, …)` for the identity's own workspace, `Call.relay = identity`,
   `peer = identity.peer()`, `columns = relay_columns` (the kind is derived by `authorize`); append only through
-  `append_relay(service, log, events, extras, person_id=…, device_id=…)`; R1 writes `link.json` inside
-  `link_reservation(service)`.
+  `append_relay(service, log, events, extras, person_id=…, device_id=…)`; R1 links only through
+  `service.store.relay_link(link, guard=lambda: relaylink.link_reservation(service))` and marks it linked only
+  through `store.relay_mark_linked(expect)`.
 
 ### 11A.5 The bridge loop (R2) and the publisher (R3)
 

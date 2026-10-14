@@ -5,10 +5,12 @@ link reservation's critical section and the persistent stop of ``orch host relay
   connections each, ≤ 36 MiB each, §11A.7). A workspace is relay-linked while ``hosts/<ws>/relay/link.json`` exists
   (state ``linking`` or ``linked``; a dangling link or an entry that cannot be inspected counts too). ``relay.link``
   above the cap is refused with ``host.limit``.
-* **The reservation.** :func:`link_reservation` is the critical section in which ``relay.link`` (R1) writes
-  ``link.json`` (state ``linking``, before any network write): under the store lock and a host-wide lock, it refuses
-  a workspace whose history holds ``auth: "convenience"`` events or whose convenience flag is on
-  (``sign.convenience_readers``, §11A.6, strict in v1.7) and a link above the cap.
+* **The reservation.** The only writer of ``link.json`` is ``store.relay_link(link, guard=lambda:
+  relaylink.link_reservation(service))`` (H12b), state ``linking``, before any network write; the only rewrite is
+  ``store.relay_mark_linked(expect)`` (``linking`` to ``linked``). :func:`link_reservation` is the guard: under the
+  store lock and a host-wide lock it refuses a workspace whose history or durable mark holds ``auth: "convenience"``
+  or whose convenience flag is on (``sign.convenience_readers``, §11A.6, strict in v1.7) and a link above the cap;
+  the store then refuses an existing link (``relay.link_exists``) and writes inside both locks.
 * **The stop.** ``hosts/<ws>/relay/stopped.json`` (0600) keeps the relay worker stopped across host restarts, the
   operator procedure after a state restore (§11A.4 "Scope of exactly-once"). :func:`may_start` is the check the relay
   worker's start (R5) must pass: linked, and not stopped. A marker that cannot be read safely counts as stopped.
@@ -80,10 +82,11 @@ def linked_workspaces(state_dir: Path) -> list[str]:
 
 @contextlib.contextmanager
 def link_reservation(service: Any) -> Iterator[None]:
-    """The critical section of ``relay.link`` (§11A.6): ``link.json`` is written inside it. Holds the store lock and a
-    host-wide lock (two workspaces linking at once cannot both take the last slot), then refuses with
-    ``sign.convenience_readers`` (convenience history or flag) and ``host.limit`` (the cap). A relink of a workspace
-    that is already linked adds nothing to the count."""
+    """The guard of ``store.relay_link`` (§11A.6), the only writer of ``link.json``:
+    ``store.relay_link(link, guard=lambda: relaylink.link_reservation(service))``. Holds the store lock (re-entrant)
+    and a host-wide lock (two workspaces linking at once cannot both take the last slot), then refuses with
+    ``sign.convenience_readers`` (convenience history, mark or flag) and ``host.limit`` (the cap). An existing link is
+    the store's refusal (``relay.link_exists``), so the guard has no relink case."""
     from .convenience import _flock, refuse_reader_op
 
     store = service.store
@@ -92,7 +95,7 @@ def link_reservation(service: Any) -> Iterator[None]:
     with store.locked(), _flock(service.state_dir, "relay-link.lock", service.host_uid):
         refuse_reader_op(service, "relay.link", history=True)
         linked = linked_workspaces(service.state_dir)
-        if service.workspace_id not in linked and len(linked) >= MAX_LINKED:
+        if len(linked) >= MAX_LINKED:
             raise HostError(
                 "host.limit",
                 f"this host already serves {len(linked)} relay-linked workspaces (at most {MAX_LINKED})",

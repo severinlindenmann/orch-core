@@ -487,6 +487,18 @@ class WorkspaceService:
                 self._relay_stuck = worker
             self.relay_cond.notify_all()
 
+    def _stuck_alive(self) -> bool:
+        """Under :attr:`relay_cond`: a retained stuck worker whose threads still run (``join(0)`` false); a stuck
+        worker whose threads ended is forgotten."""
+        stuck = self._relay_stuck
+        if stuck is None:
+            return False
+        join = getattr(stuck, "join", None)
+        if join is not None and not join(0):
+            return True
+        self._relay_stuck = None
+        return False
+
     def _stops_done(self) -> bool:
         """Under :attr:`relay_cond`: wait (bounded) until no stop is in progress."""
         return self.relay_cond.wait_for(lambda: self._relay_stopping == 0, timeout=self.relay_join_seconds + 30)
@@ -500,8 +512,8 @@ class WorkspaceService:
         with self.relay_cond:
             mark_stopped(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
             worker = self._take_relay()
-            if worker is None:
-                return "none" if self._stops_done() else "stuck"
+            if worker is None:  # "none" only when no worker runs at all, a retained stuck one included
+                return "none" if self._stops_done() and not self._stuck_alive() else "stuck"
         ended = False
         try:
             ended = self._shutdown_relay(worker)
@@ -516,16 +528,14 @@ class WorkspaceService:
         from .relaylink import clear_stopped, may_start
 
         with self.relay_cond:
+            if self.closing:
+                raise HostError("workspace.unavailable", "the workspace is closing")
             if not self._stops_done():
                 raise HostError("lock.busy", "a relay stop is still in progress; try again")
-            stuck = self._relay_stuck
-            if stuck is not None:
-                join = getattr(stuck, "join", None)
-                if join is not None and not join(0):
-                    raise HostError(
-                        "lock.busy", "relay_thread_stuck: a stopped relay thread still runs; restart the host"
-                    )
-                self._relay_stuck = None
+            if self.closing:
+                raise HostError("workspace.unavailable", "the workspace is closing")
+            if self._stuck_alive():
+                raise HostError("lock.busy", "relay_thread_stuck: a stopped relay thread still runs; restart the host")
             clear_stopped(self.state_dir, self.workspace_id, self.host_uid)
             if (
                 self.relay is not None
@@ -542,6 +552,8 @@ class WorkspaceService:
         # §11A.7 shutdown: the relay worker stops first and its threads are waited for (bounded by 120 s) before the
         # job that closes the store is queued; jobs it queued before stopping run first (the worker FIFO)
         with self.relay_cond:
+            self.closing = True  # before the worker is taken: a racing relay_start never starts a new one
+            stuck, self._relay_stuck = self._relay_stuck, None  # an earlier stop's stuck worker (joined below)
             worker = self._take_relay()
             if worker is None:
                 self._stops_done()
@@ -551,6 +563,9 @@ class WorkspaceService:
                 ended = self._shutdown_relay(worker)
             finally:
                 self._end_stop(worker, ended)
+        join = getattr(stuck, "join", None)
+        if join is not None and not join(self.relay_join_seconds):  # a stuck worker's threads too, bounded
+            LOG.error("relay_thread_stuck: workspace %s: closing with a relay thread alive", self.workspace_id)
 
         def shut() -> None:
             rec = getattr(self, "session_records", None)

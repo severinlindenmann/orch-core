@@ -33,6 +33,7 @@ import calendar
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -41,7 +42,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
-from typing import Any, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
 from orch.identity import CryptoVerifier, new_ulid
@@ -65,6 +66,7 @@ from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none,
 from .index import Index
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
+from .outbox import Outbox, OutboxEntry, Segment, make_entry, parse_entry
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins, is_forwarded, pair
 
@@ -76,6 +78,22 @@ _HOST_FIELDS = ("seq", "at", "prev", "ws_seq", "host_sig")
 _EMPTY = canon.section_hash("")
 _PLACEHOLDER_SIG = "A" * 85 + "A"
 _TICKET_HOST_EVENTS = frozenset({"edit.external", "projection.repaired"})
+_ZERO_ACC = "sha256:" + "0" * 64
+_NOPLAN = object()  # no outbox plan: the append writes its workspace checkpoint by the P1 rule (every 50)
+_log = logging.getLogger("orch.store")
+MAX_FORWARDED_ITEM_BYTES = 4096  # a forwarded revocation item (cj) above this is dropped (H12b review, Opus F2)
+_MAX_LABEL_SEALED = 1024  # b64u characters of a forwarded certificate's sealed label
+_ITEM_KEYS = frozenset(
+    {"device_id", "person_id", "reason", "revocation", "device_cert", "pk_pub", "provenance", "chain_reason"}
+)
+
+
+class _Cut(NamedTuple):
+    """The point an append is about to give its log: what ``Checkpoints.build_workspace`` reads of a log."""
+
+    seq: int
+    head: str
+    acc: str
 
 
 class HostSigner(Protocol):
@@ -233,6 +251,8 @@ class Store:
         self._name = workspace_name
         self.state_dir = root / ".state"
         self._pins = HostPins(host_state_dir, workspace_id) if host_state_dir is not None else None
+        #: the relay outbox (§11 P3-D21), active while ``<state>/hosts/<ws>/relay/link.json`` exists
+        self._outbox = Outbox(self._pins.dir / "outbox") if self._pins is not None else None
         self._lock = FileLock(self.state_dir / "lock", timeout=lock_timeout)
         self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id)
         self._index = Index(self.state_dir / "index.sqlite")
@@ -346,6 +366,7 @@ class Store:
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
             self._load()
             self._finish_pending(pend)
+            self._recover_catchup()
             self._finish_applied_checkpoint()
             self._enforce_revocations()
             if self._host is not None:
@@ -931,6 +952,7 @@ class Store:
             if reloaded:
                 self._load()
             self._finish_pending(pend)
+            self._recover_catchup()
             if reloaded:
                 self._enforce_revocations()
             yield
@@ -1079,8 +1101,84 @@ class Store:
             body = read_or_none(safe_join(self.root, f"tickets/{uid}/body.md"))
             if body is not None and f"tickets/{uid}/body.md" not in torn:
                 write_atomic(self.state_dir / "body" / f"{uid}.md", body)
+        if m.get("outbox") is not None:
+            self._install_outbox(m, d, recovering=check is not None)
         self._write_applied(m["id"], m["log"], m["seq"])
         return torn
+
+    def _install_outbox(self, m: dict[str, Any], d: Path, *, recovering: bool) -> None:
+        """Install the append's outbox entry (idempotent), only if it verifies and names exactly this event: a WSK
+        checkpoint of this workspace and genesis whose entry for the event's log is the event's ``seq`` and head.
+        A plain entry's checkpoint is also adopted as the newest workspace checkpoint (as the append itself does
+        after the commit), so a crash in between never leaves the outbox ahead of ``workspace.json``. In recovery a
+        bad entry is reported (``store.torn_write``) and left out; on the append's own path it raises."""
+        if self._outbox is None or self._pins is None:
+            # a store without the host state dir cannot install it: keep the pending directory for one that can
+            raise StoreError(
+                "validation.host_state",
+                f"the pending append of event {m['id']} to {m['log']} carries a relay outbox entry; "
+                "the next host open finishes it (open with the host state dir)",
+            )
+        pending = d / "outbox"
+        data = None if pending.is_symlink() else read_or_none(pending, 16 * 1024 * 1024)
+        try:
+            if data is None or _sha(data) != m["outbox"]:
+                raise StoreError("store.torn_write", "the pending outbox entry is missing or changed")
+            entry = parse_entry(data, wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin)
+            o = entry.checkpoint["o"]
+            mine = o["workspace_log"] if m["log"] == WORKSPACE else o["tickets"].get(m["log"])
+            head = canon.event_head(canon.parse_event_line(m["line"].encode("utf-8")))
+            if not mine or mine["seq"] != m["seq"] or mine["head"] != head:
+                raise StoreError("store.torn_write", "the pending outbox entry does not name its event")
+        except StoreError as e:
+            if not recovering:
+                raise
+            self._report("store.torn_write", f"outbox entry of event {m['id']} not installed: {e.detail}", m["log"])
+            return
+        self._pins.reserve_n(entry.n)  # idempotent: the append reserved it before signing
+        self._outbox.write_raw(entry.n, data)
+        if entry.kind == "plain":
+            self._coalesce(entry.n)
+            self._adopt(entry.checkpoint)
+
+    def _coalesce(self, n: int) -> None:
+        """Outbox coalescing (H12b review, Opus F3), right after plain entry ``n`` is written: the entry just below it
+        is deleted when it is a plain, non-catch-up entry and not the lowest entry. The relay accepts any higher
+        extension of its held checkpoint (``n`` need not be consecutive), so a middle plain entry is superseded by
+        the next one. Kept always: the lowest entry (R3 publishes oldest first, so it may be staging), every restore,
+        the plain entry just before a restore (its source: its successor is the restore, never a plain entry), every
+        catch-up entry and the newest entry. The queue therefore stays at about 2 + 2 x (queued restores) entries.
+        Idempotent: recovery may repeat it."""
+        assert self._outbox is not None
+        names = self._outbox.names()
+        ns = [k for k, _ in names]
+        if n not in ns:
+            return
+        i = ns.index(n)
+        if i < 2:
+            return  # the entry below is the lowest, or there is none
+        below, path = names[i - 1]
+        raw = None if path.is_symlink() else read_or_none(path, None)
+        if raw is None:
+            return
+        try:
+            entry = parse_entry(raw, wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin)
+        except StoreError:
+            return  # left in place: the reader stops on it
+        if entry.kind == "plain" and not entry.catchup and entry.n == below:
+            self._outbox.delete(below)
+
+    def _adopt(self, cp: dict[str, Any]) -> None:
+        """Make ``cp`` the newest checkpoint: the host pin and ``workspace.json``, each repaired on its own (a crash
+        between the two writes is finished by the next recovery, Codex P1), never moved backwards."""
+        assert self._pins is not None
+        n = cp["o"]["n"]
+        held = self._pins.held()
+        if held is None or "o" not in held or held["o"]["n"] < n:
+            self._pins.accept_checkpoint(cp)
+        cur = self._checkpoints.workspace()
+        if cur is None or "o" not in cur or cur["o"]["n"] < n:
+            self._checkpoints.write_workspace_object(cp)
 
     def _write_applied(self, event_id: str, log: str, seq: int) -> None:
         self._applied_n += 1
@@ -1547,6 +1645,14 @@ class Store:
             raise StoreError("validation.event", "the event line is too large")
         new_state = advance(old_state, ev, log=log, now=max(self._now(), ev["at"]))
         writes = self._projection(old_state, new_state, ev, log, new_texts, files, force)
+        linked = not genesis and self.outbox_active
+        planned: Any = _NOPLAN
+        outbox: bytes | None = None
+        if linked and ev["type"] != "restore":
+            # §11 P3-D21: the exact checkpoint of this append, planned now so that it rides in the commit
+            planned = self._plan_workspace_checkpoint(log, ev, new_state)
+            if isinstance(planned, dict):
+                outbox = make_entry(planned).to_bytes()
         info = self._logs.get(log)
         path = self._path_of(log)
         wsi = self._logs[WORKSPACE]  # last look, right before the write: the logs this event rests on are unchanged
@@ -1558,8 +1664,10 @@ class Store:
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         try:
             if ev["type"] == "restore":
-                self._stage_transition(ev, log, old_state)
-            manifest = self._write_pending(ev, log, line, writes)
+                transition = self._stage_transition(ev, log, old_state)
+                if linked:
+                    outbox = make_entry(transition["T"], restore=_restore_evidence(transition)).to_bytes()
+            manifest = self._write_pending(ev, log, line, writes, outbox=outbox)
             append_durable(path, line, commit=True)  # the commit
             self._finish(manifest, ev, log, line)
         except BaseException:
@@ -1567,7 +1675,7 @@ class Store:
             raise
         self._state = new_state
         try:
-            self._after_commit(old_state, new_state, ev, log)
+            self._after_commit(old_state, new_state, ev, log, planned)
         except BaseException:
             self._needs_reload = True  # finish a committed transition before the next call, even without reopening
             raise
@@ -1772,7 +1880,11 @@ class Store:
 
     # -- pending, install
 
-    def _write_pending(self, ev: dict[str, Any], log: str, line: bytes, writes: list[_Write]) -> dict[str, Any]:
+    def _write_pending(
+        self, ev: dict[str, Any], log: str, line: bytes, writes: list[_Write], outbox: bytes | None = None
+    ) -> dict[str, Any]:
+        """Step 2 of the write order. ``outbox`` is the relay outbox entry of this append (H12b): it rides in the
+        pending directory, so the commit (the log line) decides it with the event: neither or both."""
         pdir = self.state_dir / "pending" / ev["id"]
         pdir.mkdir(parents=True, exist_ok=True)
         files = []
@@ -1792,6 +1904,15 @@ class Store:
             "files": files,
             "body_copy": next((w.body_copy for w in writes if w.body_copy), None),
         }
+        if outbox is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(pdir / "outbox")  # a retried event id: start clean, never write through a link
+            fd = os.open(pdir / "outbox", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(outbox)
+                f.flush()
+                os.fsync(f.fileno())
+            manifest["outbox"] = _sha(outbox)
         write_atomic(pdir / "manifest.json", json.dumps(manifest, separators=(",", ":")).encode("utf-8"), mode=0o600)
         fsync_dir(pdir.parent)
         return manifest
@@ -1817,7 +1938,7 @@ class Store:
 
     # -- after the commit
 
-    def _after_commit(self, old: State, new: State, ev: dict[str, Any], log: str) -> None:
+    def _after_commit(self, old: State, new: State, ev: dict[str, Any], log: str, planned: Any = _NOPLAN) -> None:
         assert self._host is not None
         self._own_at = max(self._own_at, _epoch(ev["at"]))
         if log == WORKSPACE:
@@ -1852,7 +1973,7 @@ class Store:
         if typ == "restore":
             self._recover_transitions()
         else:
-            self._write_checkpoints(log, ev, new)
+            self._write_checkpoints(log, ev, new, planned)
         changed = {u for u, v in new.tickets.items() if old.tickets.get(u) is not v}
         self._maybe_index(new)
         if new.workspace.genesis is not None and self._index_ok:
@@ -1862,7 +1983,10 @@ class Store:
                 self._index.drop()
                 self._index_ok = False
 
-    def _write_checkpoints(self, log: str, ev: dict[str, Any], new: State) -> None:
+    def _write_checkpoints(self, log: str, ev: dict[str, Any], new: State, planned: Any = _NOPLAN) -> None:
+        """The checkpoints after a commit. ``planned`` is the workspace checkpoint planned before the commit in a
+        relay-linked workspace (every append writes one, and it is the outbox entry's): written as is (the outbox
+        install already wrote it, unless that was skipped), never re-signed."""
         assert self._host is not None
         sign = self._host.sign
         info = self._logs[log]
@@ -1870,30 +1994,115 @@ class Store:
             self._ticket_appends_since_cp += 1
             if self._checkpoints.write_ticket(sign, log, info.seq, info.head or "", ev["at"], info.acc) == "diverged":
                 self._diverged[log] = Divergence(log, info.seq, "a checkpoint at this height has another head")
-        if log == WORKSPACE or self._ticket_appends_since_cp >= WORKSPACE_EVERY:
-            self._write_workspace_checkpoint(ev["at"], new)
+        if planned is _NOPLAN:
+            if log == WORKSPACE or self._ticket_appends_since_cp >= WORKSPACE_EVERY:
+                self._write_workspace_checkpoint(ev["at"], new)
+        elif isinstance(planned, dict):
+            if self._pins is not None:
+                self._adopt(planned)
+            self._ticket_appends_since_cp = 0
+        elif planned == "diverged":
+            self._diverged[WORKSPACE] = Divergence(
+                WORKSPACE, self._logs[WORKSPACE].seq, "a checkpoint at this height has another head"
+            )
 
-    def _write_workspace_checkpoint(self, at_: str, state: State) -> None:
-        assert self._host is not None
+    def _workspace_logs(self, state: State) -> dict[str, Any] | None:
+        """The logs a workspace checkpoint lists now, or None when none may be written (§5.10)."""
         if state.workspace.genesis is None or self._logs[WORKSPACE].seq == 0:
-            return
+            return None
         # Do not certify a rolled-back head just because its ticket checkpoint was deleted.
         broken = {failure.log for failure in state.chain_errors} | set(self._read_errors) | set(self._diverged)
         if WORKSPACE in broken:
-            return
+            return None
         if self._workspace_checkpoint_missing():
-            return  # never start a new baseline after the checkpoint files were lost (§5.10); appends refuse
-        logs = {
+            return None  # never start a new baseline after the checkpoint files were lost (§5.10); appends refuse
+        return {
             uid: info for uid, info in self._logs.items() if uid not in broken and not self._missing_checkpoint(uid)
         }
+
+    def _plan_workspace_checkpoint(self, log: str, ev: dict[str, Any], state: State) -> dict[str, Any] | str | None:
+        """The workspace checkpoint this append will write, signed before the commit (H12b): the logs after the
+        append, by the same rule as :meth:`_write_workspace_checkpoint`. ``"diverged"`` or None: no entry."""
+        assert self._host is not None
+        logs = self._workspace_logs(state)
+        if logs is None or state.workspace.genesis is None:
+            return None
+        if log in self._logs and log not in logs:
+            return None  # the post-commit rule leaves this log out (broken, diverged, missing checkpoint): no entry
+        if log != WORKSPACE:
+            old = self._checkpoints.ticket(log)
+            if old is not None and ("o" not in old or old["o"]["seq"] >= ev["seq"]):
+                return None  # write_ticket will call it diverged after the commit: certify nothing for it (Opus F5)
+        info = self._logs.get(log)
+        head = canon.event_head(ev)
+        logs[log] = _Cut(ev["seq"], head, canon.log_acc(info.acc if info else _ZERO_ACC, head))
+        baseline = self._held_checkpoint()
+        return self._checkpoints.build_workspace(
+            self._host.sign,
+            state.workspace.genesis,
+            ev["at"],
+            logs,
+            baseline,
+            n=self._reserve_next(baseline),
+        )
+
+    def _number_floor(self) -> int:
+        """The checkpoint numbering high-water mark (``HostPins.high_n``): every number ever reserved or accepted."""
+        return self._pins.high_n() if self._pins is not None else 0
+
+    def _reserve_next(self, baseline: Mapping[str, Any] | None) -> int | None:
+        """Reserve and return the next workspace checkpoint number (H12b review, Opus F1): above every number the
+        checkpoints, ``baseline`` and the high-water mark hold. **No ``n`` is signed unless reserved first; reserved
+        ``n`` are never reused** (``HostPins.reserve_n``). No outbox scan: every outbox ``n`` was reserved."""
+        if self._pins is None:
+            return None  # a store without host state numbers by its checkpoint files alone (P1 direct reads)
+        n = (
+            max(
+                self._checkpoints.highest_n(),
+                baseline["o"]["n"] if baseline and "o" in baseline else 0,
+                self._pins.high_n(),
+            )
+            + 1
+        )
+        self._pins.reserve_n(n)
+        return n
+
+    def _write_workspace_checkpoint(self, at_: str, state: State) -> None:
+        assert self._host is not None
+        logs = self._workspace_logs(state)
+        if logs is None or state.workspace.genesis is None:
+            return
+        baseline = self._held_checkpoint()
+        if self.outbox_active:
+            # linked (H12b): every workspace checkpoint the store writes goes to the outbox too. Order: the number is
+            # reserved, then the entry, the pin and workspace.json; a crash anywhere burns the number at worst.
+            cp = self._checkpoints.build_workspace(
+                self._host.sign,
+                state.workspace.genesis,
+                at_,
+                logs,
+                baseline,
+                n=self._reserve_next(baseline),
+            )
+            if isinstance(cp, dict):
+                assert self._outbox is not None and self._pins is not None
+                self._outbox.write(make_entry(cp))
+                self._coalesce(cp["o"]["n"])
+                self._adopt(cp)
+                self._ticket_appends_since_cp = 0
+                return
+            self._diverged[WORKSPACE] = Divergence(
+                WORKSPACE, self._logs[WORKSPACE].seq, "a checkpoint at this height has another head"
+            )
+            return
         if (
             self._checkpoints.write_workspace(
                 self._host.sign,
                 state.workspace.genesis,
                 at_,
                 logs,
-                self._held_checkpoint(),
-                floor_n=self._pins.high_n() if self._pins is not None else 0,
+                baseline,
+                n=self._reserve_next(baseline),
             )
             == "diverged"
         ):
@@ -2488,7 +2697,7 @@ class Store:
             raise StoreError("chain.diverged", "invalid held workspace checkpoint")
         return cp
 
-    def _stage_transition(self, ev: dict[str, Any], log: str, state: State) -> None:
+    def _stage_transition(self, ev: dict[str, Any], log: str, state: State) -> dict[str, Any]:
         from .checkpoints import _extension, sign_object
 
         assert self._pins is not None and self._host is not None
@@ -2514,12 +2723,7 @@ class Store:
                 "kind": "workspace_checkpoint",
                 "workspace_id": self.workspace_id,
                 "genesis": self._pin,
-                "n": max(
-                    self._checkpoints.highest_n(),
-                    cp["o"]["n"] if cp else 0,
-                    self._pins.high_n(),
-                )
-                + 1,
+                "n": self._reserve_next(cp),
                 "at": ev["at"],
                 "workspace_log": workspace_entry,
                 "tickets": dict(sorted(tickets.items())),
@@ -2562,6 +2766,7 @@ class Store:
         directory = self._pins.dir / "pending-transitions"
         directory.mkdir(parents=True, exist_ok=True)
         write_atomic(directory / (ev["id"] + ".json"), canon.cj_checked(transition) + b"\n", mode=0o600)
+        return transition
 
     def _recover_transitions(self) -> None:
         if self._pins is None or self._host is None or self._state is None:
@@ -2607,3 +2812,444 @@ class Store:
             fsync_dir(completed)
             fsync_dir(path.parent)
             self._diverged.pop(log, None)
+
+    # ------------------------------------------------------------------ the relay outbox (H12b, §11, §11A)
+
+    @property
+    def outbox_active(self) -> bool:
+        """Whether appends write outbox entries: the workspace is relay-linked (``relay/link.json`` exists under
+        ``<state>/hosts/<ws>/``, written by R1 under the store lock before any network write, 11A.5)."""
+        return self._pins is not None and os.path.lexists(self._pins.dir / "relay" / "link.json")
+
+    def _relay_dir(self) -> Path:
+        if self._pins is None:
+            raise StoreError("validation.host_state", "a relay link needs the host state dir")
+        d = self._pins.dir / "relay"
+        if d.is_symlink():
+            raise StoreError("store.torn_write", "the relay state directory is a symlink")
+        return d
+
+    def relay_link(
+        self, link: Mapping[str, Any], *, guard: Callable[[], contextlib.AbstractContextManager[object]]
+    ) -> None:
+        """Write the reader reservation ``relay/link.json`` (11A.5 first link, 11A.6) and so turn the outbox on.
+
+        ``with self.locked(): with guard(): …``: under the store lock, then inside ``guard()`` (the host passes
+        ``orch.host.relaylink.link_reservation(service)``: the host-wide lock and the ``sign.convenience_readers`` /
+        ``host.limit`` refusals, held across the write so two workspaces cannot pass the cap together), refuse when
+        ``link.json`` exists (``relay.link_exists``), then write ``{**link, "state": "linking"}`` atomically
+        (fsync, 0600; the directory 0700). From that moment every append carries its outbox entry: appends take
+        the same lock. If ``guard()`` raises, nothing is written. ``link`` must be an object naming this workspace
+        (if it names one) and no state other than ``linking`` (``validation.relay_link``)."""
+        if (
+            not isinstance(link, Mapping)
+            or link.get("workspace_id", self.workspace_id) != self.workspace_id
+            or link.get("state", "linking") != "linking"
+        ):
+            raise StoreError("validation.relay_link", "link.json names another workspace or a state past linking")
+        body = canon.cj_checked({**link, "state": "linking"}) + b"\n"
+        with self._locked(), guard():
+            d = self._relay_dir()
+            path = d / "link.json"
+            if os.path.lexists(path):
+                raise StoreError("relay.link_exists", "the workspace already has a relay link")
+            d.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(d, 0o700)
+            write_atomic(path, body, mode=0o600)
+            fsync_dir(d)
+            fsync_dir(d.parent)  # a new relay/ must survive a crash too (review round 2): still under both locks
+
+    def relay_mark_linked(self, expect: Mapping[str, Any]) -> None:
+        """Rewrite ``relay/link.json`` from ``linking`` to ``linked`` under the store lock, only if it holds exactly
+        ``expect`` (state ``linking``); otherwise ``relay.link_mismatch`` and nothing is written."""
+        with self._locked():
+            d = self._relay_dir()
+            path = d / "link.json"
+            raw = None if path.is_symlink() else read_or_none(path, 1_000_000)
+            try:
+                have = loads(raw) if raw is not None else None
+            except ValueError:
+                have = None
+            if have is None or dict(expect) != have or have.get("state") != "linking":
+                raise StoreError("relay.link_mismatch", "link.json is not the expected linking record")
+            write_atomic(path, canon.cj_checked({**have, "state": "linked"}) + b"\n", mode=0o600)
+            fsync_dir(d)
+
+    def outbox_entries(self, limit: int | None = None) -> list[OutboxEntry]:
+        """The outbox entries, oldest (lowest ``n``) first, each verified (WSK signature, workspace, genesis, ``n``
+        and hash; a restore's target holds its line); only the first ``limit`` when given. Takes the lock. Raises
+        ``store.torn_write`` for an entry that does not verify: the publisher stops rather than skip or publish it."""
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise StoreError("validation.outbox", "limit is a positive integer")
+        with self._locked():
+            return self._read_outbox(limit)
+
+    def outbox_first(self) -> OutboxEntry | None:
+        """The lowest entry (the one R3 publishes next), verified, or None when the outbox is empty."""
+        got = self.outbox_entries(limit=1)
+        return got[0] if got else None
+
+    def _read_outbox(self, limit: int | None = None) -> list[OutboxEntry]:
+        if self._outbox is None:
+            return []
+        return self._outbox.read(
+            wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin, limit=limit
+        )
+
+    def outbox_delete(self, n: int, hash: str) -> bool:
+        """Delete entry ``n`` after the relay accepted it (R3: after a 200 whose ``{n, hash}`` equals the entry's,
+        and after the publication history is appended). ``hash`` must be the entry's checkpoint hash, else
+        ``outbox.mismatch`` and nothing is deleted. Returns False when there is no such entry (idempotent)."""
+        with self._locked():
+            if self._outbox is None:
+                return False
+            path = self._outbox.path(n)
+            if path.is_symlink():
+                raise StoreError("store.torn_write", f"outbox entry {n} is a symlink")
+            raw = read_or_none(path, None)
+            if raw is None:
+                return False
+            entry = parse_entry(raw, wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin)
+            if entry.n != n or entry.hash != hash:
+                raise StoreError("outbox.mismatch", f"outbox entry {n} holds another checkpoint")
+            return self._outbox.delete(n)
+
+    def _recover_catchup(self) -> None:
+        """Finish a catch-up replacement whose journal was committed (§11A.5 step 4): before anything numbers a
+        checkpoint or reads the outbox."""
+        if self._outbox is None:
+            return
+        intent = self._outbox.read_intent()
+        if intent is not None:
+            self._apply_catchup(intent)
+
+    def _apply_catchup(self, intent: dict[str, Any]) -> None:
+        assert self._outbox is not None and self._pins is not None
+        try:
+            if set(intent) != {"v", "write", "delete"} or intent["v"] != 1:
+                raise StoreError("store.torn_write", "unreadable outbox catch-up journal")
+            entries = [
+                parse_entry(e, wsk_pub=self._wsk_pub(), workspace_id=self.workspace_id, genesis=self._pin)
+                for e in intent["write"]
+            ]
+            gone = [int(n) for n in intent["delete"] if type(n) is int]
+            if not entries or len(gone) != len(intent["delete"]) or any(e.kind != "plain" for e in entries):
+                raise StoreError("store.torn_write", "unreadable outbox catch-up journal")
+        except (KeyError, TypeError) as e:
+            raise StoreError("store.torn_write", f"unreadable outbox catch-up journal ({e})") from None
+        self._pins.reserve_n(max(e.n for e in entries))  # idempotent: mint_catchup reserved them before signing
+        for entry in entries:
+            self._outbox.write(entry)
+        keep = {e.n for e in entries}
+        for n in gone:
+            if n not in keep:
+                self._outbox.delete(n)
+        last = entries[-1].checkpoint
+        cur = self._checkpoints.workspace()
+        if cur is None or "o" not in cur or cur["o"]["n"] < last["o"]["n"]:
+            self._checkpoints.write_workspace_object(last)
+        held = self._pins.held()
+        if held is None or "o" not in held or held["o"]["n"] < last["o"]["n"]:
+            self._pins.accept_checkpoint(last)
+        self._outbox.drop_intent()
+
+    def mint_catchup(
+        self,
+        *,
+        source: Mapping[str, Any] | None,
+        cap: int,
+        measure: Callable[[tuple[Segment, ...]], int],
+    ) -> list[OutboxEntry]:
+        """Mint catch-up checkpoints (§11A.5, P3-D37): prefixes Q1 ⊂ … ⊂ Qk from ``source`` (the relay's held
+        checkpoint, verified again here; None when the relay holds none) to a fresh snapshot of the current logs,
+        each step set within ``cap`` bytes by ``measure`` (R3's exact counter over the step's :class:`Segment` s, one
+        per log that grows, the workspace log first), numbered ``m+1 … m+k`` above every existing ``n`` with one
+        ``at``, signed by :meth:`Checkpoints.sign_prefix`. In one transaction (a journal) the outbox's plain entries
+        are replaced by Q1 … Qk and Qk becomes ``workspace.json``. Returns the new entries; [] when nothing lies
+        beyond ``source``.
+
+        Refuses, changing nothing: ``relay.too_large`` when the outbox holds a restore (an anchor: catch-up would
+        need numbers below an existing ``n``, so it never synthesizes anything there) or a single event's step does
+        not fit; ``checkpoint.prefix_invalid`` for a source that does not verify; ``chain.diverged`` for a source the
+        logs do not contain or numbered above the host's numbering; ``chain.broken``/``chain.diverged`` while any log
+        is broken or diverged."""
+        if type(cap) is not int or cap <= 0:
+            raise StoreError("validation.cap", "cap is a positive number of bytes")
+        with self._locked():
+            if self._host is None or self._pins is None or self._outbox is None:
+                raise StoreError("store.read_only", "no workspace key signer: this store can only read")
+            self._scan_dirs()
+            self._ensure(set(self._exists))
+            assert self._state is not None
+            self._refuse_unpublishable()
+            entries = self._read_outbox()
+            if any(e.kind == "restore" for e in entries):
+                raise StoreError("relay.too_large", "a queued restore is an anchor: no catch-up across it (§11A.5)")
+            held = self._pins.held()
+            m = max(
+                self._checkpoints.highest_n(),
+                self._pins.high_n(),
+                self._outbox.max_n(),
+                held["o"]["n"] if held and "o" in held else 0,
+            )
+            base = self._catchup_source(source, m)
+            order = self._order_beyond(base)
+            if not order:
+                return []
+            heads_before = {log: info.seq for log, info in self._logs.items()}
+            cuts = self._plan_cuts(order, base, cap, measure)
+            # R3's measure callback ran in between: whatever it did, the numbering is read again after it, and the
+            # plan must still describe the logs (review round 2)
+            if {log: info.seq for log, info in self._logs.items()} != heads_before or not self._fresh():
+                # also a write through another Store on this thread (the lock is re-entrant): Opus #456 E1
+                raise StoreError("checkpoint.prefix_invalid", "the logs changed while the catch-up was planned")
+            held = self._pins.held()
+            m_before = m
+            m = max(
+                m,
+                self._checkpoints.highest_n(),
+                self._pins.high_n(),
+                self._outbox.max_n(),
+                held["o"]["n"] if held and "o" in held else 0,
+            )
+            if m != m_before:  # the callback moved the numbering: refuse, R3 re-plans (Opus #456 E1)
+                raise StoreError("checkpoint.prefix_invalid", "the numbering moved while the catch-up was planned")
+            keys = {(log, seq): k for k, log, seq in order}
+            last_at = max(
+                [self._now(), *(self._log_last_at(log) for log in self._logs)]
+                + [cp["o"]["at"] for cp in (self._checkpoints.workspace(), held, source) if cp and "o" in cp]
+                + [e.checkpoint["o"]["at"] for e in entries]
+            )
+            self._pins.reserve_n(m + len(cuts))  # before anything numbered m+1 … m+k is signed (Opus F1)
+            prev: Mapping[str, Any] | None = source
+            minted: list[OutboxEntry] = []
+            for i, cut in enumerate(cuts):
+                cp = self._checkpoints.sign_prefix(
+                    self._host.sign,
+                    genesis=self._pin or "",
+                    n=m + 1 + i,
+                    at=last_at,
+                    cut=cut,
+                    logs=self._logs,
+                    base=prev,
+                    key=lambda log, seq: keys[(log, seq)],
+                    floor_n=m + i,
+                )
+                minted.append(make_entry(cp, catchup=True))
+                prev = cp
+            final = minted[-1].checkpoint["o"]
+            for log, info in self._logs.items():  # Qk is the fresh snapshot: every log at its current head
+                entry = final["workspace_log"] if log == WORKSPACE else final["tickets"].get(log)
+                if info.seq and (entry is None or entry["seq"] != info.seq):
+                    raise StoreError("checkpoint.prefix_invalid", f"{log}: the last prefix is not the current log")
+            intent = {"v": 1, "write": [e.to_json() for e in minted], "delete": [e.n for e in entries]}
+            self._outbox.write_intent(intent)  # the commit point of the replacement
+            self._apply_catchup(intent)
+            return minted
+
+    def _refuse_unpublishable(self) -> None:
+        assert self._state is not None
+        if self._state.workspace.genesis is None:
+            raise StoreError("chain.broken", "no genesis")
+        if self._read_errors or self._unverified:
+            log = sorted(set(self._read_errors) | self._unverified)[0]
+            raise StoreError("chain.broken", f"{log}: unreadable or unverified; nothing is published")
+        if self._state.chain_errors:
+            failure = self._state.chain_errors[0]
+            raise StoreError(failure.code, failure.detail)
+        if self._diverged:
+            d = next(iter(self._diverged.values()))
+            raise StoreError("chain.diverged", f"{d.log}: {d.detail}")
+        if self._workspace_checkpoint_missing():
+            raise StoreError("checkpoint.missing", "workspace: no workspace checkpoint is held")
+        for log in self._logs:  # never certify a head whose ticket checkpoint is missing (Opus F4, as _workspace_logs)
+            if self._missing_checkpoint(log):
+                raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
+
+    def _catchup_source(self, source: Mapping[str, Any] | None, m: int) -> dict[str, tuple[int, str, str]]:
+        """``source``'s per-log cut, after checking it is this workspace's WSK checkpoint and the logs contain it."""
+        if source is None:
+            return {}
+        from .checkpoints import verify_object
+
+        wsk = self._wsk_pub()
+        try:
+            ok = (
+                wsk is not None
+                and verify_object(wsk, source)
+                and source["o"]["kind"] == "workspace_checkpoint"
+                and source["o"]["workspace_id"] == self.workspace_id
+                and source["o"]["genesis"] == self._pin
+            )
+        except (KeyError, TypeError):
+            ok = False
+        if not ok:
+            raise StoreError("checkpoint.prefix_invalid", "the source is not a checkpoint of this workspace's key")
+        o = source["o"]
+        if o["n"] > m:
+            raise StoreError("chain.diverged", f"the source n {o['n']} is above the host's numbering {m}")
+        out = {}
+        for log, entry in {WORKSPACE: o["workspace_log"], **o["tickets"]}.items():
+            info = self._logs.get(log)
+            seq = entry["seq"]
+            if info is None or not 1 <= seq <= info.seq or info.heads[seq - 1] != entry["head"]:
+                raise StoreError("chain.diverged", f"{log}: the source is not contained in the logs")
+            if info.accs[seq - 1] != entry["acc"]:
+                raise StoreError("chain.diverged", f"{log}: the source's accumulator differs from the log's")
+            out[log] = (seq, entry["head"], entry["acc"])
+        return out
+
+    def _order_beyond(self, base: Mapping[str, tuple[int, str, str]]) -> list[tuple[tuple[Any, ...], str, int]]:
+        """Every event past ``base``, as ``(merged-order key, log, seq)``, sorted (§5.5: the workspace log by
+        ``seq``; a ticket event by ``ws_seq``, ``at``, uid, ``seq``)."""
+        order: list[tuple[tuple[Any, ...], str, int]] = []
+        for log, info in self._logs.items():
+            start = base[log][0] if log in base else 0
+            if log == WORKSPACE:
+                order.extend(((seq, 0, 0, "", seq), log, seq) for seq in range(start + 1, info.seq + 1))
+            else:
+                for e in self._read_events(log, start + 1, info.seq):
+                    order.append(((int(e["ws_seq"]), 1, _epoch(e["at"]), log, int(e["seq"])), log, int(e["seq"])))
+        order.sort()
+        return order
+
+    def _log_last_at(self, log: str) -> str:
+        info = self._logs[log]
+        return self._read_event(log, info.seq)["at"] if info.seq else "1970-01-01T00:00:00Z"
+
+    def _plan_cuts(
+        self,
+        order: list[tuple[tuple[Any, ...], str, int]],
+        base: Mapping[str, tuple[int, str, str]],
+        cap: int,
+        measure: Callable[[tuple[Segment, ...]], int],
+    ) -> list[dict[str, tuple[int, str, str]]]:
+        """Greedy: each step takes the longest run of the merged order whose step set ``measure`` keeps within
+        ``cap`` (exponential then binary search; the size only grows with the run)."""
+        prev = {log: c[0] for log, c in base.items()}
+        cuts: list[dict[str, tuple[int, str, str]]] = []
+        i = 0
+
+        def size(upto: int) -> int:
+            grow: dict[str, int] = {}
+            for _k, log, seq in order[i:upto]:
+                grow[log] = seq
+            segs = []
+            for log in sorted(grow, key=lambda lg: (lg != WORKSPACE, lg)):
+                info, after = self._logs[log], prev.get(log, 0)
+                segs.append(Segment(log, after, info.accs[after - 1] if after else _ZERO_ACC,
+                                    tuple(info.heads[after : grow[log]])))  # fmt: skip
+            return measure(tuple(segs))
+
+        while i < len(order):
+            if size(i + 1) > cap:
+                raise StoreError("relay.too_large", "a single event's step set is above the cap")
+            good, step = i + 1, 1
+            while good < len(order):
+                probe = min(len(order), i + 2 * step)
+                if size(probe) > cap:
+                    bad = probe
+                    break
+                good, step = probe, 2 * step
+            else:
+                bad = None
+            if bad is not None:
+                while bad - good > 1:
+                    mid = (good + bad) // 2
+                    good, bad = (mid, bad) if size(mid) <= cap else (good, mid)
+            for _k, log, seq in order[i:good]:
+                prev[log] = seq
+            cuts.append({log: (seq, self._logs[log].heads[seq - 1], self._logs[log].accs[seq - 1])
+                         for log, seq in prev.items() if seq})  # fmt: skip
+            i = good
+        return cuts
+
+    # ------------------------------------------------------------------ forwarded revocation evidence (H12b)
+
+    def note_forwarded_revocation(self, item: object) -> Literal["held", "pending", "dropped"]:
+        """Hold one verified item of the relay's unpublished evidence (§11A.9, P3-D31; R4 calls it as a worker job).
+
+        Every fact comes from the signed objects: ``pk_pub`` parses and names the person; the certificate verifies
+        under it (``check_cert``) and is judged at its own ``created_ms`` (an expired historical certificate is
+        still evidence); the revocation verifies under it against that certificate; device, person and reason are
+        the certificate's and revocation's, and the item's outer ``device_id``, ``person_id`` and ``reason`` and
+        ``provenance.digest`` (``sha256:`` over ``cj(revocation)``) must equal them. Then, under the store lock:
+        ``held`` when the workspace associates the device with that person (the caller raises the owners' ``needs``
+        item); ``pending`` when it does not but the person is a current or past member; ``dropped`` for anything
+        else, for anything that does not verify and when ``HostPins.note_revocation`` (forwarded, capped) does not
+        retain it. ``held`` and ``pending`` mean the record is durable. Idempotent per ``(device_id, person_id)``.
+        The host never appends ``device.revoked`` or a restore for it."""
+        facts = _verify_forwarded(item)
+        if facts is None:
+            return "dropped"
+        device, person, reason, rev, cert, pk_pub = facts
+        with self._locked():
+            if self._pins is None or self._state is None:
+                _log.info("forwarded revocation dropped (%s, %s): no host state", device, person)
+                return "dropped"
+            state = self._state
+            if state.device_person(device) == person:
+                result: Literal["held", "pending", "dropped"] = "held"
+            elif state.is_member(person):
+                result = "pending"
+            else:
+                _log.info("forwarded revocation dropped (%s, %s): not a member", device, person)
+                return "dropped"
+            owner = None
+            if self._genesis_event is not None:
+                with contextlib.suppress(KeyError, TypeError):
+                    owner = "p_" + self._genesis_event["delegation"]["o"]["owner_person_id"]
+            kept = self._pins.note_revocation(
+                device, reason, rev, self._now(), cert, pk_pub, chain=False, is_member=state.is_member, owner=owner
+            )
+            if not kept:
+                _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
+                return "dropped"
+            return result
+
+
+def _restore_evidence(transition: Mapping[str, Any]) -> dict[str, Any]:
+    """A restore's outbox evidence (§11 P3-D21): the source C, the signed line, the certificate, the delegation and
+    the proof material, taken from its pending transition."""
+    out = {k: transition[k] for k in transition if k not in ("committed", "C", "T")}
+    out["source"] = transition["C"]
+    return out
+
+
+def _verify_forwarded(item: object) -> tuple[str, str, str, dict[str, Any], dict[str, Any], str] | None:
+    """``(d_device, p_person, reason, revocation, device_cert, pk_pub)`` derived from ``item``'s signed objects, or
+    None (and a log line naming the class of failure, never key material) when anything does not verify (§11A.9)."""
+    from orch.identity import certs
+    from orch.identity.errors import Refused
+
+    try:
+        if not isinstance(item, dict) or set(item) != _ITEM_KEYS:
+            raise ValueError("not an item of the stated shape")
+        if len(canon.cj_checked(item)) > MAX_FORWARDED_ITEM_BYTES:
+            raise ValueError("the item is above the size cap")
+        if not isinstance(item["provenance"], dict) or set(item["provenance"]) != {"cursor", "digest"}:
+            raise ValueError("provenance shape")
+        schema.validate_def("deviceCert", item["device_cert"])
+        schema.validate_def("revocation", item["revocation"])
+        if len(item["device_cert"]["o"]["label_sealed"]) > _MAX_LABEL_SEALED:
+            raise ValueError("label_sealed above its cap")
+        pk_text = item["pk_pub"]
+        pk = crypto.validate_public_key(crypto.unb64u(pk_text, crypto.PUB_LEN))
+        person_hex = crypto.person_id(pk).hex()
+        cert, rev = item["device_cert"], item["revocation"]
+        cert_o = certs.check_cert(cert, pk)
+        certs.verify_cert(cert, pk, now_ms=cert_o["created_ms"])  # valid at its own creation (§11A.9)
+        rev_o = certs.verify_revocation(rev, pk, cert_o)
+        device_hex, reason = cert_o["device_id"], rev_o["reason"]
+        if rev_o["device_id"] != device_hex or rev_o["person_id"] != person_hex or cert_o["person_id"] != person_hex:
+            raise ValueError("the signed objects disagree")
+        if (item["device_id"], item["person_id"], item["reason"]) != (device_hex, person_hex, reason):
+            raise ValueError("an outer field differs from the signed objects")
+        provenance = item["provenance"]
+        if not isinstance(provenance, dict) or provenance.get("digest") != canon.artifact_digest(canon.cj_checked(rev)):
+            raise ValueError("provenance digest")
+    except (Refused, ValueError, KeyError, TypeError, AttributeError, crypto.EncodingError, crypto.CryptoError,
+            canon.HashError, schema.SchemaError) as e:  # fmt: skip
+        _log.info("forwarded revocation dropped: %s", type(e).__name__)
+        return None
+    return "d_" + device_hex, "p_" + person_hex, reason, rev, cert, pk_text

@@ -1534,3 +1534,10 @@ machinery unchanged and keep core in charge of wording. Converting would need a 
 **Why:** Prevent surviving ssh/git descendants, host/cwd drift, stale list label replacement, stale handoff state, and test leakage. Fresh reads reduce lost updates but do not provide atomic compare-and-swap against changes after that read.
 
 **Revert:** Only with equivalent core process/host isolation and label concurrency guarantees; preview cleanup remains necessary while tests share API objects.
+
+## 2026-10-14 #444 recheck: foreign reload destination and concurrent unknown signatures
+
+- **Decision:** Reset every foreign navigation to `/` before rendering and move to the launch destination only after its own code was redeemed (a made-up `launch` with an attacker `to=` stays on `/`; Opus delta F-1), while preserving private launch redemption and channel isolation. Re-mark uncertain signing outcomes after signer errors, even if a concurrent definite failure cleared the in-flight mark.
+- **Why:** A later untagged reload must not authenticate an attacker-chosen path or query (R-2); unknown signature outcomes must retain the cancellation/replacement guard across concurrent attempts (R-3). The foreign notice still directs users to open from the terminal or a bookmark at `/`.
+- **Revert:** Restore the prior URL replacement in `src/api/bootstrap.ts` and remove the uncertain-outcome re-mark in `server/src/orch_dashboard/click.py`, accepting the two residual races again.
+- **F-2 (Opus delta, info) closed structurally:** `Handoffs.begin_sign`/`end_sign` count sign calls in flight per request and remember unknown outcomes. A definite failure clears the mark only when no other sign is in flight and no outcome is unknown, in any finish order; an unknown outcome stays marked until the host answer is known (`settled`) or the mark expires. Two concurrent definite failures still clear it (nothing is at the host).

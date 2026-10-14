@@ -481,6 +481,17 @@ host restart shows as `RunnerInfo.connected:false` and, for ops that need it, `r
 state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`), transient conditions 9. Every
 `message` is host-authored and untrusted: clients render it as plain text.
 
+**Store codes of the relay publisher (H12b).** These are raised by the store API that R3 calls (§11A.5 "As built in
+H12b") and are never sent on a socket. A workspace op that meets one maps it to `internal` (`cli/store_errors.py`).
+
+| Code | Exit | Retryable | Fate | When | `retry_after_ms` |
+|---|---|---|---|---|---|
+| `checkpoint.prefix_invalid` | 1 | no | stays | `Checkpoints.sign_prefix` refuses a prefix (a number at or below an existing one, an entry that is not a point of its log, a prefix that drops its base, a ticket event resting on a later workspace head, a prefix that is not downward closed, an `at` before the base), or the catch-up source does not verify | — |
+| `relay.too_large` | 1 | no | stays | `Store.mint_catchup` cannot split: a restore is queued (an anchor), or one event's step set is above the cap. R3 alarms it (`host.status`); the 11A.5 oversized-restore refusal uses the same code | — |
+| `outbox.mismatch` | 1 | no | stays | `Store.outbox_delete(n, hash)` for an entry `n` that holds another checkpoint | — |
+| `relay.link_exists` | 1 | no | stays | `Store.relay_link` while `relay/link.json` already exists | — |
+| `relay.link_mismatch` | 1 | no | stays | `Store.relay_mark_linked(expect)` when `link.json` is missing or is not exactly `expect` in state `linking` | — |
+
 **Universal errors.** These may come from any op, beyond the op's own list:
 
 - every op: `req.invalid`, `unknown_command`, `op.unsupported`, `op.not_allowed`, `human_only` (human registry ops,
@@ -3617,6 +3628,24 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `records.status` takes `current_url` and answers `remote.current_url`, `remote.current_private` and
     `remote.matches_last` (§12.8); `orch set REF labels=` sets the empty label set. Additive on the wire except
     `history_convenience`, which tool and host ship together. No log or certificate change.
+34. **Store hooks for the relay (H12b, §11A.5 "As built in H12b"):**
+    - In a relay-linked workspace every append writes its exact workspace checkpoint into
+      `<state>/hosts/<ws>/outbox/` in the same commit (the pending directory). A restore's entry carries T and the full
+      evidence set. Checkpoints outside an append are queued too.
+    - R3's store API: `Store.outbox_entries`, `Store.outbox_delete(n, hash)` and `Store.mint_catchup(source, cap,
+      measure)`. Catch-up uses dense numbers above every existing `n` and one `at`, with an atomic journalled
+      replacement. A queued restore is an anchor and blocks catch-up. Prefixes are checked by
+      `Checkpoints.sign_prefix`.
+    - R4's store API: `Store.note_forwarded_revocation(item) -> held | pending | dropped`, with facts derived only from
+      the signed objects.
+    - New store codes `checkpoint.prefix_invalid`, `relay.too_large` (also R3's alarm code), `outbox.mismatch`,
+      `relay.link_exists` and `relay.link_mismatch`. They are never sent on a socket (§0.6).
+    - Review round 1:
+      - a durable numbering reservation: no `n` is signed unless reserved, and none is reused;
+      - outbox coalescing, `outbox_first`/`outbox_entries(limit)`;
+      - `Store.relay_link(link, *, guard)` and `Store.relay_mark_linked`;
+      - bounded forwarded evidence (F1 caps updated).
+    - No wire, log or certificate change.
 35. **Column R (H12a, contract v1.7 draft):** the relay peer class (`Peer.kind "relay"`, uid −1, `RelayIdentity`),
     column R with the closed op list `RELAY_OPS` and `OpKind "device_signed"` (`relay.submit`, never served on a
     socket), a fail-closed `resolve`, `Call.relay`; `principal()` and `principal_of` refuse a relay peer; `relay.submit`
@@ -4459,7 +4488,8 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   - A restore's entry comes right after the source it names, and normal checkpoints queued behind it wait.
   - Membership bodies are not outbox entries (see membership publication below).
   - P2 reserves this as a hook in the append transaction of D-P2-3 (next to the outcome record), plus a directory
-    `<state>/hosts/<ws>/outbox/` in the D-P2-17 custody list.
+    `<state>/hosts/<ws>/outbox/` in the D-P2-17 custody list. Built in H12b (§11A.5 "As built in H12b"). Store-side
+    coalescing supersedes unaccepted middle plain entries; the relay needs no consecutive `n`.
 - **Person-event and decision ids admitted** are committed to host state in the same transaction as their admission,
   as tombstones that survive a restore. H2b's outcome store must leave room for that table.
 - **The holder lease (P3-D10).**
@@ -4682,7 +4712,7 @@ a distinct UID and a restricted signing service (the reserved out-of-process `br
 | response chunk (ORB2 direction 2) | `orch/v2/sig/bridge\|` over `header \|\| body` | WSK | `RelaySigner.response_chunk` inside `BridgeKeys.seal_response` | signer **exists**; ORB2 seal and open (`K_bridge(e)`, `K_msg`, AES-GCM with the header as AAD) **must be added** (the `crypto.hkdf` and `aes_gcm_*` primitives exist) |
 | device request (direction 1) | `orch/v2/sig/bridge\|` | the device's `dk_sig` (verified, not made) | `crypto.verify` against the certificate's `dk_sig_pub` | primitive **exists**; check order of proto §8.6 **must be added** |
 | workspace checkpoint | `orch/v2/sig/checkpoint\|` | WSK | written by the store (`store/checkpoints.py:sign_object`); R3 publishes stored bytes and never signs | **exists** |
-| catch-up checkpoints (11A.5, P3-D37) | same | WSK | `Store.mint_catchup` → `Checkpoints.sign_prefix`, under the store lock | **must be added** (`write_workspace` cannot: it refuses a prefix behind its baseline and keeps later ticket entries) |
+| catch-up checkpoints (11A.5, P3-D37) | same | WSK | `Store.mint_catchup` → `Checkpoints.sign_prefix`, under the store lock | **built in H12b** (`write_workspace` cannot: it refuses a prefix behind its baseline and keeps later ticket entries) |
 | card | `orch/v2/sig/card-wsk\|` | WSK | `RelaySigner.card` (first link) | **must be added** |
 | member list, WK grants, cert requests | `sig_member_list`, `sig_wk_grant`, `sig_cert_request` | WSK | R6 builders; `wk_commit` (label `h_wk_commit` exists, no function) | **must be added** (R6) |
 | genesis pin (`PUT genesis`, P3-D18) | `orch/v2/sig/genesis-pin\|` | an owner device's `dk_sig` | person path: `human.prepare` of a new non-event material kind `relay.genesis_pin`, `host/signer.check` and `render` for it, signed by the click or terminal signer | **must be added**; `sig_genesis_pin` is in **no** role list today, so it must be added to `DEVICE_KEY_LABELS` (`custody/base.py`) |
@@ -5074,6 +5104,144 @@ the pinned genesis and workspace, the genesis pin's owner-device signature) and 
   - `staging_conflict`: drop the set (sets expire after 1 h) and restage under the same `(source, target)` only with
     identical pages. Otherwise alarm.
 
+#### As built in H12b (store side: outbox, catch-up, evidence intake)
+
+H12b built the store half of R3 and R4 in `orch.store` (`store.py`, `outbox.py`, `checkpoints.py`). Nothing in
+`orch.relay` is part of it. Every method below takes the store lock, so R3 and R4 call them only as worker jobs
+(`RelayWorker.submit`), never across networking.
+
+**When the outbox is on.** While `<state>/hosts/<ws>/relay/link.json` exists (`Store.outbox_active`). The file is
+written only by `Store.relay_link(link, *, guard)`. That method takes the store lock, then enters `guard()` (R5 passes
+`lambda: orch.host.relaylink.link_reservation(service)`, H12a: the host-wide lock plus the `sign.convenience_readers`
+and `host.limit` refusals, held across the write). It refuses `relay.link_exists` when a link already exists, and
+otherwise writes `{**link, "state": "linking"}` (atomic, fsynced, 0600, directory 0700). If `guard()` raises,
+nothing is written. `Store.relay_mark_linked(expect)` rewrites `linking` to `linked` under the lock only when the file
+holds exactly `expect` (`relay.link_mismatch` otherwise). Appends take the same lock, so every checkpoint after the
+write is queued. Before returning, `relay_link` fsyncs `relay/` and its parent `hosts/<ws>/` while both locks are
+still held (review round 2), so a new `relay/` survives a crash.
+
+**R5 lock order.** The store lock is taken first, then the guard's host-wide lock. R5's guard must never take a store
+lock (of this or another workspace) while it holds the host-wide lock, or two workspaces linking at once deadlock. Before the
+link nothing is queued: the first publication is a catch-up from the relay's H. After unlink nothing new is queued and
+the existing entries stay.
+
+**Outbox layout** (`<state>/hosts/<ws>/outbox/`, 0700, files 0600, in the D-P2-17 custody list per §11): one file per
+entry, `<n, 20 digits>.json`, holding `cj({v:1, kind:"plain"|"restore", n, hash, checkpoint, restore, catchup})`.
+`checkpoint` is the exact WSK-signed workspace checkpoint (a restore's target T) and `hash` its `checkpoint_hash`.
+A restore's `restore` holds the full evidence set as the pending transition holds it: `source` (C), `event` (the
+signed restore line), `log`, `device_cert`, `pk_pub`, `delegation`, `proofs`, `acc_from`, `acc_before`,
+`forward_heads`, `abandoned_heads`, `publication_complete`. `catchup.json` in the same directory is the catch-up
+journal (not an entry).
+
+**The append hook (P3-D21).** In a linked workspace **every** append writes a workspace checkpoint, not every 50th
+ticket append. Each checkpoint is the append's outbox entry. The store signs the checkpoint *before* the commit, from
+the logs as the append will leave them, and writes the entry into the event's pending directory beside the
+projection files (manifest field `outbox`, its sha256). The log line is the commit, so the existing crash rules
+decide the entry with the event: a crash before the line deletes both, and after it recovery installs both. The
+install checks the entry (WSK signature, workspace, genesis, and an entry for the event's log at exactly the event's
+`seq` and head). It then adopts a plain entry's checkpoint as `workspace.json` and the held checkpoint, so the outbox
+is never ahead of `workspace.json`. In recovery a pending entry that fails the check is reported `store.torn_write`
+and left out; it is never installed. A restore's entry (T plus evidence) is built from the transition staged in the
+same commit. Checkpoints written outside an append (`Store.checkpoint`, the eager open) are queued too, entry first.
+**Numbering invariant (review round 1, Opus F1).** *No checkpoint `n` is signed unless it is reserved first, and a
+reserved `n` is never reused.*
+- `HostPins.reserve_n(n)` writes the high-water mark `checkpoint-n` durably (fsynced) before anything numbered `n` is
+  signed: an append's planned checkpoint, any other workspace checkpoint, a restore target, and catch-up (`m+k` before
+  the first prefix is signed).
+- `_install_outbox` and journal recovery reserve again (idempotent).
+- The next number is `max(highest_n, baseline n, high_n) + 1`, read from that one durable value. There is no outbox
+  scan per append.
+- A crash anywhere at most burns a number.
+- Adoption repairs the host pin and `workspace.json` independently (Codex P1).
+
+**Coalescing (review round 1, Opus F3).** The relay accepts any higher `n` that extends its held checkpoint: `n` need
+not be consecutive (orch-relay `checkpoints.py`: `n > held n`, an exact extension, `at` not earlier). So when a plain
+entry is written, the store deletes the entry just below it if that entry is plain, not catch-up and not the lowest.
+- Always kept: the lowest entry (R3 publishes oldest first and stages only the lowest), every restore, the plain entry
+  just before a restore (its source), every catch-up entry and the newest entry.
+- The queue stays at about 2 + 2 × (queued restores) entries.
+- R3 must stage only the lowest entry (`Store.outbox_first()`).
+
+**Interface for R3 and R4 (orch-29):**
+
+| Call | Returns | Refuses |
+|---|---|---|
+| `Store.outbox_active` | `bool` | — |
+| `Store.relay_link(link, *, guard)` / `Store.relay_mark_linked(expect)` | `None` | `relay.link_exists`, `validation.relay_link` (another workspace, or a state past `linking`), whatever `guard()` raises (nothing written) / `relay.link_mismatch` |
+| `Store.outbox_first()` | the lowest entry, verified, or None | `store.torn_write` |
+| `Store.outbox_entries(limit=None)` | `list[OutboxEntry]` (only the first `limit` when given), lowest `n` first, each verified again on read: `n`, `hash`, `kind`, `checkpoint`, `restore` (`dict` or None), `catchup` | `store.torn_write` for any entry that does not verify (the publisher stops; it never skips) |
+| `Store.outbox_delete(n, hash)` | `True` (deleted) or `False` (no entry `n`: idempotent) | `outbox.mismatch` when entry `n` holds another checkpoint (nothing deleted); `store.torn_write` for a symlinked entry |
+| `Store.mint_catchup(source=H, cap=int, measure=f)` | the new `OutboxEntry` list Q1 … Qk (`catchup: true`), or `[]` when nothing lies past H | `relay.too_large` (a restore is queued, or one event's step exceeds `cap`), `checkpoint.prefix_invalid` (H does not verify), `chain.diverged` (H is not in the logs, or its `n` is above the host's numbering), `chain.broken`/`chain.diverged`/`checkpoint.missing` while any log is broken, unverified or diverged |
+| `Store.note_forwarded_revocation(item)` | `"held"`, `"pending"` or `"dropped"` | nothing: an item that does not verify is `"dropped"`; only a store fault (`store.busy`, `store.torn_write`) raises, and then there is no result, so no ack |
+
+- `measure(segments) -> int` is R3's exact counter (11A.5). It receives a tuple of
+  `orch.store.outbox.Segment(log, after_seq, from_acc, heads)`, one per log that grows in the step, the workspace log
+  first and then the tickets by uid. It returns the `cj` bytes the relay's staging caps count for that step.
+- `source` is the relay's held checkpoint object `{o, sig}` as R1 verified it, or None when the relay holds none.
+- `OutboxEntry.to_json()` gives the stored form.
+- `held` tells R4 to raise the owners' `needs` item: the store has no needs items.
+
+**Catch-up as built.**
+- The store loads every ticket log first and refuses if anything is broken or a ticket's checkpoint is missing
+  (`checkpoint.missing`, review F4).
+- The steps follow the merged order of §5.5 past H. Each step takes the longest run whose set fits (exponential,
+  then binary search over `measure`), so every prefix is downward closed in the merged order.
+- Numbers are `m+1 … m+k`, with `m = max(highest_n, high_n, outbox n, held n)`. There is one `at`: the maximum of
+  the clock, every checkpoint `at` in play (`workspace.json`, held, H, the outbox) and the last event `at` of every
+  log.
+- `Checkpoints.sign_prefix` re-checks every prefix before signing:
+  - `n` is above every existing number, and `at` is not before the base;
+  - each entry is a point of its log (head and accumulator);
+  - the prefix contains its base (H, then the previous prefix);
+  - every added ticket event rests on a workspace `seq` inside the prefix;
+  - the added events are downward closed.
+  Any failure is `checkpoint.prefix_invalid`. Nothing is carried from an older checkpoint, so a prefix never lists a
+  later ticket entry.
+- R3's `measure` callback runs under the store lock. After the plan, the store refuses with
+  `checkpoint.prefix_invalid` when the logs changed (in memory or on disk) or the numbering moved while `measure` ran,
+  and R3 re-plans; otherwise it reserves `m+k`. `measure` must be a pure counter that never calls the store.
+- The replacement is atomic through `outbox/catchup.json` (Q1 … Qk and the plain entries they supersede). The
+  journal is written first. Then the entries are written, the superseded ones deleted, Qk written as `workspace.json`
+  and accepted, and the journal deleted. Every lock finishes a journal it finds, before anything numbers a checkpoint
+  or reads the outbox.
+
+**Judgement calls (fail closed).**
+1. *Anchored catch-up mints nothing.* 11A.5 allows numbers between H and a queued anchor when they are free. With
+   dense numbering none is provably free: the store keeps no record of every checkpoint it once signed under a number,
+   and a second signature under a used `n` is an equivocation. So any queued restore makes `mint_catchup` refuse
+   `relay.too_large` and change nothing (the 11A.5 "anchor is unpublishable" exit).
+2. *Every append is checkpointed while linked.* "An outbox entry per append, the exact checkpoint" (§11) is read
+   literally: the P1 "every 50 ticket appends" rule applies only to unlinked workspaces. This costs O(tickets) per
+   append, bounded by the P3-D20 ticket capacity.
+3. *Outbox growth* is bounded by coalescing (above, review F3). It replaces round 0's "no coalescing".
+4. *A forged or torn pending entry* is reported and dropped in recovery, not installed. The committed event then has
+   no entry of its own, and the next checkpoint covers it.
+5. *Forwarded evidence* is judged by 11A.9 exactly, with these additions (review F2 and F8):
+   - the item is `dropped` when it has another key set (exactly the 8 relay keys, `provenance` exactly
+     `{cursor, digest}`), is above 4 KiB in `cj`, or fails `schema.validate_def` (`deviceCert`, `revocation`), or its
+     `label_sealed` is above 1024 characters;
+   - stored records are at most 6 KiB;
+   - at most 256 forwarded records per person, the owner included, and at most 1536 non-owner records in total,
+     members included; the owner is exempt from the total (review round 2, D1); the eviction cap is 1024 (F1 §5.10's
+     runtime numbers are updated to match);
+   - the forwarded worst case is (1536 + 256) × 6 KiB, about 10.5 MiB;
+   - `revocations.jsonl` is read without a size limit (review round 2, D2): only the host writes it, forwarded records
+     are capped as above, and chain-learned records grow only with accepted history (one per pair, each bounded by
+     the event line cap);
+   - anything unparseable is `dropped` and logged by failure class, never with key material;
+   - the pinned owner passed to `note_revocation` is the genesis delegation's `owner_person_id`.
+6. *Planning keeps the post-commit exclusions* (review F5): an excluded log, or a ticket checkpoint already at or past
+   the event, gives no planned checkpoint. Such a linked append still commits, with **no outbox entry** (fail closed:
+   nothing is certified for a log the post-commit rule would not certify).
+7. *A pending linked append* blocks a store opened without host state (`validation.host_state`, naming the event).
+   The doctor names it as `outbox.pending`, and the next host open finishes it (review F6).
+8. *A restore before the first accepted publication* (review F7): the restore entry is an anchor ahead of the
+   first-link catch-up, so nothing can be published until migration. This is accepted for v1.7 and documented here.
+   The owner should complete the first publication before signing a restore.
+9. *The pending outbox file* is created `O_EXCL | O_NOFOLLOW`. A symlinked pending file or entry is refused (F8).
+
+Tests: `tests/store/test_outbox.py`, `tests/store/test_catchup.py`, `tests/store/test_forwarded_revocation.py`.
+
 ### 11A.6 Convenience rule
 
 A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-P2-23).
@@ -5212,8 +5380,8 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   - `device_id = cert.o.device_id = revocation.o.device_id`, `person = id(pk_pub) = revocation.o.person_id`,
     `reason = revocation.o.reason`; the item's outer `device_id`, `person_id` and `reason` MUST equal them;
   - `provenance.digest == "sha256:" + sha256(cj(revocation))`.
-- Holding is one worker job, `Store.note_forwarded_revocation(item) -> "held" | "pending" | "dropped"` (**must be
-  added**), under the store lock:
+- Holding is one worker job, `Store.note_forwarded_revocation(item) -> "held" | "pending" | "dropped"` (built in
+  H12b, 11A.5 "As built in H12b"), under the store lock:
   - `store.state.device_person(device) == person` (associated): `HostPins.note_revocation(device, reason, revocation,
     at, cert, pk_pub, chain=False, is_member=state.is_member, owner=<pinned owner>)`; result `held` and a `needs` item;
   - not associated, but the person is a current or past member: held the same way as pending forwarded evidence (it
@@ -5307,9 +5475,8 @@ orch-mobile before R2 merges.
 - **Column R in the host:** the changes listed in 11A.4 (`RelayIdentity`, `Peer.kind "relay"`, `resolve_relay`,
   `Call.authorize`, `principal_of`, `NO_PARTIAL`, `append_signed`, the column-site audit).
 - **Durable remote submission:** `relay/submit.py`, the `submission` journal, `relay_fields`, `relay.submit.recover`.
-- **Forwarded evidence intake:** `Store.note_forwarded_revocation` (no store API takes forwarded evidence today; the two
-  `note_revocation` callers in `store/store.py` take chain evidence from the log).
-- **Catch-up:** `Store.mint_catchup`, `Checkpoints.sign_prefix`.
+- **Forwarded evidence intake:** `Store.note_forwarded_revocation`. *Built in H12b* (11A.5 "As built in H12b").
+- **Catch-up:** `Store.mint_catchup`, `Checkpoints.sign_prefix`. *Built in H12b.*
 - **Decision evidence:** relay §13 has the host record a verified detached `decision` verbatim as F1 `evidence`, with
   every `decision_id` single-use forever across restores. Core's F1 model has no evidence carriage and nothing reads
   `sig_decision`. orch-52 decides the F1 shape; until then `decision` is not served.
@@ -5323,7 +5490,7 @@ orch-mobile before R2 merges.
   receive sealed `WK` grants or card keys. R6 needs a new device key or a re-certification.
 - **WK custody, `wk_commit`, member-list, grant, card and cert-request builders:** none exist (labels only).
 - **ORB2 codec and `auth_bytes`:** not in core.
-- **Outbox:** reserved in §11, not built. The store's append transaction needs the hook.
+- **Outbox:** *built in H12b*: the hook in the append transaction, `Store.outbox_entries` and `Store.outbox_delete`.
 - **`_relay_paired`:** probes `membership/` only (11A.6).
 - **Relay 429 detail:** permanent and transient quotas are indistinguishable until the relay adds `quota`.
 - **P3-D37:** merged (relay `7c0406a`), but `ORCH_RELAY_MAX_PUBLICATION_BYTES` is not advertised to clients, so the cap

@@ -76,31 +76,142 @@ def _is_cols(node: ast.AST) -> bool:
     )
 
 
-def inventory() -> dict[tuple[str, str], int]:
-    out: dict[tuple[str, str], int] = {}
-    for path in sorted(SRC.glob("*.py")):
-        tree = ast.parse(path.read_text())
+def _columnish(node: ast.AST) -> bool:
+    """``….column``, ``….column.name`` or ``getattr(….column, "name")``."""
+    if isinstance(node, ast.Attribute) and node.attr in {"column", "name"}:
+        text = ast.unparse(node)
+        return text.endswith(".column") or text.endswith("column.name")
+    if isinstance(node, ast.Name) and node.id == "column":
+        return False  # a parameter or local named column: its comparisons are caught by the literal rule
+    return _getattr_name(node)
 
-        def visit(node: ast.AST, qual: list[str], name: str = path.name) -> None:
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    visit(child, [*qual, child.name])
-                    continue
-                hit = False
-                if isinstance(child, ast.Compare):
-                    parts = [child.left, *child.comparators]
-                    hit = any(_is_cols(p) for p in parts) and any(
-                        "column" in ast.unparse(p) for p in parts if not _is_cols(p)
-                    )
-                elif isinstance(child, ast.Attribute) and child.attr == "name":
-                    hit = ast.unparse(child.value).endswith("column")
-                if hit:
-                    key = (name, ".".join(qual))
-                    out[key] = out.get(key, 0) + 1
-                visit(child, qual)
 
-        visit(tree, [])
+def _getattr_name(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and ast.unparse(node.args[0]).endswith("column")
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "name"
+    )
+
+
+def _scope(node: ast.AST) -> list[ast.AST]:
+    """The nodes of one function (or module) body, without nested functions and classes."""
+    out: list[ast.AST] = []
+    todo = list(ast.iter_child_nodes(node))
+    while todo:
+        child = todo.pop()
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        out.append(child)
+        todo.extend(ast.iter_child_nodes(child))
     return out
+
+
+def _aliases(nodes: list[ast.AST]) -> set[str]:
+    """Local names bound to a column object or name (``col = call.column``, ``c, p = call.column.name, …``)."""
+    names: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and _columnish(node.value):
+                names.add(target.id)
+            elif isinstance(target, ast.Tuple) and isinstance(node.value, ast.Tuple):
+                for t, v in zip(target.elts, node.value.elts, strict=False):
+                    if isinstance(t, ast.Name) and _columnish(v):
+                        names.add(t.id)
+    return names
+
+
+def _sites(nodes: list[ast.AST]) -> int:
+    aliases = _aliases(nodes)
+
+    def mentions(n: ast.AST) -> bool:
+        text = ast.unparse(n)
+        return "column" in text or text in aliases or (isinstance(n, ast.Attribute) and ast.unparse(n.value) in aliases)
+
+    count = 0
+    for node in nodes:
+        if isinstance(node, ast.Compare):
+            parts = [node.left, *node.comparators]
+            if any(_is_cols(p) for p in parts) and any(mentions(p) for p in parts if not _is_cols(p)):
+                count += 1
+        elif isinstance(node, ast.Attribute) and node.attr == "name":
+            count += ast.unparse(node.value).endswith("column") or ast.unparse(node.value) in aliases
+        elif _getattr_name(node):
+            count += 1
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            count += _columnish(node.value) and not isinstance(node.value, ast.Attribute)  # getattr alias
+        elif isinstance(node, ast.Match) and mentions(node.subject):
+            count += len(node.cases)  # every arm of a match on a column is a site
+        elif isinstance(node, ast.MatchValue) and _is_cols(node.value):
+            count += 1
+    return count
+
+
+def inventory() -> dict[tuple[str, str], int]:
+    """Sites per ``(path under orch/, qualified function)``, over ``orch/host/**`` and ``orch/relay/**``."""
+    out: dict[tuple[str, str], int] = {}
+    roots = [SRC, SRC.parent / "relay"]
+    for root in roots:
+        for path in sorted(root.rglob("*.py")) if root.is_dir() else []:
+            rel = path.relative_to(SRC.parent).as_posix()
+            name = rel[len("host/") :] if rel.startswith("host/") else rel
+            tree = ast.parse(path.read_text())
+
+            def walk(node: ast.AST, qual: list[str], name: str = name) -> None:
+                n = _sites(_scope(node))
+                if n:
+                    out[(name, ".".join(qual))] = out.get((name, ".".join(qual)), 0) + n
+                for child in _children_defs(node):
+                    walk(child, [*qual, child.name])
+
+            walk(tree, [])
+    return out
+
+
+def _children_defs(node: ast.AST) -> list[ast.AST]:
+    """The functions and classes defined directly in ``node``'s scope (at any statement depth)."""
+    out: list[ast.AST] = []
+    todo = list(ast.iter_child_nodes(node))
+    while todo:
+        child = todo.pop(0)
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.append(child)
+            continue
+        todo.extend(ast.iter_child_nodes(child))
+    return out
+
+
+def test_the_inventory_catches_getattr_aliases_and_match_arms():
+    """Opus L6: the detector sees the indirect forms too."""
+    code = """
+def f(call):
+    col = call.column
+    if col.name == "P":
+        pass
+def g(call):
+    if getattr(call.column, "name") == "G":
+        pass
+def h(call):
+    c, p = call.column.name, 1
+    return c == "R"
+def k(call):
+    match call.column.name:
+        case "P":
+            return 1
+        case _:
+            return 0
+"""
+    tree = ast.parse(code)
+    found = {fn.name: _sites(_scope(fn)) for fn in tree.body if isinstance(fn, ast.FunctionDef)}
+    assert all(found[n] >= 1 for n in "fghk"), found
+    assert found["h"] >= 2  # the alias read and its later comparison
 
 
 def test_every_column_site_is_listed_with_rs_answer():

@@ -188,11 +188,24 @@ def test_no_socket_op_has_kind_device_signed_and_relay_submit_is_not_served_on_t
 # --- Call.authorize, principal(), principal_of() --------------------------------------------------------------------
 
 
-def relay_call(identity: RelayIdentity | None, op: str, kind: str, cols: Any, peer: Peer | None = None) -> Any:
+class WsService:
+    def __init__(self, workspace_id: str = WS) -> None:
+        self.workspace_id = workspace_id
+
+
+def relay_call(
+    identity: RelayIdentity | None,
+    op: str,
+    kind: str | None,
+    cols: Any,
+    peer: Peer | None = None,
+    service: Any = None,
+) -> Any:
     from orch.host.workspace import Call
 
     peer = peer if peer is not None else (identity.peer() if identity is not None else Peer(UID, "person", PERSON))
-    call = Call(None, None, peer, {"op": op, "args": {}}, Column("N", "no-person"), None)  # type: ignore[arg-type]
+    service = service if service is not None else WsService()
+    call = Call(service, None, peer, {"op": op, "args": {}}, Column("N", "no-person"), None)  # type: ignore[arg-type]
     call.relay = identity
     call.columns = cols
     call.kind = kind  # type: ignore[assignment]
@@ -280,6 +293,53 @@ def test_principal_of_refuses_column_r_and_any_unknown_column():
     with pytest.raises(ValueError):
         principal_of(-1, "P")
     assert principal_of(UID, "P") == f"uid:{UID}"
+
+
+# --- review round 1 (Opus M1, L1, L2) ------------------------------------------------------------------------------
+
+
+def test_authorize_refuses_an_identity_of_another_workspace():
+    """Opus M1 PoC: an identity for workspace B on workspace A's service is never served as R in A."""
+    call = relay_call(ident(), "ticket.get", "read", r_cols, service=WsService("b" * 32))
+    with pytest.raises(HostError) as exc:
+        call.authorize()
+    assert exc.value.code == "op.not_allowed"
+    with pytest.raises(HostError):
+        relay_call(ident(), "ticket.get", "read", r_cols, service=object()).authorize()  # no workspace id
+
+
+def test_a_prebuilt_column_r_without_identity_or_recompute_is_refused():
+    """Opus L1 PoC: column R without a relay identity is refused before the no-recompute early return."""
+    from orch.host.workspace import Call
+
+    call = Call(WsService(), None, Peer(UID, "person", PERSON), {"op": "ticket.get"}, resolve_relay(True), PERSON)  # type: ignore[arg-type]
+    with pytest.raises(HostError) as exc:
+        call.authorize()
+    assert exc.value.code == "op.not_allowed"
+
+
+def test_the_relay_op_kind_is_derived_never_taken_from_the_caller(monkeypatch):
+    """Opus L2: the kind comes from ``op_kind`` / ``DEVICE_SIGNED_OPS``; a caller's kind that differs is refused."""
+    import orch.host.dispatch as dispatch
+
+    call = relay_call(ident(), "ticket.get", None, r_cols)  # no kind given: derived
+    call.authorize()
+    assert call.kind == "read"
+    with pytest.raises(HostError):
+        relay_call(ident(), "relay.submit", "read", r_cols).authorize()  # relay.submit is device_signed
+    call = relay_call(ident(), "relay.submit", None, r_cols)
+    call.authorize()
+    assert call.kind == "device_signed"
+    with pytest.raises(HostError):
+        relay_call(ident(), "show", "device_signed", r_cols).authorize()
+    real = dispatch.op_kind
+    monkeypatch.setattr(dispatch, "op_kind", lambda op: ("unattended", "write") if op == "show" else real(op))
+    with pytest.raises(HostError):  # a listed op whose real kind is a write: refused although the caller says read
+        relay_call(ident(), "show", "read", r_cols).authorize()
+    with pytest.raises(HostError):
+        relay_call(ident(), "show", None, r_cols).authorize()
+    with pytest.raises(HostError):  # an op nobody serves has no kind: refused
+        relay_call(ident(), "artifact.query", None, r_cols).authorize()
 
 
 # --- outcomes: relay.submit, NO_PARTIAL and the relay_fields hook ---------------------------------------------------
@@ -438,9 +498,9 @@ def test_append_signed_appends_in_order_and_reports_landed_seqs():
 
     store = FakeStore()
     events = [signed(1), signed(2)]
-    landed, error = append_signed(FakeService(store), "L", events, [{}, {}])
+    landed, error = append_signed(FakeService(store), "L", events, [{}, {}], signed_by=None)
     assert error is None and landed == [10, 11]
-    landed, error = append_signed(FakeService(store), "L", events, [{}, {}])  # already in the log: not again
+    landed, error = append_signed(FakeService(store), "L", events, [{}, {}], signed_by=None)  # already logged
     assert error is None and landed == [10, 11] and len(store.appended) == 2
 
 
@@ -448,7 +508,9 @@ def test_append_signed_stops_at_the_first_refusal_and_names_what_landed():
     from orch.host.human import append_signed
 
     store = FakeStore(refuse_at=1)
-    landed, error = append_signed(FakeService(store), "L", [signed(1), signed(2), signed(3)], [{}, {}, {}])
+    landed, error = append_signed(
+        FakeService(store), "L", [signed(1), signed(2), signed(3)], [{}, {}, {}], signed_by=None
+    )
     assert landed == [10] and error is not None and error.code == "validation.signature"
     assert store.append_check is None  # restored
 
@@ -483,6 +545,62 @@ def test_append_signed_refuses_an_event_missing_its_signature_key_on_the_relay_p
     del ev["sig"]
     landed, error = append_signed(FakeService(store), "L", [ev], [{}], signed_by=(PERSON, DEV))
     assert landed == [] and error is not None and store.appended == []
+
+
+def test_signed_by_is_keyword_required_and_append_relay_always_checks_the_device():
+    """Opus L3: the relay check is not opt-in."""
+    from orch.host.human import append_relay, append_signed
+
+    store = FakeStore()
+    with pytest.raises(TypeError):
+        append_signed(FakeService(store), "L", [signed(1)], [{}])  # type: ignore[call-arg]
+    landed, error = append_relay(
+        FakeService(store), "L", [signed(1, device="d_" + "9" * 32)], [{}], person_id=PERSON, device_id=DEV
+    )
+    assert landed == [] and error is not None and error.code == "op.not_allowed" and store.appended == []
+    landed, error = append_relay(FakeService(store), "L", [signed(1)], [{}], person_id=PERSON, device_id=DEV)
+    assert error is None and landed == [10]
+
+
+def test_relay_code_never_calls_append_signed_directly():
+    """Opus L3: ``orch/relay`` appends only through ``append_relay`` (vacuous until R2/R5 land)."""
+    relay = SRC.parent / "relay"
+    for path in sorted(relay.rglob("*.py")) if relay.is_dir() else []:
+        tree = ast.parse(path.read_text())
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+        names |= {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+        assert "append_signed" not in names, path
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sig": "t" * 86},
+        {"actor": {"kind": "person", "id": PERSON, "device": "d_" + "9" * 32}},
+        {"actor": {"kind": "person", "id": "p_" + "9" * 32, "device": DEV}},
+    ],
+)
+def test_an_already_logged_id_with_another_signer_is_a_refusal_on_the_relay_path(change):
+    """Opus L4: on the relay path the "already logged" shortcut compares ``sig`` and ``actor``."""
+    from orch.host.human import append_relay
+
+    store = FakeStore()
+    store.appended.append({**signed(1), **change, "seq": 7})  # someone else's event under the same id
+    landed, error = append_relay(
+        FakeService(store), "L", [signed(1), signed(2)], [{}, {}], person_id=PERSON, device_id=DEV
+    )
+    assert error is not None and error.code == "op.not_allowed"
+    assert landed == [] and len(store.appended) == 1  # never committed, nothing appended after it
+
+
+def test_an_already_logged_identical_event_counts_as_landed_on_the_relay_path():
+    from orch.host.human import append_relay
+
+    store = FakeStore()
+    store.appended.append({**signed(1), "seq": 7})
+    landed, error = append_relay(FakeService(store), "L", [signed(1)], [{}], person_id=PERSON, device_id=DEV)
+    assert error is None and landed == [7]
 
 
 def test_append_signed_is_the_only_append_of_signed_events_in_human_and_finish_uses_it():
@@ -679,6 +797,33 @@ def test_may_start_needs_a_link_and_fails_closed_on_an_unsafe_marker(tmp_path):
     assert relaylink.may_start(state, WS, UID) is False
 
 
+def test_a_null_marker_and_a_symlinked_relay_dir_fail_closed(tmp_path):
+    """Opus L5: the marker's existence means stopped, whatever its content; a relay dir that is not a private
+    directory never lets the worker start."""
+    from orch.host import relaylink
+    from orch.host.custody import write_private
+
+    state = _state(tmp_path)
+    _link(state, WS)
+    write_private(relaylink.stopped_path(state, WS), None)  # JSON null
+    assert relaylink.is_stopped(state, WS, UID) is True
+    assert relaylink.may_start(state, WS, UID) is False
+    other = "c" * 32
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    write_private(elsewhere / "link.json", {"v": 1, "state": "linked"})
+    (state / "hosts" / other).mkdir(mode=0o700)
+    (state / "hosts" / other / "relay").symlink_to(elsewhere)
+    assert relaylink.is_stopped(state, other, UID) is True
+    assert relaylink.may_start(state, other, UID) is False
+
+
+def _short_run() -> Path:
+    import tempfile
+
+    return Path(tempfile.mkdtemp(prefix="rr", dir="/tmp"))
+
+
 def test_the_cli_relay_stop_writes_the_marker_with_the_host_down(tmp_path):
     import io
 
@@ -692,7 +837,8 @@ def test_the_cli_relay_stop_writes_the_marker_with_the_host_down(tmp_path):
     reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_private(reg, {"v": 1, "workspaces": [{"workspace_id": WS, "prefix": "DEMO", "root": "/x"}]})
     out = io.StringIO()
-    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(tmp_path / "run")}
+    run = _short_run()  # no socket there: the host is confirmed not running
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(run)}
     code = main(["relay", "stop", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
     assert code == 0, out.getvalue()
     assert relaylink.is_stopped(state, WS, UID)
@@ -706,3 +852,120 @@ def test_the_cli_relay_stop_writes_the_marker_with_the_host_down(tmp_path):
     code = main(["relay", "start", "--workspace", WS, "--state", str(state)], env=env, out=out)
     assert code == 0, out.getvalue()
     assert not relaylink.is_stopped(state, WS, UID)
+    run.rmdir()
+
+
+def test_the_cli_relay_stop_with_an_unreachable_host_keeps_the_marker_and_fails(tmp_path):
+    """Codex P2 #2, Opus L7: a host that cannot be reached (here an unsafe socket path) is not "not running"."""
+    import io
+
+    from orch.host import relaylink
+    from orch.host.cli import main
+    from orch.host.custody import write_private
+    from orch.host.registry import registry_path
+
+    state = _state(tmp_path)
+    reg = registry_path(state)
+    reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(reg, {"v": 1, "workspaces": [{"workspace_id": WS, "prefix": "DEMO", "root": "/x"}]})
+    long_run = tmp_path / ("r" * 120)  # over the 100-byte socket path limit
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(long_run)}
+    out = io.StringIO()
+    code = main(["relay", "stop", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
+    assert code != 0
+    doc = json.loads(out.getvalue().splitlines()[-1])
+    assert doc["ok"] is False and doc["error"]["code"] == "host.unavailable"
+    assert "marker is set" in doc["error"]["message"]
+    assert relaylink.is_stopped(state, WS, UID)  # kept
+    out = io.StringIO()
+    code = main(["relay", "start", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
+    assert code != 0 and relaylink.is_stopped(state, WS, UID)  # never cleared without the host's word
+
+
+# --- the relay worker lifecycle (Codex P2 #1, #3; Opus I3) -----------------------------------------------------------
+
+
+class SlowWorker:
+    """R5's worker contract: ``stop()`` and ``join(timeout) -> bool``."""
+
+    def __init__(self, release: Any, alive_after: bool = False) -> None:
+        import threading
+
+        self.release, self.alive_after = release, alive_after
+        self.stopped = threading.Event()
+        self.joined: list[float] = []
+
+    def stop(self) -> None:
+        self.release.wait(10)
+        self.stopped.set()
+
+    def join(self, timeout: float) -> bool:
+        self.joined.append(timeout)
+        return not self.alive_after
+
+
+def _service(tmp_path: Path) -> Any:
+    from orch.host.registry import Entry
+    from orch.host.workspace import WorkspaceService
+
+    state = _state(tmp_path)
+    entry = Entry(workspace_id=WS, prefix="DEMO", root=str(tmp_path), host_uid=UID, group="staff", peers={})
+    return WorkspaceService(entry, state, UID)
+
+
+def test_a_start_waits_for_a_stop_in_progress_and_the_stop_returns_after_shutdown(tmp_path):
+    import threading
+
+    from orch.host import relaylink
+
+    svc = _service(tmp_path)
+    _link(svc.state_dir, WS)
+    svc.state = "ok"
+    release = threading.Event()
+    old = SlowWorker(release)
+    svc.relay = old
+    started: list[Any] = []
+    svc.relay_starter = lambda s: (started.append(old.stopped.is_set()), setattr(s, "relay", object()))
+    results: dict[str, Any] = {}
+    stopper = threading.Thread(target=lambda: results.__setitem__("stop", svc.relay_stop()))
+    stopper.start()
+    for _ in range(200):
+        if relaylink.is_stopped(svc.state_dir, WS, UID):
+            break
+        threading.Event().wait(0.01)
+    starter = threading.Thread(target=lambda: results.__setitem__("start", svc.relay_start()))
+    starter.start()
+    threading.Event().wait(0.2)
+    assert "stop" not in results and "start" not in results and started == []  # both wait for the shutdown
+    release.set()
+    stopper.join(10)
+    starter.join(10)
+    assert results["stop"] == "stopped" and old.joined  # acknowledged only after stop() and join()
+    assert results["start"] == "started" and started == [True]  # the new worker started after the old one stopped
+    svc.executor.shutdown(wait=False)
+
+
+def test_close_waits_for_surviving_relay_threads_bounded(tmp_path):
+    import threading
+
+    svc = _service(tmp_path)
+    release = threading.Event()
+    release.set()
+    stuck = SlowWorker(release, alive_after=True)
+    svc.relay = stuck
+    svc.relay_join_seconds = 0.05
+    svc.close()
+    assert stuck.stopped.is_set() and stuck.joined == [0.05]
+    assert svc.relay is None
+
+
+def test_relay_stop_reports_a_worker_that_did_not_end(tmp_path):
+    import threading
+
+    svc = _service(tmp_path)
+    release = threading.Event()
+    release.set()
+    svc.relay = SlowWorker(release, alive_after=True)
+    svc.relay_join_seconds = 0.05
+    assert svc.relay_stop() == "stuck"
+    svc.executor.shutdown(wait=False)

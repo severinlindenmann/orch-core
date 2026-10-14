@@ -743,5 +743,28 @@ def test_mint_catchup_numbers_after_measure_runs(linked):
         calls.append(1)
         return measure(segments)
 
-    out = s.mint_catchup(source=None, cap=400, measure=sneaky)
-    assert out and out[0].n == bump + 1
+    before = s.outbox_entries()
+    with pytest.raises(StoreError) as info:  # the numbering moved under the plan: refused, R3 re-plans (Opus E1)
+        s.mint_catchup(source=None, cap=400, measure=sneaky)
+    assert info.value.code == "checkpoint.prefix_invalid"
+    assert s.outbox_entries() == before
+    out = s.mint_catchup(source=None, cap=400, measure=measure)  # the next plan numbers above the reservation
+    assert out and out[0].n > bump
+
+
+def test_mint_catchup_refuses_when_the_logs_changed_on_disk_during_measure(linked, monkeypatch):
+    """Opus #456 E1: a write through another Store on this thread changes the files, not this instance's seqs."""
+    env = linked
+    s = env.store
+    uid = env.new_ticket()
+    for i in range(3):
+        env.log(uid, f"n{i}")
+    from tests.store.test_catchup import measure
+
+    def sneaky(segments):
+        monkeypatch.setattr(s, "_fresh", lambda: False)
+        return measure(segments)
+
+    with pytest.raises(StoreError) as info:
+        s.mint_catchup(source=None, cap=400, measure=sneaky)
+    assert info.value.code == "checkpoint.prefix_invalid"

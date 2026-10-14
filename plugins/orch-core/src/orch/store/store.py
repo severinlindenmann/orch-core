@@ -2981,9 +2981,11 @@ class Store:
             cuts = self._plan_cuts(order, base, cap, measure)
             # R3's measure callback ran in between: whatever it did, the numbering is read again after it, and the
             # plan must still describe the logs (review round 2)
-            if {log: info.seq for log, info in self._logs.items()} != heads_before:
+            if {log: info.seq for log, info in self._logs.items()} != heads_before or not self._fresh():
+                # also a write through another Store on this thread (the lock is re-entrant): Opus #456 E1
                 raise StoreError("checkpoint.prefix_invalid", "the logs changed while the catch-up was planned")
             held = self._pins.held()
+            m_before = m
             m = max(
                 m,
                 self._checkpoints.highest_n(),
@@ -2991,6 +2993,8 @@ class Store:
                 self._outbox.max_n(),
                 held["o"]["n"] if held and "o" in held else 0,
             )
+            if m != m_before:  # the callback moved the numbering: refuse, R3 re-plans (Opus #456 E1)
+                raise StoreError("checkpoint.prefix_invalid", "the numbering moved while the catch-up was planned")
             keys = {(log, seq): k for k, log, seq in order}
             last_at = max(
                 [self._now(), *(self._log_last_at(log) for log in self._logs)]

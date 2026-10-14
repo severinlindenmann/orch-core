@@ -5080,9 +5080,9 @@ entry is written, the store deletes the entry just below it if that entry is pla
   - the added events are downward closed.
   Any failure is `checkpoint.prefix_invalid`. Nothing is carried from an older checkpoint, so a prefix never lists a
   later ticket entry.
-- R3's `measure` callback runs under the store lock. After the plan, the store checks that the logs are unchanged
-  (`checkpoint.prefix_invalid` otherwise) and reads the numbering again, then reserves `m+k`. `measure` should still be
-  a pure counter that never calls the store.
+- R3's `measure` callback runs under the store lock. After the plan, the store refuses with
+  `checkpoint.prefix_invalid` when the logs changed (in memory or on disk) or the numbering moved while `measure` ran,
+  and R3 re-plans; otherwise it reserves `m+k`. `measure` must be a pure counter that never calls the store.
 - The replacement is atomic through `outbox/catchup.json` (Q1 … Qk and the plain entries they supersede). The
   journal is written first. Then the entries are written, the superseded ones deleted, Qk written as `workspace.json`
   and accepted, and the journal deleted. Every lock finishes a journal it finds, before anything numbers a checkpoint

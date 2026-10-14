@@ -440,3 +440,73 @@ def test_outbox_delete_refuses_a_symlinked_entry(linked, tmp_path):
     with pytest.raises(StoreError) as exc:
         s.outbox_delete(e.n, e.hash)
     assert exc.value.code == "store.torn_write"
+
+
+# --- review round 1: F4, F5, F6 ------------------------------------------------------------------------------------
+
+
+def test_f4_catchup_refuses_a_ticket_without_its_checkpoint(linked):
+    env = linked
+    a = env.new_ticket()
+    env.log(a, "x")
+    b = env.new_ticket()
+    env.log(b, "y")  # the last append: only b's checkpoint would be repairable
+    (env.root / ".state" / "checkpoints" / f"ticket-{a}.json").unlink()
+    from tests.store.test_catchup import measure
+
+    env.store.close()
+    s = env.open(load="lazy")
+    with pytest.raises(StoreError) as exc:
+        s.mint_catchup(source=None, cap=10_000, measure=measure)
+    assert exc.value.code == "checkpoint.missing"
+
+
+def test_f5_planning_leaves_out_an_excluded_log(linked):
+    env = linked
+    s = env.store
+    uid = env.new_ticket()
+    from orch.store.checkpoints import Divergence
+
+    ev = dict(env.read_events(uid)[-1], seq=2)
+    s._diverged[uid] = Divergence(uid, 1, "test")
+    try:
+        assert s._plan_workspace_checkpoint(uid, ev, s.state) is None
+    finally:
+        s._diverged.pop(uid)
+
+
+def test_f5_planning_refuses_over_a_conflicting_ticket_checkpoint(linked):
+    env = linked
+    s = env.store
+    uid = env.new_ticket()
+    from orch.store.checkpoints import sign_object
+
+    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    o = json.loads(path.read_bytes())["o"]
+    o["seq"] = 5  # a ticket checkpoint ahead of the append: the post-commit write would call it diverged
+    path.write_bytes(canon.cj_checked(sign_object(env.signer.sign, o)) + b"\n")
+    ev = dict(env.read_events(uid)[-1], seq=2)
+    assert s._plan_workspace_checkpoint(uid, ev, s.state) is None
+
+
+def test_f6_the_doctor_names_a_pending_linked_append(linked, monkeypatch):
+    env = linked
+    uid = env.new_ticket()
+    monkeypatch.setattr(env.store, "_finish", _boom)
+    with pytest.raises(_Crash):
+        env.log(uid, "dying")
+    monkeypatch.undo()
+    env.store.close()
+    env.store = None
+    from orch.ops import health
+
+    findings: list = []
+    s = health._open(env.root, WS, env.host_state, findings)
+    assert s is not None
+    s.close()
+    hit = [f for f in findings if f.code == "outbox.pending"]
+    assert hit and uid in hit[0].what
+    with pytest.raises(StoreError) as exc:  # a store without host state names it too, and keeps it for the host
+        store_mod.Store.open(env.root, expected_workspace_id=WS, load="lazy")
+    assert exc.value.code == "validation.host_state" and uid in exc.value.detail
+    assert list((env.root / ".state" / "pending").glob("*/outbox"))

@@ -1,4 +1,4 @@
-import { isRealHost } from '@/api/features'
+import { hasFeature, isRealHost } from '@/api/features'
 
 export const TABS = [
   { id: 'general', label: 'General' },
@@ -16,10 +16,13 @@ export const HOST_TABS = [
   { id: 'members', label: 'Members' },
   { id: 'gates', label: 'Gates' },
   { id: 'grants', label: 'Grants' },
+  /** Only where the host serves `records/1` (M6). */
+  { id: 'records', label: 'Records', feature: 'records' },
 ] as const
 
 /** The tabs this build shows: the mockup's, or the reduced ones on a real host. */
-export const settingsTabs = (): readonly { id: string; label: string; preview?: boolean }[] => (isRealHost() ? HOST_TABS : TABS)
+export const settingsTabs = (workspace?: string): readonly { id: string; label: string; preview?: boolean }[] =>
+  isRealHost() ? HOST_TABS.filter((t) => !('feature' in t) || hasFeature(t.feature, workspace)) : TABS
 
 /** The known /settings/$tab values on this build; anything else redirects to General. */
-export const knownSettingsTab = (tab: string): boolean => settingsTabs().some((t) => t.id === tab)
+export const knownSettingsTab = (tab: string): boolean => (isRealHost() ? HOST_TABS : TABS).some((t) => t.id === tab)

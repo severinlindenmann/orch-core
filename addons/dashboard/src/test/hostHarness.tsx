@@ -47,6 +47,12 @@ export interface FakeWs {
   title: string
   /** What the signer says about the workspace (the server adds the `click` feature when it can sign). */
   click?: { custody: 'convenience' | 'passphrase' | 'none'; enabled: boolean; available: boolean; problem?: string } | null
+  /** `whoami.runner` as the server sends it (null: the host says nothing). */
+  runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
+  /** What `GET /quick` answers (M6); absent: the route is not served. */
+  quick?: unknown | ((q: URLSearchParams) => unknown)
+  /** What `GET /records` answers (M6); absent: the route is not served. */
+  records?: unknown
 }
 
 export function settingsOf(over: Partial<HostSettings> = {}): HostSettings {
@@ -157,6 +163,12 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
         { type: 'member.added', person: 'p_' + 'd'.repeat(32), name: body.name, role: body.role, pk_pub: body.pk, device_cert: JSON.parse(body.cert as string) },
         { derived: { cert_device: 'd_' + '4'.repeat(32), cert_person: 'p_' + 'd'.repeat(32), cert_scopes_max: ['look', 'decide', 'operate', 'type'], cert_expires: null } },
       )
+    case 'new':
+      return workspaceRequest('new', { type: 'ticket.created', ticket: { key: 'DEMO-0099', type: body.type ?? 'feature', title: body.title } })
+    case 'details':
+      return workspaceRequest('set', { type: 'ticket.updated', ticket: body.key, labels: body.labels })
+    case 'close':
+      return workspaceRequest('close', { type: 'ticket.closed', ticket: body.key })
     case 'move':
       return workspaceRequest('move', { type: 'ticket.moved', from: 'open', to: body.to, ...(body.reason ? { reason: body.reason } : {}) })
     case 'member_role':
@@ -180,6 +192,8 @@ export class FakeHost {
   clickCancelled: string[] = []
   clickSigned: Record<string, unknown>[] = []
   clickCount = 0
+  /** Hand-off request ids the person has signed in the terminal: the state read answers `submitted` with this key. */
+  submitted = new Map<string, string>()
   /** A route a test overrides: return undefined to fall through. */
   override?: (path: string, method: string, body?: Record<string, unknown>) => Response | undefined
 
@@ -209,7 +223,7 @@ export class FakeHost {
       return json(
         this.workspaces.map((w) =>
           w.host_state === 'ok'
-            ? { id: w.id, prefix: w.prefix, name: w.name, members: w.roster.map((m) => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: w.features, click: w.click ?? null }
+            ? { id: w.id, prefix: w.prefix, name: w.name, members: w.roster.map((m) => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: w.features, click: w.click ?? null, ...(w.runner !== undefined ? { runner: w.runner } : {}) }
             : { id: w.id, prefix: '', name: w.id, members: [], needs_you: null, host_state: w.host_state, features: [] },
         ),
       )
@@ -224,7 +238,9 @@ export class FakeHost {
     if (rest === 'tickets/DEMO-0001') return json({ ...ticket, title: ws.title })
     if (rest === 'tickets/DEMO-0001/events') return json(events)
     if (rest === 'tickets/DEMO-0001/changes') return json(changes)
-    if (rest === 'identity') return json({ uuid: ws.id, prefix: ws.prefix, genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: ws.me, name: 'Sev', role: ws.role, tier: 'A', workspace: ws.id } })
+    if (rest === 'identity') return json({ uuid: ws.id, prefix: ws.prefix, genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: ws.me, name: 'Sev', role: ws.role, tier: 'A', workspace: ws.id }, ...(ws.runner !== undefined ? { runner: ws.runner } : {}) })
+    if (rest === 'quick') return ws.quick === undefined ? missing() : json(typeof ws.quick === 'function' ? ws.quick(new URLSearchParams(query)) : ws.quick)
+    if (rest === 'records') return ws.records === undefined ? missing() : json(ws.records)
     if (rest === 'settings') return json(ws.settings)
     if (rest === 'members') return json(ws.roster)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
@@ -271,7 +287,8 @@ export class FakeHost {
     const h = /^handoff\/(hr_[0-9A-Z]+)$/.exec(rest)
     if (h && method === 'GET') {
       const request = this.requests.get(h[1])
-      return request ? json({ id: request.id, state: 'prepared', op: request.op, key: null, expires_at: request.expires_at, event_ids: [], seq: null }) : missing()
+      const signedKey = this.submitted.get(h[1])
+      return request ? json({ id: request.id, state: signedKey ? 'submitted' : 'prepared', op: request.op, key: signedKey ?? null, expires_at: request.expires_at, event_ids: signedKey ? ['01J9ZP0000000000000000SIGN'] : [], seq: signedKey ? 7 : null }) : missing()
     }
     if (h && method === 'DELETE') {
       this.cancelled.push(`${ws.id}:${h[1]}`)

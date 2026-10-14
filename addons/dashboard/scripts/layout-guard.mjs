@@ -481,6 +481,92 @@ async function run(send, close) {
               await new Promise((r) => setTimeout(r, 600))
             })
           }
+
+          // The real-host-only pages (quick tasks, the Records tab, the runner card), drawn from fixtures by the dev-only
+          // `__layout/<scenario>` route (src/dev/layoutPreview.tsx): the mock app never shows them.
+          if (!ONLY || ONLY.test('real-host-') || ONLY.source.includes('real-host')) {
+            const clickText = (sel, rx) =>
+              evaluate(async (sel, rx) => {
+                const el = [...document.querySelectorAll(sel)].find((b) => new RegExp(rx).test((b.getAttribute('aria-label') || b.textContent).trim()))
+                if (!el) return false
+                el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+                el.click()
+                await new Promise((r) => setTimeout(r, 400))
+                return true
+              }, sel, rx.source)
+            // Fixture answers arrive a moment after the page: wait for the element (up to 8 s) before calling it missing, then let the layout settle.
+            const present = async (sel) => {
+              const found = await evaluate(async (s) => {
+                for (let i = 0; i < 80 && !document.querySelector(s); i++) await new Promise((r) => setTimeout(r, 100))
+                return !!document.querySelector(s)
+              }, sel)
+              if (found) await settle()
+              return found
+            }
+            const need = async (list) => {
+              const out = []
+              for (const [what, sel] of list) if (!(await present(sel))) out.push(`${what} did not show (${sel})`)
+              return out.length ? out : undefined
+            }
+            const escape = () => evaluate(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+            const QUICK_UI = [['the add form', '[aria-label="Add a quick task"]'], ['the two-signatures line', '[data-testid="quick-two-signatures"]']]
+            for (const [name, scenario, shown] of [
+              ['real-host-quick', 'quick-normal', QUICK_UI],
+              ['real-host-quick-many', 'quick-many', QUICK_UI],
+              ['real-host-records', 'records-ok', [['the export warning', '[data-testid="records-export-warning"]'], ['the private-remote line', '[data-testid="records-private-line"]']]],
+              ['real-host-records-hidden-url', 'records-hidden-url', [['the export warning', '[data-testid="records-export-warning"]'], ['the blocked line', '[data-testid="records-export-blocked"]']]],
+              ['real-host-records-first-commit', 'records-first', [['the no-repository line', '[data-testid="records-not-configured"]']]],
+              ['real-host-runner-on', 'runner-on', [['the dashboard-execution line', '[data-testid="runner-execution-line"]']]],
+              ['real-host-runner-off', 'runner-off', [['the runner card', '[data-testid="workspace-card-runner"]']]],
+            ]) {
+              if (ONLY && !ONLY.test(name)) continue
+              await go(`/__layout/${scenario}`)
+              await check(config, name, await need(shown))
+            }
+            // The Limits box open on the quick page, and the "Make a normal ticket" hand-off open.
+            if (!ONLY || ONLY.test('real-host-quick-limits')) {
+              await go('/__layout/quick-normal')
+              const opened = await clickText('summary', /^Limits for/)
+              await check(config, 'real-host-quick-limits', opened ? await need([['the limits form', '#quick-max-commits']]) : ['the Limits box did not open'])
+            }
+            if (!ONLY || ONLY.test('real-host-quick-normal-ticket')) {
+              await go('/__layout/quick-normal')
+              const opened = await clickText('button', /^Make DEMO-0101 a normal ticket$/)
+              await settle()
+              await check(config, 'real-host-quick-normal-ticket', opened ? await need([['the hand-off dialog', '[role="dialog"]']]) : ['the Make a normal ticket button is missing'])
+              await escape()
+            }
+            // The add flow: a title with a long URL, Add, the first of the two signatures open.
+            if (!ONLY || ONLY.test('real-host-quick-add')) {
+              await go('/__layout/quick-add')
+              await evaluate(async (title) => {
+                const input = document.querySelector('#quick-title')
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, title)
+                input.dispatchEvent(new Event('input', { bubbles: true }))
+                await new Promise((r) => setTimeout(r, 200))
+              }, 'Fix ' + 'https://git.example.test/' + 'long-path/'.repeat(8))
+              const added = await clickText('button', /^Add$/)
+              await settle()
+              await check(config, 'real-host-quick-add', added ? await need([['the first signature dialog', '[role="dialog"]']]) : ['the Add button is missing'])
+              await escape()
+            }
+            // A failed push: Commit and push, confirmed, and the failure line with the commit that did land.
+            if (!ONLY || ONLY.test('real-host-records-push')) {
+              await go('/__layout/records-push-failed')
+              await present('[data-testid="records-export-warning"]')
+              const asked = await clickText('button', /^Commit and push$/)
+              await settle()
+              const confirmDialog = asked ? await need([['the push confirmation', '[role="dialog"] [data-testid="records-export-warning"]']]) : ['the Commit and push button is missing']
+              await check(config, 'real-host-records-push-confirm', confirmDialog)
+              const confirmed = await evaluate(async () => {
+                const b = [...document.querySelectorAll('[role="dialog"] button')].find((x) => x.textContent.trim() === 'Commit and push')
+                b?.click()
+                for (let i = 0; i < 30 && !document.querySelector('[data-testid="records-failure"]'); i++) await new Promise((r) => setTimeout(r, 100))
+                return !!document.querySelector('[data-testid="records-failure"]')
+              })
+              await check(config, 'real-host-records-push-failed', confirmed ? undefined : ['the failed-push line did not show'])
+            }
+          }
           shotsTaken = true
         }
       }

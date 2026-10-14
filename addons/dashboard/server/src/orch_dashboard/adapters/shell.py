@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..text import hidden
+from .addons import runner
 
 
 class Member(BaseModel):
@@ -26,6 +27,7 @@ class Workspace(BaseModel):
     features: list[str] = []
     # What the signer says about this workspace (custody, enabled, available, problem); null: no signer answered.
     click: dict | None = None
+    runner: dict | None = None
 
 
 def click_card(row):
@@ -48,6 +50,7 @@ class Me(BaseModel):
     role: str
     tier: str
     workspace: str
+    runner: dict | None = None
 
 
 def safe_name(m) -> tuple[str, bool]:
@@ -68,6 +71,11 @@ def members(data):
     return out
 
 
-def me(identity, roster, ws):
+def me(identity, roster, ws, *, runner_supported=False):
     member = next(m for m in members(roster) if m.person == identity["person"])
-    return Me(**member.model_dump(exclude={"devices"}), tier=identity["tier"], workspace=ws)
+    return Me(
+        **member.model_dump(exclude={"devices"}),
+        tier=identity["tier"],
+        workspace=ws,
+        runner=runner(identity, runner_supported),
+    )

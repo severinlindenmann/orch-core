@@ -30,6 +30,9 @@ CAPS = [
     "read_ext/2",
     "settings/1",
     "activity/1",
+    "quick/1",
+    "records/1",
+    "run/1",
 ]
 OPS = {
     name: 1
@@ -43,6 +46,8 @@ OPS = {
         "addon.list",
         "needs",
         "activity.list",
+        "quick.list",
+        "records.status",
         "ticket.query",
         "ticket.get",
         "diff",
@@ -260,6 +265,10 @@ class HostLink:
             if op == "activity.list"
             else "settings/1"
             if op == "workspace.settings"
+            else "quick/1"
+            if op == "quick.list"
+            else "records/1"
+            if op in {"records.status", "records.snapshot", "records.export_check", "records.note"}
             else "query/1"
             if op in QUERY_OPS
             else "ops/1"

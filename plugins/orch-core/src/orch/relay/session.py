@@ -129,6 +129,8 @@ class Session:
         self._seen: collections.deque[bytes] = collections.deque(maxlen=_SEEN_CHALLENGES)
         self._gen: int | None = None
         self._fenced = False
+        self._checked = False  # the local preflight passed (11A.5; gates every network call, round 6 #1)
+        self._refused: str | None = None  # a preflight or takeover refusal: every later call is refused locally
 
     def __repr__(self) -> str:
         return f"Session(workspace={self.workspace_id}, logged_in={self._token is not None}, gen={self._gen})"
@@ -175,6 +177,8 @@ class Session:
         :class:`RelayRefused` (or :class:`Fenced` for 409 ``fenced``)."""
         if holder and self._fenced:
             raise Fenced("fenced: writes stopped")
+        if not self._checked:
+            self.preflight()  # no request of any kind leaves before the local checks pass (round 6, orch-52 #1)
         data = None if body is None else wire.dumps_body(body, cap=request_cap)
         resent = False
         while True:
@@ -307,7 +311,8 @@ class Session:
         While running, a renewal answered ``fenced`` stops the worker (alarm ``fenced``). At start, the restart rule
         decided by orch-52 (13 Oct 2026) applies, fail closed, never stealing a live lease:
 
-        Before any network call (order changed 13 Oct 2026, review R1 approved by orch-52):
+        Before any network call, by :meth:`preflight` (order changed 13 Oct 2026, review R1 approved by orch-52; the
+        same preflight gates every other entry point since round 6):
 
         1. The instance record must be bound to this very directory (its inode; ``dev`` is informational since it can
            change across a reboot): a copied or restored directory alarms ``relay_takeover_refused`` and stops.
@@ -338,21 +343,9 @@ class Session:
             raise Fenced("fenced: writes stopped")
         if self._gen is not None:
             return self._renew(self._gen, deadline_s, running=True)
-        why = self._holder.binding_problem()
-        if why is not None:
-            self._refuse(f"{why}; confirm with `orch host relay takeover`")
-        rec = self._holder.load()
+        rec = self.preflight()
         if rec is None:
             return self._probe(None, deadline_s)
-        if rec.pending is not None:
-            self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
-                         "`orch host relay takeover`")  # fmt: skip
-        if not rec.last_holder:
-            self._refuse("(a) holder.json does not say this state directory was the last holder")
-        if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
-            self._refuse("(b) holder.json was written under another instance id (a restored or copied state directory)")
-        if rec.gen is None:
-            self._refuse("no stored gen to check the takeover against")
         assert rec.gen is not None
         try:
             return self._renew(rec.gen, deadline_s, running=False)
@@ -364,6 +357,42 @@ class Session:
         self._holder.save(HolderRecord(True, rec.gen, rec.instance_id, expected))  # durable before the probe
         return self._probe(expected, deadline_s)
 
+    def preflight(self) -> HolderRecord | None:
+        """The one local preflight (11A.5 steps 1 to 3; round 6, orch-52 #1), run before **any** network call: the
+        first :meth:`call` of a session (login, challenge, ``PUT card`` without a session, every directory read or
+        write) runs it, :meth:`hold` at start runs it again every time, and :func:`orch.relay.link.first_link` runs it
+        right after its ``link.json`` state check. Checks, in order:
+
+        1. the instance record is bound to this very directory (a copied or restored directory: refused);
+        2. no ``pending`` takeover record;
+        3. (a) this state directory was the last holder and (b) ``holder.json`` carries this directory's instance id,
+           and a stored ``gen`` exists.
+
+        A directory that never held (no ``holder.json``) passes 1 and returns ``None`` (the first link). A failure
+        alarms ``relay_takeover_refused`` and raises :class:`TakeoverRefused`; the session then refuses every later call
+        locally until :meth:`operator_takeover`. A :class:`StateError` (unreadable or older-format state) propagates
+        and nothing is sent either. Returns the holder record that passed."""
+        if self._refused is not None:
+            raise TakeoverRefused(self._refused)
+        why = self._holder.binding_problem()
+        if why is not None:
+            self._refuse(f"{why}; confirm with `orch host relay takeover`")
+        rec = self._holder.load()
+        if rec is not None:
+            if rec.pending is not None:
+                self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
+                             "`orch host relay takeover`")  # fmt: skip
+            if not rec.last_holder:
+                self._refuse("(a) holder.json does not say this state directory was the last holder")
+            if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
+                self._refuse(
+                    "(b) holder.json was written under another instance id (a restored or copied state directory)"
+                )
+            if rec.gen is None:
+                self._refuse("no stored gen to check the takeover against")
+        self._checked = True
+        return rec
+
     def operator_takeover(self, *, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
         """The explicit operator takeover (R5 wires it to ``orch host relay takeover``): ``take_over: true``, then the
         new ``gen`` is recorded as ours (clearing ``pending``) and the worker may proceed. A directory whose instance
@@ -374,6 +403,7 @@ class Session:
             stale = True
         if stale:
             self._holder.regenerate()
+        self._checked, self._refused = True, None  # the operator's confirmation stands in for the preflight
         got = self._hold_call({"gen": None, "take_over": True}, deadline_s, takeover=True)
         self._holder.save(HolderRecord(True, got.gen, self._holder.instance_id(), None))
         self._gen, self._fenced = got.gen, False
@@ -381,6 +411,7 @@ class Session:
 
     def _refuse(self, why: str) -> None:
         self._fenced = True
+        self._refused = why
         self._alarm("relay_takeover_refused", why)
         raise TakeoverRefused(why)
 

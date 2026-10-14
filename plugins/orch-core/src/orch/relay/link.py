@@ -7,6 +7,7 @@
    owner-signed genesis pin.
 3. ``PUT card`` without a session (P3-D4). On a resume the relay already holds the card and answers 401; the same
    card is then PUT again under W(g) after step 4's hold.
+   Before it, and before any other request, the ``link.json`` state and :meth:`Session.preflight` (round 6).
 4. challenge, login, ``host/hold``, ``PUT genesis`` (P3-D18; the relay refuses every checkpoint without it), the first
    publication with catch-up (R3, injected), then ``state: "linked"``.
 
@@ -77,11 +78,15 @@ def _kept(store: StateDir, name: str, make: Callable[[], Any]) -> Any:
 
 
 def first_link(steps: LinkSteps, session: Session, directory: Directory, retrier: Retrier, *, store: StateDir) -> None:
+    """Run (or resume) the first link. Every local check comes before the first request (round 6, orch-52 #1): the
+    ``link.json`` state, then :meth:`Session.preflight` (instance binding, ``pending``, (a), (b)), so a copied or
+    restored ``linking`` directory sends nothing, not even the session-less ``PUT card``."""
     state = steps.link_state()
     if state == "linked":
         return
     if state != "linking":
         raise LinkRefused("link.json is not in state linking: the reader reservation must come first")
+    session.preflight()
     card = _kept(store, "link-card.json", lambda: dict(steps.card()))
     seq = retrier.run(lambda: directory.put_card(card, first=True), route="PUT /v2/workspaces/{ws}/card")
     retrier.run(session.login, route="POST /v2/session/login")

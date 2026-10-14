@@ -240,19 +240,35 @@ class HostPins:
         write_atomic(self.dir / "checkpoint.json", canon.cj_checked(cp) + b"\n", mode=0o600)
 
     def high_n(self) -> int:
-        """The highest workspace checkpoint ``n`` this host ever accepted (0 if none). Read from ``checkpoint-n`` once
-        and cached; a host that predates the file falls back to its held checkpoint, once."""
-        if self._mark is None:
-            raw = read_or_none(self.dir / "checkpoint-n")
-            try:
-                mark = int(raw) if raw else 0
-            except ValueError:
-                raise StoreError("store.torn_write", "unreadable checkpoint high-water mark") from None
-            if not raw:
-                held = self.held()
-                mark = held["o"]["n"] if held and "o" in held else 0
-            self._mark = mark
-        return self._mark
+        """The checkpoint numbering high-water mark (0 if none): the highest ``n`` ever reserved (:meth:`reserve_n`) or
+        accepted. Read from ``checkpoint-n`` on every call (one small file; another store may have reserved since); a
+        host that predates the file falls back to its held checkpoint."""
+        raw = read_or_none(self.dir / "checkpoint-n")
+        try:
+            mark = int(raw) if raw else 0
+        except ValueError:
+            raise StoreError("store.torn_write", "unreadable checkpoint high-water mark") from None
+        if not raw:
+            held = self.held()
+            mark = held["o"]["n"] if held and "o" in held else 0
+        self._mark = mark
+        return mark
+
+    def reserve_n(self, n: int) -> None:
+        """Reserve checkpoint number ``n`` durably (H12b review, Opus F1).
+
+        **Invariant: no workspace checkpoint ``n`` is signed unless it is reserved first, and a reserved ``n`` is never
+        reused.** The store calls this before it signs anything numbered ``n`` (an append's planned checkpoint, any
+        other workspace checkpoint, a restore target, catch-up prefixes), so ``high_n()`` is at least the ``n`` of
+        everything that was ever signed, wherever the bytes went (the outbox, the relay, a crashed pending
+        directory), and the next number is read from this one value. A number burned by a crash costs nothing.
+        Never lowers the mark."""
+        if type(n) is not int or n < 1:
+            raise StoreError("validation.outbox", "a checkpoint n is a positive integer")
+        if n > self.high_n():
+            self.dir.mkdir(parents=True, exist_ok=True)
+            write_atomic(self.dir / "checkpoint-n", str(n).encode() + b"\n", mode=0o600)
+            self._mark = n
 
     @contextmanager
     def _heads(self) -> Iterator[sqlite3.Connection]:

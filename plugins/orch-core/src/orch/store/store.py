@@ -1125,12 +1125,25 @@ class Store:
                 raise
             self._report("store.torn_write", f"outbox entry of event {m['id']} not installed: {e.detail}", m["log"])
             return
+        self._pins.reserve_n(entry.n)  # idempotent: the append reserved it before signing
         self._outbox.write_raw(entry.n, data)
         if entry.kind == "plain":
-            cur = self._checkpoints.workspace()
-            if cur is None or "o" not in cur or cur["o"]["n"] < entry.n:
-                self._checkpoints.write_workspace_object(entry.checkpoint)
-                self._pins.accept_checkpoint(entry.checkpoint)
+            self._adopt(entry.checkpoint)
+
+    def _coalesce(self, n: int) -> None:
+        """Outbox coalescing (Opus F3): see the later definition."""
+
+    def _adopt(self, cp: dict[str, Any]) -> None:
+        """Make ``cp`` the newest checkpoint: the host pin and ``workspace.json``, each repaired on its own (a crash
+        between the two writes is finished by the next recovery, Codex P1), never moved backwards."""
+        assert self._pins is not None
+        n = cp["o"]["n"]
+        held = self._pins.held()
+        if held is None or "o" not in held or held["o"]["n"] < n:
+            self._pins.accept_checkpoint(cp)
+        cur = self._checkpoints.workspace()
+        if cur is None or "o" not in cur or cur["o"]["n"] < n:
+            self._checkpoints.write_workspace_object(cp)
 
     def _write_applied(self, event_id: str, log: str, seq: int) -> None:
         self._applied_n += 1
@@ -1948,11 +1961,8 @@ class Store:
             if log == WORKSPACE or self._ticket_appends_since_cp >= WORKSPACE_EVERY:
                 self._write_workspace_checkpoint(ev["at"], new)
         elif isinstance(planned, dict):
-            cur = self._checkpoints.workspace()
-            if cur is None or "o" not in cur or cur["o"]["n"] < planned["o"]["n"]:  # never move it backwards
-                self._checkpoints.write_workspace_object(planned)
-                if self._pins is not None:
-                    self._pins.accept_checkpoint(planned)
+            if self._pins is not None:
+                self._adopt(planned)
             self._ticket_appends_since_cp = 0
         elif planned == "diverged":
             self._diverged[WORKSPACE] = Divergence(
@@ -1983,43 +1993,59 @@ class Store:
         info = self._logs.get(log)
         head = canon.event_head(ev)
         logs[log] = _Cut(ev["seq"], head, canon.log_acc(info.acc if info else _ZERO_ACC, head))
+        baseline = self._held_checkpoint()
         return self._checkpoints.build_workspace(
             self._host.sign,
             state.workspace.genesis,
             ev["at"],
             logs,
-            self._held_checkpoint(),
-            floor_n=self._number_floor(),
+            baseline,
+            n=self._reserve_next(baseline),
         )
 
     def _number_floor(self) -> int:
-        """The highest checkpoint ``n`` held outside ``.state/checkpoints``: the high-water mark and the outbox."""
-        floor = self._pins.high_n() if self._pins is not None else 0
-        if self._outbox is not None:
-            floor = max(floor, self._outbox.max_n())
-        return floor
+        """The checkpoint numbering high-water mark (``HostPins.high_n``): every number ever reserved or accepted."""
+        return self._pins.high_n() if self._pins is not None else 0
+
+    def _reserve_next(self, baseline: Mapping[str, Any] | None) -> int | None:
+        """Reserve and return the next workspace checkpoint number (H12b review, Opus F1): above every number the
+        checkpoints, ``baseline`` and the high-water mark hold. **No ``n`` is signed unless reserved first; reserved
+        ``n`` are never reused** (``HostPins.reserve_n``). No outbox scan: every outbox ``n`` was reserved."""
+        if self._pins is None:
+            return None  # a store without host state numbers by its checkpoint files alone (P1 direct reads)
+        n = (
+            max(
+                self._checkpoints.highest_n(),
+                baseline["o"]["n"] if baseline and "o" in baseline else 0,
+                self._pins.high_n(),
+            )
+            + 1
+        )
+        self._pins.reserve_n(n)
+        return n
 
     def _write_workspace_checkpoint(self, at_: str, state: State) -> None:
         assert self._host is not None
         logs = self._workspace_logs(state)
         if logs is None or state.workspace.genesis is None:
             return
+        baseline = self._held_checkpoint()
         if self.outbox_active:
-            # linked (H12b): every workspace checkpoint the store writes goes to the outbox too, the entry first,
-            # so a crash never leaves a held checkpoint the publisher does not have
+            # linked (H12b): every workspace checkpoint the store writes goes to the outbox too. Order: the number is
+            # reserved, then the entry, the pin and workspace.json; a crash anywhere burns the number at worst.
             cp = self._checkpoints.build_workspace(
                 self._host.sign,
                 state.workspace.genesis,
                 at_,
                 logs,
-                self._held_checkpoint(),
-                floor_n=self._number_floor(),
+                baseline,
+                n=self._reserve_next(baseline),
             )
             if isinstance(cp, dict):
                 assert self._outbox is not None and self._pins is not None
                 self._outbox.write(make_entry(cp))
-                self._checkpoints.write_workspace_object(cp)
-                self._pins.accept_checkpoint(cp)
+                self._coalesce(cp["o"]["n"])
+                self._adopt(cp)
                 self._ticket_appends_since_cp = 0
                 return
             self._diverged[WORKSPACE] = Divergence(
@@ -2032,8 +2058,8 @@ class Store:
                 state.workspace.genesis,
                 at_,
                 logs,
-                self._held_checkpoint(),
-                floor_n=self._number_floor(),
+                baseline,
+                n=self._reserve_next(baseline),
             )
             == "diverged"
         ):
@@ -2635,12 +2661,7 @@ class Store:
                 "kind": "workspace_checkpoint",
                 "workspace_id": self.workspace_id,
                 "genesis": self._pin,
-                "n": max(
-                    self._checkpoints.highest_n(),
-                    cp["o"]["n"] if cp else 0,
-                    self._number_floor(),
-                )
-                + 1,
+                "n": self._reserve_next(cp),
                 "at": ev["at"],
                 "workspace_log": workspace_entry,
                 "tickets": dict(sorted(tickets.items())),
@@ -2788,6 +2809,7 @@ class Store:
                 raise StoreError("store.torn_write", "unreadable outbox catch-up journal")
         except (KeyError, TypeError) as e:
             raise StoreError("store.torn_write", f"unreadable outbox catch-up journal ({e})") from None
+        self._pins.reserve_n(max(e.n for e in entries))  # idempotent: mint_catchup reserved them before signing
         for entry in entries:
             self._outbox.write(entry)
         keep = {e.n for e in entries}
@@ -2853,6 +2875,7 @@ class Store:
                 + [cp["o"]["at"] for cp in (self._checkpoints.workspace(), held, source) if cp and "o" in cp]
                 + [e.checkpoint["o"]["at"] for e in entries]
             )
+            self._pins.reserve_n(m + len(cuts))  # before anything numbered m+1 … m+k is signed (Opus F1)
             prev: Mapping[str, Any] | None = source
             minted: list[OutboxEntry] = []
             for i, cut in enumerate(cuts):

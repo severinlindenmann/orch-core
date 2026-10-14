@@ -542,8 +542,9 @@ class Checkpoints:
         logs: Mapping[str, Any],
         baseline: Mapping[str, Any] | None = None,
         floor_n: int = 0,
+        n: int | None = None,
     ) -> str | None:
-        cp = self.build_workspace(sign, genesis, at, logs, baseline, floor_n)
+        cp = self.build_workspace(sign, genesis, at, logs, baseline, floor_n, n)
         if cp == "diverged":
             return "diverged"
         self.write_workspace_object(cp)
@@ -557,10 +558,12 @@ class Checkpoints:
         logs: Mapping[str, Any],
         baseline: Mapping[str, Any] | None = None,
         floor_n: int = 0,
+        n: int | None = None,
     ) -> dict[str, Any] | str:
         """The signed workspace checkpoint :meth:`write_workspace` would write, or ``"diverged"``; writes nothing.
         ``logs`` maps a log to anything with ``seq``, ``head`` and ``acc`` (a :class:`LogInfo`, or the cut an append
-        is about to make: the store plans the checkpoint before its commit, H12b)."""
+        is about to make: the store plans the checkpoint before its commit, H12b). ``n`` is the number the store
+        reserved for it (``HostPins.reserve_n``); it must be above every number this directory holds."""
         ws = logs[WORKSPACE]
         old = baseline or self.workspace()
         if old and "o" in old:
@@ -582,12 +585,20 @@ class Checkpoints:
             "kind": "workspace_checkpoint",
             "workspace_id": self.workspace_id,
             "genesis": genesis,
-            "n": max(self.highest_n(), old["o"]["n"] if old and "o" in old else 0, floor_n) + 1,
+            "n": self._number(n, old, floor_n),
             "at": max(at, old["o"]["at"]) if old and "o" in old else at,
             "workspace_log": {"seq": ws.seq, "head": ws.head, "acc": ws.acc},
             "tickets": dict(sorted(tickets.items())),
         }
         return sign_object(sign, o)
+
+    def _number(self, n: int | None, old: Mapping[str, Any] | None, floor_n: int) -> int:
+        low = max(self.highest_n(), old["o"]["n"] if old and "o" in old else 0)
+        if n is None:
+            return max(low, floor_n) + 1
+        if type(n) is not int or n <= low:
+            raise StoreError("checkpoint.prefix_invalid", f"n {n} is not above every existing checkpoint number")
+        return n
 
     def write_workspace_object(self, cp: dict[str, Any]) -> None:
         """Store ``cp`` (already signed) as the newest workspace checkpoint."""

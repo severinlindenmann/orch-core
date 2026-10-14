@@ -54,6 +54,9 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const region = useRef<HTMLElement>(null)
 
   useEffect(() => { setSelected(null) }, [ws])
+  // The write attach after Open is one-shot (review M1): once that run's terminal has mounted with it, every later mount
+  // (switching tabs and back, a remount) starts read-only. RealTerminal reads `initial` only when it mounts.
+  useEffect(() => { if (opened && current?.run === opened) setOpened(null) }, [opened, current?.run])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoPreview && ws) void ask(false) }, [autoPreview, ws])
 

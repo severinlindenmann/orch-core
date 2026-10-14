@@ -14,7 +14,11 @@ const WS = 'a'.repeat(32)
 vi.mock('../../workspace', () => ({ useWorkspace: () => ({ workspace: { id: WS } }) }))
 vi.mock('../dock/context', async (orig) => ({ ...(await orig<typeof import('../dock/context')>()), useDockTicket: () => undefined }))
 // The terminal itself is covered in RealTerminal.test.tsx: here only which run it is mounted for, and how.
-vi.mock('./RealTerminal', () => ({ RealTerminal: ({ run, initial }: { run: Run; initial: string }) => <div data-testid="term" data-run={run.run} data-initial={initial} /> }))
+// Like the real one, it reads `initial` once, when it mounts.
+vi.mock('./RealTerminal', async () => {
+  const { useState } = await vi.importActual<typeof import('react')>('react')
+  return { RealTerminal: function Term({ run, initial }: { run: Run; initial: string }) { const [first] = useState(initial); return <div data-testid="term" data-run={run.run} data-initial={first} /> } }
+})
 
 const run = (id: string, over: Partial<Run> = {}): Run => ({
   run: `r_01M4Y46B485AXD4CBEJZ15Z1${id}`, rev: 1, kind: 'shell', ticket: null, harness: 'shell', mode: null, model: null, as_person: true,
@@ -68,6 +72,26 @@ describe('the real dock', () => {
     const term = await screen.findByTestId('term')
     expect(term.dataset.run).toBe(opened.run)
     expect(term.dataset.initial).toBe('write') // the shell this person just opened; take is never set by itself
+  })
+
+  it('the write attach after Open is one-shot: switching away and back attaches read (review M1)', async () => {
+    vi.spyOn(runsApi, 'preview').mockResolvedValue(preview())
+    const other = run('BB')
+    const opened = run('AA')
+    list = { ...list, runs: [other] }
+    vi.spyOn(runsApi, 'open').mockImplementation(async () => { list = { ...list, runs: [opened, other] }; return { run: opened } })
+    mount()
+    await screen.findByTestId('term')
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Shell in the workspace' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open terminal' }))
+    await waitFor(() => expect(screen.getByTestId('term').dataset.run).toBe(opened.run))
+    expect(screen.getByTestId('term').dataset.initial).toBe('write')
+    fireEvent.click(screen.getAllByRole('tab')[1])
+    await waitFor(() => expect(screen.getByTestId('term').dataset.run).toBe(other.run))
+    fireEvent.click(screen.getAllByRole('tab')[0])
+    await waitFor(() => expect(screen.getByTestId('term').dataset.run).toBe(opened.run))
+    expect(screen.getByTestId('term').dataset.initial).toBe('read')
   })
 
   it('a blocked preview cannot be confirmed', async () => {

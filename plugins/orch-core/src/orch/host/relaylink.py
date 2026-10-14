@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -122,20 +123,35 @@ def clear_stopped(state_dir: Path, workspace_id: str, host_uid: int) -> None:
 
 
 def is_stopped(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
-    """True when the stop marker exists, or when it cannot be read safely (a link, another owner, a loose mode)."""
+    """True when the stop marker exists, whatever its content (a link or JSON ``null`` included), when the relay
+    directory is not a real directory, or when either cannot be inspected (fail closed)."""
+    rdir = relay_dir(state_dir, workspace_id)
     try:
-        return read_json(stopped_path(state_dir, workspace_id), host_uid) is not None
-    except HostError:
+        info = os.lstat(rdir)
+    except FileNotFoundError:
+        return False
+    except OSError:
         return True
+    if not stat.S_ISDIR(info.st_mode):
+        return True  # a symlinked or replaced relay directory: never "not stopped"
+    try:
+        os.lstat(stopped_path(state_dir, workspace_id))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def may_start(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
-    """The relay worker may start (R5): ``link.json`` is a private JSON object of the host UID and the worker is not
-    stopped. Anything else, including a ``link.json`` that cannot be read safely, is ``False``."""
+    """The relay worker may start (R5): the relay directory is a private directory of the host UID with safe
+    ancestors, ``link.json`` is a private JSON object of the host UID and the worker is not stopped. Anything else,
+    including any doubt, is ``False``."""
     if is_stopped(state_dir, workspace_id, host_uid):
         return False
     try:
+        ensure_private_dir(relay_dir(state_dir, workspace_id), host_uid, create=False)
         link = read_json(link_path(state_dir, workspace_id), host_uid)
-    except HostError:
+    except (HostError, OSError):
         return False
     return isinstance(link, dict)

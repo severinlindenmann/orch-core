@@ -514,9 +514,10 @@ class Human:
             try:
                 mark_convenience_seen(state_dir, wid, os.getuid())
             except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
-                raise OrchError(
-                    "custody.unsafe_mode",
+                raise OrchError(  # a global code: any person op may sign with convenience custody
+                    "internal",
                     f"the convenience_seen mark could not be written ({type(exc).__name__}); nothing was appended",
+                    hint="check the state directory: orch doctor",
                 ) from None
 
         return check

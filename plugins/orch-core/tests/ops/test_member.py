@@ -157,3 +157,53 @@ def test_the_mark_fails_closed_and_is_never_cleared(tmp_path):
         assert convenience_seen(state, other)
     finally:
         os.chmod(state / "hosts" / other, 0o700)
+
+
+def _as_convenience(monkeypatch):
+    """The person's key signs with ``auth: "convenience"`` (as convenience custody does in direct mode)."""
+    from orch.ops.human import Human
+
+    real = Human.backend
+
+    class AsConvenience:
+        auth = "convenience"
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(Human, "backend", property(lambda self: AsConvenience(real.fget(self))))
+
+
+def test_a_direct_convenience_append_sets_the_mark_first(hws, me, tmp_path, monkeypatch):
+    from orch.ops.readers import seen_path
+
+    _as_convenience(monkeypatch)
+    _p, pk, cert = invite(hws, tmp_path)
+    assert not seen_path(hws.host_state, WS).exists()
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert)
+    assert r.code == 0, r.err
+    assert roster(hws)[-1]["auth"] == "convenience"
+    assert seen_path(hws.host_state, WS).exists()
+    # a later reader is refused although the flag lives in no host here
+    _q, qk, qcert = invite(hws, tmp_path, "other")
+    assert me("member", "add", "--name", "O", "--pk", qk, "--cert", qcert, "--json").err_code == (
+        "sign.convenience_readers"
+    )
+
+
+def test_a_direct_convenience_append_without_its_mark_writes_nothing(hws, me, tmp_path, monkeypatch):
+    from orch.ops import readers
+
+    def boom(*_a, **_k):
+        raise OSError("no space left")
+
+    _as_convenience(monkeypatch)
+    monkeypatch.setattr(readers, "mark_convenience_seen", boom)
+    _p, pk, cert = invite(hws, tmp_path)
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert r.err_code == "internal" and "convenience_seen" in r.doc["error"]["message"], r.doc
+    assert len(roster(hws)) == n

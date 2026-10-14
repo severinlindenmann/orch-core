@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import select
+import signal
 
 import pytest
 
@@ -231,11 +233,14 @@ def _fork_and_hold(fn):
         os._exit(0)
     os.close(w1)
     os.close(r2)
-    code = os.read(r1, 1)[0]
+    ready, _, _ = select.select([r1], [], [], 20)
+    code = os.read(r1, 1)[0] if ready else 255  # 255: the child hung (deadlock)
     os.close(r1)
 
     def release():
         os.close(w2)
+        if not ready:
+            os.kill(pid, signal.SIGKILL)  # our own forked child
         os.waitpid(pid, 0)
 
     return code, release
@@ -297,6 +302,40 @@ def test_close_in_a_forked_child_leaves_the_parent_locked(tmp_path):
         release()
     with pytest.raises(StateError, match="in use"):
         StateDir(tmp_path / "relay")  # still the parent's after the child exited
+    st.close()
+
+
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
+def test_a_child_forked_while_another_thread_holds_the_lock_does_not_deadlock(tmp_path):
+    """The fork hook replaces the RLock: a parent thread holding it at the fork never releases it in the child."""
+    st = StateDir(tmp_path / "relay")
+    held, done = threading.Event(), threading.Event()
+
+    def hold_lock():
+        with st.lock:
+            held.set()
+            done.wait(30)
+
+    t = threading.Thread(target=hold_lock)
+    t.start()
+    held.wait(30)
+
+    def child():
+        try:
+            st.read("a.json")
+            return 1
+        except StateError:
+            pass
+        st.close()
+        return 0
+
+    try:
+        code, release = _fork_and_hold(child)
+        release()
+    finally:
+        done.set()
+        t.join(30)
+    assert code == 0
     st.close()
 
 

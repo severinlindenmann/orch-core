@@ -37,6 +37,7 @@ LABELS = {
     "sig_ws_event": "orch/v2/sig/ws-event|",
     "sig_host_event": "orch/v2/sig/host-event|",
     "sig_checkpoint": "orch/v2/sig/checkpoint|",
+    "sig_reader_decl": "orch/v2/sig/reader-decl|",
 }
 
 
@@ -685,7 +686,8 @@ INDEX: dict[str, str] = {
     "repo_paths.json": "repo paths: NFC before ASCII-only collision comparison; "
     "owner-signed paths may leave the workspace (1, 11.3)",
     "canon.json": "[shared, unchanged] strict parse depth 16/17 and -0 -> 0 (ticket-format 11.2)",
-    "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
+    "labels.json": "[shared, CHANGED] the F1 domain labels (5.6), prefix-free with the protocol's; H12d adds "
+    "sig_reader_decl",
     "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)",
     "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id and hash, "
     "grant secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7)",

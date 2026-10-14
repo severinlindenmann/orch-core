@@ -613,6 +613,10 @@ the field it belongs to; no code looks a hash up by value alone.
 - New labels (`orch/v2/gate|`, `section|`, `value|`, `policy|`, `people|`, `question-id|`, `event|`,
   `grant-secret|`, `checkpoint-hash|`, `log-acc|`, `sig/ticket-event|`, `sig/ws-event|`, `sig/host-event|`, `sig/checkpoint|`) go into the
   orch-relay `vectors_v2.json` label list; the table stays prefix-free.
+- **H12d (orch-v2-host §0.8.6 item 9.3, 9.11):** one more label, `orch/v2/sig/reader-decl|` (`sig_reader_decl`), the
+  signature domain of a reader's declaration, signed only by a device key (`DEVICE_KEY_LABELS`). It is an F1 label
+  (`orch.canon.LABELS`, `labels.json`), listed by the relay corpus under the same key, and prefix-free against every
+  label of both tables (`tests/crypto/test_reader_decl_label.py`).
 
 ### 5.7 Gates
 

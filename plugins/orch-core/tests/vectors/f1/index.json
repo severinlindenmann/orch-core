@@ -12,7 +12,7 @@
   "genesis.json": "the six genesis checks in order (5.11)",
   "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id and hash, grant secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7)",
   "index.json": "this list",
-  "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
+  "labels.json": "[shared, CHANGED] the F1 domain labels (5.6), prefix-free with the protocol's; H12d adds sig_reader_decl",
   "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
   "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the refusal order (5.11)",
   "replay.json": "model scenario: replayed or re-contexted signed events are refused with the real verifier (5.3, 5.11)",

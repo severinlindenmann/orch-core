@@ -100,6 +100,7 @@ LABELS: dict[str, str] = {
     "sig_ws_event": "orch/v2/sig/ws-event|",
     "sig_host_event": "orch/v2/sig/host-event|",
     "sig_checkpoint": "orch/v2/sig/checkpoint|",
+    "sig_reader_decl": "orch/v2/sig/reader-decl|",  # H12d: a reader's declaration (orch-v2-host §0.8.6 item 9.3)
 }
 """Every domain label this package defines (ticket ``§5.6``). ``tests/vectors/f1/labels.json`` pins them and the
 tests check they are prefix-free together with the protocol's own labels."""

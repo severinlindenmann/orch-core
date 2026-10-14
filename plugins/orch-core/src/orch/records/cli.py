@@ -267,8 +267,11 @@ def _do_status(run: _Run, r: Any) -> dict[str, Any]:
         except RecordsError as exc:
             kind = "not_dedicated" if exc.code == "records.not_dedicated" else "unsafe"
             local["repo"] = {"state": kind, "problem": exc.message[:300]}
-    status = dict(r.link("records.status", {}))
+    current = local.get("url")  # the effective push URL now: the host says whether it is marked, and if it changed
+    status = dict(r.link("records.status", {"current_url": current} if current else {}))
     status["local"] = local
+    # what this tool sees now replaces the host's last report: the workspace's own records repo exists
+    status["configured"] = local["repo"]["state"] in ("ok", "index_differs", "unsafe")
     return status
 
 
@@ -484,6 +487,9 @@ def _dispatch(run: _Run, r: Any) -> tuple[dict[str, Any], str]:
 
         res = init_repo(pinned_root(r.root), env=run.env)
         run.repo(r.root)  # the result must be a usable dedicated repo
+        failed = _note(r.link, {"pushed": False, "repo": {"state": "ok"}})  # records.status: configured
+        if failed:
+            res["note"] = failed
         return res, "records repo ready" + (" (created)" if res["created"] else "")
     if a.cmd == "commit":
         res = _do_commit(run, r, push_after=a.push, fresh=a.fresh_history, remote=a.remote)

@@ -78,13 +78,23 @@ def test_commit_push_is_one_child_run_and_status_follows(r):
     status = out["detail"]["status"]
     assert status["configured"] and status["last"]["commit"] == git(r.root, "rev-parse", "HEAD")
     assert status["last"]["pushed_at"] is not None and status["repo"] == {"state": "ok"}
-    assert status["pending"]["events"] == 0 and status["remote"] == {"url": url, "private": False, "export": "ok"}
+    assert status["pending"]["events"] == 0
+    assert status["remote"] == {"url": url, "private": False, "export": "ok", "current_url": url,
+                                "current_private": False, "matches_last": True}  # fmt: skip
+    # the push URL changes: the dashboard's confirmation sees it before any push
+    other = r.bare("other")
+    git(r.root, "remote", "set-url", "origin", other)
+    remote = run_cli(r, "status")[1]["detail"]["status"]["remote"]
+    assert remote["current_url"] == other and remote["matches_last"] is False and remote["url"] == url
 
 
 def test_status_reports_a_missing_or_foreign_repo_and_a_differing_index(r):
     code, out = run_cli(r, "status")
     assert code == 0 and out["detail"]["status"]["local"]["repo"] == {"state": "missing"}
-    r.init()
+    assert out["detail"]["status"]["configured"] is False
+    assert run_cli(r, "init")[0] == 0
+    assert run_cli(r, "status")[1]["detail"]["status"]["configured"] is True
+    assert r.link("records.status", {})["configured"] is True  # init reported the repo to the host
     r.commit()
     staged = subprocess.run(
         ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"x\n", capture_output=True, check=True,
@@ -200,7 +210,7 @@ def test_opus1_a_maintainers_note_never_steers_the_owners_timer_or_status(r, mon
     r.w.ticket("one")
     status = run_cli(r, "status")[1]["detail"]["status"]
     assert status["last"]["commit"] == real_commit and status["pending"]["events"] > 0
-    assert status["remote"] is None or status["remote"]["url"] == url
+    assert status["remote"]["url"] in (None, url) and "evil" not in json.dumps(status)
     assert status["last_noted"]["by"] == r.w.quinn.ref
     now = [2_000_000.0]
     code, doc, runs = _auto(r, now)

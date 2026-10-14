@@ -37,6 +37,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -112,7 +113,11 @@ _SCHEMAS = {
         "required": ["on"],
         "additionalProperties": False,
     },
-    "records.status": {"type": "object", "additionalProperties": False},
+    "records.status": {
+        "type": "object",
+        "properties": {"current_url": _URL},
+        "additionalProperties": False,
+    },
     "records.note": {
         "type": "object",
         "properties": {
@@ -158,17 +163,18 @@ def _validate(op: str, args: Any) -> None:
         where = ".".join(map(str, errors[0].absolute_path))
         raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
     # a schema ``$`` also matches before a final newline
-    for name in ("url", "ref", "sha", "page", "commit", "manifest"):
+    for name in ("url", "current_url", "ref", "sha", "page", "commit", "manifest"):
         value = args.get(name)
         if isinstance(value, str) and any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
             raise HostError("invalid.input", f"{op}: {name} is not valid")
-    url = args.get("url")
-    if isinstance(url, str):
-        from orch.records.git import url_problem
+    for name in ("url", "current_url"):
+        url = args.get(name)
+        if isinstance(url, str):
+            from orch.records.git import url_problem
 
-        problem = url_problem(url)
-        if problem is not None:  # never stored, never echoed: the mark and the audit hold no secret
-            raise HostError("invalid.input", f"{op}: url is refused: {problem}")
+            problem = url_problem(url)
+            if problem is not None:  # never stored, never echoed: the mark and the audit hold no secret
+                raise HostError("invalid.input", f"{op}: {name} is refused: {problem}")
     if op == "records.remote_private" and args["on"] and "url" not in args:
         raise HostError("invalid.input", "records.remote_private: url is required to set the mark")
     if op == "records.note" and "manifest" in args and "commit" not in args:
@@ -227,6 +233,9 @@ class Ctx:
     sees: Callable[[Any], bool]
     #: where the manifests and the hash cache live (the workspace service; a plain object in direct mode)
     holder: Any = field(default=None)
+    #: the caller is a workspace owner (direct mode: the person who owns these files); a URL is shown in full to an
+    #: owner only, to anyone else as its host
+    owner: bool = field(default=True)
 
     @property
     def actor(self) -> str:
@@ -246,6 +255,7 @@ def ctx_of(call: Call, viewer: Viewer) -> Ctx:
         person=viewer.person,
         sees=viewer.sees,
         holder=service,
+        owner=viewer.role == "owner",
     )
 
 
@@ -291,7 +301,7 @@ def run_op(ctx: Ctx, op: str, args: dict[str, Any]) -> dict[str, Any]:
     if op == "records.note":
         return _note(ctx, args)
     if op == "records.status":
-        return _status(ctx)
+        return _status(ctx, args.get("current_url"))
     raise HostError("unknown_command", f"{op} is not served")
 
 
@@ -508,6 +518,8 @@ def _note(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     for name in ("url", "repo"):
         if name in args:
             last[name] = args[name]
+    if "repo" in args:  # the records repo is the workspace's (one record root): its last report, whoever made it
+        doc["repo"] = {"state": args["repo"]["state"], "at": _stamp(now), "by": ctx.actor}
     if "auto" in args:
         last["auto"] = args["auto"]
     lasts[ctx.actor] = last
@@ -517,10 +529,51 @@ def _note(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _status(ctx: Ctx) -> dict[str, Any]:
+#: repo states that mean the workspace has its own records repo (``missing``: none; ``not_dedicated``: the record root
+#: sits in another repository)
+_CONFIGURED = frozenset({"ok", "index_differs", "unsafe"})
+
+
+def _configured(doc: dict[str, Any]) -> bool:
+    """The records repo exists, per workspace: the last repo state any tool reported (``repo`` in ``records.json``),
+    else (a record from before it) any person's last report. The host runs no git and reads no repository file
+    (D-P2-19), so this is the tools' word; the tool's own ``status`` replaces it with what it sees now."""
+    repo = doc.get("repo")
+    if isinstance(repo, dict):
+        return repo.get("state") in _CONFIGURED
+    lasts = doc.get("lasts") or {}
+    return any(isinstance(v, dict) and (v.get("repo") or {}).get("state") in _CONFIGURED for v in lasts.values())
+
+
+_SCHEME_URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(?:[^/@]*@)?([^/]*)(.*)$", re.S)
+_SCP_URL = re.compile(r"^(?:[^@/:]+@)?([^:/]+):(.*)$", re.S)
+
+
+def display_url(url: str, owner: bool) -> str:
+    """A push URL for a display: without its userinfo, and for anyone but an owner only its host (``local`` for a
+    path or ``file://``)."""
+    m = _SCHEME_URL.match(url)
+    if m:
+        scheme, host, rest = m.groups()
+        if owner:
+            return f"{scheme}://{host}{rest}"
+        return host or "local"
+    m = _SCP_URL.match(url)
+    if m:
+        host, path = m.groups()
+        return f"{host}:{path}" if owner else host
+    return url if owner else "local"
+
+
+def _status(ctx: Ctx, current_url: str | None = None) -> dict[str, Any]:
     """The caller's own last note (commit, push, repo state, URL, auto) and the pending counts since that commit, plus
     who noted last workspace-wide. ``remote.url`` is **display only**: it is what the caller's tool reported, and a
-    client must never pass it to ``records.remote_private`` (the tool resolves the URL to mark from git itself)."""
+    client must never pass it to ``records.remote_private`` (the tool resolves the URL to mark from git itself).
+
+    ``current_url`` is the effective push URL the records tool resolved just now (its ``status`` passes it): the
+    answer adds ``remote.current_url`` (for a display, :func:`display_url`), ``remote.current_private`` (that exact
+    string carries the private-remote mark) and ``remote.matches_last`` (it equals the last pushed destination), for
+    the dashboard's push confirmation. Display only: the push resolves and checks its URL again."""
     from orch.model import WORKSPACE
 
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
@@ -545,11 +598,20 @@ def _status(ctx: Ctx) -> dict[str, Any]:
                     more = True
     remote = None
     url = last.get("url")
-    if isinstance(url, str):
-        mark = doc.get("private_remote")
-        private = isinstance(mark, dict) and mark.get("url") == url
+    mark = doc.get("private_remote")
+    marked_url = mark.get("url") if isinstance(mark, dict) else None
+    if isinstance(url, str) or current_url is not None:
+        shown = url if isinstance(url, str) else current_url
+        private = marked_url is not None and marked_url == shown
         blocked = convenience_on(ctx) and not private
-        remote = {"url": url, "private": private, "export": "blocked_convenience" if blocked else "ok"}
+        remote = {
+            "url": url if isinstance(url, str) else None,
+            "private": private,
+            "export": "blocked_convenience" if blocked else "ok",
+            "current_url": None if current_url is None else display_url(current_url, ctx.owner),
+            "current_private": None if current_url is None else marked_url == current_url,
+            "matches_last": None if current_url is None else (isinstance(url, str) and url == current_url),
+        }
     out_last = None
     if last.get("commit"):
         out_last = {
@@ -560,7 +622,7 @@ def _status(ctx: Ctx) -> dict[str, Any]:
             "pushed_at": last.get("pushed_at") if last.get("pushed_commit") == last["commit"] else None,
         }
     return {
-        "configured": bool(last),
+        "configured": _configured(doc),
         "repo": last.get("repo"),
         "pending": {"events": events + ws_events, "tickets": tickets, "more": more, "workspace_events": ws_events},
         "last": out_last,

@@ -54,13 +54,25 @@ it('exchanges the private launcher fragment without opening the token channel', 
   vi.stubGlobal('BroadcastChannel', channel)
   history.replaceState(null, '', '/#launch=demo-not-a-real-code&to=%2Fw%2FDEMO')
   const fetcher = vi.fn(async (_input, init) => {
-    expect(location.hash).toBe('')
+    expect(location.pathname + location.search + location.hash).toBe('/') // the destination only after a redeemed code
     expect(init?.body).toBe(JSON.stringify({ code: 'demo-not-a-real-code' }))
     return Response.json({ token: 'demo-not-a-real-launched' })
   }) as unknown as typeof fetch
   expect(await bootstrap(fetcher)).toBe('demo-not-a-real-launched')
   expect(location.pathname).toBe('/w/DEMO')
   expect(channel).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['refused', async () => new Response(null, { status: 401 })],
+  ['unreachable', async () => { throw new TypeError('network') }],
+])('a foreign link with a made-up launch code stays on the root when the exchange is %s', async (_name, answer) => {
+  foreign()
+  vi.stubGlobal('BroadcastChannel', vi.fn())
+  history.replaceState(null, '', '/#launch=demo-not-a-real-bogus&to=%2Fw%2FDEMO%2Fticket%2FDEMO-0001%3Ftab%3Dhistory')
+  await bootstrap(vi.fn(answer) as unknown as typeof fetch).catch(() => null)
+  expect(location.pathname + location.search + location.hash).toBe('/')
+  expect(getToken()).toBeNull()
 })
 
 it('keeps the normal login screen for an untagged document', async () => {

@@ -1511,6 +1511,7 @@ manifest-copy steps; this reintroduces those packaging gaps.
 
 ## 2026-10-14 #444 recheck: foreign reload destination and concurrent unknown signatures
 
-- **Decision:** Reset foreign navigation without a launch code to `/` before rendering, while preserving private launch redemption and channel isolation. Re-mark uncertain signing outcomes after signer errors, even if a concurrent definite failure cleared the in-flight mark.
+- **Decision:** Reset every foreign navigation to `/` before rendering and move to the launch destination only after its own code was redeemed (a made-up `launch` with an attacker `to=` stays on `/`; Opus delta F-1), while preserving private launch redemption and channel isolation. Re-mark uncertain signing outcomes after signer errors, even if a concurrent definite failure cleared the in-flight mark.
 - **Why:** A later untagged reload must not authenticate an attacker-chosen path or query (R-2); unknown signature outcomes must retain the cancellation/replacement guard across concurrent attempts (R-3). The foreign notice still directs users to open from the terminal or a bookmark at `/`.
 - **Revert:** Restore the prior URL replacement in `src/api/bootstrap.ts` and remove the uncertain-outcome re-mark in `server/src/orch_dashboard/click.py`, accepting the two residual races again.
+- **Known (info, Opus delta F-2):** the re-mark narrows the concurrent-sign race but the reverse ordering (uncertain first, then a definite failure of a call that saw no prior) can still clear the mark; no double signature is possible (signer claim + host idem), only the cancel/replace guard is weaker in that window.

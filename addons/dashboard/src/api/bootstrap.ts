@@ -30,8 +30,9 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
   const code = fragment.get('launch')
   const destination = safeDestination(fragment.get('to'))
   const foreign = isForeignNavigation()
-  // A reload must not authenticate an attacker-chosen deep link.
-  history.replaceState(null, '', code ? destination : foreign ? '/' : location.pathname + location.search)
+  // A reload must not authenticate an attacker-chosen deep link: a foreign document starts at the root and moves to
+  // its destination only after its own launch code was redeemed (a made-up code keeps it on the root).
+  history.replaceState(null, '', foreign ? '/' : code ? destination : location.pathname + location.search)
   currentToken = sessionStorage.getItem(STORAGE)
   if (foreign) clearSession(false) // sessionStorage may have been copied from an opener.
   channel?.close()
@@ -54,6 +55,7 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
     if (!response.ok) return null
     const body = await response.json() as { token: string }
     remember(body.token)
+    if (foreign) history.replaceState(null, '', destination)
   } else if (!currentToken && channel) {
     await new Promise<void>((resolve) => {
       const handler = (event: MessageEvent) => {

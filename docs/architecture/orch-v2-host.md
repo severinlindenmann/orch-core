@@ -4688,12 +4688,19 @@ with local state (`link.json` `card_seq`, the host's own member list, the logs a
 ### 11A.10 Tests and conformance
 
 **Vendoring.**
-- `tests/relay/vectors/` holds `vectors_v2.json`, `http_fixtures/` with its `MANIFEST.json`, and a `SOURCE` file naming
-  the relay commit, the MANIFEST revision and the sha256 of `vectors_v2.json` (the vector file has no revision field).
+- `tests/relay/vectors/` holds `vectors_v2.json.xz`, `http_fixtures/` with its `MANIFEST.json`, and a `SOURCE` file
+  naming the relay commit, the MANIFEST revision and the sha256 of `vectors_v2.json` (the vector file has no revision
+  field).
+- The vector file is committed **xz-compressed only** (~0.4 MB instead of 23 MB; round 6, orch-52 #6), so git history
+  does not keep another raw copy at each corpus bump. The sha256 in `SOURCE` is over the **decompressed** bytes, which
+  equal the relay's `tests/vectors_v2.json`; `tests/relay/corpus.py` decompresses it and is the only reader (the crypto,
+  canon and skeleton tests load through it). `scripts/sync-vectors.sh <ref>` regenerates the `.xz`, the fixtures and
+  `SOURCE` from an orch-relay clone.
 - The drift guard copies the relay's `test_http_fixtures_manifest.py` checks: the shape; every file hashed, nothing
   added or removed; the aggregate equals the sha256 of the sorted `name\thash\n` lines; the canonical rendering.
-- **Disagreement:** core already vendors `tests/vectors/vectors_v2.json` at relay `04da0e7`, older than the relay's
-  current file. R1's first commit moves the crypto tests' loader to the one copy under `tests/relay/vectors/`. The
+- **Disagreement (resolved):** core vendored `tests/vectors/vectors_v2.json` at relay `04da0e7`, older than the
+  relay's current file. R1 moves every loader to the one copy under `tests/relay/vectors/` and drops the old copy
+  (round 6; its `encodings` and `labels` sections are identical in the new file). The
   deferred sections in `tests/crypto/test_vectors.py` (`bridge`, `relay_auth`, `p3`, `checkpoints`, `unpublished`, …)
   move to "consumed" as each group lands.
 - Updating the corpus is one PR that bumps `SOURCE` and changes nothing else.

@@ -1,10 +1,16 @@
 """The vendored orch-relay corpus (11A.10): ``vectors_v2.json`` and ``http_fixtures/`` at the commit named in
-``SOURCE``. Loader helpers only; the drift guard is ``test_corpus.py``."""
+``SOURCE``. Loader helpers only; the drift guard is ``test_corpus.py``.
+
+The vector file is stored **xz-compressed** (``vectors_v2.json.xz``, ~0.4 MB instead of 23 MB, round 6 orch-52 #6), so
+git history does not grow by the raw file at each corpus bump. ``SOURCE``'s ``vectors_v2_sha256`` is over the
+**decompressed** bytes, which are the relay's ``tests/vectors_v2.json`` byte for byte. This module is the only reader:
+every test that needs the vectors (``tests/crypto``, ``tests/canon``, ``tests/test_skeleton.py``) loads them here."""
 
 from __future__ import annotations
 
 import base64
 import json
+import lzma
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +20,15 @@ from orch.crypto import P256_N
 
 DIR = Path(__file__).resolve().parent / "vectors"
 FIXTURES = DIR / "http_fixtures"
-VECTORS_PATH = DIR / "vectors_v2.json"
-VECTORS = json.loads(VECTORS_PATH.read_text())
+VECTORS_PATH = DIR / "vectors_v2.json.xz"
+
+
+def vectors_bytes() -> bytes:
+    """The decompressed ``vectors_v2.json`` (the bytes ``SOURCE`` pins)."""
+    return lzma.decompress(VECTORS_PATH.read_bytes(), format=lzma.FORMAT_XZ)
+
+
+VECTORS = json.loads(vectors_bytes())
 S2 = VECTORS["suites"]["2"]
 KEYS = S2["keys"]
 IDS = S2["ids"]

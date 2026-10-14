@@ -3617,7 +3617,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `records.status` takes `current_url` and answers `remote.current_url`, `remote.current_private` and
     `remote.matches_last` (§12.8); `orch set REF labels=` sets the empty label set. Additive on the wire except
     `history_convenience`, which tool and host ship together. No log or certificate change.
-34. **Column R (H12a, contract v1.7 draft):** the relay peer class (`Peer.kind "relay"`, uid −1, `RelayIdentity`),
+35. **Column R (H12a, contract v1.7 draft):** the relay peer class (`Peer.kind "relay"`, uid −1, `RelayIdentity`),
     column R with the closed op list `RELAY_OPS` and `OpKind "device_signed"` (`relay.submit`, never served on a
     socket), a fail-closed `resolve`, `Call.relay`; `principal()` and `principal_of` refuse a relay peer; `relay.submit`
     is never `partial` (the `relay_fields` hook); `append_signed` is the single append of signed person events (and of

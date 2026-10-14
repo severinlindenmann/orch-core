@@ -161,6 +161,55 @@ describe('the canary corpus (section 12.6.7)', () => {
   }, 120_000)
 })
 
+// A browser runs a microtask checkpoint after every event listener callback of a trusted event (HTML "clean up after
+// running script"), so a microtask queued by one listener runs before the next listener of the same event. jsdom's
+// dispatchEvent does not: these tests emulate the browser by running queued microtasks at once while an event is being
+// dispatched (review H1: a filter that closes its window with a microtask dropped every real keystroke and paste).
+function browserDispatch(target: EventTarget, event: Event) {
+  const real = globalThis.queueMicrotask
+  globalThis.queueMicrotask = (fn: () => void) => fn()
+  try { target.dispatchEvent(event) } finally { globalThis.queueMicrotask = real }
+}
+
+describe('real xterm input, dispatched as a browser does (review H1)', () => {
+  it('typing on the textarea sends tag 0 (keydown, Enter)', () => {
+    const ta = view.term.textarea!
+    browserDispatch(ta, new KeyboardEvent('keydown', { key: 'l', code: 'KeyL', keyCode: 76, bubbles: true, cancelable: true }))
+    browserDispatch(ta, new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }))
+    expect(sent.filter((s) => s.tag === 0).map((s) => s.data).join('')).toBe('l\r')
+  })
+
+  it('a paste on the textarea sends tag 0', () => {
+    const paste = new Event('paste', { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown }
+    paste.clipboardData = { getData: (t: string) => (t === 'text/plain' ? 'echo pasted' : '') }
+    browserDispatch(view.term.textarea!, paste)
+    expect(sent.filter((s) => s.tag === 0).map((s) => s.data).join('')).toContain('echo pasted')
+  })
+
+  it('replies parsed in the same tick as a keystroke never get tag 0', () => {
+    const ta = view.term.textarea!
+    browserDispatch(ta, new KeyboardEvent('keydown', { key: 'x', code: 'KeyX', keyCode: 88, bubbles: true, cancelable: true }))
+    // After user input xterm parses the next write synchronously (WriteBuffer.handleUserInput): same tick.
+    view.output(1000, b(`${ESC}[>c${ESC}[5n${ESC}P$qm${ST}${ESC}[c${ESC}[6n`))
+    expect(sent.filter((s) => s.tag === 0).map((s) => s.data)).toEqual(['x'])
+    expect(sent.filter((s) => s.tag === 1).every((s) => isCpr(s.data) || isDa1(s.data))).toBe(true)
+  })
+})
+
+describe('pointer reports are not tag 0', () => {
+  it('data xterm flags as user input while a mouse or wheel event is dispatched is swallowed', async () => {
+    const report = () => view.term.input('\x1b[<0;5;5M', true) // what mouse tracking sends, flagged as user input
+    browserDispatch(view.term.element!, new MouseEvent('mousedown', { bubbles: true }))
+    report()
+    browserDispatch(view.term.element!, new WheelEvent('wheel', { bubbles: true, deltaY: 3 }))
+    view.term.input('\x1b[A', true)
+    expect(sent).toEqual([])
+    await new Promise((r) => setTimeout(r, 5))
+    view.term.input('k', true) // a key after the pointer event's task: the person's input again
+    expect(sent).toEqual([{ tag: 0, data: 'k' }])
+  })
+})
+
 describe('the reply filter around the person', () => {
   it('a key event sends tag 0; the same bytes from the parser do not', async () => {
     const ta = view.term.textarea!

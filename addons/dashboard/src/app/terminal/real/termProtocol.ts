@@ -55,29 +55,25 @@ export const isCpr = (s: string) => /^\x1b\[\d{1,5};\d{1,5}R$/.test(s)
 export const isDa1 = (s: string) => /^\x1b\[\?[0-9;]{0,64}c$/.test(s)
 
 /**
- * Tags `onData`: 0 only while a key or paste event of the person is being dispatched (`gesture()` is called from a
- * capture listener on the terminal; the window closes at the next microtask, before xterm parses any output), 1 only
- * for CPR or DA1, and nothing for everything else (DA2/DA3, DECRQM, DSR, DECRQSS, XTGETTCAP, OSC colour replies…).
- * A read attachment, a lost lease and a replay send nothing.
+ * Tags `onData`: 0 only for the person's own key, paste or IME input (`user`: xterm itself flagged the data as user
+ * input, see termView), 1 only for CPR or DA1, and nothing for everything else (DA2/DA3, DECRQM, DSR, DECRQSS,
+ * XTGETTCAP, OSC colour replies…). A read attachment, a lost lease and a replay send nothing.
  */
 export class ReplyFilter {
-  private inGesture = false
-
-  gesture() {
-    this.inGesture = true
-    queueMicrotask(() => { this.inGesture = false })
-  }
-
-  classify(data: string, state: { writer: boolean; replaying: boolean }): { tag: 0 | 1; data: string } | null {
+  classify(data: string, state: { writer: boolean; replaying: boolean; user: boolean }): { tag: 0 | 1; data: string } | null {
     if (!state.writer || state.replaying) return null
-    if (this.inGesture) return { tag: 0, data }
+    if (state.user) return { tag: 0, data }
     if (isCpr(data) || isDa1(data)) return { tag: 1, data }
     return null
   }
 }
 
-/** The events that count as the person's own input for tag 0. */
-export const GESTURE_EVENTS = ['keydown', 'keypress', 'beforeinput', 'input', 'compositionend', 'paste'] as const
+/**
+ * Pointer and wheel events: xterm flags their reports (mouse tracking, wheel-to-arrows in the alternate buffer) as user
+ * input too, but §12.6.7 allows tag 0 only for key and paste input, so data flagged while one of these is being
+ * dispatched is swallowed.
+ */
+export const POINTER_EVENTS = ['mousedown', 'mouseup', 'mousemove', 'wheel', 'click', 'auxclick', 'dblclick', 'contextmenu', 'pointerdown', 'pointerup', 'pointermove'] as const
 
 export interface TermConnection {
   sendInput(tag: 0 | 1, bytes: Uint8Array): void

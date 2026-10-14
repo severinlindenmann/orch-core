@@ -30,16 +30,13 @@ describe('the reply allow-list', () => {
       expect(isCpr(s) || isDa1(s), JSON.stringify(s)).toBe(false)
   })
 
-  it('tag 0 only inside a gesture, closed at the next microtask', async () => {
+  it('tag 0 only for data xterm flagged as user input', () => {
     const f = new ReplyFilter()
-    expect(f.classify('ls', { writer: true, replaying: false })).toBeNull()
-    f.gesture()
-    expect(f.classify('ls', { writer: true, replaying: false })).toEqual({ tag: 0, data: 'ls' })
-    expect(f.classify('ls', { writer: false, replaying: false })).toBeNull()
-    expect(f.classify('ls', { writer: true, replaying: true })).toBeNull()
-    await Promise.resolve()
-    expect(f.classify('ls', { writer: true, replaying: false })).toBeNull()
-    expect(f.classify('\x1b[3;4R', { writer: true, replaying: false })).toEqual({ tag: 1, data: '\x1b[3;4R' })
+    expect(f.classify('ls', { writer: true, replaying: false, user: false })).toBeNull()
+    expect(f.classify('ls', { writer: true, replaying: false, user: true })).toEqual({ tag: 0, data: 'ls' })
+    expect(f.classify('ls', { writer: false, replaying: false, user: true })).toBeNull()
+    expect(f.classify('ls', { writer: true, replaying: true, user: true })).toBeNull()
+    expect(f.classify('\x1b[3;4R', { writer: true, replaying: false, user: false })).toEqual({ tag: 1, data: '\x1b[3;4R' })
   })
 })
 

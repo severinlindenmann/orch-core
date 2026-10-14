@@ -5,7 +5,7 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal, type ITerminalInitOnlyOptions, type ITerminalOptions } from '@xterm/xterm'
-import { GESTURE_EVENTS, ReplyFilter, type Ready } from './termProtocol'
+import { POINTER_EVENTS, ReplyFilter, type Ready } from './termProtocol'
 
 /** xterm's default OSC 8 behaviour would confirm() and window.open(): links do nothing here (no links in phase 2). */
 export const NO_LINKS = { activate: () => {}, hover: () => {}, leave: () => {} }
@@ -63,11 +63,35 @@ export function createTermView(el: HTMLElement, options: ITerminalOptions & ITer
   let readyOffset = 0
   let sink: Sink | null = null
   let disposed = false
-  // Tag 0 needs the person's own key or paste event: marked in the capture phase, before xterm turns it into onData.
-  const mark = () => filter.gesture()
-  for (const name of GESTURE_EVENTS) el.addEventListener(name, mark, true)
+  // Tag 0 needs the person's own input. xterm knows which data is that: its key, paste, IME and input handlers call
+  // `coreService.triggerDataEvent(data, true)`, which fires `onUserInput` synchronously right before `onData`; the
+  // parser's replies call it without the flag. So the flag is taken from xterm's own dispatch (review H1: an
+  // event-timing window closed by a microtask dropped every real keystroke, because a browser runs microtasks between
+  // listeners). The core service is not public API: xterm is pinned by the lockfile, and a version without it fails
+  // here (no terminal at all) instead of guessing; the canary corpus test guards the property.
+  const core = (term as unknown as { _core?: { coreService?: { onUserInput?: (fn: () => void) => { dispose(): void } } } })._core
+  const onUserInput = core?.coreService?.onUserInput
+  if (typeof onUserInput !== 'function') {
+    term.dispose()
+    throw new Error('xterm has no user-input signal: the terminal is not drawn')
+  }
+  let user = false
+  // Pointer/wheel reports are flagged as user input too: data flagged while one is dispatched is not tag 0. The flag
+  // is cleared by a task (not a microtask): widening this window only ever swallows more.
+  let pointer = false
+  let pointerTimer: ReturnType<typeof setTimeout> | undefined
+  const markPointer = () => {
+    pointer = true
+    clearTimeout(pointerTimer)
+    pointerTimer = setTimeout(() => { pointer = false }, 0)
+  }
+  const doc = el.ownerDocument
+  for (const name of POINTER_EVENTS) doc.addEventListener(name, markPointer, true)
+  const userInput = onUserInput.call(core!.coreService, () => { user = !pointer })
   const data = term.onData((d) => {
-    const out = filter.classify(d, { writer, replaying })
+    const fromUser = user
+    user = false
+    const out = filter.classify(d, { writer, replaying, user: fromUser })
     if (out && sink) sink(out.tag, encoder.encode(out.data))
   })
   // Binary reports (X10 mouse) are terminal-generated and never a CPR/DA1: dropped.
@@ -120,7 +144,9 @@ export function createTermView(el: HTMLElement, options: ITerminalOptions & ITer
     dispose() {
       disposed = true
       sink = null
-      for (const name of GESTURE_EVENTS) el.removeEventListener(name, mark, true)
+      for (const name of POINTER_EVENTS) doc.removeEventListener(name, markPointer, true)
+      clearTimeout(pointerTimer)
+      userInput.dispose()
       data.dispose()
       binary.dispose()
       // xterm schedules frame work after open; disposing before it ran throws in StrictMode remounts.

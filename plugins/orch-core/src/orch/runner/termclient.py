@@ -101,7 +101,10 @@ class TermClient:
             sock.close()
             self.sock = None
             raise RunnerChanged("the runner's terminal socket cannot be reached") from None
-        self.send({"t": "attach", "ticket": self.answer["ticket"], "nonce": self.answer["nonce"]})
+        try:
+            self.send({"t": "attach", "ticket": self.answer["ticket"], "nonce": self.answer["nonce"]})
+        except TermEnded:
+            raise RunnerChanged("the terminal socket closed") from None
         first = self.recv(timeout)
         if first is None:
             raise RunnerChanged("the terminal socket closed")

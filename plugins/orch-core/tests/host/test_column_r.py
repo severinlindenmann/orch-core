@@ -723,8 +723,9 @@ def test_the_ninth_relay_link_is_refused_with_host_limit(tmp_path):
         pass
     assert exc.value.code == "host.limit"
     assert (exc.value.exit, exc.value.retryable) == (3, False)
-    with relaylink.link_reservation(svc):  # a relink of a linked workspace adds nothing
-        pass
+    with pytest.raises(HostError) as exc, relaylink.link_reservation(svc):  # no relink branch: the store refuses
+        pass  # an existing link anyway (relay.link_exists), so the guard just counts
+    assert exc.value.code == "host.limit"
 
 
 def test_a_linking_workspace_and_an_unlinked_one(tmp_path):

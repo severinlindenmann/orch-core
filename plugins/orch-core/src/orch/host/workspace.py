@@ -537,6 +537,8 @@ class Call:
         inconsistency refuses (``op.not_allowed``): a relay identity on a socket peer or the reverse, no recompute, a
         socket column or another viewer than the device's person, an op outside R's closed list."""
         op = self.frame.get("op") if isinstance(self.frame, dict) else None
+        if self.column.name == "R" and self.relay is None:  # only a relay identity is ever column R (before any return)
+            raise HostError("op.not_allowed", f"{op} is not allowed here")
         relay_peer = self.peer.kind == "relay"
         if self.relay is not None or relay_peer:
             self._authorize_relay(op)
@@ -562,10 +564,14 @@ class Call:
             or self.peer.kind != "relay"
             or self.peer.uid != -1
             or self.peer.person != identity.person_id
+            or getattr(self.service, "workspace_id", None) != identity.workspace_id
             or self.columns is None
-            or self.kind is None
         ):
             raise refuse()
+        kind = _relay_kind(op)  # derived here, never the caller's: a caller's kind that differs refuses
+        if kind is None or (self.kind is not None and self.kind != kind):
+            raise refuse()
+        self.kind = kind
         column, viewer, _verified = self.columns()
         if column.name == "R" and viewer != identity.person_id:
             raise refuse()
@@ -576,6 +582,20 @@ class Call:
         code = refusal(self.column, self.kind, op)
         if code is not None:
             raise HostError(code, f"{op} is not allowed here")
+
+
+def _relay_kind(op: Any) -> OpKind | None:
+    """The kind of a relay op: ``device_signed`` for ``relay.submit``, else the socket backend's own ``op_kind``; an
+    op nobody serves has none."""
+    from .columns import DEVICE_SIGNED_OPS
+    from .dispatch import op_kind
+
+    if not isinstance(op, str):
+        return None
+    if op in DEVICE_SIGNED_OPS:
+        return "device_signed"
+    kind = op_kind(op)
+    return kind[0] if kind is not None else None
 
 
 class OpBackend(Protocol):

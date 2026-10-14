@@ -335,7 +335,7 @@ def test_kill_points_of_a_checkpoint_outside_an_append(linked, sign_order, monke
     with pytest.raises(_Crash):
         env.store.checkpoint()
     monkeypatch.undo()
-    top = max(_seen_ns(env))
+    top = max(_seen_ns(env) | {n for w, n in sign_order if w == "sign"})  # signed but never written counts too
     _assert_reserved_before_signed(sign_order)
     env.store.close()
     env.open(load="lazy")

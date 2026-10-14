@@ -1024,8 +1024,9 @@ def test_n12_two_tabs_one_request_and_a_sign_in_flight_is_never_cancelled_or_rep
 
 def test_n12_unsettled_requests_are_tracked_one_by_one(client, token, stub, script, auth, rich):
     handoffs = client.app.state.handoffs
-    handoffs.mark_unsettled(stub.ws, "hr_a", handoffs.clock() + 100)
-    handoffs.mark_unsettled(stub.ws, "hr_b", handoffs.clock() + 100)
+    for rid in ("hr_a", "hr_b"):  # an unknown sign outcome is the only thing that leaves a mark behind
+        handoffs.begin_sign(stub.ws, rid, handoffs.clock() + 100)
+        handoffs.end_sign(stub.ws, rid, handoffs.clock() + 100, "uncertain")
     assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") == stub.ws
     handoffs.settled("hr_b")
     assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") is None
@@ -1352,3 +1353,99 @@ def test_failed_submit_state_never_reports_signed(client, token, stub, script, h
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "intent.failed"
     assert response.json()["error"]["reason"] == "gate.stale"
+
+
+def test_concurrent_uncertain_sign_remarks_after_definite_failure(client, token, stub, script, monkeypatch):
+    prepare(client, token, stub, comment(1))
+    handoffs = client.app.state.handoffs
+    first_entered, second_marked, first_finished = (threading.Event() for _ in range(3))
+    original_begin = handoffs.begin_sign
+    marks = 0
+
+    def begin(ws, rid, expires):
+        nonlocal marks
+        original_begin(ws, rid, expires)
+        marks += 1
+        if marks == 2:
+            second_marked.set()
+
+    monkeypatch.setattr(handoffs, "begin_sign", begin)
+    calls = 0
+
+    def interleaved(op, args):
+        nonlocal calls
+        if op != "sign":
+            return script.handler(op, args)
+        calls += 1
+        if calls == 1:
+            first_entered.set()
+            assert second_marked.wait(5)
+            raise ClickError("human.click_refused", "short", reason="too_soon")
+        assert first_finished.wait(5)
+        raise ClickError("internal", "unknown outcome")
+
+    script.clients[0].handler = interleaved
+    out = {}
+
+    def sign(name):
+        out[name] = sign_lost(client, token, stub)
+
+    first = threading.Thread(target=sign, args=("first",))
+    second = threading.Thread(target=sign, args=("second",))
+    first.start()
+    try:
+        assert first_entered.wait(5)
+        second.start()
+        first.join(10)
+        assert not first.is_alive()
+        assert out["first"].json()["error"]["reason"] == "too_soon"
+        assert second_marked.is_set()
+        assert handoffs.is_unsettled(REQ) == stub.ws  # a definite failure never clears while another sign is in flight
+    finally:
+        first_finished.set()
+        first.join(10)
+        if second.ident is not None:
+            second.join(10)
+    assert not second.is_alive()
+    assert out["second"].json()["error"]["reason"] == "uncertain"
+    assert handoffs.is_unsettled(REQ) == stub.ws
+
+
+@pytest.mark.parametrize(
+    "steps, marked",
+    [
+        # (call, outcome) in the order the calls finish; both calls began before either finished
+        ((("a", "definite"), ("b", "uncertain")), True),
+        ((("b", "uncertain"), ("a", "definite")), True),  # F-2: the reverse order must not clear the unknown outcome
+        ((("a", "definite"), ("b", "definite")), False),  # two definite failures: nothing is at the host
+        ((("a", "uncertain"), ("b", "definite")), True),
+        ((("a", "ok"), ("b", "definite")), False),
+    ],
+)
+def test_a_definite_sign_failure_clears_the_mark_only_with_nothing_in_flight_or_unknown(steps, marked):
+    from orch_dashboard.handoff import Handoffs
+
+    handoffs = Handoffs()
+    until = handoffs.clock() + 100
+    handoffs.begin_sign("ws", "hr_x", until)
+    handoffs.begin_sign("ws", "hr_x", until)
+    for _call, outcome in steps:
+        handoffs.end_sign("ws", "hr_x", until, outcome)
+    assert (handoffs.is_unsettled("hr_x") == "ws") is marked
+    assert handoffs.signing == {}
+
+
+def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
+    from orch_dashboard.handoff import Handoffs
+
+    handoffs = Handoffs()
+    until = handoffs.clock() + 100
+    handoffs.begin_sign("ws", "hr_x", until)
+    handoffs.end_sign("ws", "hr_x", until, "uncertain")
+    handoffs.begin_sign("ws", "hr_x", until)  # a retry that fails definitely keeps the earlier unknown outcome marked
+    handoffs.end_sign("ws", "hr_x", until, "definite")
+    assert handoffs.is_unsettled("hr_x") == "ws"
+    handoffs.settled("hr_x")  # the host says submitted (or ended)
+    handoffs.begin_sign("ws", "hr_x", until)
+    handoffs.end_sign("ws", "hr_x", until, "definite")
+    assert handoffs.is_unsettled("hr_x") is None

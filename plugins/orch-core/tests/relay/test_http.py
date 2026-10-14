@@ -623,3 +623,20 @@ def test_a_shutdown_before_the_socket_is_installed_never_connects(listener):
         call(c, deadline_s=5)
     assert e.value.kind == "shutdown"
     assert not _accepted(listener)
+
+
+def test_a_shutdown_between_the_lookup_and_the_install_never_connects(listener):
+    """``shutdown()`` lands after the name lookup returned and before the socket is installed (the lookup's own check
+    is past): the install check fails the call at once, nothing is connected."""
+
+    class ShutAfterLookup(http.RelayConn):
+        def _lookup(self, host, port):
+            r = super()._lookup(host, port)
+            self.shutdown()
+            return r
+
+    c = ShutAfterLookup("http://localhost:1", resolve=_resolve_to(listener))
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=5)
+    assert e.value.kind == "shutdown"
+    assert not _accepted(listener)

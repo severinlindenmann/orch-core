@@ -158,3 +158,18 @@ def test_operator_takeover_stands_in_for_the_preflight(env):
     got = s.operator_takeover()
     assert got.gen == 4 and m.seen != []
     s.login()  # the session works again
+
+
+def test_hold_at_start_runs_the_preflight_again_after_an_earlier_pass(env):
+    """``hold()`` at start never trusts an earlier pass: a ``pending`` record written after the session's first call
+    (say by a probe that failed transiently) refuses the next ``hold()`` with no request (11A.5 cost iv)."""
+    m, sim = env
+    clock = Clock(sim)
+    h = Holder(gen=3)
+    s = make_session(m.origin(), holder=h, clock=clock)
+    s.login()  # the preflight passed on this first call
+    n = len(m.seen)
+    h.rec = HolderRecord(True, 3, IID, 4)
+    with pytest.raises(TakeoverRefused, match="pending"):
+        s.hold()
+    assert len(m.seen) == n

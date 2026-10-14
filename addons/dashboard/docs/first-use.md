@@ -21,6 +21,7 @@ Fixed since the first version of this runbook (13 Oct), one line each:
 - `orch-addon.json` was not in the wheel: fixed by #452, `orch-dashboard addon-manifest --write <workspace>` (step 4b).
 - `orch host register` without `--peer` failed after click-to-sign custody: fixed by #451 (either custody is accepted).
 - There was no `orch host disable`: fixed by #451 (step 8).
+- `--print-url` outside a terminal stopped with a Python traceback: now a one-line refusal (this PR).
 
 Still open:
 
@@ -30,9 +31,10 @@ Still open:
 2. **Installing straight from git (`pip install git+https://...`) is not recommended.** With a token in the URL, macOS git
    hands the credential to `git-credential-osxkeychain`, which tries to store your GitHub token in the login keychain
    (the attempt hung there). Use a clone and a local path (step 1).
-3. **`orch-dashboard open --print-url` needs a terminal on stdout.** In a pipe or script it stops with a Python traceback
-   (`RuntimeError: --print-url requires a terminal`) instead of a one-line error. Cosmetic; run it in a terminal.
-4. **`orch addon grant dashboard` asks you to type `dashboard` + Enter** at the review, before the passphrase prompt (step 4b).
+
+`orch dashboard open --print-url` prints the single-use URL only to a terminal, on purpose (a launch code must not end up
+in a pipe or a log); elsewhere it refuses with one line and exit 1. `orch addon grant dashboard` asks you to type
+`dashboard` + Enter at the review before the passphrase: that is the normal signing review, not a gap (step 4b).
 
 ## Before you start
 

@@ -21,7 +21,7 @@ export function stepLines(a: FollowUpAction): string[] {
   ]
 }
 
-export function CompleteDetails({ ws, ticketKey, steps, onFinish }: { ws: string | undefined; ticketKey: string; steps: FollowUpAction[]; onFinish: () => void }) {
+export function CompleteDetails({ ws, ticketKey, steps, onFinish, title }: { ws: string | undefined; ticketKey: string; steps: FollowUpAction[]; onFinish: () => void; title?: string }) {
   const [index, setIndex] = useState(0)
   const step = steps[index]
   if (!step) return null
@@ -31,7 +31,7 @@ export function CompleteDetails({ ws, ticketKey, steps, onFinish }: { ws: string
   return (
     <HandoffDialog
       key={index}
-      title={steps.length > 1 ? `Complete details (${index + 1} of ${steps.length})` : 'Complete details'}
+      title={title ?? (steps.length > 1 ? `Complete details (${index + 1} of ${steps.length})` : 'Complete details')}
       ws={ws}
       action={action}
       confirmLabel={action.action === 'section' ? 'Prepare section' : 'Prepare details'}

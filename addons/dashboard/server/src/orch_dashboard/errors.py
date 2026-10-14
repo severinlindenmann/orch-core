@@ -34,7 +34,13 @@ def fail(code: str, message: str | None = None, exit: int = 9):
 def status(code: str) -> int:
     if code == "not_found":
         return 404
-    if code in {"usage", "invalid.input", "blob.invalid"} or code.startswith(("parse.", "frame.")):
+    if code in {
+        "usage",
+        "invalid.input",
+        "blob.invalid",
+        "records.invalid",
+        "records.snapshot_invalid",
+    } or code.startswith(("parse.", "frame.")):
         return 400
     if code in {"human_only", "role.denied", "op.not_allowed", "peer.denied", "host.required"} or code.startswith(
         "grant."
@@ -58,9 +64,19 @@ def status(code: str) -> int:
         "timeout",
         "workspace.unavailable",
         "click.unavailable",
+        "records.busy",
+        "records.budget",
+        "records.snapshot_changed",
+        "runner.unavailable",
     }:
         return 503
-    if code in {"internal", "not_implemented"}:
+    if code in {
+        "internal",
+        "not_implemented",
+        "records.child_invalid",
+        "records.child_output_limit",
+        "records.child_unavailable",
+    }:
         return 500
     return 409
 

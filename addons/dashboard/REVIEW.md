@@ -561,3 +561,17 @@ You should see: "Quick tasks" in the sidebar listing both tasks with "counts unk
 "two signatures" and signs the new task, then its label. Settings, Records shows what is waiting to commit; **Commit now** commits locally and
 shows the commit. The four terminal-only commands appear as text with no button. With a remote (use a local bare repo only) the export warning
 shows verbatim before **Commit and push**. `orch runner enable` (terminal) makes Settings, General show the "Dashboard execution" line.
+
+## Try terminals (M7a, real host, own terminal)
+
+Only on a disposable workspace (`tests/realhost_kit.py up BASE`; never your real `~/.config/orch`). Grant the `terminals` addon in the
+demo workspace and turn dashboard execution on **with the service manager off**: `ORCH_NO_SERVICE_MANAGER=1 orch runner enable
+--workspace DEMO` (it records the switch; it must not install a launchd/systemd unit). A real host admits only the runner unit's main PID,
+so until core has a dev seam for a foreground runner, the end-to-end check is the in-process test:
+`cd addons/dashboard/server && uv run pytest -m realhost tests/test_realhost_terminals.py`.
+Without a runner the dock still shows (feature `terminals`) and **New terminal** shows the host's preview with its `blocked` reason
+("runner.unavailable"). What you should see with one: the preview (command, folder, "acts as you, not as an agent", the D-P2-31 line),
+**Open terminal** opens a shell you can type in; another tab shows it read-only with **Take control**; taking it there shows **Take back**
+here; **Stop** ends it ("Some processes may still be running" when cleanup was incomplete); an ended run whose output is gone says
+"Output no longer kept". Layout: `/__layout/terminal-dock` (and `-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.
+

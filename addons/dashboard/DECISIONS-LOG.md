@@ -1534,3 +1534,45 @@ machinery unchanged and keep core in charge of wording. Converting would need a 
 **Why:** Prevent surviving ssh/git descendants, host/cwd drift, stale list label replacement, stale handoff state, and test leakage. Fresh reads reduce lost updates but do not provide atomic compare-and-swap against changes after that read.
 
 **Revert:** Only with equivalent core process/host isolation and label concurrency guarantees; preview cleanup remains necessary while tests share API objects.
+
+## M7a: real terminals in the dock (14 Oct 2026)
+
+**Decision:** On a real host the dock is drawn only when the server lists the `terminals` feature for the workspace (the host serves
+`run/1` and `term/1`: `run.sub`, `run.list`, `run.stop`, `term.preview`, `term.open`, `term.attach`, `attach.cancel`); it is then
+`RealDock` (the person's own runs) with `RealTerminal` per run. The mock keeps its terminals addon. Start agent (H11c) stays a disabled
+"not available on this host" menu item: this server lists no `agent_start` feature. The bytes go through the server's `/term` WebSocket
+and core's `TermClient` (verification, `input_id`/`lease_gen`, one frame in flight, throttle, `lost`); the server never re-implements
+the term socket protocol.
+**Why:** contract §12.6.6 makes the dashboard server the bridge and the enforcement point for the browser path; reusing `TermClient`
+keeps one implementation of §12.6.1/§12.6.3.
+**Revert:** drop `terminals.py`, `RealDock`/`RealTerminal` and the `terminals` feature; the dock falls back to "not available".
+
+**Decision:** The first attach right after the person clicks **Open terminal** in the preview dialog asks for `mode:"write"` with
+`take:false` (the lease only if nobody holds it). Every other attach (selecting a tab, a remount, any reconnect after 4401/4429/4503) is
+`read`; only **Take control** / **Take back** send `take:true`.
+**Why:** opening your own shell is the explicit gesture to type in it; §12.6.2 allows `write` without `take` (it never moves a lease
+someone holds), and §12.6.5's "never take by itself" is about `take` and reconnects. A shell that opens read-only would need a second
+click every time.
+**Revert:** pass `initial="read"` for the opened run in `RealDock`.
+
+**Decision:** The page's tag-0 window is "a `keydown`/`keypress`/`beforeinput`/`input`/`compositionend`/`paste` event of the terminal is
+being dispatched" (capture listener on the terminal element, closed at the next microtask, before xterm parses any output). Mouse
+reports (xterm `onData` from a mouse event while an application tracks the mouse) are therefore swallowed.
+**Why:** §12.6.7 allows tag 0 only from a key or paste event; mouse tracking is not in that list, and its reports are indistinguishable
+from terminal-generated replies at the sink.
+**Revert:** add mouse events to `GESTURE_EVENTS` only after the contract lists them.
+
+**Decision:** Browser tickets live 30 s, 10 per minute per bearer session (`rate.limited`, HTTP 503 like the other host-busy codes);
+the WebSocket also refuses a query string; a socket that piles up 4096 undelivered control frames ends with `overflow` (4429).
+Terminal sockets and SSE tabs count together toward 16 per session (`quota.host`, 4429). The host's `message` on a `term.attach`
+refusal is passed only when it is plain text of at most 300 characters (else left out).
+**Why:** the spec bounds output (512 KiB) but never drops control frames; an unread browser must still end, not grow. The other limits
+are the spec's.
+**Revert:** constants at the top of `server/src/orch_dashboard/terminals.py`.
+
+**Decision:** The real-host terminal pytest runs core's host and runner **in this process** (`tests/termkit.py`, core's H11b helpers
+with the `runner_identity` hook), not `orch host run` as a subprocess.
+**Why:** a subprocess host admits a runner only if its PID is the service manager's main PID; the service manager is off in tests and
+no launchd/systemd unit may be installed. Requested from stream A: a dev-only seam (e.g. `orch host run --foreground` accepting a
+foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
+**Revert:** switch `test_realhost_terminals.py` to `realhost_kit` once that seam exists.

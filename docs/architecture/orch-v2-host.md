@@ -488,6 +488,8 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 | `checkpoint.prefix_invalid` | 1 | no | stays | `Checkpoints.sign_prefix` refuses a prefix (a number at or below an existing one, an entry that is not a point of its log, a prefix that drops its base, a ticket event resting on a later workspace head, a prefix that is not downward closed, an `at` before the base), or the catch-up source does not verify | — |
 | `relay.too_large` | 1 | no | stays | `Store.mint_catchup` cannot split: a restore is queued (an anchor), or one event's step set is above the cap. R3 alarms it (`host.status`); the 11A.5 oversized-restore refusal uses the same code | — |
 | `outbox.mismatch` | 1 | no | stays | `Store.outbox_delete(n, hash)` for an entry `n` that holds another checkpoint | — |
+| `relay.link_exists` | 1 | no | stays | `Store.relay_link` while `relay/link.json` already exists | — |
+| `relay.link_mismatch` | 1 | no | stays | `Store.relay_mark_linked(expect)` when `link.json` is missing or is not exactly `expect` in state `linking` | — |
 
 **Universal errors.** These may come from any op, beyond the op's own list:
 
@@ -3601,8 +3603,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
       `Checkpoints.sign_prefix`.
     - R4's store API: `Store.note_forwarded_revocation(item) -> held | pending | dropped`, with facts derived only from
       the signed objects.
-    - New store codes `checkpoint.prefix_invalid`, `relay.too_large` (also R3's alarm code) and `outbox.mismatch`.
-      They are never sent on a socket (§0.6).
+    - New store codes `checkpoint.prefix_invalid`, `relay.too_large` (also R3's alarm code), `outbox.mismatch`,
+      `relay.link_exists` and `relay.link_mismatch`. They are never sent on a socket (§0.6).
+    - Review round 1:
+      - a durable numbering reservation: no `n` is signed unless reserved, and none is reused;
+      - outbox coalescing, `outbox_first`/`outbox_entries(limit)`;
+      - `Store.relay_link(link, *, guard)` and `Store.relay_mark_linked`;
+      - bounded forwarded evidence (F1 caps updated).
     - No wire, log or certificate change.
     *(Numbered 35 after 32, the last on develop when written; #441 may take 33 and H12a 34. It may need renumbering at
     merge.)*
@@ -4440,7 +4447,8 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   - A restore's entry comes right after the source it names, and normal checkpoints queued behind it wait.
   - Membership bodies are not outbox entries (see membership publication below).
   - P2 reserves this as a hook in the append transaction of D-P2-3 (next to the outcome record), plus a directory
-    `<state>/hosts/<ws>/outbox/` in the D-P2-17 custody list. Built in H12b (§11A.5 "As built in H12b").
+    `<state>/hosts/<ws>/outbox/` in the D-P2-17 custody list. Built in H12b (§11A.5 "As built in H12b"). Store-side
+    coalescing supersedes unaccepted middle plain entries; the relay needs no consecutive `n`.
 - **Person-event and decision ids admitted** are committed to host state in the same transaction as their admission,
   as tombstones that survive a restore. H2b's outcome store must leave room for that table.
 - **The holder lease (P3-D10).**
@@ -4985,8 +4993,14 @@ H12b built the store half of R3 and R4 in `orch.store` (`store.py`, `outbox.py`,
 `orch.relay` is part of it. Every method below takes the store lock, so R3 and R4 call them only as worker jobs
 (`RelayWorker.submit`), never across networking.
 
-**When the outbox is on.** While `<state>/hosts/<ws>/relay/link.json` exists (`Store.outbox_active`). R1 writes it
-under the store lock before any network write (11A.5 first link), so every checkpoint after it is queued. Before the
+**When the outbox is on.** While `<state>/hosts/<ws>/relay/link.json` exists (`Store.outbox_active`). The file is
+written only by `Store.relay_link(link, *, guard)`. That method takes the store lock, then enters `guard()` (R5 passes
+`lambda: orch.host.relaylink.link_reservation(service)`, H12a: the host-wide lock plus the `sign.convenience_readers`
+and `host.limit` refusals, held across the write). It refuses `relay.link_exists` when a link already exists, and
+otherwise writes `{**link, "state": "linking"}` (atomic, fsynced, 0600, directory 0700). If `guard()` raises,
+nothing is written. `Store.relay_mark_linked(expect)` rewrites `linking` to `linked` under the lock only when the file
+holds exactly `expect` (`relay.link_mismatch` otherwise). Appends take the same lock, so every checkpoint after the
+write is queued. Before the
 link nothing is queued: the first publication is a catch-up from the relay's H. After unlink nothing new is queued and
 the existing entries stay.
 
@@ -5008,16 +5022,34 @@ install checks the entry (WSK signature, workspace, genesis, and an entry for th
 is never ahead of `workspace.json`. In recovery a pending entry that fails the check is reported `store.torn_write`
 and left out; it is never installed. A restore's entry (T plus evidence) is built from the transition staged in the
 same commit. Checkpoints written outside an append (`Store.checkpoint`, the eager open) are queued too, entry first.
-Every number a checkpoint takes (ordinary, restore target, catch-up) is above the outbox's highest `n` as well as the
-high-water mark.
+**Numbering invariant (review round 1, Opus F1).** *No checkpoint `n` is signed unless it is reserved first, and a
+reserved `n` is never reused.*
+- `HostPins.reserve_n(n)` writes the high-water mark `checkpoint-n` durably (fsynced) before anything numbered `n` is
+  signed: an append's planned checkpoint, any other workspace checkpoint, a restore target, and catch-up (`m+k` before
+  the first prefix is signed).
+- `_install_outbox` and journal recovery reserve again (idempotent).
+- The next number is `max(highest_n, baseline n, high_n) + 1`, read from that one durable value. There is no outbox
+  scan per append.
+- A crash anywhere at most burns a number.
+- Adoption repairs the host pin and `workspace.json` independently (Codex P1).
+
+**Coalescing (review round 1, Opus F3).** The relay accepts any higher `n` that extends its held checkpoint: `n` need
+not be consecutive (orch-relay `checkpoints.py`: `n > held n`, an exact extension, `at` not earlier). So when a plain
+entry is written, the store deletes the entry just below it if that entry is plain, not catch-up and not the lowest.
+- Always kept: the lowest entry (R3 publishes oldest first and stages only the lowest), every restore, the plain entry
+  just before a restore (its source), every catch-up entry and the newest entry.
+- The queue stays at about 2 + 2 × (queued restores) entries.
+- R3 must stage only the lowest entry (`Store.outbox_first()`).
 
 **Interface for R3 and R4 (orch-29):**
 
 | Call | Returns | Refuses |
 |---|---|---|
 | `Store.outbox_active` | `bool` | — |
-| `Store.outbox_entries()` | `list[OutboxEntry]`, lowest `n` first, each verified again on read: `n`, `hash`, `kind`, `checkpoint`, `restore` (`dict` or None), `catchup` | `store.torn_write` for any entry that does not verify (the publisher stops; it never skips) |
-| `Store.outbox_delete(n, hash)` | `True` (deleted) or `False` (no entry `n`: idempotent) | `outbox.mismatch` when entry `n` holds another checkpoint (nothing deleted) |
+| `Store.relay_link(link, *, guard)` / `Store.relay_mark_linked(expect)` | `None` | `relay.link_exists`, `validation.relay_link` (another workspace, or a state past `linking`), whatever `guard()` raises (nothing written) / `relay.link_mismatch` |
+| `Store.outbox_first()` | the lowest entry, verified, or None | `store.torn_write` |
+| `Store.outbox_entries(limit=None)` | `list[OutboxEntry]` (only the first `limit` when given), lowest `n` first, each verified again on read: `n`, `hash`, `kind`, `checkpoint`, `restore` (`dict` or None), `catchup` | `store.torn_write` for any entry that does not verify (the publisher stops; it never skips) |
+| `Store.outbox_delete(n, hash)` | `True` (deleted) or `False` (no entry `n`: idempotent) | `outbox.mismatch` when entry `n` holds another checkpoint (nothing deleted); `store.torn_write` for a symlinked entry |
 | `Store.mint_catchup(source=H, cap=int, measure=f)` | the new `OutboxEntry` list Q1 … Qk (`catchup: true`), or `[]` when nothing lies past H | `relay.too_large` (a restore is queued, or one event's step exceeds `cap`), `checkpoint.prefix_invalid` (H does not verify), `chain.diverged` (H is not in the logs, or its `n` is above the host's numbering), `chain.broken`/`chain.diverged`/`checkpoint.missing` while any log is broken, unverified or diverged |
 | `Store.note_forwarded_revocation(item)` | `"held"`, `"pending"` or `"dropped"` | nothing: an item that does not verify is `"dropped"`; only a store fault (`store.busy`, `store.torn_write`) raises, and then there is no result, so no ack |
 
@@ -5029,7 +5061,8 @@ high-water mark.
 - `held` tells R4 to raise the owners' `needs` item: the store has no needs items.
 
 **Catch-up as built.**
-- The store loads every ticket log first and refuses if anything is broken.
+- The store loads every ticket log first and refuses if anything is broken or a ticket's checkpoint is missing
+  (`checkpoint.missing`, review F4).
 - The steps follow the merged order of §5.5 past H. Each step takes the longest run whose set fits (exponential,
   then binary search over `measure`), so every prefix is downward closed in the merged order.
 - Numbers are `m+1 … m+k`, with `m = max(highest_n, high_n, outbox n, held n)`. There is one `at`: the maximum of
@@ -5056,14 +5089,27 @@ high-water mark.
 2. *Every append is checkpointed while linked.* "An outbox entry per append, the exact checkpoint" (§11) is read
    literally: the P1 "every 50 ticket appends" rule applies only to unlinked workspaces. This costs O(tickets) per
    append, bounded by the P3-D20 ticket capacity.
-3. *Outbox growth is not bounded by the store.* While the relay is unreachable, plain entries accumulate, one full
-   checkpoint each. The store never coalesces them, because R3 may be staging any of them. R3 can compact the queue
-   with `mint_catchup`, which supersedes every plain entry; whether R3 does so is an R3 decision.
+3. *Outbox growth* is bounded by coalescing (above, review F3). It replaces round 0's "no coalescing".
 4. *A forged or torn pending entry* is reported and dropped in recovery, not installed. The committed event then has
    no entry of its own, and the next checkpoint covers it.
-5. *Forwarded evidence* is judged by 11A.9 exactly. In addition the item must be an object of the stated shape;
-   anything unparseable is `dropped` and logged by failure class, never with key material. The pinned owner passed to
-   `note_revocation` is the genesis delegation's `owner_person_id`.
+5. *Forwarded evidence* is judged by 11A.9 exactly, with these additions (review F2 and F8):
+   - the item is `dropped` when it has another key set (exactly the 8 relay keys, `provenance` exactly
+     `{cursor, digest}`), is above 4 KiB in `cj`, or fails `schema.validate_def` (`deviceCert`, `revocation`), or its
+     `label_sealed` is above 1024 characters;
+   - stored records are at most 6 KiB;
+   - at most 256 forwarded records per person, the owner included, and at most 1536 in total, members included; the
+     eviction cap is 1024 (F1 §5.10's runtime numbers are updated to match);
+   - the worst-case file is therefore far below the 16 MiB read limit;
+   - anything unparseable is `dropped` and logged by failure class, never with key material;
+   - the pinned owner passed to `note_revocation` is the genesis delegation's `owner_person_id`.
+6. *Planning keeps the post-commit exclusions* (review F5): an excluded log, or a ticket checkpoint already at or past
+   the event, gives no planned checkpoint.
+7. *A pending linked append* blocks a store opened without host state (`validation.host_state`, naming the event).
+   The doctor names it as `outbox.pending`, and the next host open finishes it (review F6).
+8. *A restore before the first accepted publication* (review F7): the restore entry is an anchor ahead of the
+   first-link catch-up, so nothing can be published until migration. This is accepted for v1.7 and documented here.
+   The owner should complete the first publication before signing a restore.
+9. *The pending outbox file* is created `O_EXCL | O_NOFOLLOW`. A symlinked pending file or entry is refused (F8).
 
 Tests: `tests/store/test_outbox.py`, `tests/store/test_catchup.py`, `tests/store/test_forwarded_revocation.py`.
 

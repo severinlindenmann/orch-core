@@ -41,9 +41,9 @@ __all__ = [
 MAX_FORWARDED_PER_DEVICE = 8  # forwarded (not chain) evidence records per device id
 MAX_FORWARDED_PER_PERSON = 64  # forwarded evidence records per revoking person, members included
 MAX_FORWARDED_TOTAL = 1024  # forwarded evidence records in total (the eviction cap; H12b review lowered it from 4096)
-# Absolute bounds (H12b review, Opus F2): nobody, the owner and members included, holds more forwarded records than
-# these, so the file stays far below the 16 MiB read limit (MAX_FORWARDED_HARD x the 4 KiB item cap + framing).
-MAX_FORWARDED_HARD = 1536  # forwarded records in total, members' records kept over MAX_FORWARDED_TOTAL included
+# Absolute bounds (H12b review, Opus F2/D1): non-owner forwarded records never exceed MAX_FORWARDED_HARD, and every
+# person, the owner included, has at most MAX_FORWARDED_PER_PERSON_HARD: at most (1536 + 256) x 6 KiB, about 10.5 MiB.
+MAX_FORWARDED_HARD = 1536  # non-owner forwarded records in total (members over MAX_FORWARDED_TOTAL included)
 MAX_FORWARDED_PER_PERSON_HARD = 256  # forwarded records per person, the pinned owner included
 MAX_FORWARDED_RECORD_BYTES = 6144  # one forwarded record as stored (cj); a larger one is dropped
 _STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}  # compromised > lost = retired (§5.10)
@@ -119,7 +119,10 @@ class HostPins:
     def revocations(self) -> list[dict[str, Any]]:
         """The effective evidence per ``(device, person)`` pair (§5.10), sorted by the pair: another person's evidence
         for the same device id is a separate record, never merged into or replacing this one."""
-        raw = read_or_none(self._revocations)
+        # No size limit (review round 2, Opus D2): only the host writes this file, forwarded records are capped
+        # (MAX_FORWARDED_*) and chain records grow only with accepted history (one per pair, each bounded by the
+        # event line cap), so a fixed read limit could only turn a long history into store.torn_write.
+        raw = read_or_none(self._revocations, None)
         if not raw:
             return []
         out = {}
@@ -237,8 +240,8 @@ class HostPins:
                 gone = min(victims, key=lambda r: r["at"])
                 records = [r for r in records if r is not gone]
                 forwarded = [r for r in forwarded if r is not gone]
-        if len(forwarded) >= MAX_FORWARDED_HARD:
-            return None  # the absolute total bound: a member's record is kept over the cap only up to it
+        if person != owner and sum(pair(r)[1] != owner for r in forwarded) >= MAX_FORWARDED_HARD:
+            return None  # the absolute total bound over non-owner records; the owner has its own 256 (review D1)
         return records
 
     def held(self) -> dict[str, Any] | None:

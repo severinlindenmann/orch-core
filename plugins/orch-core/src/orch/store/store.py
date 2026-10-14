@@ -2838,6 +2838,7 @@ class Store:
             os.chmod(d, 0o700)
             write_atomic(path, body, mode=0o600)
             fsync_dir(d)
+            fsync_dir(d.parent)  # a new relay/ must survive a crash too (review round 2): still under both locks
 
     def relay_mark_linked(self, expect: Mapping[str, Any]) -> None:
         """Rewrite ``relay/link.json`` from ``linking`` to ``linked`` under the store lock, only if it holds exactly
@@ -2976,7 +2977,20 @@ class Store:
             order = self._order_beyond(base)
             if not order:
                 return []
+            heads_before = {log: info.seq for log, info in self._logs.items()}
             cuts = self._plan_cuts(order, base, cap, measure)
+            # R3's measure callback ran in between: whatever it did, the numbering is read again after it, and the
+            # plan must still describe the logs (review round 2)
+            if {log: info.seq for log, info in self._logs.items()} != heads_before:
+                raise StoreError("checkpoint.prefix_invalid", "the logs changed while the catch-up was planned")
+            held = self._pins.held()
+            m = max(
+                m,
+                self._checkpoints.highest_n(),
+                self._pins.high_n(),
+                self._outbox.max_n(),
+                held["o"]["n"] if held and "o" in held else 0,
+            )
             keys = {(log, seq): k for k, log, seq in order}
             last_at = max(
                 [self._now(), *(self._log_last_at(log) for log in self._logs)]

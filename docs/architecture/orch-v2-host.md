@@ -5000,7 +5000,11 @@ and `host.limit` refusals, held across the write). It refuses `relay.link_exists
 otherwise writes `{**link, "state": "linking"}` (atomic, fsynced, 0600, directory 0700). If `guard()` raises,
 nothing is written. `Store.relay_mark_linked(expect)` rewrites `linking` to `linked` under the lock only when the file
 holds exactly `expect` (`relay.link_mismatch` otherwise). Appends take the same lock, so every checkpoint after the
-write is queued. Before the
+write is queued. Before returning, `relay_link` fsyncs `relay/` and its parent `hosts/<ws>/` while both locks are
+still held (review round 2), so a new `relay/` survives a crash.
+
+**R5 lock order.** The store lock is taken first, then the guard's host-wide lock. R5's guard must never take a store
+lock (of this or another workspace) while it holds the host-wide lock, or two workspaces linking at once deadlock. Before the
 link nothing is queued: the first publication is a catch-up from the relay's H. After unlink nothing new is queued and
 the existing entries stay.
 
@@ -5076,6 +5080,9 @@ entry is written, the store deletes the entry just below it if that entry is pla
   - the added events are downward closed.
   Any failure is `checkpoint.prefix_invalid`. Nothing is carried from an older checkpoint, so a prefix never lists a
   later ticket entry.
+- R3's `measure` callback runs under the store lock. After the plan, the store checks that the logs are unchanged
+  (`checkpoint.prefix_invalid` otherwise) and reads the numbering again, then reserves `m+k`. `measure` should still be
+  a pure counter that never calls the store.
 - The replacement is atomic through `outbox/catchup.json` (Q1 … Qk and the plain entries they supersede). The
   journal is written first. Then the entries are written, the superseded ones deleted, Qk written as `workspace.json`
   and accepted, and the journal deleted. Every lock finishes a journal it finds, before anything numbers a checkpoint
@@ -5097,13 +5104,18 @@ entry is written, the store deletes the entry just below it if that entry is pla
      `{cursor, digest}`), is above 4 KiB in `cj`, or fails `schema.validate_def` (`deviceCert`, `revocation`), or its
      `label_sealed` is above 1024 characters;
    - stored records are at most 6 KiB;
-   - at most 256 forwarded records per person, the owner included, and at most 1536 in total, members included; the
-     eviction cap is 1024 (F1 §5.10's runtime numbers are updated to match);
-   - the worst-case file is therefore far below the 16 MiB read limit;
+   - at most 256 forwarded records per person, the owner included, and at most 1536 non-owner records in total,
+     members included; the owner is exempt from the total (review round 2, D1); the eviction cap is 1024 (F1 §5.10's
+     runtime numbers are updated to match);
+   - the forwarded worst case is (1536 + 256) × 6 KiB, about 10.5 MiB;
+   - `revocations.jsonl` is read without a size limit (review round 2, D2): only the host writes it, forwarded records
+     are capped as above, and chain-learned records grow only with accepted history (one per pair, each bounded by
+     the event line cap);
    - anything unparseable is `dropped` and logged by failure class, never with key material;
    - the pinned owner passed to `note_revocation` is the genesis delegation's `owner_person_id`.
 6. *Planning keeps the post-commit exclusions* (review F5): an excluded log, or a ticket checkpoint already at or past
-   the event, gives no planned checkpoint.
+   the event, gives no planned checkpoint. Such a linked append still commits, with **no outbox entry** (fail closed:
+   nothing is certified for a log the post-commit rule would not certify).
 7. *A pending linked append* blocks a store opened without host state (`validation.host_state`, naming the event).
    The doctor names it as `outbox.pending`, and the next host open finishes it (review F6).
 8. *A restore before the first accepted publication* (review F7): the restore entry is an anchor ahead of the

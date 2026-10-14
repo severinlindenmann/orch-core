@@ -33,7 +33,7 @@ from .checkpoints import verify_object
 from .errors import StoreError
 from .fsio import fsync_dir, loads, read_or_none, write_atomic
 
-__all__ = ["INTENT", "Outbox", "OutboxEntry", "Segment", "make_entry", "parse_entry"]
+__all__ = ["INTENT", "Outbox", "OutboxEntry", "Segment", "make_entry", "parse_entry", "pending_linked_appends"]
 
 _NAME = re.compile(r"([0-9]{20})\.json")
 INTENT = "catchup.json"
@@ -238,3 +238,21 @@ class Outbox:
         except FileNotFoundError:
             return
         fsync_dir(self.dir)
+
+
+def pending_linked_appends(root: Path) -> list[tuple[str, str]]:
+    """``(event id, log)`` of every crashed append under ``<root>/.state/pending`` whose manifest carries an outbox
+    entry (a relay-linked workspace): for the doctor. Unreadable manifests are skipped (the store's open reports them).
+    Here, not in :mod:`orch.ops.health`, because op modules reach files only through ``ctx.caps`` (D-P2-9)."""
+    import json
+
+    out: list[tuple[str, str]] = []
+    pdir = root / ".state" / "pending"
+    for manifest in sorted(pdir.glob("*/manifest.json")) if pdir.is_dir() else []:
+        try:
+            m = json.loads(manifest.read_bytes())
+            if isinstance(m, dict) and m.get("outbox") is not None:
+                out.append((str(m["id"]), str(m["log"])))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return out

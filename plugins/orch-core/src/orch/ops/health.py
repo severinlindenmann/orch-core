@@ -96,16 +96,11 @@ def _open(root: Path, wid: str, state_dir: Path, findings: list[Finding]) -> Ins
 def _pending_linked(root: Path) -> list[Finding]:
     """A crashed append of a relay-linked workspace (its pending directory carries an outbox entry, H12b): named, so
     an operator knows why a store without host state refuses to open; the next host open finishes it."""
+    from orch.store.outbox import pending_linked_appends
+
     out = []
-    pdir = root / ".state" / "pending"
-    for manifest in sorted(pdir.glob("*/manifest.json")) if pdir.is_dir() else []:
-        try:
-            m = json.loads(manifest.read_bytes())
-            if not isinstance(m, dict) or m.get("outbox") is None:
-                continue
-            what = f"a crashed append of event {m['id']} to {m['log']} carries a relay outbox entry"
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
+    for ev, log in pending_linked_appends(root):
+        what = f"a crashed append of event {ev} to {log} carries a relay outbox entry"
         out.append(Finding("warn", "workspace", "outbox.pending", what + "; the next host open finishes it", None))
     return out
 

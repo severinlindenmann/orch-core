@@ -33,6 +33,7 @@ CAPS = [
     "quick/1",
     "records/1",
     "run/1",
+    "term/1",
 ]
 OPS = {
     name: 1
@@ -61,8 +62,18 @@ OPS = {
         "sub.open",
         "sub.close",
         "outcome.get",
+        # M7a terminals (contract v1.6, section 12.3): reads, and the writes the routes call with write=True and an idem
+        "run.sub",
+        "run.list",
+        "run.stop",
+        "term.preview",
+        "term.open",
+        "term.attach",
+        "attach.cancel",
     )
 }
+RUN_OPS = {"run.sub", "run.list", "run.stop"}
+TERM_OPS = {"term.preview", "term.open", "term.attach", "attach.cancel"}
 
 QUERY_OPS = {"ticket.query", "ticket.get", "grant.list", "needs", "workspace.show", "member.list"}
 
@@ -269,6 +280,10 @@ class HostLink:
             if op == "quick.list"
             else "records/1"
             if op in {"records.status", "records.snapshot", "records.export_check", "records.note"}
+            else "run/1"
+            if op in RUN_OPS
+            else "term/1"
+            if op in TERM_OPS
             else "query/1"
             if op in QUERY_OPS
             else "ops/1"

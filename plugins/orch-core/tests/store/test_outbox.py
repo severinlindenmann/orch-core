@@ -70,20 +70,19 @@ def test_every_append_writes_its_exact_checkpoint_to_the_outbox(linked):
     s = env.store
     assert s.outbox_active
     uid = env.new_ticket()
+    seen = []
     for i in range(3):  # ticket appends too: one entry per append, not one per 50
         env.log(uid, f"n{i}")
-    entries = s.outbox_entries()
-    assert len(entries) == 4 and all(isinstance(e, OutboxEntry) for e in entries)
-    ns = [e.n for e in entries]
-    assert ns == sorted(ns) and len(set(ns)) == 4
-    for e in entries:
-        assert e.kind == "plain" and e.restore is None and not e.catchup
+        last = s.outbox_entries()[-1]
+        assert last.checkpoint == workspace_cp(env)  # the entry is the exact checkpoint the append wrote
+        assert last.checkpoint["o"]["tickets"][uid]["seq"] == i + 2
+        assert last.checkpoint["o"]["tickets"][uid]["head"] == s.log_head(uid)
+        seen.append(last.n)
+    assert seen == sorted(seen) and len(set(seen)) == 3
+    for e in s.outbox_entries():
+        assert isinstance(e, OutboxEntry) and e.kind == "plain" and e.restore is None and not e.catchup
         assert verify_object(env.wsk_pub, e.checkpoint)
         assert e.hash == canon.checkpoint_hash(e.checkpoint["o"]) and e.n == e.checkpoint["o"]["n"]
-    last = entries[-1].checkpoint
-    assert last == workspace_cp(env)  # the entry is the exact checkpoint the append wrote
-    assert last["o"]["tickets"][uid]["seq"] == 4
-    assert last["o"]["tickets"][uid]["head"] == s.log_head(uid)
     mode = (outbox_dir(env) / entry_files(env)[0]).stat().st_mode & 0o777
     assert mode == 0o600 and outbox_dir(env).stat().st_mode & 0o777 == 0o700
 
@@ -374,3 +373,70 @@ def test_an_append_does_not_rescan_the_outbox_for_its_number(linked, monkeypatch
 
     monkeypatch.setattr(outbox_mod.Outbox, "max_n", no_scan)
     env.log(uid, "x")
+
+
+# --- review round 1: coalescing (Opus F3) ---------------------------------------------------------------------------
+
+
+def test_plain_entries_coalesce_to_the_lowest_and_the_newest(linked):
+    env = linked
+    s = env.store
+    uid = env.new_ticket()
+    first = s.outbox_entries()[0]
+    for i in range(6):
+        env.log(uid, f"n{i}")
+    entries = s.outbox_entries()
+    assert [e.n for e in entries] == [first.n, entries[-1].n]  # the lowest may be staging: it stays
+    assert entries[-1].checkpoint == workspace_cp(env)
+    assert s.outbox_first() == entries[0]
+    assert s.outbox_entries(limit=1) == entries[:1]
+
+
+def test_coalescing_keeps_restores_their_sources_and_catchup_entries(linked):
+    env = linked
+    s = env.store
+    uid = env.new_ticket()
+    env.log(uid, "a")
+    env.log(uid, "b")
+    source = s.outbox_entries()[-1]
+    facts = s.restore_facts("workspace")
+    s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
+    restore = s.outbox_entries()[-1]
+    assert restore.kind == "restore" and restore.restore["source"] == source.checkpoint
+    for i in range(4):
+        env.log(uid, f"after{i}")
+    entries = s.outbox_entries()
+    kinds = [(e.n, e.kind) for e in entries]
+    assert (source.n, "plain") in kinds and (restore.n, "restore") in kinds
+    assert len(entries) == 4  # lowest, the restore's source, the restore, the newest
+    assert entries[-1].checkpoint == workspace_cp(env)
+
+
+def test_coalescing_never_removes_catchup_entries(linked):
+    env = linked
+    s = env.store
+    uid = env.new_ticket()
+    for i in range(4):
+        env.log(uid, f"n{i}")
+    from tests.store.test_catchup import measure
+
+    minted = s.mint_catchup(source=None, cap=400, measure=measure)
+    env.log(uid, "later")
+    env.log(uid, "later2")
+    ns = [e.n for e in s.outbox_entries()]
+    assert all(e.n in ns for e in minted)
+
+
+def test_outbox_delete_refuses_a_symlinked_entry(linked, tmp_path):
+    env = linked
+    env.new_ticket()
+    s = env.store
+    e = s.outbox_entries()[-1]
+    path = outbox_dir(env) / f"{e.n:020d}.json"
+    target = tmp_path / "elsewhere.json"
+    target.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(target)
+    with pytest.raises(StoreError) as exc:
+        s.outbox_delete(e.n, e.hash)
+    assert exc.value.code == "store.torn_write"

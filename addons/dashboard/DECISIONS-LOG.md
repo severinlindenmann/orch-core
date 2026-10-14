@@ -1508,3 +1508,9 @@ The owner must still explicitly sign the addon grant.
 **Revert:** Remove the custom hooks and manifest subcommand and restore manual UI build and
 manifest-copy steps; this reintroduces those packaging gaps.
 - 2026-10-13 — **Decision:** show host submitted_at only for committed pending rows (seq present); failed submissions require Start again; preserve host fixes and retry lock.busy. **Why:** submission time alone is not proof of a logged signature (#437). **Revert:** remove this dashboard mapping if the host outcome contract changes.
+
+## 2026-10-14 #444 recheck: foreign reload destination and concurrent unknown signatures
+
+- **Decision:** Reset foreign navigation without a launch code to `/` before rendering, while preserving private launch redemption and channel isolation. Re-mark uncertain signing outcomes after signer errors, even if a concurrent definite failure cleared the in-flight mark.
+- **Why:** A later untagged reload must not authenticate an attacker-chosen path or query (R-2); unknown signature outcomes must retain the cancellation/replacement guard across concurrent attempts (R-3). The foreign notice still directs users to open from the terminal or a bookmark at `/`.
+- **Revert:** Restore the prior URL replacement in `src/api/bootstrap.ts` and remove the uncertain-outcome re-mark in `server/src/orch_dashboard/click.py`, accepting the two residual races again.

@@ -1352,3 +1352,59 @@ def test_failed_submit_state_never_reports_signed(client, token, stub, script, h
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "intent.failed"
     assert response.json()["error"]["reason"] == "gate.stale"
+
+
+def test_concurrent_uncertain_sign_remarks_after_definite_failure(client, token, stub, script, monkeypatch):
+    prepare(client, token, stub, comment(1))
+    handoffs = client.app.state.handoffs
+    first_entered, second_marked, first_finished = (threading.Event() for _ in range(3))
+    original_mark = handoffs.mark_unsettled
+    marks = 0
+
+    def mark(ws, rid, expires):
+        nonlocal marks
+        original_mark(ws, rid, expires)
+        marks += 1
+        if marks == 2:
+            second_marked.set()
+
+    monkeypatch.setattr(handoffs, "mark_unsettled", mark)
+    calls = 0
+
+    def interleaved(op, args):
+        nonlocal calls
+        if op != "sign":
+            return script.handler(op, args)
+        calls += 1
+        if calls == 1:
+            first_entered.set()
+            assert second_marked.wait(5)
+            raise ClickError("human.click_refused", "short", reason="too_soon")
+        assert first_finished.wait(5)
+        raise ClickError("internal", "unknown outcome")
+
+    script.clients[0].handler = interleaved
+    out = {}
+
+    def sign(name):
+        out[name] = sign_lost(client, token, stub)
+
+    first = threading.Thread(target=sign, args=("first",))
+    second = threading.Thread(target=sign, args=("second",))
+    first.start()
+    try:
+        assert first_entered.wait(5)
+        second.start()
+        first.join(10)
+        assert not first.is_alive()
+        assert out["first"].json()["error"]["reason"] == "too_soon"
+        assert second_marked.is_set()
+        assert handoffs.is_unsettled(REQ) is None  # first failure cleared both in-flight marks
+    finally:
+        first_finished.set()
+        first.join(10)
+        if second.ident is not None:
+            second.join(10)
+    assert not second.is_alive()
+    assert out["second"].json()["error"]["reason"] == "uncertain"
+    assert handoffs.is_unsettled(REQ) == stub.ws

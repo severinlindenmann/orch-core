@@ -28,9 +28,12 @@ it('never joins the token channel, ignores offers, clears inherited storage and 
     close() {}
   })
   foreign()
+  history.replaceState(null, '', '/w/DEMO/ticket/DEMO-0001?tab=history#attacker-fragment')
   sessionStorage.setItem('orch-session', 'demo-not-a-real-inherited')
   const fetcher = vi.fn()
-  expect(await bootstrap(fetcher)).toBeNull()
+  const boot = bootstrap(fetcher)
+  expect(location.pathname + location.search + location.hash).toBe('/')
+  expect(await boot).toBeNull()
   channels.forEach((channel) => channel.dispatchEvent(new MessageEvent('message', {
     data: { type: 'token', token: 'demo-not-a-real-offer' },
   })))
@@ -62,7 +65,9 @@ it('exchanges the private launcher fragment without opening the token channel', 
 
 it('keeps the normal login screen for an untagged document', async () => {
   vi.stubGlobal('BroadcastChannel', undefined)
+  history.replaceState(null, '', '/w/DEMO/tickets?tab=history#fragment')
   await bootstrap(vi.fn())
+  expect(location.pathname + location.search + location.hash).toBe('/w/DEMO/tickets?tab=history')
   render(<Shell />)
   expect(screen.getByText('Open your dashboard')).toBeInTheDocument()
 })

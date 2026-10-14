@@ -334,7 +334,10 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
         except HostError as exc:
-            if exc.error.get("reason") != "uncertain" and prior is None:
+            if exc.error.get("reason") == "uncertain":
+                # A concurrent definite failure may have cleared the in-flight mark.
+                handoffs.mark_unsettled(ws, rid, handoffs.clock() + TTL + 60)
+            elif prior is None:
                 # A definite retry failure must not clear an earlier unknown outcome.
                 # Clear new marks before follow-up host reads, which may themselves fail.
                 handoffs.settled(rid)

@@ -29,8 +29,9 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
   const fragment = new URLSearchParams(location.hash.slice(1))
   const code = fragment.get('launch')
   const destination = safeDestination(fragment.get('to'))
-  history.replaceState(null, '', code ? destination : location.pathname + location.search)
   const foreign = isForeignNavigation()
+  // A reload must not authenticate an attacker-chosen deep link.
+  history.replaceState(null, '', code ? destination : foreign ? '/' : location.pathname + location.search)
   currentToken = sessionStorage.getItem(STORAGE)
   if (foreign) clearSession(false) // sessionStorage may have been copied from an opener.
   channel?.close()

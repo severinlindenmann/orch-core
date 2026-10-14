@@ -597,6 +597,8 @@ class Handoffs:
         self.until: dict[tuple[str, str], float] = {}  # click requests in `active`: their own deadline
         self.pending: dict[str, int] = {}  # slots reserved by a prepare that has not answered yet
         self.unsettled: dict[str, tuple[str, float]] = {}  # request id -> (workspace, until)
+        self.signing: dict[str, int] = {}  # request id -> sign calls in flight
+        self.unknown: set[str] = set()  # request ids with a sign outcome nobody knows yet
 
     # -- ownership: per person and workspace -----------------------------------------------------------
     def own(self, person: str, ws: str, request_id: str, ttl: float) -> None:
@@ -676,6 +678,7 @@ class Handoffs:
             if hit and hit[1] > self.clock():
                 return hit[0]
             self.unsettled.pop(request_id, None)
+            self.unknown.discard(request_id)
             return None
 
     def any_unsettled(self) -> bool:
@@ -684,8 +687,37 @@ class Handoffs:
             return any(until > now for _, until in self.unsettled.values())
 
     def settled(self, request_id: str) -> None:
+        """The host's answer is known (submitted, or the request ended): clear the mark and any unknown outcome."""
         with self.lock:
             self.unsettled.pop(request_id, None)
+            self.unknown.discard(request_id)
+
+    # -- sign calls in flight: one place decides when a failed sign may clear the mark ---------------------
+    def begin_sign(self, ws: str, request_id: str, until: float) -> None:
+        """Marks the request unsettled before the signer is used."""
+        with self.lock:
+            hit = self.unsettled.get(request_id)
+            if not (hit and hit[1] > self.clock()):
+                self.unknown.discard(request_id)  # an expired unknown outcome expired with its mark
+            self.unsettled[request_id] = (ws, until)
+            self.signing[request_id] = self.signing.get(request_id, 0) + 1
+
+    def end_sign(self, ws: str, request_id: str, until: float, outcome: str) -> None:
+        """Ends one sign call: `ok`, `uncertain` or `definite`. Every mark comes from a sign in flight or an unknown
+        outcome, so a definite failure clears it only when no other sign of the request is in flight and no outcome
+        of it is unknown, whatever order concurrent calls finish in (#444 R-3, F-2). An unknown outcome stays marked
+        until the host's answer is known (`settled`) or the mark expires."""
+        with self.lock:
+            left = self.signing.get(request_id, 1) - 1
+            if left > 0:
+                self.signing[request_id] = left
+            else:
+                self.signing.pop(request_id, None)
+            if outcome == "uncertain":
+                self.unknown.add(request_id)
+                self.unsettled[request_id] = (ws, until)
+            elif outcome == "definite" and not left and request_id not in self.unknown:
+                self.unsettled.pop(request_id, None)
 
 
 def register(app: FastAPI, gateway: Gateway):

@@ -326,21 +326,17 @@ def register(app: FastAPI, gateway: Gateway):
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)
-        prior = handoffs.is_unsettled(rid)
-        handoffs.mark_unsettled(ws, rid, handoffs.clock() + TTL + 60)
+        handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         args = {"view_digest": body.view_digest}
         if body.word is not None:
             args["word"] = body.word  # exactly as typed
         try:
             got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
         except HostError as exc:
-            if exc.error.get("reason") == "uncertain":
-                # A concurrent definite failure may have cleared the in-flight mark.
-                handoffs.mark_unsettled(ws, rid, handoffs.clock() + TTL + 60)
-            elif prior is None:
-                # A definite retry failure must not clear an earlier unknown outcome.
-                # Clear new marks before follow-up host reads, which may themselves fail.
-                handoffs.settled(rid)
+            # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
+            # concurrent unknown outcome; the rule lives in Handoffs.end_sign.
+            outcome = "uncertain" if exc.error.get("reason") == "uncertain" else "definite"
+            handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, outcome)
             if exc.error.get("code") == "human.request_state":
                 rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
                 if len(rows) == 1 and rows[0].get("state") == "submitted":
@@ -357,6 +353,11 @@ def register(app: FastAPI, gateway: Gateway):
                 handoffs.settle_all(rid)
                 handoffs.disown(rid)
             raise  # an uncertain outcome keeps its slot and its request: it settles at the host
+        except BaseException:
+            # Anything else: nobody knows whether the signer signed.
+            handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "uncertain")
+            raise
+        handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "ok")
         clicks.forget(rid)
         handoffs.settle_all(rid)
         handoffs.settled(rid)

@@ -32,6 +32,7 @@ __all__ = [
     "READER_OPS",
     "SEEN_FILE",
     "abandoned_have_convenience",
+    "canonical_lines_have_convenience",
     "convenience_seen",
     "ensure_convenience_mark",
     "events_have_convenience",
@@ -89,13 +90,31 @@ def lines_have_convenience(data: bytes, *, unparseable: bool = True) -> bool:
     return any(line_is_convenience(line, unparseable=unparseable) for line in data.split(b"\n"))
 
 
+def canonical_lines_have_convenience(data: bytes) -> bool:
+    """For a cut tail or an archived one (Opus #454 L4): a line counts only when ``canon.parse_event_line`` accepts it
+    (exact canonical JSON, one LF) and its ``auth`` is ``"convenience"``. A torn, unparseable or non-canonical line
+    never counts there: it is not an event any reader accepted. (Verifying the signature too is a follow-up.)"""
+    from orch import canon
+
+    for line in data.splitlines(keepends=True):
+        if b"convenience" not in line:
+            continue
+        try:
+            ev = canon.parse_event_line(line)
+        except Exception:  # noqa: BLE001 - not an event line: never counts here
+            continue
+        if ev.get("auth") == "convenience":
+            return True
+    return False
+
+
 #: bytes read per archived tail (a cut tail is small; a bigger file counts as convenience: fail closed)
 _ABANDONED_MAX = 64 * 1024 * 1024
 
 
 def abandoned_have_convenience(state_dir: Path | None) -> bool:
-    """A cut tail in ``<root>/.state/abandoned/*.jsonl`` holds a convenience event. A cut tail may end in a torn line,
-    so a line that does not parse counts only when it names the value. Any error reading counts (fail closed)."""
+    """A cut tail in ``<root>/.state/abandoned/*.jsonl`` holds a convenience event: a canonical event line with
+    ``auth: "convenience"`` (:func:`canonical_lines_have_convenience`). Any error reading counts (fail closed)."""
     if state_dir is None:
         return False
     ab = Path(state_dir) / "abandoned"
@@ -112,7 +131,7 @@ def abandoned_have_convenience(state_dir: Path | None) -> bool:
                 data = fh.read(_ABANDONED_MAX + 1)
         except OSError:
             return True
-        if len(data) > _ABANDONED_MAX or lines_have_convenience(data, unparseable=False):
+        if len(data) > _ABANDONED_MAX or canonical_lines_have_convenience(data):
             return True
     return False
 

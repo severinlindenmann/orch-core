@@ -2429,11 +2429,12 @@ class Store:
 
     def _mark_cut_convenience(self, cut: bytes) -> None:
         """A cut tail holding a convenience event sets the workspace's durable ``convenience_seen`` mark first
-        (:mod:`orch.ops.readers`; readers may have read those events). A torn line counts only when it names the
-        value. A mark that cannot be written refuses the cut."""
-        from orch.ops.readers import ensure_convenience_mark, lines_have_convenience
+        (:mod:`orch.ops.readers`; readers may have read those events). Only a canonical event line counts
+        (``canon.parse_event_line``, Opus #454 L4); a torn or forged-looking line does not. A mark that cannot be
+        written refuses the cut."""
+        from orch.ops.readers import canonical_lines_have_convenience, ensure_convenience_mark
 
-        if not lines_have_convenience(cut, unparseable=False):
+        if not canonical_lines_have_convenience(cut):
             return
         if self._pins is None:
             raise StoreError("validation.host_state", "cutting convenience events needs the host state (the mark)")

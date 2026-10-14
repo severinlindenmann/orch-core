@@ -660,7 +660,7 @@ def test_abandon_tail_refuses_when_the_mark_cannot_be_written(env, monkeypatch):
     store = env.bootstrap()
     uid = env.new_ticket()
     env.log(uid)
-    path = _tail_with(env, uid, b'{"\\u0061uth":"convenience"}\n')  # an escaped key counts too
+    path = _tail_with(env, uid, b'{"auth":"convenience","type":"log.added","v":2}\n')
     before = path.read_bytes()
 
     def boom(*_a, **_k):
@@ -673,6 +673,24 @@ def test_abandon_tail_refuses_when_the_mark_cannot_be_written(env, monkeypatch):
     assert path.read_bytes() == before  # nothing was cut
 
 
+@pytest.mark.parametrize(
+    "line",
+    [b'{"\\u0061uth":"convenience"}\n', b'{"auth": "convenience"}\n', b'{"v":2,"auth":"convenience"}\n',
+     b'{"auth":"convenience"'],
+)  # fmt: skip
+def test_only_a_canonical_event_line_in_a_cut_tail_counts(env, line):
+    """Opus #454 L4: escaped, spaced, unsorted or torn bytes are no event any reader accepted: no mark."""
+    from orch.ops.readers import has_convenience_events, seen_path
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    _tail_with(env, uid, line)
+    store.abandon_tail(uid, 1)
+    assert not seen_path(env.host_state, WS).exists()
+    assert not has_convenience_events(store)
+
+
 def test_a_legacy_cut_tail_counts_as_convenience_history(env):
     from orch.ops.readers import has_convenience_events
 
@@ -680,6 +698,8 @@ def test_a_legacy_cut_tail_counts_as_convenience_history(env):
     ab = env.root / ".state" / "abandoned"
     ab.mkdir(parents=True, exist_ok=True)
     (ab / "workspace-9.jsonl").write_bytes(b'{"auth":"passphrase"}\n')
+    assert not has_convenience_events(store)
+    (ab / "workspace-10.jsonl").write_bytes(b'{"auth": "convenience"}\n{"auth":"convenience"')  # not canonical, torn
     assert not has_convenience_events(store)
     (ab / "workspace-12.jsonl").write_bytes(b'{"auth":"convenience","type":"log.added"}\n')
     assert has_convenience_events(store)

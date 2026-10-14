@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from . import adapters
+from .adapters.addons import runner
 from .click_signer import Signer
 from .errors import fail
 from .hostlink import HostLink
@@ -58,7 +59,7 @@ class Gateway:
         self.state = state or state_dir()
         # The one signer child of this server (started on first use, so a dev server with no host starts none).
         self.click = click or Signer(self.state)
-        self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run")))
+        self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run"))).absolute()
         self.links = {}
         self.control = None
         self.lock = threading.RLock()
@@ -96,6 +97,8 @@ class Gateway:
         link = self.enabled(ws)
         features = []
         requirements = {
+            "quick": [("quick.list", "quick/1")],
+            "records": [("records.status", "records/1")],
             "identity": [
                 ("whoami", "ops/1"),
                 ("member.list", "query/1"),
@@ -190,6 +193,9 @@ class Gateway:
                         needs_you=count,
                         features=features,
                         click=adapters.click_card(card),
+                        runner=runner(link.call("whoami"), True)
+                        if link.supports("whoami", "ops/1") and link.has("run/1")
+                        else None,
                     )
                 )
             except HostError as exc:

@@ -541,7 +541,6 @@ terminal review lines, fingerprint, expiry); Sign turns on after half a second a
 change asks you to type the word shown. Try "Sign in the terminal instead" (it cancels the click request and shows an `orch sign` code), and
 `orch host convenience off --workspace DEMO` (the buttons disappear on the next refresh). Details: HANDOVER "Click-to-sign (H5c)".
 
-
 ### T3 security regression checks (#444 / #447 I-6)
 
 Run the targeted dashboard HTTP, click and auth pytest files, plus bootstrap and foreign
@@ -553,3 +552,12 @@ no code has no server session and cannot join the token channel, even with inher
 or token offers. Check the terminal/bookmark guidance. Untagged bootstrap behavior remains
 covered. Signing regressions cover uncertain-then-definite retries and non-dict status child
 cleanup. These checks use in-process HTTP, jsdom and fake signers: no ports, browser or keychain.
+
+## Try quick tasks and records (M6, real host, own terminal)
+
+On a disposable workspace (`tests/realhost_kit.py up BASE`; never your real `~/.config/orch`). In the demo workspace folder with the demo's
+environment run `orch quick add "Fix the typo"` twice and `orch records init`, then restart `python -m orch_dashboard` and open the dashboard.
+You should see: "Quick tasks" in the sidebar listing both tasks with "counts unknown"; Limits (kept in this browser) and Add, which says
+"two signatures" and signs the new task, then its label. Settings, Records shows what is waiting to commit; **Commit now** commits locally and
+shows the commit. The four terminal-only commands appear as text with no button. With a remote (use a local bare repo only) the export warning
+shows verbatim before **Commit and push**. `orch runner enable` (terminal) makes Settings, General show the "Dashboard execution" line.

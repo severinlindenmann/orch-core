@@ -40,6 +40,7 @@ import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPre
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
 import type { HostGrant, HostSettings, RosterMember } from './settings'
+import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
@@ -137,6 +138,12 @@ export function createApi(transport: Transport) {
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
     /** `active: false` adds the grants that ended. An owner is given every entry, anyone else their own. */
     listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
+    /** Quick tasks of a real host (M6): `available: false` without `quick/1`. The limits are the browser's own setting. */
+    getQuick: (ws: string, _p: QuickParams = {}) => call<QuickPage>('GET', `/api/w/${ws}/quick`),
+    /** Records of a real host (M6): the host's status for owners and maintainers; `available: false` without `records/1`. */
+    getRecords: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records`),
+    recordsCommit: (ws: string, push: boolean) => call<RecordsRun>('POST', `/api/w/${ws}/records/commit`, { push }),
+    recordsAutoOff: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-off`),
     /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
     previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
       call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),

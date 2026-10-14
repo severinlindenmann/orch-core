@@ -199,13 +199,14 @@ class RelaySigner:
         with self._lock:
             if seq <= self._last_card_seq:
                 raise SignerRefused("card_seq not above the last accepted card")
+            # the highest-seq rule first (round 6, orch-52 #5): a cached older signature is never handed out again
+            if any(int(k) > seq for k in self._ledger.keys("card")):
+                raise SignerRefused("a card was signed at a later card_seq")
             held = self._ledger.get("card", str(seq))
             if held is not None:
                 if not wire.ct_equal(held[0].encode(), digest.encode()):
                     raise SignerRefused("another card was signed at this card_seq")
                 return held[1]
-            if any(int(k) > seq for k in self._ledger.keys("card")):
-                raise SignerRefused("a card was signed at a later card_seq")
             sig = crypto.b64u(self._sign(L["sig_card_wsk"] + body))
             self._ledger.record("card", str(seq), digest, sig)  # durable before the signature leaves
         return sig

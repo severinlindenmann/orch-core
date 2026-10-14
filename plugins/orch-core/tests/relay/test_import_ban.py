@@ -24,6 +24,9 @@ code can always traverse objects; this test keeps the package's own code honest)
   reserved out-of-process ``bridge`` class under a distinct UID (11A.2, 11A.11 Q1).
 * Honest residual: ``RelaySigner._sign_bytes`` is a callable that signs any bytes and its closure cell holds the key;
   the ban keeps ``orch.relay``'s own code from reaching it, nothing more.
+* Round 6 (orch-52 #4): relative imports are resolved with their level against the module's own package
+  (``from ..crypto import sign`` is ``orch.crypto.sign``; one that climbs above ``orch`` is refused), and every ``.py``
+  under the package is scanned, subpackages and plain subdirectories included (``rglob``).
 * No HTTP library but ``http.client`` (no ``urllib``, which reads proxy variables from the environment).
 
 ``ALLOWED`` lists the exceptions, each with its reason.
@@ -39,7 +42,21 @@ import pytest
 import orch.relay
 
 PKG = Path(orch.relay.__file__).resolve().parent
-MODULES = sorted(PKG.glob("*.py"))
+PKG_NAME = "orch.relay"
+
+
+def modules(root: Path) -> list[Path]:
+    """Every ``.py`` file under ``root``, subpackages and plain directories included (round 6, orch-52 #4)."""
+    return sorted(root.rglob("*.py"))
+
+
+def package_of(path: Path, root: Path = PKG, root_name: str = PKG_NAME) -> str:
+    """The package a module file under ``root`` belongs to (what its relative imports resolve against)."""
+    rel = path.relative_to(root).parent.parts
+    return ".".join((root_name, *rel))
+
+
+MODULES = modules(PKG)
 
 BANNED_MODULES = (
     "orch.custody",
@@ -132,7 +149,19 @@ def _class_names(cls: ast.ClassDef) -> set[str]:
     return out
 
 
-def violations(tree: ast.AST, filename: str = "<src>") -> list[str]:
+def resolve_from(node: ast.ImportFrom, package: str) -> str | None:
+    """The absolute module of ``from <level dots><module> import ...`` inside ``package`` (``None``: the import climbs
+    above the top-level package)."""
+    if not node.level:
+        return node.module or ""
+    parts = package.split(".")
+    if node.level - 1 >= len(parts):
+        return None
+    base = parts[: len(parts) - (node.level - 1)]
+    return ".".join(base + ([node.module] if node.module else []))
+
+
+def violations(tree: ast.AST, filename: str = "<src>", package: str = PKG_NAME) -> list[str]:
     out: list[str] = []
     crypto_aliases: set[str] = set()  # local names bound to orch.crypto or one of its submodules
     orch_aliases: set[str] = set()  # local names bound to the orch package itself
@@ -148,9 +177,11 @@ def violations(tree: ast.AST, filename: str = "<src>") -> list[str]:
                 elif not a.asname and a.name.split(".")[0] == "orch":
                     orch_aliases.add("orch")
         elif isinstance(node, ast.ImportFrom):
-            mod = node.module or ""
-            if node.level:
-                mod = "orch.relay." + mod
+            resolved = resolve_from(node, package)
+            if resolved is None:
+                out.append(f"relative import above the top-level package (level {node.level})")
+                continue
+            mod = resolved
             if _banned_module(mod):
                 out.append(f"from {mod}")
             for a in node.names:
@@ -279,9 +310,19 @@ def test_relay_package_has_modules():
     assert {"wire", "sign", "http", "session", "directory"} <= names, names
 
 
-@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
+def scan(root: Path, root_name: str = PKG_NAME) -> dict[str, list[str]]:
+    """Violations of every module under ``root``, keyed by its path relative to ``root``."""
+    out = {}
+    for path in modules(root):
+        rel = path.relative_to(root).as_posix()
+        out[rel] = violations(ast.parse(path.read_text(), filename=str(path)), rel, package_of(path, root, root_name))
+    return out
+
+
+@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.relative_to(PKG).as_posix())
 def test_no_banned_import_or_access(path):
-    assert violations(ast.parse(path.read_text(), filename=str(path)), path.name) == []
+    rel = path.relative_to(PKG).as_posix()
+    assert violations(ast.parse(path.read_text(), filename=str(path)), rel, package_of(path)) == []
 
 
 BYPASSES = [
@@ -378,6 +419,66 @@ LEGAL = [
     "class A:\n    def f(self):\n        pass\nclass B(A):\n    def f(self):\n        A.f(self)",
     "import os\nos.open('x', os.O_RDONLY)",
 ]
+
+
+# round 6 (orch-52 #4): relative imports resolved with their level, against the module's own package
+RELATIVE = [
+    ("from ..crypto import sign", "orch.relay"),
+    ("from .. import crypto\ncrypto.sign(k, b'')", "orch.relay"),
+    ("from ..crypto.suite import generate_private_key", "orch.relay"),
+    ("from ..host import custody", "orch.relay"),
+    ("from .. import custody", "orch.relay"),
+    ("from ...host.custody import check_tree", "orch.relay.sub"),
+    ("from ...crypto import sign", "orch.relay.sub"),
+    ("from ... import crypto as c\nc.suite.sign(k, b'')", "orch.relay.sub"),
+    ("from ..store.store import BackendSigner", "orch.relay"),
+    ("from ...... import x", "orch.relay"),  # climbs above the top-level package
+]
+
+
+@pytest.mark.parametrize("src,package", RELATIVE)
+def test_the_ban_resolves_relative_import_levels(src, package):
+    assert violations(ast.parse(src), "<src>", package), (src, package)
+
+
+def test_relative_resolution():
+    def r(src, package):
+        return resolve_from(ast.parse(src).body[0], package)
+
+    assert r("from . import wire", "orch.relay") == "orch.relay"
+    assert r("from .wire import x", "orch.relay") == "orch.relay.wire"
+    assert r("from ..crypto import x", "orch.relay") == "orch.crypto"
+    assert r("from .. import x", "orch.relay.sub") == "orch.relay"
+    assert r("from ...crypto import x", "orch.relay.sub") == "orch.crypto"
+    assert r("from .... import x", "orch.relay.sub") is None
+
+
+def test_same_package_relative_imports_stay_legal():
+    assert violations(ast.parse("from . import wire\nwire.dumps_body({}, cap=1)")) == []
+    assert violations(ast.parse("from .state import StateDir"), "<src>", "orch.relay") == []
+    assert violations(ast.parse("from .. import canon"), "<src>", "orch.relay") == []
+
+
+def test_the_scan_is_recursive(tmp_path):
+    """A banned import in a subpackage or a plain subdirectory (no ``__init__``) is found, and a relative import there
+    resolves against that subpackage."""
+    (tmp_path / "ok.py").write_text("from . import wire\n")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "__init__.py").write_text("")
+    (sub / "deep.py").write_text("from ...crypto import sign\n")
+    plain = tmp_path / "plain" / "deeper"
+    plain.mkdir(parents=True)
+    (plain / "x.py").write_text("import importlib\n")
+    found = scan(tmp_path)
+    assert set(found) == {"ok.py", "sub/__init__.py", "sub/deep.py", "plain/deeper/x.py"}
+    assert found["ok.py"] == [] and found["sub/__init__.py"] == []
+    assert found["sub/deep.py"] and found["plain/deeper/x.py"]
+
+
+def test_the_real_package_is_scanned_recursively():
+    assert set(MODULES) == set(PKG.rglob("*.py"))
+    assert all(v == [] for v in scan(PKG).values())
 
 
 @pytest.mark.parametrize("src", LEGAL)

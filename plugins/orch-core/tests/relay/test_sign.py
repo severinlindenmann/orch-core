@@ -295,6 +295,27 @@ def test_no_card_below_the_highest_signed_seq():
         signer(ledger=mem).card(dict(CARD["o"]))  # card_seq 1 < 3
 
 
+def test_a_cached_older_card_is_refused_once_a_later_seq_was_signed():
+    """Round 6 (orch-52 #5): the highest-seq rule runs before the cache. The exact card signed earlier at seq 1 is not
+    handed out again once seq 2 was signed, even though its signature is in the ledger."""
+    from .helpers import MemLedger
+
+    mem = MemLedger()
+    k = Key()
+    s = signer(k, ledger=mem)
+    o1 = dict(CARD["o"])
+    s.card(o1)
+    s.card({**o1, "card_seq": 2})
+    assert mem.get("card", "1") is not None
+    k2 = Key()
+    with pytest.raises(sign.SignerRefused, match="later card_seq"):
+        signer(k2, ledger=mem).card(dict(o1))
+    with pytest.raises(sign.SignerRefused, match="later card_seq"):
+        s.card(dict(o1))
+    assert k2.signed == []
+    assert signer(ledger=mem).card({**o1, "card_seq": 2})  # the highest one is still served from the cache
+
+
 def test_file_ledger_survives_a_restart(tmp_path):
     from orch.relay.state import FileSignLedger, StateDir
 

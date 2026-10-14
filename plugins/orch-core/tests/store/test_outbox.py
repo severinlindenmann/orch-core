@@ -234,3 +234,143 @@ def test_a_checkpoint_outside_an_append_is_queued_too(linked):
     env.store.checkpoint()
     entries = env.store.outbox_entries()
     assert len(entries) == before + 1 and entries[-1].checkpoint == workspace_cp(env)
+
+
+# --- review round 1: the numbering reservation (Opus F1, Codex P1/P2) --------------------------------------------
+
+
+def _seen_ns(env: Env) -> set[int]:
+    """Every checkpoint ``n`` written anywhere on disk: outbox entries, pending entries, the checkpoints, the pin."""
+    ns: set[int] = set()
+    for p in outbox_dir(env).glob("*.json") if outbox_dir(env).is_dir() else []:
+        if p.name[0].isdigit():
+            ns.add(json.loads(p.read_bytes())["n"])
+    for p in (env.root / ".state" / "pending").glob("*/outbox"):
+        ns.add(json.loads(p.read_bytes())["n"])
+    for p in (
+        env.root / ".state" / "checkpoints" / "workspace.json",
+        env.host_state / "hosts" / WS / "checkpoint.json",
+    ):
+        if p.exists():
+            ns.add(json.loads(p.read_bytes())["o"]["n"])
+    for p in (env.host_state / "hosts" / WS / "pending-transitions").glob("*.json"):
+        ns.add(json.loads(p.read_bytes())["T"]["o"]["n"])
+    return ns
+
+
+def _drain_and_append(env: Env, uid: str) -> int:
+    """R3 published and deleted every entry; one more append; its n."""
+    s = env.store
+    for e in s.outbox_entries():
+        s.outbox_delete(e.n, e.hash)
+    env.log(uid, "after")
+    return s.outbox_entries()[-1].n
+
+
+def test_poc_f1_a_crash_after_a_queued_checkpoint_never_lets_its_n_be_signed_again(linked, monkeypatch):
+    env = linked
+    uid = env.new_ticket()
+    monkeypatch.setattr(env.store._checkpoints, "write_workspace_object", _boom)
+    with pytest.raises(_Crash):
+        env.store.checkpoint()  # the outbox entry X is written, workspace.json and the pin are not
+    monkeypatch.undo()
+    top = max(_seen_ns(env))
+    env.store.close()
+    env.open(load="lazy")
+    assert _drain_and_append(env, uid) > top
+
+
+@pytest.mark.parametrize("where", ["outbox_write", "accept", "write_ws"])
+def test_kill_points_of_a_checkpoint_outside_an_append(linked, monkeypatch, where):
+    env = linked
+    uid = env.new_ticket()
+    from orch.store import outbox as outbox_mod
+    from orch.store import pins as pins_mod
+
+    target = {
+        "outbox_write": (outbox_mod.Outbox, "write"),
+        "accept": (pins_mod.HostPins, "accept_checkpoint"),
+        "write_ws": (type(env.store._checkpoints), "write_workspace_object"),
+    }[where]
+    monkeypatch.setattr(*target, _boom)
+    with pytest.raises(_Crash):
+        env.store.checkpoint()
+    monkeypatch.undo()
+    top = max(_seen_ns(env))
+    env.store.close()
+    env.open(load="lazy")
+    assert _drain_and_append(env, uid) > top
+
+
+@pytest.mark.parametrize("where", ["write_pending", "append_durable", "finish", "accept", "write_ws", "after_commit"])
+def test_kill_points_of_a_linked_append(linked, monkeypatch, where):
+    env = linked
+    uid = env.new_ticket()
+    from orch.store import pins as pins_mod
+
+    s = env.store
+    if where == "write_pending":
+        monkeypatch.setattr(s, "_write_pending", _boom)
+    elif where == "append_durable":
+        monkeypatch.setattr(store_mod, "append_durable", _boom)
+    elif where == "finish":
+        monkeypatch.setattr(s, "_finish", _boom)
+    elif where == "accept":
+        monkeypatch.setattr(pins_mod.HostPins, "accept_checkpoint", _boom)
+    elif where == "write_ws":
+        monkeypatch.setattr(type(s._checkpoints), "write_workspace_object", _boom)
+    else:
+        monkeypatch.setattr(s, "_write_checkpoints", _boom)
+    with pytest.raises(_Crash):
+        env.log(uid, "dying")
+    monkeypatch.undo()
+    top = max(_seen_ns(env))
+    env.store.close()
+    env.open(load="lazy")
+    assert _drain_and_append(env, uid) > top
+
+
+def test_poc_codex_p1_recovery_repairs_the_pin_and_workspace_json_independently(linked, monkeypatch):
+    env = linked
+    uid = env.new_ticket()
+    from orch.store import pins as pins_mod
+
+    monkeypatch.setattr(pins_mod.HostPins, "accept_checkpoint", _boom)  # between the two adoption writes
+    monkeypatch.setattr(env.store, "_write_checkpoints", _boom)
+    with pytest.raises(_Crash):
+        env.log(uid, "dying")
+    monkeypatch.undo()
+    env.store.close()
+    s = env.open(load="lazy")
+    last = s.outbox_entries()[-1].checkpoint
+    assert last["o"]["tickets"][uid]["seq"] == 2
+    assert workspace_cp(env) == last
+    assert s._pins.held() == last
+
+
+def test_the_reservation_is_durable_and_never_falls(linked):
+    env = linked
+    s = env.store
+    pins = s._pins
+    before = pins.high_n()
+    pins.reserve_n(before + 5)
+    assert pins.high_n() == before + 5
+    pins.reserve_n(before + 1)  # never lowered
+    assert pins.high_n() == before + 5
+    raw = (env.host_state / "hosts" / WS / "checkpoint-n").read_text()
+    assert int(raw) == before + 5
+    uid = env.new_ticket()
+    assert s.outbox_entries()[-1].n == before + 6
+    _ = uid
+
+
+def test_an_append_does_not_rescan_the_outbox_for_its_number(linked, monkeypatch):
+    env = linked
+    uid = env.new_ticket()
+    from orch.store import outbox as outbox_mod
+
+    def no_scan(self):
+        raise AssertionError("max_n scans the whole outbox")
+
+    monkeypatch.setattr(outbox_mod.Outbox, "max_n", no_scan)
+    env.log(uid, "x")

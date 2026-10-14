@@ -144,6 +144,7 @@ class RelayConn:
         self._lookups = 0  # outstanding helper threads (guarded by _fd_lock)
         self._lookup_wakeups = 0  # wait() returns in _lookup (tests: no busy spin)
         self._watch: socket.socket | None = None  # our own dup of the connection's socket, for the watchdog
+        self._fired = threading.Event()  # the current call's watchdog has fired
         self._fd_lock = threading.Lock()
         self._call_lock = threading.Lock()
 
@@ -203,25 +204,41 @@ class RelayConn:
         for af, kind, proto, _canon, sa in self._lookup(host, port):
             sock = socket.socket(af, kind, proto)
             try:
+                self._watch_socket(sock)
+            except BaseException:
+                sock.close()
+                raise
+            try:
                 sock.settimeout(max(self._deadline - self._mono(), 0.001))
                 if source_address:
                     sock.bind(source_address)
-                sock.connect(sa)
+                self._connect(sock, sa)
             except OSError as e:
                 sock.close()
+                if self._shut.is_set() or self._fired.is_set():
+                    raise
                 err = e
                 continue
-            try:
-                watch = sock.dup()
-            except OSError:
-                sock.close()
-                raise
-            with self._fd_lock:
-                old, self._watch = self._watch, watch
-            if old is not None:
-                old.close()
             return sock
         raise err or OSError("no address")
+
+    def _watch_socket(self, sock: socket.socket) -> None:
+        """Make ``sock`` visible to the watchdog and :meth:`shutdown` **before** it blocks in ``connect`` (round 6,
+        orch-52 #3), then check the deadline and the shutdown flag: one that passed or was set before the socket was
+        installed found nothing to kill, so the call fails here at once instead of connecting."""
+        watch = sock.dup()
+        with self._fd_lock:
+            old, self._watch = self._watch, watch
+        if old is not None:
+            old.close()
+        if self._shut.is_set():
+            raise OSError("connection shut down")
+        if self._fired.is_set() or self._mono() >= self._deadline:
+            raise TimeoutError("deadline passed before connect")
+
+    @staticmethod
+    def _connect(sock: socket.socket, sa: object) -> None:
+        sock.connect(sa)
 
     def shutdown(self) -> None:
         """Stop this connection for good: end any blocked resolution, read or write, and fail every later call at once
@@ -302,7 +319,7 @@ class RelayConn:
         if self._shut.is_set():  # a shutdown() racing the line above
             raise TransportError("shutdown", route)
         left = self._remaining(deadline, route)
-        fired = threading.Event()
+        fired = self._fired = threading.Event()
 
         def expire() -> None:
             fired.set()

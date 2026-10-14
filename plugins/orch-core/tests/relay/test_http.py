@@ -527,3 +527,99 @@ def test_shutdown_just_before_a_call_fails_it_at_once(stuck_resolver):
         call(c, deadline_s=20)
     assert e.value.kind == "shutdown" and stuck_resolver.calls == []
     assert time.monotonic() - t0 < 4.0
+
+
+# --- round 6 (orch-52 #3): the watchdog sees a socket before it connects ---------------------------------------------
+
+
+@pytest.fixture
+def listener():
+    """A loopback listener that never accepts: a connect completes in the kernel backlog, nothing ever answers."""
+    import socket
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(8)
+    yield s
+    s.close()
+
+
+def _accepted(listener, wait_s=0.3) -> bool:
+
+    listener.settimeout(wait_s)
+    try:
+        c, _ = listener.accept()
+    except TimeoutError:
+        return False
+    c.close()
+    return True
+
+
+def _resolve_to(listener, before=None):
+    import socket
+
+    def resolve(host, port, *a, **kw):
+        if before is not None:
+            before()
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", listener.getsockname())]
+
+    return resolve
+
+
+def test_a_socket_still_connecting_is_ended_by_shutdown(listener):
+    """``connect`` emulated as blocking on the very socket being connected (a real blocking ``recv`` after the kernel
+    connect): ``shutdown()`` from another thread must reach it, so the socket is registered before ``connect``."""
+    entered = threading.Event()
+
+    class SlowConnect(http.RelayConn):
+        def _connect(self, sock, sa):
+            sock.connect(sa)
+            entered.set()
+            if sock.recv(1) == b"":
+                raise ConnectionResetError("connect ended")
+            raise AssertionError("unexpected byte")
+
+    c = SlowConnect(f"http://127.0.0.1:{listener.getsockname()[1]}")
+    out: dict = {}
+
+    def run():
+        try:
+            call(c, deadline_s=30)
+        except http.TransportError as e:
+            out["kind"] = e.kind
+
+    t = threading.Thread(target=run, daemon=True)
+    t0 = time.monotonic()
+    t.start()
+    assert entered.wait(5)
+    c.shutdown()
+    t.join(5)
+    assert not t.is_alive(), "shutdown did not reach the connecting socket"
+    assert out["kind"] == "shutdown" and time.monotonic() - t0 < 5
+
+
+def test_a_deadline_passed_before_the_socket_is_installed_never_connects(listener):
+    """The injected clock passes the deadline while the name lookup runs (so the watchdog had nothing to kill): the call
+    fails at the install check, before ``connect``."""
+    now = [100.0]
+
+    def late():
+        now[0] += 60
+
+    c = http.RelayConn("http://localhost:1", mono=lambda: now[0], resolve=_resolve_to(listener, late))
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=5)
+    assert e.value.kind == "deadline"
+    assert not _accepted(listener)
+
+
+def test_a_shutdown_before_the_socket_is_installed_never_connects(listener):
+    """``shutdown()`` lands while the name lookup completes (no socket to kill yet): the install check fails the call
+    at once and nothing is connected or sent."""
+    holder: dict = {}
+    c = http.RelayConn("http://localhost:1", resolve=_resolve_to(listener, lambda: holder["c"].shutdown()))
+    holder["c"] = c
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=5)
+    assert e.value.kind == "shutdown"
+    assert not _accepted(listener)

@@ -4859,20 +4859,33 @@ clock is past the backup's time + 600 s.
 - `host/workspace.py`: `Call.relay`; `authorize()` with a relay identity or a relay peer requires both, a peer whose
   person is the identity's, a recompute function (`relay_columns`, passed as `Call.columns`) and an op kind; the
   recompute must answer R with the identity's person as viewer, or the refuse-all row; the principal stays
-  `r:<device_id>` and the grant `absent`. A socket call whose recompute answers R is refused. `principal(uid, …)`
-  raises for a UID below 0. `WorkspaceService` gains `relay` (R5's worker), `relay_starter` (R5's start hook),
-  `relay_lock`, `relay_stop()`, `relay_start()`, and `close()` stops a set worker first.
+  `r:<device_id>` and the grant `absent`. A socket call whose recompute answers R is refused. (Review round 1) a
+  column R without a relay identity is refused before any early return; the identity's `workspace_id` must be the
+  service's; the op kind is derived inside (`device_signed` for `relay.submit`, else `dispatch.op_kind`), and a
+  caller's kind that differs, or an op with no kind, is refused. `principal(uid, …)` raises for a UID below 0.
+  `WorkspaceService` gains `relay` (R5's worker), `relay_starter` (R5's start hook), `relay_lock`/`relay_cond`,
+  `relay_stop()`, `relay_start()`. The worker contract is `stop()` plus `join(timeout) -> bool` (true when every
+  relay thread ended). `relay_stop()` answers only after `stop()` and the bounded `join` (`relay_join_seconds`,
+  120 s) returned (`stopped`, `stuck` or `none`); `relay_start()` waits for a stop in progress and refuses with
+  `lock.busy` while one has not finished or a stuck worker's threads still run; `close()` stops the worker and
+  waits for its threads (bounded by 120 s) before it queues the job that closes the store.
 - `host/outcomes.py`: `relay.submit` is a log write (idem required, no dry run), in `NO_PARTIAL`;
   `OutcomeStore.relay_fields` is the reconciler hook for a pending `relay.submit` with landed events. (J) Until R5
   registers it such a record stays `pending`: never `partial`, never handed to the human roll-forward, never run
   again. `principal_of` raises for R, for any unknown column and for a UID below 0.
-- `host/human.py`: `append_signed(service, log, events, extras, *, signed_by=None) -> (landed, error)` is the append
-  loop of `finish()`; a test asserts it is the only `store.append` in the module and that `finish` uses it. (J) With
-  `signed_by=(person, device)` (the relay path) every event must carry exactly that person actor and device, a `sig`,
-  and no `auth:"convenience"`, checked before anything lands (`op.not_allowed`); the store still verifies each
-  signature. The closed event/scope table stays `relay/submit.py`'s (R2).
-- Column sites: `test_column_r_sites` inventories, by AST, every comparison with a column-name literal and every read
-  of `….column.name` in `orch/host` (68 at H12a) and states R's answer for each. Code changes for R: `Viewer` reads R
+- `host/human.py`: `append_signed(service, log, events, extras, *, signed_by) -> (landed, error)` is the append loop
+  of `finish()` (`signed_by` keyword-required: `None` on the person path); a test asserts it is the only
+  `store.append` in the module and that `finish` uses it. The one other append of a signed event in the host is the
+  owner-signed genesis of `host.bootstrap` (`control.py`), on the control socket before the workspace is served.
+  The relay path's only entry is `append_relay(service, log, events, extras, *, person_id, device_id)`, which always
+  passes `signed_by`; a test refuses any use of `append_signed` under `orch/relay/`. (J) With `signed_by` every event
+  must carry exactly that person actor and device, a `sig`, and no `auth:"convenience"`, checked before anything
+  lands (`op.not_allowed`), and an id already in the log counts as landed only when its `sig` and `actor` are the
+  submitted ones (else `op.not_allowed`, never a false `committed`); the store still verifies each signature. The
+  closed event/scope table stays `relay/submit.py`'s (R2).
+- Column sites: `test_column_r_sites` inventories, by AST, over `orch/host/**` and `orch/relay/**`, every comparison
+  with a column-name literal, every read of `….column.name` or `getattr(….column, "name")`, local aliases of a column
+  object or name and their comparisons, and every arm of a `match` on a column (70 at H12a round 1) and states R's answer for each. Code changes for R: `Viewer` reads R
   exactly as P (owner, manager, `needs {person}`); `Bus.principal_end` ends a subscription of any column other than
   P, G and N (it returned `None` before, a latent fail-open for an unknown column). (J) `diff` pins no base for R and
   `whoami` gives R no `runner` field.
@@ -4884,17 +4897,24 @@ clock is past the backup's time + 600 s.
   `flock` (`host/relay-link.lock`), then `refuse_reader_op(service, "relay.link", history=True)`
   (`sign.convenience_readers`: convenience history or the flag; no exception, 11A.11 Q4), then `host.limit` unless
   the workspace is already linked. The stop marker `relay/stopped.json` (0600) is written by `mark_stopped`, cleared by
-  `clear_stopped`; `is_stopped` counts an unreadable marker as stopped; `may_start(state, ws, uid)` (linked with a
-  private `link.json`, not stopped) is what R5's start must pass, under `service.relay_lock`.
+  `clear_stopped`; `is_stopped` is true when the marker exists whatever its content, when `relay/` is not a real
+  directory, or when either cannot be inspected; `may_start(state, ws, uid)` (a private `relay/` checked with
+  `ensure_private_dir(create=False)`, a private `link.json`, not stopped; any doubt is false) is what R5's start must
+  pass, under `service.relay_lock`.
 - Control ops `host.relay_stop {workspace_id}` and (J) `host.relay_start {workspace_id}` (idempotent, no idem;
   `not_found` for an unregistered workspace). `orch host relay stop --workspace W` writes the marker itself first, so
-  it works with the host down, then stops a live worker through the host; `orch host relay start` clears it and is
-  refused under `ORCH_GRANT` (`human_only`).
+  it works with the host down, then stops a live worker through the host. Only a missing socket or a refused
+  connection counts as "host not running"; any other failure (timeout, protocol error, unsafe socket path, a host
+  that is not the pinned one) keeps the marker and exits 9 (`host.unavailable`, "the marker is set, a running worker
+  may continue until the host restarts"). `orch host relay start` clears the marker only through the host or with the
+  host confirmed absent, and is refused under `ORCH_GRANT` (`human_only`).
 - R5 interface: register `service.outcomes.relay_fields` and run `relay.submit.recover(service)` in `open` after
   `human.recover`; start the worker through `service.relay_starter` (or in `open`) only under `service.relay_lock`
-  after `relaylink.may_start`, setting `service.relay`; build relay calls with `Call.relay = identity`,
-  `peer = identity.peer()`, `columns = relay_columns`, `kind` from `op_kind`/`device_signed`; append only through
-  `append_signed(..., signed_by=(person_id, device_id))`; R1 writes `link.json` inside `link_reservation(service)`.
+  after `relaylink.may_start`, setting `service.relay` to a worker with `stop()` and `join(timeout) -> bool`; build
+  relay calls with `Call(service, …)` for the identity's own workspace, `Call.relay = identity`,
+  `peer = identity.peer()`, `columns = relay_columns` (the kind is derived by `authorize`); append only through
+  `append_relay(service, log, events, extras, person_id=…, device_id=…)`; R1 writes `link.json` inside
+  `link_reservation(service)`.
 
 ### 11A.5 The bridge loop (R2) and the publisher (R3)
 

@@ -75,6 +75,21 @@ def build_env(args: Mapping[str, Any], own: Mapping[str, str]) -> dict[str, str]
     return env
 
 
+#: POSIX-compatible login shells (§12.4.1: a person's $SHELL must be one, else ``harness.shell_unsupported``)
+POSIX_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash"})
+
+
+def resolve_shell(argv: list[Any], own: Mapping[str, str]) -> list[Any]:
+    """``["$SHELL", ...]`` becomes the runner's own ``SHELL`` (an absolute path to a POSIX shell, never anything the
+    host sent); any other argv passes through (its own checks follow in :meth:`SpawnSpec.check`)."""
+    if not argv or argv[0] != "$SHELL":
+        return argv
+    shell = own.get("SHELL") or ""
+    if not shell.startswith("/") or os.path.basename(shell) not in POSIX_SHELLS or not os.access(shell, os.X_OK):
+        raise SpawnError("harness.shell_unsupported", "the runner's $SHELL is not an executable POSIX shell")
+    return [shell, *argv[1:]]
+
+
 def new_gen() -> str:
     """The runner generation (§12.3.2 ``Gen``): 32 hex digits drawn at every runner start."""
     return secrets.token_hex(16)
@@ -119,6 +134,8 @@ class HostLink:
         #: tests: drop the report of these commands (a lost ack)
         self.drop_reports: set[str] = set()
         sup.on_event = self._on_event
+        if term is not None:
+            term.on_change = self._term_changed
 
     # -- life cycle
     def start(self) -> None:
@@ -198,7 +215,7 @@ class HostLink:
                             self.ready.set()
                             held, self._held = self._held, []
                         for item, tag in held:
-                            self._pool.submit(self._command, item, tag)
+                            self._dispatch(item, tag)
                         self._resend_exits(reported_running)
                     else:
                         event = self._waiting.pop(frame.get("id"), None)
@@ -212,7 +229,7 @@ class HostLink:
                                 if not self.ready.is_set():  # held until the hello's answer
                                     self._held.append((item, conn))
                                     continue
-                            self._pool.submit(self._command, item, conn)
+                            self._dispatch(item, conn)
                 elif kind == "fatal":
                     raise ConnectionError(f"the host closed the connection: {frame.get('error')}")
 
@@ -295,6 +312,15 @@ class HostLink:
     def _current(self, tag: int) -> bool:
         return tag == self._conn and self.ready.is_set()
 
+    def _dispatch(self, item: dict[str, Any], tag: int) -> None:
+        """``attach.end`` runs inline on this (the link) thread: it never blocks (the term socket's ``end`` takes its
+        lock, queues and reports), and it must not wait behind ``stop``/``spawn`` in the command pool, or the host's
+        5 s confirmation deadline would drop the whole runner session. Every other command goes to the pool."""
+        if item.get("op") == "attach.end":
+            self._command(item, tag)
+        else:
+            self._pool.submit(self._command, item, tag)
+
     def _command(self, item: dict[str, Any], tag: int) -> None:
         cmd, cid, args = item.get("op"), str(item.get("cmd")), item.get("args") or {}
         if not self._current(tag):
@@ -307,7 +333,7 @@ class HostLink:
         except SpawnError as exc:
             outcome, payload = "error", {"code": exc.code, "message": exc.message}
         except TicketError as exc:
-            outcome, payload = "error", {"code": "invalid.input", "message": str(exc)}
+            outcome, payload = "error", {"code": exc.code, "message": str(exc)}
         except Exception as exc:  # noqa: BLE001 - never a traceback to the host
             LOG.exception("runner command %s failed", cmd)
             outcome, payload = "error", {"code": "run.spawn_failed", "message": type(exc).__name__}
@@ -321,7 +347,8 @@ class HostLink:
         if cmd == "spawn":
             spec = SpawnSpec(
                 str(args.get("run")), str(args.get("workspace_id")), str(args.get("kind")),
-                list(args.get("argv") or []), build_env(args, self.env), dict(args.get("cwd") or {}),
+                resolve_shell(list(args.get("argv") or []), self.env), build_env(args, self.env),
+                dict(args.get("cwd") or {}),
                 int(args.get("cols") or 120), int(args.get("rows") or 40),
             )  # fmt: skip
             with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot
@@ -330,12 +357,14 @@ class HostLink:
                 res = self.sup.spawn(spec)
             return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
         if cmd == "stop":
-            return self.sup.stop(str(args.get("run")), grace=max(0, int(args.get("grace_ms", 10_000))) / 1000)
+            run = str(args.get("run"))
+            if self.term is not None:  # the person stopped it: its viewers end with run.stopped (§12.6.2)
+                self.term.end_run(run, "run.stopped")
+            return self.sup.stop(run, grace=max(0, int(args.get("grace_ms", 10_000))) / 1000)
         if cmd == "attach.allow":
             if self.term is None:
-                raise TicketError("no terminal socket")
-            self.term.allow(args, epoch=tag)  # the epoch it arrived in, not the one current when it runs (F4)
-            return {}
+                raise TicketError("no terminal socket", "runner.unavailable")
+            return self.term.allow(args, epoch=tag)  # the epoch it arrived in, not the one current when it runs (F4)
         if cmd == "git":  # H11d: worktree git, one command per repo at a time, 30 s each (§12.7)
             from .wtgit import run_git
 
@@ -349,6 +378,18 @@ class HostLink:
                 self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))
             return {}
         raise SpawnError("invalid.input", f"unknown command {cmd[:32]}")
+
+    # -- the term socket's reports
+    def _term_changed(self, run: str) -> None:
+        """A run's attachments, lease or size changed: ``runner.term`` (the host's counts and ``Run.viewers``)."""
+        if not self.ready.is_set() or self.term is None:
+            return
+        args = self.term.summary(run)
+        if args["cols"] is None:
+            args.pop("cols")
+            args.pop("rows")
+        with contextlib.suppress(OSError, ConnectionError):
+            self._send_req("runner.term", args)
 
     # -- supervisor events
     def _on_event(self, kind: str, run: str, payload: dict[str, Any]) -> None:

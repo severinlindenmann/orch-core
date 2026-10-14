@@ -185,7 +185,8 @@ def test_natural_exit_records_code_and_cleans_up(state, tmp_path):
     try:
         s = spec(tmp_path, ["/bin/sh", "-c", "echo bye; exit 3"])
         sup.spawn(s)
-        wait_for(lambda: sup.get(s.run)["cleanup"] is not None)
+        # both events: the table's cleanup is written before the cleanup event is emitted
+        wait_for(lambda: len([e for e in events if e[1] == s.run]) >= 2)
         rec = sup.get(s.run)
         assert rec["state"] == "exited" and rec["exit"]["code"] == 3 and rec["exit"]["reason"] == "exited"
         assert rec["cleanup"] == "complete"

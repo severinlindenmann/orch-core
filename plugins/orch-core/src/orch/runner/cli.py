@@ -62,6 +62,10 @@ def _parser() -> argparse.ArgumentParser:
     dis = sub.add_parser("disable", help="turn dashboard execution off for a workspace")
     dis.add_argument("--workspace", required=True)
     dis.add_argument("--state", type=Path)
+    term = sub.add_parser("terminals", help="turn terminals on or off for a workspace with dashboard execution on")
+    term.add_argument("switch", choices=["on", "off"])
+    term.add_argument("--workspace", required=True)
+    term.add_argument("--state", type=Path)
     st = sub.add_parser("status")
     st.add_argument("--state", type=Path)
     st.add_argument("--run", type=Path)
@@ -182,6 +186,32 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
     return {"ok": True, "result": {"data": data}}
 
 
+def terminals(args: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any]:
+    """``orch runner terminals on|off --workspace W``: the person's own terminal for ``on`` (it widens what the
+    dashboard may start), never under ``ORCH_GRANT``; ``off`` needs no prompt."""
+    if env.get("ORCH_GRANT"):
+        return _fail("human_only", "terminals are a person's decision; an agent never turns them on", 3)
+    uid = os.getuid()
+    state = _state(args.state, env)
+    wid, prefix = _workspace(state, uid, args.workspace)
+    on = args.switch == "on"
+    text = ""
+    if on:
+        text = enablement.TERMINALS_ON_TEXT
+        try:
+            TERMINAL.show(enablement.risk_text(prefix or wid[:8], wid, True) + "\n" + text + "\n")
+            typed = TERMINAL.ask(f"Type the workspace prefix {prefix} to turn terminals on: ")
+        except Exception as exc:  # noqa: BLE001 - no terminal: refuse (never stdin, which an agent may hold)
+            return _fail("human_only", f"orch runner terminals on needs your own terminal ({exc})", 3)
+        if typed.strip() != prefix or not prefix:
+            return _fail("invalid.input", "the prefix did not match; terminals stay as they were", 5)
+    try:
+        enablement.set_terminals(state, wid, on, uid, text=text)
+    except HostError as exc:
+        return {"ok": False, "exit": exc.exit, "error": exc.error()}
+    return {"ok": True, "result": {"data": {"workspace_id": wid, "terminals": on}}}
+
+
 def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from orch.host import enable as svc
 
@@ -199,7 +229,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     for item in swept:
         log.warning("run %s was lost (runner restart); swept %d", item["run"], item["swept"])
     gen = new_gen()
-    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, info=sup.attach_info)
+    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, sup=sup)
     try:
         term.open()
     except OSError as exc:
@@ -239,6 +269,10 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             enablement.set_enabled(state, wid, False, os.getuid())
             _write(out, {"ok": True, "result": {"data": {"workspace_id": wid, "enabled": False}}})
             return 0
+        if args.cmd == "terminals":
+            doc = terminals(args, env)
+            _write(out, doc)
+            return 0 if doc.get("ok") else int(doc.get("exit", 1))
         if args.cmd == "status":
             return _status(args, env, out)
         if args.cmd == "run":

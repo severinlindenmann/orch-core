@@ -224,3 +224,26 @@ def test_enable_passes_the_registered_roots_to_the_dev_check(env, manager, monke
     monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
     code, doc = _cli(["enable", "--workspace", "ACME"], env)
     assert code == 5 and seen["roots"] == [str(tmp_path / "ws")]
+
+
+def test_terminals_on_off_needs_enable_a_terminal_and_the_prefix(env, manager, monkeypatch):
+    state = Path(env["ORCH_STATE_DIR"])
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
+    code, doc = _cli(["terminals", "on", "--workspace", "ACME"], env)
+    assert code == 3 and doc["error"]["code"] == "runner.disabled"  # dashboard execution is off
+    assert _cli(["enable", "--workspace", "ACME", "--no-terminals", "--dev"], env)[0] == 0
+    assert enablement.state_of(state, WID, os.getuid())["terminals"] is False
+    tty = Tty("wrong")
+    monkeypatch.setattr(runner_cli, "TERMINAL", tty)
+    assert _cli(["terminals", "on", "--workspace", "ACME"], env)[0] == 5
+    assert enablement.state_of(state, WID, os.getuid())["terminals"] is False
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty(None))
+    assert _cli(["terminals", "on", "--workspace", "ACME"], env)[1]["error"]["code"] == "human_only"
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
+    code, doc = _cli(["terminals", "on", "--workspace", "ACME"], env)
+    assert code == 0 and doc["result"]["data"] == {"workspace_id": WID, "terminals": True}
+    assert enablement.state_of(state, WID, os.getuid()) == {"enabled": True, "terminals": True}
+    assert _cli(["terminals", "off", "--workspace", "ACME"], env)[0] == 0  # no prompt to narrow
+    assert enablement.state_of(state, WID, os.getuid())["terminals"] is False
+    agent_env = {**env, "ORCH_GRANT": "gr_x.y"}
+    assert _cli(["terminals", "on", "--workspace", "ACME"], agent_env)[1]["error"]["code"] == "human_only"

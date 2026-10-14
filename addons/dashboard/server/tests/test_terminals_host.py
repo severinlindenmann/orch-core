@@ -181,3 +181,28 @@ def test_terminal_bytes_never_reach_the_logs(tw, caplog, capfd):
     out, err = capfd.readouterr()
     logged = caplog.text + out + err
     assert canary not in logged and canary[:7] + "''" not in logged
+
+
+def test_a_changed_runner_ends_with_4503_and_cancels_the_capability(tw, monkeypatch):
+    """Section 12.6.1: any verification mismatch closes with runner.changed, and the minted capability is cancelled."""
+    from orch.runner import termclient
+
+    from orch_dashboard.hostlink import HostLink
+
+    def changed(self, timeout=5.0):
+        raise termclient.RunnerChanged("the runner's hello does not match")
+
+    calls = []
+    real_call = HostLink.call
+
+    def spy(self, op, args=None, **kw):
+        calls.append(op)
+        return real_call(self, op, args, **kw)
+
+    monkeypatch.setattr(termclient.TermClient, "connect", changed)
+    monkeypatch.setattr(HostLink, "call", spy)
+    run = tw.open_shell()["run"]
+    with tw.connect(run) as ws:
+        code, texts = until_close(ws)
+    assert code == 4503 and texts == [{"t": "end", "reason": "runner.changed"}]
+    assert calls.count("term.attach") == 1 and "attach.cancel" in calls

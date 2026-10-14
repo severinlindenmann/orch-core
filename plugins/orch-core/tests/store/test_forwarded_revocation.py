@@ -1,0 +1,176 @@
+"""H12b: forwarded revocation intake, ``Store.note_forwarded_revocation`` (§11A.9, P3-D31 host MUSTs).
+
+Every fact comes from the signed objects (person key, certificate judged at its own ``created_ms``, revocation);
+the item's outer ``device_id``, ``person_id``, ``reason`` and ``provenance.digest`` must equal them. The result is
+``held`` (the device is associated with that person), ``pending`` (the person is a current or past member, the
+device is not associated with them) or ``dropped`` (anything else, including anything that does not verify and a cap
+rejection). Idempotent per ``(device_id, person_id)``.
+"""
+
+from __future__ import annotations
+
+import hashlib
+
+import pytest
+
+from orch import canon, crypto
+from orch.identity import certs
+from orch.store import pins as pins_mod
+from orch.store.pins import is_forwarded, pair
+from tests.identity.helpers import Person
+from tests.store.helpers import T0, Env
+
+
+def _cert(person: Person, sig_pub: bytes, *, created_ms: int = T0 * 1000, expires_ms: int | None = None) -> dict:
+    return certs.make_device_cert(
+        person.pk_pub,
+        person.pk_sign,
+        dk_sig_pub=sig_pub,
+        dk_kx_pub=crypto.public_bytes(crypto.generate_private_key()),
+        label_sealed=b"x",
+        created_ms=created_ms,
+        expires_ms=expires_ms,
+        scopes_max=["look", "decide", "operate", "type"],
+    )
+
+
+def item(person: Person, sig_pub: bytes, reason: str = "compromised", cert: dict | None = None) -> dict:
+    cert = cert or _cert(person, sig_pub)
+    device_hex = certs.device_ref(sig_pub)[2:]
+    rev = certs.make_revocation(
+        person.pk_pub, person.pk_sign, device_id_hex=device_hex, revoked_ms=T0 * 1000 + 5, reason=reason
+    )
+    return {
+        "device_id": device_hex,
+        "person_id": crypto.person_id(person.pk_pub).hex(),
+        "reason": reason,
+        "revocation": rev,
+        "device_cert": cert,
+        "pk_pub": crypto.b64u(person.pk_pub),
+        "provenance": {"cursor": "c1", "digest": "sha256:" + hashlib.sha256(canon.cj_checked(rev)).hexdigest()},
+        "chain_reason": None,
+    }
+
+
+def _revocations_file(env: Env):
+    p = env.host_state / "hosts" / "705d40abbb8c1c90354a1acaa94c935c" / "revocations.jsonl"
+    return p.read_bytes() if p.exists() else b""
+
+
+@pytest.fixture
+def ws(env):
+    env.bootstrap()
+    device, sig_pub = env.add_device()  # the owner's second device: associated with the owner
+    return env, device, sig_pub
+
+
+def test_an_associated_pair_is_held(ws):
+    env, device, sig_pub = ws
+    assert env.store.note_forwarded_revocation(item(env.owner, sig_pub)) == "held"
+    recs = [r for r in env.store._pins.revocations() if pair(r) == (device, env.owner.ref)]
+    assert len(recs) == 1 and is_forwarded(recs[0]) and recs[0]["reason"] == "compromised"
+
+
+def test_intake_is_idempotent_per_pair(ws):
+    env, _device, sig_pub = ws
+    it = item(env.owner, sig_pub)
+    assert env.store.note_forwarded_revocation(it) == "held"
+    first = _revocations_file(env)
+    assert env.store.note_forwarded_revocation(it) == "held"
+    assert _revocations_file(env) == first
+
+
+def test_a_member_whose_device_is_not_associated_is_pending(ws):
+    env, _device, _sig_pub = ws
+    stray = crypto.public_bytes(crypto.generate_private_key())  # a key the workspace never listed
+    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "pending"
+    assert any(pair(r) == (certs.device_ref(stray), env.owner.ref) for r in env.store._pins.revocations())
+
+
+def test_a_stranger_is_dropped(ws):
+    env, _device, sig_pub = ws
+    bob = Person()  # never a member; certifies the owner's device key himself
+    assert env.store.note_forwarded_revocation(item(bob, sig_pub)) == "dropped"
+    assert _revocations_file(env) == b""
+
+
+@pytest.mark.parametrize("field", ["device_id", "person_id", "reason"])
+def test_a_substituted_outer_field_is_dropped(ws, field):
+    env, _device, sig_pub = ws
+    it = item(env.owner, sig_pub, reason="lost")
+    other = Person()
+    it[field] = {
+        "device_id": certs.device_ref(other.sig_pub)[2:],
+        "person_id": crypto.person_id(other.pk_pub).hex(),
+        "reason": "compromised",
+    }[field]
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert _revocations_file(env) == b""
+
+
+def test_a_wrong_provenance_digest_is_dropped(ws):
+    env, _device, sig_pub = ws
+    it = item(env.owner, sig_pub)
+    it["provenance"]["digest"] = "sha256:" + "0" * 64
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+
+
+def test_a_forged_revocation_is_dropped(ws):
+    env, _device, sig_pub = ws
+    it = item(env.owner, sig_pub, reason="lost")
+    it["revocation"]["o"]["reason"] = "compromised"  # signature no longer verifies
+    it["reason"] = "compromised"
+    it["provenance"]["digest"] = "sha256:" + hashlib.sha256(canon.cj_checked(it["revocation"])).hexdigest()
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+    assert _revocations_file(env) == b""
+
+
+def test_a_certificate_of_another_person_is_dropped(ws):
+    env, _device, sig_pub = ws
+    bob = Person()
+    it = item(env.owner, sig_pub, cert=_cert(bob, sig_pub))
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+
+
+def test_a_pk_pub_that_is_not_the_persons_is_dropped(ws):
+    env, _device, sig_pub = ws
+    it = item(env.owner, sig_pub)
+    it["pk_pub"] = crypto.b64u(Person().pk_pub)
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+
+
+def test_an_expired_historical_certificate_is_still_evidence(ws):
+    env, _device, sig_pub = ws
+    old = _cert(env.owner, sig_pub, created_ms=(T0 - 10 * 86400) * 1000, expires_ms=(T0 - 9 * 86400) * 1000)
+    assert env.store.note_forwarded_revocation(item(env.owner, sig_pub, cert=old)) == "held"
+
+
+def test_a_cap_rejection_is_dropped(ws, monkeypatch):
+    env, _device, _sig_pub = ws
+    stray = crypto.public_bytes(crypto.generate_private_key())
+    monkeypatch.setattr(pins_mod.HostPins, "note_revocation", lambda *a, **k: False)  # its caps dropped it
+    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "dropped"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [None, "x", [], {}, {"device_id": "00"}, {"revocation": {"o": {}, "sig": ""}}],
+)
+def test_garbage_is_dropped(ws, bad):
+    env, _device, _sig_pub = ws
+    assert env.store.note_forwarded_revocation(bad) == "dropped"
+
+
+def test_garbage_fields_inside_a_well_shaped_item_are_dropped(ws):
+    env, _device, sig_pub = ws
+    for key, value in (("pk_pub", "!!"), ("device_cert", "x"), ("provenance", None), ("revocation", 3)):
+        it = item(env.owner, sig_pub)
+        it[key] = value
+        assert env.store.note_forwarded_revocation(it) == "dropped", key
+
+
+def test_held_evidence_refuses_that_pair_as_a_restore_signer(ws):
+    env, device, sig_pub = ws
+    assert env.store.note_forwarded_revocation(item(env.owner, sig_pub)) == "held"
+    assert any(pair(r) == (device, env.owner.ref) for r in env.store._pins.revocations())
+    assert env.store.diverged == {}  # forwarded evidence is never claimed by accepted history

@@ -24,7 +24,6 @@ import re
 import secrets
 import stat
 import threading
-import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -53,12 +52,34 @@ class StateError(Exception):
     """The state directory or a file in it is unsafe or unreadable. Messages name the file, never its contents."""
 
 
-_LIVE: weakref.WeakSet[StateDir] = weakref.WeakSet()
+class _Held:
+    """The lock fd and the ``RLock`` of one open :class:`StateDir`, kept apart from it so the fork hook can reach
+    them without holding the instance (``weakref`` is import-banned in ``orch.relay``)."""
+
+    __slots__ = ("fd", "lock")
+
+    def __init__(self, fd: int) -> None:
+        self.fd: int | None = fd
+        self.lock = threading.RLock()
+
+
+_OPEN: set[_Held] = set()  # every StateDir not yet closed; a closed one is removed, so its fd number is never touched
 
 
 def _after_fork_in_child() -> None:
-    for st in list(_LIVE):
-        st._forget_in_child()
+    """Child side of ``os.fork``: close the child's copy of every lock fd with a plain ``close``, never
+    ``flock(LOCK_UN)`` (the flock belongs to the open file description the parent shares, so an unlock would release
+    the parent's lock), and replace each ``RLock``: one another parent thread held at the fork is never released in
+    the child."""
+    for h in list(_OPEN):
+        h.lock = threading.RLock()
+        fd, h.fd = h.fd, None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    _OPEN.clear()
 
 
 class SignLedger(Protocol):
@@ -112,21 +133,18 @@ class StateDir:
         except StateError:
             os.close(fd)
             raise
-        self._held: int | None = fd
+        self._h = _Held(fd)
         self._pid = os.getpid()
-        self.lock = threading.RLock()
-        _LIVE.add(self)
+        _OPEN.add(self._h)
 
-    def _forget_in_child(self) -> None:
-        """Fork hook (child side): close our copy of the fd without unlocking, and make the instance unusable. The
-        lock is replaced: an RLock another parent thread held at the fork would never be released in the child."""
-        self.lock = threading.RLock()
-        fd, self._held = self._held, None
-        if fd is not None:
-            try:
-                os.close(fd)  # never flock(LOCK_UN): that would release the parent's lock too
-            except OSError:
-                pass
+    @property
+    def lock(self) -> threading.RLock:
+        """Serialises every read-modify-write on this directory within the owning process."""
+        return self._h.lock
+
+    @property
+    def _held(self) -> int | None:
+        return self._h.fd
 
     def close(self) -> None:
         """Release the directory (closing the fd drops the ``flock``). In a forked child this does nothing: the fork
@@ -134,7 +152,8 @@ class StateDir:
         if os.getpid() != self._pid:
             return
         with self.lock:
-            fd, self._held = self._held, None
+            fd, self._h.fd = self._h.fd, None
+            _OPEN.discard(self._h)
             if fd is not None:
                 os.close(fd)
 

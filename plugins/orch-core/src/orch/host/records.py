@@ -33,6 +33,7 @@ can still push.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -46,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from orch import records as rec
-from orch.ops.readers import has_convenience_events
+from orch.ops.readers import convenience_seen, has_convenience_events, mark_convenience_seen
 
 from . import convenience
 from .custody import ensure_private_dir, read_json, write_private
@@ -100,8 +101,9 @@ _SCHEMAS = {
             "sha": _SHA,
             "url": _URL,
             "ref": {"type": "string", "pattern": r"^refs/heads/[A-Za-z0-9._/-]{1,200}$"},
+            "history_convenience": {"type": "boolean"},
         },
-        "required": ["sha", "url", "ref"],
+        "required": ["sha", "url", "ref", "history_convenience"],
         "additionalProperties": False,
     },
     "records.remote_private": {
@@ -407,18 +409,34 @@ def _snapshot(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def convenience_on(ctx: Ctx) -> bool:
-    """The convenience-readers condition (§0.8.6): the flag is on, or the history holds convenience events."""
+    """The convenience-readers condition (§0.8.6): the flag is on, the durable ``convenience_seen`` mark is set
+    (#441), or the merged history holds convenience events (which sets the mark: an existing workspace counts as
+    seen)."""
     if convenience.enabled(ctx.state_dir, ctx.workspace_id, ctx.host_uid):
+        return True
+    if convenience_seen(ctx.state_dir, ctx.workspace_id):
         return True
     store = ctx.store
     with store.locked():
-        return has_convenience_events(store)
+        found = has_convenience_events(store)
+    if found:
+        _mark_seen(ctx)
+    return found
+
+
+def _mark_seen(ctx: Ctx) -> None:
+    """A scan found convenience events: set the mark (best effort; the answer is "seen" either way)."""
+    with contextlib.suppress(Exception):
+        mark_convenience_seen(ctx.state_dir, ctx.workspace_id, ctx.host_uid, clock=ctx.clock)
 
 
 def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     now = float(ctx.clock())
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
-    conv = convenience_on(ctx)
+    pushed = args["history_convenience"]  # the tool's scan of everything reachable from sha (#441)
+    if pushed:
+        _mark_seen(ctx)
+    conv = pushed or convenience_on(ctx)
     mark = doc.get("private_remote")
     marked = isinstance(mark, dict) and mark.get("url") == args["url"]
     policy = "none"
@@ -432,9 +450,10 @@ def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(mark, dict)
                 else "no private-remote mark for this URL"
             )
+            what = "a history with convenience-signed events" if pushed else "a workspace with convenience signing"
             raise HostError(
                 "sign.convenience_readers",
-                f"a records push adds a reader to a workspace with convenience signing ({why})",
+                f"a records push adds a reader to {what} ({why})",
                 hint="mark this exact push URL private (orch records remote-private), or keep the records local",
             )
         policy = "private_remote"

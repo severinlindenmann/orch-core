@@ -773,3 +773,57 @@ def test_the_signer_exits_when_its_parent_goes(tmp_path):
             os.kill(pid, 9)  # our own grandchild's PID only, if it is still there
         except ProcessLookupError:
             pass
+
+
+# --- the durable convenience_seen mark (#441) -------------------------------------------------------------------------
+
+
+def test_the_first_convenience_event_sets_the_mark_and_a_restore_does_not_clear_it(click, served, human, monkeypatch):
+    from orch.ops import readers
+
+    path = readers.seen_path(served.lab.state, served.wid)
+    _, key = human.ticket()
+    assert not path.exists()
+    _click_sign(click, key)
+    assert path.exists() and any(e.get("auth") == "convenience" for e in logged(served, key))
+    # a restore drops the convenience events from the merged history: the mark still refuses a new reader
+    monkeypatch.setattr(readers, "has_convenience_events", lambda store: False)
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    args, files = _member_args()
+    assert err(human.prepare_res("member.add", args, handoff=True, files=files)) == "sign.convenience_readers"
+    assert err(human.prepare_res("member.add", args, files=files)) == "sign.convenience_readers"
+
+
+def test_a_mark_that_cannot_be_written_refuses_the_convenience_append(click, served, human, monkeypatch):
+    from orch.ops import readers
+
+    def boom(*_a, **_k):
+        raise OSError("no space left")
+
+    monkeypatch.setattr(readers, "mark_convenience_seen", boom)
+    _, key = human.ticket()
+    before = len(logged(served, key))
+    with pytest.raises(ClickError) as info:
+        _click_sign(click, key)
+    assert info.value.code == "custody.unsafe_mode", info.value
+    assert len(logged(served, key)) == before
+    assert not readers.seen_path(served.lab.state, served.wid).exists()
+
+
+def test_an_existing_workspace_with_convenience_history_counts_as_seen(click, served, human, monkeypatch):
+    from orch.ops import readers
+
+    _, key = human.ticket()
+    _click_sign(click, key)
+    path = readers.seen_path(served.lab.state, served.wid)
+    path.unlink()  # a workspace from before the mark: only the merged history knows
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    args, files = _member_args()
+    assert err(human.prepare_res("member.add", args, handoff=True, files=files)) == "sign.convenience_readers"
+    from orch.host.errors import HostError
+
+    service = served.service
+    with service.store.locked(), pytest.raises(HostError) as info:  # the host's own check (binding and submit)
+        convenience.refuse_reader_op(service, "member.add", history=True)
+    assert info.value.code == "sign.convenience_readers"
+    assert path.exists()  # the scan that found them set the mark

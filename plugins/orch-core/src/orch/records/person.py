@@ -1,6 +1,7 @@
 """The person's side of the records tool: its state file, its log, its per-workspace lock (H11e part 2).
 
-* ``<state>/records.json`` (0600): per workspace the validated tip per branch (``validated``) and the auto-mode
+* ``<state>/records.json`` (0600): per workspace the validated tip per branch (``validated``), the tip last scanned
+  clean of convenience events per branch (``clean``, #441) and the auto-mode
   setting (``auto``: ``{on, every_min, push, root?}``; ``root`` only for a direct-mode workspace, so the timer finds
   it). Written atomically (``mkstemp``, fsync, rename), read with ``O_NOFOLLOW``; another owner, a group or other
   readable mode or a corrupt file is ``records.unsafe_config``.
@@ -91,6 +92,19 @@ class PersonState:
     def set(self, workspace_id: str, branch: str, sha: str) -> None:
         doc = self._doc()
         doc["validated"].setdefault(workspace_id, {})[branch] = sha
+        self._save(doc)
+
+    # -- tips scanned clean of convenience events (#441): a later scan covers only the objects added since
+    def clean(self, workspace_id: str, branch: str) -> str | None:
+        clean = self._doc().get("clean")
+        v = ((clean if isinstance(clean, dict) else {}).get(workspace_id) or {}).get(branch)
+        return v if isinstance(v, str) else None
+
+    def set_clean(self, workspace_id: str, branch: str, sha: str) -> None:
+        doc = self._doc()
+        if not isinstance(doc.get("clean"), dict):
+            doc["clean"] = {}
+        doc["clean"].setdefault(workspace_id, {})[branch] = sha
         self._save(doc)
 
     # -- auto mode

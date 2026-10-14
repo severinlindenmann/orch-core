@@ -341,7 +341,8 @@ def test_push_initial_then_fast_forward_and_the_export_check_binds_s_url_ref(r):
     assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main") == first["commit"]
     assert git(r.tmp, "--git-dir", bare, "for-each-ref", "--format=%(refname)").splitlines() == ["refs/heads/main"]
     checks = [a for op, a in r.calls if op == "records.export_check"]
-    assert checks == [{"sha": first["commit"], "url": url, "ref": "refs/heads/main"}]
+    want = {"sha": first["commit"], "url": url, "ref": "refs/heads/main", "history_convenience": False}
+    assert checks == [want, want]  # before any network call (#441): the push refused for --initial was checked too
     r.w.ticket("one")
     second = r.commit()
     assert r.push()["from"] == first["commit"]
@@ -459,6 +460,108 @@ def test_a_pushurl_or_insteadof_change_after_marking_is_refused(r):
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
     checks = [a["url"] for op, a in r.calls if op == "records.export_check"]
     assert checks[-2:] == [url_b, url_b]  # the export check saw the effective destination, not the configured one
+
+
+def _forge_convenience_commit(r) -> str:
+    """A records commit whose ``events/workspace.jsonl`` carries a convenience event the store does not have (a log
+    file outside the merged view, as after an owner repair), made with plumbing only: the store is never touched."""
+    env = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1",
+           "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}  # fmt: skip
+    line = json.dumps({"v": 2, "type": "log.added", "auth": "convenience", "text": "x"}, separators=(",", ":"))
+    data = git(r.root, "show", "HEAD:events/workspace.jsonl").encode() + b"\n" + line.encode() + b"\n"
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=data, capture_output=True,
+                          env=env, check=True).stdout.decode().strip()  # fmt: skip
+    git(r.root, "read-tree", "HEAD", env=env)
+    git(r.root, "update-index", "--cacheinfo", f"100644,{blob},events/workspace.jsonl", env=env)
+    tree = git(r.root, "write-tree", env=env)
+    forged = git(r.root, "commit-tree", tree, "-p", "HEAD", "-m", records_message(r.w.wid, 9))
+    git(r.root, "update-ref", "refs/heads/main", forged)
+    return forged
+
+
+@pytest.mark.slow
+def test_a_convenience_event_in_a_pushed_log_outside_the_merged_view_is_refused(r, monkeypatch):
+    from orch.ops.readers import seen_path
+
+    r.init()
+    r.commit()
+    _forge_convenience_commit(r)
+    res = r.commit()  # the store's real files on top: HEAD's tree is clean, the history is not
+    assert res["changed"]
+    url = r.bare()
+    git(r.root, "remote", "add", "origin", url)
+
+    def no_network(*_a, **_k):
+        raise AssertionError("a network call before the export check")
+
+    monkeypatch.setattr(rtool, "remote_tip", no_network)
+    with pytest.raises(RecordsError) as e:
+        r.push(initial=True)
+    assert e.value.code == "sign.convenience_readers"
+    assert [a["history_convenience"] for op, a in r.calls if op == "records.export_check"] == [True]
+    assert seen_path(r.w.lab.state, r.w.wid).exists()  # the scan's report set the durable mark
+    assert git(r.tmp, "--git-dir", url[len("file://") :], "for-each-ref") == ""
+    assert r.tips.clean(r.w.wid, "main") is None  # a dirty tip is never remembered as clean
+    monkeypatch.undo()
+    # the owner marks this exact URL private: allowed
+    assert r.cli("remote-private", "--yes")[0] == 0
+    assert r.cli("push", "--initial")[1]["pushed"]
+
+
+@pytest.mark.slow
+def test_restore_then_push_is_refused(r):
+    """The merged history and the pushed history are clean now, but a convenience event once landed (the mark)."""
+    from orch.ops.readers import mark_convenience_seen
+
+    r.init()
+    r.commit()
+    git(r.root, "remote", "add", "origin", r.bare())
+    mark_convenience_seen(r.w.lab.state, r.w.wid, os.getuid())
+    code, out = r.cli("push", "--initial")
+    assert code == 3 and out["code"] == "sign.convenience_readers"
+
+
+def test_a_scan_that_fails_pushes_nothing(r, monkeypatch):
+    r.init()
+    r.commit()
+    url = r.bare()
+    git(r.root, "remote", "add", "origin", url)
+
+    def broken(*_a, **_k):
+        raise RecordsError("records.git_failed", "git cat-file failed")
+
+    monkeypatch.setattr(rtool, "history_has_convenience", broken)
+    with pytest.raises(RecordsError) as e:
+        r.push(initial=True)
+    assert e.value.code == "records.git_failed"
+    assert not any(op == "records.export_check" for op, _ in r.calls)
+    assert git(r.tmp, "--git-dir", url[len("file://") :], "for-each-ref") == ""
+
+
+def test_a_clean_tip_is_remembered_and_the_next_scan_covers_only_new_objects(r, monkeypatch):
+    r.init()
+    first = r.commit()
+    git(r.root, "remote", "add", "origin", r.bare())
+    assert r.push(initial=True)["pushed"]
+    assert r.tips.clean(r.w.wid, "main") == first["commit"]
+    seen: list = []
+    real = rtool.history_has_convenience
+    monkeypatch.setattr(rtool, "history_has_convenience", lambda repo, tip, since=None: seen.append(since) or real(
+        repo, tip, since))  # fmt: skip
+    r.w.ticket("one")
+    r.commit()
+    assert r.push()["pushed"]
+    assert seen == [first["commit"]]
+
+
+def test_the_scanner_reads_top_level_auth_only_and_fails_closed():
+    has = rtool._blob_has_convenience  # noqa: SLF001
+    assert has(b'{"a":1}\n{"auth":"convenience","type":"x"}\n')
+    assert has(b'{"type":"x", "auth" : "convenience"}')
+    assert not has(b'{"auth":"passphrase","text":"\\"auth\\":\\"convenience\\""}\n')  # quoted in a text
+    assert not has(b'{"auth":"passphrase","signer":{"auth":"convenience"}}\n')  # not the event's own auth
+    assert has(b'{"auth":"convenience", torn\n')  # a matching line that does not parse counts
+    assert not has(b"plain text about convenience\n")
 
 
 def test_without_convenience_push_needs_no_mark(r):
@@ -654,7 +757,7 @@ def test_finding5_a_token_bearing_url_appears_nowhere(r, url):
     # the host refuses it too, without echoing it
     for op, args in (
         ("records.remote_private", {"url": url, "on": True}),
-        ("records.export_check", {"sha": "a" * 40, "url": url, "ref": "refs/heads/main"}),
+        ("records.export_check", {"sha": "a" * 40, "url": url, "ref": "refs/heads/main", "history_convenience": False}),
     ):
         res = r.client.req(op, args)
         assert res["ok"] is False and res["error"]["code"] == "invalid.input"

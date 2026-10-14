@@ -5,15 +5,38 @@ pairing and device ops when they exist) with ``sign.convenience_readers``, in ho
 readers understand the value. Switching back to terminal signing does not help: the new reader must still parse the
 convenience events already in the history. A workspace with no convenience events yet may switch convenience off and
 then add the reader.
+
+**The durable mark (#441, orch-v2-host §0.8.6 item 9 / H12d 9.7).** ``<state>/hosts/<ws>/convenience_seen.json``
+records that a convenience event once landed in this workspace. It is written at the append choke point (the host's
+:func:`orch.host.human.finish` and direct mode's ``Human`` append) before the first convenience event is written,
+and whenever a history scan finds one. Nothing clears it: an owner repair (``abandon_tail``, then ``restore``) can
+drop convenience events from the merged history, but the record files and any records repo still hold them. Every
+reader-adding check asks the mark as well as the merged history. Reading fails closed: any doubt (an unsafe or
+unreadable file, a link in its place) counts as seen.
 """
 
 from __future__ import annotations
 
+import contextlib
+import os
+import time
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from orch.ops.errors import OrchError
 
-__all__ = ["READER_OPS", "has_convenience_events", "refuse_new_reader"]
+__all__ = [
+    "READER_OPS",
+    "SEEN_FILE",
+    "convenience_seen",
+    "events_have_convenience",
+    "has_convenience_events",
+    "mark_convenience_seen",
+    "refuse_new_reader",
+    "seen_or_history",
+    "seen_path",
+]
 
 #: ops that add a reader of the workspace's log (P3 pairing and device ops join this list when they exist); the host
 #: (:mod:`orch.host.convenience`) and the op handlers use this one set
@@ -25,8 +48,60 @@ def has_convenience_events(store: Any) -> bool:
     return any(ev.get("auth") == "convenience" for _, ev in store.merged_events())
 
 
-def refuse_new_reader(store: Any, what: str) -> None:
-    if has_convenience_events(store):
+def events_have_convenience(events: Iterable[dict[str, Any]]) -> bool:
+    return any(isinstance(ev, dict) and ev.get("auth") == "convenience" for ev in events)
+
+
+SEEN_FILE = "convenience_seen.json"
+
+
+def seen_path(state_dir: Path, workspace_id: str) -> Path:
+    return Path(state_dir) / "hosts" / workspace_id / SEEN_FILE
+
+
+def convenience_seen(state_dir: Path | None, workspace_id: str) -> bool:
+    """The durable mark is set. Fails closed: anything at the path, or any error looking, counts as seen."""
+    if state_dir is None:
+        return False
+    try:
+        os.lstat(seen_path(state_dir, workspace_id))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def mark_convenience_seen(state_dir: Path, workspace_id: str, host_uid: int, *, clock: Any = time.time) -> None:
+    """Set the mark (idempotent, never cleared). Raises on failure: an append that needs it must not go ahead."""
+    from orch.host.custody import ensure_private_dir, write_private
+
+    if convenience_seen(state_dir, workspace_id):
+        return
+    hosts = Path(state_dir) / "hosts"
+    ensure_private_dir(hosts, host_uid)
+    ensure_private_dir(hosts / workspace_id, host_uid)
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(clock())))
+    write_private(seen_path(state_dir, workspace_id), {"v": 1, "seen": True, "at": stamp})
+
+
+def seen_or_history(store: Any, state_dir: Path | None, workspace_id: str, host_uid: int | None = None) -> bool:
+    """The mark, else a scan of the merged history; a scan that finds one sets the mark (best effort: the answer is
+    already "seen", so a failed write changes nothing now)."""
+    if convenience_seen(state_dir, workspace_id):
+        return True
+    if not has_convenience_events(store):
+        return False
+    if state_dir is not None:
+        with contextlib.suppress(Exception):
+            mark_convenience_seen(state_dir, workspace_id, os.getuid() if host_uid is None else host_uid)
+    return True
+
+
+def refuse_new_reader(store: Any, what: str, state_dir: Path | None = None) -> None:
+    """``sign.convenience_readers`` when the durable mark is set or the merged history holds convenience events."""
+    wid = store.state.workspace.workspace_id if state_dir is not None else ""
+    if seen_or_history(store, state_dir, str(wid)):
         raise OrchError(
             "sign.convenience_readers",
             f"{what} would add a reader to a workspace whose history has convenience signatures",

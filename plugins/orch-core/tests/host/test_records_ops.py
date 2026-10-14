@@ -122,7 +122,7 @@ def test_records_ops_are_p_only_and_manager_only(w, wq):
     as_agent_class(w)
     for op, args in (
         ("records.snapshot", {}),
-        ("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}),
+        ("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}),
         ("records.remote_private", {"url": URL_A, "on": True}),
     ):
         assert err(w.client().req(op, args, idem=True)) == "op.not_allowed"
@@ -131,7 +131,9 @@ def test_records_ops_are_p_only_and_manager_only(w, wq):
 
 
 def test_export_check_without_convenience_is_allowed_and_audited(w):
-    data = ok(w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}))
+    data = ok(
+        w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False})
+    )
     assert data["policy"] == "none" and data["convenience"] is False
     assert data["sha"] == SHA and data["url"] == URL_A and data["ref"] == REF and data["check"].startswith("x_")
     doc = host_records.read_record(w.lab.state, w.wid, os.getuid())
@@ -141,7 +143,7 @@ def test_export_check_without_convenience_is_allowed_and_audited(w):
 def test_export_check_with_convenience_needs_the_exact_private_url(w):
     convenience.set_enabled(w.lab.state, w.wid, True, os.getuid())
     c = w.client()
-    args = {"sha": SHA, "url": URL_A, "ref": REF}
+    args = {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}
     assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
     marked = ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
     assert marked["private_remote"]["url"] == URL_A and "trusts your word" in marked["text"]
@@ -158,8 +160,44 @@ def test_export_check_with_convenience_needs_the_exact_private_url(w):
 
 def test_export_check_with_convenience_events_in_history(w, monkeypatch):
     monkeypatch.setattr(host_records, "has_convenience_events", lambda store: True)
-    e = err(w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}))
+    e = err(
+        w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False})
+    )
     assert e == "sign.convenience_readers"
+
+
+def test_export_check_refuses_on_the_pushed_history_report_and_sets_the_mark(w):
+    """#441: the tool's scan of the pushed history found a convenience event that the merged view no longer has."""
+    from orch.ops.readers import seen_path
+
+    c = w.client()
+    args = {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": True}
+    res = c.req("records.export_check", args)
+    assert err(res) == "sign.convenience_readers" and "convenience-signed events" in res["error"]["message"]
+    assert seen_path(w.lab.state, w.wid).exists()
+    # the mark refuses later pushes whatever the report says
+    assert err(c.req("records.export_check", {**args, "history_convenience": False})) == "sign.convenience_readers"
+    ok(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True))
+    data = ok(c.req("records.export_check", args))
+    assert data["policy"] == "private_remote" and data["convenience"] is True
+
+
+def test_the_mark_survives_a_restore(w, monkeypatch):
+    """An owner repair (abandon_tail, then restore) drops the convenience events from the merged history: an existing
+    workspace's history sets the mark at the first check, and the mark keeps refusing after the restore."""
+    from orch.ops.readers import seen_path
+
+    c = w.client()
+    args = {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}
+    monkeypatch.setattr(host_records, "has_convenience_events", lambda store: True)
+    assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
+    assert seen_path(w.lab.state, w.wid).exists()
+    monkeypatch.setattr(host_records, "has_convenience_events", lambda store: False)  # the restore
+    assert err(c.req("records.export_check", args)) == "sign.convenience_readers"
+
+
+def test_export_check_needs_the_history_report(w):
+    assert err(w.client().req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF})) == "invalid.input"
 
 
 def test_export_check_refuses_bad_input(w):
@@ -200,7 +238,7 @@ def test_a_maintainer_reads_and_checks_but_never_sets_the_mark(w, monkeypatch):
     monkeypatch.setattr(host_records.Viewer, "of", lambda call: dataclasses.replace(real(call), role="maintainer"))
     c = w.client()
     ok(c.req("records.snapshot", {}))
-    ok(c.req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF}))
+    ok(c.req("records.export_check", {"sha": SHA, "url": URL_A, "ref": REF, "history_convenience": False}))
     assert err(c.req("records.remote_private", {"url": URL_A, "on": True}, idem=True)) == "op.not_allowed"
     assert err(c.req("records.remote_private", {"on": False}, idem=True)) == "op.not_allowed"
     assert host_records.read_record(w.lab.state, w.wid, os.getuid())["private_remote"] is None
@@ -218,7 +256,7 @@ def test_urls_that_can_hide_a_secret_are_refused_and_never_stored(w, url):
     c = w.client()
     for res in (
         c.req("records.remote_private", {"url": url, "on": True}, idem=True),
-        c.req("records.export_check", {"sha": SHA, "url": url, "ref": REF}),
+        c.req("records.export_check", {"sha": SHA, "url": url, "ref": REF, "history_convenience": False}),
     ):
         assert err(res) == "invalid.input" and "SECRET123" not in json.dumps(res)
     path = host_records.record_path(w.lab.state, w.wid)

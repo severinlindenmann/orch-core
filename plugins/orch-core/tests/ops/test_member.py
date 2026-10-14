@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 
 from orch import crypto
 from tests.identity.helpers import Person
+from tests.store.helpers import WS
 
 
 def invite(ws, tmp, name="newbie"):
@@ -114,3 +116,44 @@ def test_member_management_needs_the_operate_scope_of_the_device(hws, me, tmp_pa
     r = me("member", "add", "--name", "N", "--pk", pk, "--cert", cert, "--json")
     assert r.code == 5 and "device.scope" in r.doc["error"]["message"], r.out
     assert len(roster(hws)) == n
+
+
+# --- the durable convenience_seen mark (#441) -------------------------------------------------------------------------
+
+
+def test_member_add_is_refused_while_the_convenience_seen_mark_is_set(hws, me, tmp_path):
+    """A restore can drop every convenience event from the merged history; the mark still refuses a new reader."""
+    from orch.ops.readers import mark_convenience_seen
+
+    mark_convenience_seen(hws.host_state, WS, os.getuid())
+    _p, pk, cert = invite(hws, tmp_path)
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert r.err_code == "sign.convenience_readers"
+    assert len(roster(hws)) == n
+
+
+def test_the_mark_fails_closed_and_is_never_cleared(tmp_path):
+    from orch.ops.readers import convenience_seen, mark_convenience_seen, seen_path
+
+    wid = "a" * 32
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    assert not convenience_seen(state, wid)
+    mark_convenience_seen(state, wid, os.getuid())
+    assert convenience_seen(state, wid) and json.loads(seen_path(state, wid).read_text())["seen"] is True
+    mark_convenience_seen(state, wid, os.getuid())  # idempotent
+    # anything at the path counts as seen, a corrupt file or a link included
+    seen_path(state, wid).write_text("{not json")
+    assert convenience_seen(state, wid)
+    seen_path(state, wid).unlink()
+    seen_path(state, wid).symlink_to(tmp_path / "nowhere")
+    assert convenience_seen(state, wid)
+    # a directory that cannot be looked into: the doubt is "seen"
+    other = "b" * 32
+    (state / "hosts" / other).mkdir(mode=0o700)
+    os.chmod(state / "hosts" / other, 0)
+    try:
+        assert convenience_seen(state, other)
+    finally:
+        os.chmod(state / "hosts" / other, 0o700)

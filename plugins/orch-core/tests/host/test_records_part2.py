@@ -544,7 +544,10 @@ def test_the_log_tightens_an_existing_file(tmp_path):
 
 def test_direct_mode_audit_names_who_acted(direct):
     ws, link, wid = direct
-    link("records.export_check", {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main"})
+    link(
+        "records.export_check",
+        {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main", "history_convenience": False},
+    )
     from orch.host import records as host_records
 
     doc = host_records.read_record(ws.host_state, wid, os.getuid())

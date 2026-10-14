@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -48,6 +49,7 @@ from .errors import HostError
 from .journal import Batch, Cursors, Journal
 from .outcomes import OutcomeStore, StoreReconciler
 from .registry import Entry
+from .relayid import RelayIdentity
 from .requests import RequestStore
 from .transport import Peer, Session
 
@@ -147,6 +149,13 @@ class WorkspaceService:
         self.blobs = BlobStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         if self.requests is not None:  # a request's file bytes are charged until it goes terminal (stripped)
             self.requests.on_terminal = self.blobs.release_request
+        #: the relay worker (§11A.4, R5's ``RelayWorker``: ``stop()``), ``None`` while none runs
+        self.relay: Any = None
+        #: R5's start hook ``fn(service)``: it starts and sets :attr:`relay` (under :attr:`relay_lock`, after
+        #: :func:`orch.host.relaylink.may_start`); ``None``: no relay client in this build
+        self.relay_starter: Callable[[WorkspaceService], None] | None = None
+        #: serializes the relay worker's start against ``orch host relay stop``
+        self.relay_lock = threading.Lock()
 
     @property
     def workspace_id(self) -> str:
@@ -442,7 +451,43 @@ class WorkspaceService:
         self.sync_git()
         return self.capabilities().with_principal(principal)
 
+    def relay_stop(self) -> str:
+        """``orch host relay stop`` (§11A.4): persist the stop (it outlives a restart), then stop a running worker.
+        Returns ``"stopped"`` or ``"none"`` (no worker was running)."""
+        from .relaylink import mark_stopped
+
+        with self.relay_lock:
+            mark_stopped(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
+            worker, self.relay = self.relay, None
+        if worker is None:
+            return "none"
+        worker.stop()
+        return "stopped"
+
+    def relay_start(self) -> str:
+        """``orch host relay start``: clear the stop, and start the worker through R5's hook when the workspace is
+        linked and served. Returns ``"started"`` or ``"none"``."""
+        from .relaylink import clear_stopped, may_start
+
+        with self.relay_lock:
+            clear_stopped(self.state_dir, self.workspace_id, self.host_uid)
+            if (
+                self.relay is not None
+                or self.relay_starter is None
+                or self.closing
+                or self.state == "unavailable"
+                or not may_start(self.state_dir, self.workspace_id, self.host_uid)
+            ):
+                return "none"
+            self.relay_starter(self)
+            return "started"
+
     def close(self) -> None:
+        with self.relay_lock:  # the relay worker stops first (§11A.7 shutdown); its queued jobs run before shut
+            worker, self.relay = self.relay, None
+        if worker is not None:
+            worker.stop()
+
         def shut() -> None:
             rec = getattr(self, "session_records", None)
             if rec is not None:
@@ -481,16 +526,56 @@ class Call:
     kind: OpKind | None = None
     #: the transport's handle of this request (``sub.open``: no ``evt`` of the subscription before its ``res``)
     request: frames.Request | None = None
+    #: the verified identity of a bridge request (column R, §11A.4), else ``None``; set only by the relay entry
+    relay: RelayIdentity | None = None
 
     def authorize(self) -> None:
-        """Recompute the column from the refreshed store and refuse outside it (§0.6 steps 5 and 6, F8)."""
+        """Recompute the column from the refreshed store and refuse outside it (§0.6 steps 5 and 6, F8).
+
+        A relay call (``relay`` set, H12a) recomputes through the relay entry's ``relay_columns`` (passed as
+        :attr:`columns`) and keeps ``principal = "r:<device_id>"``: it never derives a principal from a UID. Every
+        inconsistency refuses (``op.not_allowed``): a relay identity on a socket peer or the reverse, no recompute, a
+        socket column or another viewer than the device's person, an op outside R's closed list."""
+        op = self.frame.get("op") if isinstance(self.frame, dict) else None
+        relay_peer = self.peer.kind == "relay"
+        if self.relay is not None or relay_peer:
+            self._authorize_relay(op)
+            return
         if self.columns is None:
             return
         self.column, self.viewer, self.verified = self.columns()
+        if self.column.name == "R":  # only a relay identity is ever column R
+            raise HostError("op.not_allowed", f"{op} is not allowed here")
         self.principal = principal(self.peer.uid, self.verified)
-        code = refusal(self.column, self.kind) if self.kind is not None else None
+        code = refusal(self.column, self.kind, op) if self.kind is not None else None
         if code is not None:
-            raise HostError(code, f"{self.frame['op']} is not allowed here")
+            raise HostError(code, f"{op} is not allowed here")
+
+    def _authorize_relay(self, op: Any) -> None:
+        identity = self.relay
+
+        def refuse() -> HostError:
+            return HostError("op.not_allowed", f"{op} is not allowed here")
+
+        if (
+            identity is None
+            or self.peer.kind != "relay"
+            or self.peer.uid != -1
+            or self.peer.person != identity.person_id
+            or self.columns is None
+            or self.kind is None
+        ):
+            raise refuse()
+        column, viewer, _verified = self.columns()
+        if column.name == "R" and viewer != identity.person_id:
+            raise refuse()
+        if column.name != "R" and column.error is None:  # a socket column never serves a relay request
+            raise refuse()
+        self.column, self.viewer, self.verified = column, (viewer if column.name == "R" else None), Verified("absent")
+        self.principal = identity.principal
+        code = refusal(self.column, self.kind, op)
+        if code is not None:
+            raise HostError(code, f"{op} is not allowed here")
 
 
 class OpBackend(Protocol):
@@ -513,7 +598,10 @@ def principal_uid(value: str) -> int | None:
 
 
 def principal(uid: int, verified: Verified) -> str:
-    """§0.5, F4: ``g:<grant id>@<uid>`` only for a verified grant; a grant id alone never makes a principal."""
+    """§0.5, F4: ``g:<grant id>@<uid>`` only for a verified grant; a grant id alone never makes a principal. Raises
+    for a relay peer (``uid = -1``, §11A.4): its principal is ``r:<device_id>``, from its identity alone."""
+    if type(uid) is not int or uid < 0:
+        raise ValueError("a relay peer has no UID principal")
     return f"g:{verified.grant.id}@{uid}" if verified.grant is not None else f"uid:{uid}"
 
 

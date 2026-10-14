@@ -42,7 +42,8 @@ _ARTIFACT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")  # the F1 §6 n
 @dataclass(frozen=True)
 class Viewer:
     """The viewer of one read (§0.5): P the mapped person, G the grant's person, N ``no-person`` (``person`` None),
-    which sees ``workspace`` tickets only. Every row, count, item and subscription item is filtered with
+    which sees ``workspace`` tickets only. R (a relay device, §11A.4) reads exactly as P: its device's person.
+    Every row, count, item and subscription item is filtered with
     :meth:`sees` **before** it is counted or returned, and a ref the viewer may not see is ``not_found`` exactly as a
     ref that does not exist."""
 
@@ -57,14 +58,14 @@ class Viewer:
     @classmethod
     def of(cls, call: Call) -> Viewer:
         auth = call.service.auth
-        owner = call.column.name == "P" and auth is not None and auth.owner(call.viewer)
+        owner = call.column.name in {"P", "R"} and auth is not None and auth.owner(call.viewer)
         role = auth.roles.get(call.viewer) if auth is not None and call.viewer is not None else None
         return cls(call.column.name, call.viewer, owner, role)
 
     @property
     def manager(self) -> bool:
         """A person-class owner or maintainer (column P with that role; a G caller acting for one is not)."""
-        return self.column == "P" and self.role in ("owner", "maintainer")
+        return self.column in {"P", "R"} and self.role in ("owner", "maintainer")
 
     def sees(self, view: Any) -> bool:
         return visible_to(self.person, view)  # the same test as the registry reads' Call.sees
@@ -92,7 +93,7 @@ class Viewer:
             if requested is not None and requested != self.person:
                 raise HostError("op.not_allowed", "a grant reads only its own person's needs")
             return self.person
-        if self.column == "P":
+        if self.column in {"P", "R"}:
             if requested is None or requested == self.person:
                 return self.person
             if self.owner:
@@ -105,9 +106,9 @@ class Viewer:
     def session_visible(self, entry_person: str | None) -> bool:
         """``session.list`` and ``grant.list``: an owner (P) sees every entry, any other P its own, G its own
         person's; N is outside the matrix (``op.not_allowed``, the gate's)."""
-        if self.column == "P" and self.owner:
+        if self.column in {"P", "R"} and self.owner:
             return True
-        return self.column in {"P", "G"} and entry_person is not None and entry_person == self.person
+        return self.column in {"P", "G", "R"} and entry_person is not None and entry_person == self.person
 
     def claims(self, store: Any, keys: Iterable[str]) -> list[str]:
         """A session's claims with every ticket the viewer may not see left out."""

@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from orch.host.relayid import RelayIdentity
 
 from orch.host import columns
 from orch.host.auth import Verified
 from orch.host.columns import Column, refusal, resolve, resolve_relay
 from orch.host.errors import HostError
 from orch.host.peer import Peer
+from orch.host.relayid import RelayIdentity
 
 UID = os.getuid()
 WS = "a" * 32
@@ -582,8 +582,10 @@ def _state(tmp_path: Path) -> Path:
     return state
 
 
-def _link(state: Path, ws: str) -> None:
-    (_relay_dir(state, ws) / "link.json").write_text(json.dumps({"v": 1, "state": "linked"}))
+def _link(state: Path, ws: str, link_state: str = "linked") -> None:
+    from orch.host.custody import write_private
+
+    write_private(_relay_dir(state, ws) / "link.json", {"v": 1, "state": link_state})
 
 
 def test_the_ninth_relay_link_is_refused_with_host_limit(tmp_path):
@@ -612,8 +614,7 @@ def test_a_linking_workspace_and_an_unlinked_one(tmp_path):
 
     state = _state(tmp_path)
     for i in range(8):
-        d = _relay_dir(state, f"{i:032x}")
-        (d / "link.json").write_text(json.dumps({"v": 1, "state": "linking"}))  # a reservation counts
+        _link(state, f"{i:032x}", "linking")  # a reservation counts
     with pytest.raises(HostError), relaylink.link_reservation(LinkService(state, "e" * 32, ConvStore())):
         pass
     d = _relay_dir(state, f"{0:032x}")

@@ -9,6 +9,7 @@ import pytest
 
 from orch.host import relaylink
 from orch.host.control_client import new_idem
+from orch.host.custody import write_private
 from tests.host.lifecycle_helpers import UID, Lab
 
 
@@ -62,7 +63,7 @@ def test_relay_stop_stops_the_live_worker_and_persists_the_stop(lab):
         assert not relaylink.is_stopped(lab.state, wid, UID)
         assert starts == []  # not linked: nothing to start
         relaylink.link_path(lab.state, wid).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        relaylink.link_path(lab.state, wid).write_text("{}")
+        write_private(relaylink.link_path(lab.state, wid), {"v": 1, "state": "linked"})
         ok(c.call("host.relay_start", {"workspace_id": wid}))
         assert starts == [wid]
 

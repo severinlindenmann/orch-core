@@ -93,6 +93,13 @@ def _parser() -> argparse.ArgumentParser:
     conv.add_argument("switch", choices=("on", "off", "show"))
     conv.add_argument("--workspace", required=False, help="workspace id or prefix (on/off)")
     conv.add_argument("--state", type=Path)
+    relay = sub.add_parser(
+        "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
+    )
+    relay.add_argument("action", choices=("stop", "start"))
+    relay.add_argument("--workspace", required=True, help="workspace id or prefix")
+    relay.add_argument("--state", type=Path)
+    relay.add_argument("--run", type=Path)
     out = sub.add_parser("outcome")
     out.add_argument("idem")
     out.add_argument("--state", type=Path)
@@ -169,6 +176,8 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return 0
         if args.cmd == "convenience":
             return _convenience(args, env, out)
+        if args.cmd == "relay":
+            return _relay(args, env, out)
         if args.cmd == "enable":
             doc = enable(_state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev)
             out.write(json.dumps(doc, sort_keys=True) + "\n")
@@ -565,3 +574,55 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         )
         out.write("Phone, relay link or other member later? A reader-version handshake is planned for phase 2.\n")
     return 0
+
+
+def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
+    """``orch host relay stop|start --workspace W`` (orch-v2-host §11A.4, H12a). ``stop`` writes the persistent stop
+    marker itself first (it works with the host down: the operator procedure after a state restore is to keep the
+    relay worker stopped until the host clock is past the backup's time + 600 s), then asks a running host to stop
+    the live worker. ``start`` clears it (through the host when it runs); a person's decision, never an agent's."""
+    from orch.custody.cli import write_error
+
+    from . import frames, relaylink
+    from .control_client import ControlClient
+    from .custody import read_json
+    from .registry import registry_path
+
+    state = _state(args.state, env)
+    uid = os.getuid()
+    if args.action == "start" and env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", "an agent never restarts the relay worker")
+    try:
+        reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    except HostError as exc:
+        return write_error(out, False, exc.code, exc.message)
+    match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
+    if len(match) != 1:
+        return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
+    wid = match[0]["workspace_id"]
+    try:
+        if args.action == "stop":
+            relaylink.mark_stopped(state, wid, uid)
+    except HostError as exc:
+        return write_error(out, False, exc.code, exc.message, hint=exc.hint)
+    op = "host.relay_stop" if args.action == "stop" else "host.relay_start"
+    try:
+        with ControlClient(_control_path(args.run, state, env)) as client:
+            res = client.call(op, {"workspace_id": wid})
+    except (OSError, ConnectionError, ValueError, frames.FrameError, HostError):  # ValueError: an unsafe socket path
+        res = None
+    if res is None:  # no host: the marker alone decides
+        try:
+            if args.action == "start":
+                relaylink.clear_stopped(state, wid, uid)
+        except HostError as exc:
+            return write_error(out, False, exc.code, exc.message, hint=exc.hint)
+        data = {"workspace_id": wid, "stopped": args.action == "stop", "host": "not running", "worker": "none"}
+        out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+        return 0
+    if res.get("ok"):
+        data = {**res["result"]["data"], "host": "running"}
+        out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+        return 0
+    out.write(json.dumps(res, sort_keys=True) + "\n")
+    return int(res.get("exit", 1))

@@ -15,9 +15,10 @@ from orch.ops.errors import OrchError
 
 __all__ = ["READER_OPS", "has_convenience_events", "refuse_new_reader"]
 
-#: ops that add a reader of the workspace's log (P3 pairing and device ops join this list when they exist); the host
-#: (:mod:`orch.host.convenience`) and the op handlers use this one set
-READER_OPS = frozenset({"member.add"})
+#: ops that add a reader of the workspace's log; the host (:mod:`orch.host.convenience`) and the op handlers use this
+#: one set. ``relay.link`` (a relay link) and ``relay.pair`` (the host's ``approved`` answer to a pairing, and any
+#: member list that adds a device) are host ops of the relay bridge (orch-v2-host §11A.6)
+READER_OPS = frozenset({"member.add", "relay.link", "relay.pair"})
 
 
 def has_convenience_events(store: Any) -> bool:

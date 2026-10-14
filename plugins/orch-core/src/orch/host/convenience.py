@@ -90,8 +90,20 @@ def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> 
 
 
 def _relay_paired(state_dir: Path, workspace_id: str) -> bool:
-    """P3 keeps the relay membership state in ``hosts/<ws>/membership/`` (§11); its presence means a pairing."""
-    return (Path(state_dir) / "hosts" / workspace_id / "membership").exists()
+    """The reader reservation (orch-v2-host §11A.6): true when ``hosts/<ws>/relay/link.json`` (a link, ``linking`` or
+    ``linked``) or any ``relay/unlinked-*.json`` (a former link: the reservation is permanent) exists, or the R6
+    membership state ``hosts/<ws>/membership/``. A dangling symlink counts, and so does a ``relay/`` directory that
+    cannot be listed (fail closed)."""
+    base = Path(state_dir) / "hosts" / workspace_id
+    if os.path.lexists(base / "membership") or os.path.lexists(base / "relay" / "link.json"):
+        return True
+    try:
+        names = os.listdir(base / "relay")
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True  # cannot tell: a reader may exist
+    return any(n.startswith("unlinked-") and n.endswith(".json") for n in names)
 
 
 def _model_knows() -> bool:

@@ -82,6 +82,8 @@ LOG = logging.getLogger(__name__)
 CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap"})
 #: ops that are log writes though no registry operation carries them
 _HUMAN_WRITES = frozenset({"human.submit"})
+#: device-signed person events through the relay entry (column R, §11A.4): a log write with an idem, no dry run
+_RELAY_WRITES = frozenset({"relay.submit"})
 #: host-side writes with an idem and an outcome record but no log event (H11e: the private-remote mark); a record
 #: with nothing planned is removed by reconciliation, and the op is idempotent, so a retry after a crash runs again
 HOST_WRITES = frozenset({"records.remote_private", "records.note"})
@@ -97,10 +99,12 @@ _READS = frozenset(
         "activity.list", "workspace.settings", "ticket.text",
         "records.snapshot", "records.export_check", "records.status",
         "run.list", "run.sub",
+        "host.relay_stop", "host.relay_start",
     }
 )  # fmt: skip
-#: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a)
-NO_PARTIAL = frozenset({"human.submit"})
+#: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a; ``relay.submit`` through the
+#: ``relay_fields`` hook, §11A.4)
+NO_PARTIAL = frozenset({"human.submit", "relay.submit"})
 _HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -111,7 +115,7 @@ def classify(op: str) -> Category:
     """The write category of ``op`` (§0.7). An op nobody serves is ``unknown_command``."""
     if op in CONTROL_WRITES:
         return "control"
-    if op in _HUMAN_WRITES or op in HOST_WRITES:
+    if op in _HUMAN_WRITES or op in _RELAY_WRITES or op in HOST_WRITES:
         return "log"
     from .review import HOST_PERSON_OPS
 
@@ -134,7 +138,9 @@ def classify(op: str) -> Category:
 
 def dry_run_supported(op: str) -> bool:
     """Only the log-write registry ops and ``human.prepare`` take ``opts.dry_run`` (§0.7)."""
-    return op == "human.prepare" or (op not in _HUMAN_WRITES and op not in HOST_WRITES and classify(op) == "log")
+    if op in _HUMAN_WRITES or op in _RELAY_WRITES or op in HOST_WRITES:
+        return False
+    return op == "human.prepare" or classify(op) == "log"
 
 
 def request_idem(op: str, opts: Mapping[str, Any] | None) -> str | None:
@@ -158,7 +164,11 @@ def request_idem(op: str, opts: Mapping[str, Any] | None) -> str | None:
 
 def principal_of(uid: int, column: str, grant: str | None = None) -> str:
     """``g:<grant id>@<uid>`` for the verified grant column (``grant`` is the verified ``auth.grant``), else
-    ``uid:<n>`` (F4): a grant id never makes a principal by itself."""
+    ``uid:<n>`` (F4): a grant id never makes a principal by itself. Raises for column R (its principal is
+    ``r:<device_id>``, from the relay identity alone, §11A.4), for any column it does not know and for a UID that is
+    not a kernel UID."""
+    if column not in {"P", "G", "N", "W", "C"} or type(uid) is not int or uid < 0:
+        raise ValueError(f"no UID principal for column {column!r}")
     if column == "G":
         from orch.identity import parse_grant
 
@@ -286,6 +296,10 @@ class OutcomeStore(IntentStore):
         self.roll_forward: Callable[[dict[str, Any]], dict[str, Any] | str] | None = None
         #: the same for a pending ``human.prepare`` record that names its request (``request_id``)
         self.prepared: Callable[[dict[str, Any]], dict[str, Any] | str] | None = None
+        #: the same for a pending ``relay.submit`` record some of whose events landed (§11A.4): registered at open by
+        #: the relay entry (R5, ``relay/submit.py``). Unset, such a record stays ``pending`` (never ``partial``, never
+        #: handled by the human roll-forward, never run again)
+        self.relay_fields: Callable[[dict[str, Any]], dict[str, Any] | str] | None = None
         #: key -> (principal, step, done_at); every mutation holds ``_lock``
         self._idx: dict[str, _Entry] = {}
         self._counts: dict[str, int] = {}
@@ -647,8 +661,9 @@ class OutcomeStore(IntentStore):
                 error = HostError("internal", f"{record['op']} landed but its result could not be rebuilt")
                 return {"step": "failed", "error": error.error(), "exit": error.exit}
             return {"step": "committed", "result": result, "exit": 0}
-        if landed and record["op"] in NO_PARTIAL:  # human.submit: rolled forward (H5a), never partial
-            return self.roll_forward(record) if self.roll_forward is not None else "keep"
+        if landed and record["op"] in NO_PARTIAL:  # rolled forward (H5a, §11A.4), never partial
+            hook = self.relay_fields if record["op"] in _RELAY_WRITES else self.roll_forward
+            return hook(record) if hook is not None else "keep"
         if landed:
             error = HostError(
                 "invalid.input", f"an earlier attempt of this call was interrupted after {len(landed)} event(s)"

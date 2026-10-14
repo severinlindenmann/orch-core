@@ -317,10 +317,11 @@ class Session:
            directory's. Either failing: alarm and stop. A copied or restored directory (``cp -r``, rsync, a backup
            restore that recreates the directory) therefore does not renew into the original's live lease.
 
-        Residual (not detectable locally, 11A.3/11A.5): a block-level clone (VM image, ``asr``/``dd``) keeps the
-        inode and every byte, and a copy onto another volume can land on the same inode by chance. Such a clone
-        passes 1 to 3 and renews the original's live ``gen``; the relay's holder ``gen`` is the only backstop. Never
-        run a clone while the original is live.
+        Residual (not detectable locally, 11A.3/11A.5): a block-level clone (VM image, ``asr``/``dd``) keeps the inode
+        and every byte; so does a writable snapshot or clone attached on the same machine (btrfs/ZFS snapshot,
+        ``asr``/``dd`` clone as a second volume), now that ``st_dev`` is not compared (round 5 P1); and a copy onto
+        another volume can land on the same inode by chance. Such a clone passes 1 to 3 and renews the original's live
+        ``gen``; the relay's holder ``gen`` is the only backstop. Never run a clone while the original is live.
 
         Then:
 

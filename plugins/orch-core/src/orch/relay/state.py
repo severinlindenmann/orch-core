@@ -104,7 +104,9 @@ class StateDir:
     records its pid and refuses every operation in a forked child (R2). An ``after_in_child`` fork hook also closes
     the child's copy of the fd (a plain ``close``, never ``LOCK_UN``: the flock belongs to the open file description
     the parent shares, so an unlock would release the parent's lock) and marks the instance unusable, so a forked
-    child that lives on never keeps the directory locked after the parent closes it (review round 4, N3)."""
+    child that lives on does not keep the directory locked after the parent closes it (review round 4, N3; narrow
+    race: a fork by another thread inside ``close()`` or ``__init__`` can leave the child holding the lock until it
+    exits, availability only, round 5 P2)."""
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
@@ -394,9 +396,11 @@ class FileHolderStore:
     only logged. A move across filesystems, or a tool that recreates the directory, needs the operator path
     (:func:`regenerate_instance_id`).
 
-    Not detected (residuals, 11A.3): a block-level clone (VM image, ``asr``/``dd``) keeps the inode and every byte,
-    and a copy onto another volume can land on the same inode number by chance. No local check can prove a state
-    directory is unique; the relay's holder ``gen`` is the backstop."""
+    Not detected (residuals, 11A.3): a block-level clone (VM image, ``asr``/``dd``) keeps the inode and every byte, a
+    writable snapshot or clone attached on the SAME machine (btrfs/ZFS snapshot, an ``asr``/``dd`` clone as a second
+    volume) keeps the inode and gets a new ``st_dev``, so since the device check was dropped it is no longer caught
+    (review round 5 P1), and a copy onto another volume can land on the same inode number by chance. No local check
+    can prove a state directory is unique; the relay's holder ``gen`` is the backstop."""
 
     FILE = "holder.json"
     INSTANCE = "instance.json"

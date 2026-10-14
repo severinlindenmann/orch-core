@@ -97,7 +97,8 @@ class WorkspaceLive:
         self.manager.invalidate(self.ws)
         self.link = self.manager.gateway.enabled(self.ws)
         # Runs (D-P2-37): subscribe first; the page lists (`GET .../runs`, a full run.list) after `ready`/`resync`.
-        self.run_sub = self.link.call("run.sub")["sub"] if self.link.supports("run.sub", "run/1") else None
+        served = self.link.supports("run.sub", "run/1") is True
+        self.run_sub = self.link.call("run.sub")["sub"] if served else None
         # Use the earlier cursor so changes between the two snapshots are replayed.
         snapshot = self.link.call("ticket.query", {"limit": 200})
         # Remember which tickets this person can see, so a host `gone` is only forwarded for those.

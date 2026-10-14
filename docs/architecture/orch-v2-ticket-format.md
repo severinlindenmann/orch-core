@@ -1040,8 +1040,11 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   check, the target checkpoint's included: a bundle line over the event line cap (524,288 bytes) is refused before its
   `revocations` are read, and entries are taken only from lines within it. Cap held out-of-band evidence per person
   (members included), per device id and in total (orch-core's host store: 64 forwarded records per person, 8 per
-  device, 4096 in total); a new record over the per-person cap is dropped, except the pinned card owner's, which is
-  exempt from the per-person cap so that a genuine owner revocation is never dropped. Membership (a current or past
+  device, 1024 in total); a new record over the per-person cap is dropped, except the pinned card owner's, which is
+  exempt from the per-person cap so that a genuine owner revocation is never dropped. Absolute bounds apply on top
+  (H12b review, Opus F2): at most 256 forwarded records per person, the owner included, at most 1536 in total
+  (members' records kept over the cap included), and at most 6 KiB per record (a relay item above 4 KiB is dropped
+  before it is verified), so the host's evidence file stays far below its 16 MiB read limit. Membership (a current or past
   workspace member) is evaluated at eviction time from the current roster, never frozen when the evidence was stored.
   A new non-member record never evicts anything: it is dropped when a cap is full. A member's record evicts the oldest
   non-member record, and is kept over the cap when there is none (it is bounded per person). Chain-learned evidence is

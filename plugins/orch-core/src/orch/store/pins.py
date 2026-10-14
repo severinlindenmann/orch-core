@@ -28,7 +28,9 @@ from .errors import StoreError
 from .fsio import loads, read_or_none, write_atomic
 
 __all__ = [
+    "MAX_FORWARDED_HARD",
     "MAX_FORWARDED_PER_DEVICE",
+    "MAX_FORWARDED_PER_PERSON_HARD",
     "MAX_FORWARDED_PER_PERSON",
     "MAX_FORWARDED_TOTAL",
     "HostPins",
@@ -38,7 +40,12 @@ __all__ = [
 
 MAX_FORWARDED_PER_DEVICE = 8  # forwarded (not chain) evidence records per device id
 MAX_FORWARDED_PER_PERSON = 64  # forwarded evidence records per revoking person, members included
-MAX_FORWARDED_TOTAL = 4096  # forwarded evidence records in total
+MAX_FORWARDED_TOTAL = 1024  # forwarded evidence records in total (the eviction cap; H12b review lowered it from 4096)
+# Absolute bounds (H12b review, Opus F2): nobody, the owner and members included, holds more forwarded records than
+# these, so the file stays far below the 16 MiB read limit (MAX_FORWARDED_HARD x the 4 KiB item cap + framing).
+MAX_FORWARDED_HARD = 1536  # forwarded records in total, members' records kept over MAX_FORWARDED_TOTAL included
+MAX_FORWARDED_PER_PERSON_HARD = 256  # forwarded records per person, the pinned owner included
+MAX_FORWARDED_RECORD_BYTES = 6144  # one forwarded record as stored (cj); a larger one is dropped
 _STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}  # compromised > lost = retired (§5.10)
 
 
@@ -184,6 +191,8 @@ class HostPins:
             if old is not None and not stronger:
                 return True
             new["chain"] = False
+            if len(canon.cj_checked(new)) > MAX_FORWARDED_RECORD_BYTES:
+                return False  # forwarded evidence is bounded per record (H12b review, Opus F2)
             if old is None:
                 if is_member is None:
                     raise TypeError("forwarded evidence needs is_member (the current roster)")
@@ -210,6 +219,8 @@ class HostPins:
     ) -> list[dict[str, Any]] | None:
         """``records`` with room for one more forwarded record of ``(device, person)``, or None to drop it."""
         forwarded = [r for r in records if is_forwarded(r)]
+        if sum(pair(r)[1] == person for r in forwarded) >= MAX_FORWARDED_PER_PERSON_HARD:
+            return None  # the absolute per-person bound: the owner too
         if person != owner and sum(pair(r)[1] == person for r in forwarded) >= MAX_FORWARDED_PER_PERSON:
             return None  # the per-person cap; the pinned owner is exempt
         member = is_member(person)
@@ -226,6 +237,8 @@ class HostPins:
                 gone = min(victims, key=lambda r: r["at"])
                 records = [r for r in records if r is not gone]
                 forwarded = [r for r in forwarded if r is not gone]
+        if len(forwarded) >= MAX_FORWARDED_HARD:
+            return None  # the absolute total bound: a member's record is kept over the cap only up to it
         return records
 
     def held(self) -> dict[str, Any] | None:

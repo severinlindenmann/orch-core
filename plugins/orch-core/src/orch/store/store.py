@@ -81,6 +81,11 @@ _TICKET_HOST_EVENTS = frozenset({"edit.external", "projection.repaired"})
 _ZERO_ACC = "sha256:" + "0" * 64
 _NOPLAN = object()  # no outbox plan: the append writes its workspace checkpoint by the P1 rule (every 50)
 _log = logging.getLogger("orch.store")
+MAX_FORWARDED_ITEM_BYTES = 4096  # a forwarded revocation item (cj) above this is dropped (H12b review, Opus F2)
+_MAX_LABEL_SEALED = 1024  # b64u characters of a forwarded certificate's sealed label
+_ITEM_KEYS = frozenset(
+    {"device_id", "person_id", "reason", "revocation", "device_cert", "pk_pub", "provenance", "chain_reason"}
+)
 
 
 class _Cut(NamedTuple):
@@ -3075,8 +3080,16 @@ def _verify_forwarded(item: object) -> tuple[str, str, str, dict[str, Any], dict
     from orch.identity.errors import Refused
 
     try:
-        if not isinstance(item, dict):
-            raise ValueError("not an object")
+        if not isinstance(item, dict) or set(item) != _ITEM_KEYS:
+            raise ValueError("not an item of the stated shape")
+        if len(canon.cj_checked(item)) > MAX_FORWARDED_ITEM_BYTES:
+            raise ValueError("the item is above the size cap")
+        if not isinstance(item["provenance"], dict) or set(item["provenance"]) != {"cursor", "digest"}:
+            raise ValueError("provenance shape")
+        schema.validate_def("deviceCert", item["device_cert"])
+        schema.validate_def("revocation", item["revocation"])
+        if len(item["device_cert"]["o"]["label_sealed"]) > _MAX_LABEL_SEALED:
+            raise ValueError("label_sealed above its cap")
         pk_text = item["pk_pub"]
         pk = crypto.validate_public_key(crypto.unb64u(pk_text, crypto.PUB_LEN))
         person_hex = crypto.person_id(pk).hex()
@@ -3093,7 +3106,7 @@ def _verify_forwarded(item: object) -> tuple[str, str, str, dict[str, Any], dict
         if not isinstance(provenance, dict) or provenance.get("digest") != canon.artifact_digest(canon.cj_checked(rev)):
             raise ValueError("provenance digest")
     except (Refused, ValueError, KeyError, TypeError, AttributeError, crypto.EncodingError, crypto.CryptoError,
-            canon.HashError) as e:  # fmt: skip
+            canon.HashError, schema.SchemaError) as e:  # fmt: skip
         _log.info("forwarded revocation dropped: %s", type(e).__name__)
         return None
     return "d_" + device_hex, "p_" + person_hex, reason, rev, cert, pk_text

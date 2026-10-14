@@ -66,6 +66,14 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "launch.cwd_changed": (3, False),
     "harness.not_found": (3, False),
     "run.spawn_failed": (1, False),
+    # H11b, terminals (§12.3, §12.6)
+    "harness.shell_unsupported": (3, False),
+    "launch.invalid": (5, False),
+    "launch.changed": (5, False),
+    "term.not_attachable": (3, False),
+    "run.limit": (9, True),
+    "attach.limit": (9, True),
+    "term.writer_busy": (3, False),
     # H11d, worktrees (§12.7)
     "worktree.none": (3, False),
     "worktree.exists": (3, False),

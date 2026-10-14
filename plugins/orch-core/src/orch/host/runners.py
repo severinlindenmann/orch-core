@@ -74,9 +74,9 @@ __all__ = [
 
 LOG = logging.getLogger(__name__)
 
-RUNNER_OPS: dict[str, int] = {"runner.hello": 1, "runner.report": 1, "runner.exit": 1}
+RUNNER_OPS: dict[str, int] = {"runner.hello": 1, "runner.report": 1, "runner.exit": 1, "runner.term": 1}
 RUNNER_CAPS = ["runner/1"]
-RUN_OPS: dict[str, int] = {"run.list": 1, "run.sub": 1}
+RUN_OPS: dict[str, int] = {"run.list": 1, "run.sub": 1, "run.stop": 1}
 RUN_CAPS = ["run/1"]
 COMMAND_TIMEOUT = 15.0
 ATTACH_SECONDS = 30
@@ -84,11 +84,23 @@ LIVE = ("starting", "running")
 RUN_ID = r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
 #: codes a runner may report for a command; anything else becomes ``run.spawn_failed`` / ``internal``
 RUNNER_CODES = frozenset(
-    {"launch.cwd_changed", "harness.not_found", "run.spawn_failed", "invalid.input", "not_found", "term.busy",
-     # H11d: worktree git (orch.runner.wtgit)
-     "worktree.branch_in_use", "worktree.exists", "worktree.dirty", "worktree.git_failed",
-     "observe.unavailable"}  # the orch.gitsafe gate: the repo's own config could make git run a program
+    {
+        "launch.cwd_changed", "harness.not_found", "harness.shell_unsupported", "run.spawn_failed", "invalid.input",
+        "not_found", "term.busy", "term.not_attachable",
+        # H11d: worktree git (orch.runner.wtgit)
+        "worktree.branch_in_use", "worktree.exists", "worktree.dirty", "worktree.git_failed",
+        "observe.unavailable",  # the orch.gitsafe gate: the repo's own config could make git run a program
+    }
 )  # fmt: skip
+#: how long an exited run's ring is kept by the runner (:data:`orch.runner.supervise.KEEP_RING_SECONDS`)
+REPLAY_SECONDS = 3600
+WATCH_SECONDS = 0.5
+#: an attachment whose person, grant or ticket cannot be decided for this long is ended (fail closed)
+UNDECIDED_SECONDS = 2.0
+#: how long the host waits for the runner to confirm an ``attach.end``; unanswered, the runner session is dropped
+END_TIMEOUT = 5.0
+#: ``term.attach`` mints per person (§0.11 style): 30 per minute, burst 10
+MINT_RATE, MINT_BURST = 30 / 60, 10.0
 KEEP_SECONDS = 7 * 24 * 3600
 KEEP_ENDED = 1000
 PER_CONNECTION = 8
@@ -222,6 +234,28 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         ("run", "code", "signal", "at", "cleanup"),
     ),
+    "runner.term": _obj(
+        {
+            "run": _RUN,
+            "atts": {
+                "type": "array",
+                "maxItems": 64,
+                "items": _obj(
+                    {
+                        "att": {"type": "string", "pattern": "^at_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+                        "mode": {"enum": ["read", "write"]},
+                        "writer": {"type": "boolean"},
+                    },
+                    ("att", "mode", "writer"),
+                ),
+            },
+            "seq": _INT,
+            "lease_gen": _INT,
+            "cols": {"type": ["integer", "null"], "minimum": 20, "maximum": 500},
+            "rows": {"type": ["integer", "null"], "minimum": 5, "maximum": 200},
+        },
+        ("run", "seq", "atts", "lease_gen"),
+    ),
 }
 RUN_SCHEMAS: dict[str, dict[str, Any]] = {
     "run.list": _obj(
@@ -234,6 +268,7 @@ RUN_SCHEMAS: dict[str, dict[str, Any]] = {
         }
     ),
     "run.sub": _obj({}),
+    "run.stop": _obj({"run": _RUN, "grace_ms": {"type": "integer", "minimum": 0, "maximum": 30000}}, ("run",)),
 }
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in {**RUNNER_SCHEMAS, **RUN_SCHEMAS}.items()}
 
@@ -262,6 +297,8 @@ def view(rec: dict[str, Any]) -> dict[str, Any]:
     out = {k: rec.get(k, d) for k, d in VIEW_DEFAULTS.items()}
     exit_ = rec.get("exit")
     if isinstance(exit_, dict):
+        if exit_.get("reason") in ("exited", "stopped") and rec.get("ended_ts"):
+            out["replay_until"] = _iso(float(rec["ended_ts"]) + REPLAY_SECONDS)  # the runner's ring keeps 1 h
         out["exit"] = {
             "code": exit_.get("code"), "signal": exit_.get("signal"), "at": exit_.get("at"),
             "reason": exit_.get("reason") or "exited", "cleanup": rec.get("cleanup") or "unknown",
@@ -360,6 +397,18 @@ class RunnerHub:
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.subs: dict[str, RunSub] = {}
         self.attachments: dict[str, dict[str, Any]] = {}
+        #: the runner's last ``runner.term`` per run: {lease_gen, atts:[{att, mode, writer}]} (counts and the lease)
+        self.term_state: dict[str, dict[str, Any]] = {}
+        #: the newest ``runner.term`` sequence number seen per run (this runner session); older reports are ignored
+        self._term_seq: dict[str, int] = {}
+        self._pending_pub: set[str] = set()
+        self._watching: asyncio.Task[None] | None = None
+        #: the watcher's running check (or end) per attachment
+        self._checks: dict[str, asyncio.Task[None]] = {}
+        #: starts per person (§0.11: 10 per minute, burst 5): person -> [level, at]
+        self._starts: dict[str, list[float]] = {}
+        #: ``term.attach`` mints per person: person -> [level, at]
+        self._mints: dict[str, list[float]] = {}
         self._save_lock = asyncio.Lock()
         self.ignored = 0
 
@@ -382,18 +431,24 @@ class RunnerHub:
 
     async def _save(self, rec: dict[str, Any], *, publish: bool = True) -> dict[str, Any]:
         async with self._save_lock:
-            self.store.rev += 1
-            rec["rev"] = self.store.rev
             if rec.get("state") not in LIVE and "ended_ts" not in rec:
                 rec["ended_ts"] = time.time()
             self.store.records[rec["run"]] = rec
-            await asyncio.to_thread(self.store.save, dict(rec))
-            evicted = self._evict()
+            # an evicted record's ``gone`` takes a fresh rev (a client keeps the higher rev per run, so the record's
+            # old rev would be ignored); the saved record takes the next one, so the persisted maximum covers both
+            gones = []
+            for old in self._evict():
+                self.store.rev += 1
+                gones.append({**old, "rev": self.store.rev, "_gone": True})
+            self.store.rev += 1
+            rec["rev"] = self.store.rev
+            if rec["run"] in self.store.records:  # never write back a record its own save just evicted
+                await asyncio.to_thread(self.store.save, dict(rec))
+        for gone in gones:
+            await asyncio.to_thread(self.store.remove, gone)
+            self.publish(gone)
         if publish:
             self.publish(rec)
-        for old in evicted:
-            await asyncio.to_thread(self.store.remove, old)
-            self.publish({**old, "_gone": True})
         return rec
 
     def _evict(self) -> list[dict[str, Any]]:
@@ -440,7 +495,12 @@ class RunnerHub:
             else:
                 if session is not self.session:
                     raise HostError("op.not_allowed", "runner.hello first")
-                result = await (self.report(args) if op == "runner.report" else self.exit(session, args))
+                if op == "runner.report":
+                    result = await self.report(args)
+                elif op == "runner.term":
+                    result = await self.term_report(session, args)
+                else:
+                    result = await self.exit(session, args)
             from .workspace import ok_result
 
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": ok_result(result)})
@@ -467,6 +527,7 @@ class RunnerHub:
         previous = self.generation
         self.session, self.uid, self.generation, self.pid = session, uid, args["gen"], args["pid"]
         self.epoch += 1
+        self._term_seq.clear()  # a new runner process counts its reports from 1 again
         self.sub_id = "sub_" + secrets.token_hex(8)
         session.subscriptions += 1  # the command stream keeps the connection out of the idle close
         session.on_close.append(lambda: self.disconnected(session))
@@ -555,6 +616,85 @@ class RunnerHub:
             await self._save(new)
         return {}
 
+    async def term_report(self, session: Session, args: dict[str, Any]) -> dict[str, Any]:
+        """``runner.term``: a run's attachments, lease and size changed. Only for runs of this runner (UID and
+        generation). It sets ``viewers``, ``writer``, ``cols`` and ``rows`` of the run and keeps the counts the limits
+        read; it never decides authorization (the host's own table and the capability do)."""
+        run = args["run"]
+        rec = self.store.records.get(run)
+        if rec is None or rec.get("runner_uid") != session.peer.uid or rec.get("gen") != self.generation:
+            raise HostError("not_found", "no such run on this runner")
+        if args["seq"] <= self._term_seq.get(run, -1):
+            return {}  # a stale snapshot overtaken by a newer one: it must never take a live attachment out (D2)
+        self._term_seq[run] = args["seq"]
+        atts = args["atts"]
+        listed = {a["att"] for a in atts}
+        for att in listed - self.attachments.keys():  # the runner holds only what the host's table holds
+            asyncio.get_running_loop().create_task(self._end_unknown(att))
+        if self.attachments:
+            self._watch_attachments()  # a watcher that stopped for any reason is started again
+        for att, info in list(self.attachments.items()):
+            if info["run"] == run and att in listed:
+                info["seen"] = True
+            elif info["run"] == run and info.get("seen"):  # the runner ended it (this report is the newest)
+                self.attachments.pop(att, None)
+                self._audit("term.detach", run=run, att=att, person=info.get("person"))
+        previous = (self.term_state.get(run) or {}).get("atts") or []
+        old_writer = next((a["att"] for a in previous if a["writer"]), None)
+        new_writer = next((a["att"] for a in atts if a["writer"]), None)
+        if new_writer is not None and old_writer is not None and new_writer != old_writer:
+            self._audit("term.takeover", run=run, old=old_writer, new=new_writer)
+        self.term_state[run] = {"lease_gen": args["lease_gen"], "atts": atts}
+        new = dict(rec)
+        new["viewers"] = len(atts)
+        new["writer"] = any(a["writer"] for a in atts)
+        for key in ("cols", "rows"):
+            if args.get(key) is not None:
+                new[key] = args[key]
+        if any(new.get(k) != rec.get(k) for k in ("viewers", "writer", "cols", "rows")):
+            await self._save(new, publish=False)
+            self._publish_later(run)  # at most one such item per run per 250 ms (§12.3.2)
+        return {}
+
+    def _publish_later(self, run: str) -> None:
+        if run in self._pending_pub:
+            return
+        self._pending_pub.add(run)
+
+        def fire() -> None:
+            self._pending_pub.discard(run)
+            rec = self.store.records.get(run)
+            if rec is not None:
+                self.publish(rec)
+
+        asyncio.get_running_loop().call_later(0.25, fire)
+
+    def _audit(self, event: str, **fields: Any) -> None:
+        """One line of the security audit (never terminal content)."""
+        from . import securitylog
+
+        securitylog.record(self.host.state_dir, self.host.host_uid, time.time(), event, **fields)
+
+    def counts(self, run: str, person: str) -> tuple[int, int, int]:
+        """Attachments the runner reported: on the run, of the person, on the runner (pending capabilities count
+        toward none, §12.6.2)."""
+        per_run = per_person = total = 0
+        for r, state in self.term_state.items():
+            for a in state["atts"]:
+                total += 1
+                per_run += r == run
+                per_person += (self.attachments.get(a["att"]) or {}).get("person") == person
+        return per_run, per_person, total
+
+    def take_start(self, person: str) -> bool:
+        """The start rate of §0.11: 10 per minute per person, burst 5."""
+        return _take(self._starts, person, 10 / 60, 5.0)
+
+    def take_mint(self, person: str) -> bool:
+        """The ``term.attach`` rate: 30 mints per minute per person, burst 10 (each one is an audit line, a host
+        table entry and a runner capability)."""
+        return _take(self._mints, person, MINT_RATE, MINT_BURST)
+
     def disconnected(self, session: Session) -> None:
         if self.session is not session:
             return
@@ -565,6 +705,8 @@ class RunnerHub:
                 future.set_exception(HostError("outcome.unknown", "the runner disconnected before it answered"))
         self.pending.clear()
         self.attachments.clear()
+        self.term_state.clear()
+        self._term_seq.clear()
         LOG.warning("runner disconnected (uid %s)", self.uid)
 
     # -- commands
@@ -670,9 +812,12 @@ class RunnerHub:
         lease_gen: int = 0,
         session: str | None = None,
         start_from: int | None = None,
+        who: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Mint a single-use attach capability (§12.6.2) and register its hash at the runner before answering.
-        Returns ``{att, ticket, nonce, expires_at, socket, runner:{uid, pid, gen}}``; the host keeps only the hash."""
+        Returns ``{att, ticket, nonce, expires_at, socket, runner:{uid, pid, gen}, start, offset, cols, rows,
+        lease_gen}``; the host keeps only the hash. ``who``: what the watcher needs to revalidate the person
+        (``column``, ``uid``, ``grant``, ``grant_id``)."""
         if mode not in ("read", "write"):
             raise HostError("invalid.input", "mode is read or write")
         rec = self.store.records.get(run)
@@ -682,21 +827,171 @@ class RunnerHub:
         ticket = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")  # 43 characters
         nonce = secrets.token_hex(16)
         expires_at = _iso(time.time() + ATTACH_SECONDS)
-        await self.command(
-            "attach.allow",
-            {"att": att, "ticket_hash": _hash(ticket), "workspace_id": rec["workspace_id"], "person": person,
-             "run": run, "session": session, "mode": mode, "take": take, "lease_gen": lease_gen,
-             "runner_gen": self.generation, "from": start_from, "nonce": nonce, "expires_at": expires_at},
-        )  # fmt: skip
-        self.attachments[att] = {"run": run, "person": person, "mode": mode}
+        now = time.monotonic()
+        self._purge_unpresented()
+        # recorded before the command: an end that races the answer still finds it (the runner remembers a cancel)
+        self.attachments[att] = {"run": run, "person": person, "mode": mode, "workspace_id": rec["workspace_id"],
+                                 "ticket": rec.get("ticket"), "at": now, **(who or {})}  # fmt: skip
+        try:
+            got = await self.command(
+                "attach.allow",
+                {"att": att, "ticket_hash": _hash(ticket), "workspace_id": rec["workspace_id"], "person": person,
+                 "run": run, "session": session, "mode": mode, "take": take, "lease_gen": lease_gen,
+                 "runner_gen": self.generation, "from": start_from, "nonce": nonce, "expires_at": expires_at},
+            )  # fmt: skip
+        except HostError:
+            self.attachments.pop(att, None)
+            raise
+        self._audit("term.attach", run=run, att=att, person=person, mode=mode, take=take)
+        self._watch_attachments()
+
+        def num(key: str, low: int, high: int | None = None) -> int:
+            v = got.get(key)
+            ok = isinstance(v, int) and not isinstance(v, bool) and v >= low and (high is None or v <= high)
+            if not ok:
+                raise HostError("outcome.unknown", f"the runner's answer to attach.allow has no valid {key}")
+            return v
+
         return {
             "att": att, "ticket": ticket, "nonce": nonce, "expires_at": expires_at, "socket": str(self.term_socket),
             "runner": {"uid": self.uid, "pid": self.pid, "gen": self.generation},
+            "start": num("start", 0), "offset": num("offset", 0), "cols": num("cols", 20, 500),
+            "rows": num("rows", 5, 200), "lease_gen": num("lease_gen", 0),
         }  # fmt: skip
 
     async def attach_end(self, att: str, reason: str) -> None:
+        """End an attachment at the runner. The host's entry is removed only once the runner confirmed the end
+        (invariant: **the runner holds only attachments the host's table holds**); until then it is marked
+        ``ending`` and the watcher sends the end again on every pass. An end the runner does not confirm drops the
+        runner session: the runner's ``host_lost`` then ends every attachment (fail closed)."""
+        info = self.attachments.get(att)
+        if info is not None and "ending" not in info:
+            info["ending"] = reason
+            self._audit("term.end", run=info.get("run"), att=att, person=info.get("person"), reason=reason)
+        await self._send_end(att, info["ending"] if info is not None else reason)
         self.attachments.pop(att, None)
-        await self.command("attach.end", {"att": att, "reason": reason})
+
+    async def _send_end(self, att: str, reason: str) -> None:
+        session = self.session
+        try:
+            await self.command("attach.end", {"att": att, "reason": reason}, timeout=END_TIMEOUT)
+        except HostError as exc:
+            if session is not None and session is self.session and not session.closed:
+                LOG.warning("the runner did not confirm attach.end (%s): dropping its session", exc.code)
+                self.drop_session(session)
+            raise
+
+    async def _end_unknown(self, att: str) -> None:
+        """An attachment the runner reports and the host does not hold: end it there."""
+        with contextlib.suppress(HostError):
+            await self._send_end(att, "cancelled")
+
+    def drop_session(self, session: Session) -> None:
+        """Close the runner's connection (its ``host_lost`` ends every attachment and refuses capabilities until the
+        next hello); the host forgets its attachments at once."""
+        if session.failure is None:
+            session.failure = frames.FrameError("internal")
+        self.disconnected(session)
+
+    # -- the push path: the host ends an attachment the moment its person or ticket no longer qualifies
+    def _watch_attachments(self) -> None:
+        if self._watching is None or self._watching.done():
+            self._watching = asyncio.get_running_loop().create_task(self._watch())
+
+    async def _watch(self) -> None:
+        """One pass every ``WATCH_SECONDS``; the pass itself never waits on a workspace worker. Each attachment's
+        check runs as its own task, bounded by ``UNDECIDED_SECONDS`` (a timeout, an exception or an undecidable
+        snapshot all count as undecided), so one stalled workspace never delays another. An attachment whose last
+        *decided* check (``decided_at``) is older than ``UNDECIDED_SECONDS + WATCH_SECONDS`` is ended
+        (``host.restarting``, fail closed), whether its check failed, timed out or still hangs. Restarted by every mint
+        and every ``runner.term`` while attachments exist."""
+        with contextlib.suppress(asyncio.CancelledError):
+            while self.attachments:
+                await asyncio.sleep(WATCH_SECONDS)
+                self._watch_pass()
+
+    def _watch_pass(self) -> None:
+        self._purge_unpresented()
+        loop = asyncio.get_running_loop()
+        now = time.monotonic()
+        for att in [a for a, t in self._checks.items() if t.done()]:
+            del self._checks[att]
+        for att, info in list(self.attachments.items()):
+            task = self._checks.get(att)
+            busy = task is not None and not task.done()
+            if "ending" in info:
+                if not busy:  # an end the runner has not confirmed yet: again
+                    self._checks[att] = loop.create_task(self._end_quietly(att, info["ending"]))
+            elif now - info.get("decided_at", info["at"]) > UNDECIDED_SECONDS + WATCH_SECONDS:
+                if busy:
+                    task.cancel()  # a check still hanging on its worker: nobody confirmed it may continue
+                self._checks[att] = loop.create_task(self._end_quietly(att, "host.restarting"))
+            elif not busy:
+                self._checks[att] = loop.create_task(self._check(att, info))
+
+    async def _end_quietly(self, att: str, reason: str) -> None:
+        with contextlib.suppress(HostError):  # attach_end already dropped the runner session when unconfirmed
+            await self.attach_end(att, reason)
+
+    async def _check(self, att: str, info: dict[str, Any]) -> None:
+        started = time.monotonic()
+        try:
+            reason = await asyncio.wait_for(self._ended_reason(info), UNDECIDED_SECONDS)
+        except (_Undecided, TimeoutError):
+            return  # undecided: the deadline in _watch_pass ends it if this lasts
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the watcher must outlive any single failure
+            LOG.warning("term watcher cannot decide on an attachment: %s", type(exc).__name__)
+            return
+        if reason is None:
+            info["decided_at"] = max(info.get("decided_at", info["at"]), started)
+            return
+        try:
+            await self._end_quietly(att, reason)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("term watcher: %s", type(exc).__name__)
+
+    def _purge_unpresented(self) -> None:
+        """Forget capabilities minted and never presented (long expired at the runner)."""
+        now = time.monotonic()
+        for old, info in list(self.attachments.items()):
+            if not info.get("seen") and "ending" not in info and now - info["at"] > ATTACH_SECONDS + 10:
+                del self.attachments[old]
+
+    async def _ended_reason(self, info: dict[str, Any]) -> str | None:
+        """Why this attachment must end now (``runner.disabled``, ``person.removed``, ``grant.expired``,
+        ``not_visible``), else ``None``; :class:`_Undecided` when that cannot be told yet."""
+        from types import SimpleNamespace
+
+        from .terms import missing
+
+        service = self.host.services.get(info["workspace_id"])
+        auth = getattr(service, "auth", None)
+        if service is None or auth is None:
+            return "not_visible"
+        # D-P2-31's kill switches end live attachments too: the addon revoked or disabled, the machine switch or
+        # the terminals switch off
+        if await asyncio.wrap_future(service.submit(missing, service, self)) is not None:
+            return "runner.disabled"
+        if not auth.fresh(service.entry.root):
+            await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
+            auth = getattr(service, "auth", None)
+        if auth is None or auth.stamp is None or not auth.fresh(service.entry.root):
+            raise _Undecided
+        pseudo = SimpleNamespace(column=info.get("column", "P"), person=info["person"], uid=info.get("uid", -1),
+                                 workspace_id=info["workspace_id"], grant=info.get("grant"),
+                                 grant_id=info.get("grant_id"))  # fmt: skip
+        reason = self.host.bus.principal_end(pseudo, auth, service.clock())  # type: ignore[arg-type]
+        if reason is not None:
+            return reason
+        if info.get("ticket"):
+            sub = RunSub("", None, info["workspace_id"], "P", info["person"], 0, "", None, None)  # type: ignore[arg-type]
+            if not await asyncio.wrap_future(service.submit(_ticket_visible, service, sub, info["ticket"])):
+                return "not_visible"
+        return None
 
     # -- reads
     def visible(self, rec: dict[str, Any], column: str, person: str) -> bool:
@@ -733,6 +1028,11 @@ class RunnerHub:
                 sub.session.send({"t": "evt", "sub": sub.id, "cursor": str(self.store.rev), "items": [], "end": reason})
 
     def end_all(self, reason: str) -> None:
+        if self._watching is not None:
+            self._watching.cancel()
+        for task in self._checks.values():
+            task.cancel()
+        self._checks.clear()
         for sub in list(self.subs.values()):
             self.end_sub(sub, reason)
 
@@ -805,6 +1105,22 @@ class RunnerHub:
                     return
         except asyncio.CancelledError:
             pass
+
+
+class _Undecided(Exception):
+    """The watcher cannot tell yet whether an attachment may continue (no fresh authentication snapshot)."""
+
+
+def _take(buckets: dict[str, list[float]], key: str, rate: float, burst: float) -> bool:
+    """A token bucket per key: ``rate`` per second, at most ``burst``; ``True`` when one was taken."""
+    now = time.monotonic()
+    level, at = buckets.get(key, (burst, now))
+    level = min(burst, level + (now - at) * rate)
+    if level < 1:
+        buckets[key] = [level, now]
+        return False
+    buckets[key] = [level - 1, now]
+    return True
 
 
 def _ticket_visible(service: Any, sub: RunSub, key: str) -> bool:

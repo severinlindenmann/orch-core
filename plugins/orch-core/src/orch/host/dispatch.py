@@ -82,7 +82,7 @@ from jsonschema import Draft202012Validator
 
 from . import diff as git_diff
 from . import quick as quick_list
-from . import reads, sessions
+from . import reads, sessions, terms
 from . import records as records_ops
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
@@ -96,6 +96,7 @@ from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
 from .runners import RUN_CAPS, RUN_OPS
+from .terms import TERM_CAPS, TERM_OPS
 from .visibility import Viewer
 from .workspace import deny_append, ok_result
 from .worktrees import WORKTREE_CAPS, WORKTREE_OPS
@@ -207,7 +208,8 @@ def served_ops() -> dict[str, int]:
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     out.update(records_ops.RECORDS_OPS)
-    out.update(RUN_OPS)  # H11a: run.list, run.sub
+    out.update(RUN_OPS)  # H11a: run.list, run.sub; H11b: run.stop
+    out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
     return out
 
@@ -230,6 +232,10 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("read", "read")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
+    if name == "term.preview":  # H11b: column P only
+        return ("person_read", "read")
+    if name in TERM_OPS or name == "run.stop":  # H11b: P only; G and N get op.not_allowed
+        return ("person_write", "write")
     if name in RUN_OPS:  # H11a: P and G only (§0.5, D-P2-26)
         return ("pg_read", "read")
     if name in WORKTREE_OPS:  # H11d: P and G (G only on its claimed ticket, checked by the op), never N
@@ -363,7 +369,10 @@ class RegistryBackend:
     @property
     def caps(self) -> list[str]:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
-        return [*base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *WORKTREE_CAPS]
+        return [
+            *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
+            *WORKTREE_CAPS,
+        ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
@@ -402,6 +411,8 @@ class RegistryBackend:
             return self._register(call, result)
         if op == "run.sub":
             return await self._register_runs(call, result)
+        if op in TERM_OPS or op == "run.stop":
+            return await terms.complete(call, result)
         if op in WORKTREE_OPS and op != "worktree.list":  # H11d: the runner's git, then the registration
             from . import worktrees
 
@@ -564,6 +575,8 @@ class RegistryBackend:
                 result = reads.serve(call)
             elif op in records_ops.RECORDS_OPS:
                 result = records_ops.serve(call)
+            elif op in TERM_OPS or op == "run.stop":
+                result = terms.serve(call)
             elif op in RUN_OPS:
                 from . import runners
 
@@ -693,6 +706,7 @@ class RegistryBackend:
                 "scope": grant.scope,
             },
             "session": session,
+            **({"runner": terms.runner_info(call.service)} if call.column.name in ("P", "G") else {}),
         }
 
     def status(self, call: Call) -> dict[str, Any]:

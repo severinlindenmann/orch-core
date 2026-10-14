@@ -438,6 +438,13 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
 | `harness.not_found` | 3 | no | stays | the program of a run does not exist (D-P2-28) | — |
 | `run.spawn_failed` | 1 | no | stays | the runner's trampoline failed; the message names the step, never an environment value | — |
+| `launch.invalid` | 5 | no | stays | a harness, mode, model or subagent model not allowed; the message names the field (exit 5 like `invalid.input`: the client sent a value the registry refuses) | — |
+| `launch.changed` | 5 | no | stays | `agent.start`'s recomputed `spec` differs from the preview's (exit 5 like `idem.conflict`: the request no longer matches what was shown; preview again) | — |
+| `harness.shell_unsupported` | 3 | no | stays | `$SHELL` is not POSIX-compatible and `login_shell` is on | — |
+| `term.not_attachable` | 3 | no | stays | `term.attach` on a run that is `starting` or `lost`, or `exited` with no ring kept; `detail.state` names it | — |
+| `run.limit` | 9 | yes | stays | a run limit of §0.11; `detail.which` is `agent_ws`, `agent_person`, `shell_person` or `runner` | when a run ends |
+| `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
+| `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -449,17 +456,10 @@ drops. The host never sends it.
 |---|---|---|---|---|---|
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
 | `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
-| `launch.invalid` | 5 | no | stays | a harness, mode, model or subagent model not allowed; the message names the field (exit 5 like `invalid.input`: the client sent a value the registry refuses) | — |
-| `launch.changed` | 5 | no | stays | `agent.start`'s recomputed `spec` differs from the preview's (exit 5 like `idem.conflict`: the request no longer matches what was shown; preview again) | — |
-| `harness.shell_unsupported` | 3 | no | stays | `$SHELL` is not POSIX-compatible and `login_shell` is on | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
 | `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
 | `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
 | `grant.expiring` | 3 | no | stays | `grant.deposit` of a grant with less than 15 minutes left | — |
-| `term.not_attachable` | 3 | no | stays | `term.attach` on a run that is `starting` or `lost`, or `exited` with no ring kept; `detail.state` names it | — |
-| `run.limit` | 9 | yes | stays | a run limit of §0.11; `detail.which` is `agent_ws`, `agent_person`, `shell_person` or `runner` | when a run ends |
-| `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
-| `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `worktree.none` | 3 | no | stays | `worktree.remove` for a (ticket, repo) with no registered worktree | — |
 | `worktree.exists` | 3 | no | stays | the ticket already has a worktree for that repo, or its path is not free (§12.7) | — |
 | `worktree.no_branch` | 3 | no | stays | the ticket links no branch for that repo (§12.7) | — |
@@ -3578,6 +3578,10 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     custody (it failed once the key moved to convenience custody); new `orch host disable [--purge-releases]
     [--force]`, the reverse of `enable` (service stopped and unloaded, unit file removed, state dir kept); new
     `orch dashboard [args]` launcher for the dashboard addon. No wire, log or certificate change.
+32. **Terminals (H11b, contract v1.6):** `term/1` (`term.preview`, `term.open`, `term.attach`, `attach.cancel`) and
+    `run.stop` (`run/1`) are P-only; the runner reports `runner.term`; `whoami` gains `runner` for P and G; the runner's
+    term socket re-checks its authorization at every use, and the host ends live attachments when a kill switch is
+    pulled ("As built in H11b", §12.6).
 
 ---
 
@@ -5461,9 +5465,93 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
   controlled stop: every managed run is stopped and verified before the runner exits.
 - **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
-  ticket must be exactly 43 characters; at most 32 term-socket connections are handled at once; the lockout is per
+  ticket must be exactly 43 characters; at most 96 term-socket connections are handled at once; the lockout is per
   runner, so one client replaying seen tickets locks every attachment out for 60 s.
-  The byte path after `ready` (`out`, `in`, `ack`, `gap`, `throttle`) is H11b.
+  The byte path after `ready` is H11b (below).
+
+**As built in H11b** (terminals). Where the code differs from §12.3 and §12.6 above, the code is this:
+
+- **Authorization is checked at use, not only at consumption** (`orch.runner.term.TermListener._authorized`, the one
+  function every privileged action calls: each non-blocking `send` of an output frame, each input write and each retry
+  of a partial write, each resize; the take is checked under the same lock as its registration). An attachment must
+  still be in the runner's table, not revoked, not closed, in the current host epoch with the host present; for a write
+  action it must also hold the lease at the generation the frame names. The output `send`, the PTY write and the resize
+  run non-blocking *inside* the check, under the lock that `attach.end`, `end_run`, `host_lost`, a new epoch and an
+  overflow take to revoke, so no output byte leaves and no input byte or resize is applied after a revocation. An output
+  frame that a revocation cuts short is never completed (the socket is shut without another byte). That client gets
+  no `end` reason: the frame's length prefix already commits to the revoked bytes, so nothing can follow it;
+  `TermClient` reports such a stream as ended `closed` (the page shows "ended"). There is no
+  in-place downgrade: a lease moves only by a take or by the holder's close. A revoked attachment is ended by whoever
+  notices first (`end` with the reason, queued output discarded); a lease that only moved gives `writer:false` and
+  keeps the viewer. An `attach.cancel`/`attach.end` that
+  arrives between the consumption of a ticket and the registration of the attachment is remembered and the attachment
+  never registers (`cancelled`). A write capability for a run that is no longer running is `ticket_invalid` at redeem.
+  The capability stays a bearer secret between the host and the dashboard server (single use, 10 s, bound to run, mode,
+  epoch and generation); it is not bound to the redeeming principal, which the runner cannot see.
+- **The host ends attachments by itself** (`RunnerHub._watch`, every 0.5 s while any exists): a D-P2-31 kill switch
+  was pulled (the `terminals` addon revoked or disabled, `orch runner disable`, `orch runner terminals off`:
+  `runner.disabled`), the person left or lost the mapping (`person.removed`), the grant ended, or the run's ticket
+  became invisible (`not_visible`); the run goes on. The watcher never dies on an item: any exception is logged (its
+  type only) and counts as undecided. Each attachment's check runs as its own task, bounded at 2 s (a timeout counts
+  as undecided), so a slow or hung workspace worker never delays the checks of another workspace. An attachment whose
+  last decided check is older than 2.5 s (no fresh authentication snapshot, a failing read, a check still waiting on
+  its worker) is ended with `host.restarting` (fail closed). Every `term.attach` and every `runner.term`
+  restarts a watcher that stopped. Attachments are recorded before `attach.allow` is sent, so an end between mint and
+  redeem is caught.
+- **Invariant: the runner holds only attachments the host's table holds.** The host removes its entry only after the
+  runner confirmed `attach.end` (until then the entry is `ending` and the end is sent again on every pass). An
+  `attach.end` the runner does not confirm within 5 s drops the runner session, so the runner's `host_lost` ends
+  every attachment; the runner handles `attach.end` inline on its link thread, never behind `stop` or `spawn` in its
+  four-thread command pool. An attachment the runner reports in `runner.term` that the host does not hold is ended there
+  (`cancelled`). `runner.term` carries `seq`, taken under the runner's lock together with the snapshot; the host
+  ignores a report whose `seq` is not newer than the last one it applied for that run, so a stale snapshot that
+  arrives late never takes a live attachment out of the host's table.
+- **Ops.** `term.*` and `attach.cancel` are in `term/1`, `run.stop` in `run/1`: all P only (G and N: `op.not_allowed`
+  before any run is looked at). `term.preview`/`term.open` start the person's own `$SHELL -l` (harness `shell` only;
+  `claude-code` and `codex` are `blocked: harness.not_found` until H11c; a ticket is checked for visibility and becomes
+  `ORCH_TICKET`; cwd is the workspace root until H11d). The runner replaces `argv[0] == "$SHELL"` by its own `SHELL`
+  (absolute path to a POSIX shell, else `harness.shell_unsupported`). The run id is derived from `opts.idem`
+  (`r_` + the idem's ULID), so a retry returns the same run. Order of `blocked`/`runner.disabled`: addon, machine,
+  terminals, then the runner connection. `term.attach` answers `nonce` as well (the dashboard server presents it with
+  the ticket); `runner.disabled` carries what is missing in its message (no `detail` field in `Error`).
+  Another person's run, or a run on a ticket the person cannot see, is `not_found`. The machine switch is read again on
+  the event loop at `term.open` and `term.attach`; `run.stop` and `attach.cancel` never need it.
+- **Limits.** The host refuses `attach.limit` from the runner's `runner.term` counts (pending capabilities count
+  toward none) and `run.limit` (16 shells per person, 64 runs per runner), `rate.limited` (10 starts per minute,
+  burst 5; 30 `term.attach` mints per minute per person, burst 10). The runner's connection cap is 96 (64 attachments
+  plus handshakes); at most 256 capabilities wait to be presented (`attach.allow` beyond: `attach.limit`). Per
+  attachment the runner queues at most 4 096 control frames and reads ahead at most 64 frames while a PTY write waits
+  for room; beyond either the attachment is revoked, its write lease is released at once, and it ends with
+  `overflow`. Outside a stalled write there is no frame-count cap but a bound by backpressure: the runner reads at most
+  64 KiB at a time and reads again only once every frame of the last read was handled, so a coalesced burst of small
+  frames (resizes during a window drag) never ends a healthy attachment; of a run of consecutive `resize` frames only
+  the last is applied (one PTY resize, one note per viewer, one `runner.term`). A length prefix above 128 KiB (longer
+  than any valid frame) ends the attachment with `protocol` before the body is buffered.
+- **Term socket I/O.** The socket is non-blocking once the attachment exists, with separate deadlines: the sender
+  gives up after 30 s without write progress, the reader has no deadline (an idle viewer stays attached). While a PTY
+  write waits for room the reader keeps watching the socket, so a disconnect cancels the pending write and releases the
+  lease at once. `ready` is queued under the registration lock before the attachment is visible, so it is always the
+  first frame after `hello`, whatever takeover or resize races the attach.
+- **Input ids are consecutive.** The runner writes only `last + 1`; a lower or equal id is acknowledged again and never
+  written; a higher id (a gap) is answered with `throttle` and never acknowledged, so a throttled frame can never be
+  skipped by a later one. The dashboard server keeps one input frame in flight (the next after the previous `ack`)
+  and resends the same frame after a `throttle`.
+- **`Run`.** `viewers`, `writer`, `cols` and `rows` come from `runner.term` (items coalesced to one per run per 250 ms);
+  `replay_until` is the end time plus one hour for `exited`/`stopped` runs. Attach to an exited run is read-only.
+- **Client.** `orch.runner.termclient.TermClient` does the §12.6.1 checks before a ticket is sent (path computed from
+  the client's own run directory, directory owner and mode, peer UID and PID, `hello.gen`), owns `input_id` and
+  `lease_gen`, keeps one input frame in flight, resends on `throttle` with the same id and reports unacknowledged ids
+  as `lost`. A runner frame of the wrong shape ends the stream with `protocol`; a stream that closes without `end`
+  ends with `closed`; `send`/`resize` after the end raise `TermEnded`.
+- **Terminals addon.** `addons/terminals/orch-addon.json` (capability `pty`, no fields); the host requires it granted
+  and enabled. `orch runner terminals on|off --workspace W`: `on` needs the person's own terminal and the prefix (never
+  under `ORCH_GRANT`), `off` needs none; both only with dashboard execution already on.
+- **Audit** (`audit-security.jsonl`): `term.attach`, `term.end`, `term.detach`, `term.takeover`, `run.stop`; never
+  terminal content.
+- **Not built here.** The flood acceptance measures `run.list` round trips (a workspace-worker read) instead of
+  `human.prepare`, with the runner as a separate process: p99 under 50 ms with 8 flooding runs and two silent
+  viewers (120 ms when pytest runs in parallel). The browser-facing parts (WebSocket `Security`, xterm, close codes)
+  are orch-fa's.
 
 ### 12.4 Start an agent (#307)
 
@@ -5625,9 +5713,13 @@ attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte 
   runner, then 60 s of refusals; an unknown hash closes the connection without counting, so no process can lock
   terminals out with random tickets.
 - **Ending it:** the host sends `attach.end {att, reason}` when the person loses the mapping or membership, the ticket
-  becomes invisible to them, the person stops the run, a host restart begins, or `attach.cancel` arrives; the runner
-  closes that connection with `{t:"end", reason}` and discards its queue. Reasons: `person.removed`, `not_visible`,
-  `run.stopped`, `host.restarting`, `cancelled`, `runner.restarting`, `exited` (below).
+  becomes invisible to them, a D-P2-31 kill switch is pulled (the addon revoked or disabled, the machine switch or the
+  terminals switch off), the person stops the run, a host restart begins, the host cannot decide for 2 s whether the
+  attachment may continue, or `attach.cancel` arrives; the runner closes that connection with `{t:"end", reason}` and
+  discards its queue. Reasons: `person.removed`, `not_visible`, `runner.disabled`, `run.stopped`, `host.restarting`,
+  `cancelled`, `runner.restarting`, `exited` (below), and `overflow` from the runner itself (a viewer that does not
+  read). The runner holds only attachments the host's table holds: an end the runner does not confirm drops the
+  runner session (ending every attachment), and one the runner reports that the host does not hold is ended.
 
 #### 12.6.3 Frames on the term socket (dashboard server ↔ runner)
 
@@ -5640,8 +5732,10 @@ attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte 
 - server → runner (write lease only): `{t:"in", input_id:int, lease_gen:int, b64}` (≤ 64 KiB), `{t:"resize",
   lease_gen, cols:20..500, rows:5..200}`.
 - **The dashboard server owns `input_id` and `lease_gen`.** It numbers input per attachment (monotonic), splits it into
-  frames of at most 64 KiB, and updates `lease_gen` from `ready` and `writer` frames. The runner drops a repeated or
-  lower id, acknowledges each frame after the full write to the master and retries a partial write itself. A stale
+  frames of at most 64 KiB, keeps one frame in flight (the next after the previous `ack`), and updates `lease_gen`
+  from `ready` and `writer` frames. Ids are consecutive: the runner writes only the next id, acknowledges a repeated or
+  lower id again without writing it, answers a higher id (a gap) with `throttle` without writing or acknowledging it,
+  acknowledges each frame after the full write to the master and retries a partial write itself. A stale
   `lease_gen` is refused with `{t:"writer", writer:false}`. **Unacknowledged input is never replayed across a new
   attachment**: the server reports `input_lost` to the browser.
 - **After `exit`** the runner sends `{t:"end", reason:"exited"}` and closes, so every attachment has one terminal

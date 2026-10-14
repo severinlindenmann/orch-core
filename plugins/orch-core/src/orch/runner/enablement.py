@@ -22,7 +22,17 @@ from orch.host.custody import ensure_private_dir, read_json, write_private
 from orch.host.errors import HostError
 from orch.host.registry import host_dir
 
-__all__ = ["CARD_TEXT", "NO_TERMINALS_TEXT", "flag_path", "read", "risk_text", "set_enabled", "state_of"]
+__all__ = [
+    "CARD_TEXT",
+    "NO_TERMINALS_TEXT",
+    "TERMINALS_ON_TEXT",
+    "flag_path",
+    "read",
+    "risk_text",
+    "set_enabled",
+    "set_terminals",
+    "state_of",
+]
 
 #: the decided card line (tie-break D-P2-31): workspace card, Start dialog and terminal header
 CARD_TEXT = (
@@ -46,6 +56,12 @@ def risk_text(prefix: str, workspace_id: str, terminals: bool) -> str:
     if not terminals:
         lines += ["", NO_TERMINALS_TEXT]
     return "\n".join(lines) + "\n"
+
+
+TERMINALS_ON_TEXT = (
+    "Terminals: the dashboard may open shells and attach to runs as you. A shell is a program with your files, keys "
+    "and network; anything that takes over the dashboard can type into it."
+)
 
 
 def flag_path(state_dir: Path) -> Path:
@@ -82,5 +98,21 @@ def set_enabled(
         doc["workspaces"][workspace_id] = {"enabled": True, "terminals": terminals, "at": stamp, "text": text}
     else:
         doc["workspaces"].pop(workspace_id, None)
+    write_private(flag_path(state_dir), doc)
+    return doc
+
+
+def set_terminals(state_dir: Path, workspace_id: str, on: bool, uid: int, *, text: str = "") -> dict[str, Any]:
+    """``orch runner terminals on|off``: only for a workspace whose dashboard execution is already on. The time and
+    the text shown are kept like the machine switch's. The host checks the switch at every attach and open, and its
+    watcher ends live attachments within about a second once it is off (``runner.disabled``)."""
+    doc = read(state_dir, uid)
+    entry = doc["workspaces"].get(workspace_id)
+    if not isinstance(entry, dict) or entry.get("enabled") is not True:
+        raise HostError("runner.disabled", "dashboard execution is off for this workspace: orch runner enable first")
+    entry["terminals"] = on
+    entry["terminals_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if on:
+        entry["terminals_text"] = text
     write_private(flag_path(state_dir), doc)
     return doc

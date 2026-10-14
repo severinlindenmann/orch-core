@@ -202,7 +202,9 @@ class Live:
 
     @property
     def session_ok(self) -> bool:
-        return not self.reaped
+        """The leader's session and group id still name this run: it was neither reaped by us nor by ``Popen``
+        (``returncode`` set by a ``poll``/``wait`` elsewhere means it was reaped and its PID may be reused)."""
+        return not self.reaped and self.proc.returncode is None
 
 
 def peek_exit(proc: subprocess.Popen[bytes]) -> int | None:
@@ -258,6 +260,9 @@ class Supervisor:
         self.umask = umask
         self._lock_fd: int | None = None
         self.on_event = on_event
+        #: the term socket's wake-up (H11b): called with a run id after new output, the leader's exit and the PTY's
+        #: close, from the I/O thread; it must not block
+        self.on_output: Callable[[str], None] | None = None
         self.live: dict[str, Live] = {}
         self.lock = threading.RLock()
         self._spawn_lock = threading.RLock()  # re-entrant: the host link checks its epoch and spawns under it
@@ -557,6 +562,45 @@ class Supervisor:
                 raise SpawnError("not_found", "no such live run")
             fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             live.cols, live.rows = cols, rows
+
+    def live_of(self, run: str) -> Live | None:
+        """The run's supervision record while its ring is kept (the term socket reads ``ring``, ``exit``,
+        ``pty_closed``, ``cols`` and ``rows`` from it), else ``None``."""
+        return self.live.get(run)
+
+    def write_input(self, run: str, data: bytes) -> int:
+        """One non-blocking write of terminal input to the run's PTY master (H11b): the bytes written, ``0`` when the
+        PTY's input queue is full. Refused once the leader exited or the master is closed (the input never arrived)."""
+        with self.lock:  # the master is never closed (and its fd reused) under a write
+            live = self.live.get(run)
+            if live is None or live.pty_closed or live.exit is not None:
+                raise SpawnError("not_found", "no such live run")
+            try:
+                return os.write(live.master, data)
+            except BlockingIOError:
+                return 0
+            except OSError as exc:
+                raise SpawnError("not_found", f"the terminal is gone ({exc.errno})") from None
+
+    def nudge(self, run: str) -> None:
+        """Make full-screen programs redraw (a new writer took the lease, §12.6.2): two size changes, so the kernel
+        sends the PTY's foreground group ``SIGWINCH``; the size ends where it was. No signal is sent by the runner."""
+        with self.lock:
+            live = self.live.get(run)
+            if live is None or live.pty_closed or live.exit is not None:
+                return
+            other = live.rows + 1 if live.rows < 200 else live.rows - 1
+            with contextlib.suppress(OSError):
+                fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", other, live.cols, 0, 0))
+                fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", live.rows, live.cols, 0, 0))
+
+    def _out(self, run: str) -> None:
+        hook = self.on_output
+        if hook is not None:
+            try:
+                hook(run)
+            except Exception:  # noqa: BLE001 - a viewer never disturbs supervision
+                LOG.exception("output hook failed")
 
     def attach_info(self, run: str) -> dict[str, Any] | None:
         """What an attachment's ``ready`` frame needs (§12.6.3), or ``None`` when the run's ring is not kept."""
@@ -954,6 +998,7 @@ class Supervisor:
                 self._close_pty(live)
                 return
             live.ring.write(data)
+            self._out(live.run)
 
     def _close_pty(self, live: Live) -> None:
         with self.lock:
@@ -971,6 +1016,7 @@ class Supervisor:
                 os.close(live.master)
             except OSError:
                 pass
+        self._out(live.run)
 
     def _leader_exit(self, live: Live) -> None:
         with self.lock:
@@ -987,6 +1033,7 @@ class Supervisor:
         self.table.update(live.run, state="exited", exit=live.exit, out=live.ring.end)
         self._wake()
         self._emit("exit", live.run, dict(live.exit))
+        self._out(live.run)
 
 
 def _spawn_error(status: dict[str, Any]) -> SpawnError:

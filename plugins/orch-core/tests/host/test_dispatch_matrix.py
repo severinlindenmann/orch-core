@@ -20,6 +20,7 @@ from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
 from orch.host.runners import RUN_OPS
+from orch.host.terms import TERM_OPS
 from orch.host.worktrees import WORKTREE_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
@@ -73,7 +74,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     registry = {op.name for op in ops.all()}
     host = set(HOST_OPS) | set(FILE_OPS) | set(GIT_OPS) | set(HUMAN_OPS) | set(READ_OPS) | set(HOST_PERSON_OPS)
     host |= set(RECORDS_OPS)
-    host |= set(RUN_OPS)  # H11a
+    host |= set(RUN_OPS) | set(TERM_OPS)  # H11a, H11b
     host |= set(WORKTREE_OPS)  # H11d
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
@@ -164,6 +165,10 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in RECORDS_OPS:
             write = op in {"records.remote_private", "records.note"}
             assert kind == (("person_write", "write") if write else ("person_read", "read"))
+        elif op == "term.preview":  # H11b: P only
+            assert kind == ("person_read", "read")
+        elif op in TERM_OPS or op == "run.stop":  # H11b: P only
+            assert kind == ("person_write", "write")
         elif op in RUN_OPS:  # H11a: P and G only
             assert kind == ("pg_read", "read")
         elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
@@ -309,6 +314,7 @@ def test_whoami_per_column(served):
         "tier": "A",
         "grant": None,
         "session": SESSION,
+        "runner": {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None},
     }
     g = ok(c.req("whoami", grant=served.grant))["data"]
     assert g["person"] == served.lab.owner and g["grant"]["id"] == served.lab.ws.grant_id

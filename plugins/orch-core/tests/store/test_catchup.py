@@ -189,7 +189,7 @@ def test_a_crash_while_replacing_the_outbox_is_finished_at_the_next_lock(grown, 
         s.mint_catchup(source=None, cap=500, measure=measure)
     monkeypatch.undo()
     s.close()
-    s = env.open()
+    s = env.open(load="lazy")
     entries = s.outbox_entries()
     assert entries and all(e.catchup for e in entries)
     assert [e.n for e in entries] == list(range(entries[0].n, entries[0].n + len(entries)))

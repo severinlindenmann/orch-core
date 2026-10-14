@@ -52,7 +52,7 @@ def linked(env):
     env.bootstrap()
     link(env)
     env.store.close()
-    env.open()
+    env.open(load="lazy")  # an eager open writes (and queues) a checkpoint of its own
     return env
 
 
@@ -97,7 +97,7 @@ def test_a_crash_before_the_commit_leaves_neither_event_nor_entry(linked, monkey
         env.log(uid, "dying")
     monkeypatch.undo()
     env.store.close()
-    s = env.open()
+    s = env.open(load="lazy")
     assert len(env.read_events(uid)) == before_events
     assert entry_files(env) == before_entries
     assert [e.checkpoint for e in s.outbox_entries()][-1] == workspace_cp(env)
@@ -115,7 +115,7 @@ def test_a_crash_after_the_commit_before_the_install_recovers_both(linked, monke
     assert env.read_events(uid)[-1]["text"] == "dying"  # committed
     assert len(entry_files(env)) == n_before  # not installed yet
     env.store.close()
-    s = env.open()
+    s = env.open(load="lazy")
     entries = s.outbox_entries()
     assert len(entries) == n_before + 1
     cp = entries[-1].checkpoint
@@ -156,7 +156,7 @@ def test_a_forged_pending_entry_is_never_installed(linked, monkeypatch):
         env.log(uid, "dying")
     monkeypatch.undo()
     env.store.close()
-    s = env.open()
+    s = env.open(load="lazy")
     assert len(entry_files(env)) == n_before
     assert any(r.code == "store.torn_write" for r in s.reports)
 
@@ -225,3 +225,12 @@ def test_a_restore_writes_a_restore_entry_with_its_evidence(linked):
     assert r["event"] == result.event and r["log"] == "workspace"
     assert r["delegation"] == s._genesis_event["delegation"]
     assert r["device_cert"] and r["pk_pub"] and "proofs" in r
+
+
+def test_a_checkpoint_outside_an_append_is_queued_too(linked):
+    env = linked
+    env.new_ticket()
+    before = len(env.store.outbox_entries())
+    env.store.checkpoint()
+    entries = env.store.outbox_entries()
+    assert len(entries) == before + 1 and entries[-1].checkpoint == workspace_cp(env)

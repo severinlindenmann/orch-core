@@ -26,6 +26,7 @@ from typing import Any, NamedTuple
 from orch import canon, crypto, schema
 from orch.model.types import ts
 
+from .errors import StoreError
 from .fsio import loads, read_or_none, write_atomic
 from .logs import WORKSPACE, LogInfo
 from .paths import ULID, check_uid
@@ -538,10 +539,28 @@ class Checkpoints:
         sign: Callable[[bytes], bytes],
         genesis: str,
         at: str,
-        logs: Mapping[str, LogInfo],
+        logs: Mapping[str, Any],
         baseline: Mapping[str, Any] | None = None,
         floor_n: int = 0,
     ) -> str | None:
+        cp = self.build_workspace(sign, genesis, at, logs, baseline, floor_n)
+        if cp == "diverged":
+            return "diverged"
+        self.write_workspace_object(cp)
+        return None
+
+    def build_workspace(
+        self,
+        sign: Callable[[bytes], bytes],
+        genesis: str,
+        at: str,
+        logs: Mapping[str, Any],
+        baseline: Mapping[str, Any] | None = None,
+        floor_n: int = 0,
+    ) -> dict[str, Any] | str:
+        """The signed workspace checkpoint :meth:`write_workspace` would write, or ``"diverged"``; writes nothing.
+        ``logs`` maps a log to anything with ``seq``, ``head`` and ``acc`` (a :class:`LogInfo`, or the cut an append
+        is about to make: the store plans the checkpoint before its commit, H12b)."""
         ws = logs[WORKSPACE]
         old = baseline or self.workspace()
         if old and "o" in old:
@@ -568,8 +587,112 @@ class Checkpoints:
             "workspace_log": {"seq": ws.seq, "head": ws.head, "acc": ws.acc},
             "tickets": dict(sorted(tickets.items())),
         }
-        self._write(self._workspace_path, sign_object(sign, o))
-        return None
+        return sign_object(sign, o)
+
+    def write_workspace_object(self, cp: dict[str, Any]) -> None:
+        """Store ``cp`` (already signed) as the newest workspace checkpoint."""
+        self._write(self._workspace_path, cp)
+
+    def sign_prefix(
+        self,
+        sign: Callable[[bytes], bytes],
+        *,
+        genesis: str,
+        n: int,
+        at: str,
+        cut: Mapping[str, tuple[int, str, str]],
+        logs: Mapping[str, LogInfo],
+        base: Mapping[str, Any] | None,
+        key: Callable[[str, int], tuple[Any, ...]],
+        floor_n: int,
+    ) -> dict[str, Any]:
+        """Sign a catch-up checkpoint over the prefix ``cut`` (§11A.5, P3-D37); writes nothing.
+
+        ``cut`` maps each log the prefix holds to ``(seq, head, acc)`` (``seq >= 1``; a log the prefix does not reach
+        is absent); ``logs`` are the store's verified logs, all loaded; ``base`` is the checkpoint the prefix extends
+        (the relay's held one or the previous prefix, None for none); ``key(log, seq)`` is the merged-order key of
+        an event (§5.5); ``floor_n`` the highest ``n`` that exists anywhere (checkpoints, the high-water mark, the
+        outbox). Refuses with ``checkpoint.prefix_invalid`` unless every check holds:
+
+        * ``n`` is above ``floor_n`` and above every checkpoint this directory holds; ``at`` is not before ``base``;
+        * every entry is a point of its log (the head and accumulator at that ``seq``), the workspace log included;
+          nothing is carried from an earlier checkpoint, so a prefix never holds a later ticket entry;
+        * the prefix contains ``base``: every log of ``base`` is in ``cut`` at or past its ``seq`` and ``base``'s
+          head and accumulator are the log's at that ``seq``;
+        * every ticket event the prefix adds rests on a workspace head the prefix holds (``ws_seq``);
+        * the events the prefix adds beyond ``base`` are a downward-closed part of the merged order: no event left
+          out sorts before one taken in.
+        """
+
+        def no(detail: str) -> StoreError:
+            return StoreError("checkpoint.prefix_invalid", detail)
+
+        try:
+            ts(at)
+        except (ValueError, TypeError):
+            raise no("at is not a timestamp") from None
+        if type(n) is not int or n <= floor_n or n <= self.highest_n():
+            raise no(f"n {n} is not above every existing checkpoint number")
+        if WORKSPACE not in cut:
+            raise no("a prefix holds the workspace log")
+        base_seq: dict[str, int] = {}
+        if base is not None:
+            bo = base["o"]
+            if at < bo["at"]:
+                raise no("at is before the base checkpoint's")
+            for log, entry in {WORKSPACE: bo["workspace_log"], **bo["tickets"]}.items():
+                info = logs.get(log)
+                if (
+                    info is None
+                    or not 1 <= entry["seq"] <= info.seq
+                    or info.heads[entry["seq"] - 1] != entry["head"]
+                    or info.accs[entry["seq"] - 1] != entry["acc"]
+                ):
+                    raise no(f"{log}: the base is not in the log")
+                if log not in cut or cut[log][0] < entry["seq"]:
+                    raise no(f"{log}: the prefix drops part of its base")
+                base_seq[log] = entry["seq"]
+        for log, (seq, head, acc) in cut.items():
+            info = logs.get(log)
+            if log != WORKSPACE:
+                check_uid(log)
+            if info is None or type(seq) is not int or not 1 <= seq <= info.seq:
+                raise no(f"{log}: seq {seq} is not in the log")
+            if info.heads[seq - 1] != head or info.accs[seq - 1] != acc:
+                raise no(f"{log}: the head or accumulator at seq {seq} is not the log's")
+        ws_cut = cut[WORKSPACE][0]
+        taken_max = None
+        left_min = None
+        for log, info in logs.items():
+            seq = cut[log][0] if log in cut else 0
+            if seq > base_seq.get(log, 0):
+                k = key(log, seq)
+                if log != WORKSPACE and k[0] > ws_cut:
+                    raise no(f"{log}: rests on workspace seq {k[0]}, past the prefix's {ws_cut}")
+                taken_max = k if taken_max is None or k > taken_max else taken_max
+            if seq < info.seq:
+                k = key(log, seq + 1)
+                left_min = k if left_min is None or k < left_min else left_min
+        if taken_max is not None and left_min is not None and not taken_max < left_min:
+            raise no("the prefix is not downward closed in the merged order")
+        o = {
+            "v": 2,
+            "suite": 2,
+            "kind": "workspace_checkpoint",
+            "workspace_id": self.workspace_id,
+            "genesis": genesis,
+            "n": n,
+            "at": at,
+            "workspace_log": dict(zip(("seq", "head", "acc"), cut[WORKSPACE], strict=True)),
+            "tickets": {
+                log: dict(zip(("seq", "head", "acc"), cut[log], strict=True)) for log in sorted(cut) if log != WORKSPACE
+            },
+        }
+        try:
+            schema.validate("checkpoint", {"o": o, "sig": _PLACEHOLDER_SIG})
+        except schema.SchemaError as e:
+            raise no(str(e)) from None
+        return sign_object(sign, o)
 
     def _write(self, path: Path, cp: dict[str, Any]) -> None:
         write_atomic(path, canon.cj_checked(cp) + b"\n", mode=0o644)

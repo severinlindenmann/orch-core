@@ -585,8 +585,9 @@ def test_a_failed_auto_on_restores_the_previous_entry(r):
 
 
 def test_status_is_strictly_read_only(r):
-    """The dashboard's bounded child: no lock file, no run log, no object written into the records repo (the index
-    is compared with diff-index, never write-tree), and the current push URL answered."""
+    """The dashboard's bounded child: no repo writes and no network. No object written into the records repo (the
+    index is compared with diff-index, never write-tree), no records lock file, no run log, and the current push URL
+    answered. (It may record the host's convenience mark and takes the store lock in direct mode, like any read.)"""
     r.init()
     r.commit()
     url = r.bare()

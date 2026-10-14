@@ -465,12 +465,14 @@ def test_a_pushurl_or_insteadof_change_after_marking_is_refused(r):
 _CONV_LINE = json.dumps({"v": 2, "type": "log.added", "auth": "convenience", "text": "x"}, separators=(",", ":"))
 
 
-def _forge_convenience_commit(r, path: str = "events/workspace.jsonl", line: str = _CONV_LINE) -> str:
+def _forge_convenience_commit(
+    r, path: str = "events/workspace.jsonl", line: str = _CONV_LINE, *, replace: bool = False
+) -> str:
     """A records commit whose ``path`` carries ``line`` beyond what the store has (for an event log: a log file outside
     the merged view, as after an owner repair), made with plumbing only: the store is never touched."""
     env = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1",
            "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}  # fmt: skip
-    have = git(r.root, "show", f"HEAD:{path}", check=False).encode()
+    have = b"" if replace else git(r.root, "show", f"HEAD:{path}", check=False).encode()
     data = (have + b"\n" if have else b"") + line.encode() + b"\n"
     blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=data, capture_output=True,
                           env=env, check=True).stdout.decode().strip()  # fmt: skip
@@ -604,6 +606,49 @@ def test_an_escaped_convenience_event_in_a_pushed_log_is_refused(r, line):
     with pytest.raises(RecordsError) as e:
         r.push(initial=True)
     assert e.value.code == "sign.convenience_readers"
+
+
+@pytest.mark.slow
+def test_a_convenience_event_in_a_tickets_own_log_is_refused(r):
+    uid, _key = r.w.ticket("one")
+    r.init()
+    r.commit()
+    _forge_convenience_commit(r, f"tickets/{uid}/events.jsonl")
+    r.commit()
+    git(r.root, "remote", "add", "origin", r.bare())
+    with pytest.raises(RecordsError) as e:
+        r.push(initial=True)
+    assert e.value.code == "sign.convenience_readers"
+
+
+@pytest.mark.slow
+def test_an_old_blob_readded_at_an_event_log_path_after_a_clean_tip_is_refused(r):
+    """The blob sat in a body (not an event log) when the tip was cached clean; re-added at an event-log path, the new
+    commit names it there, so the incremental scan reads it."""
+    uid, _key = r.w.ticket("one")
+    r.init()
+    r.commit()
+    _forge_convenience_commit(r, f"tickets/{uid}/body.md", _CONV_LINE, replace=True)
+    git(r.root, "remote", "add", "origin", r.bare())
+    clean = r.push(initial=True)
+    assert clean["pushed"] and r.tips.clean(r.w.wid, "main", rtool.SCANNER_VERSION) == clean["commit"]
+    _forge_convenience_commit(r, "events/workspace.jsonl", _CONV_LINE, replace=True)  # the same blob, moved
+    with pytest.raises(RecordsError) as e:
+        r.push()
+    assert e.value.code == "sign.convenience_readers"
+
+
+@pytest.mark.parametrize(
+    "key", ["extensions.partialClone", "remote.origin.promisor", "remote.origin.partialclonefilter"]
+)
+def test_a_partial_clone_records_repo_is_refused(r, key):
+    """Opus #454 I5: a backstop for git older than 2.45, where GIT_NO_LAZY_FETCH is ignored."""
+    r.init()
+    git(r.root, "remote", "add", "origin", r.bare())
+    git(r.root, "config", "--local", key, "true" if "promisor" in key or "partial" in key.lower() else "x")
+    with pytest.raises(RecordsError) as e:
+        r.repo()
+    assert e.value.code == "records.unsafe_config" and key.split(".")[-1].lower() in e.value.message.lower()
 
 
 def test_the_records_git_never_lazy_fetches(r):

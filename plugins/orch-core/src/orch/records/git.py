@@ -69,7 +69,6 @@ _DENY_KEYS = frozenset(
 _REMOTE_OK = frozenset(
     {
         "url", "pushurl", "fetch", "gh-resolved", "prune", "prunetags", "tagopt", "skipdefaultupdate", "skipfetchall",
-        "promisor", "partialclonefilter",
     }
 )  # fmt: skip
 _SCP = re.compile(r"^[A-Za-z0-9._~+-]+@[A-Za-z0-9.-]+:[^:].*$|^[A-Za-z0-9.-]+:[^:].*$")
@@ -143,6 +142,12 @@ def check_local(entries: Sequence[tuple[str, str, str]], remote: str | None) -> 
         full = f"{section}.{name}" if sub is None else None
         if section in _DENY_SECTIONS or (full is not None and full in _DENY_KEYS):
             raise RecordsError("records.unsafe_config", f"the records repo's own config sets {key}: push by hand")
+        if (section == "extensions" and full == "extensions.partialclone") or (
+            section == "remote" and name in ("promisor", "partialclonefilter")
+        ):  # a partial clone could lazy-fetch behind a read, whatever the git version (Opus #454 I5)
+            raise RecordsError(
+                "records.unsafe_config", f"the records repo's own config sets {key}: a partial clone is not supported"
+            )
         if section == "core" and name == "bare" and value.strip().lower() not in ("false", "no", "off", "0"):
             raise RecordsError("records.unsafe_config", f"the records repo's own config sets {key}")
         if section == "remote" and remote is not None and sub != remote:

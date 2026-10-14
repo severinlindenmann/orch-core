@@ -564,14 +564,12 @@ shows verbatim before **Commit and push**. `orch runner enable` (terminal) makes
 
 ## Try terminals (M7a, real host, own terminal)
 
-Only on a disposable workspace (`tests/realhost_kit.py up BASE`; never your real `~/.config/orch`). Grant the `terminals` addon in the
-demo workspace and turn dashboard execution on **with the service manager off**: `ORCH_NO_SERVICE_MANAGER=1 orch runner enable
---workspace DEMO` (it records the switch; it must not install a launchd/systemd unit). A real host admits only the runner unit's main PID,
-so until core has a dev seam for a foreground runner, the end-to-end check is the in-process test:
-`cd addons/dashboard/server && uv run pytest -m realhost tests/test_realhost_terminals.py`.
-Without a runner the dock still shows (feature `terminals`) and **New terminal** shows the host's preview with its `blocked` reason
-("runner.unavailable"). What you should see with one: the preview (command, folder, "acts as you, not as an agent", the D-P2-31 line),
-**Open terminal** opens a shell you can type in; another tab shows it read-only with **Take control**; taking it there shows **Take back**
-here; **Stop** ends it ("Some processes may still be running" when cleanup was incomplete); an ended run whose output is gone says
-"Output no longer kept". Layout: `/__layout/terminal-dock` (and `-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.
-
+The end-to-end check is in-process (a subprocess host admits only the runner unit's main PID, and `orch runner enable` installs a
+launchd/systemd unit, which must not happen on this shared laptop): `cd addons/dashboard/server && uv run pytest -m realhost
+tests/test_realhost_terminals.py` (core's host and runner in this process, a real `/bin/sh`). On a disposable real host
+(`tests/realhost_kit.py up BASE`) with the `terminals` addon granted but no runner, the dock shows (feature `terminals`) and
+**New terminal** shows the host's preview with its `blocked` reason; nothing starts. With a runner, what you should see: the preview
+(command, folder, "acts as you, not as an agent", the D-P2-31 line), **Open terminal** opens a shell you can type in; another tab shows
+it read-only with **Take control**; taking it there shows **Take back** here; **Stop** ends it ("Some processes may still be running"
+when cleanup was incomplete); an ended run whose output is gone says "Output no longer kept". Layout: `/__layout/terminal-dock` (and
+`-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.

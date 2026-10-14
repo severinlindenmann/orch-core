@@ -80,8 +80,8 @@ def test_ticket_is_single_use_hashed_and_bound():
     assert ttl <= 30 and len(raw) == 22  # 128 bits, base64url
     assert raw not in json.dumps({k: vars(v) for k, v in tickets.items.items()})  # only its hash is kept
     intent = tickets.redeem(raw)
-    assert (intent.token, intent.ws, intent.run, intent.mode, intent.take, intent.from_) == ("tok", "ws", RUN,
-                                                                                           "write", True, 5)  # fmt: skip
+    bound = (intent.token, intent.ws, intent.run, intent.mode, intent.take, intent.from_)
+    assert bound == ("tok", "ws", RUN, "write", True, 5)
     assert tickets.redeem(raw) is None  # single use
 
 

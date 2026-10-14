@@ -1,10 +1,15 @@
 """M7a against core's in-process host and runner (`termkit`): the routes, the lazy attach, the bridge and the lease."""
 
+import asyncio
 import json
+import logging
 import sys
+import time
 
 import pytest
-from termkit import TermWorld, key, read_until, text, until_close
+from termkit import TermWorld, key, read_until, text, until_close, until_text
+
+from orch_dashboard.terminals import close_code
 
 pytestmark = pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the runner is POSIX only")
 
@@ -56,3 +61,123 @@ def test_stop_ends_the_attachment_with_1000(tw):
         code, texts = until_close(ws)
         assert code == 1000 and texts[-1]["t"] == "end"
         assert texts[-1]["reason"] in ("run.stopped", "exited")
+
+
+def test_take_control_moves_the_lease_and_write_without_take_is_4409(tw):
+    run = tw.open_shell()["run"]
+    with tw.connect(run, mode="write", take=True) as first:
+        assert json.loads(text(first))["writer"] is True
+        with tw.connect(run, mode="write") as busy:  # take:false while the lease is held
+            code, texts = until_close(busy)
+            assert code == 4409 and texts[-1]["t"] == "end"
+            assert texts[-1].get("code") == "term.writer_busy" or texts[-1]["reason"] == "writer_busy"
+        with tw.connect(run, mode="write", take=True) as second:
+            assert json.loads(text(second))["writer"] is True
+            assert until_text(first, "writer") == {"t": "writer", "writer": False}  # the old holder: "Take back"
+            first.send_bytes(key(b"echo stale-$((4*4))\n"))  # dropped: no lease
+            second.send_bytes(key(b"echo fresh-$((5*5))\n"))
+            got, _ = read_until(second, b"fresh-25")
+            assert b"stale-16" not in got
+
+
+def test_writer_resize_reaches_readers_and_reader_resize_is_dropped(tw):
+    run = tw.open_shell()["run"]
+    with tw.connect(run, mode="write", take=True) as writer, tw.connect(run) as reader:
+        assert json.loads(text(writer))["writer"] is True
+        ready = json.loads(text(reader))
+        assert (ready["cols"], ready["rows"]) == (120, 40)
+        reader.send_text(json.dumps({"t": "resize", "cols": 60, "rows": 10}))  # ignored
+        writer.send_text(json.dumps({"t": "resize", "cols": 100, "rows": 30}))
+        assert until_text(reader, "resize") == {"t": "resize", "cols": 100, "rows": 30}
+        listed = {r["run"]: r for r in tw.get("/runs").json()["runs"]}
+        assert (listed[run]["cols"], listed[run]["rows"]) == (100, 30)
+
+
+def test_logout_closes_the_socket_with_4401_and_no_end(tw):
+    run = tw.open_shell()["run"]
+    with tw.connect(run) as ws:
+        assert json.loads(text(ws))["t"] == "ready"
+        tw.client.post("/auth/logout", headers=tw.headers())
+        t0 = time.monotonic()
+        code, texts = until_close(ws, timeout=5)
+        assert code == 4401 and all(t["t"] != "end" for t in texts) and time.monotonic() - t0 < 2
+
+
+def test_exited_run_replays_then_exit_then_end(tw):
+    run = tw.open_shell()["run"]
+    with tw.connect(run, mode="write", take=True) as ws:
+        assert json.loads(text(ws))["writer"] is True
+        ws.send_bytes(key(b"echo bye-$((8*8)); exit 3\n"))
+        code, texts = until_close(ws)
+        assert code == 1000 and texts[-1] == {"t": "end", "reason": "exited"}
+        assert {"t": "exit", "code": 3, "signal": None} in texts
+    with tw.connect(run) as again:
+        ready = json.loads(text(again))
+        assert ready["state"] == "exited" and ready["writer"] is False
+        got, _ = read_until(again, b"bye-64")  # the ring, below ready.offset: replay
+        code, texts = until_close(again)
+        assert code == 1000 and texts[-1]["reason"] == "exited"
+
+
+def test_a_stopped_run_lists_exit_and_cleanup(tw):
+    run = tw.open_shell()["run"]
+    res = tw.post(f"/runs/{run}/stop")
+    assert res.status_code == 200 and set(res.json()) == {"state", "cleanup"}
+    deadline = time.monotonic() + 10
+    while True:
+        row = {r["run"]: r for r in tw.get("/runs").json()["runs"]}[run]
+        if row["state"] != "running" or time.monotonic() > deadline:
+            break
+        time.sleep(0.1)
+    assert row["state"] == "exited" and row["exit"]["reason"] == "stopped"
+    assert set(row["exit"]) == {"code", "signal", "at", "reason", "cleanup"}
+    assert "grant" not in row and "session" not in row and "person" not in row
+
+
+def test_unknown_run_is_a_host_refusal_with_its_code(tw):
+    with tw.connect("r_01M4Y46B485AXD4CBEJZ15Z1TV") as ws:
+        code, texts = until_close(ws)
+        assert texts[-1]["reason"] == "host.error" and code == close_code("host.error", texts[-1]["code"])
+        assert code in (4403, 4422)
+
+
+def test_runs_reach_the_live_stream(tw):
+    """run.sub items arrive as `runs` events (subscribe first; the page lists after `ready`)."""
+    from orch_dashboard.live import Live
+
+    async def run():
+        live = Live(tw.gateway, tw.auth)
+        w, tab = live.attach(tw.ws, tw.token)
+        stream = live.stream(w, tab)
+        first = await asyncio.wait_for(anext(stream), 10)
+        assert "event: ready" in first
+        opened = await asyncio.to_thread(tw.open_shell)
+        while True:
+            frame = await asyncio.wait_for(anext(stream), 10)
+            if "event: runs" in frame:
+                data = json.loads(frame.split("data: ", 1)[1])
+                if any(i["t"] == "run" and i["run"]["run"] == opened["run"] for i in data):
+                    break
+        await stream.aclose()
+        await live.close()
+        return data
+
+    items = asyncio.run(run())
+    assert all(set(i) == {"t", "run"} for i in items)
+
+
+def test_terminal_bytes_never_reach_the_logs(tw, caplog, capfd):
+    """Section 12.6.6 hygiene: a canary typed into the shell and printed by it is in no log line of this process."""
+    canary = "CANARY-" + "7f3c9e"
+    caplog.set_level(logging.DEBUG)
+    run = tw.open_shell()["run"]
+    with tw.connect(run, mode="write", take=True) as ws:
+        assert json.loads(text(ws))["writer"] is True
+        ws.send_bytes(key(f"echo {canary[:7]}''{canary[7:]}\n".encode()))
+        got, _ = read_until(ws, canary.encode())
+    with tw.connect(run) as reader:  # and once more as replay
+        text(reader)
+        read_until(reader, canary.encode())
+    out, err = capfd.readouterr()
+    logged = caplog.text + out + err
+    assert canary not in logged and canary[:7] + "''" not in logged

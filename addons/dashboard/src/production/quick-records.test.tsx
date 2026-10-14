@@ -469,6 +469,19 @@ it.each(['not-private', 'mismatch', 'failure', 'null', 'hidden'])('records curre
 })
 
 
+it('records current check as a maintainer: host only, no private line (L2)', async () => {
+  const user = userEvent.setup()
+  state.host.workspaces[0].role = 'maintainer'
+  state.host.workspaces[0].roster = roster().map((m) => (m.person === OWNER ? { ...m, role: 'maintainer' as const } : m))
+  vi.spyOn(api, 'getRecordsCurrent').mockResolvedValueOnce({ available: true, remote: { url: 'git.example.test', url_hidden: false, private: true, export: 'ok', current_url: 'git.example.test', current_url_hidden: false, current_private: true, matches_last: true } } as never)
+  show('/w/DEMO/settings/records')
+  await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  const warning = await within(dialog).findByTestId('records-export-warning')
+  expect(warning.textContent).toBe('Push publishes every ticket in this workspace to the remote configured in the records repository (on git.example.test; only owners see the full address), restricted ones included.')
+  expect(within(dialog).queryByTestId('records-current-private')).toBeNull()
+})
+
 it.each(['ok', 'index_differs', 'unsafe'])('configured %s before the first commit has a repository', async (repoState) => {
   state.host.workspaces[0].records = status({ configured: true, last: null, repo: { state: repoState } })
   show('/w/DEMO/settings/records')

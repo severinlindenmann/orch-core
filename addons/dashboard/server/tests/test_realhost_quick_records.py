@@ -154,8 +154,9 @@ def test_adding_a_quick_task_as_a_person_is_two_signatures(api):
 def test_records_status_before_any_commit(api):
     body = api.get("/records").json()
     assert body["available"] is True
-    # The status is the caller's own last note, not a live look at git: before the first commit nothing is noted.
-    assert body["configured"] is False and body["repo"] is None and body["last"] is None
+    # `configured` (core #454) means the workspace's records repository exists, as a tool last reported it: the fixture's
+    # `orch records init` did. Nothing is committed or noted for the caller yet.
+    assert body["configured"] is True and body["repo"] is None and body["last"] is None
     assert body["pending"]["events"] > 0 and body["pending"]["more"] is False
     assert {t["key"] for t in body["pending"]["tickets"]} >= {"DEMO-0001", "DEMO-0002"}
     assert body["remote"] is None and body["auto"] is None

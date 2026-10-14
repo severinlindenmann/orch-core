@@ -1543,3 +1543,8 @@ machinery unchanged and keep core in charge of wording. Converting would need a 
 **Why:** Core #454 supplies the current effective push destination and its exact private mark through the bounded status child, and accepts the empty label set. Historical status alone cannot establish the destination of the next push. The tool still resolves and checks the destination again when pushing.
 
 **Revert:** Restore the historical confirmation wording and hide quick-only conversion if deployed core no longer supports these contracts.
+
+## 2026-10-14 Push confirm for maintainers; the records page is keyed by workspace
+
+- **Decision:** For anyone but an owner, core's `remote.current_url` is only the destination's host. The confirm then says "the remote configured in the records repository (on <host>; only owners see the full address)" instead of presenting the host as the full §12.11 address, and the private line ("orch trusts your word that only you read …") shows to owners only. `HostRecords` is keyed by workspace, so a workspace switch can never leave one workspace's destination check in a dialog that pushes another (Opus delta L1, L2 on 63b62458).
+- **Revert:** Only if core shows maintainers the full address.

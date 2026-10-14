@@ -26,11 +26,14 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** The current destination uses §12.11 verbatim; historical status remains labelled. */
-export function ExportWarning({ url, current = false }: { url: string | null; current?: boolean }) {
+export function ExportWarning({ url, current = false, hostOnly = false }: { url: string | null; current?: boolean; hostOnly?: boolean }) {
+  // hostOnly: core shows a non-owner only the host of the current destination (or "local"), never the full address.
   return (
     <p data-testid="records-export-warning" className="text-[13px] text-warning">
       {EXPORT_WARNING.before}
-      {current && url !== null ? <Raw>{url}</Raw> : <>the remote configured in the records repository (last known: {url === null ? 'cannot be shown here' : <Raw>{url}</Raw>})</>}
+      {current && url !== null && hostOnly ? <>the remote configured in the records repository (on <Raw>{url}</Raw>; only owners see the full address)</>
+        : current && url !== null ? <Raw>{url}</Raw>
+        : <>the remote configured in the records repository (last known: {url === null ? 'cannot be shown here' : <Raw>{url}</Raw>})</>}
       {EXPORT_WARNING.after}
     </p>
   )
@@ -293,8 +296,9 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
               const remote = current.data?.remote
               const checked = !current.isError && remote?.current_url != null && !remote.current_url_hidden
               return <div className="space-y-2">
-                <ExportWarning url={checked ? remote.current_url! : url} current={checked} />
-                {checked && remote.current_private === true && <p data-testid="records-current-private" className="text-[13px] text-text-muted">{PRIVATE_REMOTE.before}<Raw>{remote.current_url!}</Raw>{PRIVATE_REMOTE.after}</p>}
+                <ExportWarning url={checked ? remote.current_url! : url} current={checked} hostOnly={role !== 'owner'} />
+                {/* The private mark is the owner's word about the full address: never shown against a host-only view. */}
+                {checked && role === 'owner' && remote.current_private === true && <p data-testid="records-current-private" className="text-[13px] text-text-muted">{PRIVATE_REMOTE.before}<Raw>{remote.current_url!}</Raw>{PRIVATE_REMOTE.after}</p>}
                 {checked && remote.matches_last === false && <p data-testid="records-push-mismatch" className="text-[13px] text-warning">This is not where the last push went (last: {remote.url !== null ? <Raw>{remote.url}</Raw> : 'cannot be shown here'}).</p>}
                 {!checked && <p role="alert" className="text-[13px] text-warning">Couldn't check the current destination: <Mono>{current.error instanceof ApiError ? current.error.code : current.isError ? 'records.child_unavailable' : 'records.current_url_unavailable'}</Mono>.</p>}
               </div>

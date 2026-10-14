@@ -53,6 +53,9 @@ class FakeLaunchd:
         self.pins = AgentPins(tmp / "pins", owner=UID)
         (tmp / "pins").mkdir(exist_ok=True)
         self.plan: svc.Plan | None = None
+        #: systemd only: enabled and active are separate answers; ``None`` follows ``loaded`` / the host
+        self.enabled: bool | None = None
+        self.active: bool | None = None
 
     def manager(self, unit: svc.Plan) -> svc.Manager:
         self.plan = unit
@@ -75,12 +78,23 @@ class FakeLaunchd:
         verb = argv[1] if argv[0] == "launchctl" else argv[2]
         if verb == "print":
             return done(0, "state = running\n") if self.loaded else done(113)
-        if verb in ("is-enabled", "is-active"):
-            return done(0, "active\n" if self.host else "inactive\n") if self.loaded else done(1)
+        if verb == "is-enabled":
+            on = self.loaded if self.enabled is None else self.enabled
+            return done(0, "enabled\n") if on else done(1, "disabled\n")
+        if verb == "is-active":
+            on = bool(self.host) if self.active is None else self.active
+            return done(0, "active\n") if on else done(3, "inactive\n")
         if verb in ("bootstrap", "enable"):
             self.loaded = True
-        if verb in ("bootout",):
+        if verb in ("bootout", "disable"):
             self.loaded = False
+            if verb == "bootout" or "--now" in argv:
+                self.enabled = self.active = None
+                self.stop_host()
+            else:
+                self.enabled = False
+        if verb == "stop":
+            self.active = False
             self.stop_host()
         if verb in ("bootstrap", "kickstart", "start", "restart"):
             self.start_host()
@@ -420,9 +434,56 @@ def test_enable_refuses_development_code_as_the_service_unless_dev(tmp_path, fak
     venv = tmp_path / "proj" / ".venv" / "bin"
     venv.mkdir(parents=True)
     (tmp_path / "proj" / ".git").mkdir()
+    (tmp_path / "proj" / "pyproject.toml").write_text("[project]\nname = 'x'\n")
     assert "checkout" in svc.dev_source(venv / "python", tmp_path / "pkg")
+    assert "checkout" in svc.dev_source(tmp_path / "usr" / "python", tmp_path / "proj" / "src" / "orch")
     assert "workspace" in svc.dev_source(tmp_path / "ws" / "py", tmp_path / "pkg", [str(tmp_path / "ws")])
     assert svc.dev_source(tmp_path / "usr" / "bin" / "python", tmp_path / "lib" / "orch") is None
+
+
+def test_a_homebrew_or_pipx_install_is_not_a_checkout(tmp_path, monkeypatch):
+    """T3 L-3 (#446): Homebrew's prefix is a git work tree and a home directory may be one too; neither makes an
+    installed interpreter or an installed orch development code."""
+    brew = tmp_path / "opt" / "homebrew"
+    (brew / ".git").mkdir(parents=True)
+    python = brew / "Cellar" / "python@3.13" / "3.13.1" / "bin" / "python3.13"
+    python.parent.mkdir(parents=True)
+    home = tmp_path / "home"
+    (home / ".git").mkdir(parents=True)
+    (home / "pyproject.toml").write_text("[project]\nname = 'dotfiles'\n")
+    pipx = home / ".local" / "pipx" / "venvs" / "orch"
+    package = pipx / "lib" / "python3.13" / "site-packages" / "orch"
+    package.mkdir(parents=True)
+    assert svc.dev_source(python, brew / "lib" / "python3.13" / "site-packages" / "orch") is None
+    tool = pipx / "bin" / "python"  # a tool venv's interpreter, whose environment lies under a git home
+    tool.parent.mkdir(parents=True)
+    tool.symlink_to(python)
+    (pipx / "pyvenv.cfg").write_text("home = x\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert svc.dev_source(tool, package) is None
+    project = home / "code" / "orch"  # but a checkout under the home directory is still one
+    (project / ".git").mkdir(parents=True)
+    (project / "setup.py").write_text("")
+    (project / ".venv" / "bin").mkdir(parents=True)
+    assert "checkout" in svc.dev_source(project / ".venv" / "bin" / "python", package)
+    linked = tmp_path / "linkhome"  # a symlinked home directory still ends the walk (Codex, #448)
+    linked.symlink_to(home)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: linked))
+    assert svc.dev_source(linked / ".local" / "pipx" / "venvs" / "orch" / "bin" / "python", package) is None
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    repo = home / "code" / "other"  # a venv at a checkout's root, orch installed into it without -e (Opus L-1)
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".venv" / "bin").mkdir(parents=True)
+    (repo / ".venv" / "pyvenv.cfg").write_text("home = x\n")
+    assert "checkout" in svc.dev_source(repo / ".venv" / "bin" / "python", package)
+
+
+def test_a_relative_run_directory_becomes_absolute(tmp_path, monkeypatch):
+    """T3 L-4 (#446): a unit file never carries a path relative to the directory enable ran in."""
+    monkeypatch.chdir(tmp_path)
+    assert svc.run_dir_for(tmp_path / "s", Path("rel")) == tmp_path / "rel"
+    assert svc.run_dir_for(tmp_path / "s", None, {"ORCH_HOST_RUN_DIR": "r2"}) == tmp_path / "r2"
+    assert svc.run_dir_for(Path("s"), None, {}) == tmp_path / "s" / "run"
 
 
 def test_a_service_for_another_setup_is_never_replaced_silently(world):

@@ -40,6 +40,8 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
       return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
+    case 'failed':
+      return { title: 'The earlier attempt did not land', body: error ?? '', tone: 'warn' }
     case 'blocked':
       return { title: 'The earlier attempt ended', body: error ?? '', tone: 'warn' }
     case 'attempt_open':
@@ -242,7 +244,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {click.phase === 'failed' && click.problem && (
           <div role="alert" data-testid="click-problem" data-click-next={click.problem.next} className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
             <p className="font-medium text-text">{click.problem.title}</p>
-            <p className="text-text-muted"><Raw>{click.problem.body}</Raw></p>
+            <p title={click.problem.signedAt ?? undefined} className="text-text-muted"><Raw>{click.problem.body}</Raw></p>
           </div>
         )}
 
@@ -285,8 +287,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {end && (
           <div role={end.tone === 'warn' ? 'alert' : 'status'} data-handoff-end={phase} className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
             <p className="font-medium text-text">{end.title}</p>
-            <p className="text-text-muted"><Raw>{end.body}</Raw></p>
-            {run.error?.hint && phase === 'error' && <p className="text-text-faint">{run.error.hint}</p>}
+            <p title={run.error?.signed_at ?? undefined} className="text-text-muted"><Raw>{end.body}</Raw></p>
+            {run.error?.fix && <p><Raw>{typeof run.error.fix === 'string' ? run.error.fix : JSON.stringify(run.error.fix)}</Raw></p>}
+            {run.error?.hint && phase === 'error' && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
           </div>
         )}
 
@@ -342,8 +345,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Cancel
               </Button>
             )}
-            {(phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
-              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'expired' || phase === 'blocked' ? 'Start again' : 'Prepare again'}</Button>
+            {(phase === 'failed' || phase === 'blocked' || phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
+              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'failed' || phase === 'expired' || phase === 'blocked' ? 'Start again' : 'Prepare again'}</Button>
             )}
             {phase === 'already' && (run.request?.state === 'submitted' || run.error?.code === 'intent.done') && p.action && <Button onClick={again}>Do it again</Button>}
             {end && (

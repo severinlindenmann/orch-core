@@ -26,8 +26,19 @@ PeerClass = Literal["person", "agent", "worker", "control"]
 #: agent / unattended / human: the registry ``who``; human_api: ``human.*``; job, control: their sockets' ops;
 #: pg_read: ``session.list`` and ``grant.list`` (P and G only, H6b).
 #: person_write: a host-side write only a person-class caller makes (``records.remote_private``, H11e).
+#: pg_write: a host-side side effect of P and G (``worktree.create``/``remove``, H11d; the op narrows G further).
 OpKind = Literal[
-    "read", "person_read", "pg_read", "person_write", "agent", "unattended", "human", "human_api", "job", "control"
+    "read",
+    "person_read",
+    "pg_read",
+    "person_write",
+    "pg_write",
+    "agent",
+    "unattended",
+    "human",
+    "human_api",
+    "job",
+    "control",
 ]
 
 
@@ -65,13 +76,18 @@ def resolve(peer: PeerClass, grant: GrantState, mapping_valid: bool) -> Column:
 
 # The permission matrix (§0.5) for each column.
 _MATRIX: dict[str, set[str]] = {
-    "P": {"read", "person_read", "pg_read", "person_write", "unattended", "human_api"},
-    "G": {"read", "pg_read", "agent", "unattended"},
+    "P": {"read", "person_read", "pg_read", "person_write", "pg_write", "unattended", "human_api"},
+    "G": {"read", "pg_read", "pg_write", "agent", "unattended"},
     "N": {"read", "unattended"},
     "W": {"job"},
     "C": {"control"},
 }
-_WRITES = {"agent", "unattended", "human"}  # person_write is outside every column but P: op.not_allowed there
+_WRITES = {
+    "agent",
+    "unattended",
+    "human",
+    "pg_write",
+}  # person_write is outside every column but P: op.not_allowed there
 
 
 def refusal(column: Column, kind: OpKind) -> str | None:

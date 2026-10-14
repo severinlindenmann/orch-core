@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import adapters, addon_routes, click, handoff, reads, settings
@@ -136,15 +136,27 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     addon_routes.register(app, gateway)
 
     @app.get("/{path:path}")
-    def spa(path: str):
+    def spa(path: str, request: Request):
         # Closed SPA surface. Unknown APIs/auth paths can never fall through to index.html.
         if path.startswith("assets/"):
             candidate = (static / path).resolve()
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
         elif path in ("", "favicon.svg") or SPA_PATH.fullmatch(path):
+            # The file:// launcher is cross-site too: serve its shell, but forbid
+            # automatic session sharing in foreign documents. Missing metadata keeps
+            # old-browser compatibility (and cannot protect their foreign loads).
+            sites = request.headers.getlist("sec-fetch-site")
+            foreign = bool(sites) and sites not in (["none"], ["same-origin"])
             candidate = static / ("favicon.svg" if path == "favicon.svg" else "index.html")
             if candidate.is_file():
+                if path != "favicon.svg" and foreign:
+                    html = candidate.read_text(encoding="utf-8")
+                    marked = html.replace("<head>", '<head><meta name="orch-nav" content="foreign">', 1)
+                    if marked == html:
+                        # Fail closed (Opus #444 re-check R-1): without the marker a foreign tab would join sessions.
+                        return response("internal", 500)
+                    return HTMLResponse(marked, headers={"Cache-Control": "no-store"})
                 return FileResponse(candidate, headers={"Cache-Control": "no-store"})
         return response("not_found", 404)
 

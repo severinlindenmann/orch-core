@@ -25,6 +25,7 @@ export type HandoffPhase =
   | 'unknown'
   /** The host confirms an open request for this op+key; no new prepare until it ends. */
   | 'attempt_open'
+  | 'failed'
   | 'blocked'
   /** The host's answer does not recompute to its own fingerprint: never shown as valid. */
   | 'invalid'
@@ -32,6 +33,7 @@ export type HandoffPhase =
 
 /** What a failed submit's catalog code means to the person; an unknown code is shown as it is. */
 export function failedSubmit(code: string): string {
+  if (code === 'lock.busy' || code === 'host.busy') return 'The host is busy. Try again shortly.'
   if (code === 'gate.stale' || code === 'question.stale' || code === 'members.stale') return 'The ticket changed before it was signed, so the host refused the signature. Prepare again to sign what is there now.'
   if (code === 'human.request_expired') return 'The request ran out of time before the signature reached the host.'
   return `The host refused the signature (${code}). Nothing was signed.`
@@ -140,6 +142,9 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         if (ALREADY_DONE.has(err.code) || err.code === 'intent.done') {
           refetch()
           setPhase('already')
+        } else if (err.code === 'intent.failed') {
+          setPhase('failed')
+          refetch()
         } else if (CHANGED.has(err.code)) {
           refetch()
           setPhase('changed')
@@ -190,15 +195,16 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         if (stopped) return
         if (got.id !== request.id || got.op !== request.op) throw new ApiError(0, { code: 'not_found', message: 'That is not the request that was prepared.', retryable: false }) // never follow another request
         // A terminal answer ends the watch before finish() refetches: that refetch is itself a query update.
-        if (got.error?.code && got.state === 'submitted') {
+        if (got.seq == null && got.state === 'submitted') {
           stopped = true
-          setError(new ApiError(409, { code: got.error.code, message: failedSubmit(got.error.code), retryable: false }))
-          finish('error', got)
+          setError(new ApiError(409, { code: 'intent.failed', message: `The earlier attempt was submitted but did not land${got.error?.code ? ` (${got.error.code})` : ''}. It was not signed into the log.`, retryable: false }))
+          finish('failed', got)
         } else if (got.state === 'submitted' || got.state === 'cancelled' || got.state === 'expired') {
           stopped = true
           finish(got.state === 'submitted' ? 'done' : got.state, got)
         } else setState(got)
       } catch (e) {
+        if (e instanceof ApiError && ['lock.busy', 'host.busy'].includes(e.code)) return
         failed += 1
         if ((e instanceof ApiError && e.code === 'not_found') || failed >= MAX_FAILED_POLLS) {
           stopped = true

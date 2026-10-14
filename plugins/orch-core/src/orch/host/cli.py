@@ -19,7 +19,7 @@ from typing import Any, TextIO
 
 from .errors import HostError
 
-__all__ = ["default_peers", "enable", "ensure_service", "main"]
+__all__ = ["default_peers", "disable", "enable", "ensure_service", "main"]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -51,6 +51,21 @@ def _parser() -> argparse.ArgumentParser:
         help="replace a service installed for another state dir, run dir or interpreter (its host stops)",
     )
     en.add_argument("--dev", action="store_true", help="allow an interpreter or orch package from a source checkout")
+    dis = sub.add_parser(
+        "disable",
+        help="stop and unload the per-user service and remove its unit (the reverse of enable); the state dir stays",
+    )
+    dis.add_argument("--state", type=Path)
+    dis.add_argument("--run", type=Path)
+    dis.add_argument(
+        "--purge-releases",
+        action="store_true",
+        help="also delete the installed release copies (the runner service uses them too); orch host enable "
+        "installs a new one",
+    )
+    dis.add_argument(
+        "--force", action="store_true", help="also remove a service installed for another state dir, run dir or setup"
+    )
     for name in ("status", "doctor"):
         st = sub.add_parser(name, help="the host, the service, the registered workspaces and this directory's mode")
         st.add_argument("--state", type=Path)
@@ -156,6 +171,10 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return _convenience(args, env, out)
         if args.cmd == "enable":
             doc = enable(_state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev)
+            out.write(json.dumps(doc, sort_keys=True) + "\n")
+            return 0 if doc.get("ok") else int(doc.get("exit", 9))
+        if args.cmd == "disable":
+            doc = disable(_state(args.state, env), env, run=args.run, purge=args.purge_releases, force=args.force)
             out.write(json.dumps(doc, sort_keys=True) + "\n")
             return 0 if doc.get("ok") else int(doc.get("exit", 9))
         if args.cmd in {"status", "doctor"}:
@@ -306,6 +325,80 @@ def enable(
     return {"ok": True, "result": {"data": data}}
 
 
+def disable(
+    state: Path, env: Mapping[str, str], *, run: Path | None = None, purge: bool = False, force: bool = False
+) -> dict[str, Any]:
+    """``orch host disable``: the reverse of :func:`enable` through the same unit plan and :class:`Manager`. Stops and
+    unloads the service, removes the unit file; with ``purge`` also deletes the release copies. The state dir is kept.
+    A unit installed for another state dir or run dir (or one that cannot be read, or a loaded label with no unit file
+    here) is refused unless ``force``: the same "never silently" rule as ``enable``. Nothing to remove is a success."""
+    from . import enable as svc
+    from .release import ReleaseError, purge_releases, releases_dir
+
+    run_dir = svc.run_dir_for(state, run, env)
+    releases = releases_dir(dict(env))
+    try:
+        unit = svc.plan(env, state, run_dir, releases / "current")
+    except svc.Unsupported as exc:
+        return {"ok": True, "result": {"data": {"mode": "direct", "service": None, "reason": str(exc)}}}
+    except ValueError as exc:
+        return _failure("invalid.input", f"the unit cannot hold this path: {exc}", 5)
+    if purge and not force:  # L2: the runner service runs from these release copies
+        busy = _runner_service_busy(state, env, run_dir, releases)
+        if busy:
+            return _failure(
+                "host.busy",
+                f"the runner service ({busy}) runs from the release copies that --purge-releases deletes; "
+                "run orch runner disable first, or pass --force",
+                4,
+            )
+    manager = SERVICE_MANAGER(unit)
+    differs = svc.differences(unit)
+    other = [k for k in (differs or []) if k in ("state", "run")] if differs is not None else []
+    foreign = differs is None and _loaded(manager)  # no unit file here, but the label is loaded from elsewhere
+    if (other or foreign) and not force:
+        what = ", ".join(other) + " differ" if other else "the label is loaded from another file"
+        return _failure(
+            "host.busy",
+            f"the host service ({unit.label}) belongs to another setup ({what}); disabling it stops that host and "
+            "the workspaces it serves. To do that on purpose: orch host disable --force",
+            4,
+            differs=other or ["unit"],
+        )
+    try:
+        ran = manager.stop()
+    except OSError as exc:
+        return _failure("host.unavailable", f"the {unit.kind} service did not stop: {exc}")
+    purged: list[str] = []
+    if purge:
+        try:
+            purged = purge_releases(releases)
+        except (ReleaseError, OSError) as exc:
+            return _failure("internal", f"the service is disabled but the releases were not removed: {exc}", 1)
+    data = {"service": unit.kind, "unit": str(unit.unit_path), "removed": differs is not None,
+            "ran": ran, "state_kept": str(state), "purged_releases": purged if purge else None,
+            "note": "registered workspaces answer host.unavailable until orch host enable"}  # fmt: skip
+    return {"ok": True, "result": {"data": data}}
+
+
+def _runner_service_busy(state: Path, env: Mapping[str, str], run_dir: Path, releases: Path) -> str | None:
+    """The runner's service label when its unit is installed or loaded/active here (``None``: it is not)."""
+    from orch.runner import service as runner_service
+
+    from . import enable as svc
+
+    try:
+        unit = runner_service.plan(env, state, run_dir, releases / "current")
+    except (svc.Unsupported, ValueError):
+        return None
+    try:
+        if unit.unit_path.exists():
+            return unit.label
+    except OSError:
+        return unit.label
+    return unit.label if _loaded(RUNNER_SERVICE_MANAGER(unit)) else None
+
+
 def _loaded(manager: Any) -> bool:
     try:
         return bool(manager.loaded())
@@ -315,6 +408,13 @@ def _loaded(manager: Any) -> bool:
 
 #: the service manager of a plan (tests replace it with a fake that never runs launchctl or systemctl)
 def SERVICE_MANAGER(unit: Any) -> Any:  # noqa: N802 - a module-level seam, named like the class it builds
+    from .enable import Manager
+
+    return Manager(unit)
+
+
+#: the runner's service manager (a seam like :data:`SERVICE_MANAGER`, so a fake host manager is never asked about it)
+def RUNNER_SERVICE_MANAGER(unit: Any) -> Any:  # noqa: N802
     from .enable import Manager
 
     return Manager(unit)
@@ -355,12 +455,17 @@ def default_peers(state: Path, root: Path, env: Mapping[str, str]) -> dict[str, 
     wid = ((cfg or {}).get("workspace") or {}).get("id")
     if not isinstance(wid, str):
         raise refuse(f"{root} is not an orch workspace")
-    directory = human.keys_dir(state, wid)
-    if not (directory / human.KEY_FILE).is_file():
-        raise refuse("no device key of yours for this workspace on this machine")
-    try:
-        device = device_ref(human.open_backend(directory).public_key(human.KEY_ID))
-    except Exception as exc:  # noqa: BLE001 - an unreadable key file: ask for the mapping instead
+    from orch.custody.base import KeyNotFound
+    from orch.custody.select import device_backend
+
+    try:  # either custody (passphrase key file or convenience selection); only the public key is read
+        backend, _sel = device_backend(state, wid)
+        if not backend.exists(human.KEY_ID):  # the selection is metadata: the key itself must still be there
+            raise KeyNotFound(human.KEY_ID)
+        device = device_ref(backend.public_key(human.KEY_ID))
+    except KeyNotFound:
+        raise refuse("no device key of yours for this workspace on this machine") from None
+    except Exception as exc:  # noqa: BLE001 - an unreadable key or selection: ask for the mapping instead
         raise refuse(f"the device key could not be read ({exc})") from None
     pins = HostPins(state, wid)
     try:
@@ -450,7 +555,7 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                         hint="let them expire (10 minutes), then switch convenience on",
                     )
             convenience.set_enabled(state, wid, args.switch == "on", uid)
-    except HostError as exc:  # host.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
+    except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
     out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
@@ -458,4 +563,5 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"
         )
+        out.write("Phone, relay link or other member later? A reader-version handshake is planned for phase 2.\n")
     return 0

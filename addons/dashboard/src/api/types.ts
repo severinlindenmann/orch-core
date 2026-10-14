@@ -947,12 +947,13 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean }
+  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean }
 }
 
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  readonly fix?: string | { argv: string[] }
   readonly hint?: string
   readonly retryable: boolean
   readonly retry_after_ms?: number
@@ -974,6 +975,7 @@ export class ApiError extends Error {
     this.status = status
     this.code = body.code
     this.hint = body.hint
+    this.fix = body.fix
     this.retryable = body.retryable
     this.retry_after_ms = body.retry_after_ms
     this.reason = body.reason

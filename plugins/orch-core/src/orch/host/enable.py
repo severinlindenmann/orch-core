@@ -80,12 +80,13 @@ class Plan:
 
 
 def run_dir_for(state: Path, given: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
-    """The run directory of a tier-A host: ``--run``, else ``ORCH_HOST_RUN_DIR`` (dev, tests), else ``<state>/run``."""
+    """The run directory of a tier-A host: ``--run``, else ``ORCH_HOST_RUN_DIR`` (dev, tests), else ``<state>/run``;
+    always absolute, so a unit file never carries a path relative to the directory ``enable`` ran in."""
     if given is not None:
-        return Path(given)
+        return Path(given).absolute()
     if env and env.get("ORCH_HOST_RUN_DIR"):
-        return Path(env["ORCH_HOST_RUN_DIR"])
-    return Path(state) / "run"
+        return Path(env["ORCH_HOST_RUN_DIR"]).absolute()
+    return (Path(state) / "run").absolute()
 
 
 def plan(
@@ -121,6 +122,10 @@ def _default_run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
     if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
         raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
     return subprocess.run(list(argv), capture_output=True, text=True, timeout=30, check=False)
+
+
+def _failed(argv: Sequence[str], res: subprocess.CompletedProcess[str]) -> str:
+    return f"{' '.join(argv)} failed ({res.returncode}): {(res.stderr or res.stdout or '').strip()}"
 
 
 def _arg_after(args: list[str], flag: str) -> str | None:
@@ -166,9 +171,27 @@ def differences(unit: Plan) -> list[str] | None:
     return [k for k in ("python", "state", "run") if old[k] != new[k]]
 
 
-def _in_checkout(path: Path) -> bool:
+_INSTALLED = frozenset({"site-packages", "dist-packages"})
+
+
+def _in_checkout(path: Path, stop: frozenset[Path] = frozenset(), *, git_alone: bool = False) -> bool:
+    """Inside a ``.worktrees`` checkout, or inside a git work tree with a Python project between it and ``path`` (a
+    ``pyproject.toml`` or ``setup.py`` on the way up). A git work tree alone is not enough: Homebrew's prefix is one,
+    and so is a home directory kept in git; an installed copy (under ``site-packages``) is never a checkout. The walk
+    ends before ``stop`` (the home directory, for an interpreter's environment: pipx and uv tool environments live
+    under it, and a home directory kept in git with a ``pyproject.toml`` must not make them checkouts). With
+    ``git_alone`` (a virtual environment, judged as the interpreter) a git work tree is enough: a venv inside a
+    checkout runs that checkout's changing dependencies even when orch itself was installed without ``-e``."""
+    if _INSTALLED & set(path.parts):
+        return False
+    project = False
     for d in [path, *path.parents]:
-        if d.name == ".worktrees" or (d / ".git").exists():
+        if d in stop:
+            return False
+        if d.name == ".worktrees":
+            return True
+        project = project or (d / "pyproject.toml").is_file() or (d / "setup.py").is_file()
+        if (project or git_alone) and (d / ".git").exists():
             return True
     return False
 
@@ -177,13 +200,24 @@ def dev_source(python: Path, package: Path, roots: Sequence[str] = ()) -> str | 
     """Why the interpreter or the ``orch`` package is development code that must not become the service (``None``:
     it is not): inside a git work tree or a ``.worktrees`` checkout (a ``.venv`` of a checkout included), or inside a
     registered workspace."""
-    for what, path in (("the interpreter", Path(sys.prefix if python == Path(sys.executable) else python)),
-                       ("the interpreter", Path(python)), ("the orch package", Path(package))):  # fmt: skip
+    # The interpreter is judged by its environment (a venv's bin/python links to its base interpreter, so the link is
+    # not followed): ``sys.prefix`` for the running one, else the directory above ``bin``.
+    env = Path(sys.prefix) if python == Path(sys.executable) else Path(python).parent.parent
+    try:  # the home directory as written and resolved (a symlinked home must still end the walk)
+        home = frozenset({Path(os.path.abspath(Path.home())), Path.home().resolve()})
+    except (OSError, RuntimeError):
+        home = frozenset()
+    for what, path, stop in (("the interpreter", env, home), ("the interpreter", Path(python), home),
+                             ("the orch package", Path(package), frozenset())):  # fmt: skip
         try:
-            real = path.resolve()
+            if path is env or what == "the orch package":
+                real = path.resolve()
+            else:  # the interpreter file itself: resolve its directory, never its own link
+                real = path.parent.resolve() / path.name
         except OSError:
             continue
-        if _in_checkout(real):
+        venv = what == "the interpreter" and (real / "pyvenv.cfg").is_file()
+        if _in_checkout(real, stop, git_alone=venv):
             return f"{what} ({path}) is in a source checkout"
         for root in roots:
             try:
@@ -211,7 +245,11 @@ class Manager:
     def loaded(self) -> bool:
         if self.plan.kind == "launchd":
             return self.run(["launchctl", "print", self._target()]).returncode == 0
-        return self.run(["systemctl", "--user", "is-enabled", self.plan.systemd_name]).returncode == 0
+        # systemd: enabled and running are independent (a disabled unit can be active, a unit file can be gone while
+        # the unit still runs), so either one counts as "there is a service here"
+        if self.run(["systemctl", "--user", "is-enabled", self.plan.systemd_name]).returncode == 0:
+            return True
+        return self.active() is True
 
     def active(self) -> bool | None:
         """Whether the service manager runs the host now (``None``: it cannot tell)."""
@@ -222,7 +260,9 @@ class Manager:
             return "state = running" in (res.stdout or "")
         res = self.run(["systemctl", "--user", "is-active", self.plan.systemd_name])
         out = (res.stdout or "").strip()
-        return True if out == "active" else False if out else None
+        if out in ("active", "activating", "reloading", "refreshing", "deactivating"):
+            return True
+        return False if out else None
 
     def installed(self) -> bool:
         try:
@@ -270,6 +310,34 @@ class Manager:
         do(["systemctl", "--user", "daemon-reload"])
         do(["systemctl", "--user", "enable", self.plan.systemd_name])
         do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
+        return ran
+
+    def stop(self) -> list[list[str]]:
+        """Stop and unload the service, then remove the unit file (``orch host disable``). A loaded service that
+        will not stop leaves the unit in place and raises. Returns the commands that ran. Never touches the state dir
+        or the releases."""
+        ran: list[list[str]] = []
+        was_loaded = self.loaded()
+        if self.plan.kind == "launchd":
+            if was_loaded:
+                argv = ["launchctl", "bootout", self._target()]
+                ran.append(argv)
+                res = self.run(argv)
+                if res.returncode != 0 and self.loaded():
+                    raise OSError(_failed(argv, res))
+        elif was_loaded:  # enabled or running (or both): stop it whatever the unit file says
+            argv = ["systemctl", "--user", "disable", "--now", self.plan.systemd_name]
+            ran.append(argv)
+            res = self.run(argv)
+            if res.returncode != 0:  # e.g. the unit file is gone but the unit still runs: stop it by name
+                ran.append(["systemctl", "--user", "stop", self.plan.systemd_name])
+                self.run(ran[-1])
+                if self.loaded():
+                    raise OSError(_failed(argv, res))
+        self.plan.unit_path.unlink(missing_ok=True)
+        if self.plan.kind == "systemd":
+            ran.append(["systemctl", "--user", "daemon-reload"])
+            self.run(ran[-1])  # best effort: the unit file is gone either way
         return ran
 
     def status(self) -> dict[str, Any]:

@@ -534,7 +534,22 @@ def done_error(prepared: dict, row: dict | None = None) -> HostError:
     row = row or {}
     op = prepared.get("op") or row.get("op")
     summary = json.dumps((prepared.get("material") or {}).get("review", []), ensure_ascii=False, sort_keys=True)
-    signed_at = info.get("signed_at") or row.get("signed_at")
+    # §0.8.1: submitted includes failed appends; human.pending.seq is committed-only.
+    if row.get("seq") is None:
+        code = (row.get("error") or {}).get("code")
+        detail = f" ({code})" if code else ""
+        return HostError(
+            {
+                "code": "intent.failed",
+                "message": f"The earlier attempt was submitted but did not land{detail}. "
+                "It was not signed into the log. Start again to make a new request.",
+                "retryable": False,
+                "reason": code,
+                "state": "submitted",
+            },
+            exit=5,
+        )
+    signed_at = info.get("submitted_at") or row.get("submitted_at")
     return HostError(
         {
             "code": "intent.done",
@@ -554,6 +569,8 @@ def read_done(human, ws: str, rid: str) -> HostError:
     prepared = human(ws, "human.get", {"request_id": rid})
     rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
     row = next((r for r in rows if r.get("id") == rid), {})
+    if not row:
+        raise fail("host.unavailable", "Cannot read the earlier submission outcome.")
     if prepared.get("request", {}).get("state") != "submitted":
         raise fail("internal", "The host did not return the submitted request.")
     return done_error(prepared, row)

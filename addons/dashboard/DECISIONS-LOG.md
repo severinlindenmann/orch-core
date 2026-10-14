@@ -1475,6 +1475,39 @@ A retained binding without an open request also caused a 24 h lockout.
 **Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
 never restore whole-ticket or member-role bases as an incidental refactor.
 
+## 2026-10-13 — T3 foreign navigation gate and definite signing failures
+
+**Decision:** Always serve the shell. A present Fetch Metadata site other than exactly
+one `none` or `same-origin` injects `<meta name="orch-nav" content="foreign">` per request.
+Keep CSP unchanged and shells `no-store`. The authoritative server marker prevents the
+document from opening BroadcastChannel or retaining inherited session storage; only its
+own launch fragment can establish a session. Without one, show terminal/bookmark guidance.
+Absent headers remain untagged for old-browser compatibility; those browsers lack this
+foreign-navigation protection. No client-provided assertion can override the marker.
+
+**Why:** The private file launcher itself arrives cross-site (#444 B-1); refusing its
+shell prevents sign-in. A client marker is required to preserve launch exchange while
+preventing automatic token sharing. Definite signing failures clear only new unsettled
+marks, preserving earlier unknown outcomes across retries (#447 I-6 L-1). Non-dict signer
+status closes the new child before reporting unavailable (L-2).
+
+**Revert:** Revisit the navigation/session and unsettled-outcome policies explicitly before
+removing these controls; do not restore the launcher-breaking shell refusal.
+## 2026-10-13 — Dashboard wheel UI and manifest packaging
+
+**Decision:** Build missing production UI during wheel packaging, fail clearly if it cannot
+be built, and offer `ORCH_DASHBOARD_SKIP_UI=1` only for development. Include the canonical
+addon manifest at build time and export it with `orch-dashboard addon-manifest --write` using
+symlink-refusing directory descriptors. Sdists carry the manifest and any prebuilt UI; the
+full checkout is the supported route when UI compilation is needed.
+
+**Why:** First-use runbook gaps 2 and 3 exposed wheels without the UI or workspace manifest.
+The owner must still explicitly sign the addon grant.
+
+**Revert:** Remove the custom hooks and manifest subcommand and restore manual UI build and
+manifest-copy steps; this reintroduces those packaging gaps.
+- 2026-10-13 — **Decision:** show host submitted_at only for committed pending rows (seq present); failed submissions require Start again; preserve host fixes and retry lock.busy. **Why:** submission time alone is not proof of a logged signature (#437). **Revert:** remove this dashboard mapping if the host outcome contract changes.
+
 ## M6: quick tasks and records as native pages on the real host (13 Oct 2026)
 
 **Decision:** On a real host quick tasks (`/quick`) and records (Settings, Records) are native React pages wired to the four M6 server routes;

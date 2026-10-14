@@ -541,6 +541,18 @@ terminal review lines, fingerprint, expiry); Sign turns on after half a second a
 change asks you to type the word shown. Try "Sign in the terminal instead" (it cancels the click request and shows an `orch sign` code), and
 `orch host convenience off --workspace DEMO` (the buttons disappear on the next refresh). Details: HANDOVER "Click-to-sign (H5c)".
 
+### T3 security regression checks (#444 / #447 I-6)
+
+Run the targeted dashboard HTTP, click and auth pytest files, plus bootstrap and foreign
+navigation vitests. Foreign shell loads must be 200 with the marker (including empty,
+duplicate and unknown site values); absent/none/same-origin loads remain untagged.
+The launcher's actual cross-site navigate/document headers plus its fragment code must
+produce a session through a subsequent same-origin auth exchange. A foreign PoC tab with
+no code has no server session and cannot join the token channel, even with inherited storage
+or token offers. Check the terminal/bookmark guidance. Untagged bootstrap behavior remains
+covered. Signing regressions cover uncertain-then-definite retries and non-dict status child
+cleanup. These checks use in-process HTTP, jsdom and fake signers: no ports, browser or keychain.
+
 ## Try quick tasks and records (M6, real host, own terminal)
 
 On a disposable workspace (`tests/realhost_kit.py up BASE`; never your real `~/.config/orch`). In the demo workspace folder with the demo's

@@ -174,3 +174,77 @@ def test_held_evidence_refuses_that_pair_as_a_restore_signer(ws):
     assert env.store.note_forwarded_revocation(item(env.owner, sig_pub)) == "held"
     assert any(pair(r) == (device, env.owner.ref) for r in env.store._pins.revocations())
     assert env.store.diverged == {}  # forwarded evidence is never claimed by accepted history
+
+
+# --- review round 1: bounded forwarded evidence (Opus F2, F8) ----------------------------------------------------
+
+
+def _big_label_item(person: Person, size: int) -> dict:
+    sig_pub = crypto.public_bytes(crypto.generate_private_key())
+    cert = certs.make_device_cert(
+        person.pk_pub,
+        person.pk_sign,
+        dk_sig_pub=sig_pub,
+        dk_kx_pub=crypto.public_bytes(crypto.generate_private_key()),
+        label_sealed=b"L" * size,
+        created_ms=T0 * 1000,
+        expires_ms=None,
+        scopes_max=["look", "decide", "operate", "type"],
+    )
+    return item(person, sig_pub, cert=cert)
+
+
+def test_poc_f2_huge_items_are_dropped_and_the_store_stays_usable(ws):
+    env, _device, _sig_pub = ws
+    for _ in range(3):
+        assert env.store.note_forwarded_revocation(_big_label_item(env.owner, 300_000)) == "dropped"
+    assert _revocations_file(env) == b""
+    stray = crypto.public_bytes(crypto.generate_private_key())
+    assert env.store.note_forwarded_revocation(item(env.owner, stray)) == "pending"
+    env.store.restore_facts("workspace")  # still readable
+
+
+def test_an_item_above_4_kib_is_dropped(ws):
+    env, _device, _sig_pub = ws
+    assert env.store.note_forwarded_revocation(_big_label_item(env.owner, 3000)) == "dropped"
+
+
+def test_extra_keys_are_dropped(ws):
+    env, _device, sig_pub = ws
+    it = item(env.owner, sig_pub)
+    it["extra"] = 1
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+    it = item(env.owner, sig_pub)
+    it["provenance"]["extra"] = 1
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+    it = item(env.owner, sig_pub)
+    del it["chain_reason"]
+    assert env.store.note_forwarded_revocation(it) == "dropped"
+
+
+def test_the_record_count_is_bounded_for_every_person_including_the_owner(ws, monkeypatch):
+    env, _device, _sig_pub = ws
+    monkeypatch.setattr(pins_mod, "MAX_FORWARDED_PER_PERSON_HARD", 3)
+    results = [
+        env.store.note_forwarded_revocation(item(env.owner, crypto.public_bytes(crypto.generate_private_key())))
+        for _ in range(5)
+    ]
+    assert results == ["pending"] * 3 + ["dropped"] * 2
+
+
+def test_the_total_is_bounded_even_for_members(ws, monkeypatch):
+    env, _device, _sig_pub = ws
+    monkeypatch.setattr(pins_mod, "MAX_FORWARDED_HARD", 2)
+    results = [
+        env.store.note_forwarded_revocation(item(env.owner, crypto.public_bytes(crypto.generate_private_key())))
+        for _ in range(4)
+    ]
+    assert results == ["pending"] * 2 + ["dropped"] * 2
+
+
+def test_the_worst_case_file_stays_well_below_the_read_limit():
+    from orch.store import fsio
+    from orch.store.store import MAX_FORWARDED_ITEM_BYTES
+
+    worst = pins_mod.MAX_FORWARDED_HARD * (MAX_FORWARDED_ITEM_BYTES + 512)
+    assert worst * 2 <= fsio.MAX_READ

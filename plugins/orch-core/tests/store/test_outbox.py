@@ -627,26 +627,29 @@ def test_no_append_without_its_entry_once_link_json_exists(unlinked):
 
     env = unlinked
     uid = env.new_ticket()
-    other = env.other(load="lazy")
     seen: list = []
-    real = other._write_pending
-
-    def watch(ev, log, line, writes, outbox=None):
-        seen.append((_link_path(env).exists(), outbox is not None))
-        return real(ev, log, line, writes, outbox=outbox)
-
-    other._write_pending = watch  # type: ignore[method-assign]
+    started = threading.Event()
 
     def appends():
+        other = env.other(load="lazy")  # a Store belongs to its thread (its sqlite handles)
+        real = other._write_pending
+
+        def watch(ev, log, line, writes, outbox=None):
+            seen.append((_link_path(env).exists(), outbox is not None))
+            return real(ev, log, line, writes, outbox=outbox)
+
+        other._write_pending = watch  # type: ignore[method-assign]
+        started.set()
         for i in range(25):
             other.append({"type": "log.added", "actor": env.agent, "text": f"r{i}"}, log=uid)
+        other.close()
 
     t = threading.Thread(target=appends)
     t.start()
-    time.sleep(0.05)
+    started.wait(30)
+    time.sleep(0.02)
     env.store.relay_link(dict(LINK), guard=_ok_guard([]))
     t.join(60)
-    other.close()
     assert len(seen) == 25
     assert all(entry for linked, entry in seen if linked)  # once the file exists, every append carries its entry
     assert all(not entry for linked, entry in seen if not linked)

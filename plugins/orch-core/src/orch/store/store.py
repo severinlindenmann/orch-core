@@ -2802,6 +2802,59 @@ class Store:
         ``<state>/hosts/<ws>/``, written by R1 under the store lock before any network write, 11A.5)."""
         return self._pins is not None and os.path.lexists(self._pins.dir / "relay" / "link.json")
 
+    def _relay_dir(self) -> Path:
+        if self._pins is None:
+            raise StoreError("validation.host_state", "a relay link needs the host state dir")
+        d = self._pins.dir / "relay"
+        if d.is_symlink():
+            raise StoreError("store.torn_write", "the relay state directory is a symlink")
+        return d
+
+    def relay_link(
+        self, link: Mapping[str, Any], *, guard: Callable[[], contextlib.AbstractContextManager[object]]
+    ) -> None:
+        """Write the reader reservation ``relay/link.json`` (11A.5 first link, 11A.6) and so turn the outbox on.
+
+        ``with self.locked(): with guard(): …``: under the store lock, then inside ``guard()`` (the host passes
+        ``orch.host.relaylink.link_reservation(service)``: the host-wide lock and the ``sign.convenience_readers`` /
+        ``host.limit`` refusals, held across the write so two workspaces cannot pass the cap together), refuse when
+        ``link.json`` exists (``relay.link_exists``), then write ``{**link, "state": "linking"}`` atomically
+        (fsync, 0600; the directory 0700). From that moment every append carries its outbox entry: appends take
+        the same lock. If ``guard()`` raises, nothing is written. ``link`` must be an object naming this workspace
+        (if it names one) and no state other than ``linking`` (``validation.relay_link``)."""
+        if (
+            not isinstance(link, Mapping)
+            or link.get("workspace_id", self.workspace_id) != self.workspace_id
+            or link.get("state", "linking") != "linking"
+        ):
+            raise StoreError("validation.relay_link", "link.json names another workspace or a state past linking")
+        body = canon.cj_checked({**link, "state": "linking"}) + b"\n"
+        with self._locked(), guard():
+            d = self._relay_dir()
+            path = d / "link.json"
+            if os.path.lexists(path):
+                raise StoreError("relay.link_exists", "the workspace already has a relay link")
+            d.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(d, 0o700)
+            write_atomic(path, body, mode=0o600)
+            fsync_dir(d)
+
+    def relay_mark_linked(self, expect: Mapping[str, Any]) -> None:
+        """Rewrite ``relay/link.json`` from ``linking`` to ``linked`` under the store lock, only if it holds exactly
+        ``expect`` (state ``linking``); otherwise ``relay.link_mismatch`` and nothing is written."""
+        with self._locked():
+            d = self._relay_dir()
+            path = d / "link.json"
+            raw = None if path.is_symlink() else read_or_none(path, 1_000_000)
+            try:
+                have = loads(raw) if raw is not None else None
+            except ValueError:
+                have = None
+            if have is None or dict(expect) != have or have.get("state") != "linking":
+                raise StoreError("relay.link_mismatch", "link.json is not the expected linking record")
+            write_atomic(path, canon.cj_checked({**have, "state": "linked"}) + b"\n", mode=0o600)
+            fsync_dir(d)
+
     def outbox_entries(self, limit: int | None = None) -> list[OutboxEntry]:
         """The outbox entries, oldest (lowest ``n``) first, each verified (WSK signature, workspace, genesis, ``n``
         and hash; a restore's target holds its line); only the first ``limit`` when given. Takes the lock. Raises

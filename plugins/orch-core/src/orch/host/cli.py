@@ -606,12 +606,26 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
     except HostError as exc:
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     op = "host.relay_stop" if args.action == "stop" else "host.relay_start"
+    res: dict[str, Any] | None = None
+    absent = False  # the host is confirmed not running: no socket, or nobody accepts on it
     try:
         with ControlClient(_control_path(args.run, state, env)) as client:
             res = client.call(op, {"workspace_id": wid})
-    except (OSError, ConnectionError, ValueError, frames.FrameError, HostError):  # ValueError: an unsafe socket path
-        res = None
-    if res is None:  # no host: the marker alone decides
+    except (FileNotFoundError, ConnectionRefusedError):
+        absent = True
+    except (OSError, ConnectionError, ValueError, frames.FrameError, HostError) as exc:  # unknown: a timeout, a
+        # protocol error, an unsafe socket path (ValueError), a host that is not the pinned one
+        why = type(exc).__name__
+        if args.action == "stop":
+            message = (
+                f"host unreachable ({why}): the marker is set, a running worker may continue until the host restarts"
+            )
+        else:
+            message = f"host unreachable ({why}): the stop was not cleared"
+        error = {"code": "host.unavailable", "message": message, "retryable": True}
+        out.write(json.dumps({"ok": False, "error": error, "exit": 9}, sort_keys=True) + "\n")
+        return 9
+    if absent:  # no host: the marker alone decides
         try:
             if args.action == "start":
                 relaylink.clear_stopped(state, wid, uid)
@@ -620,6 +634,7 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
         data = {"workspace_id": wid, "stopped": args.action == "stop", "host": "not running", "worker": "none"}
         out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
         return 0
+    res = res or {}
     if res.get("ok"):
         data = {**res["result"]["data"], "host": "running"}
         out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")

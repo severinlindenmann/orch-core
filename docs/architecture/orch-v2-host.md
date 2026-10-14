@@ -4419,7 +4419,11 @@ is `stale_card`.
      only that the file does not exist: a state file that is unreadable, not JSON, or the JSON literal `null` is a
      `StateError` (nothing is sent), never "absent" (round 8, R7-1). A `StateError` after an earlier pass is not
      sticky, but the pass is dropped: every later call runs the preflight again and fails while the state stays
-     unreadable (round 8, R7-2).
+     unreadable (round 8, R7-2). The whole preflight runs under a per-`Session` lock (round 9), so this holds for
+     threads sharing the `Session` too: a concurrent passing run cannot set the pass after another thread's
+     `StateError` (it no longer depends on one-thread discipline; the lock is never held across network I/O). One
+     accepted exception: `logout()` may still send after a preflight `StateError` (never after a refusal), since
+     releasing our own token is not acting as holder.
   The pass and the sticky refusal are **per `Session` object** (round 8, R7-4): R5 keeps ONE `Session` per state
   directory, shared by the workspace's relay threads (poll, resp, pub, aux), or shares the refusal state between
   them; otherwise a refusal raised by one thread's `hold()` does not stop another thread's session that already

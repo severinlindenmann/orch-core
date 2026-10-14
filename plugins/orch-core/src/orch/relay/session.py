@@ -124,6 +124,10 @@ class Session:
         self._t, self._signer, self._holder, self._alarm = transport, signer, holder, alarm
         self._mono, self._sleep, self._stop = mono, sleep, stop
         self._login_lock = threading.Lock()
+        # serialises preflight() (round 9): a passing run cannot set _checked after another thread's StateError. A leaf
+        # lock: preflight does no network I/O and takes no other Session lock; reentrant so an alarm sink that calls
+        # back into this Session (refused by then) cannot deadlock it
+        self._preflight_lock = threading.RLock()
         self._token: str | None = None
         self._relogin_at = 0.0
         self._bad_sig_at: float | None = None
@@ -384,34 +388,40 @@ class Session:
 
         The refusal (and the pass) is per :class:`Session` object (round 8, R7-4): R5 keeps ONE Session per state
         directory (shared by its relay threads), or shares the refusal state between them; a refusal raised in one
-        Session does not stop another Session that already passed."""
-        if self._refused is not None:
-            raise TakeoverRefused(self._refused)
-        # Not passed until this run passes (round 8, R7-2): a StateError raised now, after an earlier pass, makes every
-        # later call run the preflight again, and fail again while the state stays unreadable.
-        self._checked = False
-        why = self._holder.binding_problem()
-        if why is not None:
-            self._refuse(f"{why}; confirm with `orch host relay takeover`")
-        rec = self._holder.load()
-        if rec is None:
-            why = self._holder.history_problem()
+        Session does not stop another Session that already passed. Within one Session the whole preflight runs under a
+        lock (round 9), so threads sharing it cannot interleave: a passing run never sets the pass after another
+        thread's StateError, and the next call runs the preflight again.
+
+        One accepted exception: :meth:`logout` still sends after a preflight StateError (not after a refusal), since
+        releasing our own token is not acting as holder."""
+        with self._preflight_lock:
+            if self._refused is not None:
+                raise TakeoverRefused(self._refused)
+            # Not passed until this run passes (round 8, R7-2): a StateError raised now, after an earlier pass, makes
+            # every later call run the preflight again, and fail again while the state stays unreadable.
+            self._checked = False
+            why = self._holder.binding_problem()
             if why is not None:
-                self._refuse(f"{why}; recover with `orch host relay takeover`")
-        else:
-            if rec.pending is not None:
-                self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
-                             "`orch host relay takeover`")  # fmt: skip
-            if not rec.last_holder:
-                self._refuse("(a) holder.json does not say this state directory was the last holder")
-            if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
-                self._refuse(
-                    "(b) holder.json was written under another instance id (a restored or copied state directory)"
-                )
-            if rec.gen is None:
-                self._refuse("no stored gen to check the takeover against")
-        self._checked = True
-        return rec
+                self._refuse(f"{why}; confirm with `orch host relay takeover`")
+            rec = self._holder.load()
+            if rec is None:
+                why = self._holder.history_problem()
+                if why is not None:
+                    self._refuse(f"{why}; recover with `orch host relay takeover`")
+            else:
+                if rec.pending is not None:
+                    self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
+                                     "`orch host relay takeover`")  # fmt: skip
+                if not rec.last_holder:
+                    self._refuse("(a) holder.json does not say this state directory was the last holder")
+                if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
+                    self._refuse(
+                        "(b) holder.json was written under another instance id (a restored or copied state directory)"
+                    )
+                if rec.gen is None:
+                    self._refuse("no stored gen to check the takeover against")
+            self._checked = True
+            return rec
 
     def operator_takeover(self, *, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
         """The explicit operator takeover (R5 wires it to ``orch host relay takeover``): ``take_over: true``, then the
@@ -423,7 +433,8 @@ class Session:
             stale = True
         if stale:
             self._holder.regenerate()
-        self._checked, self._refused = True, None  # the operator's confirmation stands in for the preflight
+        with self._preflight_lock:
+            self._checked, self._refused = True, None  # the operator's confirmation stands in for the preflight
         got = self._hold_call({"gen": None, "take_over": True}, deadline_s, takeover=True)
         self._holder.save(HolderRecord(True, got.gen, self._holder.instance_id(), None))
         self._gen, self._fenced = got.gen, False

@@ -350,19 +350,26 @@ class FileSignLedger:
         self._s = state
 
     def _load(self) -> dict[str, dict[str, dict[str, str]]]:
+        """The whole ledger, every kind and entry type-checked: a ``null`` or malformed kind or entry (``{"card":
+        {"10": null}}``, ``{"card": []}``, a non-string digest or sig) is a StateError, never "nothing signed",
+        so a different card can never be signed at that seq (round 9, fail closed)."""
         obj = self._s.read_json(self.FILE)
         if obj is None:
             return {}
         if type(obj) is not dict:
             raise StateError("sign ledger shape")
+        for entries in obj.values():
+            if type(entries) is not dict:
+                raise StateError("sign ledger shape")
+            for e in entries.values():
+                if type(e) is not dict or type(e.get("digest")) is not str or type(e.get("sig")) is not str:
+                    raise StateError("sign ledger entry")
         return obj
 
     def get(self, kind: str, key: str) -> tuple[str, str] | None:
         e = self._load().get(kind, {}).get(key)
-        if e is None:
+        if e is None:  # only a missing key: _load refused every null entry
             return None
-        if type(e) is not dict or type(e.get("digest")) is not str or type(e.get("sig")) is not str:
-            raise StateError("sign ledger entry")
         return e["digest"], e["sig"]
 
     def keys(self, kind: str) -> list[str]:

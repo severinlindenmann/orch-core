@@ -434,3 +434,33 @@ def test_a_relative_path_is_checked_from_the_root(tmp_path, monkeypatch):
 def test_parent_traversal_is_refused(tmp_path):
     with pytest.raises(StateError, match="parent traversal"):
         StateDir(f"{tmp_path}/x/../relay")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        b'{"card":{"10":null}}',
+        b'{"card":null}',
+        b'{"k":[]}',
+        b'{"card":[]}',
+        b'{"card":{"10":[]}}',
+        b'{"card":{"10":"x"}}',
+        b'{"card":{"10":{"digest":1,"sig":"s"}}}',
+        b'{"card":{"10":{"digest":"aa","sig":null}}}',
+        b'{"card":{"10":{"digest":"aa"}}}',
+        b'{"other":{"x":null},"card":{}}',
+    ],
+)
+def test_a_null_or_malformed_ledger_entry_is_a_state_error_not_nothing_signed(tmp_path, bad):
+    """Round 9: a ``null`` or malformed kind or entry fails closed on every read and on record; it is never "nothing
+    signed", and the file is never rewritten over it."""
+    with StateDir(tmp_path / "relay") as st:
+        st.write(FileSignLedger.FILE, bad)
+        led = FileSignLedger(st)
+        with pytest.raises(StateError, match="sign ledger"):
+            led.get("card", "10")
+        with pytest.raises(StateError, match="sign ledger"):
+            led.keys("card")
+        with pytest.raises(StateError, match="sign ledger"):
+            led.record("card", "10", "bb", "sig")
+        assert st.read(FileSignLedger.FILE) == bad

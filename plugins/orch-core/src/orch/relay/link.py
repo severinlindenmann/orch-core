@@ -72,9 +72,12 @@ def _kept(store: StateDir, name: str, make: Callable[[], Any]) -> Any:
     if held is None:
         held = once.keep(canon.dumps(make()))
     try:
-        return wire.loads_canonical(held)
+        obj = wire.loads_canonical(held)
     except wire.WireError:
         raise LinkRefused(f"{name} is not readable; refusing to rebuild it") from None
+    if type(obj) is not dict:  # null, a list or a number: refused, never a TypeError later (round 9)
+        raise LinkRefused(f"{name} is not a JSON object; refusing to rebuild it")
+    return obj
 
 
 def first_link(steps: LinkSteps, session: Session, directory: Directory, retrier: Retrier, *, store: StateDir) -> None:

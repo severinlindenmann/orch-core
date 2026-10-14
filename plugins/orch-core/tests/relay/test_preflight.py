@@ -427,3 +427,56 @@ def test_an_unreadable_holder_after_an_earlier_pass_stops_every_later_call(env, 
         st.write("holder.json", good)
         d.get_card()
         assert len(m.seen) > n
+
+
+# -- round 9: preflight is serialised within one Session --------------------------------------------------------------
+
+
+def test_a_concurrent_passing_preflight_cannot_mask_another_threads_state_error(env, tmp_path):
+    """orch-52 F1, forced with events: thread C's first call reads a good ``holder.json`` inside the preflight and
+    pauses; ``holder.json`` becomes ``null``; thread A's ``hold()`` runs its preflight. Without the lock A raised
+    StateError first and C then set the pass, so a later ``get_card()`` sent a request while the file was still
+    ``null``. With it A waits for C, raises StateError after C's pass, and every later call refuses locally."""
+    import threading
+
+    m, sim = env
+    loaded, go = threading.Event(), threading.Event()
+
+    class Pausing(FileHolderStore):
+        def load(self):
+            rec = super().load()
+            if threading.current_thread().name == "C" and not loaded.is_set():
+                loaded.set()
+                assert go.wait(10)
+            return rec
+
+    with StateDir(_linked_dir(tmp_path, "held")) as st:
+        clock = Clock(sim)
+        s = make_session(m.origin(), holder=Pausing(st), clock=clock)
+        d = directory(s)
+        out: dict = {}
+
+        def run(name, fn):
+            try:
+                fn()
+                out[name] = None
+            except Exception as e:  # noqa: BLE001 - recorded for the asserts
+                out[name] = e
+
+        c = threading.Thread(target=run, args=("C", d.get_card), name="C", daemon=True)
+        c.start()
+        assert loaded.wait(10)
+        st.write("holder.json", b"null")
+        a = threading.Thread(target=run, args=("A", s.hold), name="A", daemon=True)
+        a.start()
+        a.join(0.5)  # with the lock A is blocked here; without it A has already failed
+        go.set()
+        c.join(10)
+        a.join(10)
+        assert not c.is_alive() and not a.is_alive()
+        assert isinstance(out["A"], StateError), out
+        n = len(m.seen)
+        for _ in range(2):
+            with pytest.raises(StateError, match="null"):
+                d.get_card()
+        assert len(m.seen) == n

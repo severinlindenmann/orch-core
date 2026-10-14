@@ -697,3 +697,34 @@ def test_a_deadline_firing_during_connect_sends_no_byte(listener):
     finally:
         peer.close()
     assert got == b"", got
+
+
+def test_a_deadline_passed_during_connect_sends_no_byte_even_if_the_watchdog_is_late(listener):
+    """Round 9: the injected clock passes the deadline while ``connect`` runs, and the watchdog (a real 30 s timer)
+    has not fired: the post-connect recheck compares the clock itself and fails the call as a deadline before a byte
+    is sent, so a late watchdog thread cannot let the call run past its deadline."""
+    now = [100.0]
+
+    class SlowClockConnect(http.RelayConn):
+        def _connect(self, sock, sa):
+            sock.connect(sa)
+            now[0] += 60
+            assert not self._fired.is_set()
+
+    c = SlowClockConnect(f"http://127.0.0.1:{listener.getsockname()[1]}", mono=lambda: now[0])
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=30)
+    assert e.value.kind == "deadline"
+    listener.settimeout(1)
+    try:
+        peer, _ = listener.accept()
+    except TimeoutError:
+        return
+    peer.settimeout(2)
+    try:
+        got = peer.recv(65536)
+    except ConnectionResetError:
+        got = b""
+    finally:
+        peer.close()
+    assert got == b"", got

@@ -354,3 +354,20 @@ def test_two_signers_on_one_state_dir_never_return_two_cards_at_one_seq(tmp_path
         t.join(30)
     assert len({variant for variant, _ in got}) <= 1, got
     st.close()
+
+
+@pytest.mark.parametrize("bad", [b'{"card":{"10":null}}', b'{"card":{"10":[]}}', b'{"card":null}'])
+def test_a_null_ledger_entry_never_lets_a_different_card_be_signed_at_that_seq(tmp_path, bad):
+    """Round 9, equivocation: the ledger holds ``null`` (or a malformed entry) at card_seq 10; a request for a card at
+    seq 10 is refused (StateError), no signature is made, and the ledger on disk is unchanged."""
+    from orch.relay.state import FileSignLedger, StateDir, StateError
+
+    with StateDir(tmp_path / "relay") as st:
+        st.write(FileSignLedger.FILE, bad)
+        k = Key()
+        s = signer(k, ledger=FileSignLedger(st))
+        for issued in (1, 2):
+            with pytest.raises(StateError, match="sign ledger"):
+                s.card({**CARD["o"], "card_seq": 10, "issued_ms": issued})
+        assert k.signed == []
+        assert st.read(FileSignLedger.FILE) == bad

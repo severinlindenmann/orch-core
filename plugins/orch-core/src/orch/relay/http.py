@@ -218,7 +218,7 @@ class RelayConn:
                 self._check_after_connect()
             except OSError as e:
                 sock.close()
-                if self._shut.is_set() or self._fired.is_set():
+                if self._shut.is_set() or self._fired.is_set() or self._mono() >= self._deadline:
                     raise
                 err = e
                 continue
@@ -244,10 +244,11 @@ class RelayConn:
         watchdog) that landed between the install check and ``connect`` hit a socket not yet connected (ENOTCONN,
         swallowed), and on Darwin a ``shutdown()`` during a pending connect can even make ``connect`` return success.
         Here the socket is connected, so a later ``shutdown()`` reaches it; one that already happened fails the call
-        (the caller closes the socket)."""
+        (the caller closes the socket). The deadline is compared on the clock too, not only through the watchdog's
+        flag (round 9): a watchdog thread scheduled late must not let a call that is already past its deadline send."""
         if self._shut.is_set():
             raise OSError("connection shut down")
-        if self._fired.is_set():
+        if self._fired.is_set() or self._mono() >= self._deadline:
             raise TimeoutError("deadline passed during connect")
 
     @staticmethod

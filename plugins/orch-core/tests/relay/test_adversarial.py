@@ -497,3 +497,25 @@ def test_resume_uses_the_persisted_card(env):
     s2, _ = new(m, sim, holder=h, clock=clock)
     first_link(steps, s2, directory(s2), make_retrier(clock), store=m.store)
     assert sim.cards[WS] == card and steps.calls.count("card") == 1
+
+
+@pytest.mark.parametrize("bad", [b"null", b"[]", b"0", b'"card"'])
+def test_a_persisted_link_card_that_is_not_an_object_is_refused_before_any_request(env, bad):
+    """Round 9: ``link-card.json`` holding ``null`` (or another non-object) is a :class:`LinkRefused`, never a
+    TypeError later and never rebuilt; nothing is sent."""
+    m, sim = env
+    s, clock = new(m, sim)
+    m.store.write("link-card.json", bad)
+    with pytest.raises(LinkRefused, match="not a JSON object"):
+        first_link(Steps(make_card(m.origin())), s, directory(s), make_retrier(clock), store=m.store)
+    assert m.seen == []
+    assert m.store.read("link-card.json") == bad
+
+
+def test_a_persisted_link_genesis_that_is_null_is_refused_before_put_genesis(env):
+    m, sim = env
+    s, clock = new(m, sim)
+    m.store.write("link-genesis.json", b"null")
+    with pytest.raises(LinkRefused, match="not a JSON object"):
+        first_link(Steps(make_card(m.origin())), s, directory(s), make_retrier(clock), store=m.store)
+    assert not any(x.path.endswith("/genesis") for x in m.seen)

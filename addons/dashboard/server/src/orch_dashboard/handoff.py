@@ -667,10 +667,6 @@ class Handoffs:
             return any(rid == request_id for tok, open_ in self.active.items() if tok != token for rid in open_)
 
     # -- a signature whose outcome is unknown, or in flight ------------------------------------------
-    def mark_unsettled(self, ws: str, request_id: str, until: float) -> None:
-        with self.lock:
-            self.unsettled[request_id] = (ws, until)
-
     def is_unsettled(self, request_id: str) -> str | None:
         """The workspace of a request whose signature may be at the host, else None."""
         with self.lock:

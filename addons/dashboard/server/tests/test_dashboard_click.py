@@ -1024,8 +1024,9 @@ def test_n12_two_tabs_one_request_and_a_sign_in_flight_is_never_cancelled_or_rep
 
 def test_n12_unsettled_requests_are_tracked_one_by_one(client, token, stub, script, auth, rich):
     handoffs = client.app.state.handoffs
-    handoffs.mark_unsettled(stub.ws, "hr_a", handoffs.clock() + 100)
-    handoffs.mark_unsettled(stub.ws, "hr_b", handoffs.clock() + 100)
+    for rid in ("hr_a", "hr_b"):  # an unknown sign outcome is the only thing that leaves a mark behind
+        handoffs.begin_sign(stub.ws, rid, handoffs.clock() + 100)
+        handoffs.end_sign(stub.ws, rid, handoffs.clock() + 100, "uncertain")
     assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") == stub.ws
     handoffs.settled("hr_b")
     assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") is None

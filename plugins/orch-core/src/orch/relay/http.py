@@ -11,7 +11,9 @@
   Plain ``http`` is only for the loopback origins that :func:`wire.check_origin` allows.
 * Every call has a **total** deadline on the injected monotonic clock covering connect, TLS, headers and body: a
   watchdog shuts the socket down when it passes (so a relay that drips header bytes cannot stretch a call), and the
-  socket timeout is set to the time remaining before every bounded body read.
+  socket timeout is set to the time remaining before every bounded body read. The watchdog's socket is registered
+  before ``connect`` blocks; a deadline or :meth:`RelayConn.shutdown` that passed before that fails the call at once
+  (round 6, orch-52 #3).
 * The body is read in bounded pieces against ``cap`` whatever ``Content-Length`` or chunked framing says; over the cap
   the connection is closed and the call fails as transient ``too_large``.
 * No redirect is followed: any 3xx is :class:`RedirectRefused` (permanent; alarm ``relay_redirect``).

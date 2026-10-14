@@ -4111,7 +4111,7 @@ through purpose-specific methods.
   |---|---|---|
   | `login(challenge)` | origin and workspace id from `link.json`, kind `workspace`, challenge 32 bytes | `sig_relay_auth` |
   | `response_chunk(header, body)` | ORB2 direction 2, the header's workspace id, an epoch `BridgeKeys` holds, the whole envelope ≤ 256 KiB (the relay's cap counts the raw envelope, `bridge.py` `envelope`) | `sig_bridge` |
-  | `card(o)` | exact field set, workspace id, WSK public key = own, `relay_url` = the stored origin, `card_seq` > the last accepted one and ≥ the highest signed one; a different card at a signed `card_seq` is refused, the same one gets the recorded signature back (durable last-signed ledger written before the signature is returned; ECDSA signatures are randomised, so nothing is re-signed) | `sig_card_wsk` |
+  | `card(o)` | exact field set, workspace id, WSK public key = own, `relay_url` = the stored origin, `card_seq` > the last accepted one and ≥ the highest signed one; a different card at a signed `card_seq` is refused, the same one gets the recorded signature back (durable last-signed ledger written before the signature is returned; ECDSA signatures are randomised, so nothing is re-signed). The highest-signed rule is checked first: once a later `card_seq` was signed, an older card is refused even if its signature is in the ledger (round 6, orch-52 #5) | `sig_card_wsk` |
   | R6: `member_list`, `wk_grant`, `cert_request`, `wk_commit` | specified by R6 | R6 labels |
 
   The `HOST_LABELS` role check (`custody/base.py`) stays as a backstop. It does not separate directions by itself:
@@ -4120,7 +4120,9 @@ through purpose-specific methods.
   test over `orch.relay` bans private names on other objects, dynamic attribute access (`getattr`, `vars`, `globals`,
   `eval`, `importlib`, `sys.modules`, introspection attributes) and every `orch.crypto` signing entry point under any
   alias, frame and interpreter reach (`logging.currentframe`, `traceback.walk_stack`, `f_builtins`), and assignment to
-  an attribute of an imported module or class. This is defence in depth, not isolation: same-process code can always
+  an attribute of an imported module or class. Relative imports are resolved with their level against the module's own
+  package (`from ..crypto import sign` is `orch.crypto.sign`), and every `.py` under `orch/relay/` is scanned,
+  subpackages included (round 6, orch-52 #4). This is defence in depth, not isolation: same-process code can always
   traverse objects, and reassigning a module function (say `wire.auth_bytes`) before calling the public `login` signs
   attacker bytes. The real boundary is the reserved out-of-process `bridge` class under a distinct UID (11A.11 Q1).
 - Epoch keys are used only through `BridgeKeys`, which opens a request and seals a response and returns only
@@ -4191,6 +4193,14 @@ rename + dir fsync) and read with `read_json`.
 | `instance.json` | `{instance_id, dev, ino}`: the state directory's instance id (random 128 bits, created once with the state) bound to the `st_ino` of the locked directory fd (decided by orch-52, 13 Oct 2026; `dev` is recorded for information only since 14 Oct, below). `cp -r` or rsync copies the id but not the inode, and a restore through a backup tool recreates the directory: both show as a mismatch, which alarms `relay_takeover_refused`. A process restart or a rename within one filesystem keeps the inode; a move across filesystems (or a tool that recreates the directory) needs the operator path. `st_dev` is not compared: it is assigned per mount and can change across a reboot or remount (APFS volume order, btrfs subvolumes, LVM, an external volume), so a changed `dev` with the same inode is logged at info level, not alarmed. Not detected (residuals, same class, inherent to local state): a block-level clone (VM image, `asr`/`dd`, a block-level disk clone booted on a second machine) keeps the inode and every byte, a writable filesystem snapshot or clone (btrfs/ZFS snapshot, an `asr`/`dd` clone attached as a second volume on the SAME machine) keeps the inode number by design and gets a new `st_dev`; since the device check was dropped (14 Oct 2026, review round 5 P1) it passes and renews the live `gen`. Read-only snapshots (APFS, Time Machine) fail with EROFS before any network call, and a copy onto another volume can land on the same inode number by chance; no local check can prove a state directory is unique, and the relay's holder `gen` is the backstop. Never run a clone while the original is live. Only the operator path rebinds: `regenerate_instance_id(state)` (new id and current `dev`/`ino`), called by the restore procedure and by `orch host relay takeover` on a directory bound elsewhere. A round-3 `instance.json` (`{instance_id}` only, never released) is refused with a `StateError` naming `orch host relay takeover`, which regenerates it | no | claimed once (`os.link`) at creation; rebinding is an atomic write |
 | `sign-ledger.json` | the last-signed ledger: `{kind: {key: {digest, sig}}}` (cards by `card_seq`) | no | written durably before a signature is returned |
 | `link-card.json`, `link-genesis.json` | the card and the genesis pin (with its certificate and genesis hash) of the first link, write-once (claimed with `os.link`, read back if another writer won) | no | persisted before their first PUT; a resume re-sends these bytes |
+
+**The state directory's ancestors (round 6, orch-52 #2).** `StateDir` runs the custody tree check itself (`orch.host`
+is import-banned in `orch.relay`, so it mirrors `check_tree`): every ancestor is opened from `/` one component at a
+time with `O_NOFOLLOW | O_DIRECTORY` (a symlinked ancestor is refused), and each must be owned by root or the host UID
+and not writable by group or other unless it is a root-owned sticky directory (`/tmp`). The directory itself is then
+created (0700) and opened relative to its checked parent, never by path, and must be a 0700 directory of the host UID.
+Gap, as documented for the relay state elsewhere: ACLs are not inspected here (the host's ACL check needs `ctypes`,
+which the import ban refuses); R5 can swap in `host/custody.check_tree` behind the same interface.
 
 One live instance per state directory: `StateDir` holds an exclusive non-blocking `flock` on the directory for its
 lifetime (close-on-exec); a second instance, in this process or another, is refused "in use". All I/O goes through the
@@ -4359,7 +4369,9 @@ clock is past the backup's time + 600 s.
    internal instance is 4 MiB, the public one 16 MiB);
 2. the owner's account and delegation on the relay (owner client, P3-D34) and the owner-signed genesis pin (person
    path, 11A.2);
-3. `PUT card` without a session (the only unfenced workspace write, P3-D4: a workspace login needs a card);
+3. `PUT card` without a session (the only unfenced workspace write, P3-D4: a workspace login needs a card). Before
+   it, and before any other request, the `link.json` state check and the local preflight (steps 1 to 3 of the restart
+   takeover below) run: a copied or restored `linking` directory sends nothing (round 6, orch-52 #1);
 4. challenge, login, `host/hold`, `PUT genesis` (a W(g) write, so after the hold; the relay refuses every checkpoint
    without it), the first publication (below, with catch-up), then `state:"linked"`.
 A crash leaves `linking`; the next start runs the sequence again (every step is idempotent on the relay). The card and
@@ -4378,7 +4390,10 @@ is `stale_card`.
   monotonic clock from the start of the login (the relay's `expires_ms` is never trusted, 11A.8), or once on a 401
   `unauthenticated`/`expired`, which also covers a relay with a shorter lifetime; the identical bytes are then resent.
 - **Restart takeover (DECIDED by orch-52, 13 Oct 2026; core-only, fail closed, no relay change).** At start, before
-  any network call:
+  any network call (steps 1 to 3 are `Session.preflight`, one local check that gates **every** entry point since round
+  6, orch-52 #1: the first request of a session of any kind, login, challenge, the session-less `PUT card` and every
+  directory read or write, runs it, `hold()` at start runs it again, and `first_link` runs it right after its
+  `link.json` check; a failure refuses every later call locally until the operator takeover):
   1. the instance record must be bound to this very directory (its inode; `dev` is informational, 11A.3); else alarm
      `relay_takeover_refused` ("this state directory was copied or restored") and stop;
   2. `holder.json` has `pending` (a probe was in flight when the host stopped): alarm ("possibly our own interrupted
@@ -4562,6 +4577,12 @@ A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-
   (a stuck resolver would otherwise sit outside both the socket timeout and the watchdog); the connection goes to the
   resolved address and TLS still checks the origin's hostname.
 - A proxy from `link.json` is refused for an `http` origin (the login and the token would cross it in cleartext).
+
+- The deadline watchdog and `shutdown()` act on a dup of the connection's socket, registered **before** `connect`
+  blocks (round 6, orch-52 #3); when it is installed, a deadline that already passed or a `shutdown()` that already
+  happened (both found nothing to kill) fails the call at once, so nothing is connected or sent. Platform note: Linux
+  ends a still-connecting socket on `shutdown(SHUT_RDWR)`; where the platform does not, the connect still ends at its
+  socket timeout, which is the call's remaining deadline.
 
 **Deadlines and caps.** Every call has a **total** deadline on the monotonic clock, covering connect, headers and body.
 Before each bounded read the socket timeout is set to the time remaining, so a relay that drips bytes ends at the

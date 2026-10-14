@@ -58,8 +58,9 @@ class FakeSocket {
   open() { this.readyState = 1; this.onopen?.() }
 }
 
-function handlers(): TermHandlers & Record<string, ReturnType<typeof vi.fn>> {
-  return { ready: vi.fn(), output: vi.fn(), gap: vi.fn(), resize: vi.fn(), writer: vi.fn(), inputLost: vi.fn(), inputPaused: vi.fn(), exit: vi.fn(), closed: vi.fn() } as never
+function handlers() {
+  const h = { ready: vi.fn(), output: vi.fn(), gap: vi.fn(), resize: vi.fn(), writer: vi.fn(), inputLost: vi.fn(), inputPaused: vi.fn(), exit: vi.fn(), closed: vi.fn() }
+  return h satisfies TermHandlers
 }
 
 describe('the socket', () => {

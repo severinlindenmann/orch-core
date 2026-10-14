@@ -90,9 +90,8 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 /** One idem per confirmed preview (`a_` + a ULID-shaped random id); a retry of the same click reuses it. */
 export function newIdem(random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
-  const bytes = random(25)
-  const tail = Array.from(bytes, (b) => CROCKFORD[b & 31]).join('')
-  return `a_${CROCKFORD[bytes[0] & 7]}${tail.slice(1)}`
+  const bytes = random(26)
+  return `a_${CROCKFORD[bytes[0] & 7]}${Array.from(bytes.subarray(1), (b) => CROCKFORD[b & 31]).join('')}`
 }
 
 const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`

@@ -71,11 +71,13 @@ class Security:
         if (
             method in ("POST", "PUT", "PATCH")
             and path != "/auth/logout"
+            and not (method == "POST" and path.startswith("/api/w/") and path.endswith("/records/auto-off"))
             and values(b"content-type") != ["application/json"]
         ):
             return await reject("invalid.input", 400)  # every browser mutation is bounded JSON
         click_step = path.startswith("/api/w/") and "/click/" in path and path.endswith(CLICK_STEP)
-        limit = 1024 if path == "/auth/session" else CLICK_BODY_LIMIT if click_step else 1_048_576
+        records_step = path.startswith("/api/w/") and path.endswith(("/records/commit", "/records/auto-off"))
+        limit = 1024 if path == "/auth/session" or records_step else CLICK_BODY_LIMIT if click_step else 1_048_576
         body = bytearray()
         while True:
             event = await receive()

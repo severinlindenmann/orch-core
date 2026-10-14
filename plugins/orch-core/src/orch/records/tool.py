@@ -23,11 +23,14 @@ records commit of this workspace (the ``Orch-Records`` trailer, at most one pare
 only, as regular files. Replace objects are off, grafts and shallow repos are refused. ``--fresh-history`` makes the
 next commit a root commit instead (the old history stays in the repo but leaves the branch).
 
-**Push** (items 6, D-P2-34): the source commit S is resolved once; the effective push URL is resolved once; the remote
-tip T comes from ``ls-remote`` of that literal URL; T must exist locally and be an ancestor of S; the history is
-validated; ``records.export_check`` is asked with (S, URL, ref); then exactly S is pushed to that URL with
-``--force-with-lease=<ref>:<T>``. The lease only guards the race: it never authorizes a non-fast-forward, because T is
-an ancestor of S. A missing remote branch needs ``--initial``.
+**Push** (items 6, D-P2-34): the source commit S is resolved once; the effective push URL is resolved once; the
+history is validated; every blob reachable from S is scanned for an event with ``auth: "convenience"`` (#441); and
+``records.export_check`` is asked with (S, URL, ref, that report), all **before any network call**. The check refuses
+a non-private URL on the report alone, whatever the host's merged view says. A tip scanned clean is remembered
+(``clean`` in the person's ``records.json``), so a later push scans only the new objects. Then the remote tip T comes
+from ``ls-remote`` of that literal URL; T must exist locally and be an ancestor of S; and exactly S is pushed to that
+URL with ``--force-with-lease=<ref>:<T>``. The lease only guards the race: it never authorizes a non-fast-forward,
+because T is an ancestor of S. A missing remote branch needs ``--initial``.
 """
 
 from __future__ import annotations
@@ -65,6 +68,7 @@ __all__ = [
     "ValidatedTips",
     "commit",
     "fetch_manifest",
+    "history_has_convenience",
     "init_repo",
     "push",
     "validate_history",
@@ -533,6 +537,106 @@ def validate_history(repo: Git, workspace_id: str, tip: str, since: str | None =
     return len(ids)
 
 
+#: the scanner's rules; a clean-tip cache entry of another version is ignored (a full rescan)
+SCANNER_VERSION = 2
+#: the event logs: the only record files whose lines are events (bodies and artifacts are free text agents write)
+EVENT_LOG = re.compile(r"events/workspace\.jsonl|tickets/[0-7][0-9A-HJKMNP-TV-Z]{25}/events\.jsonl")
+#: bytes of blob content read per ``cat-file --batch`` call
+_SCAN_CHUNK = 64 * 1024 * 1024
+
+
+def _blob_has_convenience(data: bytes, seen: set[bytes] | None = None) -> bool:
+    """A line of an event-log blob is an event with ``auth: "convenience"``
+    (:func:`orch.ops.readers.line_is_convenience`: lenient JSON; a line that does not parse counts, fail closed).
+    ``seen`` holds lines already judged clean in this scan (logs are append-only: each version repeats the older
+    lines)."""
+    from orch.ops.readers import line_is_convenience
+
+    for line in data.split(b"\n"):
+        if seen is not None:
+            if line in seen:
+                continue
+        if line_is_convenience(line):
+            return True
+        if seen is not None:
+            seen.add(line)
+    return False
+
+
+def _event_log_blobs(repo: Git, tip: str, since: str | None) -> list[str]:
+    """Every blob that sits at an event-log path in a commit reachable from ``tip`` and not from ``since``: what each
+    of those commits added or changed there (the history is linear, validated before). Blobs at an event-log path in
+    ``since``'s history were scanned clean under the same rules (:data:`SCANNER_VERSION`)."""
+    ids = _commits(repo, tip, since)
+    if not ids:
+        return []
+    raw = repo.run("diff-tree", "--stdin", "-r", "-z", "--no-renames", "--root", input="\n".join(ids).encode() + b"\n")
+    tokens = raw.stdout.split(b"\0")
+    out: dict[str, None] = {}
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith(b":"):
+            fields = tok[1:].decode().split(" ")
+            path = tokens[i + 1].decode(errors="surrogateescape")
+            i += 2
+            if fields[4] != "D" and EVENT_LOG.fullmatch(path):
+                out[fields[3]] = None
+            continue
+        i += 1
+    return list(out)
+
+
+def history_has_convenience(repo: Git, tip: str, since: str | None = None) -> bool:
+    """Whether an event log in the history a push exports (reachable from ``tip``, and not from ``since``, a tip
+    scanned clean before) holds an event with ``auth: "convenience"`` (#441), whatever the host's merged view says
+    now. Only event-log paths count. Any git error raises (the push fails closed)."""
+    repo.no_grafts()
+    if since is not None and not _is_ancestor(repo, since, tip):
+        since = None
+    blobs_ids = _event_log_blobs(repo, tip, since)
+    if not blobs_ids:
+        return False
+    fmt = "--batch-check=%(objectname) %(objecttype) %(objectsize)"
+    lines = repo.run("cat-file", fmt, input="\n".join(blobs_ids).encode() + b"\n").stdout.decode().splitlines()
+    if len(lines) != len(blobs_ids):
+        raise RecordsError("records.history_invalid", "git listed objects it cannot describe")
+    blobs: list[tuple[str, int]] = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) != 3 or parts[1] != "blob" or not parts[2].isdigit():
+            raise RecordsError("records.history_invalid", "an event log of the history is missing or not a file")
+        blobs.append((parts[0], int(parts[2])))
+    seen: set[bytes] = set()
+    chunk: list[tuple[str, int]] = []
+    size = 0
+    for item in [*blobs, None]:
+        if item is not None and (not chunk or size + item[1] <= _SCAN_CHUNK):
+            chunk.append(item)
+            size += item[1]
+            continue
+        if chunk and _chunk_has_convenience(repo, chunk, seen):
+            return True
+        if item is not None:
+            chunk, size = [item], item[1]
+    return False
+
+
+def _chunk_has_convenience(repo: Git, chunk: list[tuple[str, int]], seen: set[bytes]) -> bool:
+    raw = repo.run("cat-file", "--batch", input="\n".join(oid for oid, _ in chunk).encode() + b"\n").stdout
+    pos = 0
+    for oid, size in chunk:
+        nl = raw.index(b"\n", pos)
+        header = raw[pos:nl].split()
+        if len(header) != 3 or header[0].decode() != oid or int(header[2]) != size:
+            raise RecordsError("records.history_invalid", f"{oid[:12]} could not be read")
+        data = raw[nl + 1 : nl + 1 + size]
+        pos = nl + 1 + size + 1
+        if _blob_has_convenience(data, seen):
+            return True
+    return False
+
+
 def _is_ancestor(repo: Git, a: str, b: str) -> bool:
     return repo.run("merge-base", "--is-ancestor", a, b, check=False).returncode == 0
 
@@ -611,6 +715,16 @@ def _push(
     branch: str, ref: str, source: str,
 ) -> dict[str, Any]:  # fmt: skip
     url = push_url(repo, remote, net)
+    repo.no_grafts()
+    # before any network call: the history, then the export check with the scan of what the push exports (#441)
+    checked = validate_history(repo, workspace_id, source, tips.get(workspace_id, branch))
+    tips.set(workspace_id, branch, source)
+    conv = history_has_convenience(repo, source, tips.clean(workspace_id, branch, SCANNER_VERSION))
+    check = link("records.export_check", {"sha": source, "url": url, "ref": ref, "history_convenience": conv})
+    if check.get("sha") != source or check.get("url") != url or check.get("ref") != ref:
+        raise RecordsError("records.push_rejected", "the export check answered for another push")
+    if not conv:
+        tips.set_clean(workspace_id, branch, source, SCANNER_VERSION)
     target = remote_tip(net, url, ref)  # T
     if target is None and not initial:
         raise RecordsError(
@@ -618,7 +732,6 @@ def _push(
             f"the remote has no {ref}",
             hint="a first push creates it: orch records push --initial (terminal)",
         )
-    repo.no_grafts()
     if target is not None:
         if repo.run("cat-file", "-e", f"{target}^{{commit}}", check=False).returncode != 0:
             raise RecordsError(
@@ -632,11 +745,6 @@ def _push(
             )
     if target == source:
         return {"pushed": False, "commit": source, "url": url, "ref": ref, "reason": "up_to_date"}
-    checked = validate_history(repo, workspace_id, source, tips.get(workspace_id, branch))
-    tips.set(workspace_id, branch, source)
-    check = link("records.export_check", {"sha": source, "url": url, "ref": ref})
-    if check.get("sha") != source or check.get("url") != url or check.get("ref") != ref:
-        raise RecordsError("records.push_rejected", "the export check answered for another push")
     repo.recheck_local()
     if push_url(repo, remote, net) != url:  # the destination is the one checked, right before the push
         raise RecordsError("records.push_rejected", "the push destination changed during this run")

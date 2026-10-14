@@ -11,6 +11,7 @@ import { fmtDateTime, plural } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
 import { Raw } from '@/components/sign/visible'
+import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
 import { ClickRisk } from '@/components/sign/ClickSignPanel'
 import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
@@ -35,6 +36,8 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const [draft, setDraft] = useState<Partial<Record<DurationKey, string>>>({})
   if (settings.isError) return <LoadFailed what="settings" onRetry={() => void settings.refetch()} />
   const id = identity.data
+  // The runner is what the host says (`whoami.runner`); nothing is drawn when it says nothing. The list of workspaces carries it too.
+  const runner = id?.runner ?? workspace.runner ?? null
   const data = settings.data
   const served = hasFeature('do:settings.set', workspace.id)
   const why = !canChangeSettings(role) ? 'Only owners can save.' : !served ? 'This host cannot change settings yet.' : null
@@ -89,6 +92,26 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
               {workspace.click.enabled && workspace.click.available
                 ? 'Sign with one click is on for this workspace. "Sign in the terminal instead" stays in every dialog.'
                 : `Sign with one click is not available now${workspace.click.problem ? ` (${workspace.click.problem})` : ''}. Sign in the terminal.`}
+            </p>
+          </div>
+        </Section>
+      )}
+
+      {runner && (
+        <Section title="Dashboard execution">
+          <div data-testid="workspace-card-runner" className="space-y-2 text-[13px]">
+            {runner.enabled ? (
+              <p data-testid="runner-execution-line" className="text-warning">
+                {DASHBOARD_EXECUTION_LINE}
+              </p>
+            ) : (
+              <p className="text-text-muted">
+                Dashboard execution is off for this workspace: no agent or terminal can be started from here. Turn it on in your terminal with <code className="font-mono text-text">{TERMINAL_COMMANDS.runnerEnable}</code>.
+              </p>
+            )}
+            <p className="text-text-muted">
+              {runner.connected ? 'The runner on this machine is connected' : 'The runner on this machine is not connected'}
+              {runner.enabled ? `; terminals are ${runner.terminals ? 'available' : 'not available'}.` : '.'}
             </p>
           </div>
         </Section>

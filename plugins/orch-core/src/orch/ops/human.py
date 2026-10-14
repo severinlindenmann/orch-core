@@ -497,7 +497,30 @@ class Human:
         person, device = self.who()
         ev = self._envelope(event, log, person, device)
         ev["sig"] = sign_person_event(self.backend, KEY_ID, self.workspace_id, log, ev, action=action)
+        if ev.get("auth") == "convenience":  # #441: the durable mark, inside the append, before the event is written
+            precommit = self._mark_seen(precommit)
         return self.store.append(ev, log=log, precommit=precommit)
+
+    def _mark_seen(self, inner: Callable[[], None] | None) -> Callable[[], None]:
+        """``precommit`` that also sets the durable ``convenience_seen`` mark (:mod:`orch.ops.readers`); a mark that
+        cannot be written refuses the append (fail closed)."""
+        from orch.ops.readers import ensure_convenience_mark
+
+        state_dir, wid = self.call.ws.state_dir, self.workspace_id
+
+        def check() -> None:
+            if inner is not None:
+                inner()
+            try:
+                ensure_convenience_mark(state_dir, wid, os.getuid())
+            except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
+                raise OrchError(  # a global code: any person op may sign with convenience custody
+                    "internal",
+                    f"the convenience_seen mark could not be written ({type(exc).__name__}); nothing was appended",
+                    hint="check the state directory: orch doctor",
+                ) from None
+
+        return check
 
     def run(
         self,

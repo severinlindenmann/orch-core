@@ -78,13 +78,23 @@ def test_commit_push_is_one_child_run_and_status_follows(r):
     status = out["detail"]["status"]
     assert status["configured"] and status["last"]["commit"] == git(r.root, "rev-parse", "HEAD")
     assert status["last"]["pushed_at"] is not None and status["repo"] == {"state": "ok"}
-    assert status["pending"]["events"] == 0 and status["remote"] == {"url": url, "private": False, "export": "ok"}
+    assert status["pending"]["events"] == 0
+    assert status["remote"] == {"url": url, "private": False, "export": "ok", "current_url": url,
+                                "current_private": False, "matches_last": True}  # fmt: skip
+    # the push URL changes: the dashboard's confirmation sees it before any push
+    other = r.bare("other")
+    git(r.root, "remote", "set-url", "origin", other)
+    remote = run_cli(r, "status")[1]["detail"]["status"]["remote"]
+    assert remote["current_url"] == other and remote["matches_last"] is False and remote["url"] == url
 
 
 def test_status_reports_a_missing_or_foreign_repo_and_a_differing_index(r):
     code, out = run_cli(r, "status")
     assert code == 0 and out["detail"]["status"]["local"]["repo"] == {"state": "missing"}
-    r.init()
+    assert out["detail"]["status"]["configured"] is False
+    assert run_cli(r, "init")[0] == 0
+    assert run_cli(r, "status")[1]["detail"]["status"]["configured"] is True
+    assert r.link("records.status", {})["configured"] is True  # init reported the repo to the host
     r.commit()
     staged = subprocess.run(
         ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"x\n", capture_output=True, check=True,
@@ -200,7 +210,7 @@ def test_opus1_a_maintainers_note_never_steers_the_owners_timer_or_status(r, mon
     r.w.ticket("one")
     status = run_cli(r, "status")[1]["detail"]["status"]
     assert status["last"]["commit"] == real_commit and status["pending"]["events"] > 0
-    assert status["remote"] is None or status["remote"]["url"] == url
+    assert status["remote"]["url"] in (None, url) and "evil" not in json.dumps(status)
     assert status["last_noted"]["by"] == r.w.quinn.ref
     now = [2_000_000.0]
     code, doc, runs = _auto(r, now)
@@ -544,7 +554,10 @@ def test_the_log_tightens_an_existing_file(tmp_path):
 
 def test_direct_mode_audit_names_who_acted(direct):
     ws, link, wid = direct
-    link("records.export_check", {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main"})
+    link(
+        "records.export_check",
+        {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main", "history_convenience": False},
+    )
     from orch.host import records as host_records
 
     doc = host_records.read_record(ws.host_state, wid, os.getuid())
@@ -569,3 +582,32 @@ def test_a_failed_auto_on_restores_the_previous_entry(r):
     code, out = run_cli(r, "auto", "on", "--every", "10", "--push", timer=Broken())
     assert code == 1 and out["code"] == "records.timer_failed"
     assert r.tips.auto(r.w.wid) == {"on": True, "every_min": 30, "push": False, "last_run": 123}
+
+
+def test_status_is_strictly_read_only(r):
+    """The dashboard's bounded child: no repo writes and no network. No object written into the records repo (the
+    index is compared with diff-index, never write-tree), no records lock file, no run log, and the current push URL
+    answered. (It may record the host's convenience mark and takes the store lock in direct mode, like any read.)"""
+    r.init()
+    r.commit()
+    url = r.bare()
+    git(r.root, "remote", "add", "origin", url)
+    staged = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"y\n", capture_output=True, check=True,
+        env={"HOME": str(r.home), "PATH": os.environ["PATH"]},
+    ).stdout.decode().strip()  # fmt: skip
+    git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
+
+    def snapshot():
+        objects = sorted(str(p) for p in (r.root / ".git" / "objects").rglob("*") if p.is_file())
+        person = sorted(str(p) for p in (r.tips.path.parent / "person").rglob("*")) if (
+            r.tips.path.parent / "person").exists() else []  # fmt: skip
+        return objects, person, (r.root / ".git" / "index").read_bytes()
+
+    before = snapshot()
+    code, out = run_cli(r, "status")
+    assert code == 0, out
+    status = out["detail"]["status"]
+    assert status["local"]["repo"] == {"state": "index_differs"} and status["configured"] is True
+    assert status["remote"]["current_url"] == url and status["remote"]["current_private"] is False
+    assert snapshot() == before

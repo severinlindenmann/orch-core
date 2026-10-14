@@ -1073,6 +1073,23 @@ class _Stored(Exception):
         self.error = error
 
 
+def _mark_seen(service: WorkspaceService) -> HostError | None:
+    """Set the durable ``convenience_seen`` mark (:mod:`orch.ops.readers`); the error when it cannot be written, which
+    fails the submission before anything is appended (fail closed)."""
+    from pathlib import Path
+
+    from orch.ops.readers import ensure_convenience_mark
+
+    try:
+        ensure_convenience_mark(Path(service.state_dir), service.workspace_id, service.host_uid, clock=service.clock)
+    except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
+        return HostError(
+            "custody.unsafe_mode",
+            f"the convenience_seen mark could not be written ({type(exc).__name__}); nothing was appended",
+        )
+    return None
+
+
 def _signed_by(events: list[dict[str, Any]], person: str, device: str) -> HostError | None:
     """The relay path's precondition of :func:`append_signed`: every event is a person event of exactly this
     (person, device) pair, signed (``sig``), and never ``auth: "convenience"`` (§11A.4, §11A.6). Checked before
@@ -1109,7 +1126,11 @@ def append_signed(
     :func:`append_relay` passes it). There every event must be that pair's signed person event, never
     ``auth: "convenience"``, checked before anything lands (``op.not_allowed``), and an event whose id is already in
     the log counts as landed only when its ``sig`` and ``actor`` are the submitted ones (else ``op.not_allowed``:
-    never a false ``committed``)."""
+    never a false ``committed``).
+
+    The durable ``convenience_seen`` mark (#441) is written here, under the store lock and before the first append,
+    when any event carries ``auth: "convenience"``; if it cannot be written nothing is appended (fail closed). On the
+    relay path ``signed_by`` already refuses convenience events, so the mark is never needed there."""
     from orch.store import StoreError
 
     if signed_by is not None:
@@ -1129,7 +1150,9 @@ def append_signed(
 
         store.append_check = check
         try:
-            for ev, extra in zip(events, extras, strict=True):
+            if any(e.get("auth") == "convenience" for e in events):
+                error = _mark_seen(service)  # #441: the durable mark, under the store lock, before the first append
+            for ev, extra in zip(events, extras, strict=True) if error is None else ():
                 found = store.logged_event(log, ev["id"])
                 if found is not None:
                     if signed_by is not None and (

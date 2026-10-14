@@ -1475,7 +1475,6 @@ A retained binding without an open request also caused a 24 h lockout.
 **Revert:** Revert this final dashboard round only with owner approval of the changed intent invariant;
 never restore whole-ticket or member-role bases as an incidental refactor.
 
-
 ## 2026-10-13 — T3 foreign navigation gate and definite signing failures
 
 **Decision:** Always serve the shell. A present Fetch Metadata site other than exactly
@@ -1508,3 +1507,30 @@ The owner must still explicitly sign the addon grant.
 **Revert:** Remove the custom hooks and manifest subcommand and restore manual UI build and
 manifest-copy steps; this reintroduces those packaging gaps.
 - 2026-10-13 — **Decision:** show host submitted_at only for committed pending rows (seq present); failed submissions require Start again; preserve host fixes and retry lock.busy. **Why:** submission time alone is not proof of a logged signature (#437). **Revert:** remove this dashboard mapping if the host outcome contract changes.
+
+## M6: quick tasks and records as native pages on the real host (13 Oct 2026)
+
+**Decision:** On a real host quick tasks (`/quick`) and records (Settings, Records) are native React pages wired to the four M6 server routes;
+the mock keeps its declarative addon pages. Adding a quick task is `new` then a `details` label `quick` through the one signing path
+(`HandoffDialog`), said as "two signatures". Quick limits are local (flat `max_commits`/`max_files`). No "Make a ticket" button. The records
+page runs only `commit [--push]` and `auto off`; everything else is a command to type. A push is confirmed after the export warning is shown.
+The records "not configured" state is "nothing noted yet" (host `configured = bool(last)`), not "no repository".
+
+**Why:** The mock addon pages are node trees bound to mock state; the real host has no addon state to bind. Native pages reuse M5's signing
+machinery unchanged and keep core in charge of wording. Converting would need a signed label removal the server does not allow.
+
+**Revert:** Remove the `/quick` route, the Records tab and the card section; the server routes are independent.
+
+## 2026-10-13 — M6 security review corrections
+
+**Decision:** Until core supplies the live push URL, label the status destination “Last known destination” and its private flag “Last noted as private”. In both export warnings, substitute “the remote configured in the records repository (last known: <url>)” for the URL phrase; keep the rest of the §12.11 constant verbatim. Do not show the private assurance in push confirmation: status has no current-destination field. Render failure prose separately as “Output of the records tool”.
+
+**Why:** `records.status.remote` describes the last commit/push note, not git’s current push target. This deliberate §12.11 wording deviation avoids misleading export consent while stream A supplies a live destination contract. Remote-controlled failure prose must be distinguishable from dashboard statements.
+
+**Revert:** Restore current-destination wording and the confirmation’s private assurance only when core explicitly guarantees both describe the live push destination.
+
+**Decision:** Kill the records child’s own process group before reaping on every outcome, including success. Pass the gateway’s resolved run directory as `ORCH_HOST_RUN_DIR`, pin cwd to state, and omit `XDG_CONFIG_HOME` from the child environment. Read a ticket freshly for quick conversion, show kept/removed labels, and key the handoff by action and ticket. Document the production preview route as redirect-only and restore preview API swaps after tests.
+
+**Why:** Prevent surviving ssh/git descendants, host/cwd drift, stale list label replacement, stale handoff state, and test leakage. Fresh reads reduce lost updates but do not provide atomic compare-and-swap against changes after that read.
+
+**Revert:** Only with equivalent core process/host isolation and label concurrency guarantees; preview cleanup remains necessary while tests share API objects.

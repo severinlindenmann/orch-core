@@ -969,3 +969,35 @@ def test_relay_stop_reports_a_worker_that_did_not_end(tmp_path):
     svc.relay_join_seconds = 0.05
     assert svc.relay_stop() == "stuck"
     svc.executor.shutdown(wait=False)
+
+
+# --- #441 / #454: the convenience_seen mark lives in append_signed -------------------------------------------------
+
+
+class MarkService(FakeService):
+    def __init__(self, store: Any, state: Path) -> None:
+        super().__init__(store)
+        self.state_dir, self.workspace_id, self.host_uid, self.clock = state, WS, UID, lambda: 1_800_000_000.0
+
+
+def test_append_signed_writes_the_convenience_mark_before_the_first_convenience_event(tmp_path):
+    from orch.host.human import append_signed
+    from orch.store.convmark import convenience_seen
+
+    state = _state(tmp_path)
+    store = FakeStore()
+    landed, error = append_signed(MarkService(store, state), "L", [signed(1)], [{}], signed_by=None)
+    assert error is None and not convenience_seen(state, WS)  # no convenience event: no mark
+    landed, error = append_signed(MarkService(store, state), "L", [signed(2, auth="convenience")], [{}], signed_by=None)
+    assert error is None and landed == [11] and convenience_seen(state, WS)
+
+
+def test_append_signed_appends_nothing_when_the_mark_cannot_be_written(tmp_path):
+    from orch.host.human import append_signed
+
+    state = _state(tmp_path)
+    (state / "hosts").mkdir(mode=0o700)
+    (state / "hosts" / WS).write_text("not a directory")  # the mark's directory cannot exist
+    store = FakeStore()
+    landed, error = append_signed(MarkService(store, state), "L", [signed(1, auth="convenience")], [{}], signed_by=None)
+    assert landed == [] and error is not None and error.code == "custody.unsafe_mode" and store.appended == []

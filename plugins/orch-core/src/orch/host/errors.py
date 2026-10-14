@@ -74,6 +74,16 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "run.limit": (9, True),
     "attach.limit": (9, True),
     "term.writer_busy": (3, False),
+    # H11d, worktrees (§12.7)
+    "worktree.none": (3, False),
+    "worktree.exists": (3, False),
+    "worktree.no_branch": (3, False),
+    "worktree.branch_in_use": (3, False),
+    "worktree.dirty": (3, False),
+    "worktree.in_use": (3, False),
+    "worktree.unpinned": (3, False),
+    "worktree.git_failed": (1, False),
+    "unsupported.platform": (3, False),
 }
 
 

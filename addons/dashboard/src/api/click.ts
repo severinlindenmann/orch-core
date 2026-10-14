@@ -83,6 +83,7 @@ export interface ClickProblem {
   next: ClickNext
   /** `rate.limited`: how long to wait. */
   waitMs?: number
+  signedAt?: string | null
 }
 
 const UNAVAILABLE: Record<string, string> = {
@@ -120,7 +121,7 @@ export const unknownOutcome = (e: unknown): boolean => !(e instanceof ApiError) 
 export function alreadySigned(e: Pick<ApiError, 'signed_at' | 'op' | 'summary'>): string {
   const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op ? `${e.op} action` : 'action'
   const at = e.signed_at ? Date.parse(e.signed_at) : NaN
-  const when = Number.isFinite(at) ? `${Math.max(0, Math.floor((Date.now() - at) / 60_000))} min ago (${e.signed_at})` : '(signing time unavailable from this host)'
+  const when = Number.isFinite(at) ? `${Math.max(0, Math.floor((Date.now() - at) / 60_000))} min ago` : '(signing time unavailable from this host)'
   return `A similar ${thing} was signed ${when}. ${e.summary ?? 'Signed content unavailable from this host.'} Do it again only if you intend a second signature.`
 }
 
@@ -133,7 +134,12 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.convenience_unavailable':
       return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'}${OFF}`, next: 'terminal' }
     case 'intent.done':
-      return { title: 'Already done', body: alreadySigned(e), next: 'again' }
+      return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at }
+    case 'intent.failed':
+      return { title: 'The earlier attempt did not land', body: e.message, next: 'prepare' }
+    case 'lock.busy':
+    case 'host.busy':
+      return { title: 'Busy', body: 'The host is busy. Try again shortly.', next: 'retry' }
     case 'intent.expired':
       return { title: 'This attempt is too old; start again', body: e.message, next: 'prepare' }
     case 'intent.ended':
@@ -145,7 +151,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.click_only':
       return { title: 'This workspace signs in the dashboard', body: e.message, next: 'open' }
     case 'sign.convenience_readers':
-      return { title: 'This would add a reader', body: e.message, next: 'terminal' }
+      return { title: 'This would add a reader', body: [e.message, e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' '), next: 'terminal' }
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':

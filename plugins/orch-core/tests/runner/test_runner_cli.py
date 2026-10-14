@@ -50,7 +50,9 @@ class FakeManager:
 
         def run(argv):
             self.ran.append(list(argv))
-            looks = "print" in argv or "is-enabled" in argv  # nothing is loaded before this test installs it
+            looks = (
+                "print" in argv or "is-enabled" in argv or "is-active" in argv
+            )  # nothing is loaded before this test installs it
             return subprocess.CompletedProcess(list(argv), 113 if looks else 0, "", "")
 
         return svc.Manager(unit, run=run)
@@ -114,7 +116,9 @@ def test_enable_with_the_wrong_prefix_changes_nothing(env, manager, monkeypatch)
     code, doc = _cli(["enable", "--workspace", WID, "--dev"], env)
     assert code == 5 and doc["error"]["code"] == "invalid.input"
     assert enablement.state_of(Path(env["ORCH_STATE_DIR"]), WID, os.getuid())["enabled"] is False
-    assert all(argv[1] == "print" or argv[2] == "is-enabled" for argv in manager.ran)  # only looked, never started
+    assert all(
+        argv[1] == "print" or argv[2] in ("is-enabled", "is-active") for argv in manager.ran
+    )  # only looked, never started
 
 
 def test_enable_without_a_terminal_is_refused(env, manager, monkeypatch):

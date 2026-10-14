@@ -1022,10 +1022,36 @@ pre-check remain defence in depth; they are not a replacement for this host prer
 
 **Known limits after the final Opus re-check (13 Oct, all LOW, none can produce a second signature):**
 - N1: "Already done" is also shown when the state was reverted in between (role B→A→B, close→reopen→close). The
-  wording reads as if nothing changed since; "Do it again" is offered, so nothing is blocked. A future host
-  `submitted_at` (stream A follow-up to #434) lets the screen say when it was signed.
+  warning describes the earlier signature; "Do it again" is offered, so nothing is blocked. The
+  host `submitted_at` (#437) now supplies relative signing time with an absolute-time title, only when
+  `human.pending.seq != null` confirms a committed outcome (§0.8.1). Missing times remain unavailable.
+  Submitted failures show `intent.failed`, the host catalog code, and Start again (advances retry), with a
+  warning that nothing was signed into the log. `lock.busy` is retryable and hand-off polling continues.
+  Host convenience-reader fix text is displayed verbatim through Raw.
 - N5: a label add sends the full label set, so a concurrent label change in another tab is different content and
   therefore a different intent (by the owner's definition). The host's `base_rev` on `ticket.updated` refuses the
   stale one at commit.
 - F4: the server treats an unknown signer status as "click off" (fail-open for the path choice). Core #434 (merged)
   enforces one path per workspace at the host, so a stray hand-off request can't be prepared there.
+
+
+### T3 navigation and signing cleanup — 13 Oct 2026 (#444, #447 I-6)
+
+Every shell route serves HTML with unchanged CSP and `no-store`. Present Fetch Metadata
+other than a single exact `none`/`same-origin` value (including empty, same-site, cross-site,
+unknown, duplicate or comma-joined values) adds `<meta name="orch-nav" content="foreign">`
+in the head per request, regardless of mode/destination. Assets are unchanged. Absent
+metadata stays untagged for compatibility; older browsers or header-stripping clients
+therefore lack this protection.
+
+The server marker is authoritative for the document's bootstrap: foreign tabs clear any
+inherited session storage and never open BroadcastChannel, request tokens or receive offers.
+There is no requester assertion that can override it. Untagged tabs share sessions as before.
+Foreign tabs may exchange their own launch fragment via the same-origin auth API, supporting
+the private file launcher's cross-site navigation. Without a session they show terminal
+(`orch-dashboard open`) / bookmark guidance. Tokens are never embedded in HTML or URLs.
+
+Definite pre-dispatch/signer failures clear newly created unsettled marks before follow-up
+reads, but retain prior unknown-outcome marks on retry. Channel loss/timeouts/internal errors
+remain uncertain until settlement/expiry. A non-dict initial signer status closes the newly
+spawned child before reporting unavailable.

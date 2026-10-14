@@ -108,7 +108,7 @@ def auth():
 def client(gateway, auth, tmp_path):
     static = tmp_path / "static"
     (static / "assets").mkdir(parents=True)
-    (static / "index.html").write_text('<html><script src="/assets/main-hash.js"></script></html>')
+    (static / "index.html").write_text('<html><head><script src="/assets/main-hash.js"></script></head></html>')
     (static / "assets/main-hash.js").write_text('console.log("public bundle")')
     with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
         yield client

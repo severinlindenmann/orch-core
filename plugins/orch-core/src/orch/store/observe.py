@@ -47,6 +47,8 @@ def git(path: Path, *args: str, strip: bool = True) -> str | None:
                 "core.fsmonitor=false",
                 "-c",
                 "core.attributesFile=/dev/null",
+                "-c",
+                "protocol.allow=never",
                 "--no-optional-locks",
                 "-C",
                 str(path),
@@ -56,7 +58,7 @@ def git(path: Path, *args: str, strip: bool = True) -> str | None:
             text=True,
             timeout=_TIMEOUT,
             check=False,
-            env={**git_env(), "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"},
+            env={**git_env(), "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_LAZY_FETCH": "1"},
             stdin=subprocess.DEVNULL,
             start_new_session=True,  # no controlling terminal: a repository's filter cannot reach the person's tty
         )

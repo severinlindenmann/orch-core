@@ -315,6 +315,8 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle_all(rid)  # every session's slot
             handoffs.settled(rid)
             clicks.forget(rid)
+        if got == "submitted" and row.get("seq") is None:
+            raise done_error({}, row)
         return {"id": rid, "state": got}
 
     @app.post("/api/w/{ws}/click/sign")
@@ -324,6 +326,7 @@ def register(app: FastAPI, gateway: Gateway):
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)
+        prior = handoffs.is_unsettled(rid)
         handoffs.mark_unsettled(ws, rid, handoffs.clock() + TTL + 60)
         args = {"view_digest": body.view_digest}
         if body.word is not None:
@@ -331,6 +334,10 @@ def register(app: FastAPI, gateway: Gateway):
         try:
             got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
         except HostError as exc:
+            if exc.error.get("reason") != "uncertain" and prior is None:
+                # A definite retry failure must not clear an earlier unknown outcome.
+                # Clear new marks before follow-up host reads, which may themselves fail.
+                handoffs.settled(rid)
             if exc.error.get("code") == "human.request_state":
                 rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
                 if len(rows) == 1 and rows[0].get("state") == "submitted":
@@ -339,8 +346,6 @@ def register(app: FastAPI, gateway: Gateway):
                     handoffs.settle_all(rid)
                     clicks.forget(rid)
                     raise done_error(prepared, rows[0]) from None
-            if exc.error.get("reason") != "uncertain":
-                handoffs.settled(rid)  # a definite refusal: nothing is in flight; an uncertain one keeps its mark
             sweep()
             if exc.error.get("reason") == "disabled":
                 ended(ws, rid)  # the flag was switched off: this request can never be signed, it reads as ended

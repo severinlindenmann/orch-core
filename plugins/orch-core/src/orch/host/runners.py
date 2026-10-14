@@ -87,6 +87,9 @@ RUNNER_CODES = frozenset(
     {
         "launch.cwd_changed", "harness.not_found", "harness.shell_unsupported", "run.spawn_failed", "invalid.input",
         "not_found", "term.busy", "term.not_attachable",
+        # H11d: worktree git (orch.runner.wtgit)
+        "worktree.branch_in_use", "worktree.exists", "worktree.dirty", "worktree.git_failed",
+        "observe.unavailable",  # the orch.gitsafe gate: the repo's own config could make git run a program
     }
 )  # fmt: skip
 #: how long an exited run's ring is kept by the runner (:data:`orch.runner.supervise.KEEP_RING_SECONDS`)

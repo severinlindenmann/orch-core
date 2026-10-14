@@ -130,6 +130,7 @@ class HostLink:
         self._pool = concurrent.futures.ThreadPoolExecutor(4, thread_name_prefix="orch-runner-cmd")
         self._answers: dict[str, dict[str, Any]] = {}
         self._waiting: dict[str, threading.Event] = {}
+        self._repo_locks: dict[str, threading.Lock] = {}
         #: tests: drop the report of these commands (a lost ack)
         self.drop_reports: set[str] = set()
         sup.on_event = self._on_event
@@ -304,6 +305,10 @@ class HostLink:
                 self._on_event("cleanup", run, {"cleanup": rec["cleanup"]})
 
     # -- commands
+    def _repo_lock(self, repo: str) -> threading.Lock:
+        with self._write:
+            return self._repo_locks.setdefault(repo, threading.Lock())
+
     def _current(self, tag: int) -> bool:
         return tag == self._conn and self.ready.is_set()
 
@@ -360,6 +365,14 @@ class HostLink:
             if self.term is None:
                 raise TicketError("no terminal socket", "runner.unavailable")
             return self.term.allow(args, epoch=tag)  # the epoch it arrived in, not the one current when it runs (F4)
+        if cmd == "git":  # H11d: worktree git, one command per repo at a time, 30 s each (§12.7)
+            from .wtgit import run_git
+
+            pin = args.get("repo_pin") if isinstance(args.get("repo_pin"), dict) else {}
+            with self._repo_lock(str(pin.get("path"))):
+                if not self._current(tag):
+                    raise _Stale()
+                return run_git(args, self.env, log=LOG.info)
         if cmd == "attach.end":
             if self.term is not None:
                 self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))

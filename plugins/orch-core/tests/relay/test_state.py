@@ -351,3 +351,57 @@ def test_io_stays_in_the_locked_directory_after_a_rename(tmp_path):
     assert st.read("a.json") == b"first"
     st.close()
     second.close()
+
+
+# --- round 6 (orch-52 #2): the custody tree check on every ancestor ---------------------------------------------------
+
+
+def test_a_symlinked_ancestor_is_refused(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    (tmp_path / "link").symlink_to(real)
+    with pytest.raises(StateError, match="symlink"):
+        StateDir(tmp_path / "link" / "relay")
+    assert not (real / "relay").exists()  # refused before anything was created
+    with pytest.raises(StateError, match="symlink"):
+        StateDir(tmp_path / "link" / "deeper" / "relay")
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o770, 0o757, 0o722, 0o1777])
+def test_a_too_open_ancestor_is_refused(tmp_path, mode):
+    """Group or other write on an ancestor owned by this user (a sticky bit only helps a root-owned one, like /tmp)."""
+    wide = tmp_path / "wide"
+    wide.mkdir()
+    wide.chmod(mode)
+    try:
+        with pytest.raises(StateError, match="writable by another principal"):
+            StateDir(wide / "relay")
+        with pytest.raises(StateError, match="writable by another principal"):
+            StateDir(wide / "a" / "relay")  # deeper: still found
+    finally:
+        wide.chmod(0o700)
+
+
+def test_an_ancestor_of_another_owner_is_refused(tmp_path, monkeypatch):
+    """Simulated: this process claims another UID, so the ancestors owned by the real user (not root) are foreign."""
+    from orch.relay import state
+
+    real = os.getuid()
+    monkeypatch.setattr(state, "_me", lambda: real + 4242)
+    with pytest.raises(StateError, match=f"owner {real}, expected root or {real + 4242}"):
+        StateDir(tmp_path / "relay")
+    assert not (tmp_path / "relay").exists()
+
+
+def test_a_relative_path_is_checked_from_the_root(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with StateDir("relay") as s:
+        assert s.path == tmp_path / "relay"
+    (tmp_path / "l").symlink_to(tmp_path)
+    with pytest.raises(StateError, match="symlink"):
+        StateDir("l/relay2")
+
+
+def test_parent_traversal_is_refused(tmp_path):
+    with pytest.raises(StateError, match="parent traversal"):
+        StateDir(f"{tmp_path}/x/../relay")

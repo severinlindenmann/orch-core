@@ -1,6 +1,10 @@
 """Durable relay state for R1 (contract 11A.3): a private directory, files written atomically, never through a symlink.
 
-* :class:`StateDir`: the directory is ``0700`` and owned by this UID (created so if missing; refused otherwise). Every
+* :class:`StateDir`: the directory is ``0700`` and owned by this UID (created so if missing; refused otherwise), and
+  its ancestors pass the custody tree check (round 6, orch-52 #2): walked from ``/`` with ``O_NOFOLLOW | O_DIRECTORY``
+  (a symlinked ancestor is refused), each owned by root or this UID and not group/other-writable unless it is a
+  root-owned sticky directory; the directory is then created and opened relative to its checked parent. ACLs are not
+  inspected (``ctypes`` is import-banned here; the gap is documented in 11A.3). Every
   file is opened relative to a directory fd with ``O_NOFOLLOW``, must be a regular file owned by this UID with mode
   ``0600``, and is written as a temp file (``O_CREAT | O_EXCL | O_NOFOLLOW``, ``0600``) + ``fsync`` + ``rename`` +
   directory ``fsync``. A symlink, a foreign owner or a wider mode is refused (:class:`StateError`), never repaired.
@@ -11,7 +15,8 @@
 
 **For orch-52 / R5:** 11A.3 says relay state is written with the host's custody helpers
 (``host/custody.write_private``, ``check_tree``). ``orch.host`` is import-banned in ``orch.relay``, so this module is a
-stdlib implementation of the same rules; R5 may swap it for the host helpers behind the same interfaces.
+stdlib implementation of the same rules (``_walk_to_parent``/``_check_ancestor`` mirror ``check_tree``, without the ACL
+check); R5 may swap it for the host helpers behind the same interfaces.
 """
 
 from __future__ import annotations
@@ -82,6 +87,55 @@ def _after_fork_in_child() -> None:
     _OPEN.clear()
 
 
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def _me() -> int:
+    """This process's UID (one seam, so a test can simulate a foreign owner)."""
+    return os.getuid()
+
+
+def _check_ancestor(fd: int, shown: Path, uid: int) -> None:
+    """One ancestor of the state directory: owned by root or this UID, and not writable by group or other unless it is
+    a root-owned sticky directory (``/tmp``). The same rule as ``orch.host.custody._check_component`` (round 6,
+    orch-52 #2), minus its ACL check (it needs ``ctypes``, import-banned here; the documented 11A.3 gap)."""
+    st = os.fstat(fd)
+    mode = stat.S_IMODE(st.st_mode)
+    if st.st_uid not in (0, uid):
+        raise StateError(f"{shown}: owner {st.st_uid}, expected root or {uid}")
+    sticky = st.st_uid == 0 and bool(mode & stat.S_ISVTX)
+    if mode & 0o022 and not sticky:
+        raise StateError(f"{shown}: writable by another principal")
+
+
+def _walk_to_parent(path: Path) -> int:
+    """Open every ancestor of ``path`` from ``/`` one component at a time with ``O_NOFOLLOW | O_DIRECTORY`` (a symlink
+    anywhere on the way is refused), check each with :func:`_check_ancestor`, and return an fd of the parent: the
+    state directory itself is then created and opened relative to it, never by path (``check_tree`` mirrored)."""
+    if not path.is_absolute() or ".." in path.parts or len(path.parts) < 2:
+        raise StateError(f"{path}: expected an absolute path without parent traversal")
+    uid = _me()
+    fd = os.open("/", _DIR_FLAGS)
+    try:
+        _check_ancestor(fd, Path("/"), uid)
+        current = Path("/")
+        for part in path.parts[1:-1]:
+            current /= part
+            try:
+                nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            except FileNotFoundError:
+                raise StateError(f"{current} does not exist") from None
+            except OSError as e:  # ELOOP/ENOTDIR: a symlinked or non-directory ancestor
+                raise StateError(f"{current}: a symlink or not a directory ({e.strerror or e})") from None
+            os.close(fd)
+            fd = nxt
+            _check_ancestor(fd, current, uid)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 class SignLedger(Protocol):
     """What the signer records before it returns a signature: ``(kind, key) -> (digest, sig)``."""
 
@@ -109,22 +163,29 @@ class StateDir:
     exits, availability only, round 5 P2)."""
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
-        self.path = Path(path)
+        if ".." in Path(path).parts:  # before abspath, which would fold it away lexically
+            raise StateError(f"{path}: expected a path without parent traversal")
+        self.path = Path(os.path.abspath(path))
+        parent = _walk_to_parent(self.path)
+        name = self.path.name
         try:
-            os.mkdir(self.path, 0o700)
-        except FileExistsError:
-            pass
-        st = os.lstat(self.path)
-        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
-            raise StateError(f"relay state directory {self.path} must be a 0700 directory owned by this user")
+            try:
+                os.mkdir(name, 0o700, dir_fd=parent)
+            except FileExistsError:
+                pass
+            except OSError as e:
+                raise StateError(f"cannot create {self.path}") from e
+            try:
+                fd = os.open(name, _DIR_FLAGS, dir_fd=parent)
+            except OSError as e:  # ELOOP/ENOTDIR: a symlink or not a directory
+                why = f"relay state directory {self.path} must be a 0700 directory owned by this user"
+                raise StateError(why) from e
+        finally:
+            os.close(parent)
         try:
-            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        except OSError as e:
-            raise StateError(f"cannot open {self.path}") from e
-        try:
-            held = os.fstat(fd)
-            if (held.st_dev, held.st_ino) != (st.st_dev, st.st_ino):
-                raise StateError(f"relay state directory {self.path} changed while it was opened")
+            st = os.fstat(fd)
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != _me() or stat.S_IMODE(st.st_mode) != 0o700:
+                raise StateError(f"relay state directory {self.path} must be a 0700 directory owned by this user")
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(fd)
@@ -193,7 +254,7 @@ class StateDir:
             raise StateError(f"{name}: not a regular file") from e
         try:
             st = os.fstat(fd)
-            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != _me() or stat.S_IMODE(st.st_mode) != 0o600:
                 raise StateError(f"{name}: must be a 0600 regular file owned by this user")
             if st.st_size > MAX_FILE:
                 raise StateError(f"{name}: too large")

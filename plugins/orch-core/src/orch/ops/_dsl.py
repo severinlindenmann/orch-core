@@ -45,7 +45,8 @@ LABEL_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,31}$"
 TOKEN_PATTERN = r"^[a-z][a-z0-9_]*$"
 AC_PATTERN = r"^AC[1-9][0-9]*$"
 # Fields a ticket may set through `orch set`; person-only ones (visibility, owner, people) have their own operations.
-SET_PATTERN = r"^(?:title|priority|size|labels|due|links|parent|blocked_by)=."
+#: ``labels=`` alone is the empty label set (a person drops ``quick`` that way); every other key needs a value
+SET_PATTERN = r"^(?:(?:title|priority|size|labels|due|links|parent|blocked_by)=.|labels=$)"
 
 
 def L(desc: str, *, split: bool = False, items: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:

@@ -200,3 +200,44 @@ def test_a_restore_counts_every_current_device_as_added():
     with pytest.raises(readers.ReadersRefused):
         readers.check_readers(ws, {a.device: 1, b.device: 0}, [{"type": "restore"}], required=1, relay_level=None)
     readers.check_readers(ws, {a.device: 1, b.device: 1}, [{"type": "restore"}], required=1, relay_level=None)
+
+
+# --- #513 review: malformed records never crash a read ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda r: r.update(source=[]),
+        lambda r: r.update(source={}),
+        lambda r: r.update(device_id=["x"]),
+        lambda r: r.update(person_id={"a": 1}),
+        lambda r: r.update(reader="1"),
+        lambda r: r.update(reader=True),
+        lambda r: r.update(digest=5),
+        lambda r: r.update(dk_hash=None),
+        lambda r: r.update(decl=[]),
+        lambda r: r.update(decl={"o": [], "sig": "x"}),
+        lambda r: r["decl"].update(o={"who": [], "bind": {}}),
+        lambda r: r.update(at=1),
+        lambda r: r.update(v="1"),
+    ],
+)
+def test_a_record_with_any_field_of_the_wrong_type_is_level_0_never_an_error(tmp_path, change):
+    a, b = Person(), Person()
+    rec, _ = _admit(tmp_path, a)
+    _admit(tmp_path, b)
+    change(rec)
+    readerrecs.write_record(tmp_path, WS, UID, rec)
+    ws = _ws(a, b)
+    assert readers.levels(tmp_path, WS, _state(ws)) == {a.device: None, b.device: 1}
+    assert readers.prune(tmp_path, WS, _state(ws)) == {"kept": [b.device], "dropped": [a.device]}  # keeps going
+
+
+def test_a_record_that_is_not_an_object_is_level_0(tmp_path):
+    a = Person()
+    _admit(tmp_path, a)
+    path = readerrecs.record_path(tmp_path, WS, a.device[2:])
+    for raw in (b"[]", b"7", b'"x"', b"null"):
+        path.write_bytes(raw)
+        assert readers.levels(tmp_path, WS, _state(_ws(a))) == {a.device: None}

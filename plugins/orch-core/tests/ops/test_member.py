@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from orch import crypto
 from tests.identity.helpers import Person
 from tests.store.helpers import WS
@@ -323,3 +325,23 @@ def test_a_member_added_without_a_declaration_drops_a_stale_record_of_its_device
     assert read_record(hws.host_state, WS, p.device[2:]) is not None
     assert me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert).code == 0
     assert read_record(hws.host_state, WS, p.device[2:]) is None
+
+
+@pytest.mark.parametrize(("stale", "admitted"), [(0, 1), (1, 0)])
+def test_a_direct_re_added_device_counts_at_the_admitted_level_never_a_stale_record(hws, me, tmp_path, stale, admitted):
+    """#513 review (Opus M): a stored record with a later created_ms must not win over the admitted declaration."""
+    from orch.ops import readers
+    from orch.store.readerrecs import read_record, write_record
+    from tests.identity.reader_helpers import decl
+
+    p, pk, cert = invite(hws, tmp_path)
+    d = decl(p, WS, level=stale, via="declare", created_ms=hws.clock[0] * 1000 + 100_000)
+    got = readers.verify_admission(
+        d, workspace_id=WS, cert=p.cert(), person=p.ref, via="declare", surfaces=("log",), now_ms=None
+    )
+    write_record(hws.host_state, WS, os.getuid(), readers.make_record(got, d, p.ref, "declare", "before"))
+    path = reader_decl(hws, p, tmp_path, level=admitted)
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--reader-decl", path)
+    assert r.code == 0, r.err
+    rec = read_record(hws.host_state, WS, p.device[2:])
+    assert rec["reader"] == admitted and rec["source"] == "member.add"

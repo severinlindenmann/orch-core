@@ -98,3 +98,31 @@ def test_register_keeps_the_records_that_verify_against_the_log_and_drops_the_re
         res = lab.register(c)
         assert res["ok"] is True, res
     assert readerrecs.device_ids(lab.state, WS) == [lab.ws.owner.device[2:]]
+
+
+def test_a_refused_registration_leaves_the_records_untouched(lab, tmp_path):
+    """#513 review (Codex P2): an older checkout of a registered workspace is refused (host.busy) and prunes nothing:
+    the records are pruned only after admission, under the store lock."""
+    import os
+    import shutil
+
+    from orch.ops import readers
+    from tests.identity.helpers import Person
+    from tests.store.helpers import WS
+
+    now = lab.ws.clock[0] * 1000
+    with lab.host() as h, h.client() as c:
+        res = lab.register(c)
+        assert res["ok"] is True, res
+        stranger = Person()  # a record the log does not back: a prune would drop it
+        d = decl(stranger, WS, via="declare", created_ms=now)
+        got = readers.verify_admission(
+            d, workspace_id=WS, cert=stranger.cert(), person=stranger.ref, via="declare", surfaces=("log",),
+            now_ms=now,
+        )  # fmt: skip
+        readers.store_record(lab.state, WS, os.getuid(), readers.make_record(got, d, stranger.ref, "declare", "t"))
+        copy = tmp_path / "older-checkout"
+        shutil.copytree(lab.root, copy, symlinks=True)
+        again = lab.register(c, root=str(copy))
+        assert again["ok"] is False, again
+    assert readerrecs.device_ids(lab.state, WS) == [stranger.device[2:]]

@@ -182,3 +182,63 @@ def test_a_member_added_without_a_declaration_drops_a_stale_record_at_the_host(s
     _, res = _submit_member(human, args, files)
     ok(res)
     assert readerrecs.read_record(served.lab.state, served.wid, q.device[2:]) is None
+
+
+# --- review round 1 of #513 ------------------------------------------------------------------------------------------
+
+
+def _stale(served, p: Person, level: int, created_ms: int) -> None:
+    """A record of ``p``'s device from before (a removal, a refused append), with a LATER ``created_ms``."""
+    d = decl(p, served.wid, level=level, via="declare", created_ms=created_ms)
+    got = readers.verify_admission(
+        d, workspace_id=served.wid, cert=p.cert(), person=p.ref, via="declare", surfaces=("log",), now_ms=None
+    )
+    readerrecs.write_record(served.lab.state, served.wid, UID, readers.make_record(got, d, p.ref, "declare", "before"))
+
+
+@pytest.mark.parametrize(("stale", "admitted"), [(0, 1), (1, 0)])
+def test_a_re_added_device_counts_at_the_level_the_gate_admitted_never_a_stale_record(served, human, stale, admitted):
+    """#513 review (Opus M): a stored record with a later created_ms must not win over the admitted declaration."""
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    q, args, files = _member(served, admitted)
+    _stale(served, q, stale, _now_ms(served) + 100_000)
+    _, res = _submit_member(human, args, files)
+    ok(res)
+    rec = readerrecs.read_record(served.lab.state, served.wid, q.device[2:])
+    assert rec["reader"] == admitted and rec["source"] == "member.add"
+
+
+def test_a_redeclaration_replaces_a_corrupt_incumbent_whatever_its_created_ms(served):
+    """#513 review (Codex P2, Opus L): only a record that verifies may win the dedup or latest-wins comparison."""
+    owner = served.lab.ws.owner
+    _stale(served, owner, 1, _now_ms(served) + 10_000_000)  # a far-future created_ms
+    path = readerrecs.record_path(served.lab.state, served.wid, owner.device[2:])
+    bad = readerrecs.read_record(served.lab.state, served.wid, owner.device[2:])
+    bad["decl"]["sig"] = crypto.b64u(b"\0" * 64)  # the signature no longer verifies
+    readerrecs.write_record(served.lab.state, served.wid, UID, bad)
+    d = decl(owner, served.wid, level=0, via="declare", created_ms=_now_ms(served))
+    got = ok(served.client().req("reader.declare", {"reader_decl": d}, idem=True))["data"]
+    assert got["reader"] == 0 and got["digest"] == reader_digest(d)
+    assert readerrecs.read_record(served.lab.state, served.wid, owner.device[2:])["decl"] == d
+    assert path.exists()
+
+
+def reader_digest(d) -> str:
+    from orch.identity.reader import decl_digest
+
+    return decl_digest(d)
+
+
+def test_column_r_gets_a_trimmed_reader_list(served):
+    """#513 review: a phone gets {device, person, reader, level} per device and required_reader, no decl or dk_hash."""
+    from types import SimpleNamespace
+
+    from orch.host import reads_ws
+
+    owner = served.lab.ws.owner
+    declare(served, owner, 1)
+    for column, keys in (("R", {"device", "person", "reader", "level"}),
+                         ("P", {"device", "person", "dk_hash", "reader", "level", "digest", "decl"})):  # fmt: skip
+        out = reads_ws.reader_list(SimpleNamespace(viewer=SimpleNamespace(column=column), service=served.service))
+        assert set(out) == {"readers", "required_reader"}
+        assert all(set(r) == keys for r in out["readers"]), (column, out)

@@ -24,13 +24,58 @@ from orch.ops.caps import Capabilities
 from orch.store import observe
 
 FIXED_DATE = "2026-01-01T00:00:00+00:00"
+#: every plain git run of the tests has an identity: a control that needs one (``diff.<d>.cachetextconv`` writes a
+#: notes commit) must not fail silently on a machine without one (the CI runner: "Author identity unknown", rc 128)
+IDENTITY = ("-c", "user.name=t", "-c", "user.email=t@example.invalid")
+
+
+#: a minimal long-running filter process (git's pkt-line protocol, version 2): it records its start and hands every
+#: blob back unchanged, so a positive control through ``filter.<d>.process`` succeeds (rc 0)
+_PROCESS = r"""#!/usr/bin/env python3
+import sys
+inp, out = sys.stdin.buffer, sys.stdout.buffer
+open(MARK, "a").write("ran\n")
+def read():
+    n = inp.read(4)
+    if not n:
+        sys.exit(0)
+    n = int(n, 16)
+    return None if n == 0 else inp.read(n - 4)
+def until_flush():
+    items = []
+    while (p := read()) is not None:
+        items.append(p)
+    return items
+def write(*lines):
+    for line in lines:
+        data = line if isinstance(line, bytes) else (line + "\n").encode()
+        out.write(b"%04x" % (len(data) + 4) + data)
+    out.write(b"0000")
+    out.flush()
+until_flush(); write("git-filter-server", "version=2")
+until_flush(); write("capability=clean", "capability=smudge")
+while True:
+    until_flush()
+    content = b"".join(until_flush())
+    write("status=success")
+    for i in range(0, len(content), 65000):
+        out.write(b"%04x" % (len(content[i:i + 65000]) + 4) + content[i:i + 65000])
+    write()
+    write()
+"""
 
 
 def _prog(bin_dir: Path, mark: Path, name: str) -> str:
-    """An executable that records that it ran (``mark/name``), then behaves enough like the real thing."""
-    body = {"clean": "exec cat", "smudge": "exec cat", "textconv": 'exec cat "$1"'}.get(name.split("-")[-1], "exit 0")
+    """An executable that records each run as one line in ``mark/name``, then behaves enough like the real thing.
+    Positive controls require at least one line, orch runs exactly none ("exactly once" is not deterministic: a
+    textconv runs once per side of a diff)."""
     p = bin_dir / name
-    p.write_text(f'#!/bin/sh\n: > "{mark / name}"\n{body}\n')
+    if name.endswith("process"):
+        p.write_text(_PROCESS.replace("MARK", repr(str(mark / name))))
+        p.chmod(0o755)
+        return str(p)
+    body = {"clean": "exec cat", "smudge": "exec cat", "textconv": 'exec cat "$1"'}.get(name.split("-")[-1], "exit 0")
+    p.write_text(f'#!/bin/sh\necho ran >> "{mark / name}"\n{body}\n')
     p.chmod(0o755)
     return str(p)
 
@@ -62,7 +107,7 @@ def world(tmp_path, monkeypatch):
     def git(repo: Path, *args: str, home: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
         """Plain git (no isolation), under ``home`` (default: the empty one, for setup)."""
         return subprocess.run(
-            ["git", "-c", "credential.helper=", "-c", "protocol.file.allow=always", "-C", str(repo), *args],
+            ["git", "-c", "credential.helper=", "-c", "protocol.file.allow=always", *IDENTITY, "-C", str(repo), *args],
             capture_output=True, text=True, env=env(home or w.empty), stdin=subprocess.DEVNULL, check=check,
             timeout=60,
         )  # fmt: skip
@@ -70,6 +115,18 @@ def world(tmp_path, monkeypatch):
     w.git = git
     w.prog = lambda name: _prog(w.bin, w.mark, name)
     w.fired = lambda: {p.name for p in w.mark.iterdir()}
+    w.count = lambda name: len((w.mark / name).read_text().splitlines()) if (w.mark / name).exists() else 0
+
+    def control(repo: Path, *args: str, fires: tuple[str, ...] | list[str], home: Path | None = None):
+        """A positive control in plain git: it must succeed (rc 0) and run EACH program in ``fires`` at least once;
+        a silent no-fire fails the test."""
+        res = git(repo, *args, home=home, check=False)
+        assert res.returncode == 0, f"positive control {args} failed: {res.stderr[-400:]}"
+        missing = [n for n in fires if w.count(n) < 1]
+        assert not missing, f"positive control {args}: {missing} did not run"
+        return res
+
+    w.control = control
 
     def clear() -> None:
         for p in w.mark.iterdir():
@@ -161,7 +218,7 @@ GLOBAL_VECTORS = [
     ("diff-external", {"diff.external": "{diff-external}"}, None, ["diff"]),
     ("diff-textconv", {"diff.evil.textconv": "{diff-textconv}"}, "*.g diff=evil\n", ["diff"]),
     ("fsmonitor", {"core.fsmonitor": "{fsmonitor}"}, None, ["status", "--porcelain"]),
-    ("post-index-change", {"core.hooksPath": "{hooks}"}, None, ["update-index", "--refresh"]),
+    ("post-index-change", {"core.hooksPath": "{hooks}"}, None, ["update-index", "-q", "--refresh"]),
     ("alternate-refs", {"core.alternateRefsCommand": "{alternate-refs}"}, None, ["push", "{dst}", "HEAD:refs/heads/x"]),
 ]  # fmt: skip
 
@@ -190,8 +247,7 @@ def test_a_hostile_global_config_runs_nothing_and_changes_no_result(world, calle
     w.gitconfig(_hostile(w, entries), attrs)
     # positive control: plain git with this HOME runs the vector's program
     plain = make_repo(w, "plain")
-    w.git(plain, *[a.replace("{dst}", str(plain.parent / "dst.git")) for a in trigger], home=w.home, check=False)
-    assert vector in w.fired(), f"positive control: plain git did not run {vector}"
+    w.control(plain, *[a.replace("{dst}", str(plain.parent / "dst.git")) for a in trigger], fires=[vector], home=w.home)
     w.clear()
     # every operation of the caller: nothing runs
     got = run_all(caller, make_repo(w, "hostile"))
@@ -249,7 +305,7 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
         person |= {kv.split("=", 1)[0].lower() for kv in gitsafe._DIFF_PINS[1::2]}
     assert keys == {
         "core.hookspath", "core.fsmonitor", "protocol.allow", "submodule.recurse", "core.attributesfile",
-        "i18n.commitencoding", "core.commitgraph", "core.trustctime", "core.checkstat",
+        "i18n.commitencoding", "core.commitgraph", "core.trustctime", "core.checkstat", "advice.graftfiledeprecated",
     } | person  # fmt: skip
     assert "core.attributesfile=/dev/null" in listing and "core.hookspath=/dev/null" in listing
     assert w.fired() == set()
@@ -268,19 +324,22 @@ def test_status_keeps_only_its_own_allow_list_and_the_global_ignore_still_counts
 
 def test_no_operation_runs_a_pager_even_on_a_terminal(world):
     w = world
-    w.gitconfig(_hostile(w, {"core.pager": "{pager}", "pager.status": "{pager-status}"}))
+    w.gitconfig(_hostile(w, {"core.pager": "{pager}", "pager.log": "{pager-log}"}))
     repo = make_repo(w, "r")
 
-    def on_tty(argv: list[str], env: dict[str, str]) -> None:
+    def on_tty(argv: list[str], env: dict[str, str]) -> int:
         master, slave = pty.openpty()
         try:
-            subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, env=env, timeout=30, check=False)
+            return subprocess.run(
+                argv, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, env=env, timeout=30, check=False
+            ).returncode
         finally:
             os.close(slave)
             os.close(master)
 
-    on_tty(["git", "-C", str(repo), "-c", "pager.status=true", "status"], w.env(w.home))  # positive control
-    assert w.fired() & {"pager", "pager-status"}
+    # positive controls: each pager runs in plain git on a terminal
+    assert on_tty(["git", "-C", str(repo), "log"], w.env(w.home)) == 0 and w.count("pager-log") >= 1
+    assert on_tty(["git", "-C", str(repo), "show"], w.env(w.home)) == 0 and w.count("pager") >= 1
     w.clear()
     for op, spec in gitsafe.OPS.items():
         operand = sample_operands(spec)
@@ -381,8 +440,7 @@ def test_a_populated_submodule_with_a_hostile_filter_runs_nothing(world, monkeyp
     w = world
     plain = make_repo(w, "plain")
     _populated_submodule(w, plain)
-    w.git(plain, "status", "--porcelain")
-    assert {"sub-clean", "sub-fsmonitor"} & w.fired(), "positive control: the submodule's own config must run"
+    w.control(plain, "status", "--porcelain", fires=["sub-clean", "sub-fsmonitor"])  # its own config runs
     w.clear()
     repo = make_repo(w, "repo")
     _populated_submodule(w, repo)
@@ -422,8 +480,8 @@ def _hostile_repo(w, where: str) -> Path:
 def test_observe_runs_no_program_of_a_hostile_repo_config(world):
     w = world
     plain = _hostile_repo(w, "plain")
-    w.git(plain, "status", "--porcelain")
-    assert w.fired() == {"repo-clean"}  # positive control: the command observe's status runs, in plain git
+    w.control(plain, "status", "--porcelain", fires=["repo-clean"])  # the command observe's status runs
+    assert w.fired() == {"repo-clean"}
     w.clear()
     repo = _hostile_repo(w, "repo")
     got = run_all("observe", repo)
@@ -441,8 +499,8 @@ def test_a_local_hookspath_or_fsmonitor_program_never_runs_through_observe(world
     _prog(hooks, w.mark, "post-index-change")
     plain = make_repo(w, "plain")
     w.git(plain, "config", "core.hooksPath", str(hooks))
-    w.git(plain, "update-index", "--refresh", check=False)
-    assert w.fired() == {"post-index-change"}  # positive control
+    w.control(plain, "update-index", "-q", "--refresh", fires=["post-index-change"])
+    assert w.fired() == {"post-index-change"}
     w.clear()
     repo = make_repo(w, "repo")
     w.git(repo, "config", "core.hooksPath", str(hooks))  # on the allow-list (husky): -c overrides it
@@ -450,8 +508,7 @@ def test_a_local_hookspath_or_fsmonitor_program_never_runs_through_observe(world
     assert w.fired() == set()
     w.git(repo, "config", "core.fsmonitor", w.prog("fsmonitor"))
     w.git(plain, "config", "core.fsmonitor", str(w.bin / "fsmonitor"))
-    w.git(plain, "status", "--porcelain")
-    assert "fsmonitor" in w.fired()  # positive control
+    w.control(plain, "status", "--porcelain", fires=["fsmonitor"])
     w.clear()
     assert observe.porcelain(repo) is None  # a program as core.fsmonitor: refused
     assert w.fired() == set()
@@ -460,10 +517,8 @@ def test_a_local_hookspath_or_fsmonitor_program_never_runs_through_observe(world
 def test_health_runs_no_program_of_a_hostile_repo_config(world):
     w = world
     plain = _hostile_repo(w, "plain")
-    w.git(plain, "diff", "--cached")
-    assert "repo-textconv" in w.fired()  # positive control: health's diff, in plain git (patch form)
-    w.git(plain, "status", "--porcelain")
-    assert "repo-clean" in w.fired()
+    w.control(plain, "diff", "--cached", fires=["repo-textconv"])  # health's diff, in plain git (patch form)
+    w.control(plain, "status", "--porcelain", fires=["repo-clean"])
     w.clear()
     repo = _hostile_repo(w, "repo")
     got = run_all("health", repo)
@@ -699,8 +754,7 @@ def test_the_submodule_refusal_covers_the_whole_repo_even_from_a_subdirectory(wo
     dirty checked-out submodule elsewhere would read as clean."""
     w = world
     repo, sub = _super_with_armed_submodule(w)
-    w.git(repo, "status", "--porcelain")
-    assert w.fired() & {"sub-clean", "sub-fsmonitor"}  # positive control: plain git runs the submodule's config
+    w.control(repo, "status", "--porcelain", fires=["sub-clean", "sub-fsmonitor"])  # the submodule's config runs
     w.clear()
     assert observe.dirty(repo) is None
     assert observe.dirty(repo / "d") is None  # refused from the subdirectory too, never "" (clean)
@@ -768,8 +822,8 @@ def _bumped_submodule(w) -> tuple[Path, str, str]:
 def test_an_allowed_looking_diff_submodule_never_opens_a_submodule(world, monkeypatch):
     w = world
     repo, before, after = _bumped_submodule(w)
-    w.git(repo, "-c", "diff.submodule=diff", "diff", before, after, check=False)
-    assert w.fired() & {"sub-external", "sub-textconv", "sub-fsmonitor"}  # positive control: a child diff ran
+    # positive control: a child diff runs inside the submodule (its external diff wins over its textconv)
+    w.control(repo, "-c", "diff.submodule=diff", "diff", before, after, fires=["sub-external"])
     w.clear()
     w.git(repo, "config", "diff.submodule", "diff")  # tolerated by the gate (orch-52): neutralised, not refused
     gitsafe.gate(str(repo), os.environ)
@@ -894,11 +948,12 @@ def test_every_hostile_diff_key_is_neutralised_byte_for_byte(world):
         value = str(w.tmp / "order") if v == "{order}" else w.prog(v.strip("{}")) if v.startswith("{") else v
         w.git(hostile, "config", k, value)
     # positive controls: plain git runs every program and its output differs from the clean repo's
-    w.git(hostile, "diff", c1, c2, check=False)
-    assert {"diff-external", "diff-command"} <= w.fired()
-    w.git(hostile, "diff", "--no-ext-diff", c1, c2, "--", "a.g", check=False)
-    w.git(hostile, "diff", "--no-ext-diff", c1, c2, "--", "big.l", check=False)
-    assert {"diff-textconv", "lfs-textconv"} <= w.fired(), w.git(hostile, "check-attr", "diff", "--", "big.l").stdout
+    w.control(hostile, "diff", c1, c2, fires=["diff-external", "diff-command"])
+    # One run per file. Root cause of the earlier CI no-fire: diff.x.cachetextconv=true makes git write a notes
+    # commit, which needs an identity; without one git stopped (rc 128) before it reached big.l. Every plain run
+    # now has one (IDENTITY), and the controls check rc and each marker.
+    w.control(hostile, "diff", "--no-ext-diff", c1, c2, "--", "a.g", fires=["diff-textconv"])
+    w.control(hostile, "diff", "--no-ext-diff", c1, c2, "--", "big.l", fires=["lfs-textconv"])
     w.clear()
     for args in (["diff", "--no-ext-diff", "--no-textconv", c1, c2], ["diff", "--numstat", c1, c2]):
         assert w.git(hostile, *args).stdout != w.git(clean, *args).stdout, args
@@ -932,9 +987,7 @@ def test_git_lfs_diff_textconv_is_tolerated_and_never_runs(world):
     w = world
     repo = make_repo(w, "r", attrs="*.g diff=lfs\n")
     w.git(repo, "config", "diff.lfs.textconv", w.prog("lfs-textconv"))
-    w.git(repo, "diff", "--no-ext-diff", "--cached", "a.g", check=False)
-    w.git(repo, "diff", "--no-ext-diff", check=False)
-    assert "lfs-textconv" in w.fired()  # positive control
+    w.control(repo, "diff", "--no-ext-diff", fires=["lfs-textconv"])  # the work-tree change of a.g
     w.clear()
     gitsafe.gate(str(repo), os.environ)
     assert observe.dirty(repo) is not None and run_all("health", repo)["staged_raw"] is not None
@@ -1074,3 +1127,181 @@ def test_big_file_threshold_never_turns_the_review_into_binary(world):
     assert "Binary files" in w.git(repo, "diff", c2, c3).stdout  # positive control
     patch = observe.git(repo, "diff_patch", rev=("3", c2, c3))
     assert "Binary files" not in patch and "curl evil" in patch
+
+
+# ----------------------------------------------------------- final Opus delta on 31717986 (R7): regex, driver "", notes
+
+#: probe 14: a POSIX BRE with backreferences that backtracks exponentially on lines like "aaaa…ab"
+REDOS = r"^\(\(a*\)*\)*\2\2c"
+
+
+def _redos_repo(w, where: str) -> tuple[Path, str, str]:
+    base = w.tmp / where
+    base.mkdir()
+    repo = base / "r"
+    w.git(base, "init", "-q", "-b", "main", str(repo))
+    (repo / ".gitattributes").write_text("*.g diff=x\n")
+    head = ("a" * 28 + "b\n") * 3
+    (repo / "f.g").write_text(head + "".join(f"line {i}\n" for i in range(20)))
+    w.git(repo, "add", "-A")
+    w.git(repo, "commit", "-qm", "1")
+    (repo / "f.g").write_text(head + "".join(f"line {i}\n" for i in range(20) if i != 15))
+    w.git(repo, "commit", "-qam", "2")
+    c2 = w.git(repo, "rev-parse", "HEAD").stdout.strip()
+    return repo, w.git(repo, "rev-parse", "HEAD~1").stdout.strip(), c2
+
+
+def test_a_backtracking_funcname_never_stalls_the_review_patch(world):
+    """R7-M1 (probe 14): every driver the repo defines gets ``xfuncname``/``funcname`` pinned to ``^$``, so the
+    repo's regex never runs; the patch comes back at once and equals a clean repo's."""
+    import time
+
+    w = world
+    clean, c1, c2 = _redos_repo(w, "clean")
+    repo, h1, h2 = _redos_repo(w, "hostile")
+    assert (c1, c2) == (h1, h2)
+    for key in ("diff.x.funcname", "diff.x.xfuncname"):
+        w.git(repo, "config", "--unset-all", key, check=False)
+    w.git(repo, "config", "diff.x.funcname", REDOS)
+    with pytest.raises(subprocess.TimeoutExpired):  # positive control: plain git stalls on the regex
+        subprocess.run(["git", "-C", str(repo), "diff", h1, h2], env=w.env(w.empty), capture_output=True, timeout=5)
+    started = time.monotonic()
+    got = observe.git(repo, "diff_patch", rev=("3", h1, h2))
+    assert time.monotonic() - started < 5
+    assert got is not None and got == observe.git(clean, "diff_patch", rev=("3", c1, c2))
+
+
+def test_an_empty_driver_name_is_refused_and_the_algorithm_is_pinned(world, monkeypatch):
+    """R7-L1 (probe 13): ``[diff ""] algorithm`` is the driver ``""`` (an empty ``diff=`` attribute selects it), not
+    the top-level ``diff.algorithm``: the gate refuses it by name; and ``--diff-algorithm=default`` beats it even past
+    the gate."""
+    import random
+
+    w = world
+    random.seed(3)
+    base = w.tmp / "probe13"
+    base.mkdir()
+    while True:  # two files where myers and patience differ
+        a = "".join(random.choice("ab}{\n") for _ in range(30)).replace("\n\n", "\nx\n") + "\n"
+        b = "".join(random.choice("ab}{\n") for _ in range(30)).replace("\n\n", "\nx\n") + "\n"
+        (base / "f.c").write_text(a)
+        (base / "g.c").write_text(b)
+        algo = ["git", "diff", "--no-index", "--diff-algorithm={}", "f.c", "g.c"]
+        outs = {
+            x: subprocess.run([*algo[:3], algo[3].format(x), *algo[4:]], cwd=base, capture_output=True).stdout
+            for x in ("myers", "patience")
+        }  # fmt: skip
+        if outs["myers"] != outs["patience"]:
+            break
+
+    def build(where: str) -> tuple[Path, str, str]:
+        repo = w.tmp / where
+        w.git(w.tmp, "init", "-q", "-b", "main", str(repo))
+        (repo / "f.c").write_text(a)
+        w.git(repo, "add", "f.c")
+        w.git(repo, "commit", "-qm", "1")
+        (repo / "f.c").write_text(b)
+        w.git(repo, "commit", "-qam", "2")
+        return repo, *(w.git(repo, "rev-parse", r).stdout.strip() for r in ("HEAD~1", "HEAD"))
+
+    clean, c1, c2 = build("clean")
+    repo, h1, h2 = build("hostile")
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "attributes").write_text("*.c diff=\n")
+    w.git(repo, "config", "diff..algorithm", "patience")
+    assert w.git(repo, "diff", h1, h2).stdout != w.git(clean, "diff", c1, c2).stdout  # positive control
+    with pytest.raises(gitsafe.Unsafe, match=r"diff\.\.algorithm"):
+        gitsafe.gate(str(repo), os.environ)
+    assert observe.git(repo, "diff_patch", rev=("3", h1, h2)) is None
+    monkeypatch.setattr(gitsafe, "gate", lambda *a, **k: [])  # past the gate, the option still decides
+    assert observe.git(repo, "diff_patch", rev=("3", h1, h2)) == observe.git(clean, "diff_patch", rev=("3", c1, c2))
+
+
+def _refs_and_objects(w, repo: Path) -> tuple[str, str, str]:
+    packed = repo / ".git" / "packed-refs"
+    return (
+        w.git(repo, "for-each-ref", "--format=%(refname) %(objectname)").stdout,
+        packed.read_text() if packed.exists() else "",
+        w.git(repo, "count-objects", "-v").stdout,
+    )
+
+
+def test_cachetextconv_never_makes_an_orch_read_write_a_notes_commit(world):
+    """``diff.<d>.cachetextconv=true`` makes git WRITE a notes commit (refs/notes/textconv/<d>) during a diff. Every
+    orch diff runs with --no-textconv, so no textconv and no cache: no ref and no object changes."""
+    w = world
+    repo, c1, c2 = _diff_repo(w, "r")
+    w.git(repo, "config", "diff.x.textconv", w.prog("diff-textconv"))
+    w.git(repo, "config", "diff.x.cachetextconv", "true")
+    before = _refs_and_objects(w, repo)
+    _every_operation_bytes(repo, c1, c2)
+    for op in ("diff_patch", "diff_numstat", "diff_names"):
+        operand = ("3", c1, c2) if op == "diff_patch" else (c1, c2)
+        assert observe.git(repo, op, rev=operand) is not None
+    assert observe.dirty(repo) is not None and run_all("health", repo)["staged_raw"] is not None
+    assert _refs_and_objects(w, repo) == before and w.count("diff-textconv") == 0
+    # positive control: the same diff in plain git runs the textconv and writes the notes commit
+    w.control(repo, "diff", c1, c2, "--", "a.g", fires=["diff-textconv"])
+    after = _refs_and_objects(w, repo)
+    assert "refs/notes/textconv/x" in after[0] and after != before
+
+
+# ------------------------------------------------- R7-M1: a diff git cannot produce is "unavailable", never empty
+
+
+def _timeout_for(monkeypatch, marker: str):
+    """``subprocess.run`` raises TimeoutExpired for any git argv containing ``marker`` (as the 30 s limit would)."""
+    real = subprocess.run
+
+    def run(argv, *a, **k):
+        if isinstance(argv, list) and argv[:1] == ["git"] and marker in argv:
+            raise subprocess.TimeoutExpired(argv, 30)
+        return real(argv, *a, **k)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+
+def test_observe_dirty_is_unknown_when_its_diff_times_out(world, monkeypatch):
+    repo = make_repo(world, "r")
+    assert observe.dirty(repo) is not None
+    _timeout_for(monkeypatch, "--no-relative")  # staged_tree
+    assert observe.dirty(repo) is None  # unknown, never "clean"
+
+
+def test_observe_diff_operations_answer_none_when_they_time_out(world, monkeypatch):
+    repo, c1, c2 = _diff_repo(world, "r")
+    _timeout_for(monkeypatch, "--end-of-options")
+    for op, operand in (("diff_patch", ("3", c1, c2)), ("diff_numstat", (c1, c2)), ("diff_names", (c1, c2))):
+        assert observe.git(repo, op, rev=operand) is None, op  # None, never "" (an empty diff)
+
+
+def test_tree_dirty_is_unknown_when_its_diff_times_out(world, monkeypatch):
+    from orch.runner import wtgit
+
+    w = world
+    repo = make_repo(w, "r")
+    own = dict(os.environ)
+    assert wtgit.tree_dirty(str(repo), own) is not None
+    real = subprocess.Popen
+
+    def popen(argv, *a, **k):  # the staged_tree diff never finishes in time
+        if isinstance(argv, list) and "--no-relative" in argv:
+            argv = ["sleep", "5"]
+        return real(argv, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setitem(wtgit.read_git.__kwdefaults__, "timeout", 0.5)
+    assert wtgit.tree_dirty(str(repo), own) is None
+
+
+@pytest.mark.parametrize("marker,what", [("--relative", "git cannot list the staged files here"),
+                                         ("cat-file", "git cannot read the staged file")])  # fmt: skip
+def test_check_staged_says_git_is_unavailable_when_its_diff_times_out(world, monkeypatch, ws, marker, what):
+    repo = make_repo(world, "r")
+    _timeout_for(monkeypatch, marker)
+    store = ws.other()
+    try:
+        found = health.check_staged(store, repo, Capabilities.direct())
+    finally:
+        store.close()
+    assert [f.code for f in found] == ["git.unavailable"] and found[0].what == what

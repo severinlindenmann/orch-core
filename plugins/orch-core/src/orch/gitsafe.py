@@ -146,6 +146,7 @@ PINNED = (
 #: (final Opus delta on #561, MC and L1)
 HARDEN = (
     *NEUTRAL, *PINNED, "-c", "core.commitGraph=false", "-c", "core.trustctime=true", "-c", "core.checkStat=default",
+    "-c", "advice.graftFileDeprecated=false",  # GIT_GRAFT_FILE=/dev/null makes git print a hint otherwise (R7 I3)
 )  # fmt: skip
 #: subcommands that take ``--no-ext-diff --no-textconv`` (no diff program, no textconv program)
 _NO_PROGRAMS = frozenset({"diff", "show", "log"})
@@ -283,12 +284,18 @@ class Unsafe(Exception):
 
 
 def _split(key: str) -> tuple[str, str | None, str]:
+    """``(section, subsection, name)``: ``None`` for no subsection, and an EMPTY subsection (``[diff ""]``, listed as
+    ``diff..name``) kept distinct as ``""``, never read as the top-level key (Opus R7-L1 on #561)."""
     section, _, rest = key.partition(".")
+    if "." not in rest:
+        return section.lower(), None, rest.lower()
     sub, _, name = rest.rpartition(".")
-    return section.lower(), (sub or None), name.lower()
+    return section.lower(), sub, name.lower()
 
 
 def _allowed(section: str, sub: str | None, name: str, value: str) -> bool:
+    if sub == "":  # an empty subsection is no key orch knows
+        return False
     if sub is None:
         names = ALLOWED.get(section)
         if names is None or (names != "*" and name not in names):
@@ -408,7 +415,10 @@ _SLOT = re.compile(r"<(rev|path|context)>")
 #: keep ``=dirty`` and still show a gitlink (pointer) change.
 #: every diff between commits: never relative to a subdirectory, never a submodule opened for its log or its diff
 #: (``--submodule=short`` beats an allowed-looking ``diff.submodule``), no colour, pointer moves visible
-_DIFF_FIXED = ("--no-relative", "--submodule=short", "--no-color", "--ignore-submodules=dirty", "-O/dev/null")
+_DIFF_FIXED = (
+    "--no-relative", "--submodule=short", "--no-color", "--ignore-submodules=dirty", "-O/dev/null",
+    "--diff-algorithm=default",  # beats even a driver's own algorithm, which -c diff.algorithm does not (R7-L1)
+)  # fmt: skip
 #: Every diff operation also gets these command-scope values (command scope beats the repo's own config), so a
 #: ``diff.*`` key cannot run a program or change the output orch parses (the gate tolerates only
 #: :data:`DIFF_TOLERATED`; pinning more costs nothing). Each named key of
@@ -459,10 +469,10 @@ OPS: dict[str, Op] = {
     # the whole repository from any subdirectory (MB): full names, the top as pathspec
     "index_flags": Op(("ls-files", "-v", "--full-name", "--", ":(top)")),
     "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--no-color", "--relative",
-                      "--ignore-submodules=dirty", "--submodule=short", "-O/dev/null")),
+                      "--ignore-submodules=dirty", "--submodule=short", "-O/dev/null", "--diff-algorithm=default")),
     # paths of staged_raw are relative to -C <repo> (--relative): ":0:./<path>" resolves them there, not at the top
     "staged_tree": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--no-color", "--no-relative",
-                       "--ignore-submodules=dirty", "--submodule=short", "-O/dev/null")),
+                       "--ignore-submodules=dirty", "--submodule=short", "-O/dev/null", "--diff-algorithm=default")),
     "staged_blob": Op(("cat-file", "blob", ":0:./<path>")),
     "diff_numstat": Op(("diff", "--numstat", "-M50%", "--text", *_DIFF_FIXED, "--end-of-options",
                          "<rev>", "<rev>", "--")),
@@ -551,11 +561,18 @@ def command(
 
 
 def _driver_pins(local: Iterable[tuple[str, str, str]]) -> list[tuple[str, str]]:
-    """For every diff driver the repository's own config defines (``diff.<driver>.*``, tolerated by the gate),
-    ``diff.<driver>.binary=false`` as command-scope configuration, passed through ``GIT_CONFIG_COUNT`` (no parsing of
-    the driver's name): a repo-forced binary driver changes neither ``diff_numstat``'s counts nor ``diff_patch``."""
+    """For every diff driver the repository's own config defines (``diff.<driver>.*``, tolerated by the gate), as
+    command-scope configuration passed through ``GIT_CONFIG_COUNT`` (no parsing of the driver's name):
+
+    * ``diff.<driver>.binary=false``: a repo-forced binary driver changes neither ``diff_numstat``'s counts nor
+      ``diff_patch``. Known difference (Opus R7 I1, harmless, more visible): a file with NUL bytes mapped to a driver
+      the repo defines shows counts in ``diff_numstat``, where a repo without that driver shows ``-``;
+    * ``diff.<driver>.xfuncname=^$`` and ``diff.<driver>.funcname=^$``: the repo's regex never runs (a backtracking
+      one stalled ``diff_patch`` until the timeout, Opus R7-M1), and the hunk-header text it would choose is stripped
+      anyway (:func:`plain_hunk_headers`)."""
     drivers = sorted({sub for _scope, key, _v in local if (s := _split(key))[0] == "diff" and (sub := s[1])})
-    return [(f"diff.{d}.binary", "false") for d in drivers]
+    return [(f"diff.{d}.{name}", value) for d in drivers
+            for name, value in (("binary", "false"), ("xfuncname", "^$"), ("funcname", "^$"))]  # fmt: skip
 
 
 def gitlinks(raw: bytes) -> list[str]:
@@ -734,7 +751,8 @@ DIFF_DRIVER_TOLERATED: dict[str, str] = {
     "cachetextconv": "unused: --no-textconv",
     "command": "--no-ext-diff on every diff (_argv)",
     "binary": "pinned diff.<driver>.binary=false for every driver the repo defines (_driver_pins); --text on the patch",
-    "xfuncname": "only the text after a hunk header's second @@; orch strips it (plain_hunk_headers)",
+    "xfuncname": "pinned ^$ for every driver the repo defines (_driver_pins): the repo's regex never runs; the text "
+    "after a hunk header's second @@ is stripped anyway (plain_hunk_headers)",
     "funcname": "as xfuncname",
     "wordregex": "only --word-diff, which no operation uses",
 }
@@ -743,7 +761,7 @@ DIFF_DRIVER_TOLERATED: dict[str, str] = {
 def diff_tolerated(key: str) -> bool:
     """Whether a ``diff.*`` key of a repository's own config is on :data:`DIFF_TOLERATED`/`DIFF_DRIVER_TOLERATED`."""
     section, sub, name = _split(key)
-    if section != "diff":
+    if section != "diff" or sub == "":  # driver "" (selected by an empty ``diff=`` attribute): refused (R7-L1)
         return False
     return name in (DIFF_TOLERATED if sub is None else DIFF_DRIVER_TOLERATED)
 

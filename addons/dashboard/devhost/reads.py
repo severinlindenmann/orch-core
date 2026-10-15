@@ -859,6 +859,18 @@ def _unified_files(text):
     return files
 
 
+DIFF_UNAVAILABLE = "diff unavailable"
+
+
+def _diff_part(name: str, out: str | None) -> str:
+    """One part of a repo's diff; ``None`` (git failed, was refused or timed out) is the error the Changes tab shows
+    as "Diff unavailable", never an empty diff."""
+    if out is None:
+        _LOG.warning("%s for a linked repo (git failed, was refused or timed out)", DIFF_UNAVAILABLE)
+        raise fail("observe.unavailable", f"{name}: {DIFF_UNAVAILABLE}: git could not produce it in time", exit=3)
+    return out
+
+
 def diff(store, views, args):
     if set(args) - {"ref", "repo", "context", "max_bytes"}:
         raise bad("unknown argument")
@@ -902,8 +914,10 @@ def diff(store, views, args):
         if not base:
             raise fail("observe.unavailable", f"{name}: no base to compare with", exit=3)
         sources.append({"repo": name, "branch": branch, "base_sha": base, "head_sha": head})
-        numstat = observe.git(path, "diff_numstat", rev=(base, head)) or ""
-        names = observe.git(path, "diff_names", rev=(base, head)) or ""
+        # A diff git could not produce (failed, refused or past its timeout) is "diff unavailable", never "no changes"
+        # or an empty patch (#561 R7-M1): observe.git answers None then, "" only for a real empty diff.
+        numstat = _diff_part(name, observe.git(path, "diff_numstat", rev=(base, head)))
+        names = _diff_part(name, observe.git(path, "diff_names", rev=(base, head)))
         status = {}
         for line in names.splitlines():
             code, *paths = line.split("\t")
@@ -914,7 +928,7 @@ def diff(store, views, args):
                 real = next((p for p in status if real.endswith(p)), real)
             code, old = status.get(real, ("M", None))
             files.append({**f, "path": real, "repo": name, "status": code, "old_path": old})
-        text = observe.git(path, "diff_patch", rev=(str(context), base, head), strip=False) or ""
+        text = _diff_part(name, observe.git(path, "diff_patch", rev=(str(context), base, head), strip=False))
         parts.append(text)
     unified = "".join(parts)
     if len(unified.encode()) > limit:

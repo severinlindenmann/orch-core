@@ -4183,8 +4183,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     changes:** the repository identity (F1 5.7) reads `remote.origin.url` from the repository's own local and
     worktree config only, without includes (a URL set globally or in an included file is now `local:<name>`, so a
     declared `remote` reports `repo.remote_mismatch`); a host-mode `task done --run` with a verify command refuses
-    (`verify.failed`, with the gate's reason) before running it when the working tree's state cannot be told. No op,
-    code, wire, hash or schema change.
+    (`verify.failed`, with the gate's reason) before running it when the working tree's state cannot be told; the
+    dashboard's Changes tab shows hunk headers without function context, and a diff git cannot produce as "Diff
+    unavailable". No op, code, wire, hash or schema change.
 
 ---
 
@@ -10554,11 +10555,15 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     - `diff.<driver>.textconv`, `.cachetextconv`: `--no-textconv` (git-lfs's `diff.lfs.textconv` is tolerated);
     - `diff.<driver>.binary`: `diff.<driver>.binary=false` for every driver the repository defines, plus `--text` on
       the patch;
-    - `diff.<driver>.xfuncname`, `.funcname`: they choose only the text after a hunk header's second `@@`. That text
-      is shown in the dashboard's diff (it draws whole hunk lines; `adapters/changes.py` only finds the first `@@`),
-      so `store/observe` strips it from `diff_patch` (`gitsafe.plain_hunk_headers`);
+    - `diff.<driver>.xfuncname`, `.funcname`: pinned to `^$` for every driver the repository defines, so its regex
+      never runs (a backtracking one stalled the patch until the timeout); the text it would choose after a hunk
+      header's second `@@` is shown in the dashboard's diff (it draws whole hunk lines), so `store/observe` also
+      strips it from `diff_patch` (`gitsafe.plain_hunk_headers`);
     - `diff.<driver>.wordRegex`: only `--word-diff`, which no operation uses.
 
+    An empty driver name (`[diff ""]`, which an empty `diff=` attribute selects) is never read as a top-level key:
+    it is refused, and every diff passes `--diff-algorithm=default`. A diff git cannot produce (it fails, is refused
+    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch.
     Any other `diff.*` key is refused, naming it: "this repo sets diff.X, which orch doesn't support yet; remove it
     or tell us". A key a future git adds is therefore refused by default. No other operation reads diff config, and
     the runner's `worktree add`/`remove` run no diff. A test sets every tolerated key to a hostile value and gets

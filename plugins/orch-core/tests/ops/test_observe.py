@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 from tests.ops.test_task_ac import claimed, fill_and_approve, py
 
@@ -160,6 +161,9 @@ def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
     (repo / "impl.txt").write_text("broken\n")  # same content, new mtime: git runs the filter to compare
     assert observe.dirty(repo) is None
     assert not marker.exists()
+    # positive control: plain git status runs that filter, so the assertions above can fail
+    done = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, check=False)
+    assert done.returncode == 0 and marker.exists()
 
 
 def test_observe_refuses_remote_mismatch_and_accepts_ascii_case_match(ws, cli):

@@ -177,8 +177,12 @@ def test_the_gate_tolerates_a_diff_program_and_the_worktree_commands_never_run_i
     root, repo, own, args = world
     marker = root / "diff-program-ran"
     (repo / ".gitattributes").write_text("* diff=x\n")
-    _git(repo, "config", key, f"touch {marker}; true")
+    _git(repo, "config", key, f'echo ran >> {marker}; cat "$1" 2>/dev/null; true')
     gitsafe.gate(str(repo), own)
     assert wtgit.run_git(args("worktree.add"), own) == {"ok": True}
     assert wtgit.run_git(args("worktree.remove"), own) == {"ok": True}
     assert not marker.exists()
+    # positive control: plain git's diff runs that program, so the assertion above can fail
+    (repo / "f").write_text("y")  # a tracked change the attribute maps to driver x
+    _git(repo, "diff")  # check=True: rc 0
+    assert marker.exists()

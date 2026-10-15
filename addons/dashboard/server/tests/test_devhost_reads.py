@@ -435,3 +435,20 @@ def test_the_parent_fallback_is_logged_never_silent(rich, stub, monkeypatch, cap
     assert len(lines) == 1 and lines[0].levelno == logging.WARNING
     assert lines[0].getMessage() == "merge base unavailable, using the parent commit (git.merge_base_failed)"
     assert data["sources"][0]["base_sha"] != normal["sources"][0]["head_sha"]
+
+
+@pytest.mark.parametrize("op", ["diff_numstat", "diff_names", "diff_patch"])
+def test_a_diff_git_cannot_produce_is_unavailable_never_empty(rich, stub, monkeypatch, caplog, op):
+    """#561 R7-M1: observe.git answers None when git fails, is refused or passes its timeout; the diff read is then
+    "diff unavailable" (observe.unavailable), never counts with an empty patch or "no changes"."""
+    import logging
+
+    from devhost import reads
+
+    real = reads.observe.git
+    monkeypatch.setattr(reads.observe, "git", lambda path, o, **kw: None if o == op else real(path, o, **kw))
+    with caplog.at_level(logging.WARNING, logger="orch_dashboard.devhost"):
+        with pytest.raises(HostError, match="observe.unavailable") as e:
+            stub.call("diff", {"ref": "DEMO-0001"})
+    assert "diff unavailable" in e.value.error["message"]
+    assert [r.getMessage() for r in caplog.records if "diff unavailable" in r.getMessage()]

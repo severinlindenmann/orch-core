@@ -30,7 +30,7 @@ uv run pytest -q -m slow -n auto           # the slow tests, which CI runs as a 
 
 The tests marked `slow` (wheel and venv builds, the bridge mutants, a performance budget) run in their own CI job. Every run lists its 15 slowest tests: mark a new test `@pytest.mark.slow` when it lands there.
 
-CI uses Python 3.11, so avoid syntax that needs a newer Python. The workflows are in `.github/workflows` (`orch-core`, `dashboard`).
+CI uses Python 3.14, the only supported version (`requires-python >=3.14`). The workflows are in `.github/workflows` (`orch-core`, `dashboard`).
 
 ## Pull requests
 

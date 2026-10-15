@@ -4,6 +4,8 @@ The signatures are valid (corpus keys), so each value reaches the check's shape 
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from orch import canon, crypto
@@ -21,7 +23,9 @@ WS = IDS["workspace_a"]
 PK = corpus.pub("person_alice.sig")
 WSK = corpus.pub("wsk_a.sig")
 CARD = wscard.verify_card(CR["cases"][0]["card"], PK)
-BAD = [["a"], {"a": 1}, 7, None, True]
+# D1-4: a float and an int beyond the safe range; a numeric string "7" is in the integer-field test below (as a
+# string field's value it can be valid, a label "7").
+BAD = [["a"], {"a": 1}, 7, None, True, 1.5, 2**64]
 
 
 def _refused_or_accepted(call, original: object) -> None:
@@ -35,7 +39,17 @@ def _refused_or_accepted(call, original: object) -> None:
 
 
 def _sign(name: str, label: str, o: dict) -> dict:
-    return {"o": o, "sig": crypto.b64u(crypto.sign(corpus.priv(name), crypto.L[label] + canon.dumps(o)))}
+    """Signed over ``cj(o)``, or, for a value ``cj`` cannot carry (a float, an int beyond 2^53), over the sorted compact
+    JSON a hostile signer would use: the checks must refuse it either way."""
+    body = _cj_or_json(o)
+    return {"o": o, "sig": crypto.b64u(crypto.sign(corpus.priv(name), crypto.L[label] + body))}
+
+
+def _cj_or_json(o: object) -> bytes:
+    try:
+        return canon.dumps(o)
+    except canon.JcsError:
+        return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
 def _variants(o: dict, skip: tuple[str, ...] = ("v", "suite", "kind")) -> list[tuple[str, dict, object]]:
@@ -92,7 +106,7 @@ _PRIMARY_KX = corpus.priv("primary.kx")
 def test_open_cert_request_refuses_bad_inner_types(name, inner, orig):
     rid = bytes.fromhex(REQ_O["request_id"])
     sealed = crypto.seal(
-        corpus.pub("primary.kx"), bytes.fromhex(IDS["device_primary"]), "cert-request", rid, 0, canon.dumps(inner)
+        corpus.pub("primary.kx"), bytes.fromhex(IDS["device_primary"]), "cert-request", rid, 0, _cj_or_json(inner)
     )
     o = {**REQ_O, "sealed": crypto.b64u(sealed)}
     req = certreq.check_cert_request(
@@ -150,3 +164,39 @@ def test_caller_ids_of_bad_type_are_refused(bad):
     ):
         with pytest.raises(Refused):
             call()
+
+
+INT_FIELDS = [
+    ("cert_request", "wsk_a.sig", "sig_cert_request", REQ_O, ("created_ms", "expires_ms")),
+    ("cert_challenge", "person_alice.sig", "sig_cert_challenge", CH_O, ("expires_ms",)),
+    ("cert_rejection", "person_alice.sig", "sig_cert_rejection", RJ_O, ("expires_ms",)),
+    ("member_list", "wsk_a.sig", "sig_member_list", LIST_O, ("epoch", "list_seq", "issued_ms")),
+    ("wk_grant", "wsk_a.sig", "sig_wk_grant", GRANT_O, ("epoch",)),
+]
+_CHECK = {
+    "cert_request": lambda s: certreq.check_cert_request(
+        s,
+        CARD,
+        me_person_id=IDS["person_alice"],
+        me_device_id=IDS["device_primary"],
+        journal=certreq.CertJournal(),
+        now_ms=REQ_O["created_ms"],
+    ),
+    "cert_challenge": lambda s: certreq.check_cert_challenge(s, PK, REQ_O),
+    "cert_rejection": lambda s: certreq.check_cert_rejection(s, PK, REQ_O),
+    "member_list": lambda s: memberlist.check_member_list(s, WSK, WS),
+    "wk_grant": lambda s: memberlist.check_wk_grant(s, WSK, WS, IDS["device_phone"]),
+}
+INT_V = [
+    (f"{kind}.{k}={bad!r}", kind, key, label, {**o, k: bad})
+    for kind, key, label, o, keys in INT_FIELDS
+    for k in keys
+    for bad in ("7", 1.5, 2**64, True, None)
+]
+
+
+@pytest.mark.parametrize(("name", "kind", "key", "label", "o"), INT_V, ids=[v[0] for v in INT_V])
+def test_an_integer_field_of_another_type_or_range_is_refused(name, kind, key, label, o):
+    """D1-4: a numeric string, a float, an int beyond the safe range, a bool or null in a time, epoch or sequence."""
+    with pytest.raises(Refused):
+        _CHECK[kind](_sign(key, label, o))

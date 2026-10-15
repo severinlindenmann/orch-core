@@ -34,6 +34,7 @@ CAPS = [
     "records/1",
     "run/1",
     "term/1",
+    "reader/1",
 ]
 OPS = {
     name: 1
@@ -77,6 +78,9 @@ OPS = {
         "agent.start",
         "grant.deposit_status",
         "grant.forget",
+        # H12d-2 (section 0.8.6 item 9.11): the readers and their levels, a read of cap `reader/1`. Never
+        # `reader.declare`: a declaration comes from the device itself.
+        "reader.list",
     )
 }
 RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "grant.deposit_status", "grant.forget"}
@@ -296,6 +300,8 @@ class HostLink:
             if op in RUN_OPS
             else "term/1"
             if op in TERM_OPS
+            else "reader/1"
+            if op == "reader.list"
             else "query/1"
             if op in QUERY_OPS
             else "ops/1"

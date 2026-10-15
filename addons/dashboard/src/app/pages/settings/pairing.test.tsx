@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { setFeatures } from '@/api/features'
 import { checkSas, pairingApi, pairServed, realPairingApi } from '@/api/pairing'
-import { pairPreviewForTests, resetLayoutPreview } from '@/dev/layoutPreview'
+import { MAC_DEVICE, pairPreviewForTests, resetLayoutPreview } from '@/dev/layoutPreview'
 import { createPairFixture, fixtureLinks, installPairFixture } from '@/dev/pairFixture'
 import { qrPath } from './host/Devices'
 import { renderApp } from '@/test/renderApp'
@@ -345,13 +345,15 @@ describe('commands for the shell (review N1)', () => {
 })
 
 describe('paired devices', () => {
-  it('come from member.list devices with the read_ext fields; the Mac without them is not listed', async () => {
+  it('come from member.list devices paired through the relay (read_ext/3); the Mac (relay: false) is not listed', async () => {
     open('pair-devices')
     const rows = await screen.findAllByTestId('device-row', {}, T)
     expect(rows.length).toBe(10)
-    expect(document.body.textContent).not.toContain('d_mac')
+    expect(screen.getByRole('table', { name: 'Paired devices' }).textContent).not.toContain(MAC_DEVICE.id)
     expect(rows[1]).toHaveTextContent('Severin')
-    expect(rows[1].querySelectorAll('td')[3]).toHaveTextContent('no')
+    expect(rows[1].querySelectorAll('td')[3]).toHaveTextContent('yes')
+    expect(rows[1].querySelectorAll('td')[5]).toHaveTextContent('none') // reader null: no verified record
+    expect(rows[0].querySelectorAll('td')[5]).toHaveTextContent('1')
     expect(pairPreviewForTests.fixture()!.calls.map((c) => c.op)).toContain('members')
   })
 

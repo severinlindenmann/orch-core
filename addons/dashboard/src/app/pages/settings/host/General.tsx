@@ -1,4 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
+import { signerProblem } from '@/api/refusals'
 import { useState } from 'react'
 import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
 import { hasFeature } from '@/api/features'
@@ -91,8 +93,15 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
             <p className="text-[13px] text-text-muted">
               {workspace.click.enabled && workspace.click.available
                 ? 'Sign with one click is on for this workspace. "Sign in the terminal instead" stays in every dialog.'
-                : `Sign with one click is not available now${workspace.click.problem ? ` (${workspace.click.problem})` : ''}. Sign in the terminal.`}
+                : `Sign with one click is not available now.${workspace.click.problem ? ` ${signerProblem(workspace.click.problem)}` : ''} Sign in the terminal.`}
             </p>
+            {workspace.click.problem === 'readers_old' && (
+              <p data-testid="signing-readers-old" className="text-[13px]">
+                <Link to="/settings/$tab" params={{ tab: 'devices' }} className="text-brand underline underline-offset-2 hover:no-underline">
+                  See which devices need an update
+                </Link>
+              </p>
+            )}
           </div>
         </Section>
       )}

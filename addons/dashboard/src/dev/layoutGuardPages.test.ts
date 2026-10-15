@@ -29,3 +29,12 @@ it('every drop layout scenario has a real-host-drop-* guard page, listed and che
     expect(guard).toContain(`['real-host-${s}', '${s}',`)
   }
 })
+
+it('the H12d-2 reader scenarios have guard pages, listed and checked', () => {
+  for (const s of ['readers-devices', 'convenience-refusals'] as const) {
+    expect(LAYOUT_SCENARIOS).toContain(s)
+    expect(REAL_HOST_PAGES).toContain(`real-host-${s}`)
+    expect(guard).toContain(`['real-host-${s}', '${s}',`)
+  }
+  expect(selectsRealHost(/readers|refusals/)).toBe(true)
+})

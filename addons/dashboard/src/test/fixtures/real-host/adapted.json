@@ -2132,8 +2132,8 @@
    "expires_at": "2026-01-01T09:02:27Z",
    "id": "gr_00000000000000000000000003",
    "issued_at": "2026-01-01T09:00:00Z",
-   "person": "p_00000000000000000000000000000001",
    "label": null,
+   "person": "p_00000000000000000000000000000001",
    "revoked": null,
    "scope": "workable",
    "session_ids": [],
@@ -2410,7 +2410,13 @@
    "devices": [
     {
      "auth": "passphrase",
+     "cert_expires_at": null,
      "id": "d_00000000000000000000000000000002",
+     "label": null,
+     "label_hidden": false,
+     "paired_at": null,
+     "reader": null,
+     "relay": null,
      "scopes": [
       "look",
       "decide",

@@ -626,3 +626,17 @@ host yet." (no sidebar entry until the server lists `drop`). To see the page, ru
 - `/__layout/drop-versions`: a document at 1024 of 1024 versions (cap line, pruned versions' downloads off, 12 per page) and "New versions
   of a document are saved from a phone. This host sends files only." Open **Versions** on meeting-notes.md for 37 of 1024.
 
+
+## Try reader levels and click-to-sign refusals (core H12d-2)
+
+Fixtures only (`npm run dev`):
+
+- `/__layout/readers-devices`: Settings → Devices. "Reader levels" lists ten devices by label and member (never by id); four are
+  below the required level 1 and say "Needs an update of the orch app" and come first; the line above says why level 1 is
+  required. "Work phone / second line" shows its line break as text. Pairing above still says it is not available.
+- `/__layout/convenience-refusals`: every reason of `sign.convenience_unavailable` and `sign.convenience_readers`, an unknown
+  reason (the general sentence, the reason never shown), `reader.decl_invalid`, and the signer's `readers_old`. The devices each
+  names appear by label ("Work phone…", "a device of Mara with no name", "a device this page does not know").
+
+On a real host: Settings → General's Signing card says why click-to-sign is paused (`readers_old`) with **See which devices need
+an update**; Settings → Devices shows the levels when the host serves `reader/1`.

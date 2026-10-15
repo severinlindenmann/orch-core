@@ -1791,3 +1791,47 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** Align the gated `drop/1` fixtures with orch-relay revision #71 (864c2d55): retire sends `expect_version` and nullable `expect_head` from the list. A version conflict keeps the dialog open with its code and reload guidance, and refreshes the list. Expired/retired rows show the nullable `tombstone_until_ms` date beside their reason.
 - **Why:** Prevent deleting an item changed since listing, and make the tombstone retention deadline visible using the page’s date format. Layout fixtures exercise both tombstone states.
 - **Revert:** Remove the retire preconditions/conflict fixture and the head/tombstone fields, rendering and tests; restore the earlier fixture contract.
+
+## 2026-10-15 Reader levels and click-to-sign refusal reasons (core H12d-2, #513)
+
+- **Decision:**
+  - **Error.detail is closed per code on the server** (`errors.py` `closed_detail`): `detail` reaches the browser only for
+    `sign.convenience_unavailable` and `sign.convenience_readers`, with only `reason` (from that code's closed set) and `devices`
+    (a list of at most 64 `d_` + 32-hex ids; anything else drops the whole list). Every other code's `detail` is dropped,
+    including the ones core's table allows (`term.not_attachable`, `run.limit`, `launch.no_grant`, `runner.disabled`,
+    `ticket.key_not_next`): no page reads them. Before this, `detail` passed through unfiltered.
+  - **`reader.list`** is a read of cap `reader/1` (hostlink), served at `GET /api/w/<uuid>/readers` through an allow-list:
+    `{available, readers:[{device, person, reader, level}], required_reader}`. `dk_hash`, `digest` and `decl` stay on the
+    server. `reader.declare` is never sent (a declaration comes from the device). Feature `readers`.
+  - **`/members`** forwards the read_ext/3 device fields and `reader` (`label`, `label_hidden`, `paired_at`, `relay`,
+    `cert_expires_at`, `reader`), each checked; a label with invisible or control characters other than LF is withheld
+    (`label_hidden`), never repaired.
+  - **The page** (`src/api/refusals.ts`) rechecks the reason and the devices and says each reason in one sentence; an
+    unknown reason gets the code's general sentence and is never shown. The devices a refusal names are shown by label and
+    member (`RefusalDevices`), never by id, in the sign panel, the hand-off dialog and pairing errors. A known
+    `sign.convenience_readers` reason replaces the host's message in the click problem (the host text may name readers by
+    id); without a reason (an older host) the host's message stays. In the terminal hand-off the host's message follows the
+    sentence, labelled "The host says".
+  - **The signer's `problem`** is a sentence where known (`readers_old`, `disabled`, `not_convenience`, `version_mismatch`,
+    `custody_unavailable`); `readers_old` links to Settings → Devices.
+  - **Settings → Devices** shows "Reader levels" whenever the host serves `reader/1`, independent of the pairing gate. Paired
+    devices are now those with `relay: true` (core sends `relay` on every device).
+- **Why:** H12d-2's brief; the readers' levels are the fix for every relaxed refusal, so the page names them.
+- **Revert:** drop `closed_detail` (restore `error = {k: v … if k != "fix"}`), `reader.list`/`reader/1` in `hostlink.py`, the
+  `readers` feature and route, the new `Device` fields; delete `src/api/refusals.ts`, `RefusalDevices.tsx`, `host/Readers.tsx`,
+  `src/dev/readersFixture.ts` and the two scenarios; restore the `UNAVAILABLE` map in `click.ts`.
+- **Review fixes (Opus review, 15 Oct; APPROVE, 2 Low, 4 Info):**
+  - **L1:** the `other_member` sentence covers both of spec 9.9's cases (the other member's orch declaration or one of
+    their devices below level 1), and its fix is that member updating orch and declaring, on their computer and each device.
+  - **L2:** a device label in a refusal and in Reader levels is shown with `Inline` (an LF is escaped) inside a mono box, not
+    between bare quotes, so a label with quotes, `(named by the device)` or a line break cannot fake a second entry.
+  - **I1:** the `unknown_readers` sentence says "while click-to-sign is on or has been used here" (flag or history).
+  - **I2:** the sign panel looks devices up in the dialog's own workspace (`ws` prop), never the View's `workspace.id`.
+  - **Open (not here):** I3, the click signer drops `detail`, so the sign panel never names devices: a core follow-up
+    (`ClickError` has no detail). I4, the top-level keys of a host error pass as a deny-list (pre-existing): an allow-list is
+    a later slice.
+- **Full-suite fixes (15 Oct):** `closed_detail` is now core's whole per-code table (`DETAIL_KEYS`), not only the two
+  convenience codes: `term.not_attachable` `state`, `run.limit` `which`, `launch.no_grant` `reason`, `runner.disabled` `missing`
+  (the M6 records page relied on it: regression fixed), `ticket.key_not_next` `next_key` (ticket-key format), each from its
+  closed set; any other code, key or value is dropped. The real-host golden `adapted.json` was regenerated from the recorded
+  `raw.json` with the recorder's own writer (`adapt`, indent 1, sorted keys): the diff is only the six new roster device fields.

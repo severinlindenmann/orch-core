@@ -1,3 +1,5 @@
+import re
+
 from fastapi.responses import JSONResponse
 
 from .text import hidden
@@ -97,11 +99,66 @@ def plain_argv(fix) -> bool:
     )
 
 
+#: `Error.detail` (host contract v1.9, section 0.3) is closed per code: only the codes below reach the browser with a
+#: detail, only with their keys, each value from a closed set (a tuple), a ticket key (`KEY`) or a list of device ids
+#: (`DEVICES`). Anything else the host sends in `detail` (another code, another key, a value not in the set, a device
+#: entry that is not an id) is dropped, never echoed. The same table as core's `orch.host.errors.DETAIL_KEYS` (core
+#: H12d-2); before H12d-2 the dashboard passed `detail` through unfiltered, so every code core allows keeps it.
+KEY = "key"
+DEVICES = "devices"
+DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
+    "term.not_attachable": {"state": ("starting", "running", "exited", "lost")},
+    "run.limit": {"which": ("agent_ws", "agent_person", "shell_person", "runner")},
+    "launch.no_grant": {"reason": ("none", "expiring", "scope", "revoked")},
+    "runner.disabled": {"missing": ("addon", "machine", "terminals")},
+    "ticket.key_not_next": {"next_key": KEY},
+    "sign.convenience_unavailable": {
+        "reason": ("disabled", "relay_paired", "other_member", "phone_device", "reader_version"),
+        "devices": DEVICES,
+    },
+    "sign.convenience_readers": {
+        "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
+        "devices": DEVICES,
+    },
+}
+TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{1,9}-[0-9]{4,}")
+DEVICE = re.compile(r"d_[0-9a-f]{32}")
+DEVICES_MAX = 64
+
+
+def closed_detail(code, detail) -> dict | None:
+    """The part of a host error's `detail` the browser may see (see `DETAIL_KEYS`), or None."""
+    allowed = DETAIL_KEYS.get(code)
+    if allowed is None or not isinstance(detail, dict):
+        return None
+    out: dict = {}
+    for key, values in allowed.items():
+        value = detail.get(key)
+        if values == DEVICES:
+            if (
+                isinstance(value, list)
+                and len(value) <= DEVICES_MAX
+                and all(isinstance(d, str) and DEVICE.fullmatch(d) for d in value)
+            ):
+                out[key] = list(dict.fromkeys(value))
+        elif not isinstance(value, str):
+            continue
+        elif values == KEY:
+            if TICKET_KEY.fullmatch(value):
+                out[key] = value
+        elif value in values:
+            out[key] = value
+    return out or None
+
+
 def host_response(exc: HostError):
     # The host's `fix` stays out of the browser, as since M0 (it can carry argv and paths), except: a plain-text fix,
     # and the command a person runs to leave a signing-path refusal (`orch host convenience off --workspace …`), only
     # for those codes and only when every argv word is plain. Both are rendered as untrusted text.
-    error = {k: v for k, v in exc.error.items() if k != "fix"}
+    error = {k: v for k, v in exc.error.items() if k not in {"fix", "detail"}}
+    detail = closed_detail(error.get("code"), exc.error.get("detail"))
+    if detail is not None:
+        error["detail"] = detail
     fix = exc.error.get("fix")
     if isinstance(fix, str) or (exc.error.get("code") in FIX_COMMAND_CODES and plain_argv(fix)):
         error["fix"] = fix

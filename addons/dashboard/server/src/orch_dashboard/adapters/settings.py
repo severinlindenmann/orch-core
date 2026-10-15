@@ -175,6 +175,16 @@ class Device(BaseModel):
     auth: str | None
     scopes: list[str]
     valid: bool
+    # v1.9 `read_ext/3` (section 0.8.5) and H12d-2. Absent from the host: None (unknown), never a default of ours.
+    #: the device's own name (R6 pairing record), untrusted text; None when the host sends none or it can't be shown
+    label: str | None = None
+    #: the label had invisible or control characters (other than a line break): it is withheld, never repaired
+    label_hidden: bool = False
+    paired_at: str | None = None
+    relay: bool | None = None
+    cert_expires_at: str | None = None
+    #: the level the device's reader record counts as now; None: no verified record (the gate counts it as 0)
+    reader: int | None = None
 
 
 class RosterMember(BaseModel):
@@ -184,6 +194,28 @@ class RosterMember(BaseModel):
     devices: list[Device]
     name_hidden: bool = False  # see adapters.shell.safe_name
     # `last_seen` is not served by the host (v1.5): there is no such field to fill.
+
+
+LABEL_MAX = 80  # protocol section 2.5: at most 80 code points after cleaning
+READER_MAX = 1000  # a level is a small int; anything outside 0..READER_MAX is not a level
+
+
+def label(value) -> tuple[str | None, bool]:
+    """The device's label, or None. A line break is kept (the protocol keeps LF); any other invisible or control
+    character withholds the whole label (`label_hidden`), as a member's name is."""
+    if not isinstance(value, str) or not value or len(value) > LABEL_MAX:
+        return None, False
+    if hidden(value.replace("\n", "")):
+        return None, True
+    return value, False
+
+
+def level(value) -> int | None:
+    return value if type(value) is int and 0 <= value <= READER_MAX else None
+
+
+def time_or_none(value) -> str | None:
+    return value if isinstance(value, str) and TIME.fullmatch(value) else None
 
 
 def word(value) -> str:
@@ -202,6 +234,12 @@ def roster(data) -> list[RosterMember]:
                     auth=word(d["auth"]) if isinstance(d.get("auth"), str) else None,
                     scopes=[word(s) for s in d.get("scopes") or []],
                     valid=d.get("valid") is True,
+                    label=label(d.get("label"))[0],
+                    label_hidden=label(d.get("label"))[1],
+                    paired_at=time_or_none(d.get("paired_at")),
+                    relay=d["relay"] if type(d.get("relay")) is bool else None,
+                    cert_expires_at=time_or_none(d.get("cert_expires_at")),
+                    reader=level(d.get("reader")),
                 )
                 for d in m["devices"]
             ]
@@ -273,5 +311,49 @@ def grants(data, ext: bool) -> list[Grant]:
                 )
             )
         return out
+    except (KeyError, TypeError, AttributeError, ValueError):
+        raise bad() from None
+
+
+# ---- reader.list (H12d-2, cap `reader/1`) ---------------------------------------------------------------------------
+DEVICE = re.compile(r"^d_[0-9a-f]{32}$")
+
+
+class Reader(BaseModel):
+    device: str
+    person: str
+    #: what the device declared (0 without a record that verifies)
+    reader: int
+    #: the level the gate counts now
+    level: int
+
+
+class Readers(BaseModel):
+    available: bool
+    readers: list[Reader]
+    #: 1 while click-to-sign is on or the workspace has click-signed history: every reader must be at this level
+    required_reader: int | None
+
+
+def readers_unavailable() -> Readers:
+    return Readers(available=False, readers=[], required_reader=None)
+
+
+def readers(data) -> Readers:
+    """`reader.list` through an allow-list: device, person, reader, level and `required_reader` only. `dk_hash`,
+    `digest` and `decl` stay on the server (the page does not need them)."""
+    try:
+        rows = []
+        for r in data["readers"]:
+            if not DEVICE.fullmatch(r["device"]) or not PERSON.fullmatch(r["person"]):
+                raise ValueError("id")
+            declared, counted = level(r.get("reader")), level(r.get("level"))
+            if declared is None or counted is None:
+                raise ValueError("level")
+            rows.append(Reader(device=r["device"], person=r["person"], reader=declared, level=counted))
+        required = level(data.get("required_reader"))
+        if required is None:
+            raise ValueError("required_reader")
+        return Readers(available=True, readers=rows, required_reader=required)
     except (KeyError, TypeError, AttributeError, ValueError):
         raise bad() from None

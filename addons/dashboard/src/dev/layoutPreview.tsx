@@ -27,6 +27,11 @@ import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { clickProblem } from '@/api/click'
+import { signerProblem } from '@/api/refusals'
+import type { RosterMember } from '@/api/settings'
+import { ClickProblemBox } from '@/components/sign/RefusalDevices'
+import { readersOf, readersRoster, refusalSamples } from './readersFixture'
 
 export const LAYOUT_SCENARIOS = [
   'quick-normal',
@@ -59,6 +64,9 @@ export const LAYOUT_SCENARIOS = [
   'pair-cert',
   'pair-failed',
   'pair-devices',
+  // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
+  'readers-devices',
+  'convenience-refusals',
   // Drop (proposed drop/1): Workspace → Drop with the fixture drop api.
   'drop-unavailable',
   'drop-list',
@@ -204,16 +212,20 @@ const LONG_LABEL = `Severin’s iPhone 17 Pro Max ${LONG_WORD}`.slice(0, 80)
 const pairOffer = (state: PairOfferStatus['state'], over: Partial<PairOfferStatus> = {}): PairOfferStatus => ({
   offer_id: '7'.repeat(32), state, created_ms: Date.now() - 60_000, expires_ms: Date.now() + 240_000, scopes: ['look', 'decide'], label: LONG_LABEL, ...over,
 })
+// `member.list` as core serves it (v1.9 read_ext/3, H12d-2): every device has every field; `paired_at` and
+// `cert_expires_at` are RFC 3339 times, `reader` the counted level or null (no verified record).
 const pairDevice = (i: number, over: Partial<MemberDevice> = {}): MemberDevice => ({
-  id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`, paired_ms: Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000, relay: true,
-  cert_expires: '2027-10-12T09:00:00Z', reader: 1, ...over,
+  id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`,
+  paired_at: new Date(Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z'), relay: true,
+  cert_expires_at: '2027-10-12T09:00:00Z', reader: 1, ...over,
 })
+export const MAC_DEVICE: MemberDevice = { id: 'd_' + 'f'.repeat(32), auth: 'passphrase', scopes: ['look', 'decide', 'operate', 'type'], valid: true, label: null, paired_at: null, relay: false, cert_expires_at: null, reader: 1 }
 const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
   const member = (devices: MemberDevice[]): PairMember[] => [
-    // The Mac's own device has no pairing fields (no `relay`): it is not listed as a paired device.
-    { person: 'p_' + 'a'.repeat(32), name: 'Severin', role: 'owner', devices: [{ id: 'd_mac', auth: null, scopes: ['look', 'decide', 'operate'], valid: true }, ...devices] },
+    // The Mac's own device was not paired through the relay (`relay: false`): it is not listed as a paired device.
+    { person: 'p_' + 'a'.repeat(32), name: 'Severin', role: 'owner', devices: [MAC_DEVICE, ...devices] },
   ]
-  const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
+  const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
   switch (scenario) {
     case 'pair-unavailable':
       return { served: false }
@@ -230,10 +242,15 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
       // A failed offer is not live: the scenario follows it as the page would right after the failure.
       return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: '7'.repeat(32) }, members }
     case 'pair-devices':
-      return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
+      return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
     default:
       return { members }
   }
+}
+/** The roster a scenario reads: the pair fixture's members for `pair-*`, else the readers fixture. */
+function rosterFor(scenario: LayoutScenario): RosterMember[] {
+  if (scenario.startsWith('pair-')) return ({ ...pairOptions(scenario), ...pairOverride }.members ?? []) as RosterMember[]
+  return readersRoster()
 }
 const DAY = 86_400_000
 const T0 = Date.parse('2026-10-09T11:30:00Z')
@@ -413,6 +430,9 @@ function install() {
     settings_at: null,
     policy_at: null,
   }))
+  // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
+  set('getRoster', async () => rosterFor(current))
+  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' ? 1 : 0))
   set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
@@ -435,7 +455,7 @@ export function LayoutPreview({ name }: { name: string }) {
       undoDrop = installDropFixture(dropFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers']) qc.removeQueries({ queryKey: [key] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
@@ -461,7 +481,23 @@ export function LayoutPreview({ name }: { name: string }) {
         )}
       </div>
     )
-  if (scenario.startsWith('pair-'))
+  if (scenario === 'convenience-refusals')
+    return (
+      <section aria-label="Every click-to-sign refusal (layout preview)" data-testid="refusal-gallery" className="max-w-4xl space-y-3">
+        <h2 className="text-base font-semibold">Every click-to-sign refusal (layout preview)</h2>
+        {refusalSamples().map((sample) => (
+          <div key={sample.title} data-testid="refusal-sample" className="space-y-1">
+            <p className="font-mono text-[12px] text-text-faint">{sample.title}</p>
+            <ClickProblemBox problem={clickProblem(sample.error)} ws={workspace.id} />
+          </div>
+        ))}
+        <div data-testid="refusal-sample" className="space-y-1">
+          <p className="font-mono text-[12px] text-text-faint">signer status · readers_old</p>
+          <p data-testid="signer-readers-old" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-text-muted">{signerProblem('readers_old')}</p>
+        </div>
+      </section>
+    )
+  if (scenario.startsWith('pair-') || scenario === 'readers-devices')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
         <HostDevices workspace={workspace} />

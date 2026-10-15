@@ -64,9 +64,9 @@ _OUTBOX_ENTRY = re.compile(r"\d{20}\.json")
 @dataclass(frozen=True)
 class Seams:
     """The dependency seams (each ``None`` until its group lands). With the gate open, a worker starts only when
-    ALL are set (:meth:`missing`) and each object they build conforms to its protocol
-    (:func:`orch.relay.worker.check_seam`). None of these factories may wait for a job of the workspace's worker
-    thread: the starter calls them under ``relay_lock``, on the open path on the worker thread itself.
+    ALL are set (:meth:`missing`) and each object they build conforms to its protocol (``_conform``: the protocol and
+    every member callable). None of these factories may wait for a job of the workspace's worker thread: the starter
+    calls them under ``relay_lock`` (re-entrant), on the open path on the worker thread itself.
 
     * ``r6(service) -> (EpochKeySource, R6View)``: R6 (11A.15.2), the real key source and member view;
     * ``publisher(service, worker) -> Publisher``: R3 (11A.5), the publisher thread and ``publish_first``;
@@ -185,6 +185,17 @@ def convenience_block(service: WorkspaceService) -> str | None:
     return None
 
 
+def _conform(obj: Any, kind: type, label: str) -> Any:
+    """A seam object conforms: the protocol (``worker.check_seam``) and every required member callable (review
+    Low 2: ``runtime_checkable`` checks presence only)."""
+    from orch.relay import worker as relay_worker
+
+    relay_worker.check_seam(obj, kind, label)
+    if not all(callable(getattr(obj, n, None)) for n in relay_worker.SEAM_METHODS[kind]):
+        raise relay_worker.SeamMissing(f"the {label} seam has a member that is not callable")
+    return obj
+
+
 def _check_r6(epochs: Any, view: Any) -> None:
     from orch.relay.worker import SeamMissing
 
@@ -266,7 +277,7 @@ def start_worker(
         holder: dict[str, RelayWorker] = {}
 
         def run_first_link() -> None:
-            source = relay_worker.check_seam(seams.link_source(service), relay_worker.LinkSource, "link_source")
+            source = _conform(seams.link_source(service), relay_worker.LinkSource, "link_source")
             directory = Directory(session, owner_pk_pub=source.owner_pk_pub(), wsk_pub=wsk.public_key)
             retrier = Retrier(sleep=time.sleep, alarm=alarms, stop=stop)
             first_link(_LinkSteps(holder["w"], service, state, source, link, session, directory), session, directory,
@@ -278,12 +289,8 @@ def start_worker(
             first_link=run_first_link, on_ended=release,
         )  # fmt: skip
         holder["w"] = worker
-        worker.publisher = relay_worker.check_seam(
-            seams.publisher(service, worker), relay_worker.Publisher, "publisher"
-        )
-        worker.unpublished = relay_worker.check_seam(
-            seams.unpublished(service, worker), relay_worker.Unpublished, "unpublished"
-        )
+        worker.publisher = _conform(seams.publisher(service, worker), relay_worker.Publisher, "publisher")
+        worker.unpublished = _conform(seams.unpublished(service, worker), relay_worker.Unpublished, "unpublished")
         rids = RidStore(state)
 
         def no_post(device: str, rid: str, envelope: bytes) -> str:
@@ -389,11 +396,13 @@ def reserve_link(
 def unlink_job(service: WorkspaceService) -> str:
     """On the worker thread, holding ``service.relay_cond`` (no worker can start in between) and the store lock (the
     outbox turns off with the rename): ``link.json`` becomes ``unlinked-<linked_at>.json`` (``os.link`` then
-    ``unlink``: never over an existing file). ``relay.not_linked`` without a link; ``lock.busy`` while a worker runs."""
+    ``unlink``: never over an existing file), then the unlink intent is cleared and ``relay_reason`` is
+    ``not_linked``. Idempotent across a crash: an intent whose link is already renamed is only cleared (the answer is
+    ``"done"``). ``relay.not_linked`` without a link or an intent; ``lock.busy`` while a worker runs."""
     from orch.store.fsio import fsync_dir
 
     from .custody import read_json
-    from .relaylink import link_path, relay_dir
+    from .relaylink import clear_unlink_intent, link_path, relay_dir, unlink_pending
 
     store = service.store
     if store is None:
@@ -404,6 +413,10 @@ def unlink_job(service: WorkspaceService) -> str:
         with store.locked():
             path = link_path(service.state_dir, service.workspace_id)
             if not os.path.lexists(path):
+                if unlink_pending(service.state_dir, service.workspace_id):  # renamed before a crash: finish
+                    clear_unlink_intent(service.state_dir, service.workspace_id, service.host_uid)
+                    service.relay_reason = "not_linked"
+                    return "done"
                 raise HostError("relay.not_linked", "the workspace has no relay link")
             link = read_json(path, service.host_uid)
             at = link.get("linked_at") if isinstance(link, dict) else None
@@ -420,6 +433,8 @@ def unlink_job(service: WorkspaceService) -> str:
                 raise HostError("internal", "no free unlinked-<linked_at> name")
             os.unlink(path)
             fsync_dir(d)
+            clear_unlink_intent(service.state_dir, service.workspace_id, service.host_uid)
+            service.relay_reason = "not_linked"
     return name
 
 

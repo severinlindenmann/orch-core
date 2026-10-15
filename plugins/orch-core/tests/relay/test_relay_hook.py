@@ -784,3 +784,146 @@ def test_stored_alarms_are_bounded_and_whitelisted(served):  # noqa: F811
     write_private(relaylink.relay_dir(svc.state_dir, served.wid) / "alarms.json", {"v": 1, "alarms": rows})
     got = relayhook.status(svc)["alarms"]
     assert len(got) == 64 and all("token" not in r for r in got)
+
+
+# -- round 3 (Opus delta of #532) -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("crash", ["before_rename", "after_rename"])
+def test_an_unlink_interrupted_by_a_restart_is_finished_at_open_and_never_serves(host_lab, monkeypatch, crash):
+    """D-1: the unlink intent is durable. A restart between the intent and the rename (or between the rename and
+    clearing the intent) finishes the unlink at the next open; no worker starts, even with the gate open."""
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    starts: list[str] = []
+
+    def make_starter(backend, seams=None, **kw):
+        return lambda svc: starts.append(svc.workspace_id)
+
+    monkeypatch.setattr(relayhook, "make_starter", make_starter)
+    hl = host_lab
+    with hl.host() as h, h.client() as c:
+        wid = ok(hl.register(c))["data"]["workspace_id"]
+        svc = h.host.services[wid]
+        svc.submit(lambda: relayhook.reserve_link(svc, origin="https://r.example", max_publication_bytes=MIB4)).result(
+            30
+        )
+        relaylink.mark_unlink_intent(hl.state, wid, UID)  # the unlink began; the host dies before the rename
+        if crash == "after_rename":
+            link = relaylink.link_path(hl.state, wid)
+            os.rename(link, link.parent / "unlinked-1.json")
+    with hl.host() as h:
+        svc = h.host.services[wid]
+        d = relaylink.relay_dir(hl.state, wid)
+        assert starts == [] and svc.relay is None and svc.relay_reason == "not_linked"
+        assert not (d / "link.json").exists() and list(d.glob("unlinked-*.json"))
+        assert not relaylink.unlink_pending(hl.state, wid)
+
+
+def test_relay_start_is_refused_while_an_unlink_is_pending_and_unlink_sets_the_marker(served, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    _reserve(served)
+    relaylink.mark_unlink_intent(svc.state_dir, served.wid, UID)
+    with pytest.raises(HostError) as e:
+        svc.relay_start()
+    assert e.value.code == "lock.busy" and "unlink_pending" in e.value.message
+    assert relaylink.start_blocker(svc.state_dir, served.wid, UID) == "unlink_pending"
+    relaylink.clear_unlink_intent(svc.state_dir, served.wid, UID)
+    svc.relay_reason = None
+    assert svc.relay_unlink().startswith("unlinked-")
+    assert svc.relay_reason == "not_linked"  # D23: the success updates the reason
+    assert relaylink.is_stopped(svc.state_dir, served.wid, UID)  # the marker is set before the stop (D-1)
+    assert not relaylink.unlink_pending(svc.state_dir, served.wid)
+
+
+def test_an_ended_stuck_worker_is_forgotten(served, monkeypatch):  # noqa: F811
+    """D21: once a retained stuck worker released everything (``alive()`` false), start and unlink no longer
+    answer ``lock.busy``."""
+    svc = served.service
+
+    class Ended(FakeWorker):
+        def alive(self) -> bool:
+            return False
+
+    with svc.relay_cond:
+        svc._relay_stuck = Ended()  # noqa: SLF001
+    assert svc.relay_start() == "none"  # not lock.busy
+    with svc.relay_cond:
+        assert svc._relay_stuck is None  # noqa: SLF001
+
+
+def test_start_worker_refuses_a_truthy_non_true_gate(served, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(relay_worker, "R6_READY", 1)
+    _reserve(served)
+    with pytest.raises(relay_worker.SeamMissing, match="r6_not_ready"):
+        relayhook.start_worker(served.service, object(), _seams(lambda s: (Epochs(), R6(Epochs()))))
+
+
+def test_seam_members_must_be_callable_and_the_r6_view_checked():  # D14 to D16
+    class BadJoin:
+        def start(self): ...
+        def stop(self): ...
+
+        join = 1
+
+        def publish_first(self, session, directory): ...
+
+    with pytest.raises(relay_worker.SeamMissing, match="not callable"):
+        relayhook._conform(BadJoin(), relay_worker.Publisher, "publisher")  # noqa: SLF001
+    with pytest.raises(relay_worker.SeamMissing):
+        relayhook._conform(object(), relay_worker.LinkSource, "link_source")  # noqa: SLF001
+    with pytest.raises(relay_worker.SeamMissing):
+        relayhook._check_r6(Epochs(), object())  # noqa: SLF001 - no member_list
+    epochs = Epochs()
+    epochs.wk = 1  # type: ignore[assignment]
+    with pytest.raises(relay_worker.SeamMissing):
+        relayhook._check_r6(epochs, R6(Epochs()))  # noqa: SLF001 - present but not callable
+
+
+def test_a_non_conforming_link_source_stops_the_first_link_before_anything_is_sent(served, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    from orch.host.dispatch import RegistryBackend
+
+    svc = served.service
+    _reserve(served)  # linking: the start thread runs the first link
+    sent: list[str] = []
+
+    def transport(origin, link):
+        sent.append(origin)
+        return http.RelayConn(origin)
+
+    seams = _seams(lambda s: (Epochs(), R6(Epochs())), link_source=lambda s: object())
+    svc.relay_starter = relayhook.make_starter(RegistryBackend(), seams, transport=transport)
+    assert svc.relay_start() == "started"
+    assert _wait(lambda: relayhook.status(svc)["worker"] in ("failed", "stopping"))
+    assert relayhook.status(svc)["reason"] == "relay_start_failed: SeamMissing"
+    assert svc.relay_stop() == "stopped"
+
+
+def test_a_seam_factory_reaching_the_audit_on_the_open_path_cannot_self_deadlock(served, monkeypatch):  # noqa: F811
+    """Low 3: the starter runs the seam factories under ``relay_cond`` on the worker thread; one that reaches the
+    foreign-append audit re-enters the (re-entrant) lock instead of wedging the workspace."""
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    _reserve(served)
+    reached: list[int] = []
+
+    def r6(service):
+        service._build_journal(audit=True)  # noqa: SLF001
+        reached.append(1)
+        raise relay_worker.SeamMissing("stop here")
+
+    svc.relay_starter = relayhook.make_starter(object(), _seams(r6))
+    svc.submit(svc._relay_open).result(10)  # noqa: SLF001 - would hang with a plain Lock
+    assert reached == [1] and svc.relay_reason == "start_failed: SeamMissing"
+
+
+def test_stored_alarms_are_sanitised_and_clipped_on_read_back(served):  # noqa: F811
+    from orch.host.custody import write_private
+
+    svc = served.service
+    _reserve(served)
+    row = {"code": "c\x1b[2J", "count": 1, "detail": "x\n" + "y" * 500}
+    write_private(relaylink.relay_dir(svc.state_dir, served.wid) / "alarms.json", {"v": 1, "alarms": [row]})
+    (got,) = relayhook.status(svc)["alarms"]
+    assert got["code"] == "c?[2J" and got["detail"].startswith("x?") and len(got["detail"]) == 200

@@ -671,9 +671,25 @@ def test_r5_one_gate_check_and_no_test_transport_in_production():
     src = PKG.parent
     offenders = []
     for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text())
         if path.name == "worker.py" and path.parent.name == "relay":
+            # D19: inside worker.py only the module-level literal and the body of r6_ready() may name the gate
+            allowed = set()
+            for n in tree.body:
+                if (
+                    isinstance(n, ast.FunctionDef)
+                    and n.name == "r6_ready"
+                    or (
+                        isinstance(n, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "R6_READY" for t in n.targets)
+                    )
+                ):
+                    allowed |= {id(x) for x in ast.walk(n)}
+            bad = [x.lineno for x in ast.walk(tree) if isinstance(x, ast.Name) and x.id == "R6_READY"
+                   and id(x) not in allowed]  # fmt: skip
+            assert bad == [], f"worker.py names R6_READY outside r6_ready(): {bad}"
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr == "R6_READY":
                 offenders.append(f"{path.name}:{node.lineno} reads R6_READY")
             if isinstance(node, ast.Name) and node.id == "R6_READY":

@@ -155,7 +155,9 @@ class WorkspaceService:
         #: :func:`orch.host.relaylink.may_start`); ``None``: no relay client in this build
         self.relay_starter: Callable[[WorkspaceService], None] | None = None
         #: serializes the relay worker's start against ``orch host relay stop`` and ``close``; R5's start runs under it
-        self.relay_lock = threading.Lock()
+        #: re-entrant (R5 round 3): a seam factory run by the starter under this lock on the worker thread that
+        #: reaches the foreign-append audit cannot self-deadlock the workspace
+        self.relay_lock = threading.RLock()
         self.relay_cond = threading.Condition(self.relay_lock)
         #: stops in progress (a worker taken out of :attr:`relay` whose ``stop`` and ``join`` have not returned)
         self._relay_stopping = 0
@@ -253,10 +255,19 @@ class WorkspaceService:
     def _relay_open(self) -> None:
         """The end of :meth:`open`, on the worker thread: start the relay worker when ``link.json`` exists (§11A.4).
         Never fails the open: whatever keeps the worker from starting is :attr:`relay_reason`."""
-        from .relaylink import link_path
+        from .relaylink import link_path, unlink_pending
 
         if self.state == "unavailable":
             self.relay_reason = "workspace_unavailable"
+            return
+        if unlink_pending(self.state_dir, self.workspace_id):  # an unlink a restart interrupted: finish it, never serve
+            from .relayhook import unlink_job
+
+            try:
+                unlink_job(self)
+            except Exception as exc:  # noqa: BLE001 - the intent stays: nothing starts, the next open tries again
+                LOG.error("relay unlink of %s could not finish: %s", self.workspace_id, type(exc).__name__)
+                self.relay_reason = "unlink_pending"
             return
         if not os.path.lexists(link_path(self.state_dir, self.workspace_id)):
             self.relay_reason = "not_linked"
@@ -658,11 +669,13 @@ class WorkspaceService:
         """``orch host relay start``: wait for a stop in progress, clear the stop, and start the worker through R5's
         hook when the workspace is linked and served. Returns ``"started"`` or ``"none"``; ``lock.busy`` while a
         stop has not finished or a stuck worker's threads still run (no second worker beside them)."""
-        from .relaylink import clear_stopped
+        from .relaylink import clear_stopped, unlink_pending
 
         with self.relay_cond:
             if self.closing:
                 raise HostError("workspace.unavailable", "the workspace is closing")
+            if unlink_pending(self.state_dir, self.workspace_id):
+                raise HostError("lock.busy", "unlink_pending: an unlink of this workspace has not finished yet")
             if not self._stops_done():
                 raise HostError("lock.busy", "a relay stop is still in progress; try again")
             if self.closing:
@@ -673,15 +686,26 @@ class WorkspaceService:
             return "started" if self._relay_try_start() else "none"
 
     def relay_unlink(self) -> str:
-        """``orch host relay unlink`` (§11A.6): stop the worker (bounded), then, in one worker job holding
-        :attr:`relay_cond` and the store lock, rename ``link.json`` to ``unlinked-<linked_at>.json`` (never
-        deleted: the reader reservation is permanent). Refused while a worker's threads still run (``lock.busy``).
-        Returns the new file name."""
+        """``orch host relay unlink`` (§11A.6). Crash-safe order (R5 round 3, D-1): the durable unlink intent, then
+        the stop marker, both under :attr:`relay_cond` and before the worker is touched; then the bounded stop; then,
+        in one worker job holding :attr:`relay_cond` and the store lock, the rename of ``link.json`` to
+        ``unlinked-<linked_at>.json`` (never deleted: the reservation is permanent) and the intent cleared. Until
+        then no worker starts (``start_blocker``: ``unlink_pending``), ``relay start`` is refused, and an open after a
+        restart finishes it. Refused while a worker's threads still run (``lock.busy``, the intent stays: the next
+        open finishes it). Returns the new file name (``"done"`` when a crash had already renamed it)."""
         from .relayhook import unlink_job
+        from .relaylink import link_path, mark_stopped, mark_unlink_intent, unlink_pending
 
         with self.relay_cond:
             if self.closing:
                 raise HostError("workspace.unavailable", "the workspace is closing")
+            if not os.path.lexists(link_path(self.state_dir, self.workspace_id)) and not unlink_pending(
+                self.state_dir, self.workspace_id
+            ):
+                raise HostError("relay.not_linked", "the workspace has no relay link")
+            mark_unlink_intent(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
+            mark_stopped(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
+            self.relay_reason = "unlink_pending"
             worker = self._take_relay()
             if worker is None and (not self._stops_done() or self._stuck_alive()):
                 raise HostError("lock.busy", "relay_thread_stuck: a stopped relay thread still runs; restart the host")
@@ -700,10 +724,10 @@ class WorkspaceService:
             self.relay_reason = "unlink_pending"
             raise HostError(
                 "lock.busy",
-                "unlink_pending: the rename is queued behind the workspace's worker and completes when it runs",
+                "unlink_pending: the rename is queued behind the workspace's worker and completes when it runs "
+                "(durably: a restart finishes it); no relay worker starts meanwhile",
                 hint="check with orch host status: the link shows as unlinked once it ran",
             ) from None
-        self.relay_reason = "not_linked"
         return name
 
     def close(self) -> None:

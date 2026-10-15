@@ -549,3 +549,118 @@ def test_the_history_is_checked_again_after_a_first_link_before_anything_is_serv
     assert r.w.join(5) is True
     assert r.links == 1 and r.loop.started == 0 and r.w.error == "convenience_events_present"
     r.close()
+
+
+# -- round 3 (Opus delta of #532) -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_join_never_reports_ended_before_the_release_and_releases_once(tmp_path, gate, seed):
+    """D4/D5: the reaper and several later joins race; every ``join`` that answers true does so only after the logout,
+    the rid store and ``on_ended`` ran, exactly once, and ``alive()`` stays true while the release runs."""
+    import random
+
+    rnd = random.Random(seed)
+    r = Rig(tmp_path, stuck=True)
+    during: list[bool] = []
+
+    def slow_logout(deadline_s: float = 5.0) -> None:
+        during.append(r.w.alive())
+        time.sleep(0.1)
+        r.session.logouts += 1
+
+    r.session.logout = slow_logout  # type: ignore[method-assign]
+    r.w.start()
+    r.wait_started()
+    r.w.stop()
+    assert r.w.join(0.05) is False  # the reaper starts
+    r.w.REAP_PAUSE_S = 0.01
+    seen: list[tuple[bool, int, int, int]] = []
+
+    def joiner() -> None:
+        time.sleep(rnd.random() * 0.05)
+        ok = r.w.join(5)
+        seen.append((ok, r.session.logouts, r.rids.closed, r.ended))
+
+    threads = [threading.Thread(target=joiner) for _ in range(4)]
+    for t in threads:
+        t.start()
+    time.sleep(rnd.random() * 0.05)
+    r.loop.release.set()
+    for t in threads:
+        t.join(10)
+    assert seen and all(s == (True, 1, 1, 1) for s in seen)
+    assert during == [True] and r.ended == 1 and r.w.alive() is False
+    r.close()
+
+
+def test_a_stop_during_publisher_start_leaves_the_publisher_stopped(tmp_path, gate):
+    """D6: a stop that lands after the loop started but before the publisher's start returned must still end with
+    the publisher stopped (the re-stop after ``publisher.start``)."""
+    box: dict = {}
+
+    class StopMidStart(Pub):
+        def start(self) -> None:
+            t = threading.Thread(target=box["w"].stop)  # the stop runs while start has not yet started anything
+            t.start()
+            t.join(5)
+            self.calls.append("start")
+
+    pub = StopMidStart()
+    r = Rig(tmp_path, publisher=pub)
+    box["w"] = r.w
+    r.w.start()
+    assert r.w.join(5) is True
+    after_start = pub.calls[pub.calls.index("start") + 1 :]
+    assert "stop" in after_start  # stopped again after its start returned
+    r.close()
+
+
+def test_relay_worker_start_refuses_a_truthy_non_true_gate(tmp_path, monkeypatch):
+    """D19: ``RelayWorker.start`` opens only for the literal True (through ``r6_ready``)."""
+    monkeypatch.setattr(W, "R6_READY", 1)
+    r = Rig(tmp_path)
+    with pytest.raises(W.SeamMissing, match="r6_not_ready"):
+        r.w.start()
+    assert r.loop.started == 0
+    r.close()
+
+
+def test_the_reaper_waits_between_rounds_and_releases_only_once_everything_ended(tmp_path, gate):
+    """Low 1: a publisher ``join`` that answers false at once does not make the reaper spin; D2: the reaper releases
+    only when every thread ended, never after one bounded round."""
+    calls: list[float] = []
+    done = threading.Event()
+
+    class NoWaitPub(Pub):
+        def join(self, timeout: float) -> bool:
+            calls.append(timeout)
+            return done.is_set()
+
+    r = Rig(tmp_path, publisher=NoWaitPub())
+    r.w.REAP_JOIN_S, r.w.REAP_PAUSE_S = 0.05, 0.05
+    r.w.start()
+    r.wait_started()
+    r.w.stop()
+    assert r.w.join(0.05) is False
+    time.sleep(0.5)
+    assert r.ended == 0 and r.rids.closed == 0  # many bounded rounds, still not released
+    assert len(calls) < 40  # paced, not ~500k per second
+    done.set()
+    assert _wait(lambda: r.ended == 1)
+    r.close()
+
+
+def test_a_release_that_raises_never_wedges_the_slot(tmp_path, gate):
+    r = Rig(tmp_path)
+    r.w.start()
+    r.wait_started()
+
+    def boom() -> None:
+        raise OSError("disk gone")
+
+    r.rids.close = boom  # type: ignore[method-assign]
+    r.w.stop()
+    assert r.w.join(5) is True
+    assert r.ended == 1 and r.w.alive() is False and "relay_release_failed" in r.alarms.codes()
+    r.close()

@@ -49,6 +49,10 @@ __all__ = [
     "observe_relay_level",
     "relay_dir",
     "start_blocker",
+    "unlink_intent_path",
+    "unlink_pending",
+    "mark_unlink_intent",
+    "clear_unlink_intent",
     "stopped_path",
 ]
 
@@ -179,6 +183,37 @@ def _private_relay_dir(state_dir: Path, workspace_id: str, host_uid: int) -> Pat
     return ensure_private_dir(relay_dir(state_dir, workspace_id), host_uid)
 
 
+def unlink_intent_path(state_dir: Path, workspace_id: str) -> Path:
+    return relay_dir(state_dir, workspace_id) / "unlink-intent.json"
+
+
+def mark_unlink_intent(state_dir: Path, workspace_id: str, host_uid: int, *, clock: Any = time.time) -> None:
+    """The durable intent of ``orch host relay unlink`` (0600), written before anything else of the unlink: until
+    the rename is done and the intent cleared, no worker starts (:func:`start_blocker`), ``relay start`` is refused,
+    and the next open finishes the rename (R5 round 3, D-1)."""
+    _private_relay_dir(state_dir, workspace_id, host_uid)
+    write_private(unlink_intent_path(state_dir, workspace_id), {"v": 1, "at_ms": int(clock() * 1000)})
+
+
+def clear_unlink_intent(state_dir: Path, workspace_id: str, host_uid: int) -> None:
+    from orch.store.fsio import fsync_dir
+
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(unlink_intent_path(state_dir, workspace_id))
+        fsync_dir(relay_dir(state_dir, workspace_id))
+
+
+def unlink_pending(state_dir: Path, workspace_id: str) -> bool:
+    """An unlink intent exists (or cannot be ruled out: fail closed)."""
+    try:
+        os.lstat(unlink_intent_path(state_dir, workspace_id))
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def mark_stopped(state_dir: Path, workspace_id: str, host_uid: int, *, clock: Any = time.time) -> None:
     """Write the stop marker (0600): the relay worker stays stopped until :func:`clear_stopped`."""
     _private_relay_dir(state_dir, workspace_id, host_uid)
@@ -222,6 +257,8 @@ def start_blocker(state_dir: Path, workspace_id: str, host_uid: int) -> str | No
     checked last so that ``host.status.relay`` names the operator's own stop first."""
     from orch.relay import worker
 
+    if unlink_pending(state_dir, workspace_id):
+        return "unlink_pending"
     if is_stopped(state_dir, workspace_id, host_uid):
         return "stopped"
     if not os.path.lexists(link_path(state_dir, workspace_id)):

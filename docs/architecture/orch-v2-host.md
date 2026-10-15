@@ -5662,6 +5662,24 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   now fixed: the reaper and a later `join` could both report the worker ended while one was still releasing
   (`_finish` is serialised by its own lock and sets `_ended` last).
 
+**Round 3 (15 Oct 2026, Opus delta of #532: PASS WITH REQUIRED CHANGES).**
+- **D-1 (fixed): the unlink is durable.** `relay_unlink` now writes `relay/unlink-intent.json` (0600) and the stop
+  marker, both under `relay_cond`, before it touches the worker; the rename job clears the intent after the rename
+  and sets `relay_reason = "not_linked"`. While the intent exists `start_blocker` answers `unlink_pending` (first,
+  before the marker), `relay start` is refused (`lock.busy`), and the open hook finishes the unlink instead of
+  starting anything (an intent whose link is already renamed is only cleared: crash between the rename and the clear).
+  (J) The marker stays after an unlink, so a relink needs an explicit `orch host relay start`.
+- **D-2 (tests):** `join` never answers true before the release and releases once (a concurrent stress with a slow
+  logout; `alive()` stays true during the release), the re-stop after a stop during `publisher.start`, a truthy
+  non-`True` gate at `RelayWorker.start` and `start_worker` (and the AST rule now allows `R6_READY` in `worker.py` only
+  in the literal and `r6_ready()`), an ended stuck worker forgotten, the reaper releasing only once everything ended.
+- **Lows (fixed):** the reaper pauses between rounds (`REAP_PAUSE_S`, 1 s; `REAP_JOIN_S`, 60 s; instance attributes a
+  test can shorten); `_conform` (host side) requires every protocol member to be callable (`worker.SEAM_METHODS`),
+  `_check_r6` likewise; a release that raises is alarmed `relay_release_failed` and still runs `on_ended` and ends the
+  worker (`finally`); `relay_lock` is re-entrant, so a seam factory that reaches the foreign-append audit on the open
+  path re-enters instead of wedging the worker thread (test); stored alarms are sanitised and clipped on read-back.
+- **Mutation pass, round 3:** see the PR.
+
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`
   (`service.relay_starter`, `may_start`), which R5 follows: there is no `relay.worker.start(service)` function.

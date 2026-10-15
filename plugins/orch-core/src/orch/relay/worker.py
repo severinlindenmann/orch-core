@@ -220,6 +220,14 @@ class Alarms:
             log.error("relay alarms could not be written: %s", type(e).__name__)
 
 
+#: the methods each seam protocol requires (the host checks that each is callable: ``orch.relay`` has no getattr)
+SEAM_METHODS: dict[type, tuple[str, ...]] = {
+    Publisher: ("start", "stop", "join", "publish_first"),
+    Unpublished: ("step",),
+    LinkSource: ("card", "genesis", "owner_pk_pub"),
+}
+
+
 class RelayWorker:
     """One workspace's relay worker. Build it, :meth:`attach` the loop (whose ``Bridge.job`` is :meth:`job`), then
     :meth:`start`. ``submit(fn) -> Future`` is the workspace's own ``service.submit``; ``precheck()`` (run as a
@@ -259,6 +267,8 @@ class RelayWorker:
         self._ended = False
         self._reaping = False
         self._finish_lock = threading.Lock()
+        #: the reaper's join bound and its pause between rounds (instance attributes so a test can shorten them)
+        self.REAP_JOIN_S, self.REAP_PAUSE_S = 60.0, 1.0
         self.loop: BridgeLoop | None = None
         self.rids: RidStore | None = None
         self._start_thread: threading.Thread | None = None
@@ -406,8 +416,9 @@ class RelayWorker:
             self._reaping = True
 
         def reap() -> None:
-            while not self._join_all(60.0):
-                pass
+            # a join seam that returns false at once must not make this spin: wait between rounds (review Low 1)
+            while not self._join_all(self.REAP_JOIN_S):
+                time.sleep(self.REAP_PAUSE_S)
             self._finish()
 
         threading.Thread(target=reap, name=f"orch-relay-reap-{self.id8}", daemon=True).start()
@@ -433,21 +444,25 @@ class RelayWorker:
         with self._finish_lock:
             if self._ended or not self._stopping:
                 return
-            if self.loop is not None and self.loop.error is not None and self.error is None:
-                self.error = type(self.loop.error).__name__
-            self.alarm.save()
             try:
-                self.session.logout()
-            except Exception:  # noqa: BLE001 - best effort (11A.7 step 3)
-                log.info("relay logout failed (ignored)")
-            if self.rids is not None:
-                self.rids.close()
-            self.state.close()
-            try:
-                self._on_ended()
-            except Exception:  # noqa: BLE001 - the host's bookkeeping never keeps a stopped worker alive
-                log.exception("relay worker of %s: on_ended failed", self.workspace_id)
-            self._ended = True
+                if self.loop is not None and self.loop.error is not None and self.error is None:
+                    self.error = type(self.loop.error).__name__
+                self.alarm.save()
+                try:
+                    self.session.logout()
+                except Exception:  # noqa: BLE001 - best effort (11A.7 step 3)
+                    log.info("relay logout failed (ignored)")
+                if self.rids is not None:
+                    self.rids.close()
+                self.state.close()
+            except Exception as e:  # noqa: BLE001 - a release that fails never wedges the slot: alarmed, then released
+                self.alarm("relay_release_failed", type(e).__name__)
+            finally:
+                try:
+                    self._on_ended()
+                except Exception:  # noqa: BLE001 - the host's bookkeeping never keeps a stopped worker alive
+                    log.exception("relay worker of %s: on_ended failed", self.workspace_id)
+                self._ended = True
 
     def status(self) -> dict[str, Any]:
         """For ``host.status.relay``: no secret, no relay bytes. ``serving`` only while the loop runs without an

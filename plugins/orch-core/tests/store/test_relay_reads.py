@@ -257,3 +257,91 @@ def test_an_abandoned_entry_that_is_not_a_file_is_skipped(grown):
     (ab / "workspace-2.json").write_bytes(canon.cj_checked(forked))
     found = list(env.store._abandoned_workspace_checkpoints())  # noqa: SLF001
     assert found == [canon.cj_checked(forked)]
+
+
+# -- review delta 2: F2 (FIFO, symlinked root) and F3 (byte-bounded, released cache; cached ancestry) ----------------
+
+
+def test_a_fifo_in_abandoned_never_blocks_and_is_skipped(grown):
+    import os
+    import threading
+
+    env, uid = grown
+    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(ab / "workspace-1.json")
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("r", list(env.store._abandoned_workspace_checkpoints())),  # noqa: SLF001
+                         daemon=True)  # fmt: skip
+    t.start()
+    t.join(3)
+    if t.is_alive():  # unblock before failing
+        os.close(os.open(ab / "workspace-1.json", os.O_WRONLY | os.O_NONBLOCK))
+    assert not t.is_alive() and out["r"] == []
+
+
+def test_a_symlinked_root_is_validation_path(grown):
+    import os
+
+    env, _ = grown
+    s = env.store
+    real = env.root
+    moved = real.with_name("ws-moved")
+    os.rename(real, moved)
+    os.symlink(moved, real)  # the root swapped for a symlink after the store opened
+    try:
+        with pytest.raises(StoreError) as e:
+            list(s._abandoned_workspace_checkpoints())  # noqa: SLF001
+        assert e.value.code == "validation.path"
+    finally:
+        os.unlink(real)
+        os.rename(moved, real)
+
+
+def _branch_env(env, tmp_path, lost=6):
+    env.bootstrap()
+    link(env)
+    uid = env.new_ticket()
+    env.log(uid, "kept")
+    env.store.close()
+    backup = tmp_path / "backup"
+    shutil.copytree(env.root, backup)
+    s = env.open()
+    for i in range(lost):
+        env.log(uid, f"lost-{i}")
+    lost_e, kept = _entry(env, uid, 2 + lost), _entry(env, uid, 2)
+    s.close()
+    rollback(env, backup)
+    return env.open(), uid, kept, lost_e
+
+
+def test_the_branch_cache_is_byte_bounded_and_released_after_the_last_page(env, tmp_path, monkeypatch):
+    import orch.store.store as store_mod
+
+    s, uid, kept, lost = _branch_env(env, tmp_path)
+    walks = []
+    real = s._pins.branch  # noqa: SLF001
+    monkeypatch.setattr(s._pins, "branch", lambda *a: walks.append(a) or real(*a))  # noqa: SLF001
+    s.relay_segment(uid, kept, lost, skip=0, limit=2)
+    assert isinstance(s._relay_branch[1], bytes) and len(s._relay_branch[1]) == 6 * 32  # noqa: SLF001
+    s.relay_segment(uid, kept, lost, skip=4, limit=2)  # the last page
+    assert s._relay_branch is None and len(walks) == 1  # noqa: SLF001
+    monkeypatch.setattr(store_mod, "RELAY_CACHE_BYTES", 100)  # too small to keep: every page walks again
+    walks.clear()
+    whole = [s.relay_segment(uid, kept, lost, skip=i, limit=2) for i in (0, 2, 4)]
+    assert len(walks) == 3 and [h for seg in whole for h in seg.heads] == list(s.relay_segment(uid, kept, lost).heads)
+
+
+def test_ancestry_answers_are_cached_until_the_history_grows(grown, monkeypatch):
+    env, uid = grown
+    s = env.store
+    older = s.outbox_entries()[0].checkpoint
+    newer = workspace_cp(env)
+    walks = []
+    real = s._pins.branch  # noqa: SLF001
+    monkeypatch.setattr(s._pins, "branch", lambda *a: walks.append(a) or real(*a))  # noqa: SLF001
+    assert s.relay_ancestor(older, newer) and s.relay_ancestor(older, newer)
+    first = len(walks)
+    assert first >= 1
+    env.log(uid, "grow")
+    assert s.relay_ancestor(older, newer) and len(walks) > first

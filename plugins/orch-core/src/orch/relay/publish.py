@@ -453,6 +453,7 @@ class Publisher:
         self._last_renew = 0.0
         self._sync_renew = False
         self._alert = threading.Event()
+        self._held = False
         self._renew_error: BaseException | None = None
         self._permanent = False
         self.error: BaseException | None = None
@@ -499,11 +500,16 @@ class Publisher:
                 state, wait = self.step()
                 if state == "idle":
                     self._idle()
-                elif wait > 0:
-                    self._wake.wait(wait)  # a held or backed-off step is re-checked at once on wake() (or stop)
+                elif wait > 0 and self._held:
+                    # a PublishHeld (an oversized restore, the reader-level hold...) is re-checked at once on wake()
+                    self._wake.wait(wait)
                     self._wake.clear()
                     if self._stop.is_set():
                         return
+                elif wait > 0 and self._stop.wait(wait):
+                    # review delta 2, F1: backoff, Retry-After floors, quota and permanent-refusal waits are never cut
+                    # by wake() (R5 wakes on every append): only stop() ends them
+                    return
         except Exception as e:  # noqa: BLE001 - a fence or session error (or a bug): the publisher stops, R5 is told
             if not self._stop.is_set():
                 self.error = e
@@ -595,6 +601,9 @@ class Publisher:
         if self._sync_renew and self._mono() - self._last_renew >= RENEW_EVERY_S:
             try:
                 self._session.renew(transport=self._transport())
+            except RedirectRefused:
+                self._alarm_cb("relay_redirect", "a 3xx answer to the first link's lease renewal")
+                raise
             except (RelayRefused, TransportError, LoginHeldOff) as e:
                 log.info("relay first-link renewal failed: %s", type(e).__name__)
                 self._last_renew = self._mono() - RENEW_EVERY_S + RENEW_RETRY_S
@@ -613,11 +622,21 @@ class Publisher:
                 try:
                     self._session.renew(transport=conn)
                     period = RENEW_EVERY_S
+                except RedirectRefused as e:  # review delta 2, F5: permanent, alarmed, handed over (never retried)
+                    self._alarm_cb("relay_redirect", "a 3xx answer to the first link's lease renewal")
+                    self._renew_error = e
+                    self._alert.set()
+                    return
                 except (RelayRefused, TransportError, LoginHeldOff) as e:
                     log.info("relay first-link renewal failed: %s", type(e).__name__)
                     period = RENEW_RETRY_S
                 except SessionError as e:
                     log.warning("relay first-link renewal stopped: %s", type(e).__name__)
+                    self._renew_error = e
+                    self._alert.set()
+                    return
+                except Exception as e:  # noqa: BLE001 - a bug: alarmed and handed over, never a silent end (F5)
+                    self._alarm_cb("relay_renewal_failed", type(e).__name__)
                     self._renew_error = e
                     self._alert.set()
                     return
@@ -635,6 +654,7 @@ class Publisher:
     def step(self, *, raise_held: bool = False) -> tuple[str, float]:
         """One publication step: ``("idle", 0)``, ``("progress", 0)``, or ``("wait", seconds)`` after an alarm or a
         refusal. Fence and session errors (but :class:`RelayMisbehaving`) propagate."""
+        self._held = False
         try:
             done = self.run_once()
         except _Again:
@@ -645,6 +665,7 @@ class Publisher:
             self._raise(h.code, h.detail)
             if raise_held:
                 raise
+            self._held = True
             return "wait", HELD_RECHECK_S
         except RelayMisbehaving as e:
             self._raise("relay_misbehaving", str(e))
@@ -1218,10 +1239,10 @@ class Publisher:
     def _current_level(self) -> int | None:
         """The relay's last verified reader level for the H12d-3 hold: R5's ``relay_level()`` (the host's stored level,
         ``readerrecs.relay_level(state, ws, uid)``, which its login observer writes), read fresh at every call; a
-        failing read counts as 0 (fail closed). Without it (tests, a host that has none yet): relay-info's level as
-        this publisher read it."""
+        failing read counts as 0 (fail closed), and so does a publisher built without it (relay-info's level, an
+        honest-operator statement, is never the hold's input)."""
         if self._relay_level is None:
-            return self.reader_level
+            return 0  # review delta 2, F4: no host-recorded level is level 0 (relay-info is an honest-operator claim)
         try:
             return self._relay_level()
         except Exception:  # noqa: BLE001 - any doubt is the lowest level

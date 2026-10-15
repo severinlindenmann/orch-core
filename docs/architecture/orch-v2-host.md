@@ -6556,6 +6556,22 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   period, the idle `store.busy` poll, the re-plan limit, the set-less check, a codeless 413 on the final PUT, and a
   conflicting archived history segment.
 
+**Review delta 2 (Opus, 15 Oct 2026).**
+- F1 `wake()` ends only the idle wait and a held wait (`PublishHeld`: the reader-level hold, an oversized restore,
+  ...). Backoff, `Retry-After` floors, quota waits and permanent-refusal waits are never cut by it, only by `stop()`.
+  R5 wakes on every append, so cutting them would retry at the append rate (11A.7, P9).
+- F2 `abandoned/` files are opened `O_NONBLOCK`, so a FIFO never blocks the store lock, and are kept only when they
+  are regular files. A root swapped for a symlink is `validation.path`. The same FIFO class exists store-wide in
+  `fsio.read_or_none`; it is noted for orch-52 and out of scope here.
+- F3 The one cached branch is held as raw 32-byte digests (64 bytes a head), only while it fits
+  `RELAY_CACHE_BYTES` (16 MiB, about 262 000 heads), and it is released at the run's last page. A larger branch is
+  walked per page, bounded by `RELAY_BRANCH_MAX`. `relay_ancestor` answers are cached (at most 256), keyed by both
+  checkpoints and the size of the recorded history.
+- F4 Without R5's `relay_level=` the hold counts level 0. relay-info's level is never the hold's input.
+- F5 A 3xx on the first link's renewal alarms `relay_redirect` once and stops `publish_first`. An unexpected
+  exception there alarms `relay_renewal_failed` and is handed to `publish_first`.
+- F6 Tests pin `_finish_held`'s `H.n > pub.n` order and the plain other-branch refusal.
+
 **Design inconsistencies found.**
 - `docs/architecture/orch-v2-host.md` 11A.7 table (staging and final answers 16 KiB) vs orch-relay
   `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.

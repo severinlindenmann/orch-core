@@ -1060,3 +1060,129 @@ def test_h12d3_the_hold_never_blocks_finishing_a_restore_the_relay_holds(kit, tm
     _level_kit(k, 0)
     k.drain(10)
     assert k.store.outbox_entries() == [] and [r["n"] for r in k.publisher.history.restores()] == [entry.n]
+
+
+# -- review delta 2 (Opus): F1 wake cuts only idle and held waits; F4 level default; F5 renewal edges; F6 ------------
+
+
+def _is_get_h(s):
+    return s.method == "GET" and s.path.endswith("/checkpoint") and not s.query.get("hash")
+
+
+def test_f1_wake_never_cuts_a_retry_after_floor(kit):
+    k = kit
+    k.sim.fault = lambda s: _err(503, "overloaded", retry_after=60) if _final(s) else None
+    p = k.make_publisher(mono=time.monotonic)
+    p.start()
+    time.sleep(0.5)
+    before = sum(1 for s in k.mock.seen if _is_get_h(s))
+    for _ in range(5):
+        p.wake()  # R5 wakes on every append
+        time.sleep(0.2)
+    assert sum(1 for s in k.mock.seen if _is_get_h(s)) == before
+    p.stop()
+    assert p.join(5)
+
+
+def test_f1_wake_never_retries_a_permanent_refusal(kit):
+    k = kit
+    k.sim.fault = lambda s: _err(403, "forbidden") if _final(s) else None
+    p = k.make_publisher(mono=time.monotonic)
+    p.start()
+    time.sleep(0.5)
+    before = sum(1 for s in k.mock.seen if _final(s))
+    for _ in range(5):
+        p.wake()
+        time.sleep(0.2)
+    assert sum(1 for s in k.mock.seen if _final(s)) == before
+    p.stop()
+    assert p.join(5)
+
+
+def test_f4_without_a_host_level_a_convenience_restore_is_held_whatever_relay_info_says(kit, tmp_path, monkeypatch):
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    _as_convenience(monkeypatch)
+    p = k.make_publisher()  # no relay_level=: relay-info says reader 1 (the sim's), which never counts for the hold
+    assert p.step() == ("wait", publish.HELD_RECHECK_S)
+    assert p.reader_level == 1 and k.alarms.codes() == ["relay_reader_old"]
+    assert k.store.outbox_first().n == entry.n
+
+
+def test_f5_a_redirect_on_the_renewal_is_alarmed_and_stops_the_first_link(kit, monkeypatch):
+    from orch.relay.http import RedirectRefused
+
+    from .mock import Reply
+
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+    _count_holds(k, monkeypatch, [lambda: Reply(status=307, headers={"Location": "https://x"}, body=b"")] * 50)
+    _slow_first_page(k, monkeypatch, steps=3, each_s=1, sleep=0.2)
+    with pytest.raises(RedirectRefused):
+        k.publisher.publish_first(k.session, None)
+    assert k.alarms.codes().count("relay_redirect") == 1
+
+
+def test_f5_an_unexpected_renewal_failure_is_alarmed_and_handed_over(kit, monkeypatch):
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+
+    def bug(**kw):
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(k.session, "renew", bug)
+    _slow_first_page(k, monkeypatch, steps=3, each_s=1, sleep=0.2)
+    with pytest.raises(KeyError):
+        k.publisher.publish_first(k.session, None)
+    assert "relay_renewal_failed" in k.alarms.codes()
+
+
+def _plain_held_after_a_lost_history(k, monkeypatch):
+    def boom(self, **kw):
+        raise Crash()
+
+    monkeypatch.setattr(History, "append", boom)
+    with pytest.raises(Crash):
+        k.drain()
+    monkeypatch.undo()
+    return k.store.outbox_first()
+
+
+def _switch_second_read(k, cp):
+    reads = {"n": 0}
+    real_get = k.sim._get
+
+    def get(s):
+        if not s.query.get("hash"):
+            reads["n"] += 1
+            if reads["n"] >= 2:
+                k.sim.held = cp
+        return real_get(s)
+
+    k.sim._get = get
+
+
+def test_f6_a_lower_checkpoint_with_the_same_logs_does_not_confirm(kit, monkeypatch):
+    """The fresh read shows a LOWER n with the very same logs (an ancestor by ancestry, not a descendant): even with
+    the entry served by its hash, nothing is deleted (the `H.n > pub.n` order)."""
+    k = kit
+    entry = _plain_held_after_a_lost_history(k, monkeypatch)
+    o = json.loads(json.dumps(entry.checkpoint["o"]))
+    o["n"] = entry.n - 1
+    lower = sign_object(k.env.signer.sign, o)
+    _switch_second_read(k, lower)
+    k.publisher = k.make_publisher()
+    assert k.publisher.step()[0] == "wait" and "relay_misbehaving" in k.alarms.codes()
+    assert k.store.outbox_first().n == entry.n
+
+
+def test_f6_a_plain_entry_on_another_branch_does_not_confirm_by_hash(kit, monkeypatch):
+    k = kit
+    entry = _plain_held_after_a_lost_history(k, monkeypatch)
+    o = json.loads(json.dumps(entry.checkpoint["o"]))
+    o["n"] = entry.n + 4
+    o["workspace_log"]["head"] = "sha256:" + "5" * 64  # another branch
+    _switch_second_read(k, sign_object(k.env.signer.sign, o))
+    k.publisher = k.make_publisher()
+    assert k.publisher.step()[0] == "wait" and "relay_misbehaving" in k.alarms.codes()
+    assert k.store.outbox_first().n == entry.n  # the relay still serves the entry by hash: not enough

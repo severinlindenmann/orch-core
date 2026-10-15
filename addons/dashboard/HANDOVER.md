@@ -1171,7 +1171,7 @@ feature `drop` **and** `dropApi.served()`; the real api (`src/api/drop.ts`) answ
 Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `emit`; options `documentWrites`, `chunkDelayMs`,
 `stallAfterChunks`, `sendDelayMs`, `sendError`, `readError`, `retireError`, `listError`, `pageSize`). Layout scenarios `drop-unavailable`,
 `drop-list`, `drop-long-names`, `drop-upload-progress`, `drop-errors`, `drop-versions`; guard entries `real-host-drop-*` plus
-`real-host-drop-delete` (listed in `scripts/layout-guard-pages.mjs`, so `--only drop` finds them). Tests: `src/app/pages/drop/drop.test.tsx`,
+`real-host-drop-delete` (listed in `scripts/layout-guard-pages.mjs`, so `--only drop` finds them). Tests: `src/app/pages/drop/drop.test.tsx`, `src/production/drop.test.tsx` (real host: not available, no nav entry, no call),
 `src/dev/layoutGuardPages.test.ts`. No new dependency.
 To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
 

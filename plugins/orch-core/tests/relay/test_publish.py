@@ -612,3 +612,21 @@ def test_heads_from_the_store_that_do_not_fold_to_the_target_are_never_staged(ma
     monkeypatch.setattr(k.store, "relay_segment", bent)
     assert k.publisher.step() == ("wait", publish.HELD_RECHECK_S)
     assert k.alarms.codes() == ["relay_staging_rebuild"] and calls(k, "page") == [] and calls(k, "manifest") == []
+
+
+def test_the_publisher_has_r5s_seam_protocol(make):
+    """R5's ``orch.relay.worker.Publisher`` (PR #532): start, stop, join(timeout) -> bool, publish_first(session,
+    directory). Pinned by shape here so the two PRs plug together without importing R5's module."""
+    import inspect
+
+    k = make(tickets=1)
+    p = k.publisher
+    for name, params in (
+        ("start", []),
+        ("stop", []),
+        ("join", ["timeout"]),
+        ("publish_first", ["session", "directory"]),
+    ):
+        assert list(inspect.signature(getattr(p, name)).parameters) == params, name
+    p.publish_first(k.session, None)
+    assert k.store.outbox_entries() == [] and p.join(0.1)

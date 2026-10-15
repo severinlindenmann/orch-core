@@ -6422,7 +6422,7 @@ store reads under the lock (`Store.relay_segment`, `Store.relay_position`, `Stor
 
 **Interface for R5.** `Publisher(store, job=, session=, owner_pk_pub=, wsk_pub=, state=, max_publication_bytes=,
 alarm=, conn=, on_diverged=, on_error=)`; `start()`, `stop()`, `join(timeout) -> bool` (thread
-`orch-relay-pub-<id8>`), `error`; `link_publish(session, directory)` is `LinkSteps.publish` for R1's `first_link`
+`orch-relay-pub-<id8>`), `error`, `wake()`; `publish_first(session, directory)` (alias `link_publish`; R5's seam `orch.relay.worker.Publisher` in #532) is `LinkSteps.publish` for R1's `first_link`
 (it raises `PublishHeld` while publication is held, so the link stays `linking`). `job(fn)` must be
 `RelayWorker.submit(fn).result()`; every store call of `publish.py` is such a job (an AST test pins it) and none is
 held across networking. The thread sends nothing until the shared `Session` holds a generation (the poll thread's

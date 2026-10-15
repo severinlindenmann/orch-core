@@ -39,7 +39,7 @@ relay's 64 MiB staging quota, any in-memory lowering); the host never stages mor
 one at a time, never across networking; ``mint_catchup``'s ``measure`` is a pure counter. Nothing is sent before the
 session holds a generation (the start fence of R3: no write before the holder's own ``host/hold``). A fence or
 session error stops the publisher (``error``, ``on_error``); everything else is alarmed and backed off.
-:meth:`Publisher.link_publish` is ``LinkSteps.publish`` for R1's first link.
+:meth:`Publisher.publish_first` (alias ``link_publish``) is R5's seam and ``LinkSteps.publish`` for R1's first link.
 """
 
 from __future__ import annotations
@@ -493,8 +493,9 @@ class Publisher:
 
     # -- R1's first link -----------------------------------------------------------------------------------------
 
-    def link_publish(self, session: Session, directory: Directory) -> None:
-        """``LinkSteps.publish`` (R1 ``first_link`` step 4): publish on the caller's thread until the relay holds the
+    def publish_first(self, session: Session, directory: Directory) -> None:
+        """R5's ``Publisher.publish_first`` (``orch.relay.worker``, PR #532), so ``LinkSteps.publish`` (R1
+        ``first_link`` step 4): publish on the caller's thread until the relay holds the
         newest local checkpoint and the outbox is empty. A held publication raises :class:`PublishHeld` (the link
         stays ``linking`` and resumes at the next start); a fence or session error propagates."""
         if session is not self._session:
@@ -507,6 +508,8 @@ class Publisher:
             if wait > 0 and self._stop.wait(wait):
                 break
         raise PublishHeld("relay_stopped", "the publisher was stopped during the first link")
+
+    link_publish = publish_first
 
     # -- one step ------------------------------------------------------------------------------------------------
 

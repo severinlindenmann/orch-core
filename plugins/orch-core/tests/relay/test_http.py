@@ -792,8 +792,8 @@ def test_a_deadline_passed_during_the_proxy_tunnel_sends_nothing_through_it(list
 
 
 def test_a_connect_error_past_the_deadline_tries_no_further_address(listener):
-    """Two addresses; the first is refused while the clock passes the deadline: only that one is tried, the call fails
-    as a deadline, and the second (a live listener) never sees a connection."""
+    """Two addresses; the first is refused while the clock passes the deadline: the loop stops at that error (no socket
+    is made for the second address), the call fails as a deadline, and the second (a live listener) sees nothing."""
     import socket
 
     now = [100.0]
@@ -803,7 +803,13 @@ def test_a_connect_error_past_the_deadline_tries_no_further_address(listener):
     def resolve(host, port, *a, **kw):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", sa) for sa in (dead, listener.getsockname())]
 
+    installed: list = []
+
     class RefusedLate(http.RelayConn):
+        def _watch_socket(self, sock):
+            installed.append(sock)
+            super()._watch_socket(sock)
+
         def _connect(self, sock, sa):
             tried.append(sa)
             if sa == dead:
@@ -816,4 +822,5 @@ def test_a_connect_error_past_the_deadline_tries_no_further_address(listener):
         call(c, deadline_s=30)
     assert e.value.kind == "deadline"
     assert tried == [dead]
+    assert len(installed) == 1  # the loop stopped at the error itself: no socket was even made for the second address
     assert not _accepted(listener)

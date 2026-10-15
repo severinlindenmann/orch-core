@@ -83,7 +83,13 @@ def device_standing(store: Any, person_id: str, device_id: str) -> Literal["ok",
     * ``"unknown"``: no such device of this person.
 
     Certificate expiry is not part of it (``verify_cert`` covers that). Takes the lock itself (re-entrant), so it is
-    safe to call inside R2's ``store.locked()`` span; it reads the state as of the last refresh."""
+    safe to call inside R2's ``store.locked()`` span; every entry into the store lock re-checks freshness, so it sees
+    what is on disk now.
+
+    **A removal is not durable across a restore.** A restore that abandons a ``device.removed`` revives the device
+    (existing F1 behaviour, bounded by the 11A.4 hold-off and ``readers reset``): the standing is ``"ok"`` again. Only
+    a revocation survives a restore (it is put back by the ``restore`` event), so a **lost phone must be REVOKED**,
+    not just removed."""
     with store.locked():
         state = store.state
         view = state.workspace.devices.get(device_id)

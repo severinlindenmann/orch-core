@@ -8,6 +8,7 @@ P6 freshness window. Everything runs on a real store with real signatures."""
 from __future__ import annotations
 
 import hashlib
+import shutil
 from typing import Any
 
 import pytest
@@ -441,6 +442,79 @@ def test_device_standing_follows_the_f1_log(env, phone):
     with s.locked():
         assert admission.device_standing(s, env.owner.ref, phone.device) == "removed"
         assert admission.device_standing(s, env.owner.ref, env.owner.device) == "ok"
+
+
+def _rollback(env: Env, backup: Any) -> None:
+    for name in ("events", "tickets", "config.json", "keys.jsonl"):  # logs back, ``.state`` kept
+        target = env.root / name
+        shutil.rmtree(target) if target.is_dir() else target.unlink(missing_ok=True)
+        src = backup / name
+        shutil.copytree(src, target) if src.is_dir() else shutil.copy(src, target)
+
+
+def test_device_standing_of_a_revoked_device(env):
+    d2, _ = env.add_device()
+    s = env.store
+    assert admission.device_standing(s, env.owner.ref, d2) == "ok"
+    env.revoke_device(d2)
+    assert admission.device_standing(s, env.owner.ref, d2) == "removed"
+
+
+def test_device_standing_after_member_removed(env):
+    other = Person()
+    s = env.store
+    s.append(
+        env.person_event(env.owner, "workspace", "member.added", person=other.ref, name="Mara", role="member",
+                         pk_pub=crypto.b64u(other.pk_pub), device_cert=other.cert(created=env.clock[0] * 1000)),
+        log="workspace",
+    )  # fmt: skip
+    assert admission.device_standing(s, other.ref, other.device) == "ok"
+    s.append(env.person_event(env.owner, "workspace", "member.removed", person=other.ref), log="workspace")
+    assert admission.device_standing(s, other.ref, other.device) == "removed"
+    assert admission.device_standing(s, env.owner.ref, env.owner.device) == "ok"
+
+
+def test_device_standing_of_a_tombstone_only_device(env, tmp_path):
+    """A revocation the restored chain never had stays as a tombstone: this person's → removed, another's → unknown."""
+    s = env.store
+    s.close()
+    backup = tmp_path / "backup"
+    shutil.copytree(env.root, backup)
+    s = env.open()
+    d2, _ = env.add_device()
+    env.revoke_device(d2)
+    s.close()
+    _rollback(env, backup)
+    s = env.open()
+    facts = s.restore_facts("workspace")
+    s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
+    env.store = s
+    assert d2 not in s.state.workspace.devices  # a tombstone only
+    assert admission.device_standing(s, env.owner.ref, d2) == "removed"
+    assert admission.device_standing(s, "p_" + "B" * 20, d2) == "unknown"
+
+
+def test_a_restore_that_cuts_a_device_removed_revives_the_device(env, tmp_path):
+    """Documented F1 behaviour: a restore abandons the removal, so the device is ``ok`` again. A lost phone must be
+    REVOKED (a revocation survives a restore), not merely removed."""
+    d2, _ = env.add_device()
+    s = env.store
+    s.close()
+    backup = tmp_path / "backup"
+    shutil.copytree(env.root, backup)
+    s = env.open()
+    env.store = s
+    s.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+    assert admission.device_standing(s, env.owner.ref, d2) == "removed"
+    s.close()
+    _rollback(env, backup)
+    s = env.open()
+    env.store = s
+    s.append(
+        env.person_event(env.owner, "workspace", "restore", **s.restore_facts("workspace"), reason="rollback"),
+        log="workspace",
+    )
+    assert admission.device_standing(s, env.owner.ref, d2) == "ok"
 
 
 def test_judge_events_maps_a_model_exception_to_validation_event(env, phone):

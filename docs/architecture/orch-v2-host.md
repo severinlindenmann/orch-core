@@ -3746,7 +3746,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `phone_events.json` and a changed `text.json`; amendments A–D to §11A.14 (known identity before freshness,
     re-seal under a new rid, the retry table authoritative, a same-rid resend after the chunk expired). No hash,
     contract or schema change.
-40. **Device liveness and judge hardening (H12e-2, §11A.14 "As built in H12e-2"; the number may be renumbered when
+41. **Device liveness and judge hardening (H12e-2, §11A.14 "As built in H12e-2"; the number may be renumbered when
     H11c lands):** `orch.host.admission.device_standing` (the API for column R's `standing()`); `judge_events` maps
     unexpected model exceptions to `validation.event`; §11A.14 amended: a `failed` outcome with nothing landed counts as
     `refused` (14.4), the identity check lives in the result builder with no digest in `Planned` (14.6 L7, 14.9),
@@ -5911,7 +5911,7 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   compares `digest = sha256(person_signing_bytes(ws, log, event))` plus `actor`. Under the lock (L3): the id logged with
   the same digest and actor → `committed`, `duplicate:true`, with its `seq`; with other content →
   `event.duplicate_id`; the id abandoned by a restore (in `lc.ids`, not logged) → `event.abandoned`. The outcome plan
-  records the digest, and `relay_fields` reconciliation matches it.
+  does not record the digest: the result builder (`relay_fields`) checks the identity (H12e-2).
 - **Known identity first (amendment A, decided 15 Oct 2026 by orch-52).** A known identity is answered **before**
   the freshness check: first the outcome store by `(ws, "r:<device>", idem = id)`, then the log dedup by `(log, id)`
   plus the signed-content digest and `actor` (L3). Only a never-seen event gets the ULID window check
@@ -5946,7 +5946,7 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   | **A** not run | resend the same idem and the same signed bytes (a new rid and seq where the protocol needs them) | relay: unsigned 409 `stale_epoch` hint, sealed `stale_epoch`, `stale_timestamp`, `stale_sequence` (new rid), §8.6 step-4 silence or no answer; host: `timeout`, `cancelled`, `store.busy`, `lock.busy`, `rate.limited`, `quota.host`, `host.restarting`, `conn.overloaded`, `outcome.unknown` | resend |
   | **B** unknown | same idem only; resolve with `outcome.get`, then by a log read | `already_done{status:"unknown"}`, `rid_conflict`, `outcome.get` = `pending` (admitted, not run), `outcome.unknown_idem` before ULID time + 900 s + 300 s; `idem.expired` (resolve by the log only: answer → `questions[].answer.id` = own id; creation → `ticket.get(uid)` exists) | resolve; never re-sign |
   | **C** definite, zero landed | a stored `refused` (never `failed`; but see the H12e-2 note below: core records a refusal as `failed` with an empty landed list, and that counts as `refused`); a new signature is allowed | **C-auto** (14.4 re-sign may skip the review): `members.stale`, `ticket.key_not_next`. **C-review** (new review first): `event.bad_base`, `question.stale`, `event.expired`, `event.abandoned`, and `outcome.unknown_idem` after the bound when the log read shows the event absent | re-sign (C-auto) or re-review |
-  | **D** terminal or landed | never re-sign for this review | landed: `committed` (incl. `duplicate:true`), any `failed`; question: `question.answered`, `question.unknown`, `answer.not_allowed`, `answer.bad_option`; authority and visibility: `role.denied`, `member.unknown`, `device.scope`, `device.invalid`, `device.unknown`, `ticket.frozen`, `freeze.active`, `ticket.not_visible`, `not_found`; collisions: `ticket.exists` (uid), `ticket.bad_reference`, `event.duplicate_id`; request: `forbidden_scope`, `op.not_allowed`, `sig.invalid`, `validation.event`, `validation.text`, `invalid.input`, `idem.conflict`, `idem.required`; the 11A.4 identity codes | show; stop |
+  | **D** terminal or landed | never re-sign for this review | landed: `committed` (incl. `duplicate:true`), any `failed` with landed events; question: `question.answered`, `question.unknown`, `answer.not_allowed`, `answer.bad_option`; authority and visibility: `role.denied`, `member.unknown`, `device.scope`, `device.invalid`, `device.unknown`, `ticket.frozen`, `freeze.active`, `ticket.not_visible`, `not_found`; collisions: `ticket.exists` (uid), `ticket.bad_reference`, `event.duplicate_id`; request: `forbidden_scope`, `op.not_allowed`, `sig.invalid`, `validation.event`, `validation.text`, `invalid.input`, `idem.conflict`, `idem.required`; the 11A.4 identity codes | show; stop |
 
 - **`refused` is a reading, not a state (H12e-2, decided by orch-52).** There is no `refused` outcome step. A `failed`
   outcome whose landed list is empty and which was recorded under the lock after the log check counts as "refused":
@@ -6040,7 +6040,9 @@ fills in or changes a submitted field: what lands is what the phone signed, plus
   `member.removed` that removes the person's devices). R2's column-R `standing()` **must** use it (never
   `state._core`, never `device_person`, which also answers for a removed device); `"removed"` and `"unknown"` both end
   the standing. It takes the store lock itself (re-entrant), so it is safe inside R2's `store.locked()` span. Certificate
-  expiry is not part of it (`verify_cert`).
+  expiry is not part of it (`verify_cert`). Every entry into the store lock re-checks freshness.
+  **A removal is not durable across a restore:** a restore that abandons a `device.removed` revives the device (existing F1
+  behaviour, bounded by the 11A.4 hold-off and `readers reset`), so a lost phone must be **revoked**, not just removed.
 - **`judge_events` never lets a model exception escape**: any exception other than a model `Refusal` (`KeyError`,
   `TypeError`, `ValueError`... on malformed but signed input) is `HostError("validation.event")`, a definite D. The
   model's own refusal codes are unchanged, and `HumanOps._judge` behaves as before for valid input.
@@ -6133,7 +6135,7 @@ only for one signature at the signer's prompt (a TTY or the phone's sign sheet)"
 - `ticket.get` gains `doc.head` (`{"seq", "head"}` of the log's last event), `questions[].answer.id` (the counting
   event's id) and `members_v`, all from one snapshot, so a review needs one read. `workspace.show` gains `next_key`.
   These view fields ship before the first phone release (§0.4).
-- `relay/submit.py` (14.6), `judge_events`, the digest in `Planned` and in `relay_fields`.
+- `relay/submit.py` (14.6), `judge_events`, the identity check in the `relay_fields` result builder (no digest in `Planned`).
 - New codes: `event.expired`, `event.abandoned`, `ticket.key_not_next`.
 - The +1 500 s hold-off (11A.4), the F1 §5.1 amendment (14.7), and the vectors and the class table (14.8).
 - orch-29: protocol §8.7 (the one op) and §13 (single-use scope). orch-f1: the F1 question parser, `passphrase`

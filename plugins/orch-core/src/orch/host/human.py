@@ -35,6 +35,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import copy
+import logging
 import os
 import secrets
 import time
@@ -59,6 +60,8 @@ from .requests import (
     new_request_id,
 )
 from .workspace import ok_result
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .auth import Redactor
@@ -921,6 +924,7 @@ def judge_events(
         try:
             r = preview(state, probe, log=log)
         except Exception as exc:  # noqa: BLE001 - signed but malformed input must end as a definite refusal (H12e-2)
+            _log.warning("judge_events: the model raised %s; refused as validation.event", type(exc).__name__)
             raise HostError("validation.event", f"the event cannot be judged ({type(exc).__name__})") from exc
         if isinstance(r, Refusal):
             raise _store_error(StoreError.from_refusal(r))

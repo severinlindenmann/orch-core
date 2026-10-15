@@ -4,9 +4,6 @@ text differs, the vectors win (the PR lists each difference)."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from orch import canon, crypto
@@ -95,9 +92,8 @@ def _steps(case: dict) -> list[dict]:
 
 
 HOST_CASES = S2["bridge"]["host_cases"]
-# Meta v2 (H12d, §8.3): the relay corpus's reader_decl.pair_meta cases, extracted at relay 438b7193 until the vendored
-# corpus is bumped past it (tests/identity/vectors/reader_decl_pair_meta.json).
-READER_DECL = json.loads((Path(__file__).parent / "vectors" / "reader_decl_pair_meta.json").read_text())
+# Meta v2 (H12d, §8.3): the vendored corpus's reader_decl.pair_meta cases (relay 438b7193 and later).
+READER_DECL = S2["reader_decl"]
 READER_DECL_CASES = [{**c, "name": f"reader_decl.{c['name']}"} for c in READER_DECL["pair_meta"]]
 # Every host-side epoch-0 case in the corpus: the §8.6 host cases, the G3b host cases and the meta v2 cases.
 EPOCH0_SOURCES = [*HOST_CASES, *S2["cert_binding"]["host"], *READER_DECL_CASES]
@@ -177,7 +173,7 @@ def test_sas_of_every_answer_that_shows_the_code(name, ctx, expect, meta):
 
 
 def _expects_with(key: str) -> int:
-    """How many ``expect`` objects anywhere in the vendored corpus (and the meta v2 extract) carry ``key``."""
+    """How many ``expect`` objects anywhere in the vendored corpus carry ``key``."""
     n = 0
 
     def walk(o: object) -> None:
@@ -192,7 +188,6 @@ def _expects_with(key: str) -> int:
                 walk(v)
 
     walk(S2)
-    walk(READER_DECL)
     return n
 
 
@@ -569,7 +564,7 @@ def test_every_epoch_0_host_case_is_covered():
 
 @pytest.mark.parametrize("case", READER_DECL_CASES, ids=[c["name"] for c in READER_DECL_CASES])
 def test_reader_decl_fixture_metas_are_the_envelopes(case):
-    """The extract's ``meta`` is what its envelope carries (so the extract is internally consistent)."""
+    """The case's ``meta`` is what its envelope carries."""
     for st in _steps(case):
         assert _open_request(case, st)[1] == case["meta"]
 

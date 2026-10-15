@@ -161,3 +161,39 @@ def test_the_refusal_fields_are_closed():
     }  # fmt: skip
     assert "reason" not in _refusal_fields(Refusal("sign.convenience_readers", reason="reader_too_old"))
     assert "reason" not in _refusal_fields(Refusal("internal", reason="no_declaration"))
+
+
+# --- review of #555 (orch-52, Opus F1 = Codex P2): the history scan for serving runs once per store revision -------
+
+
+def test_the_history_is_scanned_once_per_unchanged_store_and_again_after_an_append(served, monkeypatch):  # noqa: F811
+    from orch.ops import readers
+
+    entry, owner = _entry(served), served.lab.ws.owner
+    scans: list[int] = []
+    real = readers.has_convenience_events
+
+    def counting(store):
+        scans.append(1)
+        return real(store)
+
+    monkeypatch.setattr(readers, "has_convenience_events", counting)
+    for _ in range(3):
+        _read(served, entry, _ident(served, owner))
+    assert len(scans) == 1  # no convenience, no change: one scan for three requests
+    served.ticket("appended in between")
+    _read(served, entry, _ident(served, owner))
+    _read(served, entry, _ident(served, owner))
+    assert len(scans) == 2  # an append changes the store's revision: one rescan
+
+
+def test_the_store_revision_changes_with_an_append_and_not_otherwise(served):  # noqa: F811
+    store = served.service.store
+
+    def rev():
+        return served.service.submit(store.revision).result(60)
+
+    a, b = rev(), rev()
+    assert a == b
+    served.ticket("one more")
+    assert rev() != a

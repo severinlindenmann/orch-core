@@ -22,7 +22,7 @@ written at the first convenience append and by every reader-op check that scans 
 
 **Serving is bound to ``rd`` (H12d-3, §0.8.6 item 9.5):** :func:`check_rd` runs in ``Call.authorize`` for every
 column-R request but ``reader.declare``, inside the op's own job. While ``required_reader`` is at least 1
-(:func:`serving_required`: the flag, the mark, else the merged history, scanned once per store state) the request's
+(:func:`serving_required`: the flag, the mark, else the merged history, scanned once per store revision) the request's
 ``rd`` must name the device's current reader record (verified again against the device now) at that level, else
 ``sign.convenience_readers`` ``no_declaration`` / ``declaration_unknown`` / ``reader_too_old``. A replayed or resent
 request is answered from its rid record by the bridge and never reaches this check (11A.4 "The rd field").
@@ -198,19 +198,21 @@ def _declare(service: Any, person: str, decl: Any, *, device: str | None, surfac
 
 def serving_required(service: Any) -> int:
     """``required_reader`` for serving column R (9.5): 1 while the flag is on or the durable mark is set; else the
-    merged history (and the cut tails) is scanned once per store state (a scan that finds a convenience event sets the
-    mark, so it is done at most once more)."""
+    merged history (and the cut tails) is scanned once per store revision (:meth:`orch.store.Store.revision`: the
+    log heads and the ticket files' stat signatures; #555 review F1). A scan that finds a convenience event sets the
+    mark, so after it the mark answers."""
     from orch.ops.readers import seen_or_history
 
     if read_required(service) >= 1:
         return 1
     store = service.store
-    state = store.state
-    cached = getattr(service, "_rd_history", None)
-    if cached is not None and cached[0] is state:
-        return int(cached[1])
-    found = 1 if seen_or_history(store, Path(service.state_dir), service.workspace_id, service.host_uid) else 0
-    service._rd_history = (state, found)
+    with store.locked():  # one revision for the key and the scan
+        revision = store.revision()
+        cached = getattr(service, "_rd_history", None)
+        if cached is not None and cached[0] == revision:
+            return int(cached[1])
+        found = 1 if seen_or_history(store, Path(service.state_dir), service.workspace_id, service.host_uid) else 0
+    service._rd_history = (revision, found)
     return found
 
 

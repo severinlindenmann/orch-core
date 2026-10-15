@@ -2851,7 +2851,9 @@ room; JUDGEMENT CALLS marked:
   step 4 and, authoritatively, the allocation (`relay.pair_device`).
 - **`rd` in column R** (9.5): `Call._authorize_relay` calls `readerops.check_rd` for every column-R op but
   `reader.declare`, inside the op's own job. While `required_reader` is 1 (flag or mark, else the merged history,
-  scanned once per store state: **JUDGEMENT CALL**, the scan reads every log, and a find sets the mark), `rd` must be
+  scanned once per store revision: **JUDGEMENT CALL**, the scan reads every log, and a find sets the mark; the key is
+  `Store.revision()`, the log heads and the ticket files' stat signatures, since `Store.state` is a new object at every
+  read: #555 review F1), `rd` must be
   the `digest` of the device's current record, which must verify for the device now and be at the required level;
   else `sign.convenience_readers` `no_declaration` (no `rd`), `declaration_unknown`, `reader_too_old` (`detail`
   `{reason, devices, required, declared}`; the socket's closed `detail` drops the last two). A replay or byte-exact

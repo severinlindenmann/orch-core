@@ -201,6 +201,13 @@ class _NoConvenienceStore:
     def merged_events(self) -> list:
         return []
 
+    @contextlib.contextmanager
+    def locked(self):
+        yield
+
+    def revision(self) -> tuple:
+        return ((), ())
+
 
 class WsService:
     def __init__(self, workspace_id: str = WS) -> None:

@@ -113,7 +113,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     "runner.disabled": {"missing": ("addon", "machine", "terminals")},
     "ticket.key_not_next": {"next_key": KEY},
     "sign.convenience_unavailable": {
-        "reason": ("disabled", "relay_paired", "other_member", "phone_device", "reader_version"),
+        "reason": ("disabled", "relay_paired", "other_member", "phone_device", "reader_version", "pair_device"),
         "devices": DEVICES,
     },
     "sign.convenience_readers": {

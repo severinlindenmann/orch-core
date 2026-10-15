@@ -4,7 +4,7 @@
 // names the devices by their label where it knows them (never by raw id), and shows nothing it does not know.
 import { ApiError } from './types'
 
-export const UNAVAILABLE_REASONS = ['disabled', 'relay_paired', 'other_member', 'phone_device', 'reader_version'] as const
+export const UNAVAILABLE_REASONS = ['disabled', 'relay_paired', 'other_member', 'phone_device', 'reader_version', 'pair_device'] as const
 export const READERS_REASONS = ['no_declaration', 'reader_too_old', 'declaration_unknown', 'relay_too_old', 'unknown_readers'] as const
 export type UnavailableReason = (typeof UNAVAILABLE_REASONS)[number]
 export type ReadersReason = (typeof READERS_REASONS)[number]
@@ -22,6 +22,8 @@ export const UNAVAILABLE_SENTENCE: Record<UnavailableReason, string> = {
   phone_device:
     'You have another device in this workspace whose orch app cannot yet read click-signed entries. Update orch on it (it then declares what it reads), or remove it; until then, sign in the terminal.',
   reader_version: 'The host’s orch-core does not accept click-signed entries. Update orch-core on this Mac.',
+  pair_device:
+    'Adding a paired phone is signed in the terminal with your passphrase (orch sign CODE), never with click-to-sign. If this Mac’s key was switched to click-to-sign, switch it back first: orch keys custody passphrase --workspace W --in-place.',
 }
 
 /** `sign.convenience_readers`: adding a reader is refused while click-to-sign is on or the history has click-signed entries. */

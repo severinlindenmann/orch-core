@@ -23,7 +23,7 @@ def body(exc: HostError) -> dict:
     "code,reason",
     [
         ("sign.convenience_unavailable", r)
-        for r in ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
+        for r in ("disabled", "relay_paired", "other_member", "phone_device", "reader_version", "pair_device")
     ]
     + [
         ("sign.convenience_readers", r)
@@ -298,5 +298,5 @@ def test_the_detail_table_matches_cores_per_code_table():
             else:
                 assert mine == allowed, (code, key)
     assert dash.DEVICES_MAX == core.DEVICES_MAX
-    assert dash.DEVICE.pattern == core._DEVICE.pattern
+    assert dash.DEVICE.pattern == core.DEVICE_ID.pattern  # #517 renamed it
     assert dash.TICKET_KEY.pattern == core._KEY.pattern

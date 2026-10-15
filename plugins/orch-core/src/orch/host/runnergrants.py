@@ -463,14 +463,14 @@ def _deposit_plan(call: Call, hub: RunnerHub, deposit_id: str) -> dict[str, Any]
         raise HostError("op.not_allowed", "grant.deposit: only your own runner grant")
     view = service.store.state.workspace.grants.get(grant.id)
     if view is None or getattr(view, "label", None) != "runner":
-        raise HostError("op.not_allowed", 'only a grant issued with label "runner" can be handed to the runner')
+        raise HostError("grant.not_runner", 'only a grant issued with label "runner" can be handed to the runner')
     if view.verbs != "agent":
-        raise HostError("op.not_allowed", 'a runner grant covers verbs "agent"')
+        raise HostError("grant.verbs", 'a runner grant covers verbs "agent"')
     issued, expires = _epoch(view.issued_at), _epoch(view.expires_at)
     if issued is None or expires is None or expires - issued > MAX_HOURS * 3600:
         raise HostError("op.not_allowed", f"a runner grant lasts at most {MAX_HOURS} hours")
     if expires - now < MIN_LEFT:
-        raise HostError("op.not_allowed", "the grant has less than 15 minutes left; issue a new one")
+        raise HostError("grant.expiring", "the grant has less than 15 minutes left; issue a new one")
     if not enablement.state_of(hub.host.state_dir, service.workspace_id, hub.host.host_uid)["enabled"]:
         raise HostError("runner.disabled", "dashboard execution is off for this workspace on this machine "
                         "(missing: machine); turn it on in your terminal: orch runner enable")  # fmt: skip

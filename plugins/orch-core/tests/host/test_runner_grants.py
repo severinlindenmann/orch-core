@@ -98,15 +98,17 @@ def test_a_runner_grant_is_deposited_once_and_shows_in_whoami(ready):
 
 
 @pytest.mark.parametrize(
-    "kw",
-    [{"label": None}, {"label": "quinn"}, {"verbs": ["log"]}, {"hours": 13}],
+    ("kw", "code"),
+    [({"label": None}, "grant.not_runner"), ({"label": "quinn"}, "grant.not_runner"),
+     ({"verbs": ["log"]}, "grant.verbs"), ({"hours": 13}, "op.not_allowed")],
     ids=["no-label", "other-label", "verbs", "too-long"],
-)
-def test_only_a_runner_labelled_agent_grant_of_at_most_12_hours_can_be_deposited(ready, kw):
+)  # fmt: skip
+def test_only_a_runner_labelled_agent_grant_of_at_most_12_hours_can_be_deposited(ready, kw, code):
     w = ready
     c = w.conn()
     value = issue(w, **kw)
-    assert err(deposit(c, value)) == "op.not_allowed"
+    res = deposit(c, value)
+    assert err(res) == code and res["exit"] == 3  # the §0.6 codes (#466 review, Opus L1)
     assert w.runner.grants.report() == []
 
 
@@ -115,7 +117,7 @@ def test_a_grant_with_under_15_minutes_left_is_refused(ready):
     c = w.conn()
     value = issue(w, hours=1)
     w.lab.ws.clock[0] += 3000  # ten minutes left
-    assert err(deposit(c, value)) == "op.not_allowed"
+    assert err(deposit(c, value)) == "grant.expiring"
 
 
 def test_deposit_needs_a_person_and_their_own_verified_grant(ready):
@@ -146,7 +148,8 @@ def test_a_newer_runner_grant_replaces_the_old_which_is_forgotten(ready):
     assert ok(deposit(c, first))["data"]["deposit"] == "confirmed"
     assert ok(deposit(c, second))["data"]["deposit"] == "confirmed"
     assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(second)]
-    assert err(deposit(c, first)) == "grant.forgotten"
+    res = deposit(c, first)
+    assert err(res) == "grant.forgotten" and res["exit"] == 3
     assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(second)]
 
 

@@ -446,6 +446,12 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
+| `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
+| `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
+| `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
+| `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
+| `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
+| `grant.expiring` | 3 | no | stays | `grant.deposit` of a grant with less than 15 minutes left | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -455,12 +461,6 @@ drops. The host never sends it.
 
 | Code | Exit | Retryable | Fate | When | `retry_after_ms` |
 |---|---|---|---|---|---|
-| `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
-| `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
-| `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
-| `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
-| `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
-| `grant.expiring` | 3 | no | stays | `grant.deposit` of a grant with less than 15 minutes left | — |
 | `worktree.none` | 3 | no | stays | `worktree.remove` for a (ticket, repo) with no registered worktree | — |
 | `worktree.exists` | 3 | no | stays | the ticket already has a worktree for that repo, or its path is not free (§12.7) | — |
 | `worktree.no_branch` | 3 | no | stays | the ticket links no branch for that repo (§12.7) | — |

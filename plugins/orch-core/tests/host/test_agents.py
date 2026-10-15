@@ -165,7 +165,10 @@ def test_a_live_claim_refuses(ready):
     c = w.conn()
     _, key = w.ticket()
     ok(c.call("claim", {"ref": key}, grant=w.grant, session=SESSION, idem=True))
-    assert preview(c, ticket=key, harness="codex", mode="work")["blocked"]["code"] == "launch.claimed"
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    assert pre["blocked"]["code"] == "launch.claimed"
+    res = start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])
+    assert err(res) == "launch.claimed" and res["exit"] == 3
 
 
 def test_fish_as_shell_is_harness_shell_unsupported(ready, monkeypatch):

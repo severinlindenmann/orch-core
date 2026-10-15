@@ -496,13 +496,35 @@ def test_an_idle_thread_reads_the_relay_rarely_and_wake_publishes_at_once(make, 
     monkeypatch.setattr(publish, "IDLE_POLL_S", 30.0)
     k = make(tickets=1)
     p = k.make_publisher()
+    parked = threading.Event()
+    polls = []
+    real_idle, real_job = p._idle, p._job  # noqa: SLF001 - observe the idle loop instead of timing it
+
+    def idle():
+        parked.set()  # the publisher has finished its last relay-reading step and is in its idle loop
+        real_idle()
+
+    def job(fn):
+        r = real_job(fn)
+        if parked.is_set():
+            polls.append(1)  # one local outbox check by the idle loop
+        return r
+
+    p._idle, p._job = idle, job  # noqa: SLF001
+
+    def relay_reads():
+        return sum(1 for s in k.mock.seen if s.method == "GET" and s.path.endswith("/checkpoint"))
+
     p.start()
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and k.store.outbox_entries():
-        time.sleep(0.05)
-    reads = sum(1 for s in k.mock.seen if s.method == "GET" and s.path.endswith("/checkpoint"))
-    time.sleep(1.0)
-    assert sum(1 for s in k.mock.seen if s.method == "GET" and s.path.endswith("/checkpoint")) == reads  # idle: quiet
+    assert parked.wait(15)
+    reads = relay_reads()
+    for n in range(1, 4):  # three more idle passes, each woken at once: local checks only, no relay read
+        p.wake()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and len(polls) < n:
+            time.sleep(0.01)
+        assert len(polls) >= n
+    assert relay_reads() == reads  # idle: quiet
     k.env.log(k.uids[0], "x")
     p.wake()
     deadline = time.monotonic() + 15

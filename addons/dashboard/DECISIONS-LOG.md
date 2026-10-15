@@ -1566,7 +1566,9 @@ click every time.
 input handlers call `coreService.triggerDataEvent(data, true)`, which fires `onUserInput` synchronously right before `onData`; the
 parser's replies never set it. `termView` subscribes to `_core.coreService.onUserInput` (not public API; xterm is pinned by the lockfile,
 and a build without it refuses to draw the terminal). Data flagged while a pointer or wheel event is dispatched (mouse tracking reports,
-wheel-to-arrows) is swallowed (window cleared by a task, so it only ever swallows more).
+wheel-to-arrows) is swallowed, decided per event from `window.event` (delta D-L1: a timer window after pointer events
+dropped keys typed while the mouse moved). A test pins xterm to exactly 5.5.0 (delta D-L2): a bump needs the audit of every
+`triggerDataEvent(…, true)` caller first.
 **Why:** the first design (a capture listener opening a window closed by a microtask) dropped every real keystroke and paste, because a
 browser runs a microtask checkpoint between listeners. Widening that window to a task would let a reply parsed synchronously after user
 input (`WriteBuffer.handleUserInput`) go out as tag 0. xterm's flag has neither problem.
@@ -1592,3 +1594,7 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
   many accepted sockets for 5 s each. Not reachable from a web page (exact Host/Origin). Revisit with a per-process accept budget if needed.
 - I3: `run.list`/`run.sub` rely on the host's person filter (D-P2-26); the dashboard does not compare runs to the pinned person (it does
   not project `person` at all). Defence in depth only; the host is the authority.
+- Delta D-I2: a `term.attach` answer lost in transit (the host minted, the dashboard never read `att`) cannot be cancelled by id; it
+  relies on the host's 10 s capability expiry and on the link closing. Delta D-I3: if the person moves to another run before the list
+  shows the run they opened, that run's first later mount still asks `write` (never `take`): still one-shot and still their Open.
+

@@ -197,16 +197,33 @@ describe('real xterm input, dispatched as a browser does (review H1)', () => {
 })
 
 describe('pointer reports are not tag 0', () => {
-  it('data xterm flags as user input while a mouse or wheel event is dispatched is swallowed', async () => {
-    const report = () => view.term.input('\x1b[<0;5;5M', true) // what mouse tracking sends, flagged as user input
-    browserDispatch(view.term.element!, new MouseEvent('mousedown', { bubbles: true }))
-    report()
-    browserDispatch(view.term.element!, new WheelEvent('wheel', { bubbles: true, deltaY: 3 }))
-    view.term.input('\x1b[A', true)
+  it('data xterm flags as user input inside a mouse or wheel dispatch is swallowed', () => {
+    const el = view.term.element!
+    // Stand-ins for xterm's own mouse-tracking and wheel handlers: they send a report while the event is dispatched.
+    const onMouse = () => view.term.input('\x1b[<0;5;5M', true)
+    const onWheel = () => view.term.input('\x1b[A', true)
+    el.addEventListener('mousedown', onMouse)
+    el.addEventListener('wheel', onWheel)
+    browserDispatch(el, new MouseEvent('mousedown', { bubbles: true }))
+    browserDispatch(el, new WheelEvent('wheel', { bubbles: true, deltaY: 3 }))
+    el.removeEventListener('mousedown', onMouse)
+    el.removeEventListener('wheel', onWheel)
     expect(sent).toEqual([])
-    await new Promise((r) => setTimeout(r, 5))
-    view.term.input('k', true) // a key after the pointer event's task: the person's input again
+  })
+
+  it('a key typed right after the mouse moved is not dropped (delta D-L1)', () => {
+    browserDispatch(document, new MouseEvent('mousemove', { bubbles: true }))
+    browserDispatch(view.term.textarea!, new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', keyCode: 75, bubbles: true, cancelable: true }))
     expect(sent).toEqual([{ tag: 0, data: 'k' }])
+  })
+})
+
+describe('xterm pin (delta D-L2)', () => {
+  it('is exactly 5.5.0: tag 0 relies on its private user-input flag', async () => {
+    // A bump needs the audit of every `triggerDataEvent(…, true)` caller in the new version (DECISIONS-LOG, M7a H1):
+    // only key, paste, IME, input, mouse and wheel handlers may flag data as user input, never the parser.
+    const pkg = (await import('@xterm/xterm/package.json')) as { version: string }
+    expect(pkg.version).toBe('5.5.0')
   })
 })
 

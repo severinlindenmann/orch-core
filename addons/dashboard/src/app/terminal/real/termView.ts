@@ -76,18 +76,15 @@ export function createTermView(el: HTMLElement, options: ITerminalOptions & ITer
     throw new Error('xterm has no user-input signal: the terminal is not drawn')
   }
   let user = false
-  // Pointer/wheel reports are flagged as user input too: data flagged while one is dispatched is not tag 0. The flag
-  // is cleared by a task (not a microtask): widening this window only ever swallows more.
-  let pointer = false
-  let pointerTimer: ReturnType<typeof setTimeout> | undefined
-  const markPointer = () => {
-    pointer = true
-    clearTimeout(pointerTimer)
-    pointerTimer = setTimeout(() => { pointer = false }, 0)
-  }
-  const doc = el.ownerDocument
-  for (const name of POINTER_EVENTS) doc.addEventListener(name, markPointer, true)
-  const userInput = onUserInput.call(core!.coreService, () => { user = !pointer })
+  // Pointer/wheel reports are flagged as user input too: data flagged while a pointer or wheel event is being dispatched
+  // is not tag 0. Decided per event (delta D-L1: a time window after a pointer event dropped keys typed while the
+  // mouse moved): `window.event` is the event whose listeners are running right now.
+  const win = el.ownerDocument.defaultView as (Window & { event?: Event }) | null
+  const pointer = new Set<string>(POINTER_EVENTS)
+  const userInput = onUserInput.call(core!.coreService, () => {
+    const type = win?.event?.type
+    user = !(type && pointer.has(type))
+  })
   const data = term.onData((d) => {
     const fromUser = user
     user = false
@@ -144,8 +141,6 @@ export function createTermView(el: HTMLElement, options: ITerminalOptions & ITer
     dispose() {
       disposed = true
       sink = null
-      for (const name of POINTER_EVENTS) doc.removeEventListener(name, markPointer, true)
-      clearTimeout(pointerTimer)
       userInput.dispose()
       data.dispose()
       binary.dispose()

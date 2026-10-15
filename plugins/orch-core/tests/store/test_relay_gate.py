@@ -831,3 +831,31 @@ def test_the_chokepoint_fields_are_private_to_store_py():
         if ("_state_v" in p.read_text() or "_relay_pregated" in p.read_text())
     )
     assert users == ["store/store.py"], users
+
+
+def test_the_prune_takes_its_starting_head_before_its_snapshot(env, tmp_path):
+    """A snapshot factory whose own reload raises (and writes) a fresh reason for d3: the prune took its starting
+    head first, so the head changed under it and nothing is written; d3's reason survives, gated."""
+    from orch.store.store import device_standing_ok
+
+    d2, _ = env.add_device()
+    d3, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        mk.raise_gate(d2[2:], "f1_standing")  # stale
+
+        def standing_now():
+            snap = env.store.state  # before the foreign removal of d3
+            s2 = env.other()
+            try:
+                s2.append(env.person_event(env.owner, "workspace", "device.removed", device=d3), log="workspace")
+            finally:
+                s2.close()
+            env.store.refresh()  # reloads: raises d3 and writes the head
+            return lambda d: device_standing_ok(snap, "d_" + d)
+
+        with env.store.locked():
+            assert mk.prune_stale_reasons(standing_now) == 0
+        assert {"device": d3[2:], "reason": "f1_standing"} in mk.head()["gate"]["reasons"] and mk.seal_state().gated
+    finally:
+        mk.close()

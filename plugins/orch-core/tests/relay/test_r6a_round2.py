@@ -94,6 +94,19 @@ def test_a_ledger_list_above_the_heads_lhw_starts_gated(tmp_path):
         mk.close()
 
 
+def test_a_ledger_epoch_above_e_c_alone_starts_gated(tmp_path):
+    """Only the epoch evidence: a wk_commit signed above e_c, no list above the head's LHW."""
+    mk = open_keys(tmp_path)
+    rotate(mk)
+    mk.ledger.record("wk_commit", "3", crypto.b64u(bytes(32)), "")
+    mk.close()
+    mk = open_keys(tmp_path)
+    try:
+        assert mk.high_water() == (1, 3) and mk.gate_up() and mk.seal_state().gated
+    finally:
+        mk.close()
+
+
 def test_a_clean_restart_is_not_gated(tmp_path):
     mk = open_keys(tmp_path)
     rotate(mk)

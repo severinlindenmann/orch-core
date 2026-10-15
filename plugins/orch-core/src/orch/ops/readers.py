@@ -488,6 +488,9 @@ def added_readers(events: Iterable[dict[str, Any]], ws: Any = None) -> list[str]
             dev = o.get("device_id") if isinstance(o, dict) else None
             out.append("d_" + dev if isinstance(dev, str) else "d_?")
         elif e.get("type") == "restore" and ws is not None:
+            # TODO(H12d, R3: the first path that emits a restore through an appending writer): compute the readers
+            # the cut actually revives (a cut device.removed/member.removed) at the emitter and pass that set; until
+            # then every current device counts as added (strict: a level-0 grandfathered reader refuses a restore)
             out.extend(d.id for d in current_devices(ws))
     return list(dict.fromkeys(out))
 

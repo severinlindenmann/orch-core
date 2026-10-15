@@ -146,7 +146,8 @@ Result  = {data:any, key:Key | null, seq:int 0.., cursor:int 0.., hints:[str]{0.
            duplicate:bool, exit:int 0..9, head:str | null}
 Error   = {code:str/[a-z_]+(\.[a-z_]+)*/, message:str{1..400}, hint?:str{1..400},
            fix?:{argv:[str]{1..32}}, retryable:bool, retry_after_ms?:int 1..3600000,
-           detail?:{state?:str, which?:str, reason?:str, missing?:str, next_key?:Key}}   // v1.9, closed per code (below)
+           detail?:{state?:str, which?:str, reason?:str, missing?:str, next_key?:Key,
+                    devices?:[Device]{0..64}}}                    // v1.9, closed per code (below); devices: H12d-2
 Evt     = {t:"evt", sub:SubId, cursor:Cursor, items:[Item]{0..64}, end?:EndReason}
 Fatal   = {t:"fatal", error:Error}
 OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
@@ -1200,8 +1201,12 @@ Errors: `not_found`, `invalid.input`.
 
 ```
 {id:str, prefix:str, name:str, genesis:Hash, epoch:int, wsk_fingerprint:str, members_v:int, state:"ok"|"degraded",
- next_key:Key | null}                                                                // next_key: v1.7 (§11A.14)
+ next_key:Key | null,                                                                // next_key: v1.7 (§11A.14)
+ required_reader:0|1}                                                                 // H12d-2 (§0.8.6 item 9.11)
 ```
+
+`required_reader` (H12d-2) is 1 while the click-to-sign flag is on or the durable `convenience_seen` mark is set
+(a read scans no history), else 0 (§0.8.6 item 9.4).
 
 `next_key` (v1.7, H12e) is the store's exact next key (`_next_key()` after the directory scan, under the lock),
 advisory and never a reservation. It is `null` for a principal that may not create a ticket: a viewer, no-person,
@@ -1214,8 +1219,13 @@ column G (judgement call of H12e: an agent's `new` allocates its own key), and a
 
 ```
 {members:[{person:Person, name:str, role:"owner"|"maintainer"|"member"|"viewer",
-           devices:[{id:Device, auth:str | null, scopes:[str], valid:bool}]}]}
+           devices:[{id:Device, auth:str | null, scopes:[str], valid:bool,
+                     reader:int}]}],                                      // reader: H12d-2 (§0.8.6 item 9.11)
+ required_reader:0|1}                                                     // H12d-2
 ```
+
+`devices[].reader` (H12d-2) is the level the device's reader record counts as now (verified on every read; 0 without
+one that verifies); `required_reader` as for `workspace.show`.
 
 `session.list {active?:bool = true}` (read) →
 
@@ -2682,7 +2692,8 @@ leaves room, the strictest reading unless said otherwise:
 - **Records** (9.10): `orch.store.readerrecs` (files) and `orch.ops.readers` (rules). **One directory for both modes**:
   `<state>/hosts/<ws>/readers/<device hex>.json`, not `<workspace>/.state/readers/`: in tier A the direct-mode and
   the host state directory are one (the `convenience_seen` precedent, #441), so `register` "imports" by verifying
-  every record against the log it just read and removing the ones that do not verify (`readers.prune`), and
+  every record against the log and removing the ones that do not verify (`readers.prune`), only after admission,
+  with the ownership lock and the store lock held (a refused registration prunes nothing), and
   `unregister` leaves them for direct mode (nothing to export). **Every read verifies again**: a record counts only
   for its exact current device pair (not removed, not revoked), every field against the device's certificate and
   person (`State.device_evidence`), the declaration re-verified without the clock (`recheck`) with the `via` and KAT
@@ -2697,10 +2708,14 @@ leaves room, the strictest reading unless said otherwise:
   events not in the log yet) and in direct `Human._sign_and_append` (a `precommit` before the mark's). It refuses a
   reader-adding event (`member.added`, `device.added`; a `restore` counts **every** current device until a path
   emits one) whose new reader is below `required_reader` (`no_declaration`, `reader_too_old`), and a convenience
-  event while another current reader is below level 1 (the relaxed reasons, 9.9). A convenience event in the same
+  event while another current reader is below level 1 (the relaxed reasons, 9.9). A member with no current device
+  (every device removed or revoked) does not count for `other_member`: only current devices are readers. A convenience event in the same
   request makes `required_reader` at least 1. The admitted reader's record is written there, before the append; a
-  record that cannot be written refuses the append. A reader added **without** a declaration has any stale record
-  of its device removed there (a removed and re-added device must not count with a record from before). `tests/host/test_append_paths.py` lists every log append.
+  record that cannot be written refuses the append. **Every** added device has its stored record removed there
+  first (#513 review), so only the declaration the gate admitted counts, never a record from before a removal or
+  from a refused append, in either direction. Only a **verified** incumbent (accepted by `record_level` against the
+  device now) competes in the dedup and latest-wins comparison; a corrupt one is replaced. A record with any field
+  of the wrong type is level 0 and never an error. `tests/host/test_append_paths.py` lists every log append.
 - **Direct mode tightens:** a convenience-signed direct append (convenience custody in direct mode) is refused
   while another current reader is below level 1, with `sign.convenience_unavailable` (now a P1 global code).
 - **`member.add`** (9.11): `reader_decl` is an `x-file` argument (`--reader-decl PATH`), read with a 4 KiB cap
@@ -2714,9 +2729,10 @@ leaves room, the strictest reading unless said otherwise:
   declaration is an argument). `relay.link` and `relay.pair` keep item 1's rule until H12d-3.
 - **`reader.declare`** is P only (`person_write`, an idem): a current device of the calling person, `via:"declare"`,
   the `log` surface; it answers the record now current `{device, reader, level, digest}` (an older declaration
-  answers the stored one). Column R with `rd` is H12d-3. **`reader.list`** (P and R) answers `{readers:[{device,
-  person, dk_hash, reader, level, digest, decl}], required_reader}`; `dk_hash` lets `orch keys reader declare` build
-  a declaration. `required_reader` in the reads is the flag or the mark (no history scan on a read).
+  answers the stored one). Column R with `rd` is H12d-3. **`reader.list`** answers column P `{readers:[{device,
+  person, dk_hash, reader, level, digest, decl}], required_reader}` (`dk_hash` lets `orch keys reader declare` build
+  a declaration) and column R (a phone, #513 review decision) only `{readers:[{device, person, reader, level}],
+  required_reader}`: no `decl`, no `dk_hash`. `required_reader` in the reads is the flag or the mark (no history scan on a read).
 - **Custody decision (9.3, #463 L1):** a **convenience device key never signs a reader declaration** (no review, no
   presence: a same-UID process must not raise or lower a level); a convenience device needs no record for its own
   signatures (`reader_version` qualifies it). The passphrase prompt shows every field (`describe`, object kind
@@ -3892,7 +3908,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     built in H12d-2"; the number may be renumbered when a parallel change lands first):** `member.add` takes
     `reader_decl` (`--reader-decl PATH`, an `x-file`), and the review of a reader-adding event carries
     `derived.reader` (a host attestation; a signer without it refuses: update orch). New ops `reader.declare` (P,
-    `person_write`, an idem) and `reader.list` (a read, P and R), cap `reader/1`; `member.list` devices gain `reader`,
+    `person_write`, an idem) and `reader.list` (a read, P and R; R trimmed to `{device, person, reader, level}`), cap `reader/1`; `member.list` devices gain `reader`,
     `member.list` and `workspace.show` gain `required_reader`; `ticket.get` `questions[].answer` gains
     `signer:{device, auth}`. New code `reader.decl_invalid`; `sign.convenience_readers` and
     `sign.convenience_unavailable` gain `Error.detail` `{reason, devices}` (seven codes may carry `detail` now).
@@ -7587,7 +7603,7 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
 | `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R with `rd`: H12d-3) |
-| `reader/1` | `reader.list` | ✓ | — | — | read (also column R) |
+| `reader/1` | `reader.list` | ✓ | — | — | read (column R too, trimmed to `{device, person, reader, level}`) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 

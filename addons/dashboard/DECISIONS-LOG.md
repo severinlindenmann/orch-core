@@ -1555,12 +1555,15 @@ someone holds), and §12.6.5's "never take by itself" is about `take` and reconn
 click every time.
 **Revert:** pass `initial="read"` for the opened run in `RealDock`.
 
-**Decision:** The page's tag-0 window is "a `keydown`/`keypress`/`beforeinput`/`input`/`compositionend`/`paste` event of the terminal is
-being dispatched" (capture listener on the terminal element, closed at the next microtask, before xterm parses any output). Mouse
-reports (xterm `onData` from a mouse event while an application tracks the mouse) are therefore swallowed.
-**Why:** §12.6.7 allows tag 0 only from a key or paste event; mouse tracking is not in that list, and its reports are indistinguishable
-from terminal-generated replies at the sink.
-**Revert:** add mouse events to `GESTURE_EVENTS` only after the contract lists them.
+**Decision (review H1, replaces the first tag-0 design):** Tag 0 is decided by xterm's own flag: its key, paste, IME and
+input handlers call `coreService.triggerDataEvent(data, true)`, which fires `onUserInput` synchronously right before `onData`; the
+parser's replies never set it. `termView` subscribes to `_core.coreService.onUserInput` (not public API; xterm is pinned by the lockfile,
+and a build without it refuses to draw the terminal). Data flagged while a pointer or wheel event is dispatched (mouse tracking reports,
+wheel-to-arrows) is swallowed (window cleared by a task, so it only ever swallows more).
+**Why:** the first design (a capture listener opening a window closed by a microtask) dropped every real keystroke and paste, because a
+browser runs a microtask checkpoint between listeners. Widening that window to a task would let a reply parsed synchronously after user
+input (`WriteBuffer.handleUserInput`) go out as tag 0. xterm's flag has neither problem.
+**Revert:** none safe without an equivalent per-datum user-input signal; an xterm upgrade must keep the canary and H1 tests green.
 
 **Decision:** Browser tickets live 30 s, 10 per minute per bearer session (`rate.limited`, HTTP 503 like the other host-busy codes);
 the WebSocket also refuses a query string; a socket that piles up 4096 undelivered control frames ends with `overflow` (4429).
@@ -1576,3 +1579,10 @@ with the `runner_identity` hook), not `orch host run` as a subprocess.
 no launchd/systemd unit may be installed. Requested from stream A: a dev-only seam (e.g. `orch host run --foreground` accepting a
 foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 **Revert:** switch `test_realhost_terminals.py` to `realhost_kit` once that seam exists.
+
+**Residuals accepted after the M7a security review (I2, I3):**
+- I2: WebSockets that have not yet presented a ticket count toward no limit; a local non-browser process that forges Host/Origin can hold
+  many accepted sockets for 5 s each. Not reachable from a web page (exact Host/Origin). Revisit with a per-process accept budget if needed.
+- I3: `run.list`/`run.sub` rely on the host's person filter (D-P2-26); the dashboard does not compare runs to the pinned person (it does
+  not project `person` at all). Defence in depth only; the host is the authority.
+

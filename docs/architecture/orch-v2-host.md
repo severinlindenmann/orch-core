@@ -6052,21 +6052,29 @@ optional `ORCH_RELAY_DIR` cross-check, compares with the relay).
 **As built for R2 (T2 job, 15 Oct 2026).** CI job `relay-t2` in `.github/workflows/orch-core.yml` (its own job, py3.14;
 the main matrix runs `-m "not slow and not relay_t2"`). It reads `relay_commit` from `SOURCE`, checks out
 `severinlindenmann/orch-relay` at exactly that commit (`actions/checkout`, `ref:` from `SOURCE`), runs `uv sync --locked`
-in both, then `pytest -m relay_t2 tests/relay/t2` with `ORCH_RELAY_DIR` set and `ORCH_RELAY_T2_REQUIRED=1`. Nothing of
-the relay is vendored: the tests import its `ref` package from `ORCH_RELAY_DIR`.
+in both, then `pytest tests/relay/t2` (the `relay_t2` tests and the harness self-tests) plus the drift guard's
+`ORCH_RELAY_DIR` cross-check of the vendored corpus, with `ORCH_RELAY_DIR` set and `ORCH_RELAY_T2_REQUIRED=1`. It does
+not depend on the base branch. Nothing of the relay is vendored: the tests load its `ref/orch_protocol_ref.py` by file
+path from `ORCH_RELAY_DIR`.
 - **Harness** (`tests/relay/t2/harness.py`, `conftest.py`): `ORCH_RELAY_DIR` must be at the `SOURCE` commit (`git
   rev-parse HEAD`, else fail); unset, the tests SKIP with a message locally and FAIL under `CI` or
   `ORCH_RELAY_T2_REQUIRED`. One relay process per test, each test run twice (`ORCH_RELAY_MAX_PUBLICATION_BYTES=4194304`,
   and unset for the 16 MiB default): free loopback port chosen first, `uv run orch-relay serve --host 127.0.0.1 --port
   P`, an allow-list environment (`ORCH_RELAY_ORIGIN=http://127.0.0.1:P`, a temp `ORCH_RELAY_DATA`, a random
   `ORCH_RELAY_INSTANCE`), started only when `/healthz` answers that instance while the child is alive (else another
-  port, at most 3). Teardown signals only the child's own process group (`SIGTERM`, `SIGINT` = uvicorn's forced exit,
-  `SIGKILL` after 10 s) and fails the test if the group is alive or the port still accepts; each test must finish in
-  20 s. Locally: `ORCH_RELAY_DIR=<a worktree of the SOURCE commit, uv-synced> uv run pytest -p no:xdist -m relay_t2
-  tests/relay/t2` (24 tests, about 1 minute).
+  port, at most 3). The relay runs under `tests/relay/t2/supervisor.py`, the leader of its own process group, whose
+  stdin is a pipe only the harness holds: when the harness process dies in any way (SIGKILL, an alarm, OOM) the pipe
+  reads EOF and the supervisor ends the group (`SIGTERM`, `SIGINT`, `SIGKILL`; tested with a child python killed by a
+  5 s alarm). Teardown signals only that group (`SIGTERM`, `SIGINT` = uvicorn's forced exit, `SIGKILL` after 10 s); a
+  group or port left behind is reaped (`SIGKILL`, only after checking that every member was born after the spawn and
+  names our port and the relay or the supervisor) AND fails the test; every group still registered is reaped at
+  `pytest_sessionfinish` and `atexit`. Each test has a hard 20 s limit (SIGALRM) from the relay answering `/healthz`
+  to its teardown (relay start-up and stop are outside it; the requeue tests use about 11 s of it). Locally: `ORCH_RELAY_DIR=<a worktree of the SOURCE commit, uv-synced> uv run pytest -p no:xdist -m relay_t2
+  tests/relay/t2` (25 relay tests and 9 harness self-tests, under 2 minutes locally).
 - **Covered (R1):** `/healthz` instance and `GET /v2/relay-info` `max_publication_bytes` equal to the configured cap;
   the owner account from an operator invite (`orch-relay invite create` on the temp data directory) through `POST
-  /v2/accounts`; a device registration; the first card without a session, then a session-less PUT answered 401
+  /v2/accounts`, the identical request replayed with the same answer and the used invite with a fresh proof refused
+  `403 not_eligible`; a device registration; the first card without a session, then a session-less PUT answered 401
   (`put_card(first=True)` returns `None`); the verified card read; login with the exact origin, `bad_signature` with
   another port or `localhost` for the same port, then `LoginHeldOff`; `host/hold`, a renewal, an operator takeover by a
   second Session fencing the first (renewal and W(g) writes refused), the new holder's card PUT.
@@ -6076,7 +6084,7 @@ the relay is vendored: the tests import its `ref` package from `ORCH_RELAY_DIR`.
   `ref.open_wk_grant`, request envelopes by `ref.envelope`, every answer chunk through `ref.device_check`, §8.8). Tests:
   a read answered and opened; a write landing once; a requeued rid (the device's identical resend after the relay's
   10 s requeue bound) answered with the same chunk bytes and never run twice; a request under an old epoch answered with
-  a signed `stale_epoch` naming the committed one (the device fetches grants); an answer over `MAX_ANSWER` refused up
+  a signed `stale_epoch` naming the committed one (`device_check` sets `fetch_grants`; the test does not re-fetch); an answer over `MAX_ANSWER` refused up
   front with one `frame.too_large` chunk, a 1 MiB answer delivered in full; requests reaching the host out of `seq`
   order each answered once, the same `seq` again under a new rid `stale_sequence`; a request held by the relay from
   before the worker started fenced (`already_done {status: unknown}`), its re-issue answered; a takeover fencing the

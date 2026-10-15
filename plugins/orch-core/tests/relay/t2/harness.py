@@ -19,9 +19,10 @@
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import http.client
-import importlib
+import importlib.util
 import json
 import os
 import secrets
@@ -47,8 +48,11 @@ HOST = "127.0.0.1"
 START_ATTEMPTS = 3
 HEALTH_WAIT_S = 60.0  # a cold CI runner resolves the relay's environment on the first `uv run`
 STOP_GRACE_S = 10.0
-TEST_BUDGET_S = 20.0  # one test, from the relay answering to its teardown (11A.10: each T2 test < 20 s)
+TEST_BUDGET_S = 20.0  # a hard per-test limit (11A.10: each T2 test < 20 s), from the relay answering to teardown
 FORCE_AFTER_S = 1.0
+_REF_NAME = "orch_relay_ref_t2"
+SUPERVISOR = Path(__file__).resolve().parent / "supervisor.py"
+FAKE_MARK = "orch-relay-t2-fake"  # the self-tests' stand-in child names itself with this
 # the child's environment is an allow-list: nothing else of the parent leaks in (no ORCH_RELAY_* of the caller, no
 # VIRTUAL_ENV of core's environment)
 PASS_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "UV_CACHE_DIR", "UV_PYTHON", "UV_PYTHON_INSTALL_DIR",
@@ -83,12 +87,18 @@ def relay_dir() -> Path:
 
 
 def ref_module(d: Path) -> ModuleType:
-    """The relay's reference client (``ref/orch_protocol_ref.py``, test support only) from the pinned checkout."""
-    if str(d) not in sys.path:
-        sys.path.insert(0, str(d))
-    mod = importlib.import_module("ref.orch_protocol_ref")
+    """The relay's reference client (``ref/orch_protocol_ref.py``, test support only) from the pinned checkout, loaded
+    by file path (the relay's root never goes on ``sys.path``; the module uses only the stdlib and ``cryptography``)."""
+    if _REF_NAME in sys.modules:
+        mod = sys.modules[_REF_NAME]
+    else:
+        spec = importlib.util.spec_from_file_location(_REF_NAME, d / "ref" / "orch_protocol_ref.py")
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[_REF_NAME] = mod  # dataclasses resolve their module through sys.modules
+        spec.loader.exec_module(mod)
     if not Path(mod.__file__ or "").resolve().is_relative_to(d):
-        pytest.fail(f"ref imported from {mod.__file__}, not from {d}", pytrace=False)
+        pytest.fail(f"ref loaded from {mod.__file__}, not from {d}", pytrace=False)
     return mod
 
 
@@ -130,6 +140,45 @@ def group_alive(pgid: int) -> bool:
     return True
 
 
+def _killpg(pgid: int, sig: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(pgid, sig)
+
+
+def group_members(pgid: int) -> list[tuple[int, float, str]]:
+    """``(pid, start time (epoch s, whole seconds), command line)`` of every process in group ``pgid``."""
+    r = subprocess.run(
+        ["ps", "-A", "-o", "pid=,pgid=,lstart=,args="], capture_output=True, text=True, timeout=30, check=False,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "LANG": "C"},
+    )  # fmt: skip
+    out = []
+    for line in r.stdout.splitlines():
+        parts = line.split(None, 7)
+        if len(parts) < 8 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[1]) != pgid:
+            continue
+        try:  # lstart: "Thu Oct 15 12:53:05 2026", local time
+            started = time.mktime(time.strptime(" ".join(parts[2:7]), "%a %b %d %H:%M:%S %Y"))
+        except ValueError:
+            continue
+        out.append((int(parts[0]), started, parts[7]))
+    return out
+
+
+def spawn(cmd: list[str], *, cwd: Path, env: dict[str, str], log: Path) -> subprocess.Popen[bytes]:
+    """``cmd`` under the supervisor, as the leader of a new process group (session), its stdin a pipe only this
+    process holds: if this process dies in any way, the supervisor ends the group (``supervisor.py``)."""
+    with open(log, "wb") as out:
+        return subprocess.Popen(
+            [sys.executable, str(SUPERVISOR), *cmd], cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=out,
+            stderr=subprocess.STDOUT, start_new_session=True,
+        )  # fmt: skip
+
+
+def fake_cmd(port: int, *, seconds: int = 60) -> list[str]:
+    """The self-tests' stand-in for the relay: a sleeper that names :data:`FAKE_MARK` and the port."""
+    return [sys.executable, "-c", f"import time; time.sleep({seconds})", FAKE_MARK, "--port", str(port)]
+
+
 @dataclass
 class RelayProcess:
     dir: Path
@@ -140,6 +189,14 @@ class RelayProcess:
     proc: subprocess.Popen[bytes]
     log: Path
     stopped: bool = field(default=False)
+    started: float = field(default_factory=time.time)  # wall clock just after the spawn (the group's birth bound)
+
+    def __post_init__(self) -> None:
+        _STARTED.append(self)
+
+    @property
+    def pgid(self) -> int:
+        return self.proc.pid  # start_new_session: the supervisor leads its own group
 
     @property
     def origin(self) -> str:
@@ -185,43 +242,100 @@ class RelayProcess:
         return r.stdout
 
     def stop(self) -> None:
-        """Signal only our own process group; reap it; check it is gone and the port is closed."""
+        """Signal only our own process group; reap it; then close the supervisor's pipe."""
         if self.stopped:
             return
         self.stopped = True
-        pgid = self.proc.pid  # start_new_session: the child leads its own group
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(pgid, signal.SIGTERM)
+        pgid = self.pgid
+        _killpg(pgid, signal.SIGTERM)
         end = time.monotonic() + STOP_GRACE_S
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(FORCE_AFTER_S)
         if group_alive(pgid):  # uvicorn waits for open connections; SIGINT while shutting down is its forced exit
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(pgid, signal.SIGINT)
+            _killpg(pgid, signal.SIGINT)
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(max(0.1, end - time.monotonic()))
         while group_alive(pgid) and time.monotonic() < end:
             time.sleep(0.05)
         if group_alive(pgid):
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(pgid, signal.SIGKILL)
-        self.proc.wait(10)
+            _killpg(pgid, signal.SIGKILL)
+        self._close_pipe()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            self.proc.wait(10)
         end = time.monotonic() + 5.0
         while group_alive(pgid) and time.monotonic() < end:
             time.sleep(0.05)
+
+    def _close_pipe(self) -> None:
+        if self.proc.stdin is not None:
+            with contextlib.suppress(OSError):
+                self.proc.stdin.close()
 
     def leaked(self) -> list[str]:
         """What a stopped relay left behind (empty when clean)."""
         out = []
         if self.proc.poll() is None:
             out.append(f"child {self.proc.pid} alive")
-        if group_alive(self.proc.pid):
-            out.append(f"process group {self.proc.pid} alive")
+        if group_alive(self.pgid):
+            out.append(f"process group {self.pgid} alive")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1.0)
             if s.connect_ex((HOST, self.port)) == 0:
                 out.append(f"port {self.port} still accepting")
         return out
+
+    def owns_group(self) -> bool:
+        """The group ``pgid`` is still the one this harness started: it has members, and every member was born after
+        our spawn (whole-second clock, 2 s slack) and is our relay or supervisor for OUR port. Anything else (a
+        reused pgid) is never signalled."""
+        members = group_members(self.pgid)
+        tag = f"--port {self.port}"
+        return bool(members) and all(
+            started >= int(self.started) - 2 and tag in cmd
+            and ("orch-relay" in cmd or str(SUPERVISOR) in cmd or FAKE_MARK in cmd)
+            for _, started, cmd in members
+        )  # fmt: skip
+
+    def kill_leaked(self) -> list[str]:
+        """Reap a leak: ``SIGKILL`` the group if it is verifiably ours, then close the pipe (the supervisor's own
+        backstop). Returns what had leaked."""
+        leaks = self.leaked()
+        if group_alive(self.pgid) and self.owns_group():
+            _killpg(self.pgid, signal.SIGKILL)
+        self._close_pipe()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            self.proc.wait(5)
+        end = time.monotonic() + 5.0
+        while group_alive(self.pgid) and self.owns_group() and time.monotonic() < end:
+            time.sleep(0.05)
+        return leaks
+
+    def finish(self) -> list[str]:
+        """Teardown: stop, then reap whatever leaked (SIGKILL of our own group); the leaks are returned so the caller
+        FAILS on them. A group that is gone is forgotten; one still alive stays registered for :func:`reap_all`."""
+        self.stop()
+        leaks = self.leaked()
+        if leaks:
+            self.kill_leaked()
+        if not group_alive(self.pgid) and self in _STARTED:
+            _STARTED.remove(self)
+        return leaks
+
+
+_STARTED: list[RelayProcess] = []  # every group this process started; reaped at exit and at session end
+
+
+def reap_all() -> list[str]:
+    """Stop and reap every relay this process started that is still around; returns the leaks found."""
+    leaks: list[str] = []
+    while _STARTED:
+        rp = _STARTED.pop()
+        rp.stop()
+        leaks += rp.kill_leaked()
+    return leaks
+
+
+atexit.register(reap_all)
 
 
 def start_relay(d: Path, data: Path, cap: int | None, *, attempts: int = START_ATTEMPTS) -> RelayProcess:
@@ -231,12 +345,8 @@ def start_relay(d: Path, data: Path, cap: int | None, *, attempts: int = START_A
         port = free_port()
         instance = secrets.token_hex(16)
         log = data.parent / f"{data.name}-relay-{i}.log"
-        with open(log, "wb") as out:
-            proc = subprocess.Popen(
-                ["uv", "run", "orch-relay", "serve", "--host", HOST, "--port", str(port)], cwd=d,
-                env=relay_env(data, port, instance, cap), stdin=subprocess.DEVNULL, stdout=out,
-                stderr=subprocess.STDOUT, start_new_session=True,
-            )  # fmt: skip
+        proc = spawn(["uv", "run", "orch-relay", "serve", "--host", HOST, "--port", str(port)], cwd=d,
+                     env=relay_env(data, port, instance, cap), log=log)  # fmt: skip
         rp = RelayProcess(d, data, port, instance, cap, proc, log)
         try:
             healthy = rp.wait_healthy()
@@ -246,5 +356,6 @@ def start_relay(d: Path, data: Path, cap: int | None, *, attempts: int = START_A
         if healthy:
             return rp
         rp.stop()
+        rp.kill_leaked()
         tails.append(rp.log_tail(1500))
     raise RuntimeError("the relay did not start: " + "\n---\n".join(tails))

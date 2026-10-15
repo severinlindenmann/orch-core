@@ -19,8 +19,9 @@ from orch.relay.session import Fenced, LoginHeldOff
 
 from ..bridgekit import ulid
 from ..helpers import OPEN_CONNS, directory, make_card
-from .harness import get_json
-from .kit import DEVICE, HostSide, Members, Owner, RefDevice, answer_of, now_ms, publish_card, session, wait_for
+from .harness import get_json, relay_dir
+from .kit import DEVICE, PERSON, HostSide, Members, Owner, RefDevice, answer_of, now_ms, publish_card, session, wait_for
+from .orphan import orphan_test
 
 pytestmark = pytest.mark.relay_t2
 
@@ -56,10 +57,11 @@ def test_relay_runs_with_our_origin_instance_and_publication_cap(relay):
 
 def test_owner_account_card_and_verified_reads(relay):
     owner = linked(relay)
-    # a used invite is single use: the same account cannot be created again
-    status, obj = owner.http.call("POST", "/v2/accounts", {"invite": "x", "pk_pub": "x", "device_cert": {},
-                                                           "challenge": "x", "sig": "x"})  # fmt: skip
-    assert status >= 400
+    # the identical request again is answered as before (a lost answer can be retried) ...
+    assert owner.http.call("POST", "/v2/accounts", owner.account_body) == (200, {"person_id": PERSON})
+    # ... but the used invite with a new, valid proof is refused: single use
+    status, obj = owner.http.call("POST", "/v2/accounts", owner.account_request(owner.invite_code))
+    assert (status, obj["error"]) == (403, "not_eligible"), (status, obj)
     sess = session(relay)
     d = directory(sess)
     # the relay holds a card now: a session-less PUT is 401 and put_card(first=True) says so with None
@@ -251,3 +253,11 @@ def test_a_takeover_fences_the_running_loop(bridged, relay):
 
 def _ulid() -> str:
     return ulid(now_ms())
+
+
+def test_the_relay_ends_when_the_process_that_started_it_dies(tmp_path):
+    """A hard kill of pytest (here: a child python running the harness, ended by a 5 s alarm with no cleanup at all)
+    must not leave the relay running: the supervisor sees its pipe close and ends the group."""
+    d = relay_dir()
+    (tmp_path / "data").mkdir()
+    orphan_test(["relay", str(tmp_path / "data"), str(d), "5"], tmp_path)

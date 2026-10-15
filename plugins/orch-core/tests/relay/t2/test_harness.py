@@ -7,20 +7,22 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
-import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
 from . import harness
 from .harness import RelayProcess, relay_env
+from .orphan import orphan_test
 
 
-def _sleeper() -> subprocess.Popen[bytes]:
-    return subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)"], stdin=subprocess.DEVNULL, start_new_session=True
-    )
+def _sleeper(tmp_path: Path, port: int | None = None) -> tuple[subprocess.Popen[bytes], int]:
+    port = port or harness.free_port()
+    p = harness.spawn(harness.fake_cmd(port), cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, log=tmp_path / "fake.log")
+    return p, port
 
 
 def test_the_child_environment_is_an_allow_list(monkeypatch, tmp_path):
@@ -53,7 +55,7 @@ def test_a_port_answering_another_instance_is_never_adopted(tmp_path):
     srv = ThreadingHTTPServer((harness.HOST, 0), H)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
-    proc = _sleeper()
+    proc, _ = _sleeper(tmp_path, srv.server_address[1])
     rp = RelayProcess(tmp_path, tmp_path, srv.server_address[1], "ours", None, proc, tmp_path / "log")
     try:
         assert rp.wait_healthy(5) is False
@@ -64,8 +66,8 @@ def test_a_port_answering_another_instance_is_never_adopted(tmp_path):
 
 
 def test_teardown_reaps_our_process_group_and_reports_leaks(tmp_path):
-    proc = _sleeper()
-    rp = RelayProcess(tmp_path, tmp_path, harness.free_port(), "ours", None, proc, tmp_path / "log")
+    proc, port = _sleeper(tmp_path)
+    rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
     assert rp.leaked()  # alive: a leak if it were left like this
     assert rp.wait_healthy(0.5) is False  # nothing answers: never "started"
     rp.stop()
@@ -77,6 +79,64 @@ def test_teardown_reaps_our_process_group_and_reports_leaks(tmp_path):
         s.listen(1)
         assert rp.leaked() == [f"port {rp.port} still accepting"]
     assert rp.leaked() == []
+
+
+def test_a_leak_is_reaped_and_reported(tmp_path):
+    proc, port = _sleeper(tmp_path)
+    rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
+    rp.stopped = True  # as if teardown never stopped it
+    assert rp.owns_group()
+    leaks = rp.finish()
+    assert f"process group {rp.pgid} alive" in leaks  # reported (the fixture fails on it) ...
+    assert not harness.group_alive(rp.pgid) and rp.leaked() == []  # ... and reaped
+    assert rp not in harness._STARTED
+
+
+class _SameGroup:
+    """A handle on a group someone else leads (no pipe of ours, never waited on): what a reused pgid looks like."""
+
+    stdin = None
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def poll(self) -> None:
+        return None
+
+    def wait(self, timeout: float) -> int:
+        raise subprocess.TimeoutExpired("x", timeout)
+
+
+def test_a_group_that_is_not_verifiably_ours_is_never_signalled(tmp_path):
+    proc, port = _sleeper(tmp_path)
+    rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
+    other_port = port + 1 if port < 65535 else port - 1
+    other = RelayProcess(tmp_path, tmp_path, other_port, "x", None, _SameGroup(rp.pgid), tmp_path / "l")  # type: ignore[arg-type]
+    try:
+        other.stopped = True
+        assert not other.owns_group()  # another port's tag
+        other.kill_leaked()
+        assert harness.group_alive(rp.pgid)  # untouched
+        other.port, other.started = port, time.time() + 3600  # members born before the spawn are not ours either
+        assert not other.owns_group()
+        other.kill_leaked()
+        assert harness.group_alive(rp.pgid)
+    finally:
+        harness._STARTED[:] = [x for x in harness._STARTED if x is not other]
+        rp.finish()
+    assert not harness.group_alive(rp.pgid)
+
+
+def test_reap_all_ends_every_group_this_process_started(tmp_path):
+    procs = [_sleeper(tmp_path) for _ in range(2)]
+    rps = [RelayProcess(tmp_path, tmp_path, port, "ours", None, p, tmp_path / "log") for p, port in procs]
+    leaks = harness.reap_all()
+    assert leaks == []  # stopped cleanly: nothing leaked
+    assert not any(harness.group_alive(rp.pgid) for rp in rps) and harness._STARTED == []
+
+
+def test_a_fake_group_ends_when_its_parent_dies_without_cleanup(tmp_path):
+    orphan_test(["fake", str(tmp_path), "2"], tmp_path)
 
 
 def _outcome(fn) -> BaseException | None:

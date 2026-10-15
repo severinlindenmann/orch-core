@@ -98,14 +98,19 @@ class Owner:
     def create_account(self) -> str:
         """POST /v2/accounts with the invite, the person key and the primary's PK-signed certificate, proved by the
         primary's device key over ``auth_bytes(origin, challenge, "device", primary)``."""
-        ch = self.http.challenge()
-        sig = crypto.sign(corpus.priv("primary.sig"), wire.auth_bytes(self.relay.origin, ch, "device", PRIMARY))
-        obj = self.http.ok("POST", "/v2/accounts", {
-            "invite": self.invite(), "pk_pub": crypto.b64u(corpus.pub("person_alice.sig")),
-            "device_cert": CERTS["primary"], "challenge": crypto.b64u(ch), "sig": crypto.b64u(sig),
-        })  # fmt: skip
+        self.invite_code = self.invite()
+        self.account_body = self.account_request(self.invite_code)
+        obj = self.http.ok("POST", "/v2/accounts", self.account_body)
         assert obj == {"person_id": PERSON}, obj
         return obj["person_id"]
+
+    def account_request(self, invite: str) -> dict[str, Any]:
+        ch = self.http.challenge()
+        sig = crypto.sign(corpus.priv("primary.sig"), wire.auth_bytes(self.relay.origin, ch, "device", PRIMARY))
+        return {
+            "invite": invite, "pk_pub": crypto.b64u(corpus.pub("person_alice.sig")), "device_cert": CERTS["primary"],
+            "challenge": crypto.b64u(ch), "sig": crypto.b64u(sig),
+        }  # fmt: skip
 
     def register(self, name: str) -> None:
         cert = CERTS[name]

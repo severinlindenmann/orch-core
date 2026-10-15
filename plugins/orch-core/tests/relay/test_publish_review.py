@@ -902,3 +902,54 @@ def test_a_finished_restores_record_resends_it_after_a_relay_rollback(kit, tmp_p
     k.drain(20)
     assert [h for _, h in k.sim.accepted].count(entry.hash) == 2  # re-sent from the record, accepted again
     assert k.current()["hash"] == canon.checkpoint_hash(k.sim.held["o"])
+
+
+def test_a_renewal_session_error_is_raised_by_publish_first_itself(kit, monkeypatch):
+    """The lease stays valid (the stalled page costs 3 s of relay time): only the handed-over error stops it."""
+    from orch.relay.session import RelayMisbehaving
+
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+    _count_holds(k, monkeypatch, [lambda: json_reply(200, {"gen": 999, "lease_s": 40, "cursor": 0})])
+    _slow_first_page(k, monkeypatch, steps=3, each_s=1, sleep=0.2)
+    with pytest.raises(RelayMisbehaving):
+        k.publisher.publish_first(k.session, None)
+
+
+def test_a_handed_over_error_wakes_a_waiting_publish_first(kit, monkeypatch):
+    from orch.relay.session import RelayMisbehaving
+
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 30.0)
+    p = k.make_publisher(conn=None)
+    k.sim.fault = lambda s: _err(503, "overloaded", retry_after=4) if _final(s) else None
+    out = {}
+
+    def run():
+        try:
+            p.publish_first(k.session, None)
+        except Exception as e:  # noqa: BLE001
+            out["e"] = e
+
+    t = threading.Thread(target=run, daemon=True)
+    t0 = time.monotonic()
+    t.start()
+    time.sleep(0.5)
+    p._renew_error = RelayMisbehaving("renewal")  # noqa: SLF001 - what the renewal thread hands over
+    p._alert.set()  # noqa: SLF001
+    t.join(10)
+    assert isinstance(out.get("e"), RelayMisbehaving) and time.monotonic() - t0 < 2.5
+
+
+def test_the_sync_renewal_restarts_its_period_after_a_renewal(kit, monkeypatch):
+    k = kit
+    p = k.make_publisher(conn=None)
+    n = _count_holds(k, monkeypatch)
+    p._sync_renew, p._last_renew = True, k.clock.mono()  # noqa: SLF001
+    k.clock.advance(publish.RENEW_EVERY_S)
+    p._tick()  # noqa: SLF001
+    p._tick()  # noqa: SLF001 - the same instant: no second renewal
+    assert n["c"] == 1
+    k.clock.advance(publish.RENEW_EVERY_S)
+    p._tick()  # noqa: SLF001
+    assert n["c"] == 2

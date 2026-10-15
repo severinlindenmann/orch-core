@@ -4,11 +4,15 @@
     orch keys custody convenience --workspace W        # one passphrase prompt; needs the workspace's flag on
     orch keys custody passphrase --workspace W --in-place
     orch keys forget --workspace W                     # removes local convenience custody (not revocation)
+    orch keys primary init                             # the person-level primary key pair (passphrase custody only)
+    orch keys primary status                           # its public facts: device id, public keys, purposes
+    orch keys reader declare --workspace W             # H12d-2: declare this machine's device a reader (one prompt)
+    orch keys reader declare --enrol --workspace-id ID --cert PATH --out PATH   # an invitee's declaration
 
-``ORCH_GRANT`` refuses every subcommand but ``status``, and the changing subcommands also need the person's terminal
-(``/dev/tty``): they prevent accidental use through supported agent workflows, they do not authenticate a person
-against a same-UID process. Errors use the CLI's catalog envelope (``{ok:false, error:{code, message, hint?, fix?,
-retryable}}``), with the host's exit codes for host codes.
+``ORCH_GRANT`` refuses every subcommand but the two ``status`` ones, and the changing subcommands also need the
+person's terminal (``/dev/tty``): they prevent accidental use through supported agent workflows, they do not
+authenticate a person against a same-UID process. Errors use the CLI's catalog envelope (``{ok:false,
+error:{code, message, hint?, fix?, retryable}}``), with the host's exit codes for host codes.
 """
 
 from __future__ import annotations
@@ -46,10 +50,23 @@ def _parser() -> argparse.ArgumentParser:
     cus.add_argument("--rotate", action="store_true")
     cus.add_argument("--state", type=Path)
     cus.add_argument("--json", action="store_true")
+    rd = sub.add_parser("reader")
+    rd.add_argument("action", choices=("declare",))
+    rd.add_argument("--workspace")
+    rd.add_argument("--enrol", action="store_true")
+    rd.add_argument("--workspace-id")
+    rd.add_argument("--cert", type=Path)
+    rd.add_argument("--out", type=Path)
+    rd.add_argument("--state", type=Path)
+    rd.add_argument("--json", action="store_true")
     fg = sub.add_parser("forget")
     fg.add_argument("--workspace", required=True)
     fg.add_argument("--state", type=Path)
     fg.add_argument("--json", action="store_true")
+    pr = sub.add_parser("primary")
+    pr.add_argument("action", choices=("init", "status"))
+    pr.add_argument("--state", type=Path)
+    pr.add_argument("--json", action="store_true")
     return p
 
 
@@ -100,6 +117,10 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
     from orch.ops.runtime import state_dir
 
     state = args.state.resolve() if args.state is not None else state_dir(env)
+    if args.cmd == "primary":
+        return _primary(args, state, env, err)
+    if args.cmd == "reader":
+        return _reader_declare(args, state, env)
     if args.cmd == "forget":
         _need_terminal(env)
         entry = _one(state, args.workspace)
@@ -133,6 +154,85 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
     err.write(DOWNGRADE_WARNING + "\n")
     sel = select.downgrade_in_place(state, wid)
     return {"workspace_id": wid, "custody": sel["custody"], "device": sel["device"], "gen": sel.gen}
+
+
+PRIMARY_NEXT = (
+    "the primary's certificate and its relay registration are not made yet "
+    "(orch-v2-host 11A.15.10 items 10 and 11); `orch keys primary status` shows them once they exist"
+)
+
+
+def _primary(args: argparse.Namespace, state: Path, env: Mapping[str, str], err: TextIO) -> Any:
+    """``orch keys primary`` (orch-v2-host 11A.15.9): ``init`` makes the person-level primary key pair in passphrase
+    custody (never convenience); ``status`` shows public facts only and never prompts."""
+    from orch.custody import primary
+
+    if args.action == "status":
+        return primary.status(state)
+    _need_terminal(env)
+    primary.init(state)
+    err.write(PRIMARY_NEXT + "\n")
+    return primary.status(state)
+
+
+#: bytes of a device certificate file (``--cert``), refused before it is parsed
+CERT_MAX = 16 * 1024
+
+
+def _reader_declare(args: argparse.Namespace, state: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    """``orch keys reader declare`` (§0.8.6 item 9.3, H12d-2): signed with the device key after the prompt shows every
+    field; a convenience device key refuses (no review)."""
+    import re
+    import time
+
+    from orch import canon
+    from orch.custody import select
+    from orch.host.control_client import new_idem
+
+    from . import readerdecl
+
+    _need_terminal(env)
+    now_ms = int(time.time() * 1000)
+    if args.enrol:
+        wid = args.workspace_id or ""
+        if not re.fullmatch(r"[0-9a-f]{32}", wid) or args.cert is None or args.out is None:
+            raise _Fail("invalid.input", "--enrol needs --workspace-id (32 hex), --cert PATH and --out PATH", 5)
+        try:
+            with open(args.cert, "rb") as fh:
+                raw = fh.read(CERT_MAX + 1)
+            if len(raw) > CERT_MAX:
+                raise _Fail("invalid.input", f"--cert is larger than {CERT_MAX} bytes", 5)
+            cert = canon.loads_strict(raw)
+        except (OSError, canon.JcsError, ValueError) as exc:
+            raise _Fail("parse.json", f"--cert is not a device certificate ({exc})", 5) from None
+        backend, _ = select.device_backend(state, wid)
+        try:
+            decl = readerdecl.enrol(backend, wid, cert, now_ms)
+        except ValueError as exc:
+            raise _Fail("invalid.input", str(exc), 5) from None
+        fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(canon.cj_checked(decl) + b"\n")
+        return {"workspace_id": wid, "reader": decl["o"]["reader"], "out": str(args.out)}
+    entry = _one(state, args.workspace)
+    wid = entry["workspace_id"]
+    backend, _ = select.device_backend(state, wid)
+    from orch.host.client import Connection, Pin
+    from orch.hostclient import workspace_socket
+
+    path = workspace_socket(env, state, int(entry["host_uid"]), wid)
+    try:
+        conn = Connection(Pin(int(entry["host_uid"]), wid, path), client="orch keys")
+    except (OSError, ConnectionError) as exc:
+        raise _Fail("host.unavailable", f"the workspace is not served ({exc}); start the host first", 9) from None
+    try:
+        try:
+            answer = readerdecl.declare_hosted(conn, backend, wid, now_ms, new_idem())
+        except LookupError as exc:
+            raise _Fail("not_found", str(exc), 2) from None
+    finally:
+        conn.close()
+    return {"workspace_id": wid, **answer}
 
 
 def main(

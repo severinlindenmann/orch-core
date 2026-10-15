@@ -40,8 +40,9 @@ if TYPE_CHECKING:
 
 __all__ = ["CAPS", "READ_OPS", "SCHEMAS", "ReadCtx", "iso", "serve"]
 
-#: the caps the reads add to ``welcome.caps`` (§0.4); ``read_ext/2`` lists ``read_ext/1`` too
-CAPS = ["query/1", "read_ext/1", "read_ext/2", "activity/1", "settings/1", "text/1"]
+#: the caps the reads add to ``welcome.caps`` (§0.4); each ``read_ext/N`` lists every lower one too (``read_ext/3``,
+#: v1.9: the ``member.list`` device fields)
+CAPS = ["query/1", "read_ext/1", "read_ext/2", "read_ext/3", "activity/1", "settings/1", "text/1"]
 
 # --- argument schemas (§0.8, §0.8.5) ------------------------------------------------------------------------------
 
@@ -119,6 +120,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     ),
     "workspace.show": _obj({}),
     "member.list": _obj({}),
+    "reader.list": _obj({}),  # H12d-2 (§0.8.6 item 9.11): columns P and R
     "session.list": _obj({"active": {"type": "boolean"}}),
     "grant.list": _obj({"active": {"type": "boolean"}}),
     "workspace.settings": _obj({"limit": {**_INT, "minimum": 1, "maximum": 32}, "page": _PAGE}),

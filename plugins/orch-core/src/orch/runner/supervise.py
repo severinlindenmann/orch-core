@@ -207,11 +207,68 @@ class Live:
         return not self.reaped and self.proc.returncode is None
 
 
+#: ``NOTE_EXITSTATUS`` (macOS ``<sys/event.h>``): the exit event carries the wait status in ``data`` (not in ``select``)
+NOTE_EXITSTATUS = 0x04000000
+#: the kqueue watch is shared state on ``proc``; peeks come from the I/O thread and from stop and abort paths
+_EXIT_LOCK = threading.Lock()
+
+
+def watch_exit(proc: subprocess.Popen[bytes]) -> None:
+    """Where there is no ``os.waitid`` (macOS), arm a kqueue exit watch on ``proc`` for :func:`peek_exit`. Call it
+    right after the spawn: a process that already exited can no longer be watched (``ESRCH``). Idempotent.
+
+    State on ``proc``: ``_orch_exit_kq`` is the armed kqueue, or ``None`` when it was too late to arm;
+    ``_orch_exit_status`` is the wait status once the exit was seen (the event fires only once)."""
+    if hasattr(os, "waitid") or hasattr(proc, "_orch_exit_kq"):
+        return
+    kq = select.kqueue()
+    fflags = select.KQ_NOTE_EXIT | NOTE_EXITSTATUS
+    event = select.kevent(proc.pid, filter=select.KQ_FILTER_PROC, flags=select.KQ_EV_ADD, fflags=fflags)
+    try:
+        ack = kq.control([event], 1, 0)
+        late = any(ev.flags & select.KQ_EV_ERROR for ev in ack)
+    except ProcessLookupError:
+        ack, late = [], True
+    if late:
+        kq.close()
+        proc._orch_exit_kq = None  # type: ignore[attr-defined]
+        return
+    proc._orch_exit_kq = kq  # type: ignore[attr-defined]
+    if ack:  # it exited while the watch was armed
+        _seen(proc, ack[0].data)
+
+
+def _seen(proc: subprocess.Popen[bytes], status: int) -> None:
+    proc._orch_exit_status = status  # type: ignore[attr-defined]
+    proc._orch_exit_kq.close()  # type: ignore[attr-defined]
+
+
+def _peek_kqueue(proc: subprocess.Popen[bytes]) -> int | None:
+    with _EXIT_LOCK:
+        return _peek_kqueue_locked(proc)
+
+
+def _peek_kqueue_locked(proc: subprocess.Popen[bytes]) -> int | None:
+    watch_exit(proc)
+    if not hasattr(proc, "_orch_exit_status"):
+        kq = proc._orch_exit_kq  # type: ignore[attr-defined]
+        if kq is None:
+            return proc.poll()  # exited before it could be watched: reaping is the only way to its status
+        events = kq.control(None, 1, 0)
+        if not events:
+            return None
+        _seen(proc, events[0].data)
+    return os.waitstatus_to_exitcode(proc._orch_exit_status)  # type: ignore[attr-defined]
+
+
 def peek_exit(proc: subprocess.Popen[bytes]) -> int | None:
-    """The leader's exit status in ``returncode`` form, **without reaping it** (``waitid(WNOWAIT)``): until it is
-    reaped its PID, and so the run's session and group id, cannot be reused."""
+    """The leader's exit status in ``returncode`` form, **without reaping it** (``waitid(WNOWAIT)``, or on macOS,
+    which has no ``waitid``, the kqueue watch of :func:`watch_exit`): until it is reaped its PID, and so the run's
+    session and group id, cannot be reused."""
     if proc.returncode is not None:
         return proc.returncode
+    if not hasattr(os, "waitid"):
+        return _peek_kqueue(proc)
     try:
         res = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
     except ChildProcessError:
@@ -447,6 +504,8 @@ class Supervisor:
                     spec.run, pid=proc.pid, birth=first.birth if first else None, pgid=proc.pid, sid=proc.pid,
                     cgroup=str(cg) if cg is not None else None,
                 )  # fmt: skip
+                with _EXIT_LOCK:
+                    watch_exit(proc)  # armed before the spec is written: until then the trampoline only waits for it
                 try:
                     try:
                         handle = os.fdopen(pipes.pop("spec"), "wb")  # the file object owns the fd from here

@@ -90,8 +90,22 @@ def _parse(argv: Sequence[str]) -> tuple[str, dict[str, Any]]:
 class Direct:
     """One direct-mode workspace: the store (read-only, under the shared ownership lock), the pin file and the repos."""
 
-    def __init__(self, root: Path, wid: str, state: Path, env: Mapping[str, str], clock: Any = time.time) -> None:
+    def __init__(
+        self,
+        root: Path,
+        wid: str,
+        state: Path,
+        env: Mapping[str, str],
+        clock: Any = time.time,
+        *,
+        ident: tuple[int, int] | None = None,
+        config: bytes | None = None,
+    ) -> None:
         self.root, self.wid, self.state, self.env, self.clock = Path(root), wid, Path(state), env, clock
+        #: the root's identity when it was discovered: checked before the store opens below it
+        self.ident = ident
+        #: the config.json bytes discovery read: the store's open-time check uses them, never a re-read by path
+        self.config = config
         from orch.host.ownership import DirectGuard
         from orch.ops.caps import Git
 
@@ -108,12 +122,16 @@ class Direct:
 
     def store(self) -> Any:
         if self._store is None:
+            from orch.discovery import same_root
             from orch.ops.errors import OrchError
             from orch.store import Store, StoreError
 
+            if self.ident is not None and not same_root(self.root, self.ident):
+                raise WtError("not_found", f"{self.root} is no longer the workspace directory that was found")
             try:
                 self._store = Store.open(self.root, expected_workspace_id=self.wid, host=None,
-                                         host_state_dir=self.state, load="lazy", guard=self.guard)  # fmt: skip
+                                         host_state_dir=self.state, load="lazy", guard=self.guard,
+                                         config=self.config)  # fmt: skip
             except StoreError as exc:
                 raise WtError(exc.code, exc.detail or exc.code) from None
             except OrchError as exc:
@@ -429,15 +447,20 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO | None = No
             raise WtError("op.not_allowed", "agents use the host's worktree ops; this tool is for the person")
         cmd, a = _parse(argv)
         from orch.ops.caps import Files
-        from orch.ops.runtime import _config, find_workspace, state_dir
+        from orch.ops.errors import OrchError
+        from orch.ops.runtime import Workspace, state_dir
 
         files = Files.direct()
-        root = find_workspace(env, os.getcwd(), files)
-        cfg = _config(root, files) if root is not None else None
+        ws = Workspace(env, cwd=os.getcwd(), files=files)
+        cfg = ws.config  # as discovery read it, never again by path
         wid = ((cfg or {}).get("workspace") or {}).get("id")
-        if root is None or not isinstance(wid, str):
+        if ws.root is None or not isinstance(wid, str):
             raise WtError("not_found", "no orch workspace here")
-        direct = Direct(Path(root), wid, state_dir(env, files), env, now)
+        try:
+            root = ws.verify_root()  # still the directory found, before anything under it is opened
+        except OrchError as exc:
+            raise WtError(exc.code, str(exc.message), hint=exc.hint) from None
+        direct = Direct(Path(root), wid, state_dir(env, files), env, now, ident=ws.ident, config=ws.config_bytes)
         with direct.guarded():
             if cmd == "list":
                 data: Any = direct.list(a["ticket"], a["check"])

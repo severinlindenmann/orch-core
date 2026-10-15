@@ -85,7 +85,7 @@ def layout(make_repo, tmp_path):  # noqa: F811
 
 
 def test_gitdir_profile_cannot_open_a_worktree_file(layout):
-    res = _run(PROFILE, {**layout, "allowed": [layout["gitdir"]]})
+    res = _run(PROFILE, {**layout, "allowed": [layout["gitdir"], layout["worktree"] + "/.git"]})
     assert res["gitdir_config"] == "ok" and res["gitdir_config_walk"] == "ok"
     for name in ("worktree_file", "worktree_dotdot", "outside_file", "etc_hosts", "relative_plain"):
         assert res[name] == "denied", (name, res)
@@ -111,7 +111,9 @@ def test_the_profiles_are_built_from_the_pins(layout):
     from orch.gitread.pinning import pin_repo
 
     pins = pin_repo(layout["worktree"], [layout["worktree"]]).to_json()
-    assert ops.allowed_paths("gitdir", {"pins": pins}) == [layout["gitdir"], layout["gitdir"]]
+    # #486: the gitdir profile also admits exactly the working copy's ``.git`` (the working copy only as an ancestor)
+    dotgit = layout["worktree"] + "/.git"
+    assert ops.allowed_paths("gitdir", {"pins": pins}) == [layout["gitdir"], layout["gitdir"], dotgit]
     assert ops.allowed_paths("worktree", {"pins": pins}) == [layout["gitdir"], layout["gitdir"], layout["worktree"]]
 
 

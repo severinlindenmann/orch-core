@@ -16,6 +16,9 @@ import { HostRecords } from '@/app/pages/settings/host/Records'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
+import { DropError, dropError } from '@/api/drop'
+import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop'
+import { AGENT, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
@@ -24,6 +27,11 @@ import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { clickProblem } from '@/api/click'
+import { signerProblem } from '@/api/refusals'
+import type { RosterMember } from '@/api/settings'
+import { ClickProblemBox } from '@/components/sign/RefusalDevices'
+import { readersOf, readersRoster, refusalSamples } from './readersFixture'
 
 export const LAYOUT_SCENARIOS = [
   'quick-normal',
@@ -56,6 +64,16 @@ export const LAYOUT_SCENARIOS = [
   'pair-cert',
   'pair-failed',
   'pair-devices',
+  // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
+  'readers-devices',
+  'convenience-refusals',
+  // Drop (proposed drop/1): Workspace → Drop with the fixture drop api.
+  'drop-unavailable',
+  'drop-list',
+  'drop-long-names',
+  'drop-upload-progress',
+  'drop-errors',
+  'drop-versions',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -194,16 +212,20 @@ const LONG_LABEL = `Severin’s iPhone 17 Pro Max ${LONG_WORD}`.slice(0, 80)
 const pairOffer = (state: PairOfferStatus['state'], over: Partial<PairOfferStatus> = {}): PairOfferStatus => ({
   offer_id: '7'.repeat(32), state, created_ms: Date.now() - 60_000, expires_ms: Date.now() + 240_000, scopes: ['look', 'decide'], label: LONG_LABEL, ...over,
 })
+// `member.list` as core serves it (v1.9 read_ext/3, H12d-2): every device has every field; `paired_at` and
+// `cert_expires_at` are RFC 3339 times, `reader` the counted level or null (no verified record).
 const pairDevice = (i: number, over: Partial<MemberDevice> = {}): MemberDevice => ({
-  id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`, paired_ms: Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000, relay: true,
-  cert_expires: '2027-10-12T09:00:00Z', reader: 1, ...over,
+  id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`,
+  paired_at: new Date(Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z'), relay: true,
+  cert_expires_at: '2027-10-12T09:00:00Z', reader: 1, ...over,
 })
+export const MAC_DEVICE: MemberDevice = { id: 'd_' + 'f'.repeat(32), auth: 'passphrase', scopes: ['look', 'decide', 'operate', 'type'], valid: true, label: null, paired_at: null, relay: false, cert_expires_at: null, reader: 1 }
 const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
   const member = (devices: MemberDevice[]): PairMember[] => [
-    // The Mac's own device has no pairing fields (no `relay`): it is not listed as a paired device.
-    { person: 'p_' + 'a'.repeat(32), name: 'Severin', role: 'owner', devices: [{ id: 'd_mac', auth: null, scopes: ['look', 'decide', 'operate'], valid: true }, ...devices] },
+    // The Mac's own device was not paired through the relay (`relay: false`): it is not listed as a paired device.
+    { person: 'p_' + 'a'.repeat(32), name: 'Severin', role: 'owner', devices: [MAC_DEVICE, ...devices] },
   ]
-  const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
+  const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
   switch (scenario) {
     case 'pair-unavailable':
       return { served: false }
@@ -220,11 +242,93 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
       // A failed offer is not live: the scenario follows it as the page would right after the failure.
       return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: '7'.repeat(32) }, members }
     case 'pair-devices':
-      return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
+      return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
     default:
       return { members }
   }
 }
+/** The roster a scenario reads: the pair fixture's members for `pair-*`, else the readers fixture. */
+function rosterFor(scenario: LayoutScenario): RosterMember[] {
+  if (scenario.startsWith('pair-')) return ({ ...pairOptions(scenario), ...pairOverride }.members ?? []) as RosterMember[]
+  return readersRoster()
+}
+const DAY = 86_400_000
+const T0 = Date.parse('2026-10-09T11:30:00Z')
+/** Every Drop error the page explains, for the `drop-errors` scenario and the tests. */
+export const DROP_SAMPLE_ERRORS: DropError[] = [
+  new DropError(413, { code: 'drop.too_large', message: 'drop.too_large', retryable: false }, { limit_bytes: 25 * 1024 * 1024 }),
+  new DropError(429, { code: 'drop.quota', message: 'drop.quota', retryable: false }, { quota: 'drop_ws', limit: 512 * 1024 * 1024, used: 511 * 1024 * 1024 }),
+  new DropError(429, { code: 'drop.quota', message: 'drop.quota', retryable: false }, { quota: 'drop_device_documents', limit: 64, used: 64 }),
+  new DropError(429, { code: 'drop.quota', message: 'drop.quota', retryable: false }, { quota: `drop_new_${LONG_WORD}`, limit: 1, used: 1 }),
+  new DropError(429, { code: 'drop.version_cap', message: 'drop.version_cap', retryable: false }),
+  new DropError(409, { code: 'drop.version_conflict', message: 'drop.version_conflict', retryable: false }),
+  new DropError(410, { code: 'drop.expired', message: 'drop.expired', retryable: false }),
+  new DropError(410, { code: 'drop.pruned', message: 'drop.pruned', retryable: false }),
+  new DropError(503, { code: 'drop.unavailable', message: 'drop.unavailable', retryable: false }),
+  new DropError(403, { code: 'drop.not_visible', message: 'drop.not_visible', retryable: false }),
+  new DropError(503, { code: 'drop.overloaded', message: 'drop.overloaded', retryable: true, retry_after_ms: 4200 }),
+]
+const dropOptions = (scenario: LayoutScenario): DropFixtureOptions => {
+  const doc = (over: Parameters<typeof dropItem>[0] = {}) => dropItem({ kind: 'document', versions: over?.version ?? 1, expires_ms: null, ...over })
+  const mixed = () => [
+    dropItem({ name: 'quarterly-report.pdf' }),
+    dropItem({ name: 'build-log.txt', mime: 'text/plain', author: AGENT }),
+    dropItem({ name: 'scan-from-phone.jpg', mime: 'image/jpeg', claimed: false }),
+    doc({ object_id: 'demo-doc-notes', name: 'meeting-notes.md', mime: 'text/markdown', version: 37, versions: 37 }),
+    dropItem({ name: 'old-export.zip', mime: 'application/zip', state: 'pruned' }),
+    dropItem({ name: 'expired-photo.heic', mime: 'image/heic', state: 'expired', expires_ms: T0 - DAY, tombstone_until_ms: T0 + 29 * DAY }),
+    dropItem({ name: 'deleted-contract.pdf', state: 'retired', tombstone_until_ms: T0 + 30 * DAY }),
+    ...Array.from({ length: 4 }, (_, i) => dropItem({ name: `invoice-${i + 1}.pdf` })),
+  ]
+  const sent = () => [dropItem({ name: 'handover.pdf', author: ME }), dropItem({ name: 'diagram.svg', mime: 'image/svg+xml', author: ME })]
+  switch (scenario) {
+    case 'drop-unavailable':
+      return { served: false }
+    case 'drop-list':
+      return { received: mixed(), sent: sent(), pageSize: 8 }
+    case 'drop-long-names':
+      return {
+        received: [
+          dropItem({ name: `${LONG_WORD}.pdf`, mime: `application/vnd.${LONG_WORD}` }),
+          dropItem({ name: '<img src=x onerror=alert(1)>.html', mime: 'text/html' }),
+          dropItem({ name: 'invoice\u202Efdp.exe', mime: 'application/octet-stream', author: AGENT }),
+          dropItem({ name: 'line one\nline two\u0000.txt', mime: 'text/plain' }),
+          dropItem({ name: null, name_hidden: true }),
+          dropItem({ name: `${'a very long file name with many words '.repeat(5)}.docx`, author: { ...PHONE, person_name: `Severin ${LONG_WORD}`, device: `d_${LONG_WORD.toLowerCase()}` } }),
+          dropItem({ name: `${LONG_URL}`, claimed: false }),
+        ],
+      }
+    case 'drop-upload-progress':
+      return { received: mixed().slice(0, 3), stallAfterChunks: 2 }
+    case 'drop-errors':
+      return { received: mixed().slice(0, 4), readError: { '*': DROP_SAMPLE_ERRORS[1] }, sendError: DROP_SAMPLE_ERRORS[1] }
+    case 'drop-versions':
+      return {
+        received: [doc({ object_id: 'demo-doc-full', name: 'shared-plan.md', mime: 'text/markdown', version: 1024, versions: 1024 }), doc({ object_id: 'demo-doc-notes', name: 'meeting-notes.md', version: 37, versions: 37 })],
+        versions: {
+          'demo-doc-full': Array.from({ length: 1024 }, (_, i) => dropVersion(1024 - i, { state: i < 8 ? 'live' : 'pruned', author: i % 5 === 0 ? AGENT : PHONE })),
+          'demo-doc-notes': Array.from({ length: 37 }, (_, i) => dropVersion(37 - i)),
+        },
+        pageSize: 12,
+      }
+    default:
+      return {}
+  }
+}
+const dropStart = (scenario: LayoutScenario): DropPreviewStart | undefined => {
+  if (scenario === 'drop-versions') return { openDoc: 'demo-doc-full' }
+  if (scenario === 'drop-upload-progress') return { upload: new File([new Uint8Array(3 * 1024 * 1024)], `quarterly-figures-${LONG_WORD}.xlsx`, { type: 'application/vnd.ms-excel' }) }
+  return undefined
+}
+let undoDrop: (() => void) | null = null
+let dropOverride: DropFixtureOptions | null = null
+let dropFixture: DropFixture | null = null
+/** Tests: options merged into the next drop scenario, and the fixture it installed. */
+export const dropPreviewForTests = {
+  set: (o: DropFixtureOptions | null) => void (dropOverride = o),
+  fixture: () => dropFixture,
+}
+
 let undoPair: (() => void) | null = null
 let pairOverride: PairFixtureOptions | null = null
 let pairFixture: PairFixture | null = null
@@ -253,6 +357,10 @@ export function resetLayoutPreview() {
   undoPair = null
   pairOverride = null
   pairFixture = null
+  undoDrop?.()
+  undoDrop = null
+  dropOverride = null
+  dropFixture = null
   installed = false
   current = 'quick-normal'
   serial = 0
@@ -322,6 +430,9 @@ function install() {
     settings_at: null,
     policy_at: null,
   }))
+  // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
+  set('getRoster', async () => rosterFor(current))
+  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' ? 1 : 0))
   set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
@@ -338,8 +449,13 @@ export function LayoutPreview({ name }: { name: string }) {
       pairFixture = createPairFixture({ ...pairOptions(current), ...pairOverride })
       undoPair = installPairFixture(pairFixture)
     }
+    if (current.startsWith('drop-')) {
+      undoDrop?.()
+      dropFixture = createDropFixture({ ...dropOptions(current), ...dropOverride })
+      undoDrop = installDropFixture(dropFixture)
+    }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers']) qc.removeQueries({ queryKey: [key] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
@@ -351,7 +467,37 @@ export function LayoutPreview({ name }: { name: string }) {
       <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}
         grantStep={scenario === 'agent-outcomes' ? { kind: 'unknown', grant: AGENT_GRANT } : undefined} />
     )
-  if (scenario.startsWith('pair-'))
+  if (scenario.startsWith('drop-'))
+    return (
+      <div className="min-w-0 space-y-6">
+        <DropView workspace={workspace} preview={dropStart(scenario)} />
+        {scenario === 'drop-errors' && (
+          <section aria-label="Every Drop error (layout preview)" data-testid="drop-error-gallery" className="max-w-4xl space-y-3">
+            <h2 className="text-base font-semibold">Every Drop error (layout preview)</h2>
+            {DROP_SAMPLE_ERRORS.map((e, i) => (
+              <DropErrorLine key={i} detail={dropError(e, { max_bytes: 25 * 1024 * 1024, version_cap: 1024 })} />
+            ))}
+          </section>
+        )}
+      </div>
+    )
+  if (scenario === 'convenience-refusals')
+    return (
+      <section aria-label="Every click-to-sign refusal (layout preview)" data-testid="refusal-gallery" className="max-w-4xl space-y-3">
+        <h2 className="text-base font-semibold">Every click-to-sign refusal (layout preview)</h2>
+        {refusalSamples().map((sample) => (
+          <div key={sample.title} data-testid="refusal-sample" className="space-y-1">
+            <p className="font-mono text-[12px] text-text-faint">{sample.title}</p>
+            <ClickProblemBox problem={clickProblem(sample.error)} ws={workspace.id} />
+          </div>
+        ))}
+        <div data-testid="refusal-sample" className="space-y-1">
+          <p className="font-mono text-[12px] text-text-faint">signer status · readers_old</p>
+          <p data-testid="signer-readers-old" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-text-muted">{signerProblem('readers_old')}</p>
+        </div>
+      </section>
+    )
+  if (scenario.startsWith('pair-') || scenario === 'readers-devices')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
         <HostDevices workspace={workspace} />

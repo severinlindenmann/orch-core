@@ -39,7 +39,7 @@ import {
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickAction, ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
-import type { HostGrant, HostSettings, RosterMember } from './settings'
+import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
@@ -136,6 +136,8 @@ export function createApi(transport: Transport) {
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
+    /** H12d-2: every device's reader level and the workspace's `required_reader` (real host only). */
+    getReaders: (ws: string) => call<HostReaders>('GET', `/api/w/${ws}/readers`),
     /** `active: false` adds the grants that ended. An owner is given every entry, anyone else their own. */
     listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
     /** Quick tasks of a real host (M6): `available: false` without `quick/1`. The limits are the browser's own setting. */

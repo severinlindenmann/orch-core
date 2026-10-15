@@ -184,22 +184,32 @@ class Session:
         deadline_s: float = SMALL_DEADLINE_S,
         keys: frozenset[str] | set[str] | None = None,
         fenced_stops: bool = True,
+        raw: bytes | None = None,
+        transport: Transport | None = None,
     ) -> dict[str, Any]:
         """One relay call. ``body`` is built into ``cj`` bytes once; a 401 ``unauthenticated``/``expired`` re-logs in
         once and resends the identical bytes. 2xx bodies must be an object with exactly ``keys``; anything else raises
-        :class:`RelayRefused` (or :class:`Fenced` for 409 ``fenced``)."""
+        :class:`RelayRefused` (or :class:`Fenced` for 409 ``fenced``).
+
+        R2: ``raw`` sends those exact bytes as ``application/octet-stream`` (an ORB2 chunk; at most ``request_cap``),
+        instead of a JSON ``body``. ``transport`` is the calling thread's own connection (11A.7: one ``RelayConn``
+        per thread) while the login, the holder generation and the preflight stay this Session's, shared by the
+        workspace's relay threads (round 8, R7-4)."""
+        if raw is not None and (body is not None or type(raw) is not bytes or len(raw) > request_cap):
+            raise wire.WireError("too_large" if type(raw) is bytes else "malformed", "raw request body")
         if holder and self._fenced:
             raise Fenced("fenced: writes stopped")
         if not self._checked or self._refused is not None:
             # No request of any kind leaves before the local checks pass (round 6, orch-52 #1), and a refusal sticks
             # even after an earlier pass (round 7, R6-1): preflight() re-raises it; only operator_takeover clears it.
             self.preflight()
-        data = None if body is None else wire.dumps_body(body, cap=request_cap)
+        data = raw if raw is not None else None if body is None else wire.dumps_body(body, cap=request_cap)
+        conn = self._t if transport is None else transport
         resent = False
         while True:
             headers: dict[str, str] = {}
             if data is not None:
-                headers["Content-Type"] = "application/json"
+                headers["Content-Type"] = "application/octet-stream" if raw is not None else "application/json"
             token = None
             if auth:
                 token = self._ensure_login()
@@ -208,7 +218,7 @@ class Session:
                 if self._gen is None:
                     raise NotHolder("no holder generation")
                 headers["Orch-Holder"] = str(self._gen)
-            r = self._t.request(method, path, route=route, headers=headers, body=data, deadline_s=deadline_s, cap=cap)
+            r = conn.request(method, path, route=route, headers=headers, body=data, deadline_s=deadline_s, cap=cap)
             if 200 <= r.status < 300:
                 try:
                     obj = wire.loads_body(r.body, cap=cap)

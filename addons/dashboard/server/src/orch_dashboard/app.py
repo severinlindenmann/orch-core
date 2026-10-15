@@ -24,7 +24,7 @@ class LaunchCode(BaseModel):
 
 # The browser app's own addresses (permanent URLs, G2): served index.html so a reload or pasted link opens the page.
 SPA_PATH = re.compile(
-    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick)|/settings(?:/(?:general|members|gates|grants|records))?"
+    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick)|/settings(?:/(?:general|members|gates|grants|records|devices))?"
     r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
     r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
 )
@@ -45,7 +45,10 @@ def create_app(port: int, gateway=None, auth=None, static=None):
         await live.close()
         gateway.close()
 
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    # FastAPI >= 0.140 ships OpenTelemetry on by default: off here, whatever the environment says (no request paths or
+    # exception text may ever leave this local server).
+    telemetry = {"tracing": False, "metrics": False, "logs": False, "operation_spans": False, "auto_configure": False}
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan, telemetry=telemetry)
     app.state.auth = auth
     app.state.live = live
     app.state.term_tickets = tickets

@@ -180,9 +180,21 @@ def test_the_members_read_has_devices_and_no_last_seen(worlds, team):
         set(m) == {"person", "name", "role", "devices", "name_hidden"} for m in got
     )  # no last_seen, nothing invented
     device = got[1]["devices"][0]
-    assert (
-        set(device) == {"id", "auth", "scopes", "valid"} and device["valid"] is True and "operate" in device["scopes"]
-    )
+    assert set(device) == {
+        "id",
+        "auth",
+        "scopes",
+        "valid",
+        # v1.9 read_ext/3 and H12d-2: the device fields the host sends (none invented)
+        "label",
+        "label_hidden",
+        "paired_at",
+        "relay",
+        "cert_expires_at",
+        "reader",
+    }
+    assert device["valid"] is True and "operate" in device["scopes"]
+    assert device["reader"] is None and device["label"] is None and device["relay"] is False
 
 
 def test_an_owner_sees_every_grant_and_anyone_else_their_own(worlds, team):
@@ -194,6 +206,26 @@ def test_an_owner_sees_every_grant_and_anyone_else_their_own(worlds, team):
     assert seen(tom) == [grants["tom"]]
     mara = worlds(people["mara"].ref)
     assert seen(mara) == [grants["mara"]]  # a maintainer is not an owner
+
+
+def test_a_grant_carries_its_label_from_grant_list(worlds, team):
+    """H11c-2: `grant.list` items name the grant.issued label (`runner` marks the runner grant)."""
+    env, people, grants = team
+    owner = worlds(env.owner.ref)
+    rows = {g["id"]: g for g in owner.get(f"/api/w/{owner.stub.ws}/grants").json()}
+    assert rows[grants["tom"]]["label"] == "tests"
+
+
+@pytest.mark.parametrize(
+    ("label", "shown"),
+    [("runner", "runner"), (None, None), ("Not A Label", None), ("x" * 33, None), (7, None), ("\u202erunner", None)],
+)
+def test_a_grant_label_is_shown_only_as_the_schema_allows(label, shown):
+    row = {"id": "gr_" + "0" * 26, "person": "p_a", "scope": "all", "verbs": "agent", "issued_at": "t",
+           "expires_at": "t", "revoked_at": None, "sessions": 0}  # fmt: skip
+    if label is not None:
+        row["label"] = label
+    assert adapters.settings.grants({"grants": [row]}, False)[0].label == shown
 
 
 def test_a_revoked_grant_has_who_and_when_only_from_a_read_ext_2_host(worlds, team):

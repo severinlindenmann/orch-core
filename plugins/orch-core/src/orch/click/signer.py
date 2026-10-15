@@ -51,6 +51,11 @@ REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
 
+#: the readers-condition reasons that mean "a reader is below level 1" (§0.8.6 item 9.9): ``status`` shows
+#: ``readers_old`` for the workspace until a call succeeds again (H12d-2, 9.11)
+READERS_OLD = frozenset({"relay_paired", "other_member", "phone_device"})
+
+
 class Budget:
     """Event signatures per signer instance: ``PER_MINUTE`` and ``PER_HOUR`` on monotonic time, reserved for a whole
     request before signing. Not a per-person limit (several dashboards have several budgets)."""
@@ -241,14 +246,21 @@ class ClickSigner:
         from orch.host.errors import HostError
 
         conn = self._conn(entry)
+        wid = entry["workspace_id"]
         try:
-            return conn.call(op, args, **kw)
+            res = conn.call(op, args, **kw)
+            if self.problems.get(wid) == "readers_old":
+                self.problems.pop(wid, None)
+            return res
         except HostError as exc:
             reason = None
             if exc.code == "sign.convenience_unavailable":
                 head = exc.message.split(":", 1)[0]
                 reason = head if head in REASONS else None
-            raise ClickError(exc.code, exc.message, reason=reason, retryable=exc.retryable) from None
+                if reason in READERS_OLD:  # H12d-2 (§0.8.6 item 9.11): status names it until a call succeeds
+                    self.problems[wid] = "readers_old"
+            # #517: the host's detail only for the two convenience codes, re-validated whole by ClickError
+            raise ClickError(exc.code, exc.message, reason=reason, retryable=exc.retryable, detail=exc.detail) from None
         except (OSError, ConnectionError) as exc:
             self.conns.pop(entry["workspace_id"], None)
             try:

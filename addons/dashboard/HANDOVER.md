@@ -1169,7 +1169,7 @@ Host ops (names confirmed by orch-52: cap `pair/1`, class P, human_only; none se
 | `list(ws)` | `pair.list {}` | rows `{offer_id, state, created_ms, expires_ms, scopes, label?, sas?, cert_code?, reason?}`; assumed `cert_ready`, `needs_remove` |
 | `answer(ws, id, approve)` | `pair.answer` | only after the typed SAS matches; Reject default; 3 typed mismatches refuse (assumed `mismatches` arg) |
 | `cancel(ws, id)` | `pair.cancel` | |
-| `members(ws)` | `member.list {}` under a `read_ext` bump | `devices[]` gain `label, paired_ms, relay, cert_expires, reader`; listed when `relay` is present |
+| `members(ws)` | `member.list {}` (read_ext/3, v1.9) | `devices[]` carry `label, paired_at, relay, cert_expires_at, reader` (H12d-2 shape); listed when `relay` is true |
 | `subscribe(ws, fn)` | `sub.open {topics:["pair"]}` | items `{t:"pair", offer_id, state}`, no secrets; the page refetches `list` |
 | hand-off `pair_device {offer}` | `human.prepare {op:"relay.pair_device"}` | F1 `device.added`; terminal only (not click-eligible) |
 | (none) | device removal | CLI only this round: the page shows `orch device remove <device-id> --workspace <PREFIX>` (assumed) |
@@ -1178,3 +1178,45 @@ Fixture: `src/dev/pairFixture.ts` (`createPairFixture`, `installPairFixture`, `e
 `pair-blocked-convenience`, `pair-offer`, `pair-pending`, `pair-cert`, `pair-failed`, `pair-devices`; guard entries `real-host-pair-*`
 (plus `real-host-pair-link` and `real-host-pair-remove-command`; listed in `scripts/layout-guard-pages.mjs` so `--only pair` finds them).
 Tests: `src/app/pages/settings/pairing.test.tsx`, the Devices case in `src/production/settings.test.tsx`, `src/dev/layoutGuardPages.test.ts`. QR: `uqr` 0.1.3 (pinned).
+
+## Reader levels and click-to-sign refusals (core H12d-2, 15 Oct)
+
+| Route | Host op | Notes |
+|---|---|---|
+| `GET /api/w/<uuid>/readers` | `reader.list {}` (cap `reader/1`, read) | `{available, readers:[{device, person, reader, level}], required_reader}`; `dk_hash`, `digest`, `decl` not forwarded; `available:false` without the cap; feature `readers` |
+| `GET /api/w/<uuid>/members` | `member.list {}` | devices also carry `label` (withheld → `label_hidden`), `paired_at`, `relay`, `cert_expires_at`, `reader` (null: no verified record) |
+| any error | — | `error.detail` only for `sign.convenience_unavailable` / `sign.convenience_readers`: `reason` from the closed set, `devices` device ids (`errors.py` `closed_detail`) |
+
+Not called: `reader.declare`. The click signer's channel carries `reason` at the top level and no `devices` (core's `ClickError`);
+the page reads `detail.reason`, else `reason`. `reader.decl_invalid` has its sentence (pairing, member add). The signer's status
+`problem: readers_old` is its own sentence with a link to Settings → Devices. Page: `src/api/refusals.ts`,
+`src/components/sign/RefusalDevices.tsx`, `src/app/pages/settings/host/Readers.tsx`. Devhost: `reader.list`, `required_reader`
+in `workspace.show`/`member.list`, the read_ext/3 fields (`ORCH_DEV_READERS=0` turns them off). Layout scenarios
+`readers-devices`, `convenience-refusals`; guard pages `real-host-readers-devices`, `real-host-convenience-refusals`. Tests:
+`server/tests/test_dashboard_readers.py`, `src/app/pages/settings/readers.test.tsx`, `src/production/readers.test.tsx`.
+
+## Drop (drop/1, proposal pending, fixtures only, 15 Oct)
+
+Workspace → Drop (`src/app/pages/drop/index.tsx`, route `/drop`, sidebar entry after Quick tasks when the server lists `drop`). Gate:
+feature `drop` **and** `dropApi.served()`; the real api (`src/api/drop.ts`) answers `drop.unavailable` for every call; the server lists no
+`drop` feature and has no route. Binding decisions of 15 Oct (files only in P4, host cleans names, no auto-claim, Delete through
+`drop.retire` pending D39a1, states `live`/`pruned`/`expired`/`retired`) and the assumptions: DECISIONS-LOG "Drop: Workspace → Drop".
+
+| Page call (`dropApi`) | Proposed host op | Notes |
+|---|---|---|
+| `info(ws)` | `drop.info {}` (assumed) | `{max_bytes, version_cap, writes}`: the only source of the 25 MiB and 1024 limits |
+| `list(ws, {direction, after, limit})` | `drop.list` | Received / Sent, cursor pages of 32 |
+| `versions(ws, {object_id, after})` | `drop.versions` | documents only; `cap` |
+| `blobPut`, `blobDrop` | `blob.put`, `blob.drop` (§0.10, served today) | 768 KiB chunks; `uploadBlob` gives progress and cancel |
+| `send(ws, {blob, name, mime, object_id?, base_version?}, idem)` | `drop.send` | the host seals and PUTs ("Sealing and sending…") |
+| `read(ws, {object_id, version})` + `content(ws, blob)` | `drop.read` + a future dashboard route | download only (attachment headers in DECISIONS-LOG) |
+| `retire(ws, object_id)` | `drop.retire` | files and documents, confirm first |
+| `subscribe(ws, fn)` | `sub.open {topics:["drop"]}` | items `{t:"drop", object_id, version}`; the page refetches |
+
+Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `emit`; options `documentWrites`, `chunkDelayMs`,
+`stallAfterChunks`, `sendDelayMs`, `sendError`, `readError`, `retireError`, `listError`, `pageSize`). Layout scenarios `drop-unavailable`,
+`drop-list`, `drop-long-names`, `drop-upload-progress`, `drop-errors`, `drop-versions`; guard entries `real-host-drop-*` plus
+`real-host-drop-delete` (listed in `scripts/layout-guard-pages.mjs`, so `--only drop` finds them). Tests: `src/app/pages/drop/drop.test.tsx`, `src/production/drop.test.tsx` (real host: not available, no nav entry, no call),
+`src/dev/layoutGuardPages.test.ts`. No new dependency.
+To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
+

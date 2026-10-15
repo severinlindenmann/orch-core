@@ -7,7 +7,7 @@
     "cli": "orch member add",
     "summary": "Add a member with a role; their first device certificate comes with the invitation.",
     "who": "human",
-    "usage": "orch member add --name NAME [--role owner|maintainer|member|viewer] --pk KEY --cert PATH [--dry-run]",
+    "usage": "orch member add --name NAME [--role owner|maintainer|member|viewer] --pk KEY --cert PATH [--reader-decl PATH] [--dry-run]",
     "pre": [
       "workspace_exists",
       "role_allows",
@@ -45,6 +45,12 @@
         "cert": {
           "type": "string",
           "description": "their device certificate: PATH or - for stdin",
+          "x-metavar": "PATH",
+          "x-file": true
+        },
+        "reader_decl": {
+          "type": "string",
+          "description": "their reader declaration: PATH",
           "x-metavar": "PATH",
           "x-file": true
         }
@@ -118,6 +124,16 @@
         ]
       },
       {
+        "code": "reader.decl_invalid",
+        "exit": 3,
+        "retryable": false,
+        "hint": "make a new one with the reader's own orch (orch keys reader declare)",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
         "code": "role.denied",
         "exit": 3,
         "retryable": false,
@@ -131,7 +147,7 @@
         "code": "sign.convenience_readers",
         "exit": 3,
         "retryable": false,
-        "hint": "update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first",
+        "hint": "pass the reader's declaration (orch keys reader declare --enrol, then --reader-decl PATH)",
         "fix": [
           "orch",
           "help"

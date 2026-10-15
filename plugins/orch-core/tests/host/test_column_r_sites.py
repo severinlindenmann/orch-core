@@ -40,10 +40,15 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("dispatch.py", "RegistryBackend.whoami"): (2, "R gets no runner info (P and G only)"),
     ("outcomes.py", "principal_of"): (2, "raises for R (the principal is r:<device>, never derived from a uid)"),
     ("reads_ws.py", "_person_reader"): (1, "unreachable (session.list, grant.list are not R ops); refuses R"),
+    ("reads_ws.py", "reader_list"): (
+        2,
+        "R: the current devices' levels only ({device, person, reader, level}: no decl, no dk_hash; H12d-2, 9.11)",
+    ),
     ("reads_ws.py", "may_create"): (
         2,
         "R: true only for a non-viewer whose requesting device is its person's, valid, with decide; G and N: false",
     ),
+    ("reads_ws.py", "member_list"): (1, "R reads as P: device labels (read_ext/3); G and N get label null"),
     ("reads_ws.py", "_next_key"): (1, "R: next_key only where may_create says so (G and N: null)"),
     ("reads_ws.py", "workspace_settings"): (2, "R reads as P: the full repo entries and the settings stamps"),
     ("runners.py", "RunnerHub.open_sub"): (3, "unreachable (run.sub is not an R op)"),

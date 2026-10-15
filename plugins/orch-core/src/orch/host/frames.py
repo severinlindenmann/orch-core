@@ -292,6 +292,20 @@ _ERROR = _object(
         "hint": _str(low=1, high=400),
         "fix": _object({"argv": _array(_STRING, 32, 1)}, host=True),
         "retry_after_ms": _int(1, 3_600_000),
+        # §0.3 (v1.9): a closed per-code object; a reader ignores unknown keys (§0.1), the host sends only the table's
+        "detail": _object(
+            {},
+            {
+                "state": _str(r"[a-z_]+", 1, 32),
+                "which": _str(r"[a-z_]+", 1, 32),
+                "reason": _str(r"[a-z_]+", 1, 32),
+                "missing": _str(r"[a-z_]+", 1, 32),
+                "next_key": _str(KEY),
+                # H12d-2 (§0.8.6 item 9.9): the readers below the level a reader refusal names
+                "devices": _array(_str(r"d_[0-9a-f]{32}"), 64, 0),
+            },
+            host=True,
+        ),
     },
     host=True,
 )

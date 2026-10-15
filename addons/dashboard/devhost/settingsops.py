@@ -80,8 +80,16 @@ def settings(host, store, ws, person: str, args: dict[str, Any]) -> dict[str, An
     }
 
 
-def members(ws) -> dict[str, Any]:
-    return {
+def members(ws, readers=None) -> dict[str, Any]:
+    """`readers` (levels, required): the v1.9 `read_ext/3` device fields and `required_reader` (H12d-2)."""
+    levels, required = readers if readers is not None else ({}, None)
+
+    def ext(d):
+        if readers is None:
+            return {}
+        return {"label": None, "paired_at": None, "relay": False, "cert_expires_at": None, "reader": levels.get(d.id)}
+
+    out = {
         "members": [
             {
                 "person": m.person,
@@ -93,6 +101,7 @@ def members(ws) -> dict[str, Any]:
                         "auth": None,
                         "scopes": list(d.scopes),
                         "valid": d.expires_ms is None or d.expires_ms > time.time() * 1000,
+                        **ext(d),
                     }
                     for d in ws.devices.values()
                     if d.person == m.person and not d.removed and not d.revoked
@@ -101,6 +110,31 @@ def members(ws) -> dict[str, Any]:
             for m in ws.members.values()
         ]
     }
+    if readers is not None:
+        out["required_reader"] = required
+    return out
+
+
+def reader_list(ws, readers) -> dict[str, Any]:
+    """`reader.list {}` (H12d-2): every current device; a device without a level has no record (0, no digest)."""
+    levels, required = readers
+    rows = []
+    for d in ws.devices.values():
+        if d.removed or d.revoked:
+            continue
+        level = levels.get(d.id)
+        rows.append(
+            {
+                "device": d.id,
+                "person": d.person,
+                "dk_hash": "demo-not-a-real-dk-hash",
+                "reader": level or 0,
+                "level": level or 0,
+                "digest": None if level is None else "sha256:" + "0" * 64,
+                "decl": None if level is None else {"v": 1, "demo": "not-a-real-declaration"},
+            }
+        )
+    return {"readers": sorted(rows, key=lambda r: r["device"]), "required_reader": required}
 
 
 def grants(store, ws, person: str, args: dict[str, Any], ext: bool) -> dict[str, Any]:
@@ -121,6 +155,7 @@ def grants(store, ws, person: str, args: dict[str, Any], ext: bool) -> dict[str,
             "person": g.person,
             "scope": g.scope,
             "verbs": g.verbs,
+            "label": getattr(g, "label", None),  # H11c-2: the grant.issued label
             "issued_at": issued[g.id],
             "expires_at": g.expires_at,
             "revoked_at": revoked[g.id]["at"] if g.id in revoked else None,

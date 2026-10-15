@@ -260,7 +260,8 @@ def test_term_attach_refuses_runs_that_are_not_attachable(ready):
         rec = new_run_id()
         w.h.run(w.h.host.runners._save({**fields(w), "run": rec, "workspace_id": w.wid, "state": state,
                                          "exit": None, "cleanup": None, "runner_uid": UID, "gen": GEN1}))  # fmt: skip
-        assert err(c.call("term.attach", {"run": rec, "mode": mode})) == "term.not_attachable"
+        got = c.call("term.attach", {"run": rec, "mode": mode})
+        assert err(got) == "term.not_attachable" and got["error"]["detail"] == {"state": state}
     run = open_shell(c)["run"]
     ok(c.call("run.stop", {"run": run, "grace_ms": 500}))
     assert err(c.call("term.attach", {"run": run, "mode": "write"})) == "term.not_attachable"
@@ -401,7 +402,8 @@ def test_disabling_the_machine_switch_ends_a_live_writer(ready):
     try:
         enablement.set_enabled(Path(w.lab.state), w.wid, False, UID)
         assert drain_end(t) == "runner.disabled"
-        assert err(c.call("term.attach", {"run": run})) == "runner.disabled"
+        got = c.call("term.attach", {"run": run})
+        assert err(got) == "runner.disabled" and got["error"]["detail"] == {"missing": "machine"}
     finally:
         t.close()
 
@@ -762,7 +764,7 @@ def test_run_limit_on_term_open_carries_retry_after_ms(ready, monkeypatch):
     monkeypatch.setattr(terms, "SHELLS_PER_PERSON", 1)
     pre = preview(c)
     res = c.call("term.open", {"spec": pre["spec"]}, idem=True)
-    assert err(res) == "run.limit"
+    assert err(res) == "run.limit" and res["error"]["detail"] == {"which": "shell_person"}
     assert res["error"]["retryable"] is True and 1 <= res["error"]["retry_after_ms"] <= 3_600_000
 
 

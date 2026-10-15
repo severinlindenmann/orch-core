@@ -34,9 +34,7 @@ def _ids(e: dict[str, Any], key: str) -> str:
 
 
 def _pinned(ws: Any, ctx: Context) -> bool:
-    from orch.ops.runtime import _config
-
-    cfg = _config(ws.root, ctx.caps.files) or {}
+    cfg = ws.config or {}
     wid = cfg.get("workspace", {}).get("id", "")
     return (ws.state_dir / "hosts" / wid / "genesis").is_file()
 

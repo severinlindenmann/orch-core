@@ -605,3 +605,38 @@ this host yet." To see the page, run `npm run dev` and open the dev-only scenari
 - `/__layout/pair-cert`: two terminal steps with copyable commands (primary approval with the cert code; `orch sign <CODE>`). `/__layout/pair-failed`: the reason and "remove the device".
 - `/__layout/pair-devices`: the list from `member.list` (the Mac itself is not listed; a two-line label; an empty one shows "phone");
   **Remove this device** opens the CLI command as text (removal is CLI only this round).
+
+## Try Drop (fixtures)
+
+Nothing reaches a host: the `drop/1` ops are proposed, not agreed. On a real host `/w/<PREFIX>/drop` says "Drop is not available on this
+host yet." (no sidebar entry until the server lists `drop`). To see the page, run `npm run dev` and open the dev-only scenarios:
+
+- `/__layout/drop-unavailable`: the not-available line.
+- `/__layout/drop-list`: Received / Sent tabs, 8 per page (**Older** / **Newer**). Rows show name, kind and type, size, author (person,
+  device, "from a phone" or a "sealed by an agent" mark), created, expiry and state. Pruned, Expired and Deleted rows and the Unclaimed
+  one have Download off with the reason. Expired and Deleted rows also show “Disappears from this list on” with the removal date. **Send a file** (or drop a file on the dashed box): over 25 MiB is refused before anything is
+  uploaded; otherwise progress in bytes and percent, then "Sealing and sending…", then "Sent …" and the file shows under Sent.
+  **Download** saves a file (the fixture's content is HTML with a script: it must arrive as a download, never open). **Delete** asks
+  "Delete this file for everyone?" (removed for everyone at once); **Delete for everyone** turns the row into a Deleted tombstone. Delete sends the listed version and head; a `drop.version_conflict` keeps the dialog open, explains that the item changed, and refreshes the list (fixture option `retireConflict: true`).
+- `/__layout/drop-long-names`: very long names and types, `<img src=x onerror=alert(1)>.html` as text, a right-to-left override shown as
+  `\u{202e}`, a newline and a NUL shown escaped, a name that can't be shown, a long person name and device id.
+- `/__layout/drop-upload-progress`: an upload stalled at 1.5 MiB of 3 MiB (50 %); **Cancel** says nothing was sent.
+- `/__layout/drop-errors`: every error text with its code (too large, three quotas, version cap, version conflict, expired, pruned,
+  unavailable, not visible, busy with retry time); sending or downloading there fails with the workspace quota.
+- `/__layout/drop-versions`: a document at 1024 of 1024 versions (cap line, pruned versions' downloads off, 12 per page) and "New versions
+  of a document are saved from a phone. This host sends files only." Open **Versions** on meeting-notes.md for 37 of 1024.
+
+
+## Try reader levels and click-to-sign refusals (core H12d-2)
+
+Fixtures only (`npm run dev`):
+
+- `/__layout/readers-devices`: Settings → Devices. "Reader levels" lists ten devices by label and member (never by id); four are
+  below the required level 1 and say "Needs an update of the orch app" and come first; the line above says why level 1 is
+  required. "Work phone / second line" shows its line break as text. Pairing above still says it is not available.
+- `/__layout/convenience-refusals`: every reason of `sign.convenience_unavailable` and `sign.convenience_readers`, an unknown
+  reason (the general sentence, the reason never shown), `reader.decl_invalid`, and the signer's `readers_old`. The devices each
+  names appear by label ("Work phone…", "a device of Mara with no name", "a device this page does not know").
+
+On a real host: Settings → General's Signing card says why click-to-sign is paused (`readers_old`) with **See which devices need
+an update**; Settings → Devices shows the levels when the host serves `reader/1`.

@@ -17,6 +17,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { fmtDateTime } from '@/lib/time'
 import { Mono, Pill } from '../../ticket/shared'
 import { useSettingsHandoff } from './useSettingsHandoff'
+import { ReaderLevels } from './Readers'
+import { refusalOf, refusalSentence } from '@/api/refusals'
+import { RefusalDevices } from '@/components/sign/RefusalDevices'
 
 const box = 'space-y-3 rounded-md border border-border px-3 py-3 text-[13px]'
 
@@ -29,27 +32,42 @@ function CopyText({ children, label, testId }: { children: string; label: string
   )
 }
 
-function ErrorLine({ error }: { error: unknown }) {
+function ErrorLine({ error, ws }: { error: unknown; ws: string }) {
   const e = error instanceof ApiError ? error : null
+  // H12d-2: a click-to-sign readers refusal or a declaration that did not verify, in plain words first.
+  const refusal = refusalOf(error)
   return (
-    <p role="alert" className="text-[13px] text-danger">
-      Not done. {e ? <Mono>{e.code}</Mono> : null} {e && e.message !== e.code ? <Inline>{e.message}</Inline> : !e ? 'Try again in a moment.' : null}
-    </p>
+    <div role="alert" className="space-y-1 text-[13px]">
+      {refusal && (
+        <p data-testid="pair-refusal" data-reason={refusal.reason ?? ''} className="text-danger">
+          {refusalSentence(refusal)}
+        </p>
+      )}
+      {refusal && <RefusalDevices ws={ws} ids={refusal.devices} />}
+      <p className={refusal ? 'text-text-muted' : 'text-danger'}>
+        Not done. {e ? <Mono>{e.code}</Mono> : null} {e && e.message !== e.code ? <Inline>{e.message}</Inline> : !e ? 'Try again in a moment.' : null}
+      </p>
+    </div>
   )
 }
 
-/** Settings → Devices. Without the gate: one calm line, no call to the host. */
+/** Settings → Devices: the reader levels (H12d-2), then pairing. Without the pairing gate: one calm line, no pairing call. */
 export function HostDevices({ workspace }: { workspace: Workspace }) {
-  if (!pairServed(workspace.id))
-    return (
-      <div className="space-y-3">
-        <h2 className="text-base font-semibold">Devices</h2>
-        <p data-testid="pair-unavailable" className="rounded-md border border-border px-3 py-2 text-[13px] text-text-muted">
-          {PAIR_UNAVAILABLE}
-        </p>
-      </div>
-    )
-  return <Pairing workspace={workspace} />
+  return (
+    <div className="space-y-6">
+      {!pairServed(workspace.id) ? (
+        <div className="space-y-3">
+          <h2 className="text-base font-semibold">Devices</h2>
+          <p data-testid="pair-unavailable" className="rounded-md border border-border px-3 py-2 text-[13px] text-text-muted">
+            {PAIR_UNAVAILABLE}
+          </p>
+        </div>
+      ) : (
+        <Pairing workspace={workspace} />
+      )}
+      <ReaderLevels ws={workspace.id} />
+    </div>
+  )
 }
 
 function Pairing({ workspace }: { workspace: Workspace }) {
@@ -185,7 +203,7 @@ function Pairing({ workspace }: { workspace: Workspace }) {
         ) : (
           <BeforeOffer workspace={workspace} preview={preview.data} creating={creating} onCreate={() => void create()} />
         )}
-        {error && !(error instanceof ApiError && preview.data?.blocked?.code === error.code) ? <ErrorLine error={error} /> : null}
+        {error && !(error instanceof ApiError && preview.data?.blocked?.code === error.code) ? <ErrorLine error={error} ws={ws} /> : null}
       </section>
       <DeviceList workspace={workspace} devices={members.data ? pairedDevices(members.data.members) : null} failed={members.isError} />
     </div>
@@ -194,12 +212,15 @@ function Pairing({ workspace }: { workspace: Workspace }) {
 
 function Blocked({ blocked, workspace }: { blocked: PairBlocked; workspace: Workspace }) {
   const convenience = blocked.code === 'sign.convenience_readers'
+  // H12d-2: the preview's `blocked.detail` has the same closed keys as `Error.detail`.
+  const refusal = convenience ? refusalOf(new ApiError(409, { code: blocked.code, message: blocked.message, retryable: false, detail: blocked.detail })) : null
   return (
     <div role="alert" data-testid="pair-blocked" data-code={blocked.code} className="space-y-2 rounded-md border border-warning/40 px-3 py-3 text-[13px]">
       <p className="font-medium">
         {convenience ? 'A phone cannot be paired while click-to-sign is on for this workspace.' : 'A phone cannot be paired on this workspace now.'}{' '}
         <Mono>{blocked.code}</Mono>
       </p>
+      {refusal?.reason && <p data-testid="pair-blocked-reason">{refusalSentence(refusal)}</p>}
       <p className="text-text-muted" aria-label="What the host says">
         The host says: <Inline>{blocked.message}</Inline>
       </p>
@@ -438,7 +459,7 @@ function CompareCode({ ws, status, onCancel, refresh }: { ws: string; status: Pa
           Approve
         </Button>
       </div>
-      {error ? <ErrorLine error={error} /> : null}
+      {error ? <ErrorLine error={error} ws={ws} /> : null}
       <Button size="sm" variant="ghost" onClick={onCancel}>
         Cancel pairing
       </Button>
@@ -626,10 +647,10 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                   <TableCell className="whitespace-normal">
                     <Inline>{d.name}</Inline>
                   </TableCell>
-                  <TableCell>{d.paired_ms ? fmtDateTime(new Date(d.paired_ms).toISOString()) : '—'}</TableCell>
+                  <TableCell>{d.paired_at ? fmtDateTime(d.paired_at) : '—'}</TableCell>
                   <TableCell>{d.relay ? 'yes' : 'no'}</TableCell>
-                  <TableCell>{d.cert_expires ? fmtDateTime(d.cert_expires) : '—'}</TableCell>
-                  <TableCell>{d.reader ?? '—'}</TableCell>
+                  <TableCell>{d.cert_expires_at ? fmtDateTime(d.cert_expires_at) : '—'}</TableCell>
+                  <TableCell>{d.reader ?? 'none'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

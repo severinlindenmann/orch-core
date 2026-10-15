@@ -402,7 +402,12 @@ def _zeroise(buf: bytearray) -> None:
         buf[i] = 0
 
 
-_UNREVIEWED = (canon.LABELS["sig_reader_decl"].encode("ascii"),)  # device labels this backend never signs
+#: device labels this backend never signs. H12d-2 decision (orch-v2-host §0.8.6 item 9.3): a reader declaration is a
+#: reviewed statement about the running build, so it is signed only with a review (the passphrase prompt shows every
+#: field); a key that signs for any same-UID process without presence must not raise or lower a reader's level. A
+#: convenience device needs no declaration of its own for its signatures: it is the signing device of its convenience
+#: checks, qualified by ``reader_version`` (this host's model).
+_UNREVIEWED = (canon.LABELS["sig_reader_decl"].encode("ascii"),)
 
 
 class ConvenienceBackend:
@@ -448,8 +453,11 @@ class ConvenienceBackend:
         check_key_id(key_id)
         if not label_allowed(payload, DEVICE_KEY_LABELS):
             raise CustodyError("a device key does not sign this payload (unknown label or another role's label)")
-        if label_allowed(payload, _UNREVIEWED):  # #463 review L1: no review path yet; H12d-2 decides
-            raise CustodyError("reader_decl signatures are not prompted for in P1")
+        if label_allowed(payload, _UNREVIEWED):  # #463 review L1, decided in H12d-2: never without a review
+            raise CustodyError(
+                "a convenience device key does not sign reader declarations (no review, no presence); declare with "
+                "a passphrase device key (orch keys reader declare)"
+            )
         key = self._load()
         try:
             sig = crypto.sign(key, payload)
@@ -457,6 +465,11 @@ class ConvenienceBackend:
             key = None  # noqa: F841
         self.signatures += 1
         return sig
+
+    def unseal(self, key_id: str, purpose: str, object_id: bytes, epoch: int, extra: bytes, sealed: bytes) -> bytes:
+        """Never: convenience custody holds one device signing key, and a key-exchange key is never in convenience
+        custody (the primary's keys are passphrase-only, orch-v2-host 11A.15.1)."""
+        raise CustodyError("convenience custody holds no key-exchange key and opens nothing")
 
     def verify_capability(self) -> None:
         """Load the key and prove it signs (a throwaway payload, verified against the selected public key)."""

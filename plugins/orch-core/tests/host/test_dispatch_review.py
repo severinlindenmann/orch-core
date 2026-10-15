@@ -81,9 +81,7 @@ def test_read_only_doctor_and_check_open_no_second_store_and_read_no_config(serv
         raise AssertionError("a second store or a config.json read in host mode")
 
     monkeypatch.setattr(health.InspectStore, "open", classmethod(refuse))
-    monkeypatch.setattr(runtime, "_config", refuse)
-    monkeypatch.setattr("orch.ops.commands.doctor._config", refuse)
-    monkeypatch.setattr("orch.ops.commands.check._config", refuse)
+    monkeypatch.setattr(runtime, "_config", refuse)  # doctor and check read the config only via Workspace.config
     c = served.client()
     assert ok(c.req("doctor"))["data"]["problems"] >= 0
     assert ok(c.req("check"))["data"]["problems"] >= 0

@@ -4,6 +4,7 @@
 import type { Workspace } from './types'
 import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
+import { refusalOf, refusalSentence } from './refusals'
 
 /** Verbatim (owner decision, 12 Oct 2026). Also the first line of every sign panel. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
@@ -123,14 +124,8 @@ export interface ClickProblem {
   /** `rate.limited`: how long to wait. */
   waitMs?: number
   signedAt?: string | null
-}
-
-const UNAVAILABLE: Record<string, string> = {
-  disabled: 'Click-to-sign is switched off for this workspace.',
-  relay_paired: 'This workspace is paired with a relay, so the host will not accept convenience signatures.',
-  other_member: 'This workspace has another member, so the host will not accept convenience signatures.',
-  phone_device: 'You have another device in this workspace, so the host will not accept convenience signatures.',
-  reader_version: 'The host does not understand convenience signatures yet. Update orch-core.',
+  /** H12d-2: the device ids the refusal names (shown by label through `RefusalDevices`, never as ids). */
+  devices?: string[]
 }
 
 const OFF = ' Fix it, or turn convenience off from the terminal with `orch host convenience off --workspace <prefix>`.'
@@ -170,8 +165,10 @@ export function clickProblem(e: unknown): ClickProblem {
   switch (e.code) {
     case 'human.click_refused':
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
-    case 'sign.convenience_unavailable':
-      return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'}${OFF}`, next: 'terminal' }
+    case 'sign.convenience_unavailable': {
+      const r = refusalOf(e)!
+      return { title: 'Click-to-sign is not available here', body: `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
+    }
     case 'intent.done':
       return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at }
     case 'intent.failed':
@@ -189,8 +186,13 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.click_only':
       return { title: 'This workspace signs in the dashboard', body: e.message, next: 'open' }
-    case 'sign.convenience_readers':
-      return { title: 'This would add a reader', body: [e.message, e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' '), next: 'terminal' }
+    case 'sign.convenience_readers': {
+      const r = refusalOf(e)!
+      // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.
+      return { title: 'This would add a reader', body: [r.reason ? refusalSentence(r) : e.message, e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' '), next: 'terminal', devices: r.devices }
+    }
+    case 'reader.decl_invalid':
+      return { title: 'The reader declaration did not verify', body: refusalSentence(refusalOf(e)!), next: 'terminal' }
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':

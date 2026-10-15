@@ -122,6 +122,8 @@ RELAY_OPS = frozenset(
         # host reads, filtered for the viewer exactly as P (F6)
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings",
+        # H12d-2: the reader records of the current devices (§0.8.6 item 9.11)
+        "reader.list",
         # the principal's own
         "whoami", "outcome.get",
         # device-signed person events

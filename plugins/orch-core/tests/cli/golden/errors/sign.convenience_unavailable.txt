@@ -1,0 +1,1 @@
+err sign.convenience_unavailable a reader of this workspace has not declared that it understands convenience signatures · retry:false · next: declare the readers it names (orch keys reader declare), or remove them; sign with your passphrase key · fix: orch help

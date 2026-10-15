@@ -227,6 +227,20 @@ describe('the runner grant', () => {
     expect(await screen.findByTestId('runner-grant-confirmed', {}, { timeout: 8000 })).toBeInTheDocument()
   }, 15000)
 
+  it.each([
+    ['grant.forgotten', 'A newer grant replaced this one before the runner took it.'],
+    ['runner_restarted', 'The runner refused it.'], // a host code outside the closed set (the server already maps it)
+  ] as const)('unknown that the host then rejects (%s) names the reason from grant.deposit_status', async (reason, text) => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'unknown', deposit_id: REQ.slice(3), grant: GRANT })
+    s.status.mockResolvedValueOnce({ deposit: 'unknown' }).mockResolvedValueOnce({ deposit: 'rejected', reason: reason as never })
+    mount()
+    await issueAndSign()
+    const box = await screen.findByTestId('runner-grant-rejected', {}, { timeout: 8000 })
+    expect(box).toHaveTextContent(`The runner did not take the grant: ${text}`)
+    expect(within(box).getByRole('button', { name: 'Revoke grant' })).toBeInTheDocument()
+  }, 15000)
+
   it('a View without the deposit line gets no Sign button', async () => {
     s.preview.mockResolvedValue(noGrant())
     s.view.mockResolvedValue(grantView({ deposit_line: undefined, lines: ['grant', DEPOSIT_RISK] }))

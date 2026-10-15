@@ -36,6 +36,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/settings",
         "/api/w/{ws}/members",
+        "/api/w/{ws}/readers",
         "/api/w/{ws}/grants",
         "/api/w/{ws}/quick",
         "/api/w/{ws}/records",
@@ -77,6 +78,7 @@ def test_shell_p1_reads(client, token, stub):
         "members",
         "settings_read",
         "grant_list",
+        "readers",
         "read_ext",
         "read_ext2",
         *(
@@ -154,8 +156,8 @@ def test_caps_hide_unavailable(gateway, stub):
     link = gateway.link(stub.ws)
     link.welcome["caps"].remove("query/1")
     # these do not depend on query/1
-    assert gateway.features(stub.ws) == ["activity", "settings_read", "read_ext", "read_ext2"]
-    gone = ("read_ext/1", "read_ext/2", "activity/1", "settings/1")
+    assert gateway.features(stub.ws) == ["activity", "settings_read", "readers", "read_ext", "read_ext2"]
+    gone = ("read_ext/1", "read_ext/2", "activity/1", "settings/1", "reader/1")
     link.welcome["caps"][:] = [c for c in link.welcome["caps"] if c not in gone]
     assert gateway.features(stub.ws) == []
     link.welcome["ops"]["whoami"] = 2
@@ -249,3 +251,11 @@ def test_artifact_get_needs_the_diff_capability(gateway, stub):
     with pytest.raises(HostError) as err:
         link.call("artifact.get", {"ref": "DEMO-0001", "name": "x", "offset": 0})
     assert err.value.error["code"] == "op.unsupported"
+
+
+def test_fastapi_telemetry_is_off_even_when_the_environment_asks_for_it(monkeypatch):
+    monkeypatch.setenv("FASTAPI_OTEL_AUTO_CONFIGURE", "true")
+    app = create_app(PORT)
+    config = app._telemetry
+    assert not any(config[k] for k in ("tracing", "metrics", "logs", "operation_spans", "auto_configure"))
+    assert app._native_telemetry.enabled() is False

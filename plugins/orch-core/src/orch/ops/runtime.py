@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from orch import canon
+from orch import canon, discovery
 from orch.canon.text import TextError, normalize_text
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
@@ -49,15 +49,18 @@ __all__ = [
     "Notes",
     "Projection",
     "Workspace",
+    "discover",
+    "find_v1_workspace",
     "find_workspace",
     "guarded",
+    "locate_workspace",
     "records_dir",
     "scoped_key",
     "visible_to",
     "state_dir",
 ]
 
-CONFIG_SCHEMA = "orch.workspace/2"
+CONFIG_SCHEMA = discovery.CONFIG_SCHEMA
 GRANT_SHAPE = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
 _AGENT_ID = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _TASK_ONLY = re.compile(r"T[1-9][0-9]*")
@@ -83,34 +86,66 @@ def state_dir(env: Mapping[str, str], files: Files | None = None) -> Path:
 
 
 def _config(path: Path, files: Files) -> dict[str, Any] | None:
-    """``config.json`` of a workspace directory, or ``None`` if ``path`` is not one (a symlink is not read)."""
-    cfg = path / "config.json"
+    """``config.json`` of a workspace directory, or ``None`` if ``path`` is not one. Direct mode reads it through
+    :func:`orch.discovery.read_config` (``O_NOFOLLOW`` fds below the root); host mode through the host ``Files``,
+    itself an ``O_NOFOLLOW`` fd walk from the host's roots."""
+    if files.roots is None:
+        return discovery.read_config(path)
     try:
-        if cfg.is_symlink() or not cfg.is_file():
-            return None
-        raw = files.read_bytes(cfg) if cfg.stat().st_size <= (1 << 20) else b""
-        doc = json.loads(raw)
-    except (OSError, ValueError, RecursionError):
+        doc = json.loads(files.read_bytes(path / "config.json"))
+    except (OSError, ValueError, RecursionError, CapabilityDenied):
         return None
-    ws = doc.get("workspace") if isinstance(doc, dict) else None
-    if doc.get("schema") != CONFIG_SCHEMA or not isinstance(ws, dict) or not isinstance(ws.get("id"), str):
+    return discovery.v2_config(doc if isinstance(doc, dict) else None)
+
+
+def discover(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> discovery.Found | None:
+    """The nearest workspace as :class:`orch.discovery.Found`: its path, v1 or not, the ``config.json`` read once and
+    the root's identity. The invariant and the rules are :mod:`orch.discovery`'s: the start (``ORCH_WORKSPACE``, else
+    ``cwd``) is resolved and trusted; with ``ORCH_WORKSPACE`` only that path is a v2 workspace (no fallback), a v1 one
+    there or in its ``orchestrator/`` is reported; walking up, the first directory that is a v2 or a v1 workspace wins,
+    so a v1 workspace nested under a v2 one is never opened as the v2 ancestor. Host mode (files with roots) never
+    detects v1 and reads only through the host ``Files`` (no identity: those reads are confined by the host)."""
+    explicit = env.get("ORCH_WORKSPACE")
+    if files.roots is not None:
+
+        def hosted(p: Path) -> discovery.Found | None:
+            cfg = _config(p, files)
+            return discovery.Found(p, False, cfg) if cfg else None
+
+        if explicit:
+            return hosted(Path(explicit))
+        here = Path(files.getcwd() if cwd is None else cwd).resolve()
+        for d in (here, *here.parents):
+            for cand in (d, d / "orchestrator"):
+                found = hosted(cand)
+                if found is not None:
+                    return found
         return None
-    return doc
+    start = explicit if explicit else (files.getcwd() if cwd is None else cwd)
+    return discovery.locate(start, explicit=bool(explicit))
+
+
+def locate_workspace(
+    env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files
+) -> tuple[Path, bool] | None:
+    """The nearest workspace: ``(path, is_v1)``, or ``None`` (:func:`discover`)."""
+    found = discover(env, cwd, files)
+    return (found.path, found.v1) if found is not None else None
 
 
 def find_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> Path | None:
     """``ORCH_WORKSPACE`` if it names a workspace, else the nearest directory above ``cwd`` that is one or holds
-    ``orchestrator/`` that is. ``None`` when there is none."""
-    explicit = env.get("ORCH_WORKSPACE")
-    if explicit:
-        p = Path(explicit)
-        return p if _config(p, files) else None
-    here = Path(cwd or files.getcwd()).resolve()
-    for d in (here, *here.parents):
-        for cand in (d, d / "orchestrator"):
-            if _config(cand, files):
-                return cand
-    return None
+    ``orchestrator/`` that is. ``None`` when there is none, or when the nearest one is a v1 workspace
+    (:func:`locate_workspace`)."""
+    found = locate_workspace(env, cwd, files)
+    return found[0] if found is not None and not found[1] else None
+
+
+def find_v1_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> Path | None:
+    """The v1 workspace that is the nearest workspace of ``cwd`` (or ``ORCH_WORKSPACE``), or ``None``. Detection
+    only: a v1 workspace is never opened; the one thing v2 does with it is ``orch import v1``."""
+    found = locate_workspace(env, cwd, files)
+    return found[0] if found is not None and found[1] else None
 
 
 def scoped_key(principal: str, session: str) -> str:
@@ -151,6 +186,10 @@ class Workspace:
         self._cwd = cwd
         self._root: Path | None = None
         self._looked = False
+        #: what discovery found (the config read once, the root's identity); ``None`` before, or when nothing was
+        self._found: discovery.Found | None = None
+        #: the nearest workspace is a v1 one (never opened: require_root refuses and names ``orch import v1``)
+        self._v1: Path | None = None
         self._store: Any = None
         #: set by opening the store: was the genesis pin created by this call (trust on first use)?
         self.pin_created = False
@@ -176,12 +215,59 @@ class Workspace:
     @property
     def root(self) -> Path | None:
         if not self._looked:
-            self._root, self._looked = find_workspace(self.env, self._cwd, self.files), True
+            found = discover(self.env, self._cwd, self.files)
+            self._looked = True
+            if found is not None and found.v1:
+                self._v1 = found.path
+            elif found is not None:
+                self._root, self._found = found.path, found
         return self._root
+
+    @property
+    def config(self) -> dict[str, Any] | None:
+        """The workspace's ``config.json`` as discovery read it (never re-read by path); ``None`` without a v2
+        workspace. The host's view (:meth:`hosted`, nothing discovered) reads it through the host ``Files``."""
+        if self.root is None:
+            return None
+        if self._found is not None:
+            return self._found.config
+        return _config(self.root, self.files)
+
+    @property
+    def ident(self) -> tuple[int, int] | None:
+        """The root's ``(st_dev, st_ino)`` as discovery saw it (``None``: not discovered by fd, e.g. host ``Files``),
+        for a caller that opens the root later (:func:`orch.discovery.same_root`)."""
+        return self._found.ident if self.root is not None and self._found is not None else None
+
+    @property
+    def config_bytes(self) -> bytes | None:
+        """The ``config.json`` bytes discovery read from the checked fd (``None``: not discovered by fd), for a caller
+        that opens the store itself (``Store.open(config=...)``)."""
+        return (self._found.raw or None) if self.root is not None and self._found is not None else None
+
+    def verify_root(self) -> Path:
+        """The root, after checking it is still the directory discovery found (``st_dev``/``st_ino``): call it before
+        opening anything else under the root by path. A root swapped after discovery refuses."""
+        root = self.require_root()
+        found = self._found
+        if found is not None and found.ident is not None and not discovery.same_root(root, found.ident):
+            raise OrchError(
+                "not_found",
+                f"{root} is no longer the workspace directory that was found; nothing was opened",
+                hint="run the command again",
+            )
+        return root
 
     def require_root(self) -> Path:
         root = self.root
         if root is None:
+            v1 = self._v1
+            if v1 is not None:
+                raise OrchError(
+                    "not_found",
+                    f"{v1} is a v1 workspace; run `orch import v1` to migrate it",
+                    hint=f"orch import v1 {v1}",
+                )
             raise OrchError("not_found", "no orch workspace here", hint="run orch init in the workspace directory")
         return root
 
@@ -196,8 +282,9 @@ class Workspace:
         from orch.host.ownership import DirectGuard
         from orch.store import BackendSigner, Store
 
-        cfg = _config(root, self.files) or {}
+        cfg = self.config or {}
         wid = cfg["workspace"]["id"]
+        root = self.verify_root()  # Store.open opens below the root by path: it must still be the one found
         sd = state_dir(self.env, self.files)
         host = None
         keys = sd / "hosts" / wid / "keys"
@@ -217,6 +304,7 @@ class Workspace:
             # D-P2-18: in direct mode a workspace the host has adopted answers host.required. Host-mode files (roots
             # set) never take the direct-mode guard: it reads the agent pins outside the roots (H3a note a).
             guard=DirectGuard(sd, wid) if self.files.roots is None else None,
+            config=self._found.raw if self._found is not None and self._found.raw else None,
         )
 
 
@@ -784,6 +872,19 @@ class Call:
             raise self._fail_text("the file is not UTF-8") from None
         self.check_secret(text)
         return text
+
+    def read_file_capped(self, source: str, cap: int) -> bytes:
+        """The bytes of a file argument, at most ``cap`` of them, refused (``invalid.input``) when longer **before**
+        anyone parses them (H12d-2 I2: a reader declaration)."""
+        if source == "-":
+            data = self._read_limited(source)
+        elif source in self.ctx.files:
+            data = self.ctx.files[source]
+        else:
+            data = self._read_path(source, cap)[0]
+        if len(data) > cap:
+            raise OrchError("invalid.input", f"the file is longer than {cap} bytes")
+        return bytes(data)
 
     def _read_limited(self, source: str) -> bytes:
         if source == "-":

@@ -445,8 +445,10 @@ def test_two_devices_with_the_same_idem_never_collide(tmp_path):
         ev = other.event(m["args"]["log"], "ticket.created", eid=m["idem"], key="DEMO-77", ticket_type="task",
                          title="other", owner="p_" + other.person)  # fmt: skip
         meta, data = w.call({"op": "new_ticket", "args": {"log": m["args"]["log"], "events": [ev]}, "idem": m["idem"]})
-        assert meta == {"status": "ok"} and data["duplicate"] is False
-        assert len(w.host.runs) == 2 and mine is not other
+        # the outcome keys never collide (no replay of the first device's outcome, no idem.conflict); the log dedup
+        # by event identity then sees the same id with another actor: event.duplicate_id (D), nothing runs again
+        assert meta == {"refusal": "event.duplicate_id", "retryable": False} and data is None
+        assert len(w.host.runs) == 1 and mine is not other
     finally:
         w.close()
 

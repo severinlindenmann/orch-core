@@ -19,7 +19,7 @@ from orch import crypto
 from orch.relay import bridge as bridge_mod
 from orch.relay import sign, wire
 from orch.relay.bridge import Bridge, Item
-from orch.relay.keys import BridgeKeys, Member, MemberList
+from orch.relay.keys import BridgeKeys, Member, MemberList, SealState
 from orch.relay.rids import RidStore
 from orch.relay.state import StateDir
 
@@ -42,7 +42,13 @@ class _Epochs:
         return self.cur
 
     def wk(self, epoch: int) -> bytes | None:
-        return self.keys.get(epoch)
+        return self.keys.get(epoch) if epoch <= self.cur else None
+
+    def refusal_key(self, epoch: int) -> bytes | None:
+        return None
+
+    def seal_state(self) -> SealState:
+        return SealState(self.cur, False, self.cur + 1)
 
 
 class _R6:

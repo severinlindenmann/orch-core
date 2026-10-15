@@ -13,6 +13,16 @@ Tables::
 ``kind``: ``read``/``write`` (admitted to run), ``refusal`` (refused after step 5, answered at entry), ``unverified``
 (a step-4 refusal: device, signature; recorded so a resend replays the same bytes, never consumes a seq).
 
+``device`` is the verified device id, except for ``unverified`` records: those are keyed ``u:<header device>`` (R2-11),
+so a request a verified device sends never matches a refusal recorded for a forged header naming it.
+
+**Growth bound** (R2-3/R2-4; the caps are the bridge's, checked before every insert): rows per device per 15 min
+``PER_DEVICE + BUSY_ALLOWANCE`` (1 088) and per 24 h ``DEVICE_DAY_ROWS`` (8 192); host-wide per 15 min ``MAX_RECORDS``
+(16 384) and per 24 h ``MAX_RETAINED_ROWS`` (131 072); tombstones at most :data:`MAX_TOMBSTONES` (the oldest go first;
+the seq window and the ±300 s check keep refusing an old request without them); stored chunk bytes per device and
+host-wide within the bridge's byte budgets. ``auto_vacuum=INCREMENTAL``: every sweep returns free pages to the file
+system (:data:`VACUUM_PAGES` at a time).
+
 Every transition is ONE SQLite transaction (``synchronous=FULL``, WAL): T1 :meth:`admit` (window + rid + submission),
 T2 :meth:`answer` (chunks ``stored`` + state ``answered`` + submission deleted), the refusals (:meth:`record_refusal`:
 rid ``answered`` + its chunk, and the window when the step consumes the seq), and the chunk marks. Nothing is ever
@@ -37,6 +47,7 @@ from .state import StateDir, StateError
 
 __all__ = [
     "CHUNK_KEEP_MS",
+    "MAX_TOMBSTONES",
     "RID_KEEP_MS",
     "SEQ_WINDOW",
     "TOMBSTONE_KEEP_MS",
@@ -51,16 +62,21 @@ SEQ_WINDOW = 64
 RID_KEEP_MS = 24 * 3600 * 1000  # a rid record lives 24 h after first_ms (then a tombstone)
 TOMBSTONE_KEEP_MS = 7 * 24 * 3600 * 1000  # a tombstone lives 7 days
 CHUNK_KEEP_MS = 960_000  # chunk bytes are dropped at first_ms + 960 s (the relay refuses re-stores after 900 s)
+MAX_TOMBSTONES = 262_144  # the oldest tombstones go first beyond this (about 65 MB at about 250 B each)
+VACUUM_PAGES = 4096  # pages returned per sweep (auto_vacuum=INCREMENTAL)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS rid(device TEXT NOT NULL, rid TEXT NOT NULL, first_ms INTEGER NOT NULL,
   req_digest TEXT NOT NULL, epoch INTEGER NOT NULL, seq INTEGER NOT NULL, state TEXT NOT NULL, principal TEXT,
   idem TEXT, kind TEXT NOT NULL, PRIMARY KEY(device, rid));
 CREATE INDEX IF NOT EXISTS rid_idem ON rid(device, idem);
+CREATE INDEX IF NOT EXISTS rid_dev_first ON rid(device, first_ms);
+CREATE INDEX IF NOT EXISTS rid_first ON rid(first_ms);
 CREATE TABLE IF NOT EXISTS submission(device TEXT NOT NULL, rid TEXT NOT NULL, op TEXT NOT NULL, log TEXT NOT NULL,
   events TEXT NOT NULL, PRIMARY KEY(device, rid));
 CREATE TABLE IF NOT EXISTS chunk(device TEXT NOT NULL, rid TEXT NOT NULL, idx INTEGER NOT NULL, epoch INTEGER NOT NULL,
   bytes BLOB, state TEXT NOT NULL, PRIMARY KEY(device, rid, idx));
+CREATE INDEX IF NOT EXISTS chunk_live ON chunk(device) WHERE bytes IS NOT NULL;
 CREATE TABLE IF NOT EXISTS window(device TEXT PRIMARY KEY, high INTEGER NOT NULL, bitmap TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cursor(k INTEGER PRIMARY KEY CHECK (k = 0), after INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v INTEGER NOT NULL);
@@ -121,6 +137,7 @@ class RidStore:
             self._conn = sqlite3.connect(
                 f"file:{path}?mode=rw", uri=True, check_same_thread=False, isolation_level=None
             )
+            self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")  # effective on a new file (before the first table)
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=FULL")
             for fd, name in zip(self._fds, (DB, DB + "-wal", DB + "-shm"), strict=True):
@@ -267,6 +284,21 @@ class RidStore:
 
         self._tx("supersede", body)
 
+    def append_chunk(self, device: str, rid: str, idx: int, epoch: int, data: bytes) -> bool:
+        """Ruling D: a fresh closing chunk (``already_done {status: unknown}``) for an answered rid whose bytes were
+        swept, at index ``idx`` (the next unused one). ``False`` when that index exists or the rid is not answered."""
+
+        def body(db: sqlite3.Connection) -> bool:
+            row = db.execute("SELECT state FROM rid WHERE device=? AND rid=?", (device, rid)).fetchone()
+            if row is None or row[0] != "answered":
+                return False
+            if db.execute("SELECT 1 FROM chunk WHERE device=? AND rid=? AND idx>=?", (device, rid, idx)).fetchone():
+                return False
+            db.execute("INSERT INTO chunk VALUES(?,?,?,?,?,'stored')", (device, rid, idx, epoch, data))
+            return True
+
+        return bool(self._tx("append", body))
+
     def mark(self, device: str, rid: str, idx: int, state: str) -> None:
         """A chunk's state: ``attempted`` (committed before the first byte of its first POST), ``posted`` (202),
         ``expired`` (410), ``exhausted`` (409 retry_exhausted), ``conflict`` (409 chunk_conflict), ``dropped``."""
@@ -362,6 +394,35 @@ class RidStore:
                 )
             return int(q.fetchone()[0])
 
+    def chunk_bytes(self, device: str | None = None) -> int:
+        """Stored chunk bytes (not yet swept), for one device or host-wide (the byte budget, R2-4)."""
+        with self._lock:
+            if device is None:
+                q = self._db.execute("SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM chunk WHERE bytes IS NOT NULL")
+            else:
+                q = self._db.execute(
+                    "SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM chunk WHERE device=? AND bytes IS NOT NULL", (device,)
+                )
+            return int(q.fetchone()[0])
+
+    def admitted_reads(self, device: str | None = None) -> int:
+        """Admitted reads (each may still store up to one whole answer), for one device or host-wide."""
+        with self._lock:
+            if device is None:
+                q = self._db.execute("SELECT COUNT(*) FROM rid WHERE state='admitted' AND kind='read'")
+            else:
+                q = self._db.execute(
+                    "SELECT COUNT(*) FROM rid WHERE device=? AND state='admitted' AND kind='read'", (device,)
+                )
+            return int(q.fetchone()[0])
+
+    def pragmas(self) -> dict[str, Any]:
+        """The durability settings (a test pins them: WAL, ``synchronous=FULL``, ``auto_vacuum=INCREMENTAL``)."""
+        with self._lock:
+            return {
+                k: self._db.execute(f"PRAGMA {k}").fetchone()[0] for k in ("journal_mode", "synchronous", "auto_vacuum")
+            }
+
     # -- cursor and the start fence -------------------------------------------------------------------------------
 
     def cursor(self) -> int:
@@ -418,8 +479,17 @@ class RidStore:
                 "DELETE FROM rid WHERE state='tombstone' AND first_ms + ? <= ?",
                 (RID_KEEP_MS + TOMBSTONE_KEEP_MS, now_ms),
             )
+            over = db.execute("SELECT COUNT(*) FROM rid WHERE state='tombstone'").fetchone()[0] - MAX_TOMBSTONES
+            if over > 0:  # the oldest first: the seq window and the ±300 s check still refuse an old request
+                db.execute(
+                    "DELETE FROM rid WHERE rowid IN (SELECT rowid FROM rid WHERE state='tombstone' "
+                    "ORDER BY first_ms LIMIT ?)",
+                    (over,),
+                )
 
         self._tx("sweep", body)
+        with self._lock:
+            self._db.execute(f"PRAGMA incremental_vacuum({VACUUM_PAGES})").fetchall()
 
     def dump(self) -> dict[str, Iterable[Any]]:  # tests and the doctor: no chunk bytes, no events
         with self._lock:

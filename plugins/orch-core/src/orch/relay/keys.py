@@ -5,35 +5,72 @@ R6 is a security dependency of R2, not a fixture (11A.1): R2 is tested against a
 (R5) does not start the poll thread until R6 is merged. Nothing here writes R6 state.
 
 * :class:`BridgeKeys` opens a request body and seals a response chunk; it hands out plaintext or envelopes, never a key
-  (11A.2 "Epoch keys are used only through BridgeKeys"). Burned epochs count as held (proto §8.5 G2b). It is also the
-  :class:`orch.relay.sign.EpochKeys` the signer asks before it signs a chunk.
+  (11A.2 "Epoch keys are used only through BridgeKeys"). It is also the :class:`orch.relay.sign.EpochKeys` the signer
+  asks before it signs a chunk (burned keys count as held there, proto §8.5 G2b).
+* **G1, the seal gate** (orch-52 / R6 design #473): every chunk is sealed inside :meth:`BridgeKeys.sealing`, which
+  holds the seal lock and takes ONE snapshot of the seal state (:class:`SealState`: the committed epoch, the rotation
+  gate, the epoch a ``stale_epoch`` names). The caller seals AND commits the replayable bytes (T2 or the refusal
+  record) inside that span; R6 raises the gate or commits a rotation inside :meth:`BridgeKeys.serialised` (the same
+  lock), so a gate is never raised between the check and the commit. :meth:`Sealer.seal_response` (data) refuses
+  any epoch but the snapshot's committed one, and any epoch while the gate is up. :meth:`Sealer.seal_refusal` is the
+  only path under an old, burned or gated epoch: it builds the plaintext ITSELF with
+  :func:`orch.relay.framing.refusal_meta` (the closed field sets), so no caller can seal arbitrary plaintext there;
+  under a burned epoch (above the committed one, :meth:`EpochKeySource.refusal_key`) only ``stale_epoch``.
 * :class:`R6View` returns the current accepted member list: per device its person, its scopes and its certificate, and
   the owner-verified person key (``pk_pub``) the certificate is checked under.
 """
 
 from __future__ import annotations
 
+import contextlib
 import secrets
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
-from . import wire
+from . import framing, wire
 from .sign import RelaySigner
 
-__all__ = ["BridgeKeys", "EpochKeySource", "KeyMissing", "Member", "MemberList", "R6View"]
+__all__ = [
+    "BridgeKeys", "EpochKeySource", "KeyMissing", "Member", "MemberList", "R6View", "SealRefused", "SealState",
+    "Sealer",
+]  # fmt: skip
 
 
 class KeyMissing(Exception):
     """No key for this epoch (above current, deleted, never held): the request is dropped (proto §8.6 step 2)."""
 
 
+class SealRefused(Exception):  # noqa: N818 - the gate's verdict, not an I/O error
+    """G1: data may not be sealed under this epoch now (old, burned or gated): the caller answers with a refusal."""
+
+
+@dataclass(frozen=True)
+class SealState:
+    """One seal-time snapshot (G1). ``current``: the committed epoch, the only one data is sealed under; ``gated``:
+    the rotation gate is up (proto §7.2 H5: no new sealing of data even under ``current``); ``stale_target``: the
+    epoch a ``stale_epoch`` names for a burned or gated request: the pending epoch, else ``EHW + 1``."""
+
+    current: int
+    gated: bool
+    stale_target: int
+
+
 class EpochKeySource(Protocol):
-    """R6's custody of ``WK_e``: the current epoch, and the key of an epoch still held (burned keys included)."""
+    """R6's custody of ``WK_e``: the committed epoch, the key of a held epoch at or below it, the seal state and the
+    key of a burned epoch above it (refusals only, proto §7.2 H4 / §8.5 G2b)."""
 
     def current_epoch(self) -> int: ...
 
     def wk(self, epoch: int) -> bytes | None: ...
+
+    def seal_state(self) -> SealState: ...
+
+    def refusal_key(self, epoch: int) -> bytes | None:
+        """A BURNED epoch's key (above the committed one), usable only to open a request and seal its signed
+        ``stale_epoch``; ``None`` for every other epoch."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -65,37 +102,91 @@ class BridgeKeys:
         if type(workspace) is not bytes or len(workspace) != 16:
             raise ValueError("workspace id")
         self._source, self._ws = source, workspace
+        self._lock = threading.RLock()
 
     @property
     def current(self) -> int:
         return self._source.current_epoch()
 
-    def holds(self, epoch: int) -> bool:
+    def serves(self, epoch: int) -> bool:
+        """A committed or older epoch whose key is held: requests under it are opened and answered (§8.6 step 2)."""
         return type(epoch) is int and 1 <= epoch <= self.current and self._source.wk(epoch) is not None
 
-    def _channel(self, epoch: int) -> bytes:
-        if not self.holds(epoch):
+    def burned(self, epoch: int) -> bool:
+        """A burned epoch above the committed one: opened only to answer its signed ``stale_epoch`` (C5, G2b)."""
+        return type(epoch) is int and epoch > self.current and self._source.refusal_key(epoch) is not None
+
+    def holds(self, epoch: int) -> bool:
+        """For the signer (:class:`orch.relay.sign.EpochKeys`): served or burned (G2b: a burned key counts as held)."""
+        return self.serves(epoch) or self.burned(epoch)
+
+    def _wk(self, epoch: int) -> bytes:
+        if self.serves(epoch):
+            wk = self._source.wk(epoch)
+        elif self.burned(epoch):
+            wk = self._source.refusal_key(epoch)
+        else:
             raise KeyMissing("epoch key not held")
-        wk = self._source.wk(epoch)
         assert wk is not None
         return wire.k_bridge(wk, self._ws, epoch)
 
     def open_request(self, header: bytes, body: bytes) -> bytes:
         """The plaintext of a request body; :class:`KeyMissing` (drop) or :class:`wire.WireError` ``tag`` (drop)."""
         h = wire.parse_header(header)
-        if h.epoch > self.current:
-            raise KeyMissing("future epoch")
-        return wire.open_body(self._channel(h.epoch), header, body)
+        return wire.open_body(self._wk(h.epoch), header, body)
 
-    def seal_response(
-        self, signer: RelaySigner, *, request: wire.Header, idx: int, flags: int, ts_ms: int, plaintext: bytes
-    ) -> bytes:
-        """One response chunk for ``request`` at index ``idx``: sealed under the request's epoch (an old epoch only
-        for refusals: the caller's rule, 11A.5), signed by the WSK through :meth:`RelaySigner.response_chunk`."""
+    def state(self) -> SealState:
+        """A snapshot of the seal state for a decision that seals nothing itself (step 9); every seal takes its own
+        snapshot inside :meth:`sealing`."""
+        return self._source.seal_state()
+
+    @contextlib.contextmanager
+    def serialised(self) -> Iterator[None]:
+        """R6 raises the rotation gate and commits a rotation inside this span (the seal lock), never between a
+        :meth:`sealing` snapshot and the commit of the bytes sealed under it."""
+        with self._lock:
+            yield
+
+    @contextlib.contextmanager
+    def sealing(self, signer: RelaySigner) -> Iterator[Sealer]:
+        """G1: the seal lock and ONE snapshot of the seal state; seal AND commit the replayable bytes inside it."""
+        with self._lock:
+            yield Sealer(self, signer, self._source.seal_state(), self._wk)
+
+
+class Sealer:
+    """The only way to seal a response chunk, bound to one :class:`SealState` snapshot (G1)."""
+
+    def __init__(
+        self, keys: BridgeKeys, signer: RelaySigner, state: SealState, channel: Callable[[int], bytes]
+    ) -> None:
+        self._keys, self._signer, self.state, self._channel = keys, signer, state, channel
+
+    def data_ok(self, epoch: int) -> bool:
+        """Data may be sealed under ``epoch``: it is the snapshot's committed epoch, the gate is down, the key held."""
+        return epoch == self.state.current and not self.state.gated and self._keys.serves(epoch)
+
+    def _seal(self, request: wire.Header, idx: int, flags: int, ts_ms: int, plaintext: bytes) -> bytes:
         h = wire.Header(
             2, 2, flags, wire.SUITE, request.workspace, request.device, request.rid, bytes(16), idx, ts_ms,
             request.epoch, secrets.token_bytes(16),
         )  # fmt: skip
         hb = h.pack()
         body = wire.seal_body(self._channel(request.epoch), hb, plaintext)
-        return wire.build_envelope(hb, body, signer.response_chunk(hb, body))
+        return wire.build_envelope(hb, body, self._signer.response_chunk(hb, body))
+
+    def seal_response(self, *, request: wire.Header, idx: int, last: bool, ts_ms: int, plaintext: bytes) -> bytes:
+        """A DATA chunk (never ``REFUSAL``): only under the snapshot's committed epoch with the gate down, else
+        :class:`SealRefused`."""
+        if not self.data_ok(request.epoch):
+            raise SealRefused("no data under an old, burned or gated epoch")
+        return self._seal(request, idx, wire.FLAG_LAST if last else 0, ts_ms, plaintext)
+
+    def seal_refusal(self, *, request: wire.Header, idx: int, ts_ms: int, code: str, **fields: Any) -> bytes:
+        """A ``LAST | REFUSAL`` chunk whose plaintext this method builds from the closed refusal fields
+        (:func:`orch.relay.framing.refusal_plaintext`); any served epoch, old or gated included. Under a burned
+        epoch only ``stale_epoch`` (proto §7.2 H4: nothing else is ever sealed under it)."""
+        if self._keys.burned(request.epoch) and code != "stale_epoch":
+            raise SealRefused("only stale_epoch under a burned epoch")
+        pt = framing.refusal_plaintext(code, **fields)
+        return self._seal(request, idx, wire.FLAG_LAST | wire.FLAG_REFUSAL, ts_ms, pt)

@@ -7,11 +7,17 @@ workspace, ``Call.relay = identity``, ``peer = identity.peer()``, ``columns`` = 
 the scopes again, inside the op's own job), then :meth:`Call.authorize`; it appends only through
 :func:`orch.host.human.append_relay`.
 
-``relay.submit`` (O5, orch-52 15 Oct 2026): the outcome record, the step-9b duplicate check (O2), ``HumanOps._judge``,
-``outcomes.plan`` (fsynced) and the append run in ONE store-lock span (``store.locked()`` re-reads the store first).
-O2: an event id already in the log is a committed duplicate (``duplicate: true``) when its signed content (the bytes
-the device signs, F1 §5.3) and its actor equal the submitted event's; otherwise ``event.duplicate_id``. Dedup is by
-event identity, not by signature bytes (ECDSA signatures are randomised).
+``relay.submit`` (O5, orch-52 15 Oct 2026, ruling A): ONE store-lock span (``store.locked()`` re-reads the store
+first) holding, in order, the outcome record by ``(ws, r:<device>, idem = event id)`` (a known idem replays its
+outcome), the log dedup (O2: an event id already in the log is a committed duplicate, ``duplicate: true``, when its
+signed digest and actor equal the submitted event's, otherwise ``event.duplicate_id``; never by signature bytes),
+and ONLY THEN, for a never-seen event, the ULID window against the HOST clock (``event.expired``); then the target
+and key, ``judge_events``, ``outcomes.plan`` (fsynced), the append and a log check. Every core helper of those steps
+is reached through ONE seam, :mod:`orch.host.relayadmit` (H12e's names; R2's stand-ins until #474 merges).
+
+Errors: a :class:`HostError` becomes a sealed :class:`orch.relay.framing.Refusal` with its code (``retryable`` is the
+bridge's, derived from the retry table; ``next_key`` from ``detail``); a :class:`orch.store.StoreError` (``store.busy``
+from the lock, and any other store refusal) too: it never escapes as a non-refusal (R2-6).
 
 Not wired here (R5): registering :func:`register` at open, starting the worker. ``WorkspaceService.open`` is unchanged.
 """
@@ -24,8 +30,10 @@ from typing import TYPE_CHECKING, Any
 from orch import canon
 from orch.relay import submit as relay_submit
 from orch.relay.framing import Identity, Refusal
+from orch.store import StoreError
 from orch.store.pins import HostPins, pair
 
+from . import relayadmit
 from .auth import Verified
 from .columns import Column, resolve_relay
 from .errors import HostError
@@ -40,11 +48,14 @@ if TYPE_CHECKING:
 __all__ = ["RelayEntry", "register"]
 
 
-def _refusal(exc: HostError) -> Refusal:
-    fields: dict[str, Any] = {"retryable": bool(exc.retryable)}
-    nk = getattr(exc, "next_key", None)
-    if isinstance(nk, str):
-        fields["next_key"] = nk  # advisory (ticket.key_not_next, orch-52 final)
+def _refusal(exc: HostError | StoreError) -> Refusal:
+    """The sealed form of a host or store error: its code and, for ``ticket.key_not_next``, the advisory
+    ``next_key`` (H12e: ``HostError.detail``). ``retryable`` is not carried: the bridge derives it (ruling C)."""
+    fields: dict[str, Any] = {}
+    detail = getattr(exc, "detail", None)
+    nk = detail.get("next_key") if isinstance(detail, dict) else None
+    if exc.code == "ticket.key_not_next" and isinstance(nk, str):
+        fields["next_key"] = nk
     return Refusal(exc.code, **fields)
 
 
@@ -64,7 +75,7 @@ class RelayEntry:
     """``HostPort`` over one :class:`WorkspaceService` and its socket backend (``RegistryBackend``: the same ops)."""
 
     def __init__(self, service: WorkspaceService, backend: Any) -> None:
-        self.service, self.backend = service, backend
+        self._service, self._backend = service, backend  # private: orch.relay never reaches the service (R2-13)
 
     def _call(
         self, identity: Identity, op: str, args: dict[str, Any], recheck: Callable[[], bool], idem: str | None
@@ -76,7 +87,7 @@ class RelayEntry:
             return resolve_relay(bool(recheck())), ident.person_id, Verified("absent")
 
         call = Call(
-            self.service, None, ident.peer(), frame, Column("N", "no-person"), None, Verified("absent"),  # type: ignore[arg-type]
+            self._service, None, ident.peer(), frame, Column("N", "no-person"), None, Verified("absent"),  # type: ignore[arg-type]
             ident.principal, columns=columns, relay=ident,
         )  # fmt: skip
         return call
@@ -84,7 +95,7 @@ class RelayEntry:
     # -- HostPort -------------------------------------------------------------------------------------------------
 
     def standing(self, device_id: str, person_id: str) -> str:
-        store = self.service.store
+        store = self._service.store
         if store is None:
             return "unavailable"
         try:
@@ -92,7 +103,7 @@ class RelayEntry:
                 state = store.state
                 if (device_id, person_id) in state.revocation_evidence():
                     return "revoked"
-                held = HostPins(self.service.state_dir, self.service.workspace_id).revocations()
+                held = HostPins(self._service.state_dir, self._service.workspace_id).revocations()
                 if any(pair(rec) == (device_id, person_id) for rec in held):
                     return "revoked"
                 if state.device_person(device_id) != person_id or person_id not in state.workspace.members:
@@ -103,14 +114,14 @@ class RelayEntry:
 
     def read(self, identity: Identity, op: str, args: dict[str, Any], recheck: Callable[[], bool]) -> dict:
         try:
-            return self.backend.serve(self._call(identity, op, args, recheck, None))
-        except HostError as exc:
+            return self._backend.serve(self._call(identity, op, args, recheck, None))
+        except (HostError, StoreError) as exc:
             raise _refusal(exc) from None
 
     def lookup(self, identity: Identity, idem: str) -> dict[str, Any]:
         try:
-            return self.service.outcomes.lookup(identity.principal, idem)
-        except HostError as exc:
+            return self._service.outcomes.lookup(identity.principal, idem)
+        except (HostError, StoreError) as exc:
             raise _refusal(exc) from None
 
     def submit(
@@ -118,10 +129,9 @@ class RelayEntry:
     ) -> dict[str, Any]:
         """``relay.submit`` after the bridge's lock-free checks: ONE ``store.locked()`` span (orch-52 final, 15 Oct
         2026) holding, in order: the refresh (``locked`` re-reads), the identity (:meth:`Call.authorize` with the
-        recheck), the outcome record (replay or conflict of ``(ws, r:<device>, event id)``), the dedup by event
-        identity, the log, the key, :func:`judge_events`, ``outcomes.plan`` (fsynced), ``append_relay`` and a log check
-        before the outcome is classified."""
-        service = self.service
+        recheck), the outcome record (replay or conflict of ``(ws, r:<device>, event id)``), then :meth:`_apply`.
+        ``store.busy`` (the lock) and every other store or host error is a sealed refusal, never a raw exception."""
+        service = self._service
         # the binding is the event identity (signed content and actor), never the signature bytes: an identical
         # event signed again is the same request (orch-52 final); the signed events are noted on the record
         args = {"log": log, "events": [{k: v for k, v in e.items() if k != "sig"} for e in events]}
@@ -138,32 +148,22 @@ class RelayEntry:
             with store.locked():  # the one span; the store is re-read first
                 self._call(identity, "relay.submit", args, recheck, idem).authorize()
                 return service.outcomes.execute(identity.principal, idem, "relay.submit", args, apply, planned=None)
-        except HostError as exc:
+        except (HostError, StoreError) as exc:
             raise _refusal(exc) from None
 
     def _apply(self, intent: Any, identity: Identity, log: str, events: list[dict]) -> dict[str, Any]:
-        service = self.service
+        """Inside the span, after the outcome record: the log dedup, THEN the window for a never-seen event (ruling A,
+        host clock), the target and key, the judgement, the plan, the append and the log check."""
+        service = self._service
         store = service.store
         service.outcomes.note(intent, signed_events=events)  # fsynced: what relay_fields rolls forward
         ws = service.workspace_id
         ev = events[0]
-        found = store.logged_event(log, ev["id"])
-        if found is not None:  # dedup by event identity (step 9b), before anything is judged
-            if not same_event(ws, log, found, ev):
-                raise HostError("event.duplicate_id", "an event with this id and other content is in the log")
-            return relay_submit.result(log, [int(found["seq"])], duplicate=True)
-        exists = store.log_head(log) is not None or store.ticket(log, heal=False) is not None
-        if ev["type"] == "ticket.created":
-            if exists:  # ticket.exists means only that this uid exists
-                raise HostError("ticket.exists", "a ticket with this uid exists")
-            want = store._next_key()  # noqa: SLF001 - TODO(orch-52): the public next-key helper
-            if ev.get("key") != want:
-                err = HostError("ticket.key_not_next", "the key is not the next free key")
-                err.next_key = want  # type: ignore[attr-defined]
-                raise err
-        elif not exists:
-            raise HostError("not_found", "no such ticket")
-        judge_events(store, log, events)
+        seq = relayadmit.known_or_fresh(store, log, ev, service.clock())
+        if seq is not None:  # an identical landed event: committed, duplicate (before anything is judged)
+            return relay_submit.result(log, [seq], duplicate=True)
+        relayadmit.check_target(store, log, ev)
+        relayadmit.judge_events(store, log, events)
         service.outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events])  # fsynced
         landed, error = append_relay(
             service, log, events, [{} for _ in events], person_id=identity.person_id, device_id=identity.device_id
@@ -185,31 +185,6 @@ def same_event(workspace_id: str, log: str, a: dict[str, Any], b: dict[str, Any]
         ) == canon.person_signing_bytes(workspace_id, log, b)
     except Exception:  # noqa: BLE001 - unbuildable bytes are not the same event
         return False
-
-
-def judge_events(store: Any, log: str, events: list[dict[str, Any]]) -> None:
-    """All events together with ``model.preview`` under the store lock (signatures verified), as
-    ``HumanOps._judge`` does for the person path, without a request record. TODO(orch-52): replace with core's
-    ``judge_events`` helper when it lands (#465)."""
-    from orch.model import Refusal as ModelRefusal
-    from orch.model import preview
-    from orch.store import StoreError
-
-    state = store.state
-    stamp = store.peek_stamp(log)
-    seq, prev, at = stamp["seq"], stamp["prev"], stamp["at"]
-    for ev in events:
-        probe = {**ev, "seq": seq, "prev": prev, "at": at}
-        if "ws_seq" in stamp:
-            probe["ws_seq"] = stamp["ws_seq"]
-        try:
-            r = preview(state, probe, log=log)
-        except Exception:  # noqa: BLE001 - device-supplied fields the model cannot judge: refused, never run
-            raise HostError("invalid.input", "the event cannot be judged") from None
-        if isinstance(r, ModelRefusal):
-            exc = StoreError.from_refusal(r)
-            raise HostError(exc.code, exc.detail or exc.code)
-        state, seq, prev = r, seq + 1, canon.event_head(probe)
 
 
 def _rebuild_for(workspace_id: str) -> Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any]]:

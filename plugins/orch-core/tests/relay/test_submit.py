@@ -22,8 +22,8 @@ def _args(**over):
     return {"log": log, "events": [ev]}
 
 
-def check(args, *, op="new_ticket", idem=None, now=T0, ident=IDENT, pub=None):
-    return submit.check_events(op, args, ident, pub or P.dk_pub, idem=idem or args["events"][0]["id"], now_ms=now)
+def check(args, *, op="new_ticket", idem=None, ident=IDENT, pub=None):
+    return submit.check_events(op, args, ident, pub or P.dk_pub, idem=idem or args["events"][0]["id"])
 
 
 def code(fn):
@@ -74,13 +74,10 @@ def test_idem_must_be_the_event_id():
     assert code(lambda: check(_args(), idem=ulid())) == "idem.invalid"
 
 
-def test_the_event_id_must_be_fresh():
-    old = _args(eid=ulid(T0 - framing.FRESH_PAST_MS - 1))
-    assert code(lambda: check(old)) == "event.expired"
-    future = _args(eid=ulid(T0 + framing.FRESH_FUTURE_MS + 1))
-    assert code(lambda: check(future)) == "event.expired"
-    assert check(_args(eid=ulid(T0 - framing.FRESH_PAST_MS)))  # the edges pass
-    assert check(_args(eid=ulid(T0 + framing.FRESH_FUTURE_MS)))
+def test_the_lock_free_checks_never_judge_freshness():
+    """Ruling A: the window is the host's, after dedup; the lock-free checks pass an old or future event id."""
+    assert check(_args(eid=ulid(T0 - framing.FRESH_PAST_MS - 10**9)))
+    assert check(_args(eid=ulid(T0 + framing.FRESH_FUTURE_MS + 10**9)))
 
 
 def _signed_by(phone, log, ev):

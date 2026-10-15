@@ -14,7 +14,7 @@ from orch.identity import certs
 from orch.relay import framing, sign, wire
 from orch.relay.bridge import Bridge, Item
 from orch.relay.framing import Identity, Refusal
-from orch.relay.keys import BridgeKeys, Member, MemberList
+from orch.relay.keys import BridgeKeys, Member, MemberList, SealState
 from orch.relay.rids import RidStore
 from orch.relay.state import StateDir
 
@@ -129,22 +129,45 @@ def _key(seed: bytes | None, what: bytes):
 
 
 class Epochs:
+    """R6's key custody, fixture: committed epochs ``1..cur`` (``keys``), burned epochs above ``cur`` (``burned``:
+    their keys are in ``keys`` too, so a phone fixture can seal under them), an optional pending epoch and the
+    rotation gate."""
+
     def __init__(self, current: int = 2, *, seed: bytes | None = None) -> None:
         self.cur = current
-        self.keys = {
-            e: (secrets.token_bytes(32) if seed is None else crypto.sha256(seed + b"wk%d" % e))
-            for e in range(1, current + 1)
-        }
+        self.seed = seed
+        self.keys = {e: self._new(e) for e in range(1, current + 1)}
+        self.burned: set[int] = set()
+        self.pending: int | None = None
+        self.gated = False
+
+    def _new(self, e: int) -> bytes:
+        return secrets.token_bytes(32) if self.seed is None else crypto.sha256(self.seed + b"wk%d" % e)
 
     def current_epoch(self) -> int:
         return self.cur
 
     def wk(self, epoch: int) -> bytes | None:
-        return self.keys.get(epoch)
+        return self.keys.get(epoch) if epoch <= self.cur else None
+
+    def refusal_key(self, epoch: int) -> bytes | None:
+        return self.keys.get(epoch) if epoch in self.burned and epoch > self.cur else None
+
+    def seal_state(self) -> SealState:
+        ehw = max([self.cur, *self.burned, *([self.pending] if self.pending else [])])
+        return SealState(self.cur, self.gated, self.pending if self.pending is not None else ehw + 1)
 
     def rotate(self) -> None:
-        self.cur += 1
-        self.keys[self.cur] = secrets.token_bytes(32)
+        self.cur = max([self.cur, *self.burned]) + 1
+        self.keys[self.cur] = self._new(self.cur)
+        self.pending, self.gated = None, False
+
+    def burn(self) -> int:
+        """An exposed body introduced epoch EHW + 1 and was abandoned (proto §7.2 H4): that epoch is burned."""
+        e = max([self.cur, *self.burned]) + 1
+        self.keys[e] = self._new(e)
+        self.burned.add(e)
+        return e
 
 
 class R6:
@@ -167,8 +190,11 @@ class FakeHost:
     ``OutcomeStore.execute`` + ``relay.submit``: a duplicate idem with the same binding replays ``duplicate: true``,
     another binding is ``idem.conflict``; a pending record reconciles from the log."""
 
-    def __init__(self, root: Path, *, fault: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self, root: Path, *, fault: Callable[[str], None] | None = None, clock: Callable[[], int] | None = None
+    ) -> None:
         self.root, self.fault = root, fault or (lambda p: None)
+        self.clock = clock or (lambda: T0)  # the HOST clock (ms): the event window is checked against it
         self.standings: dict[tuple[str, str], str] = {}
         self.runs: list[tuple[str, str]] = []  # (op, idem) each time an op body ran
         self.reads: list[str] = []
@@ -211,8 +237,10 @@ class FakeHost:
                 raise Refusal("outcome.unknown_idem", retryable=False)
         if rec["step"] == "pending":
             return {"state": "pending"}
+        if rec["step"] == "tombstone":
+            raise Refusal("idem.expired")
         out = {"state": rec["step"], "exit": rec.get("exit", 0)}
-        for k in ("result", "error"):
+        for k in ("result", "error", "seqs"):
             if k in rec:
                 out[k] = rec[k]
         return out
@@ -248,26 +276,56 @@ class FakeHost:
             if rec is not None:
                 if rec["step"] == "committed":
                     return {**rec["result"], "duplicate": True}
-                raise Refusal(rec["error"]["code"], retryable=False)
+                if rec["step"] == "tombstone":
+                    raise Refusal("idem.expired")
+                raise Refusal(rec["error"]["code"], **({"seqs": rec["seqs"]} if rec.get("seqs") else {}))
             outcomes = self._load("outcomes.json")
         outcomes[key] = {"binding": binding, "step": "pending", "log": log, "events": events}
         self._save("outcomes.json", outcomes)
         self.fault("after_begin")
-        self.runs.append((op, idem))
         logd = self.log
         ev = events[0]
-        if ev.get("title") == "refuse me":
-            outcomes.pop(key)
-            outcomes[key] = {"binding": binding, "step": "failed", "error": {"code": "ticket.exists"}, "exit": 5}
+        ident = canon.dumps({"log": log, "event": unsigned[0]}).decode()
+        if ev["id"] in logd:  # log dedup by event identity BEFORE the window (ruling A)
+            if logd[ev["id"]].get("ident") != ident:
+                return self._fail(key, binding, "event.duplicate_id")
+            result = {**_submit_result(log, [logd[ev["id"]]["seq"]]), "duplicate": True}
+            outcomes[key] = {**outcomes[key], "step": "committed", "result": result}
             self._save("outcomes.json", outcomes)
-            raise Refusal("ticket.exists", retryable=False)
-        logd[ev["id"]] = {"seq": len(logd) + 1, "type": ev["type"]}
+            return result
+        born, now = framing.ulid_ms(ev["id"]), self.clock()
+        if not now - framing.FRESH_PAST_MS <= born <= now + framing.FRESH_FUTURE_MS:
+            return self._fail(key, binding, "event.expired")  # a never-seen event only, against HOST time
+        self.runs.append((op, idem))
+        if ev.get("title") == "refuse me":
+            return self._fail(key, binding, "ticket.exists")
+        if ev.get("key") == "DEMO-TAKEN":
+            return self._fail(key, binding, "ticket.key_not_next", next_key="DEMO-42")
+        logd[ev["id"]] = {"seq": len(logd) + 1, "type": ev["type"], "ident": ident}
         self._save("log.json", logd)
         self.fault("after_append")
         result = _submit_result(log, [logd[ev["id"]]["seq"]])
         outcomes[key] = {**outcomes[key], "step": "committed", "result": result}
         self._save("outcomes.json", outcomes)
         return result
+
+    def _fail(self, key: str, binding: str, code: str, **fields: Any) -> dict[str, Any]:
+        outcomes = self._load("outcomes.json")
+        outcomes[key] = _fail_record(binding, code)
+        self._save("outcomes.json", outcomes)
+        raise Refusal(code, **fields)
+
+    def set_outcome(self, principal: str, idem: str, step: str, **fields: Any) -> None:
+        """A stored outcome for ``(principal, idem)`` (a vector's setup): ``failed``/``partial`` with ``error`` and
+        ``seqs``, or ``tombstone``."""
+        outcomes = self._load("outcomes.json")
+        outcomes[f"{principal}|{idem}"] = {"binding": "", "step": step, "exit": 5 if step != "tombstone" else 0,
+                                           **fields}  # fmt: skip
+        self._save("outcomes.json", outcomes)
+
+
+def _fail_record(binding: str, code: str) -> dict[str, Any]:
+    return {"binding": binding, "step": "failed", "error": {"code": code}, "exit": 5}
 
 
 def _ok(data: Any) -> dict[str, Any]:
@@ -314,7 +372,7 @@ class World:
         self.key = Key()
         self.alarms: list[tuple[str, str]] = []
         (tmp / "host").mkdir(exist_ok=True)
-        self.host = FakeHost(tmp / "host", fault=fault)
+        self.host = FakeHost(tmp / "host", fault=fault, clock=self.clock)
         self.post = Poster()
         self.fault = fault
         self.state: StateDir | None = None

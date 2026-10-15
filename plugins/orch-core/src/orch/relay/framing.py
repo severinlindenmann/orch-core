@@ -20,15 +20,20 @@ exactly one F1 person event, signed by the requesting device's ``dk_sig`` over `
 (F1 §5.3; ``seq``, ``at``, ``prev``, ``ws_seq``, ``host_sig`` absent). The event type must be the one :data:`OPS`
 names for the op (the closed event/scope table of ``relay/submit.py``).
 
-**Answer** (response chunks, each ≤ 256 KiB, the whole answer ≤ 4 MiB of plaintext):
+**Answer** (response chunks, each ≤ 256 KiB; the whole answer's chunk envelopes ≤ :data:`RELAY_DEVICE_RESPONSE_BYTES`,
+the relay's per-device budget of undelivered response bytes, so ``cj(result)`` ≤ :data:`MAX_ANSWER`):
 
-* success: chunk 0 meta ``{"status": "ok"}``, later chunks meta ``{}``; ``data`` across the chunks is ``cj(result)``
-  (the §0.3 Result object); the last chunk has ``LAST``.
-* refusal: one chunk, ``LAST | REFUSAL``, meta ``{"refusal": <code>, ...}``: the proto §14 codes with their documented
-  fields (``high``, ``host_ms``, ``epoch``, ``status``), or a host §0.6 code (dotted) with ``retryable`` and, for a
-  write that failed after events landed, ``seqs``. A refusal never echoes request text.
+* success: chunk 0 meta exactly ``{"status": "ok"}``, later chunks meta exactly ``{}``; ``data`` across the chunks is
+  ``cj(result)`` (the §0.3 Result object); the last chunk has ``LAST``. Above the cap: ``frame.too_large`` (nothing
+  stored but that refusal).
+* refusal: one chunk, ``LAST | REFUSAL``, meta ``{"refusal": <code>, ...}`` with EXACTLY the fields of
+  :func:`refusal_meta` (the closed field sets): a proto §14 code with its documented field (``high``, ``host_ms``,
+  ``epoch``, ``status``) and nothing else; a host §0.6 code with ``retryable`` (DERIVED from :data:`RETRY`, never
+  passed in), ``seqs`` only for a write whose events partly landed (never "not run"), and ``next_key`` only for
+  ``ticket.key_not_next``. A refusal never echoes request text.
 
-:data:`RETRY` is the one closed retry classification (four classes) shared by the R2 tests and the phone.
+:data:`RETRY` is the one closed retry classification shared by the R2 tests, the doc and the phone;
+:data:`RETRY_CONTEXT` holds its two context rules (orch-52 ruling C).
 """
 
 from __future__ import annotations
@@ -45,6 +50,10 @@ from . import wire
 __all__ = [
     "MAX_ANSWER",
     "META_KEYS",
+    "PROTO_CODES",
+    "PROTO_FIELDS",
+    "RELAY_DEVICE_RESPONSE_BYTES",
+    "RETRY_CONTEXT",
     "OPS",
     "FRESH_FUTURE_MS",
     "FRESH_PAST_MS",
@@ -57,12 +66,22 @@ __all__ = [
     "answer_plaintexts",
     "check_meta",
     "grant_shaped",
+    "refusal_meta",
     "refusal_plaintext",
     "retry_class",
+    "retryable",
     "ulid_ms",
 ]
 
-MAX_ANSWER = 4 << 20  # plaintext of one answer; above it: frame.too_large
+#: the relay's per-device budget of undelivered response bytes (proto §19 "Per workspace", P3-D17: "each device may
+#: consume at most 2 MiB of that response budget"; above it the relay answers 429 quota_exceeded). An answer whose
+#: chunk envelopes exceed it could never be delivered, so it is refused up front (frame.too_large).
+RELAY_DEVICE_RESPONSE_BYTES = 2 << 20
+_CHUNK_ROOM = wire.MAX_CHUNK - wire.OVERHEAD  # plaintext of one full chunk
+_FIRST_META, _LATER_META = 4 + len(b'{"status":"ok"}'), 4 + len(b"{}")
+_MAX_CHUNKS = RELAY_DEVICE_RESPONSE_BYTES // wire.MAX_CHUNK  # 8 full chunks fill the budget exactly
+#: the largest ``cj(result)`` whose chunk envelopes fit :data:`RELAY_DEVICE_RESPONSE_BYTES` (2 095 587 bytes)
+MAX_ANSWER = _MAX_CHUNKS * _CHUNK_ROOM - _FIRST_META - (_MAX_CHUNKS - 1) * _LATER_META
 SCOPE_ORDER = ("look", "decide", "operate", "type")
 META_KEYS = frozenset({"op", "args", "idem", "rd"})
 #: O1 (orch-52 final, 15 Oct 2026): ``outcome.get`` answers ``pending`` for an idem (= event id) that has no outcome
@@ -113,17 +132,20 @@ OPS: Mapping[str, OpSpec] = {
     "answer": OpSpec("relay.submit", "write", "decide", "question.answered"),
 }
 
-#: The ONE closed retry classification (orch-52's final #465 decisions, 15 Oct 2026): every answer code a device can
-#: get maps to one class; the R2 tests and the phone use this table as data. An UNKNOWN code is ``D`` (fail closed).
-#: A: resend the same bytes and idem (same rid within 240 s, else a new rid with the same idem = event id).
-#: B: unknown: settle by reading the log (``outcome.get`` with the idem, or the ticket).
+#: The ONE closed retry classification (orch-52's final #465 decisions and ruling C, 15 Oct 2026): every answer code a
+#: device can get maps to one class; the R2 tests, the doc and the phone use this table as data. An UNKNOWN code is
+#: ``D`` (fail closed). ``retryable`` is DERIVED from it (A, B -> true; C-auto, C-review, D -> false).
+#: A: nothing ran and no seq was consumed, or the request was refused before anything could run: resend the same
+#:    signed event and idem (same rid within 240 s, else a new rid with the same idem = event id).
+#: B: unknown, something may have run: settle by reading (``outcome.get`` with the idem, or the ticket). On a READ,
+#:    ``already_done {status: unknown}`` means: re-issue the read under a new rid (reads are idempotent).
 #: C-auto: the phone rebuilds the event (a new event id) without a new review (``next_key``, a fresh member list).
 #: C-review: the person must review again before anything is re-signed.
 #: D: definite: the answer is the outcome (``committed`` and ``duplicate: true`` included).
 RETRY: Mapping[str, str] = {
     **dict.fromkeys(
         (
-            "stale_epoch", "stale_sequence", "stale_timestamp", "relay.stale_epoch_hint", "relay.silence",
+            "stale_epoch", "stale_sequence", "stale_timestamp", "busy", "relay.stale_epoch_hint", "relay.silence",
             "relay.timeout", "cancelled", "store.busy", "lock.busy", "rate.limited", "quota.host", "host.restarting",
             "conn.overloaded", "outcome.unknown",
         ),
@@ -137,24 +159,105 @@ RETRY: Mapping[str, str] = {
     **dict.fromkeys(
         (
             "committed", "event.duplicate_id", "ticket.exists", "idem.conflict", "idem.invalid", "idem.required",
-            "forbidden_scope", "not_member", "revoked", "bad_signature", "malformed", "busy", "req.invalid",
+            "forbidden_scope", "not_member", "revoked", "bad_signature", "malformed", "req.invalid",
             "grant.secret_in_args", "op.not_allowed", "invalid.input", "frame.too_large", "not_found", "internal",
         ),
         "D",
     ),
 }  # fmt: skip
-#: ``outcome.unknown_idem`` is B ("unknown_idem before the bound") while ``outcome.get`` would still answer
-#: ``pending`` (:data:`PENDING_NO_RECORD_MS` after the event id's ULID time); the bridge answers ``pending`` then, so a
-#: device that sees the code itself is past the bound: "lost past the bound", C-review.
+#: The context rules of ruling C (data, carried by the vectors): ``internal`` is B when it happened after a WRITE was
+#: admitted (effects possible: settle by ``outcome.get``), else D; ``outcome.unknown_idem`` is B before the pending
+#: bound (the event id's ULID time + :data:`PENDING_NO_RECORD_MS`; the bridge answers ``pending`` then) and C-review
+#: after it ("lost past the bound").
+RETRY_CONTEXT: Mapping[str, Mapping[str, str]] = {
+    "internal": {"effects_possible": "B"},
+    "outcome.unknown_idem": {"before_bound": "B"},
+}
+#: Phone guidance that is not a class (data, carried by the vectors and the doc).
+RETRY_NOTES: Mapping[str, str] = {
+    "already_done": "on a read: re-issue under a new rid; on a write: outcome.get with the idem",
+    "ticket.exists": "after a C-auto rebuild (a new event id for the same uid): check outcome.get for the first idem",
+    "event.abandoned": "reserved: emitted once core's H12e known_or_fresh is wired (a restore abandoned the id)",
+    "pending": "the idem is admitted or running: no second run; ask outcome.get later (bounded)",
+}
 
 
-def retry_class(code: str) -> str:
-    """The class of ``code``; an unknown code is ``D`` (fail closed)."""
+def retry_class(code: str, *, effects_possible: bool = False, before_bound: bool = False) -> str:
+    """The class of ``code`` in its context (:data:`RETRY_CONTEXT`); an unknown code is ``D`` (fail closed)."""
+    ctx = RETRY_CONTEXT.get(code, {})
+    if effects_possible and "effects_possible" in ctx:
+        return ctx["effects_possible"]
+    if before_bound and "before_bound" in ctx:
+        return ctx["before_bound"]
     return RETRY.get(code, "D")
 
 
+def retryable(code: str, *, effects_possible: bool = False, before_bound: bool = False) -> bool:
+    """DERIVED from the class (ruling C): A and B are retryable; C-auto, C-review and D are not."""
+    return retry_class(code, effects_possible=effects_possible, before_bound=before_bound) in ("A", "B")
+
+
+#: the proto §14 codes the bridge seals, each with EXACTLY its documented fields (nothing else, no ``retryable``)
+PROTO_FIELDS: Mapping[str, frozenset[str]] = {
+    "not_member": frozenset(), "revoked": frozenset(), "bad_signature": frozenset(), "busy": frozenset(),
+    "malformed": frozenset(), "stale_sequence": frozenset({"high"}), "stale_timestamp": frozenset({"host_ms"}),
+    "stale_epoch": frozenset({"epoch"}), "forbidden_scope": frozenset(), "already_done": frozenset({"status"}),
+    "rid_conflict": frozenset(),
+}  # fmt: skip
+PROTO_CODES = frozenset(PROTO_FIELDS)
+_HOST_CODE = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+")  # a dotted §0.6 code; undotted: only RETRY's
+_MAX_SEQS = 1024
+
+
+def refusal_meta(
+    code: str,
+    *,
+    effects_possible: bool = False,
+    before_bound: bool = False,
+    seqs: Any = None,
+    next_key: Any = None,
+    **proto: Any,
+) -> dict[str, Any]:
+    """THE refusal builder: the meta of a refusal chunk with exactly its closed field set, or :class:`ValueError`.
+
+    * a proto code (:data:`PROTO_FIELDS`): exactly its documented field(s), each a non-negative int (``status`` the
+      string ``unknown``); ``seqs``/``next_key``/context flags are refused;
+    * a host code: ``retryable`` derived from :data:`RETRY` in context; ``seqs`` only as a non-empty list of positive
+      ints (events that LANDED; a refusal where nothing ran has none); ``next_key`` only for ``ticket.key_not_next``,
+      a short string. Any other field is refused."""
+    if type(code) is not str:
+        raise ValueError("refusal code")
+    if code in PROTO_FIELDS:
+        if seqs is not None or next_key is not None or effects_possible or before_bound:
+            raise ValueError(f"{code}: host fields on a proto code")
+        if set(proto) != PROTO_FIELDS[code]:
+            raise ValueError(f"{code}: fields {sorted(proto)}")
+        for k, v in proto.items():
+            if k == "status" and v != "unknown":
+                raise ValueError("status")
+            if k != "status" and (type(v) is not int or v < 0):
+                raise ValueError(k)
+        return {"refusal": code, **proto}
+    if proto or not (_HOST_CODE.fullmatch(code) or code in RETRY) or len(code) > 64:
+        raise ValueError(f"{code}: not a refusal code or extra fields {sorted(proto)}")
+    out: dict[str, Any] = {
+        "refusal": code, "retryable": retryable(code, effects_possible=effects_possible, before_bound=before_bound),
+    }  # fmt: skip
+    if seqs is not None:
+        if type(seqs) is not list or not 0 < len(seqs) <= _MAX_SEQS or any(type(x) is not int or x < 1 for x in seqs):
+            raise ValueError("seqs")
+        out["seqs"] = list(seqs)
+    if next_key is not None:
+        if code != "ticket.key_not_next" or type(next_key) is not str or not 0 < len(next_key) <= 64:
+            raise ValueError("next_key")
+        out["next_key"] = next_key
+    return out
+
+
 class Refusal(Exception):  # noqa: N818 - a sealed refusal, not an error of this process
-    """A sealed refusal: ``code`` and its documented fields. The message never carries request data."""
+    """A sealed refusal: ``code`` and its documented fields (``seqs``, ``next_key``; a proto code's own field). A
+    ``retryable`` passed here is IGNORED: the sealed value is derived from :data:`RETRY` (ruling C). The message never
+    carries request data."""
 
     def __init__(self, code: str, **fields: Any) -> None:
         super().__init__(code)
@@ -233,18 +336,21 @@ def check_meta(meta: Mapping[str, Any], data: bytes) -> Request:
 
 
 def refusal_plaintext(code: str, **fields: Any) -> bytes:
-    return wire.build_plaintext({"refusal": code, **fields}, b"")
+    """The plaintext of a refusal chunk: :func:`refusal_meta` (the closed field sets), ``data`` empty."""
+    return wire.build_plaintext(refusal_meta(code, **fields), b"")
 
 
 def answer_plaintexts(result: Mapping[str, Any], *, room: int) -> list[bytes]:
     """The plaintexts of a success answer: chunk 0 meta ``{"status":"ok"}``, later ``{}``; ``room`` is the plaintext
-    budget of one chunk. Raises :class:`Refusal` ``frame.too_large`` above :data:`MAX_ANSWER`."""
+    budget of one chunk. Raises :class:`Refusal` ``frame.too_large`` above :data:`MAX_ANSWER` or when the chunk
+    envelopes would exceed :data:`RELAY_DEVICE_RESPONSE_BYTES` (never deliverable): refused before anything is
+    stored."""
     try:
         data = canon.dumps(dict(result))
     except canon.JcsError:
-        raise Refusal("internal", retryable=False) from None
+        raise Refusal("internal") from None
     if len(data) > MAX_ANSWER:
-        raise Refusal("frame.too_large", retryable=False)
+        raise Refusal("frame.too_large")
     out: list[bytes] = []
     first = wire.build_plaintext({"status": "ok"}, b"")
     later = wire.build_plaintext({}, b"")
@@ -255,4 +361,6 @@ def answer_plaintexts(result: Mapping[str, Any], *, room: int) -> list[bytes]:
         out.append(head + data[pos : pos + take])
         pos += take
         if pos >= len(data):
+            if sum(len(p) + wire.OVERHEAD for p in out) > RELAY_DEVICE_RESPONSE_BYTES:
+                raise Refusal("frame.too_large")
             return out

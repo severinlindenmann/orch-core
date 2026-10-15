@@ -4,14 +4,18 @@
   ``answer`` -> ``question.answered`` (scope ``decide``). Any other event type is ``forbidden_scope``. It is the
   ``event`` column of :data:`orch.relay.framing.OPS`, checked to agree by a test.
 * :func:`check_events` (the lock-free checks): exactly one F1 person event per request, of the table's type, its id
-  equal to the idem and fresh (its ULID time in [now - 900 s, now + 300 s]), whose actor is exactly the requesting
-  device and its person, whose ``auth`` is in :data:`AUTH`, without ``source_sha`` or any host-stamped field, whose
-  ``sig`` verifies under **this** device's ``dk_sig_pub`` over ``person_signing_bytes(ws, log, E)``; ``log`` is a
-  ticket uid. Every failure is a sealed refusal; nothing is appended. The store verifies every signature again.
+  equal to the idem, whose actor is exactly the requesting device and its person, whose ``auth`` is in :data:`AUTH`,
+  without ``source_sha`` or any host-stamped field, whose ``sig`` verifies under **this** device's ``dk_sig_pub`` over
+  ``person_signing_bytes(ws, log, E)``; ``log`` is a ticket uid. Every failure is a sealed refusal; nothing is
+  appended. The store verifies every signature again. **No freshness check here** (orch-52 ruling A): the event id's
+  ULID window ([host now - 900 s, host now + 300 s], ``event.expired``) is checked by the host INSIDE the store-lock
+  span, after the outcome record and the log dedup answered every known identity, so a committed event resent late
+  replays its outcome instead of being refused.
 * :func:`recover`: start-up roll-forward of admitted writes (11A.4 "admitted" row): no outcome record, or ``pending``
-  that reconciles to nothing landed: run again from the submission row (identity rechecked; no new seq admission, no
-  ts window); ``pending`` with landed events: rolled forward through ``relay_fields`` (never judged again); terminal:
-  nothing to run. The bridge then answers every admitted write from ``outcome.get``.
+  that reconciles to nothing landed: run again from the submission row (identity AND the op's scope rechecked; no new
+  seq admission, no ts window); ``pending`` with landed events: rolled forward through ``relay_fields`` (never judged
+  again); terminal: nothing to run. The bridge then answers every admitted write from ``outcome.get``.
+  :func:`recover_one` is the same for one rid (the bridge's bounded retry of a write whose run failed).
 * :func:`make_relay_fields`: the ``OutcomeStore.relay_fields`` hook R5 registers at open.
 
 ``orch.host`` is import-banned here: the host side is reached through :class:`orch.relay.bridge.HostPort` (the host
@@ -28,10 +32,10 @@ from typing import Any, Protocol
 from orch import canon, crypto
 from orch.canon.hashing import HashError
 
-from .framing import FRESH_FUTURE_MS, FRESH_PAST_MS, OPS, Identity, Refusal, ulid_ms
-from .rids import RidStore
+from .framing import OPS, Identity, Refusal
+from .rids import Rid, RidStore
 
-__all__ = ["AUTH", "EVENTS", "check_events", "make_relay_fields", "recover", "result"]
+__all__ = ["AUTH", "EVENTS", "check_events", "make_relay_fields", "recover", "recover_one", "result"]
 
 log = logging.getLogger("orch.relay.submit")
 
@@ -49,13 +53,13 @@ AUTH = frozenset({"secure-enclave-unlocked", "passphrase"})
 
 
 def check_events(
-    op: str, args: Mapping[str, Any], identity: Identity, dk_sig_pub: bytes, *, idem: str, now_ms: int
+    op: str, args: Mapping[str, Any], identity: Identity, dk_sig_pub: bytes, *, idem: str
 ) -> tuple[str, list[dict]]:
     """The lock-free checks of a ``relay.submit`` request, in order: the args shape and exactly one event
     (``invalid.input``), the event type of the closed table (``forbidden_scope``), no host-stamped field
-    (``invalid.input``), idem == event id (``idem.invalid``), the event id's ULID freshness (``event.expired``), the
-    actor (``op.not_allowed``), the auth kind (``op.not_allowed``), the device signature (``op.not_allowed``).
-    Returns ``(log, events)``."""
+    (``invalid.input``), idem == event id (``idem.invalid``), the actor (``op.not_allowed``), the auth kind
+    (``op.not_allowed``), the device signature (``op.not_allowed``). Returns ``(log, events)``. Freshness is the
+    host's, after dedup (ruling A)."""
     table = EVENTS.get(op)
     if table is None:
         raise Refusal("forbidden_scope")
@@ -71,9 +75,6 @@ def check_events(
         raise Refusal("invalid.input", retryable=False)
     if idem != ev["id"]:
         raise Refusal("idem.invalid", retryable=False)
-    born = ulid_ms(ev["id"])
-    if not now_ms - FRESH_PAST_MS <= born <= now_ms + FRESH_FUTURE_MS:
-        raise Refusal("event.expired", retryable=False)
     if ev.get("actor") != {"kind": "person", "id": identity.person_id, "device": identity.device_id}:
         raise Refusal("op.not_allowed", retryable=False)
     if ev.get("auth") not in AUTH:  # convenience never through the relay (11A.6)
@@ -99,44 +100,49 @@ class SubmitPort(Protocol):
     def lookup(self, identity: Identity, idem: str) -> dict[str, Any]: ...
 
 
-def recover(
-    port: SubmitPort,
-    rids: RidStore,
-    identity_of: Callable[[str, int], tuple[Identity, Callable[[], bool]] | None],
-) -> list[tuple[str, str, str]]:
+IdentityOf = Callable[[str, int, str | None], tuple[Identity, Callable[[], bool]] | None]
+
+
+def recover(port: SubmitPort, rids: RidStore, identity_of: IdentityOf) -> list[tuple[str, str, str]]:
     """Roll every admitted write forward so its outcome is terminal (or stays pending where the log cannot say).
-    ``identity_of(device, epoch)`` rebuilds the identity and its recheck from R6 and the host (``None``: the device
-    no longer holds; the write is then refused ``op.not_allowed`` by the run, never appended). Returns
+    ``identity_of(device, epoch, scope)`` rebuilds the identity and its recheck (steps 1 to 3 AND ``scope``, the op's)
+    from R6 and the host (``None``: the device no longer holds; the write is then never run). Returns
     ``(device, rid, what)`` per write; idempotent (a second run finds the outcomes terminal)."""
     out = []
     for rec in rids.admitted():
-        if rec.kind != "write" or rec.idem is None:
-            continue
-        sub = rids.submission(rec.device, rec.rid)
-        built = identity_of(rec.device, rec.epoch)
-        if sub is None or built is None:
-            out.append((rec.device, rec.rid, "unanswerable"))
-            continue
-        identity, recheck = built
-        try:
-            state = port.lookup(identity, rec.idem).get("state")
-        except Refusal as r:
-            state = None if r.code == "outcome.unknown_idem" else "error"
-        if state in ("committed", "failed", "partial"):
-            out.append((rec.device, rec.rid, "terminal"))
-            continue
-        if state == "error":
-            out.append((rec.device, rec.rid, "unknown"))
-            continue
-        op, log_id, events = sub
-        try:  # no record, or a pending one: begin() reconciles it (landed: relay_fields; nothing: runs again)
-            port.submit(identity, rec.idem, op, log_id, events, recheck)
-            what = "ran"
-        except Refusal as r:
-            what = f"refused:{r.code}"
-        out.append((rec.device, rec.rid, what))
-        log.info("relay.submit recover device=%s rid=%s %s", rec.device, rec.rid, what)
+        if rec.kind == "write" and rec.idem is not None:
+            out.append((rec.device, rec.rid, recover_one(port, rids, identity_of, rec)))
     return out
+
+
+def recover_one(port: SubmitPort, rids: RidStore, identity_of: IdentityOf, rec: Rid) -> str:
+    """:func:`recover` for one admitted write: ``terminal``, ``unknown`` (the outcome store could not say),
+    ``unanswerable`` (no submission row, or the device or the op's scope no longer holds), ``ran`` or
+    ``refused:<code>``. Raises what ``port.submit`` raises when that is not a refusal."""
+    sub = rids.submission(rec.device, rec.rid)
+    if sub is None or rec.idem is None:
+        return "unanswerable"
+    op, log_id, events = sub
+    spec = OPS.get(op)
+    built = identity_of(rec.device, rec.epoch, spec.scope if spec is not None else "-")
+    if built is None or spec is None:
+        return "unanswerable"
+    identity, recheck = built
+    try:
+        state = port.lookup(identity, rec.idem).get("state")
+    except Refusal as r:
+        state = None if r.code == "outcome.unknown_idem" else "error"
+    if state in ("committed", "failed", "partial"):
+        return "terminal"
+    if state == "error":
+        return "unknown"
+    try:  # no record, or a pending one: begin() reconciles it (landed: relay_fields; nothing: runs again)
+        port.submit(identity, rec.idem, op, log_id, events, recheck)
+        what = "ran"
+    except Refusal as r:
+        what = f"refused:{r.code}"
+    log.info("relay.submit recover device=%s rid=%s %s", rec.device, rec.rid, what)
+    return what
 
 
 Append = Callable[[str, list[dict], list[dict], str, str], tuple[list[int], Any]]

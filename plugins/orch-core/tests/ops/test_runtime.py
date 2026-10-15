@@ -167,3 +167,33 @@ def test_verification_cache_keys_include_mtime_and_ctime(ws, cli):
     st = os.stat(p)
     os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
     assert stat_sig(p) != before
+
+
+def test_a_v2_command_in_a_v1_layout_folder_refuses_and_points_to_the_importer(tmp_path, monkeypatch):
+    """A v1 workspace is detected, never opened: the command refuses and names ``orch import v1``."""
+    import io
+    import shutil
+    from pathlib import Path
+
+    from orch.cli.main import main
+
+    v1 = tmp_path / "proj"
+    shutil.copytree(Path(__file__).parents[1] / "importer" / "fixtures" / "v1", v1)
+    before = sorted((q.relative_to(v1), q.stat().st_mtime_ns) for q in v1.rglob("*"))
+    for cwd in (v1, v1 / "orchestrator", v1 / "orchestrator" / "tickets"):
+        monkeypatch.chdir(cwd)
+        for argv in (["show", "1"], ["check"], ["instructions", "sync"]):
+            out, err = io.StringIO(), io.StringIO()
+            code = main(argv, env={"HOME": str(tmp_path / "home")}, stdout=out, stderr=err)
+            assert code == 2 and "v1 workspace" in err.getvalue(), (cwd, argv, err.getvalue())
+            assert "orch import v1" in err.getvalue()
+    assert before == sorted((q.relative_to(v1), q.stat().st_mtime_ns) for q in v1.rglob("*"))  # nothing written
+    # ORCH_WORKSPACE names it: the same refusal
+    out, err = io.StringIO(), io.StringIO()
+    env = {"HOME": str(tmp_path / "home"), "ORCH_WORKSPACE": str(v1 / "orchestrator")}
+    assert main(["check"], env=env, stdout=out, stderr=err) == 2 and "orch import v1" in err.getvalue()
+    # a folder that is neither v1 nor v2 keeps the plain message
+    monkeypatch.chdir(tmp_path)
+    out, err = io.StringIO(), io.StringIO()
+    assert main(["check"], env={"HOME": str(tmp_path)}, stdout=out, stderr=err) == 2
+    assert "no orch workspace here" in err.getvalue()

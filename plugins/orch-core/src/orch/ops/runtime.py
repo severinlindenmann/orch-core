@@ -49,6 +49,7 @@ __all__ = [
     "Notes",
     "Projection",
     "Workspace",
+    "find_v1_workspace",
     "find_workspace",
     "guarded",
     "records_dir",
@@ -109,6 +110,33 @@ def find_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, f
     for d in (here, *here.parents):
         for cand in (d, d / "orchestrator"):
             if _config(cand, files):
+                return cand
+    return None
+
+
+def find_v1_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> Path | None:
+    """The v1 workspace that holds ``cwd`` (or ``ORCH_WORKSPACE``), or ``None``. Detection only: a v1 layout
+    (``config.json`` with ``"schema": 1``, here or in ``orchestrator/``) is never opened as a workspace; the one
+    thing v2 does with it is ``orch import v1``."""
+
+    def is_v1(path: Path) -> bool:
+        cfg = path / "config.json"
+        try:
+            if cfg.is_symlink() or not cfg.is_file() or cfg.stat().st_size > (1 << 20):
+                return False
+            doc = json.loads(files.read_bytes(cfg))
+        except (OSError, ValueError, RecursionError):
+            return False
+        return isinstance(doc, dict) and doc.get("schema") == 1 and not isinstance(doc.get("schema"), bool)
+
+    explicit = env.get("ORCH_WORKSPACE")
+    if explicit:
+        p = Path(explicit)
+        return p if is_v1(p) else None
+    here = Path(cwd or files.getcwd()).resolve()
+    for d in (here, *here.parents):
+        for cand in (d, d / "orchestrator"):
+            if is_v1(cand):
                 return cand
     return None
 
@@ -182,6 +210,13 @@ class Workspace:
     def require_root(self) -> Path:
         root = self.root
         if root is None:
+            v1 = find_v1_workspace(self.env, self._cwd, self.files)
+            if v1 is not None:
+                raise OrchError(
+                    "not_found",
+                    f"{v1} is a v1 workspace; run `orch import v1` to migrate it",
+                    hint=f"orch import v1 {v1}",
+                )
             raise OrchError("not_found", "no orch workspace here", hint="run orch init in the workspace directory")
         return root
 

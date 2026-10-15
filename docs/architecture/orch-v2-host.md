@@ -8825,8 +8825,8 @@ R2's `relay/keys.py`).
   all (the persisted per-epoch name in `head.burned` is informational).
 - J-R6a-3 **The card is signed by R6's own `RelaySigner`** over the same WSK with the ledger `membership/sign-ledger.json`
   (cards, member lists, `wk_commit`, grants): R5's `link_source(service)` seam hands no signer
-  (`host/relayhook.py:83` on `feat/relay-r5-hook`), and R5's signer holds the relay directory's ledger
-  (`relayhook.py:248`). **R5 MUST NOT sign cards** with its signer, or the "one card per `card_seq`" ledger splits.
+  (`host/relayhook.py:84`, merged in #532), and R5's signer holds the relay directory's ledger
+  (`relayhook.py:262`). **R5 MUST NOT sign cards** with its signer, or the "one card per `card_seq`" ledger splits.
 - J-R6a-4 **The first card's numbers.** An orphan `wxk`/`ck` file, or a card signed (ledger) but never claimed, is never
   reused: the next attempt draws `v`/`s` above every file, ledger entry and the head, so the first card can carry
   `card_seq` 2 (or more) after a crash. The relay accepts any first `card_seq`.

@@ -44,6 +44,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
         2,
         "R: true only for a non-viewer whose requesting device is its person's, valid, with decide; G and N: false",
     ),
+    ("reads_ws.py", "member_list"): (1, "R reads as P: device labels (read_ext/3); G and N get label null"),
     ("reads_ws.py", "_next_key"): (1, "R: next_key only where may_create says so (G and N: null)"),
     ("reads_ws.py", "workspace_settings"): (2, "R reads as P: the full repo entries and the settings stamps"),
     ("runners.py", "RunnerHub.open_sub"): (3, "unreachable (run.sub is not an R op)"),

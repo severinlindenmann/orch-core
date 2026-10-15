@@ -40,8 +40,9 @@ if TYPE_CHECKING:
 
 __all__ = ["CAPS", "READ_OPS", "SCHEMAS", "ReadCtx", "iso", "serve"]
 
-#: the caps the reads add to ``welcome.caps`` (§0.4); ``read_ext/2`` lists ``read_ext/1`` too
-CAPS = ["query/1", "read_ext/1", "read_ext/2", "activity/1", "settings/1", "text/1"]
+#: the caps the reads add to ``welcome.caps`` (§0.4); each ``read_ext/N`` lists every lower one too (``read_ext/3``,
+#: v1.9: the ``member.list`` device fields)
+CAPS = ["query/1", "read_ext/1", "read_ext/2", "read_ext/3", "activity/1", "settings/1", "text/1"]
 
 # --- argument schemas (§0.8, §0.8.5) ------------------------------------------------------------------------------
 

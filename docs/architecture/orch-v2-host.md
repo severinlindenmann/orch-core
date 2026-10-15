@@ -520,6 +520,20 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 | `relay.link_exists` | 1 | no | stays | `Store.relay_link` while `relay/link.json` already exists | — |
 | `relay.link_mismatch` | 1 | no | stays | `Store.relay_mark_linked(expect)` when `link.json` is missing or is not exactly `expect` in state `linking` | — |
 
+**Planned codes of H13 (§11A.16.9; not served yet).** These join the table above, with
+`orch.host.errors.HOST_CODES`, in the PR that serves the `drop/1` op raising them; until then no op answers them.
+
+| Code | Exit | Retryable | Fate | When | `retry_after_ms` |
+|---|---|---|---|---|---|
+| `drop.unavailable` | 9 | yes | stays | no running relay worker, Drop off at the relay, a reconciliation in progress, or `drop.read` before the copy is local | when known |
+| `drop.too_large` | 5 | no | stays | a `drop.send` blob above 26,214,400 bytes | — |
+| `drop.no_audience` | 3 | no | stays | the audience function leaves no device | — |
+| `drop.quota` | 3 | no | stays | a stored-bytes quota at the relay or the host's retire-row bound; `detail.quota` from a closed set | — |
+| `drop.gone` | 3 | no | stays | the object is expired or retired | — |
+| `drop.conflict` | 3 | no | stays | a retire whose precondition failed (the head moved), or a hand-off whose head or audience changed before submit | — |
+| `drop.integrity` | 1 | no | stays | a descriptor, hash, `dek_commit` or wrap check failed (the entry is quarantined) | — |
+| `drop.handoff_required` | 3 | no | stays | a claim of someone else's inbox content, a retire of someone else's upload or a bind sent as a plain op; use `human.prepare` and the terminal signer | — |
+
 **Universal errors.** These may come from any op, beyond the op's own list:
 
 - every op: `req.invalid`, `unknown_command`, `op.unsupported`, `op.not_allowed`, `human_only` (human registry ops,
@@ -756,6 +770,9 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
 {peer:{uid:int, class:str}, person:Person | null, tier:"A"|"B",
  grant:{id:str, until:Time, verbs:"agent" | [OpName], scope:"all"|"workable"} | null, session:str | null}
 ```
+
+Column R only (additive, changelog 56): `relay:{ops:{answer:1, new_ticket:1}, r6_ready:bool}`, the person-event write kinds
+this host serves over the relay with their versions and the live R6 gate. P, G and N get no `relay` field.
 
 Errors: none beyond any op.
 
@@ -4118,7 +4135,31 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     durable per-request journal (`<state>/person/primary/requests/`) and `PrimaryQueue` (§8.4 steps 2 to 4 with
     `check_cert_request`, `open_cert_request`, `make_cert_challenge`, `make_device_cert`, `make_cert_rejection`).
     No CLI, op, code, wire, hash or schema change.
-55. **Git isolation for every read-only git call (#546, follow-up to #541; §12.7 "Isolation"; the number may be
+55. **H13 design of record: push and Drop, host end (§11A.16; decided by orch-52 after the Codex challenge, 15 Oct 2026; nothing served; the number may be
+    renumbered when a parallel change lands first):** the H13a push planner (kinds `question`, `question.closed`,
+    `drop.new`; a durable per-log cursor and `outbound.sqlite` intents; seal at the committed epoch with the gate down;
+    persisted outers resent unchanged), the H13b Drop client (a mirror by change position, full reconciliation rules,
+    host-written `file`s with persisted `ODU2` frames, claims and re-wraps for the phone's `drop_claim`/`drop_rewrap`,
+    the retire intent with its 29-day window), the one audience function for restricted tickets, the planned cap
+    `drop/1` with eight ops (`drop.bind` included) and the planned codes in §0.6 "Planned codes of H13", and H13c: no F1, hash, schema or
+    reader-level change. Decided after the challenge: the audience is the intersection everywhere and is revalidated before every seal
+    and send; a host authorization journal with quarantine; per-direction Drop cursors until `direction: "all"`
+    with a generation (orch-29, pending A2/D39a2); event-hash intent keys and immutable deadlines; no push for an
+    unclaimed inbox object; head tokens for retire; grant checks; a terminal hand-off for claims and retires of
+    other people's content, signed by the terminal signer (`drop.handoff_required`, the new label `sig_drop_handoff`); storage reservations and caps.
+56. **Docs follow-ups to H13 (DECIDED (orch-52, 15 Oct 2026)):** the Simulator signs no person events and Live refuses Demo keys
+    (§11A.14.3); the retry table in `r2_framing.json` is authoritative and `timeout` becomes `relay.timeout`
+    (§11A.14.4); lost write answers are settled with `outcome.get`, then resent with the same bytes under a new rid
+    inside the 840 s margin (§11A.14); the phone UI for O2 and the gestureless own-claim rule Q-H9 with the other
+    relay A2 facts (§11A.16). Docs only; nothing served.
+57. **Column-R `whoami.relay` (additive, contract unchanged otherwise; the number may be renumbered when a parallel change
+    lands first):** `whoami` in column R (relay bridge, phone devices) gains `relay:{ops:{<kind>:int}, r6_ready:bool}`: `ops`
+    is the person-event write kinds the host serves on R with their versions (today `answer` 1 and `new_ticket` 1, derived
+    from the write rows of the R2 framing table `orch.relay.framing.OPS`), `r6_ready` the live R6 gate read at answer time
+    (the same source as `host.status.relay.gate.r6_ready`; `false` while R6 is dormant). Columns P, G and N get no `relay`
+    field. No secret, nothing per workspace beyond what `whoami` scopes. No vector change (the R2 vectors carry a
+    fixed host answer).
+58. **Git isolation for every read-only git call (#546, follow-up to #541; §12.7 "Isolation"; the number may be
     renumbered when a parallel change lands first):** `orch.gitsafe` holds the one mechanism of the invariant "no git
     invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list":
     `isolated_env`, `config_env`, `person_entries`, and `command`, a **closed set of operations** (`gitsafe.OPS`:
@@ -5164,6 +5205,7 @@ corpus is vendored under `tests/relay/vectors/` (11A.10).
 | `relay/state.py` | the files of 11A.3. As built in R1: a stdlib private directory (0700, files 0600, `O_NOFOLLOW` against a directory fd, temp + fsync + rename + directory fsync), the last-signed ledger and the write-once first-link files; `orch.host` is import-banned in `orch.relay`, so R5 may swap it for the host custody helpers behind the same interfaces |
 | `relay/worker.py` | R5: `RelayWorker`, started and stopped by `WorkspaceService`. As built (15 Oct 2026): the worker, the `Publisher`/`Unpublished`/`LinkSource` seams and the R6 gate `R6_READY`; the host side is `host/relayhook.py` (11A.4 "As built in R5") |
 | `relay/r6/` | R6 (11A.15): `keys.py` (WK, WXK, CK custody, `EpochKeySource`), `members.py` (membership publication, `R6View`), `pair.py` (`R6Pairing`, the offer state machine), `card.py` (WXK rotation, card keys) |
+| `relay/audience.py`, `relay/outbound.py`, `relay/dropauth.py`, `relay/push.py`, `relay/drop.py` | H13 (11A.16): the one audience function (the intersection), `outbound.sqlite`, the authorization journal `drop-auth.sqlite` and `relay/drop/`, the push planner, sealer and sender, the Drop mirror, writer, claims, re-wraps and retire |
 
 Groups (each one PR into `develop`, first commit its failing vector or test, merged on green CI):
 
@@ -6437,6 +6479,213 @@ writes and flushes (R4 adds its pages there), `job` must be `RelayWorker.submit(
 `EpochKeySource` must implement `seal_state()` and `refusal_key(e)` and raise the gate / commit a rotation inside
 `BridgeKeys.serialised()`, and none of its methods may take the store lock (the lock order above). R3 adds its publisher thread beside these; the store side of the outbox is H12b's.
 
+#### As built in R3 (the checkpoint publisher, 15 Oct 2026)
+
+Code: `relay/publish.py` (`Publisher`, `History`, `measure`), the staging builders and the exact counter in
+`relay/wire.py` (`plan_pages`, `build_page`, `build_manifest`, `page_bytes`, `manifest_bytes`, `set_bytes`), and three
+store reads under the lock (`Store.relay_segment`, `Store.relay_position`, `Store.relay_ancestor`, with
+`orch.store.outbox.RelayPosition`). Small R1 changes: `StateDir.read/write(limit=)` (at most `BIG_FILE`, 8 MiB) and
+`StateDir.remove`, `Directory(transport=)` (the publisher thread reads through its own connection),
+`Session.call(content_type=)` (a staging body is sent as the exact `cj` bytes that were counted).
+
+**Interface for R5.** `Publisher(store, job=, session=, owner_pk_pub=, wsk_pub=, state=, max_publication_bytes=,
+alarm=, conn=, on_diverged=, on_error=)`; `start()`, `stop()`, `join(timeout) -> bool` (thread
+`orch-relay-pub-<id8>`), `error`, `wake()`; `publish_first(session, directory)` (it renews the lease while it runs, review R2) (alias `link_publish`; R5's seam `orch.relay.worker.Publisher` in #532) is `LinkSteps.publish` for R1's `first_link`
+(it raises `PublishHeld` while publication is held, so the link stays `linking`). `job(fn)` must be
+`RelayWorker.submit(fn).result()`; every store call of `publish.py` is such a job (an AST test pins it) and none is
+held across networking. The thread sends nothing until the shared `Session` holds a generation (the poll thread's
+`host/hold`). `on_diverged(H)` is R5's degrade hook (D-P2-12): R3 alarms `chain.diverged` and holds publication, but no
+store API exists for it to degrade the host itself (gap, below). The store passed in must offer `genesis`,
+`outbox_first`, `outbox_entries`, `outbox_delete`, `mint_catchup`, `relay_segment`, `relay_position`,
+`relay_ancestor` (`PublishStore`).
+
+**Judgement calls (fail closed, 15 Oct 2026).**
+- P1 The module is `relay/publish.py` as 11A.1 names it (the implementation brief said `publisher.py`).
+- P2 *Journal.* `publish.json` is `{v, n, hash, kind, source_hash, cap, size, manifest_digest}` and the manifest itself
+  (`publish-manifest.json`, every page digest) is the design's `pages:[{i, digest, count, put}]`: it is computed first
+  (one pass over the heads, one page in memory, every run checked to join and fold to the signed target) and recorded
+  durably (the manifest, then `publish.json` as the commit point) before the first PUT of the set. Which pages are
+  staged is never assumed: the identical manifest is PUT first and the relay's `missing` list is sent, each page
+  rebuilt and compared with its recorded digest (a mismatch drops the journal: `relay_staging_rebuild`). A `put` flag
+  per page would cost a rewrite of a file of up to about 1 MB per page; an identical PUT is a free no-op anyway.
+- P3 *History layout.* `StateDir` is one flat directory, so `published/restore-<n>.json` is
+  `published-restore-<n>.json` and `published/last.json` is `published-last.json`; `published.jsonl` rolls into
+  `published-<k>.jsonl` every 1 024 lines, kept forever (a 1 MiB file cap and a whole-file rewrite per line). A
+  restore record is `{body, source, acc_from}`: the body alone lacks the heads, so a republication rebuilds its pages
+  from the store (the current log, or `heads.sqlite` for an abandoned branch). The record is written before the line;
+  a repeat line (a crash before the outbox delete) is not appended twice.
+- P4 *Verified acknowledgement.* An entry is deleted only after a 200 whose `result` is `accepted` or `ignored` with
+  exactly its `{n, hash}`, AND a fresh verified `GET checkpoint`: after `accepted` the relay must hold that very
+  checkpoint; `ignored` is accepted only for a final PUT sent without a set (an entry at or below H) and needs H at
+  or above it; a staged extension answered `ignored` is `relay_misbehaving`. Then the history, then
+  `outbox_delete`.
+- P5 *Queued mismatch is not divergence (§11).* Before the restore explanation, an H equal to a queued outbox entry or
+  to a queued restore's source is not classified further: the outbox rules decide (an owner's restore after a host
+  rollback publishes from exactly that H). The 11A.5 table lacks this row.
+- P6 *Explained by an accepted restore* needs all three conditions of the table; ancestry is `Store.relay_ancestor`
+  (per log, equal entries or a verified path through `heads.sqlite`). The history is never trimmed, so "H is in
+  `published.jsonl`" holds for anything this host published.
+- P7 *A restore behind its source.* When H is an ancestor of the restore's source C, C is republished first, as it is
+  (no catch-up below an anchor: a set above C is `relay.too_large`); any other H holds `restore_source_mismatch`
+  without sending anything (no charged refusal). A restore with `publication_complete: false` holds
+  `relay_restore_incomplete`; a line above 524 288 bytes or a set above C holds `relay.too_large`; neither is sent.
+- P8 *Catch-up triggers.* `mint_catchup(source=H, cap=⌊0.9 C⌋)` runs when the lowest plain entry is not an extension of
+  H or its set exceeds C, and when the outbox is empty but the newest local checkpoint is not H (the first link, a
+  relay rollback); `[]` is idle. `checkpoint.prefix_invalid` (the logs moved while `measure` ran) re-plans at most 3
+  times in a row; the store's anchor refusal (H12b J1) holds `relay.too_large`.
+- P9 *Refusals.* `chain_diverged` at the final PUT re-reads and classifies H; a second in a row is
+  `relay_misbehaving` with backoff, never `on_diverged` unless the classification proves a fork. `staging_incomplete`
+  drops the journal and restages (3 in a row: misbehaving). `staging_conflict` drops the journal, alarms
+  `relay_staging_conflict` and waits one hour (the set's expiry), then restages identically. `checkpoint_time`
+  backs off and alarms `clock_skew` at the third in a row; the bytes are never re-signed. `restore_source_mismatch`
+  re-plans a plain publication and holds a restore; `restore_missing_revocation`, `restore_invalid`,
+  `restore_not_owner`, `restore_reused`, `genesis_mismatch` and `no_genesis` hold with an alarm. Any other 4xx alarms
+  `relay_publish_refused` and backs off. A 3xx alarms `relay_redirect` and holds.
+- P10 *Quota and transient budgets.* The quota counter is the publisher's, across steps (the `Retrier`'s is per call
+  and would restart every step): up to 5 waits of at least `Retry-After` with backoff, then `relay_quota` and one hour
+  between attempts; a `quota` naming `nodes`, `workspaces` or `evidence` alarms at once and waits an hour. Transient
+  answers back off (full jitter, 1 s to 5 min, `Retry-After` a floor) without a count limit and without an alarm.
+  The counters reset when a step settles.
+- P11 *Too large.* An unexpected `too_large` (413 at a page or the manifest, 400 at the final PUT) lowers C in memory
+  to `min(C, ½ refused set)` at most 4 times per rolling hour (then `relay_too_large`, held) and re-plans; for a
+  restore it holds `relay.too_large`.
+- P12 *Held means hourly.* A held condition (H7, a fork, an oversized restore, a mismatch) is re-evaluated every hour
+  (`HELD_RECHECK_S`); each alarm code is raised once until a step settles.
+- P13 *relay-info* is read once per publisher start: 404 is reader level 0 and no announced maximum; a malformed answer
+  (a non-integer level, a non-positive maximum) is `relay_misbehaving`. C = min(`link.json`, relay-info, the relay's
+  64 MiB staging quota, any lowering).
+- P14 *Reader level.* A restore whose line's `auth` is `convenience` is held `relay_reader_old` while the relay's level
+  is below 1 (§9.8). The evidence inside the line is not inspected (narrower than §9.8's "whose evidence carries a
+  convenience event"; the line's own `auth` is the parser case the relay level names).
+- P15 *Response caps.* The manifest answer and the final answer are read up to 1 MiB, not 11A.7's 16 KiB: the
+  manifest answer lists every missing index and a restore's final answer may carry `unpublished_refs`; over a 16 KiB
+  cap both would be a transient failure forever.
+
+**Review round 1 (Opus, 15 Oct 2026; safety held, four liveness defects fixed).**
+- R1 A restore entry the relay already holds is finished, never held: when the fresh verified H is the restore's
+  target, or descends from it (`Store.relay_ancestor`), the history record and line are written and the entry is
+  deleted without any PUT (a lost acknowledgement, or a crash before or after the history line; the relay would refuse
+  a re-sent restore at `n <= held n`). A restore entry at or below H on another branch still holds
+  `restore_source_mismatch`.
+- R2 `publish_first` renews the 40 s lease while it runs: `Session.renew(transport=)` (a running renewal, never a
+  probe; `fenced` stops) every `RENEW_EVERY_S` (10 s since the delta round) on a renewal thread with its own connection, which also covers
+  one long call; without a connection factory, before each request and inside every wait. R5's aux thread renews
+  once the loop runs.
+- R3 The idle outbox check never stops the publisher on a store fault: `store.busy` polls again, any other store code
+  is alarmed and left to the step's own hold. Only a fence or session error (and R5's `WorkerStopped`) ends it.
+- R4 A plain `restore_source_mismatch` re-plans once; the second in a row is `relay_misbehaving` with backoff.
+- Lower: `History` keeps the restore records and the segment count in memory (read once per process); a crash during
+  a segment rollover no longer duplicates the segment; `too_large` on a set-less final PUT holds `relay.too_large` and
+  leaves C alone, and no lowering goes below `MIN_CAP` (4 KiB; below it `relay_too_large` holds); a final body above
+  `FINAL_CAP` is held before anything is staged; any other permanent 4xx holds (P9 amended: never retried unchanged at
+  once) and a 413 without a code is `too_large`; store codes are alarmed as `relay_store_<code>` (a store
+  `chain.diverged` is not R3's fork alarm).
+
+**Review round 2 (orch-52 / Codex, 15 Oct 2026).**
+- P1 Every deletion goes through a confirmation, recovery included: `_accepted` (history, then delete) is reached
+  only from `_publish` (after `_final` and `_confirm`) and from `_finish_held` (an AST test pins it). For an entry the
+  relay already holds with no acknowledgement to read, `_finish_held` makes a second fresh verified read. That read
+  must prove one of two things. Either the held checkpoint is exactly the entry. Or it is a later one that descends
+  from the entry by the host's own logs and recorded ancestry, AND the relay serves the entry itself by its hash
+  (`GET checkpoint?hash=`, verified). An ancestry claim alone, a 404 or a 410 holds `relay_restore_unconfirmed`
+  (plain: `relay_unconfirmed`). Another branch holds `restore_source_mismatch` (plain: `relay_misbehaving`).
+  Nothing is deleted in either case.
+- P1 `Store.relay_position` reads `.state/checkpoints/abandoned/` through directory fds pinned from the workspace
+  root, one component at a time (`O_DIRECTORY | O_NOFOLLOW`), and opens each file `O_NOFOLLOW` relative to its
+  directory. A symlinked component is `validation.path`; a symlinked entry is not evidence.
+- P2 Paging an abandoned branch walks and folds it once: the store keeps one verified branch for its pages. On this
+  laptop a 200 000-head branch takes 1.8 s to walk plus 0.4 s to fold, once instead of once per page. Branch and
+  ancestry walks are bounded at `RELAY_BRANCH_MAX` (64 MiB / 74 heads, the relay's largest set); above it the store
+  refuses `validation.relay`.
+- The three store reads are not side-effect-free. The lock runs recovery, and lazy loading replays logs and can write
+  projections. Their docstrings say so.
+- H12d-3 (#555, wired 15 Oct 2026, round 4): `_restore_pub`, the one place every restore publication is built,
+  holds it while `readers.restore_held(level, [line])` is true. The level comes from R5's
+  `relay_level=lambda: readerrecs.relay_level(state, ws, uid)`, the level its login observer stores. It is read fresh
+  at every step, and a read that fails counts as 0. Without the callable, relay-info's level is used. A held restore
+  stays in the outbox: nothing is sent, nothing deleted, C is not lowered. The alarm is `relay_reader_old`. It is
+  re-checked hourly, or at once on `wake()`, which now also ends a held or backed-off wait. Finishing a restore the
+  relay already holds is not held: that path only does bookkeeping, and the delete still needs the fresh read.
+  This supersedes P14.
+
+**Review round 2 delta (Opus, 15 Oct 2026).**
+- F1 Without a connection factory, a transient renewal failure (5xx, transport, `LoginHeldOff`) is retried after
+  `RENEW_RETRY_S` and never escapes `publish_first`. Only a fence or another session error ends it.
+- F2 The renewal thread hands a fence or another session error (a malformed hold answer, say) to `publish_first`,
+  which raises it at once. A failed renewal is retried after `RENEW_RETRY_S` (2 s), and renewals run every
+  `RENEW_EVERY_S` (10 s). Even two renewals in a row that each time out after 10 s stay inside the 40 s lease:
+  10 + 10 + 2 + 10 < 40, pinned by a test.
+- F3 `publish_first`'s waits wake at once on a renewal error or a stop, and check `session.fenced`. During the first
+  link a permanent refusal raises `PublishHeld("relay_publish_refused")` for R1/R5 to decide, instead of an hour's
+  sleep inside the link.
+- F4 Tests now pin the R1 gate's store check (order and a verified path), the finished restore's record (re-sent
+  after a relay rollback), `Session.renew` (no probe without a generation, a fence sets `fenced`, refused locally
+  afterwards), the renewal thread (it ends with `publish_first` and has its own connection), the synchronous renewal
+  period, the idle `store.busy` poll, the re-plan limit, the set-less check, a codeless 413 on the final PUT, and a
+  conflicting archived history segment.
+
+**Review delta 2 (Opus, 15 Oct 2026).**
+- F1 `wake()` ends only the idle wait and a held wait (`PublishHeld`: the reader-level hold, an oversized restore,
+  ...). Backoff, `Retry-After` floors, quota waits and permanent-refusal waits are never cut by it, only by `stop()`.
+  R5 wakes on every append, so cutting them would retry at the append rate (11A.7, P9).
+- F2 `abandoned/` files are opened `O_NONBLOCK`, so a FIFO never blocks the store lock, and are kept only when they
+  are regular files. A root swapped for a symlink is `validation.path`. The same FIFO class exists store-wide in
+  `fsio.read_or_none`; it is noted for orch-52 and out of scope here.
+- F3 The one cached branch is held as raw 32-byte digests (64 bytes a head), only while it fits
+  `RELAY_CACHE_BYTES` (16 MiB, about 262 000 heads), and it is released at the run's last page. A larger branch is
+  walked per page, bounded by `RELAY_BRANCH_MAX`. `relay_ancestor` answers are cached (at most 256), keyed by both
+  checkpoints and the size of the recorded history.
+- F4 Without R5's `relay_level=` the hold counts level 0. relay-info's level is never the hold's input.
+- F5 A 3xx on the first link's renewal alarms `relay_redirect` once and stops `publish_first`. An unexpected
+  exception there alarms `relay_renewal_failed` and is handed to `publish_first`.
+- F6 Tests pin `_finish_held`'s `H.n > pub.n` order and the plain other-branch refusal.
+
+**orch-52 round 6 (15 Oct 2026).**
+- *Which deletions R3 confirms.* There are two kinds of outbox deletion. R3's own deletes an entry after the relay
+  took it. It goes through `_publish` (`_final`, then `_confirm`'s fresh verified read) or, for an entry the relay
+  already holds with no acknowledgement to read, through `_finish_held`, whose fresh verified read is the
+  confirmation. Then comes the history line, then `outbox_delete`. The store's own, by design (H12b), deletes plain
+  entries that a later entry supersedes before they are ever published: coalescing on append (the plain entry just
+  below a new one) and the catch-up replacement (`mint_catchup`'s journal replaces the queued plain entries with
+  Q1 … Qk). Neither removes anything the relay was meant to hold: the superseding entries carry every head of the
+  superseded ones.
+- The `relay_ancestor` cache is keyed on `Store.revision()` (H12d-3: every read head and every ticket-log file's
+  stat signature), not a sum of seqs. An append by another Store instance, a same-length branch and a cut tail all
+  recompute the answer.
+- Accepted limit, #562: a branch above `RELAY_CACHE_BYTES` (about 262 000 heads) is walked whole for each page,
+  bounded by `RELAY_BRANCH_MAX`. Bounded paging for huge abandoned branches is tracked in #562.
+
+**Design inconsistencies found.**
+- `docs/architecture/orch-v2-host.md` 11A.7 table (staging and final answers 16 KiB) vs orch-relay
+  `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.
+- 11A.3 `publish.json` and `published/` (this file, the 11A.3 table) vs `relay/state.py` `_NAME` (flat names) and
+  `MAX_FILE` (1 MiB; a restore record is up to about 4.7 MiB): P2, P3.
+- 11A.5 "The relay does not announce it" (Maximum publication size) and orch-relay `docs/protocol-v2.md` §19.8 ("The
+  relay does not advertise its maximum yet") vs `relay_info.py` at `438b719` (it does; 11A.12 already says so).
+- 11A.5 startup classification table vs §11 "A mismatch with an entry still in the outbox": the queued-restore row
+  is missing (P5).
+- §9.8 "R3 holds every restore whose evidence carries a convenience event" has no counterpart in 11A.5 (P14).
+- No store API lets R3 degrade the host on `chain.diverged` (D-P2-12); `on_diverged` is the hook R5 must wire.
+
+**Tests.** `tests/relay/test_publish.py` (the counter, ordinary publication, catch-up, `relay-info`, the cap and its
+lowering, kills at every durable boundary, the history, the thread, the start fence and the first-link hook, log
+redaction), `test_publish_hostile.py` (lying acknowledgement and staging state, replays, a false `chain_diverged`,
+5xx storms, a slow relay, quota and rate answers, conflicts, clock refusals, a redirect, a fence, an unverifiable H),
+`test_publish_restore.py` (the classification table, restores with abandoned suffixes, oversized restores, a stale
+H before a restore, rollbacks across an accepted restore, a replayed abandoned-branch checkpoint, kills mid-restore),
+`tests/store/test_relay_reads.py`, the AST pins in `test_import_ban.py` (every store call is a worker job; `measure`
+is pure), against `tests/relay/pubsim.py` (an independent copy of the relay's checkpoint routes in their check
+order), and T2 (`tests/relay/t2/test_t2_publish.py`, below).
+
+**For R5.** Wire `on_diverged` to the host's degrade, `on_error` to the worker stop (a fence or session error ends the
+publisher, as R2's), start the publisher beside `BridgeLoop` with the ONE shared `Session`, and give `link_publish` to
+R1's `first_link` through `LinkSteps.publish`. `max_publication_bytes` comes from `link.json`. Alarms to surface in
+`host.status`: `relay_rolled_back`, `chain.diverged`, `relay_host_state_lost`, `relay.too_large`, `relay_too_large`,
+`relay_quota`, `clock_skew`, `relay_misbehaving`, `relay_staging_conflict`, `relay_staging_rebuild`,
+`restore_source_mismatch`, `restore_missing_revocation`, `relay_restore_incomplete`, `relay_restore_invalid`,
+`relay_reader_old`, `relay_redirect`, `relay_outbox_torn`, `relay_outbox_mismatch`, `relay_publish_refused`,
+`relay_publish_local`, `relay_refused_<code>`.
+
 ### 11A.6 Convenience rule
 
 A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-P2-23).
@@ -6682,7 +6931,7 @@ path from `ORCH_RELAY_DIR`.
   (two independent kills); a child of the harness forked without exec would hold the pipes open (the tests never
   fork). Each test has a hard 20 s limit (SIGALRM, raising a `BaseException` so no `except Exception` swallows it) from the relay answering `/healthz`
   to its teardown (relay start-up and stop are outside it; the requeue tests use about 11 s of it). Locally: `ORCH_RELAY_DIR=<a worktree of the SOURCE commit, uv-synced> uv run pytest -p no:xdist -m relay_t2
-  tests/relay/t2` (25 relay tests and 15 harness self-tests, about 2 minutes locally).
+  tests/relay/t2` (37 relay tests and 15 harness self-tests, about 2.5 minutes locally).
 - **Covered (R1):** `/healthz` instance and `GET /v2/relay-info` `max_publication_bytes` equal to the configured cap;
   the owner account from an operator invite (`orch-relay invite create` on the temp data directory) through `POST
   /v2/accounts`, the identical request replayed with the same answer and the used invite with a fresh proof refused
@@ -6701,8 +6950,17 @@ path from `ORCH_RELAY_DIR`.
   order each answered once, the same `seq` again under a new rid `stale_sequence`; a request held by the relay from
   before the worker started fenced (`already_done {status: unknown}`), its re-issue answered; a takeover fencing the
   running loop (`Fenced`, the threads joined).
-- **Not yet covered (each lands with its group):** link with a first publication and catch-up, histories above 4 and
-  16 MiB, a restore (R3); unpublished evidence (R4); the worker and the first real link through `orch host relay link`
+- **Covered (R3, 15 Oct 2026), `test_t2_publish.py`, a real `Store` of the vector workspace A (`wsk_a`, alice, the
+  owner device `primary`, the card's own delegation) through core's `Publisher`:** the first link's publication
+  through `link_publish` within `relay-info`'s maximum (C equals the configured cap); a backlog published by catch-up
+  in several checkpoints under a small `link.json` C, each set accepted by the relay; a ticket restore with its
+  abandoned suffix accepted under the relay's owner policy (a ref-built member list with `operate` for `primary`), and
+  ordinary publication after it; a restore whose acknowledgement was lost finished from the fresh read (review R1);
+  the first link renewing the lease while it publishes (review R2; the outlived 40 s lease itself runs against the
+  simulator's clock); the relay's page, request and line caps as core builds against them.
+- **Not yet covered (each lands with its group):** histories above 4 and 16 MiB through the real relay (a history of
+  56 000 or 226 000 heads takes far longer than the 20 s budget; the split itself runs at a small C above, and the
+  counter is pinned by the layer-1 tests); unpublished evidence (R4); the worker and the first real link through `orch host relay link`
   (R5, with the test owner client `tests/relay/owner.py` of 11A.15.11); pairing, the real member list and WK custody,
   the `dev-pair` step and the reference test phone (R6); the hostile-relay rows of the release gate through a proxy in
   front of the real relay (the R2 identity and exactly-once rows run against the mock and the fakes only, layer 1).
@@ -6896,13 +7154,16 @@ The host refuses with `validation.text` and never normalises a signed string. Th
 - **The iPhone:** its `dk_sig` is a Secure Enclave key, `WhenPasscodeSetThisDeviceOnly`, no `.userPresence` (D49;
   orch-mobile P4, A6). F1 §5.3 names exactly this custody, `secure-enclave-unlocked`. `secure-enclave` would claim a
   presence check per signature (D41). The human act is the sign sheet (orch-mobile U7).
-- **Simulator and dev builds:** a software P-256 `dk_sig` encrypted under a passphrase, decrypted for one signature at
-  the sign sheet, never cached. This is F1 §5.3's `passphrase` custody, honestly declared. XCUITest types the
-  passphrase. Such builds never claim `secure-enclave-unlocked`. Production builds compile only Secure Enclave custody
-  (a provisioning rule: `auth` is a declaration, not proof, F1 §12 O1). Demo stays a separate realm (orch-mobile P3).
+- **Simulator and dev builds (DECIDED (orch-52, 15 Oct 2026), replaces the earlier passphrase-custody rule):** the Simulator signs
+  **no** person events. Phone person events are signed only with Secure Enclave custody (`auth`
+  `secure-enclave-unlocked`). The end-to-end tests of `question.answered` and `ticket.created` run on a **physical
+  device** (TestFlight). A dev-only convenience exception (option 2) is an **open OWNER decision**. In-process Demo
+  realms (FakeHost, demo keys) may declare `passphrase`, but the Live transport refuses Demo keys and Demo-realm
+  events. Production builds compile only Secure Enclave custody (a provisioning rule: `auth` is a declaration, not
+  proof, F1 §12 O1). Demo stays a separate realm (orch-mobile P3).
 - **Custody is chosen at compile time (orch-f1).** The phone's Live realm uses the Secure Enclave on a device and the
-  passphrase custody only in Simulator builds, behind that compile-time switch. A TestFlight or App Store build always
-  signs `secure-enclave-unlocked`.
+  no person-event custody in Simulator builds (DECIDED (orch-52, 15 Oct 2026): the Simulator signs no person events), behind that
+  compile-time switch. A TestFlight or App Store build always signs `secure-enclave-unlocked`.
 - **`convenience` is refused, also under any dev opt-in** (owner rule Q4 of 11A.11). `_signed_by` refuses it.
   `convenience.check` refuses it on every relay-paired workspace. One accepted convenience event writes the
   permanent `convenience_seen` mark and blocks every later reader. The host behaves the same in dev and production.
@@ -6944,11 +7205,18 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   keep the relay worker stopped until the host clock is past backup time + 1 500 s** (+ 900 s window + 600 s). R2
   needs no new store. A store-level index of every admitted person id (F1 §5.10 follow-up) is an issue for the CLI
   path, not an R2 dependency.
+- **Lost write answers (DECIDED (orch-52, 15 Oct 2026)).** A write whose outcome is unknown is settled with `outcome.get` first. If
+  it did not land, the client resends the **same signed bytes** under a **new rid** automatically, while the event id's
+  ULID time is inside the host window (900 s back; clients use an 840 s margin). Outside that window the event is
+  C-review: the person reviews and signs a **new** event. Clients never auto re-sign after a crash or relaunch. Live
+  writes are enabled only when the host advertises `relay.submit` in the column-R ops and the R6 gate is open.
 - **One review = one uid.** A creation keeps its reviewed `uid` across every attempt. If an attempt that looked unlanded
   did land, the next one gets `ticket.exists` and the phone shows the existing ticket. A misclassification can never
   create a second ticket.
 - **The four classes.** Only C and D are **definite**. An unknown code is D. The table is closed: a shared data file
   that both the R2 tests and the phone read, with a test asserting that every code R2 can emit is in it.
+  DECIDED (orch-52, 15 Oct 2026): the retry table in `tests/relay/r2_vectors/r2_framing.json` (`tables.retry`) is authoritative, and clients
+  generate their tables from it.
 - **The table is authoritative (amendment C, decided 15 Oct 2026 by orch-52).** `retryable` on a relay answer is
   derived from it: A and B → `true`; C-auto, C-review and D → `false`. Placements it fixes:
   - `busy` with nothing run and no seq consumed → A;
@@ -6959,7 +7227,7 @@ The host refuses with `validation.text` and never normalises a signed string. Th
 
   | Class | Meaning | Codes | The phone |
   |---|---|---|---|
-  | **A** not run | resend the same idem and the same signed bytes (a new rid and seq where the protocol needs them) | relay: unsigned 409 `stale_epoch` hint, sealed `stale_epoch`, `stale_timestamp`, `stale_sequence` (new rid), §8.6 step-4 silence or no answer; host: `timeout`, `cancelled`, `store.busy`, `lock.busy`, `rate.limited`, `quota.host`, `host.restarting`, `conn.overloaded`, `outcome.unknown` | resend |
+  | **A** not run | resend the same idem and the same signed bytes (a new rid and seq where the protocol needs them) | relay: unsigned 409 `stale_epoch` hint, sealed `stale_epoch`, `stale_timestamp`, `stale_sequence` (new rid), §8.6 step-4 silence or no answer; host: `relay.timeout`, `cancelled`, `store.busy`, `lock.busy`, `rate.limited`, `quota.host`, `host.restarting`, `conn.overloaded`, `outcome.unknown` | resend |
   | **B** unknown | same idem only; resolve with `outcome.get`, then by a log read | `already_done{status:"unknown"}`, `rid_conflict`, `outcome.get` = `pending` (admitted, not run), `outcome.unknown_idem` before ULID time + 900 s + 300 s; `idem.expired` (resolve by the log only: answer → `questions[].answer.id` = own id; creation → `ticket.get(uid)` exists) | resolve; never re-sign |
   | **C** definite, zero landed | a stored `refused` (never `failed`; but see the H12e-2 note below: core records a refusal as `failed` with an empty landed list, and that counts as `refused`); a new signature is allowed | **C-auto** (14.4 re-sign may skip the review): `members.stale`, `ticket.key_not_next`. **C-review** (new review first): `event.bad_base`, `question.stale`, `event.expired`, `event.abandoned`, and `outcome.unknown_idem` after the bound when the log read shows the event absent | re-sign (C-auto) or re-review |
   | **D** terminal or landed | never re-sign for this review | landed: `committed` (incl. `duplicate:true`), any `failed` with landed events; question: `question.answered`, `question.unknown`, `answer.not_allowed`, `answer.bad_option`; authority and visibility: `role.denied`, `member.unknown`, `device.scope`, `device.invalid`, `device.unknown`, `ticket.frozen`, `freeze.active`, `ticket.not_visible`, `not_found`; collisions: `ticket.exists` (uid), `ticket.bad_reference`, `event.duplicate_id`; request: `forbidden_scope`, `op.not_allowed`, `sig.invalid`, `validation.event`, `validation.text`, `invalid.input`, `idem.conflict`, `idem.required`; the 11A.4 identity codes | show; stop |
@@ -7163,7 +7431,7 @@ admission path, `next_key` atomicity, facts), the orch-f1 review (B1, B2, S3–S
 an Opus tie-break adopted in full. Two structural fixes close most findings: **idem = event id** and **one review = one
 uid**, both with the 900 s freshness window. Three conflicts were settled:
 1. **Simulator `convenience` under a dev opt-in (orch-f1 B2): rejected.** It contradicts `_signed_by`, owner rule Q4
-   and the permanent `convenience_seen` mark. The Simulator uses honest `passphrase` custody, accepted on column R.
+   and the permanent `convenience_seen` mark. DECIDED (orch-52, 15 Oct 2026): the Simulator signs no person events (14.3); an in-process Demo realm may declare `passphrase`, the Live transport refuses it.
 2. **A window around `next_key` (orch-f1 S5): rejected.** A race makes the phone's key taken, and a window only allows
    counter jumps. Exact next key, `ticket.key_not_next` with an advisory `next_key`, and a fast auto re-sign that
    counts against the cap of 3.
@@ -8576,6 +8844,855 @@ The Simulator uses `relay.dev.severin.io`; `--relay local` stays for the Python 
 offer's scopes, never `operate` in v1.7), and F1 §5.3 gates admin events on the certificate's `operate`, so a phone signs
 no admin event. `auth ∈ {secure-enclave-unlocked, passphrase}` matches the phone's
 certificate. R6 appends `device.added` (step 9) before the phone's first `relay.submit` can verify (step 10 follows).
+
+### 11A.16 H13: push and Drop, host end (the H13 design of record)
+
+Status: **decided, 15 Oct 2026** (#566). Docs only; nothing here is built. The draft was challenged by Codex, and
+orch-52 decided the challenged points on 15 Oct 2026. Each such point is marked **DECIDED (orch-52, 15
+Oct 2026, after Codex challenge)**, shortened below to **DECIDED (orch-52, Codex)**. Two relay points are marked
+**AGREED WITH orch-29, PENDING A2/D39a2**: the relay design amendment A2 and the relay code D39a2 must land first, and
+the routes stay off until then. The other marks:
+- **JUDGEMENT CALL:** a choice between defensible options, with the rejected option named;
+- **OPEN:** a question for the party named, with a recommended answer.
+
+Ground truth:
+- orch-relay `develop` `docs/p3-relay-design.md` §14: P3-D39 items 1 to 12, P3-D40 items 1 to 9, amendment A1, and the
+  host questions Q-H1 to Q-H7 of §14.9;
+- orch-relay `docs/protocol-v2.md` §9, §10, §19.9 and §19.10;
+- orch-core `develop` @ `58c365a4` (R2, R3, R5 and H12b merged);
+- R6a PR #554;
+- orch-mobile `develop` @ `2cf4de2`: the Drop client of #75, the NSE, and the bridge ops `drop_claim` and `drop_rewrap`.
+
+This section is the host half of orch-52's review commitments:
+- **H13a:** the push planner and its durable outbox;
+- **H13b:** the Drop client;
+- **H13c:** what the core carries.
+
+**Summary of the decisions.**
+
+| # | Area | Decision (short) | Where |
+|---|---|---|---|
+| D1 | carriage | The core records **no** F1 event, checkpoint field or hash input for Drop objects or pushes. There is no schema, hash or reader-level change. Authorization metadata about Drop objects lives in a durable host journal, `relay/drop-auth.sqlite`, which is not F1 | 11A.16.7 |
+| D2 | push kinds | `question`, `question.closed`, and `drop.new`. `drop.new` is never sent for an unclaimed inbox object; for an inbox object its intent is created atomically with the claim. `ticket.update` is deferred out of H13. `join` and `peer.ticket` are never sent | 11A.16.4 |
+| D3 | push intents | The planner reads committed events through a durable per-log cursor. The intent key includes the committed event's hash. Intents of an abandoned branch are invalidated explicitly. Every intent has an immutable deadline. A start fence keeps history from being pushed | 11A.16.4 |
+| D4 | audience | **The intersection, everywhere.** A device passes only if its standing is current, the object's ticket is visible to its person, the object's recipient restriction includes it, and the object's binding is known. One function, `relay/audience.py`, applies this to every read, listing, push target, wrap and bridge answer. Hand-offs see objects only through its approval view (minimum metadata, never contents). The single exception is the column-P listing of unverified documents (`{object, kind, size, head}` only) | 11A.16.2 |
+| D5 | sealing and dispatch | Sealing happens inside `BridgeKeys` under one seal snapshot, at the committed epoch with the gate down. The audience is **revalidated immediately before every seal and every send**, against one consistent authorization state | 11A.16.2, 11A.16.4 |
+| D6 | persist before send | Every outbound relay write is persisted byte-exact before its first attempt. New bytes appear only through a recorded transition: a reseal, a rewrap or a narrowed target list | 11A.16.3 |
+| D7 | Drop writes | The host writes `file` objects only. A device-only frame carries no workspace wrap. The host's recovery wrap is a typed, host-only envelope that is never sent | 11A.16.5 |
+| D8 | Drop reads | The mirror keeps **separate cursors per list direction** until `direction: "all"` with a `generation` exists. Once it does, the host switches to it (agreed with orch-29, pending A2/D39a2). The host reconciles in full after a gap of more than 29 days, a restore or a takeover. An object whose binding is unknown is quarantined | 11A.16.5 |
+| D9 | retire | The UI holds an opaque head token, and `drop.retire` sends exactly that token. The host never substitutes the mirror's current hash. A lost answer is retried only inside the 29-day window. Files only: the host retires no document in H13 | 11A.16.5 |
+| D10 | ops and gestures | Eight ops under the cap `drop/1`, `drop.bind` included. Grants are checked on every op. A claim of someone else's inbox content, a retire of someone else's upload, and every `drop.bind` need a signed terminal hand-off bound to object, head and audience (for a bind, also the destination ticket and the resulting audience). A person's own sends, claims of their own uploads and retires of their own uploads need none | 11A.16.6 |
+| D11 | host storage | Storage is under `relay/drop/` only, through the `StateDir` fd. Bytes are reserved before allocation, the caps are explicit, garbage collection and ENOSPC recovery are defined, a free-space reserve is kept, and the per-sender limits are aggregate | 11A.16.5 "Host storage" |
+
+#### 11A.16.0 Scope and the split
+
+- **In (P4 basics, D43):**
+  - the host's push send for its own workspace;
+  - the host as a Drop reader of its own workspace;
+  - the host as a writer of `file` objects;
+  - the host as the claimer and re-wrapper of its own workspace's objects;
+  - the host's retire of files;
+  - the bridge ops `drop_claim` and `drop_rewrap`;
+  - the socket ops of 11A.16.6;
+  - the authorization journal;
+  - the `host.status.relay` fields.
+- **Out:**
+  - documents written or retired by the host (D7, Q9);
+  - `ticket.update` pushes (Q2);
+  - a phone retire request (Q6);
+  - cross-workspace addressing, personal and shared spaces, and `drop:` agents (P6);
+  - the lease, and public and upload links;
+  - any F1 event, checkpoint or schema change. The only new signed or sealed formats are two:
+    - the host-local recovery envelope of D7, which never leaves the host;
+    - the `sig_drop_handoff` hand-off material of D10: non-event, made by the terminal signer, domain-separated from
+      the event and reader labels.
+    No relay-visible or phone-visible format changes.
+- **The split:**
+  - H13a: push;
+  - H13b: Drop;
+  - H13c: carriage (D1). H13c is pinned by tests inside the H13a and H13b PRs.
+
+#### 11A.16.1 Ground truth checked, and conflicts found
+
+| # | Finding | Resolution |
+|---|---|---|
+| G1 | Phones hold no `operate` in v1.7 (11A.15.6, N1). The relay's device Drop `PUT` required `operate` | **AGREED WITH orch-29, PENDING A2/D39a2 (Q1).** A device that holds `decide` without `operate` may create **new immutable `file` objects only**. Such a write must be version 1 with `If-Match: 0`, use the recipients `"inbox"`, and carry the inbox wraps only: one `wxk` wrap and optionally the author's own `device` wrap, never `wk`. It counts against a separate, smaller decide-class budget. Such a device cannot write document versions, re-wrap or claim. This is not a blanket substitution of `decide` for `operate`. **The phone's `drop_claim` stays a request to the host** and follows D10 |
+| G2 | #554 lacks the typed H13 methods | They are specified in 11A.16.2 and built by H13-1 after #554 merges |
+| G3 | `orch.crypto` has the labels but no push or Drop builders | H13-0 builds them |
+| G4 | Q-H1: the host on develop checks only the poll's top-level keys | The current host tolerates `notices.drop`. H13b adds a closed parse of `notices` |
+| G5 | `orch-v2.md` §6.3 still describes a collapse id and a sealed fetch | A text-only fix ships with H13a |
+| G6 | Opening a `wxk` wrap needs `WXK` | `CardKeys.open_wrap_wxk`, which belongs to R6's card holder |
+| G7 | The relay skips pushes over its budget silently | The host keeps a stricter budget of its own (11A.16.4) |
+
+#### 11A.16.2 Keys, signing, the audience function and dispatch
+
+**Typed key methods** (the 11A.2 rule unchanged: no raw key, purpose-specific methods only).
+
+| Holder, method | Checks | Produces |
+|---|---|---|
+| `BridgeKeys.push_sealing(signer)` → `_PushSealer` | Takes the same seal lock as `sealing` and one `SealState` snapshot. The sealer class is private and needs the module token | a sealer bound to one snapshot |
+| `_PushSealer.seal_push(payload)` | The payload has exactly `{kind, id, label, ts_ms}`. `kind` is one of `question`, `question.closed`, `drop.new`. `id` is ASCII, 1 to 128 bytes. The label is a fixed point of `clean_label`, padded to 80 code points. The snapshot is sealable. `cj(outer)` is at most 3,072 bytes | the outer at `snap.current`, signed inside by `RelaySigner.push` |
+| `_PushSealer.wrap_dek_wk(object_id, version, dek)` | The snapshot is sealable. The caller is a `[space_id]` frame, a re-wrap or a claim, never a device-only frame (D7) | one §10.3 `wk` record |
+| `_PushSealer.recovery_envelope(object_id, dek)` | The snapshot is sealable | a **host-only recovery envelope** (D7, Q4): `{v:1, kind:"drop_recovery", object_id, epoch, ct}`, with `ct = AES-GCM(HKDF(WK_e, "", "orch/v2/host-drop-recovery\|" ‖ ws ‖ u32(e) ‖ object_id), random nonce, DEK)`. The KDF label is new and host-local. The shape is not a §10.3 record, so it can never be sent as a wrap |
+| `BridgeKeys.open_recovery(envelope)` | A held epoch at or below `e_c`; the object id matches | the DEK or `None` |
+| `BridgeKeys.open_wrap_wk(record, descriptor)` | A held epoch at or below `e_c`, never a burned one; `dek_commit` checked | the DEK or `None` |
+| `CardKeys.open_wrap_wxk(record, descriptor)` | A held `WXK_v` within its retention; `dek_commit` checked | the DEK or `None` |
+| `RelaySigner.push(ws, epoch, payload)` | Called only by `_PushSealer`. The label is `sig_push`, over `suite ‖ ws ‖ u32(epoch) ‖ cj(payload)`, at the snapshot's epoch | the inner signature |
+| `RelaySigner.drop_object(o)` | The exact §10.4 field set. `author_kind: "workspace"`, and `author_id` = `space_id` = this workspace. `space_kind: "workspace"`. `object_kind: "file"` (a `document` is refused). `version: 1`, `parent: 0`, `parent_hash: null`. `recipients` is `[space_id]` or a sorted unique non-empty device list, never `"inbox"`. `expires_ms` lies in `(now + 60 s, now + 7 d]`. `origin` is `human` or `agent` | the descriptor signature (`sig_drop_object`) |
+| `RelaySigner.drop_claim(o)` | The exact §10.5 field set, with this workspace's `workspace_id`. The wrap is a `wk` record at the snapshot's epoch | the claim signature (`sig_drop_claim`) |
+
+**Lock order** (one line): `relay_lock` → store lock → `relay-link.lock` → seal lock → `RidStore` lock →
+`OutboundStore` lock → `DropAuth` lock (the innermost; it never calls out). Nothing inside a seal span takes the store
+lock.
+
+**DECISION D4, the intersection (DECIDED (orch-52, Codex), item 1).** `relay/audience.py` provides
+`devices_for(state, members, obj)`. It is called under the store lock. `obj` is either an authorization record
+(11A.16.3 `drop_auth`) or a push context `{ticket, narrow}`. A device passes only if **all** of the following hold:
+
+1. **Standing.** The device is in the committed member list with `look` in both its list entry and its certificate,
+   and `device_standing_ok` holds (the one standing function of #554).
+2. **Ticket.** The object or push is bound to no ticket, or `visible_to(person, ticket)` holds for the device's
+   person (`state.device_person`).
+3. **Recipient restriction.** The object's audience kind is `space`, or the audience is `inbox` and the object has been
+   claimed by this workspace, or the device is in the object's device-only `recipients` list. An unclaimed inbox object
+   passes only for its own verified author device.
+4. **Narrowing.** For a push context: the device belongs to one of the addressee persons, or to one of a send's `to`
+   persons.
+5. **Binding known.** The object's binding is `bound`. A `quarantined` object passes for no device and no person (D8).
+
+**The approval view (the one mode for hand-offs).** Two hand-offs need a person to approve something D4 hides from
+them: a claim of someone else's unclaimed inbox object, and a `drop.bind` of a quarantined object. For these,
+`audience.py` has a second mode, `approval_view(state, person, obj, op)`. It is the only way such an object reaches a
+person before the hand-off commits.
+- **Who gets it.** It answers only inside `human.prepare` for the material kinds `drop.claim` and `drop.bind`, on the
+  terminal path. The click signer, the dashboard's plain ops and the bridge never get it.
+- **The person's checks.** The person passes step 1 for one of their devices, and holds the op's role: a member in
+  standing for a claim, an owner or maintainer for a bind.
+- **What it returns** is a closed minimum, enough for the person to see what they approve:
+  - the object id, the head token and the size;
+  - the sender's identity: the verified author device and person, or the host sender from the journal, or
+    `unverified`;
+  - the file name as **untrusted text**, under the same `clean_label` rules and caps as push labels, and marked as
+    untrusted in the review.
+- **What it never returns:** contents, a wrap, a DEK, or `mime`. Contents become readable only after the claim or the
+  bind commits, and then through the normal D4 mode.
+
+**The single exception: unverified documents.** Documents are never verified, bound, pushed or relayed to any device
+in H13 (Q9). So D4's step 5 (binding known) can never hold for them, and they would be invisible even to the host's
+operator. The one exception is the separate listing `drop.list {view: "unverified_documents"}`. It answers only in
+column P on this host, never to G, never over the bridge, and never in a push. It returns only
+`{object, kind: "document", size, head}`: no title, no label, no name, no author name, and no contents.
+- **Why the exception is safe:** it shows nothing that D4 protects (no ticket, no label, no content), only that an
+  object exists and how large it is, which is what the relay's own oracle already reveals to members.
+- **What it does not grant:** it applies no audience rule to anything else, and a document never enters any other
+  listing or decision.
+
+The rule for persons (socket listings) is the same with "a device of the person" in steps 1 and 3. There is **no
+owner bypass** (Q10): an owner sees a device-only object only if one of that owner's own devices is listed and the
+ticket is visible to the owner.
+
+**The rule is one function.** Every place that decides what crosses to a device uses this function and nothing else:
+- push targets, at seal time and at every send;
+- Drop recipients and wraps, at framing and at every upload attempt;
+- re-wrap and claim checks;
+- bridge answers;
+- every socket op.
+
+An AST test pins that no other module builds a device set, a recipient list or a listing filter. No visibility rule
+anywhere is an OR of these conditions.
+
+**JUDGEMENT CALL:** a restricted ticket whose audience equals every member device still gets device-only addressing,
+never `wk`, because a later member would otherwise read it.
+
+**Dispatch-time revalidation (DECIDED (orch-52, Codex), item 4).** Removing access does not rotate the epoch (a ticket
+is restricted, a member is removed, a device is revoked before rotation), so sealing at the committed epoch alone is
+not enough. The rule:
+
+- **The authorization generation.** The store keeps an in-memory `auth_gen` and raises it at **one** chokepoint: the
+  `Store._state` setter, which #554 already uses to raise the relay gate. It is raised whenever an event changes a
+  ticket's visibility, a member's role or presence, a device's standing, or a grant. Held revocation evidence raises it
+  through the same function. An AST test pins the chokepoint.
+- **The dispatch step.** Every seal and every send (a first attempt or a resend) runs as one decision under the store
+  lock:
+  1. recompute the audience with D4;
+  2. compare it with the recorded one;
+  3. record `auth_gen`;
+  4. release the lock and transmit.
+
+  That decision is the **linearization point**. An authorization change that commits before it is seen by it. One that
+  commits after it is ordered after the send, as a message already sent. The decision needs no network I/O, so the
+  store lock is never held across a request.
+- **If the audience shrank,** nothing reaches the device that lost access:
+  - a **push** is sent with the narrowed target list (a recorded transition). The outer carries no targets, so the
+    sealed bytes stay the same and the relay's LRU still deduplicates per device. If its label is now about a ticket
+    some former targets may not see, those targets are simply gone. An empty set is `dropped`;
+  - a **Drop frame** not yet stored is re-framed for the new audience with the same DEK (a new descriptor, new wraps,
+    `frame_gen + 1`). After a lost answer the host first reads back: an object already stored was released at an
+    earlier linearization point and is not recalled, as for removals (spec §6.4). The host then writes no new wrap for
+    the removed devices, and the frame is not resent;
+  - a **re-wrap or claim** whose requesting device or audience no longer passes is refused (`not_found`).
+- **If the audience grew,** nothing widens automatically. New devices get nothing until a new push or object is
+  planned. **JUDGEMENT CALL:** the rejected option re-targets queued items to new devices, which would send old
+  questions to a device that joined later.
+
+**Label padding.** Every label is padded with U+0020 to 80 code points. The NSE trims trailing spaces (verified in
+`PushPresentation.swift`). Residual R-D6 remains.
+
+#### 11A.16.3 State (extends 11A.3)
+
+Two SQLite files are opened like `rids.sqlite`: a checked open, `O_NOFOLLOW`, the inode re-check, WAL, and
+`synchronous=FULL`. There is also one directory `relay/drop/`. All three are reached only through the `StateDir` fd.
+None of it is F1.
+
+**`relay/drop-auth.sqlite`: the authorization journal (DECIDED (orch-52, Codex), item 2).** This is separate from the
+mirror, and it survives a mirror rebuild. It is append-mostly. A row is never rewritten in place; a change appends a
+new row with a higher `rev`.
+
+| Table | Contents | Written |
+|---|---|---|
+| `drop_auth(object, rev, binding, ticket, audience, recipients, author_kind, author_id, author_person, sender_person, sender_grant, origin, decided_ms, source)` | `binding` is `bound` or `quarantined`. `ticket` is null for workspace-wide content. `audience` is `space`, `inbox` or `devices`. `author_person` is set only when **verified**: the author device's certificate was checked under that person's `PK`. `sender_*` names the person or grant behind a host upload. `source` is `host_send`, `device_upload`, `rebind` or `quarantine` | **before** the frame of a host upload is persisted; when a device upload is first verified; at quarantine; at a rebind |
+
+The binding rules:
+- **A host upload** is bound when it is sent, to the `ticket` given (or none).
+- **A device upload** is bound to no ticket: devices cannot name tickets. The binding is derived from verified
+  provenance, so it is rebuilt automatically after a loss.
+- **An object without a journal row** after a restore or a relist is `quarantined`. This covers host-authored objects
+  (`author_kind: "workspace"`), and any object whose provenance cannot be verified. A quarantined object is visible to no
+  device and no person, only to the host. Only `drop.bind` (11A.16.6) rebinds it, and that op takes a terminal hand-off.
+- **Retention:** rows are kept while the object or its tombstone is in the mirror, then 30 more days. Quarantined rows
+  follow the same rule, with at most 1,024 per workspace (`drop_quarantine_full` alarm, and the oldest row deleted
+  first).
+
+**`relay/outbound.sqlite`:**
+
+| Table or path | Contents | Crash rule |
+|---|---|---|
+| `meta` | `start_ms`, `instance_id`, and one `holder_gen` per direction | created once |
+| `push_cursor(log, seq, head)` | the last event judged, per log | advanced in the same transaction as the intents |
+| `push_intent(key PK, log, seq, event_hash, kind, id, ticket, narrow, label, priority, deadline_ms, state, targets, auth_gen, outer, epoch, sealed_ms, attempts, next_ms, accepted, reason)` | `key = H(log ‖ seq ‖ event_hash ‖ kind ‖ id)` for an event's intent, and `H("drop" ‖ object ‖ version ‖ head)` for `drop.new` (item 6). `deadline_ms` is **immutable** (item 7) | the outer is persisted inside the seal span; the targets are recorded at every dispatch |
+| `push_ts(id_hash PK, last_ts)` | the last `ts_ms` per id | updated in the seal transaction; rows older than 25 h are pruned |
+| `drop_obj(object PK, version, kind, state, verified, n, direction, created_ms, expires_ms, tombstone_until_ms, head_hash, claimed_by, descriptor, name, mime, size, local)` | the mirror of the relay list. It has no authorization column: binding, recipients and provenance live only in `drop-auth` (I-H13-8). `name` and `mime` are kept only after the host opened the metadata | rewritten per page, in one transaction with that direction's `drop_pos` |
+| `drop_pos(direction PK, position, last_complete_start_ms)` | **one row per direction** (D8) | each moves only forward |
+| `drop_up(object PK, state, frame_name, frame_gen, frame_len, recovery, expires_ms, attempts, next_ms, auth_gen, reason, idem)` | `recovery` is the host-only envelope (D7) | the frame is claimed write-once before the row says `framed` |
+| `drop_retire(object PK, head_token, first_attempt_ms, file_expires_ms, state, answer, idem, handoff)` | `head_token` is exactly the token the UI held (D9). `handoff` is the verified hand-off digest, when one was needed | written before the first request |
+| `drop_rewrap(object, version PK, record, state)` | a persisted re-wrap or claim record | written inside the seal span |
+| `drop_reserve(scope, bytes)` | the byte reservations of D11 | in the same transaction as the allocation that needs them |
+| `drop/frames/`, `drop/files/`, `drop/tmp/` | frames, verified plaintext copies, temporary files | 11A.16.5 "Host storage" |
+
+**Restore:**
+- If `instance_id` differs, both databases are renamed aside (`*-<ms>.lost`). New ones get `start_ms = now`, and the
+  host reconciles in full.
+- Objects that then have no journal row are re-derived (device uploads) or quarantined (D8).
+- Frames whose rows are gone are deleted unsent.
+
+**Recovery envelopes across events (Q4):**
+- An envelope lives as long as its `drop_up` row.
+- It opens under its epoch's `WK`, which R6 never deletes (Q8 of 11A.15), so a rotation does not break it.
+- A restore loses the row and the envelope together.
+- A takeover leaves them fenced in this state directory. The new holder never sees them, and that upload is abandoned
+  with the old directory.
+
+#### 11A.16.4 H13a: push
+
+**Kinds (D2).**
+
+| Kind | Trigger | `id` | `label` | Narrowing (D4 step 4) | `priority`, ttl |
+|---|---|---|---|---|---|
+| `question` | a committed `question.asked` | the question's `qid` | the question text | the persons from `questions.addressees`, minus the asking device | `high`, 86,400 s |
+| `question.closed` | a committed `question.answered` | the same `qid` | `Answered on <device label>` or `Answered` | the same addressee persons | `high`, 86,400 s |
+| `drop.new` | a host upload `stored`; a verified device upload of audience `space` or `devices` first seen live; **an inbox object at the commit of its claim, atomically, in the same transaction that records the claim** (item 5) | the object id | the opened file name, else `New file` | none beyond D4 (the author device is excluded) | `high`, 86,400 s |
+
+**No push for an unclaimed inbox object (DECIDED (orch-52, Codex), item 5).** Its name could leak to members who
+cannot read it yet. `ticket.update` is **deferred out of H13 (DECIDED (orch-52, Codex), Q2)**.
+
+**The planner (D3).** A worker job (it needs the store lock) runs when the store reports an append, and at least every
+30 s:
+1. it reads the events after `push_cursor`, per log, through a new read-only store method,
+   `Store.events_after(cursor, limit=256)`, each with its `at` and its hash;
+2. **the start fence:** an event whose `at` is before `meta.start_ms` produces no intent. So a first link, a restore and
+   a re-created `outbound.sqlite` push nothing old (Q-H2, orch-52 item 6; the 11A.4 start fence applied to pushes);
+3. a rewritten log is handled by the event-hash rule below;
+4. it inserts intents with `INSERT OR IGNORE` on `key`, and advances the cursors, **in one transaction**. A crash before
+   the commit replans the same keys; a crash after it finds them.
+
+Targets are not fixed at planning time. They are decided at every dispatch (11A.16.2).
+
+**JUDGEMENT CALL (no store hook):** the checkpoint outbox is written inside the append's pending directory (H12b),
+because a checkpoint is numbered and signed with the event. A push is best effort, and its key is the event's position
+and hash. So a cursor plus a primary key gives exactly-once intents without touching the store's critical section.
+
+**JUDGEMENT CALL (merge):** a `question` intent not yet sealed when its question is answered is set `merged` together
+with the `question.closed` intent. Nothing is shown and nothing is replaced.
+
+**The event hash (DECIDED (orch-52, Codex), item 6).** The key includes the committed `event_hash`. When the log is
+rewritten (a restore abandons a tail), the planner checks every non-final intent's `(log, seq, event_hash)` against
+the log. An intent whose point is no longer in the log is set `invalidated`, with the reason `abandoned`, in one
+transaction with the cursor move. A re-appended event at the same `seq` has another hash, so it gets a new key and is
+planned again. Sent intents stay sent; a push cannot be recalled.
+
+**The deadline (DECIDED (orch-52, Codex), item 7).** `deadline_ms = event_at_ms + ttl_s × 1000` for an event's intent,
+and `created_ms + ttl_s × 1000` for `drop.new`. It is set at insert and never changed: neither a reseal, a narrowing nor
+a retry refreshes it. It is checked before every seal, every retry and every send. Past it, the intent is `dropped` with
+the reason `deadline`.
+
+**Seal and send.**
+- **Sealing:** a worker job seals up to 32 `planned` intents. It runs the dispatch step of 11A.16.2 (deadline,
+  audience, `auth_gen`). An empty set is `dropped` with the reason `no_target`, and sets above 1,024 devices are split.
+  Then, in **one** `push_sealing` span, it sets `ts_ms = max(now_ms, push_ts.last + 1)` per id (Q-H3), pads the label,
+  calls `seal_push`, and persists the outer, the epoch, the targets, `ts_ms` and `state = sealed` in one
+  `OutboundStore` transaction. If the snapshot is not sealable, the intents stay `planned`, and the job runs again on
+  the R6 commit that lowers the gate.
+- **Sending:** on the push thread. Before every attempt, the dispatch step runs again as a short worker job: deadline,
+  audience, `auth_gen`. A narrowed set is recorded and sent. An empty set is `dropped`.
+- **The send** is `POST /v2/workspaces/{ws}/push` with `Orch-Holder` and the **persisted** outer. Every attempt is a
+  new dispatch, revalidated first:
+
+| Answer | Action |
+|---|---|
+| 200 `{accepted}` | `sent`, with `accepted` recorded (it is never shown per device) |
+| no answer, a transport error, a 5xx other than 503 | send the same outer again, with backoff 1, 2, 4 … 60 s, while the deadline holds (the relay's 24 h LRU deduplicates) |
+| 429 `rate_limited`, 503 `overloaded` | send again after `Retry-After`, while the deadline holds (never permanent; Q-H6 classes) |
+| 409 `stale_epoch` | back to `planned`. A reseal gives a new `c`, so a new push, which is expected (Q-H2). It happens only while the deadline holds, keeps the deadline, and happens at most 3 times; then `failed`, with the alarm `push_epoch_loop` |
+| 409 `fenced` | the worker's fenced path (11A.5: the loop stops, and the worker is `failed`). The intents stay for the next start of this state directory |
+| 401 | R1's single-flight re-login, then the same outer again |
+| 404 | push is not configured at this relay (P3-D40 item 9). Every `planned` and `sealed` intent is `dropped`, `push.state` becomes `off_at_relay`, and the next intent probes again, at most hourly |
+| 400 `malformed` | `failed`, with the alarm `push_malformed` (a host bug; never sent again) |
+
+- **Host budgets (G7; JUDGEMENT CALL on the numbers):** at most 6 pushes per 10 minutes per (device, workspace), and
+  one per id per 60 s. A newer intent for the same id merges the older unsent one. They are applied after D4. A device
+  over budget is left out of that intent's targets, and the phone reconciles when it opens. These budgets are stricter
+  than the relay's (a burst of 20, then 2 per minute), so the relay's silent skip should not trigger for an honest
+  host.
+
+**Restore and takeover.**
+- A restored state directory gets a new `start_ms` (11A.16.3), and its `sealed` intents past their deadline are dropped
+  unsent (Q-H2).
+- After a takeover by another state directory, this one is fenced (409). The new holder has its own `outbound.sqlite`
+  and its own fence.
+- Pushes are never sent again across instances. The relay's dedup memory does not survive a relay restart, and the NSE
+  shows a replay as generic text (R-D2, A12).
+
+**Lifecycle (relation to R3/R5).**
+- H13 adds two seams to `relayhook.SEAMS`, `push` and `drop`, with refusing defaults (`NoPush`, `NoDrop`).
+- `RelayWorker` starts them after the loop and the publisher, and joins them within the same shared deadline (11A.4
+  "As built in R5").
+- They start only when the worker starts, so the `R6_READY` gate and its flip conditions apply unchanged, and only after
+  the first link has reached `linked`.
+- The planner, sealing and the dispatch steps run as worker jobs. The push thread `orch-relay-push-<id8>` and the Drop
+  thread `orch-relay-drop-<id8>` never take the store lock.
+- Two more relay connections per workspace: 8 per workspace, 64 at the 8-workspace cap (11A.7).
+
+#### 11A.16.5 H13b: Drop
+
+**Reading (D8).**
+
+- **The wake.** The poll thread passes `notices.drop` to the Drop thread. The parse is closed: an integer ≥ 0, and
+  anything else is ignored and counted as `drop_notice_malformed`. The thread also lists every 15 minutes, so a missed
+  notice costs at most that long.
+
+- **Cursors (DECIDED (orch-52, Codex), item 3; Q3):**
+  - the host keeps one position per direction (`received`, `sending`);
+  - each direction is listed `after` its own position until `next: null`, verified, and advanced on its own;
+  - a `drop` notice is news when it is above the lower of the two positions;
+  - a full reconciliation lists both directions from zero.
+- **The switch to `direction: "all"` (AGREED WITH orch-29, PENDING A2/D39a2; Q7).** W sessions will get
+  `direction: "all"`:
+  - every page carries a `generation`;
+  - a mismatch answers 409 `generation_changed`, and the host relists from 0;
+  - the first page carries an `until` high-watermark, so paging is consistent.
+
+  Once that is deployed and announced by the relay level, the host uses one cursor `(generation, position)`, lists
+  `after` up to `until`, and on a 409 relists from 0 under the new generation. Until then it keeps the two cursors.
+- **Full reconciliation.** The host lists both directions from the start and replaces the whole mirror. Anything
+  missing is gone, and its local copy is deleted. It happens:
+  - at the first start;
+  - when the gap since the start of the last complete list is more than 29 days;
+  - after a restore (11A.16.3);
+  - after a takeover, when `meta.holder_gen` differs from the session's generation;
+  - before deciding about a retire past its window (D9);
+  - after a verification failure.
+
+  After it, every object without a journal row is re-derived or quarantined (11A.16.3).
+- **Verification** (protocol §10.4, "Readers MUST"), before an entry becomes `verified`:
+  - the descriptor's signature under the author's key: a device author's certificate from
+    `membership/devices/<id>.json`, which keeps removed devices' certificates write-once, or this workspace's own
+    `wsk_pub`;
+  - **author provenance, verified and never taken from listing metadata:** the device author's certificate is checked
+    under its person's `PK` (the genesis delegation), which sets `author_person`;
+  - the author was a member of this workspace;
+  - the entry's `object_id` and `version` equal the descriptor's, and a file has `version == 1`.
+
+  A failure quarantines the entry, raises the alarm `drop_integrity`, and hides it from every op. The mirror keeps the
+  highest verified version per object and refuses a lower one.
+- **Documents (DECIDED (orch-52, Codex), Q9):**
+  - mirrored as **unverified metadata only**: no binding, never opened, never retired by the host in H13, and never used
+    for any decision (no push, no audience, no claim, no relay to devices);
+  - shown only through the single exception of D4: `drop.list {view: "unverified_documents"}`, in column P only,
+    returning `{object, kind, size, head}` and nothing else.
+- **Metadata:**
+  - for a verified live file, the host opens a DEK it can reach (`open_wrap_wk`, or `open_wrap_wxk` for an inbox file),
+    checks `dek_commit`, opens `meta`, and stores `name`, `mime` and `size`, after `clean_label` and the caps of D11.
+    The DEK is then discarded;
+  - for an **unclaimed inbox** object the opened name is stored, but it is shown only to the author's verified person
+    and inside a claim hand-off review.
+- **Downloads (`drop.fetch`):**
+  1. reserve the bytes (D11);
+  2. stream the blob to `drop/tmp/`, capped at `content_len`, at a minimum rate of 64 KiB/s;
+  3. check `H(blob) == content_hash`;
+  4. decrypt chunk by chunk (ORD2, including the `is_last` byte) into a second temp file;
+  5. check `metadata.size`, fsync, and rename into `drop/files/`.
+
+  One download per workspace at a time. **JUDGEMENT CALL:** the relay allows 4 per device, but a host does not compete
+  with its phones.
+
+**Writing (D7).**
+
+1. **`drop.send`** (11A.16.6) runs under the store lock:
+   - the D4 audience for the given `ticket` and `to`;
+   - an empty audience is `drop.no_audience`;
+   - the **journal row first** (`source: host_send`, the binding, the audience, the sender person or grant);
+   - then the reservations, then the frame.
+2. **Addressing:**
+   - no ticket and no `to`: `[space_id]` with one `wk` wrap;
+   - a restricted ticket, or any `to`: device `recipients` and `device` wraps only. **A device-only frame contains no
+     `wk` or other workspace wrap** (a test asserts this for every device-only frame, including re-framings).
+3. **The recovery envelope (Q4, DECIDED (orch-52, Codex)):** every frame gets one, made in the same seal span and
+   stored in `drop_up.recovery`, never in the frame. A `stale_epoch` rewrap of a `[space_id]` frame and a re-framing
+   after a narrowed audience both recover the DEK from it.
+4. **Framing.** In one `push_sealing` span the host makes:
+   - a fresh object id (16 random bytes) and a DEK;
+   - the ORD2 blob (1 MiB chunks) and the sealed `meta`, written to a temp file in `drop/frames/`;
+   - the descriptor, with `created_ms = now` and `expires_ms = now + 7 d − 10 min`, signed by `RelaySigner.drop_object`;
+   - the wraps and the recovery envelope;
+   - the head.
+
+   The frame is claimed write-once, and the `drop_up` row is set `framed`, in one `OutboundStore` transaction. The blob
+   is consumed when that transaction commits (§0.10 "Consumption").
+5. **Upload.** The dispatch step (11A.16.2) runs before every attempt. The Drop thread then sends
+   `PUT /v2/drop/{o}/versions` with `If-Match: 0`, an exact `Content-Length` and `Orch-Holder`. It streams the frame
+   from its fd, reads an early answer as soon as one arrives, and then stops sending.
+
+| Answer | Action |
+|---|---|
+| 201, or 200 (an exact retry) | `stored`. The frame is deleted, the mirror entry is written from the stored descriptor, and a `drop.new` intent is inserted |
+| no answer | read back `GET .../versions/1/descriptor`. The host's own descriptor → `stored`. 404 → send the stored frame again. Another descriptor, or 410 → `failed` (a collision of 128 random bits is a bug or an attack: alarm `drop_integrity`). 403 → `failed` |
+| 409 `stale_epoch` | **rewrap the same DEK** (Q-F4). The DEK comes back from the recovery envelope; the host writes a new `wk` wrap at the new epoch into frame `gen + 1`, with the same blob and descriptor, and sends it. At most 3 times (the `EpochRefetchLimiter` rule), then `failed`. A device-only frame has no `wk`, so it never gets this answer |
+| 409 `rotation_required` (if the owner adopts it) | wait for the host's own rotation commit, then as `stale_epoch` |
+| 409 `version_conflict` | as "another descriptor" above |
+| 409 `fenced` | the worker's fenced path. The row stays `framed` |
+| 403 `not_eligible` | an audience device left the workspace in the meantime. The audience is decided again by the dispatch step, and the object is framed anew with the same object id, DEK and blob: a new descriptor for the new `recipients`, and new wraps. Nothing was stored, so this is safe. If it fails again, `failed` |
+| 410 `expired` | `expired`: the upload outlived its file. It is shown and never sent again |
+| 429 `quota_exceeded` with a stored-bytes `quota` | `failed`, with `reason = quota`. The op's outcome is `drop.quota` with `detail.quota`, and the alarm is `drop_quota`. **Never sent again unchanged** (Q-H6) |
+| 429 for a slot or `rate_limited`, 503 `overloaded` | send again after `Retry-After`, while `now < expires_ms − 1 h` |
+| 400, 413, 428 | `failed`, with the alarm `drop_malformed` (a host bug) |
+
+**Claims and re-wraps.**
+- **The bridge ops** are `drop_rewrap` (scope `look`) and `drop_claim` (scope `decide`, see G1). Each answer applies D4
+  for the requesting device. A hidden or unknown object answers `not_found`.
+- **Re-wrap:** only for `[space_id]` objects, or inbox objects this workspace has claimed. Never for a device-only
+  object.
+- **Claim (DECIDED (orch-52, Codex), item 10 as refined by orch-52):**
+  - **The person's own upload.** The inbox object's **verified** author device belongs to the claiming person
+    (`author_person` from the journal, set by the certificate check, never from listing metadata). It needs no hand-off,
+    like the person's own `drop.send`. That applies to `drop.claim` on the socket and to the phone's `drop_claim` (the
+    requesting device's person must equal `author_person`).
+    A gestureless own-claim also requires the verified author device to be a **current** member device of the claiming
+    person at claim time (re-checked under the store lock), and it is listed in "Shared from your phone" for 7 days
+    (details in 11A.16.12, Q-H9).
+  - **Anyone else's inbox content.** It needs a **terminal hand-off** bound to object, head and audience (11A.16.6).
+    The person sees the object only through D4's approval view: its id, head token, size, sender identity, and its
+    name as untrusted text, never its contents. The phone's `drop_claim` for such an object answers
+    `drop.handoff_required`, and the person claims it from a terminal.
+  - **No auto-claim (Q8).**
+  - **The commit.** The claim record is persisted inside the seal span. After the relay's 200, one `OutboundStore`
+    transaction marks the claim done **and** inserts the `drop.new` intent (item 5).
+
+**Retire (D9; DECIDED (orch-52, Codex), item 8).**
+- **The head token.** Every `DropItem` the host shows carries `head`, an opaque token:
+  `"h1." + b64u(u32(version) ‖ head_hash)`.
+- **`drop.retire {object, head}`** decodes the token and sends exactly `{expect_version, expect_head}` from it. The host
+  **never** substitutes the mirror's current version or hash. A token that does not decode, or that names another object
+  family, is `invalid.input`. A token older than the mirror is sent as it is, and the relay answers `version_conflict`,
+  which is surfaced as `drop.conflict`.
+- **Files only (Q9).**
+- **The intent.** The `drop_retire` row (the head token, `first_attempt_ms = now`, `file_expires_ms`, `state =
+  pending`, and the hand-off digest when one was needed) is written before any request.
+- **The answers.** The Drop thread posts `{expect_version, expect_head}` with `Orch-Holder`:
+  - 200 `{state}` → `done`. The mirror entry becomes that tombstone, and the local copy is deleted;
+  - 409 `version_conflict` → `conflict`. The object is untouched, and the outcome is `drop.conflict`;
+  - 409 `fenced` → the fenced path, and the row stays `pending`;
+  - 403 → `failed`;
+  - 400 → `failed`, with the alarm `drop_malformed`.
+- **A lost answer (Q-H7)** is sent again with the same body only while
+  `now < min(first_attempt_ms, file_expires_ms) + 29 d`. After that the row becomes `reconcile` and is **never
+  replayed**. The next full reconciliation decides:
+  - a live entry with the same head needs a new retire from a person;
+  - a retired or expired tombstone is `done`;
+  - an absent object is `done`, with the reason `gone`.
+
+  A 404 inside the window also goes to `reconcile`. A 404 proves nothing (A1, change 3).
+- **The bound on retired restricted tombstones (P3-D39 item 8).** The relay charges each retired device-only tombstone
+  65 B per listed device for 30 days. A retire of a device-only object is refused with `drop.quota`
+  (`detail.quota: "host_retire_rows"`) while the host's own retires of such objects in the last 30 days, times their
+  listed devices, times 65 B, exceed 1 MiB. A member's restricted file is left to expire rather than retired in bulk.
+
+**Quotas (Q-H6).**
+- **Permanent:** a 429 `quota_exceeded` whose `quota` is one of the ten stored-bytes names (`drop_ws`, `drop_head_ws`,
+  `drop_account`, `drop_versions`, `drop_documents`, `drop_device`, `drop_device_head`, `drop_device_versions`,
+  `drop_device_documents`, `drop_doc_versions`). It is shown and never retried unchanged. Only expiry, pruning or a
+  retire ends it.
+- **Retryable after `Retry-After`:** a 429 with `quota: "slot"`, a 429 `rate_limited`, and a 503 `overloaded`.
+- **An unknown `quota` value** is treated as permanent (fail closed) and alarmed.
+
+**Host storage (D11; DECIDED (orch-52, Codex), item 11).**
+- **Paths:**
+  - everything lives under `<state>/hosts/<ws>/relay/drop/` and is reached only through the `StateDir` fd;
+  - names are built only from validated hex ids and integers;
+  - `relay/drop/` and both databases are in the D-P2-17 custody list and in `check_workspace_files`.
+- **The workspace tree is never opened by H13.** The pinned-root rule of #564 (one root fd, `O_NOFOLLOW` on every
+  component) is therefore not weakened.
+- **Inputs:** bytes come only from a §0.10 blob (D-P2-11: the host never opens a path a client names).
+- **Outputs:** bytes leave only through `drop.read`.
+
+- **Reservations before allocation.**
+  - Every allocation reserves its bytes, in one `OutboundStore` transaction, against three scopes: the workspace scope
+    and the host-wide scope (`drop_reserve`), and the free-space reserve. Then it creates any file.
+  - The allocations are frames, temporary files, downloads and decrypted copies.
+  - **Overlaps are reserved in full:**
+    - a re-framing reserves `frame_gen + 1` while `gen` still exists;
+    - a download reserves the ciphertext temp **and** the plaintext copy.
+  - Releasing happens only after the unlink.
+- **Caps:**
+
+  | Item | Cap |
+  |---|---|
+  | pending frames per workspace | 4, and 128 MiB |
+  | local copies per workspace | 512 MiB |
+  | Drop bytes per host | 2 GiB in total (frames, copies and temps) |
+  | mirror rows per workspace | 40,000 (the relay bound: about 30,000 tombstones plus live objects) |
+  | journal rows per workspace | 80,000 |
+  | quarantined rows per workspace | 1,024 |
+  | stored metadata | name ≤ 255 code points, MIME ≤ 127 bytes, no other plaintext |
+  | one list page read | ≤ 4 MiB |
+  | one list round | ≤ 60 s of scanning, then it yields and resumes from its cursor |
+
+  Over a cap: `quota.host` (an op) or the alarm `drop_cap` (the background thread, which pauses that work).
+- **The free-space reserve.** Drop never allocates when the filesystem's free space after the allocation would fall
+  below the larger of 2 GiB and 5 %.
+- **Garbage collection.** At start-up and hourly it deletes:
+  - files in `drop/tmp/`;
+  - frames without a `framed` or `sent` row;
+  - copies of objects whose tombstone, expiry or eviction is recorded;
+  - reservations with no live allocation.
+- **ENOSPC.** A write that fails with ENOSPC or EDQUOT:
+  1. unlinks its temp file;
+  2. releases its reservation;
+  3. answers `quota.host`, retryable;
+  4. pauses Drop allocations;
+  5. raises the alarm `drop_disk_full`.
+
+  Allocation resumes once the reserve holds again. No row ever points to a missing file, because files land first and
+  rows second.
+- **Aggregate per-sender limits.** The limits count per **person** across that person's direct calls and all their
+  grants, so minting grants does not multiply quotas: 60 sends per hour and 256 MiB of uploads per day per person. Each
+  grant also has its own budget of 20 per hour, inside the person's.
+
+#### 11A.16.6 The person and agent surface
+
+Cap `drop/1`. `DropItem` = `{object, version, kind, state, verified, audience, author:{kind, id, person?}, origin,
+created_at, expires_at?, size?, name?, mime?, ticket?, claimed, local, head, upload?}`. Every op applies D4 for its
+viewer. A hidden object and an absent one are both `not_found`.
+
+| Op | P | G (grant) | N | Notes |
+|---|---|---|---|---|
+| `drop.list`, `drop.get` | ✓ | ✓, only within the grant's ticket scope | — | the mirror, through D4; `head` in every item. `drop.list {view: "unverified_documents"}` is column P only (D4's single exception) |
+| `drop.fetch`, `drop.read` | ✓ | ✓, as above | — | the reservations of D11 |
+| `drop.send {blob, ticket?, to?}` | ✓ (no hand-off) | ✓ only if the grant's purpose explicitly includes Drop publication (a new grant verb `drop.send`), `ticket` is within the grant's scope, and the grant is unexpired with its person in standing; `origin: "agent"` | — | write with `opts.idem`; the aggregate limits apply |
+| `drop.claim {object, head}` | ✓; the person's own verified upload needs no hand-off; anyone else's needs the hand-off | never | — | write with `opts.idem` |
+| `drop.retire {object, head}` | ✓; the person's own upload (`sender_person` or `author_person` is the person) needs no hand-off; anyone else's needs the hand-off and the role of owner or maintainer | never | — | write with `opts.idem`; files only |
+| `drop.bind {object, head, ticket?, to?}` | ✓, an owner or maintainer, always with a hand-off | never | — | rebinds a quarantined object (11A.16.3) to a destination ticket (or none) and audience; the person sees it only through D4's approval view |
+
+**Grants (DECIDED (orch-52, Codex), item 9).** Every Drop op from column G checks, at every call, the grant's ticket
+scope, its purpose (its verbs), its person's standing and its expiry. The same function (`Call.sees`) serves the
+registry reads. A G call can never claim, retire or bind.
+
+**The terminal hand-off (DECIDED (orch-52, Codex), item 10, as refined).**
+- **The flow.** A claim of someone else's inbox content, a retire of someone else's upload, and every `drop.bind` go
+  through `human.prepare`, with new **non-event** material kinds `drop.claim`, `drop.retire` and `drop.bind`. These are
+  reviewed and confirmed **only by the terminal signer** (`orch sign`). The click signer refuses them (`terminal_only`),
+  as for `relay.pair_device`.
+- **What is bound.** The material binds:
+  - the workspace id, the object id and the head token;
+  - the audience: `space`, or the sorted device list;
+  - the verified author or sender;
+  - the displayed name (as untrusted text) and the size;
+  - for `drop.bind`, also the **destination ticket** (a uid, or `null`), the `to` persons, and the **resulting
+    audience** computed by D4 for that ticket.
+
+  `host/signer.check` recomputes all of them and refuses any extra field and any cross-kind substitution.
+- **The signature (DECIDED (orch-52, 15 Oct 2026), O1).** The hand-off is **signed** by the person's terminal signer,
+  the same machinery as `orch sign` and `human.prepare`, so it is a bound, auditable person gesture. Its label is a new
+  device label, `sig_drop_handoff` = `orch/v2/sig/drop-handoff|`. It is added to the planned labels in
+  `orch.crypto.labels` (H13-0) and to `DEVICE_KEY_LABELS` (H13b-4). The signed bytes are
+  `"orch/v2/sig/drop-handoff|" ‖ cj(material)`, where the material carries `kind` (`drop.claim`, `drop.retire` or
+  `drop.bind`) and the bound fields above.
+- **Domain separation.** `sig_drop_handoff` is a `_p` label (`orch/v2/sig/...|`), separate from the event labels
+  (`sig_ticket_event`, `sig_ws_event`, the `_e` labels) and from the reader label (`sig_reader_decl`). No label is a
+  prefix of another, and a test over `orch.crypto.labels` asserts that. The host verifies a hand-off only under this
+  label and only as non-event material. It never counts as an F1 event or a reader declaration, and no other label's
+  signature counts as a hand-off.
+- **The check at submit.** At `human.submit`, under the store lock, the host recomputes and compares:
+  - the head;
+  - the audience;
+  - for `drop.bind`, the destination ticket's existence and visibility, and the resulting audience.
+
+  If any of them differs from the bound values (for example, the ticket was restricted in the meantime), the answer is
+  `drop.conflict`, and nothing is sent or rebound.
+- **The plain op.** A plain `drop.claim` or `drop.retire` that needs a hand-off answers `drop.handoff_required`.
+
+**Risk that remains (stated as orch-52 asked).** The dashboard runs as the person's UID. A compromised dashboard can
+still do, without any gesture:
+- **ordinary sends:** publish any blob it can read, to devices the person may address. The audience is still the D4
+  intersection, so restricted tickets stay inside their lists;
+- **claims of the person's own phone uploads;**
+- **retires of the person's own uploads.**
+
+It cannot claim anyone else's inbox content, retire anyone else's upload, or rebind a quarantined object. The
+aggregate per-person limits bound the sends.
+
+**No person signature on ordinary writes** follows from item 10, so Q5 needs no owner answer.
+
+#### 11A.16.7 H13c: what the core carries
+
+**D1: nothing in F1.** There is no event kind, no field of an existing event, no checkpoint or outbox entry, and no
+hash input. Drop objects and pushes are relay-local state of the host (11A.16.3), the same class as the rid store and
+the publication history.
+
+**Why.** A Drop object is already a signed, versioned object at the relay, with descriptors, change positions and
+tombstones. Copying it into F1 would:
+- create two histories to reconcile;
+- put file names into checkpoints that the relay stores and every member reads;
+- need a reader-level bump.
+
+A push is a notification about an F1 event that already exists. **JUDGEMENT CALL:** the rejected alternative is a
+`drop.attached` workspace event. When a ticket must cite a Drop object durably, the person path makes an
+`artifact.added` from the fetched bytes instead, through an existing op and its existing review.
+
+The **authorization journal** (`drop-auth.sqlite`) is host-local state too:
+- it is not part of checkpoints;
+- it is not replicated to other hosts;
+- it is lost only with a state restore, and the quarantine rule then fails closed.
+
+The hand-off material kinds are non-event kinds of the existing `human.*` path. They append nothing to a log. The new
+device label is a custody change, not an F1 change. H12d's reader levels and the convenience rule are unaffected. The
+`rd` gate applies to the Drop bridge ops like every column R op except `reader.declare`. **JUDGEMENT CALL:** they
+return no F1 content, so an exemption would be defensible, but it would make a second rule.
+
+A restore of F1 changes the push cursor (11A.16.4) and nothing in Drop.
+
+**The pin tests** (in H13a-1 and H13b-1): a Drop send, a claim (with and without a hand-off), a retire and a push each
+leave the logs, `workspace.json`, the outbox and every checkpoint byte-identical.
+
+#### 11A.16.8 Threat model and invariants
+
+- **I-H13-1, one place for the seal.** Every push outer and every `wk` wrap or claim the host makes is produced inside
+  `BridgeKeys` or `CardKeys`, under one seal snapshot, at the committed epoch with the gate down, and is persisted inside
+  that span. The recovery envelope is host-only by type and never sent. An AST test extends the `.wk(` ban to the new
+  modules.
+- **I-H13-2, the audience is the intersection.** It is one function, applied at every read, listing, push target, wrap
+  and bridge answer, and **again immediately before every seal and send**, serialized with authorization changes through
+  `auth_gen` and the store lock. Nothing reaches a device or person after the decision that it may not see.
+- **I-H13-3, persist before send.** No outbound relay write is attempted before its exact bytes are durable. Resends
+  are byte-identical. New bytes come only through a recorded transition: a reseal, a rewrap, a re-framing, or a narrowed
+  target list.
+- **I-H13-4, the fence.** Every outbound write carries `Orch-Holder`. A 409 `fenced` stops the worker, as in R2 and R3,
+  and leaves the durable rows for the next start.
+- **I-H13-5, no path re-reads, and the pinned root.** H13 files are reached only through the `StateDir` fd. The
+  workspace tree is never opened by H13. Inputs come from §0.10 blobs only.
+- **I-H13-6, closed detail.** `Error.detail` for the new codes carries only `quota`, from the closed set of 11A.16.5
+  plus `host_retire_rows`. `drop.handoff_required` carries none. Alarm details carry classes, never ids, names or
+  labels.
+- **I-H13-7, positions and windows.** Each direction's position only moves forward. A notice is news only above the
+  stored positions. A retire is never replayed outside its 29-day window. A full reconciliation follows a gap of more
+  than 29 days, a restore and a takeover.
+- **I-H13-8, authorization metadata.** The binding, recipients and provenance come only from the journal, never from
+  the mirror or from listing metadata. An unknown binding means quarantine.
+- **I-H13-9, deadlines.** A push deadline is fixed at creation and checked at every dispatch.
+- **I-H13-10, exact heads.** A retire, claim or bind acts only on the head the person saw (the token), never on the
+  mirror's current one.
+- **I-H13-11, storage.** Every byte is reserved before it is allocated. The free-space reserve holds. Limits are per
+  person in aggregate.
+
+| Actor | Can | Cannot, under these rules |
+|---|---|---|
+| hostile relay | withhold or delay pushes and Drop entries; skip pushes within its budget; refuse uploads; learn targets, sizes and timing | forge a push or a descriptor; serve an older head the mirror accepts; make the host seal under an old or burned epoch; make the host replay a retire after the window; learn a restricted id from a push label |
+| member device | request re-wraps and claims of objects it may see; claim its own person's uploads; upload within its share | get a re-wrap of a device-only object under `wk`; learn a hidden object through `drop_rewrap` or `drop_claim` (`not_found`, the same as absent); claim anyone else's content without the person's terminal gesture |
+| agent (G) | send and read only inside its grant's ticket scope and purpose | claim, retire or bind; read device-only objects of others |
+| compromised dashboard | the remaining risk of 11A.16.6 | the gestures that need the terminal signer |
+| same-UID code | read the databases, the local copies and the WSK (the §7 exposure, unchanged) | — the boundary is the reserved `bridge` UID (11A.11 Q1) |
+
+**Residuals:**
+- R-D6;
+- a push sent before a restriction is not recalled;
+- an object stored before a restriction or removal is not recalled. The host stops re-wrapping it for devices that
+  lost access, and the person may retire it;
+- plaintext copies on the host are exposed to the same UID (T12).
+
+#### 11A.16.9 Error codes, alarms, caps and status
+
+**Planned codes.** They are listed in §0.6 "Planned codes of H13" until they are served:
+
+| Code | Exit | Retryable | Fate | When | `retry_after_ms` |
+|---|---|---|---|---|---|
+| `drop.unavailable` | 9 | yes | stays | no running relay worker, Drop off at the relay, a reconciliation in progress, or `drop.read` before the copy is local | when known |
+| `drop.too_large` | 5 | no | stays | a `drop.send` blob above 26,214,400 bytes | — |
+| `drop.no_audience` | 3 | no | stays | the audience function leaves no device | — |
+| `drop.quota` | 3 | no | stays | a stored-bytes quota at the relay, or the host's retire-row bound. `detail.quota` comes from a closed set | — |
+| `drop.gone` | 3 | no | stays | the object is expired or retired | — |
+| `drop.conflict` | 3 | no | stays | a retire whose precondition failed (the head moved), or a hand-off whose head or audience changed before submit | — |
+| `drop.integrity` | 1 | no | stays | a descriptor, hash, `dek_commit` or wrap check failed (the entry is quarantined) | — |
+| `drop.handoff_required` | 3 | no | stays | a claim of someone else's inbox content, a retire of someone else's upload, or a bind, sent as a plain op (or as the phone's `drop_claim`). Use `human.prepare` and the terminal signer | — |
+
+The catalogs to update in the PR that serves these codes:
+- §0.6, and `test_every_host_code_has_the_tables_exit_and_retryability`;
+- `orch.host.errors.HOST_CODES` and `DETAIL_KEYS` (`drop.quota` → `quota`);
+- the R2 retry table `orch.relay.framing.RETRY`: `drop.unavailable` is class A; `drop.gone`, `drop.integrity` and
+  `drop.conflict` are class D;
+- the click signer's and the dashboard's closed tables;
+- the phone's host-api mapping (orch-f1);
+- the signer's material kinds (`host/signer.check` and `render`);
+- `DEVICE_KEY_LABELS` (`sig_drop_handoff`);
+- the grant verb `drop.send`;
+- the R2 `RETRY` row (`drop.handoff_required`: D).
+
+**Alarms** (`alarms.json`, 11A.4 "The alarms book"):
+- `push_malformed`, `push_epoch_loop`, `push_off_at_relay` (info), `push_invalidated` (info);
+- `drop_integrity`, `drop_quota`, `drop_malformed`, `drop_wrap_foreign`;
+- `drop_reconcile` (info, with the trigger class), `drop_notice_malformed`;
+- `drop_quarantined` (info), `drop_quarantine_full`, `drop_cap`, `drop_disk_full`.
+
+**`host.status.relay` gains** (counts only):
+- `push: {state: "on"|"gated"|"off_at_relay"|"stopped", queued, last_sent_ms}`;
+- `drop: {state, positions, last_full_ms, uploads_pending, retires_pending, local_bytes, quarantined, reserved_bytes,
+  free_reserve_ok}`.
+
+#### 11A.16.10 What the dashboard (orch-fa) and the phone (orch-f1) see
+
+**The dashboard:**
+- the Files view reads `drop.list` and `drop.get`. It shows the state (`live`, `expired`, `retired`, `pruned`), the
+  upload progress, and the end of a tombstone;
+- it downloads with `drop.fetch` and `drop.read`, and sends with `blob.put` and `drop.send`;
+- each item carries the `head` token, which retire and claim send back unchanged;
+- the health card reads `host.status.relay.push` and `.drop`;
+- device-only objects appear only for persons whose own device is listed and who see the ticket (no owner bypass);
+- unverified documents appear only in the separate column-P listing `view: "unverified_documents"`, with id, kind, size
+  and head only;
+- quarantined objects are invisible, except a count in status;
+- claims and retires that need a hand-off show "confirm in a terminal" (`drop.handoff_required`), with the
+  `orch sign` request id.
+
+**The phone:**
+- the three push kinds, with no push for unclaimed inbox items;
+- uploads limited to new inbox files under the decide-class budget (G1, pending A2/D39a2);
+- `drop_claim` succeeds for the person's own uploads, and answers `drop.handoff_required` for other people's content;
+- hidden objects answer `not_found`.
+
+**For orch-f1:**
+- the `drop.handoff_required` mapping;
+- the phone retire (Q6, deferred).
+
+#### 11A.16.11 Build plan (revised)
+
+| PR | Content | Depends on | Estimate |
+|---|---|---|---|
+| H13-0 | the `orch.crypto` push and Drop builders, and the host-only recovery envelope, against the vectors. Two new planned labels: `kdf_host_drop_recovery` (`orch/v2/host-drop-recovery\|`) and `sig_drop_handoff` (`orch/v2/sig/drop-handoff\|`). A test asserts that no label is a prefix of another | — | 1.5 d |
+| H13-1 | the `BridgeKeys` and `CardKeys` typed methods, the `RelaySigner` methods, `audience.py` (the intersection, D4), `auth_gen` at the `Store._state` chokepoint, AST tests | #554 merged; R6b `R6View` | 2 d |
+| H13-2 | **the authorization journal** (`drop-auth.sqlite`, binding and provenance verification, quarantine, retention) | H13-1 | 1.5 d |
+| H13a-1 | `OutboundStore`, `Store.events_after`, the planner (event-hash keys, abandoned-branch invalidation, immutable deadlines, start fence), D1 pin tests | H13-1 | 2 d |
+| H13a-2 | sealing and sending with **dispatch-time revalidation** (narrowing, linearization tests: a restriction committed between seal and send, and one after the dispatch decision), host budgets, the `push` seam, status | H13a-1 | 2 d |
+| H13b-1 | the Drop thread: **per-direction cursors**, verification with provenance, the mirror, reconciliation and quarantine, metadata, downloads | H13-0, H13-2; relay D39a1 | 2 d |
+| H13b-2 | **storage accounting** (reservations, caps, free-space reserve, GC, ENOSPC), the writer, frames, recovery envelopes, dispatch revalidation for uploads, a test that device-only frames carry no workspace wrap | H13b-1, H13a-1 | 2.5 d |
+| H13b-3 | the bridge ops, re-wrap, `wrap_conflict`, claims (own-upload rule, claim-commit push), the retire with head tokens and windows | H13b-2; relay D39a2, D39b | 1.5 d |
+| H13b-4 | **the terminal hand-off** (the `drop.claim`, `drop.retire` and `drop.bind` material kinds, `signer.check`/`render`, `sig_drop_handoff`, the click signer's `terminal_only`), the `drop/1` ops with grant checks and aggregate limits, the CLI, the catalogs | H13b-3 | 2.5 d |
+| H13b-5 | **the switch to `direction: "all"`** with `generation` and `until` | relay A2/D39a2 for `all` | 0.5 d |
+| H13-T2 | `relay-t2` tests against the loopback relay: a push captured by the fake APNs and opened by the reference NSE logic; a host upload read by the reference phone; a phone upload claimed and re-wrapped by the host; a retire with a lost answer; restricted-ticket addressing; a restriction racing a queued push; a hand-off claim; quarantine after a restore | relay D39a1, D39a2, D39b, D40a; R6 flip prerequisites | 1.5 d |
+
+The total is about **19.5 core days**. The draft estimated about 14 and orch-52 about 11; the difference is the
+crypto builders, the journal, dispatch revalidation, storage accounting, the hand-off, the switch and the T2 tests.
+
+The order:
+1. H13-0, in parallel with waiting for #554;
+2. H13-1;
+3. H13-2 and H13a-1, in parallel;
+4. H13a-2 and H13b-1, in parallel;
+5. H13b-2;
+6. H13b-3;
+7. H13b-4;
+8. H13b-5, once the relay is ready;
+9. H13-T2.
+
+Every PR gets an Opus security review and orch-52's review, and an Opus delta for every security fix. H13-1 and H13b-4
+also change custody and the signer, so they need an Opus review of the new label and material kinds.
+
+**The R5 follow-ups:**
+- the `push` and `drop` seams, and their joins in `RelayWorker`;
+- the poll thread's hand-off of `notices.drop`;
+- 8 connections per workspace in the 11A.7 budget;
+- streamed request and response bodies in the transport (11A.7 has none today).
+
+#### 11A.16.12 Questions: decided and open
+
+**Decided by orch-52 on 15 Oct 2026, after the Codex challenge:**
+- **Q1:** **agreed with orch-29, pending A2/D39a2.** A device with `decide` and without `operate` may create new
+  immutable inbox `file`s only, under a smaller decide-class budget. Claims stay with the host under D10.
+- **Q2:** `ticket.update` is deferred out of H13.
+- **Q3:** separate cursors per direction.
+- **Q4:** the recovery wrap is a typed host-only envelope, with the retention above, and tested so that device-only
+  frames carry no workspace wrap.
+- **Q5:** settled by D10; no owner question.
+- **Q6:** the phone retire is deferred. When it comes, it binds to the authenticated device and person, verified author
+  provenance and the exact head.
+- **Q7:** **agreed with orch-29, pending A2/D39a2:** `direction: "all"` with `generation` and `until`. Separate cursors
+  until then.
+- **Q8:** no auto-claim, and claims follow D10.
+- **Q9:** documents are unverified metadata only. The host never retires them in H13, and they drive no decision.
+- **Q10:** no owner bypass; the intersection rule applies.
+
+- **O1:** the hand-off is signed under `sig_drop_handoff` by the person's terminal signer (11A.16.6).
+- **O2 (orch-f1), accepted (DECIDED (orch-52, 15 Oct 2026)), resolved:** the phone UI for `drop.handoff_required` and the decide-class budget.
+  - **(a) Hand-off.** `drop.handoff_required` answers a phone's `drop_claim` with that distinct closed code, never a
+    bare 403. The phone shows a "Needs your Mac" chip and the status line "Only someone at the Mac can share this item
+    with the workspace. Nothing was changed.", offers no retry, and clears both when a later list shows `claimed_by` or
+    the item is gone.
+  - **(b) Budget.** The decide-class budget refusal (429, quota `drop_decide_creations` or `drop_decide_bytes`)
+    carries `Retry-After` to 00:00 UTC (relay A2). One banner text serves both quotas: "Daily sending limit reached on
+    this phone. Your items are kept and will send after {local time of 00:00 UTC}." Queued sends are kept, never
+    resealed, and resumed in order after the deadline. Own uploads show "Sent, waiting for your Mac to file it", then
+    "Filed by your Mac". The phone suppresses `drop.new` for its own sends.
+- **Q-H9 (DECIDED (orch-52, 15 Oct 2026), from relay A2's Opus review): the gestureless own-claim rule.** A gestureless claim of one's
+  **own** upload requires the verified author device to be a **current** member device of the claiming person (`decide`
+  present, not revoked) at claim time, re-checked **under the store lock in the same step as the claim**. Every
+  gestureless own-claim is listed for 7 days in a "Shared from your phone" list in the dashboard and in `orch status`
+  (item, device, time). Retiring one's own upload stays a single unsigned action. Residual: a stolen unlocked phone can
+  push content within the decide-class budget until the device is revoked; revoking before the claim blocks it. Other
+  relay A2 facts: the decide budget is charged at admission, with no refund for aborted streams; a decide-only device
+  has one upload slot; a device's `received` excludes foreign unclaimed inbox objects.
+
+**Open:** none from orch-f1 (O2 resolved above).
+
+#### 11A.16.13 Judgement calls (index)
+
+- No store hook for push intents (a cursor plus a primary key).
+- Merging an unsent `question` with its `question.closed`.
+- The host push budget numbers.
+- One download per workspace.
+- Device-only addressing even when the audience is every member.
+- A growing audience does not re-target queued items.
+- The dispatch decision under the store lock is the linearization point.
+- The `rd` gate on the Drop bridge ops.
+- `CardKeys` opens `wxk` wraps.
+- Label padding.
+- The storage numbers of D11.
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

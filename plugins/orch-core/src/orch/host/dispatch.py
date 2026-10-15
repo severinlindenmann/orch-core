@@ -743,7 +743,17 @@ class RegistryBackend:
             },
             "session": session,
             **({"runner": terms.runner_info(call.service, call.viewer)} if call.column.name in ("P", "G") else {}),
+            **({"relay": self._relay_caps()} if call.column.name == "R" else {}),
         }
+
+    @staticmethod
+    def _relay_caps() -> dict[str, Any]:
+        """``whoami.relay`` (column R only): the person-event writes this host serves on R (the framing table's write
+        kinds) and the live R6 gate, read now (the same source as ``host.status.relay.gate``). Nothing else."""
+        from orch.relay import worker as relay_worker
+        from orch.relay.framing import WRITE_OP_VERSIONS
+
+        return {"ops": dict(WRITE_OP_VERSIONS), "r6_ready": relay_worker.r6_ready()}
 
     def status(self, call: Call) -> dict[str, Any]:
         from orch.cli.main import VERSION_LINE
@@ -951,11 +961,12 @@ class RegistryBackend:
         from orch.cli.session import FileRecords
         from orch.cli.store_hooks import hooks_for
         from orch.ops.errors import OrchError
-        from orch.ops.runtime import records_dir
 
         store = call.service.store
         hooks = hooks_for(store)
-        records = ScopedRecords(FileRecords(records_dir(Path(call.service.entry.root))), call.principal)
+        records = ScopedRecords(
+            FileRecords(store.state_dir / "sessions", fs=store.fs), call.principal
+        )  # the store's pinned root (#564)
         parsed = Parsed(operation, dict(args), dry_run=ctx.dry_run)
         try:
             res = cli.run(parsed, ctx, records, hooks)  # type: ignore[arg-type]

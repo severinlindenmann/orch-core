@@ -49,12 +49,19 @@ __all__ = [
 log = logging.getLogger("orch.relay.state")
 
 MAX_FILE = 1 << 20
+BIG_FILE = 8 << 20  # R3's staging manifest (<= 4 MiB) and restore records (a final body <= 2.6 MiB plus its source)
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _KEY = re.compile(r"[a-z0-9_.:-]{1,64}")
 # per-kind key rule of the sign ledger, on top of _KEY: a card is keyed by str(card_seq), the canonical decimal (round
 # 10, R9-1). "010", " 10", "+10", "1_0" or a fullwidth digit would be int()-equal to a seq yet missed by the exact
 # lookup, so a different card could be signed at that seq; the reader accepts only what record() writes.
 _LEDGER_KEY = {"card": re.compile(r"0|[1-9][0-9]*")}
+
+
+def _limit(limit: int) -> int:
+    if type(limit) is not int or not 0 < limit <= BIG_FILE:
+        raise StateError("bad state file limit")
+    return limit
 
 
 class StateError(Exception):
@@ -247,12 +254,14 @@ class StateDir:
             raise StateError("bad state file name")
         return name
 
-    def read(self, name: str) -> bytes | None:
+    def read(self, name: str, *, limit: int = MAX_FILE) -> bytes | None:
+        """The file's bytes, or ``None`` when it does not exist. ``limit`` (default 1 MiB, at most :data:`BIG_FILE`)
+        bounds what is read; R3's manifest and restore records are larger (11A.3)."""
         name = self._name(name)
         with self.lock:
-            return self._read(name, self._dir())
+            return self._read(name, self._dir(), _limit(limit))
 
-    def _read(self, name: str, dfd: int) -> bytes | None:
+    def _read(self, name: str, dfd: int, limit: int = MAX_FILE) -> bytes | None:
         try:
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
         except FileNotFoundError:
@@ -263,12 +272,12 @@ class StateDir:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode) or st.st_uid != _me() or stat.S_IMODE(st.st_mode) != 0o600:
                 raise StateError(f"{name}: must be a 0600 regular file owned by this user")
-            if st.st_size > MAX_FILE:
+            if st.st_size > limit:
                 raise StateError(f"{name}: too large")
             chunks, n = [], 0
             while piece := os.read(fd, 65536):
                 n += len(piece)
-                if n > MAX_FILE:
+                if n > limit:
                     raise StateError(f"{name}: too large")
                 chunks.append(piece)
             return b"".join(chunks)
@@ -282,17 +291,17 @@ class StateDir:
             st = os.fstat(self._dir())
             return st.st_dev, st.st_ino
 
-    def write(self, name: str, data: bytes) -> None:
+    def write(self, name: str, data: bytes, *, limit: int = MAX_FILE) -> None:
         name = self._name(name)
-        self._publish(name, data, claim=False)
+        self._publish(name, data, claim=False, limit=_limit(limit))
 
     def claim(self, name: str, data: bytes) -> bool:
         """Create ``name`` with ``data`` only if it does not exist (``os.link`` of a complete temp file: atomic, never
         replaces); ``False`` when another writer claimed it first."""
         return self._publish(self._name(name), data, claim=True)
 
-    def _publish(self, name: str, data: bytes, *, claim: bool) -> bool:
-        if len(data) > MAX_FILE:
+    def _publish(self, name: str, data: bytes, *, claim: bool, limit: int = MAX_FILE) -> bool:
+        if len(data) > limit:
             raise StateError(f"{name}: too large")
         with self.lock:
             dfd = self._dir()

@@ -778,6 +778,7 @@ def test_whoami_runner_per_column(ready):
     assert info == {"connected": True, "enabled": True, "terminals": True, "gen": GEN1, "grant": None}
     g = ok(c.call("whoami", {}, grant=w.lab.ws.grant))["data"]
     assert g["runner"]["connected"] is True
+    assert "relay" not in ok(c.call("whoami", {}))["data"] and "relay" not in g  # the relay caps are column R only
 
 
 # -- the security review: every op against §12 and the N5 rules ----------------------------------------------------
@@ -807,6 +808,7 @@ def test_column_n_and_g_are_refused_for_every_terminal_op_and_never_learn_a_run(
             # the column decides before the run is looked at: the same refusal for an own, a foreign and no run
             assert err(c.call(op, args, grant=grant, **kw)) == "op.not_allowed", (op, grant is n_grant)
     assert "runner" not in ok(c.call("whoami", {}, grant=n_grant))["data"]
+    assert "relay" not in ok(c.call("whoami", {}, grant=n_grant))["data"]
 
 
 def test_the_opt_in_is_read_again_at_every_write_capable_op(ready):

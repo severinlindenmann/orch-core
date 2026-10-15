@@ -10,17 +10,24 @@ import { SigningCard } from './SigningCard'
 
 const WS = 'a'.repeat(32)
 const workspace = { id: WS, prefix: 'INT', name: 'orchestrator', click: null } as unknown as Workspace
+const HOSTILE = { ...workspace, prefix: 'X;rm -rf ~' } as unknown as Workspace
 const OFF: ClickCard = { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true }
 const ON: ClickCard = { custody: 'convenience', enabled: true, available: true, switchable: true }
 
-function mount(card: ClickCard, owner = true) {
+function mount(card: ClickCard, owner = true, ws: Workspace = workspace) {
   vi.spyOn(api, 'clickStatus').mockResolvedValue(card)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <SigningCard workspace={workspace} owner={owner} />
+      <SigningCard workspace={ws} owner={owner} />
     </QueryClientProvider>,
   )
+}
+
+async function typeAndSubmit(pw = 'pw') {
+  fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
+  fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: pw } })
+  fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
 }
 
 afterEach(() => {
@@ -93,14 +100,15 @@ describe('Sign in the dashboard', () => {
     expect(sw).not.toHaveBeenCalled()
   })
 
-  it('the on form shows what moves where, and the field is not autofilled', async () => {
+  it('the on form shows what moves where, and the field asks for the current passphrase', async () => {
     mount({ ...OFF, device: 'd_' + '1'.repeat(32) })
     fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
     const details = screen.getByTestId('signing-conversion')
     expect(details).toHaveTextContent('orchestrator (INT)')
     expect(details).toHaveTextContent('d_' + '1'.repeat(32))
     expect(details).toHaveTextContent(/moves to.*this computer's key store/i)
-    expect(screen.getByLabelText(/Your passphrase/)).toHaveAttribute('autocomplete', 'off')
+    // an existing passphrase is proven: browsers ignore autocomplete=off on password fields (orch-9d L2)
+    expect(screen.getByLabelText(/Your passphrase/)).toHaveAttribute('autocomplete', 'current-password')
   })
 
   it('the signer asking for the terminal names the command', async () => {
@@ -122,5 +130,95 @@ describe('Sign in the dashboard', () => {
     mount({ ...OFF, switchable: false })
     expect(await screen.findByTestId('signing-update')).toHaveTextContent('orch host convenience on --workspace INT')
     expect(screen.queryByRole('button', { name: /Turn/ })).toBeNull()
+  })
+
+  // -- orch-9d's review of #578 (M1, M2, L1-L5) -----------------------------------------------------------------------
+
+  it('a hostile prefix is never put into a command (M1)', async () => {
+    mount(ON, true, HOSTILE)
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
+    expect(screen.getByTestId('signing-move-back')).toHaveTextContent(/can't be put in a command safely/)
+    for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('rm -rf')
+    expect(screen.queryByRole('button', { name: /Copy/ })).toBeNull()
+  })
+
+  it('a hostile prefix gets no terminal-on command either (M1)', async () => {
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true }, true, HOSTILE)
+    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent(/can't be put in a command safely/)
+    for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('rm -rf')
+  })
+
+  it('the commands have a copy button (L1)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    mount(ON)
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Copy the command' }))
+    expect(writeText).toHaveBeenCalledWith('orch keys custody passphrase --workspace INT --in-place')
+  })
+
+  it('every error reloads the card: a stale form gives way to what the signer says now (M2)', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'custody.terminal_needed', message: 'x', retryable: false }))
+    mount(OFF)
+    const status = vi.mocked(api.clickStatus)
+    await typeAndSubmit()
+    await screen.findByTestId('signing-error')
+    status.mockResolvedValue({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true })
+    await waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('a timeout does not claim nothing changed (M2)', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(503, { code: 'click.unavailable', message: 'The signing helper did not answer in time. Try again.', retryable: false }))
+    mount(OFF)
+    const status = vi.mocked(api.clickStatus)
+    await typeAndSubmit()
+    const err = await screen.findByTestId('signing-error')
+    expect(err).toHaveTextContent(/result is unknown/i)
+    expect(err).not.toHaveTextContent(/nothing changed/i)
+    await waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('an unknown code or a lost connection is also "unknown", never "nothing changed" (M2)', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValueOnce(new ApiError(500, { code: 'internal', message: 'boom', retryable: false })).mockRejectedValueOnce(new TypeError('fetch failed'))
+    mount(OFF)
+    await typeAndSubmit()
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/result is unknown/i)
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    await waitFor(() => expect(screen.getByTestId('signing-error')).toHaveTextContent(/result is unknown/i))
+  })
+
+  it('the error is tied to the field, and the field is cleared after it (L4, L5)', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(403, { code: 'custody.wrong_passphrase', message: 'x', retryable: false }))
+    mount(OFF)
+    await typeAndSubmit('secret words')
+    const err = await screen.findByTestId('signing-error')
+    const field = screen.getByLabelText(/Your passphrase/)
+    expect(field).toHaveValue('')
+    expect(field.getAttribute('aria-describedby')).toContain(err.id)
+    expect(err.id).not.toBe('')
+  })
+
+  it('a double submit sends once (L4)', async () => {
+    let settle: (c: ClickCard) => void = () => {}
+    const sw = vi.spyOn(api, 'switchClick').mockImplementation(() => new Promise((r) => (settle = r)))
+    mount(OFF)
+    await typeAndSubmit()
+    fireEvent.click(screen.getByRole('button', { name: /Turn on/ }))
+    fireEvent.submit(screen.getByLabelText(/Your passphrase/).closest('form')!)
+    expect(sw).toHaveBeenCalledTimes(1)
+    settle(ON)
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On/))
+  })
+
+  it('the passphrase does not outlive the card (L4)', async () => {
+    const first = mount(OFF)
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'typed then left' } })
+    first.unmount()
+    mount(OFF)
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
+    expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
+    expect(document.body.innerHTML).not.toContain('typed then left')
   })
 })

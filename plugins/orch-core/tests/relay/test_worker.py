@@ -1,0 +1,411 @@
+"""R5: :class:`orch.relay.worker.RelayWorker` on its own (fakes for the loop, the session and the service's submit):
+the R6 gate, the lifecycle (start, stop, join(timeout) -> bool), the store seam that refuses after stop, start/stop
+races, the first-link and convenience steps on the start thread, the R3/R4 seams, the alarms book and fork safety."""
+
+from __future__ import annotations
+
+import ast
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import pytest
+
+import orch.relay
+from orch.relay import worker as W
+from orch.relay.state import StateDir
+
+
+@pytest.fixture
+def gate(monkeypatch):
+    monkeypatch.setattr(W, "R6_READY", True)
+
+
+class FakeLoop:
+    def __init__(self, *, stuck: bool = False) -> None:
+        self.started = self.stopped = 0
+        self.aux_steps: list = []
+        self.error = None
+        self.release = threading.Event()
+        self.stuck = stuck
+        self._threads: list[threading.Thread] = []
+        self.joins: list[float] = []
+
+    def start(self) -> None:
+        self.started += 1
+        t = threading.Thread(target=self._run, name="orch-relay-poll-fake", daemon=True)
+        self._threads.append(t)
+        t.start()
+
+    def _run(self) -> None:
+        self.release.wait(30)
+
+    def stop(self) -> None:
+        self.stopped += 1
+        if not self.stuck:
+            self.release.set()
+
+    def join(self, timeout: float) -> bool:
+        self.joins.append(timeout)
+        for t in self._threads:
+            t.join(timeout)
+        return not any(t.is_alive() for t in self._threads)
+
+    def threads(self):
+        return list(self._threads)
+
+
+class FakeSession:
+    gen, fenced = 3, False
+
+    def __init__(self) -> None:
+        self.logouts = 0
+
+    def logout(self, deadline_s: float = 5.0) -> None:
+        self.logouts += 1
+
+
+class FakeRids:
+    def __init__(self) -> None:
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+class Pub:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def start(self) -> None:
+        self.calls.append("start")
+
+    def stop(self) -> None:
+        self.calls.append("stop")
+
+    def join(self, timeout: float) -> bool:
+        self.calls.append("join")
+        return True
+
+    def publish_first(self, session, directory) -> None:
+        self.calls.append("publish_first")
+
+
+class Rig:
+    def __init__(self, tmp: Path, **kw) -> None:
+        self.ex = ThreadPoolExecutor(1, thread_name_prefix="orch-ws-test")
+        self.state = StateDir(Path(os.path.realpath(tmp)) / "relay")
+        self.session = FakeSession()
+        self.loop = FakeLoop(stuck=kw.pop("stuck", False))
+        self.rids = FakeRids()
+        self.ended = 0
+        self.saved: list[dict] = []
+        self.alarms = W.Alarms(now_ms=lambda: 7, persist=self.saved.append)
+        self.link_state = kw.pop("link_state", "linked")
+        self.links = 0
+        self.w = W.RelayWorker(
+            workspace_id="ab" * 16, state=self.state, session=self.session, submit=self.ex.submit,
+            alarms=self.alarms, stop_event=threading.Event(), link_state=lambda: self.link_state,
+            on_ended=self._ended, first_link=kw.pop("first_link", self._link), **kw,
+        )  # fmt: skip
+        self.w.attach(self.loop, self.rids)
+
+    def _ended(self) -> None:
+        self.ended += 1
+
+    def _link(self) -> None:
+        self.links += 1
+
+    def wait_started(self) -> None:
+        assert _wait(lambda: self.loop.started == 1)
+
+    def close(self) -> None:
+        self.w.stop()
+        self.w.join(5)
+        self.ex.shutdown(wait=True)
+        self.state.close()
+
+
+def _wait(pred, timeout=10.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+@pytest.fixture
+def rig(tmp_path, gate):
+    r = Rig(tmp_path)
+    yield r
+    r.close()
+
+
+# -- the R6 gate ------------------------------------------------------------------------------------------------------
+
+
+def test_the_r6_gate_is_the_literal_false_and_nothing_in_the_source_assigns_it():
+    """11A.1: no poll thread until R6 is merged and integration-tested. The gate is ONE module-level literal; no other
+    source line under ``orch/`` assigns or patches it (tests may, through monkeypatch). Flipping it is a reviewed
+    change with the 11A.4 "As built in R5" checklist. Honest limit: same-process code can still set the attribute."""
+    tree = ast.parse(Path(W.__file__).read_text())
+    assigns = [
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+        and any(isinstance(t, ast.Name) and t.id == "R6_READY" for t in (n.targets if isinstance(n, ast.Assign)
+                                                                           else [n.target]))
+    ]  # fmt: skip
+    assert len(assigns) == 1 and isinstance(assigns[0].value, ast.Constant) and assigns[0].value.value is False
+    assert assigns[0] in tree.body  # module level, not inside a function
+    src = Path(orch.relay.__file__).resolve().parent.parent
+    offenders = []
+    for path in src.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for t in targets:
+                    if isinstance(t, ast.Attribute) and t.attr == "R6_READY":
+                        offenders.append(str(path))
+                    if isinstance(t, ast.Name) and t.id == "R6_READY" and path != Path(W.__file__):
+                        offenders.append(str(path))
+            if isinstance(node, ast.Constant) and node.value == "R6_READY" and path != Path(W.__file__):
+                offenders.append(str(path))  # setattr(worker, "R6_READY", …) and friends
+    assert offenders == []
+
+
+def test_start_refuses_with_the_gate_closed_before_any_thread(tmp_path):
+    r = Rig(tmp_path)
+    before = {t.name for t in threading.enumerate()}
+    with pytest.raises(W.SeamMissing, match="r6_not_ready"):
+        r.w.start()
+    assert r.loop.started == 0 and {t.name for t in threading.enumerate()} <= before | {"orch-ws-test_0"}
+    r.close()
+
+
+# -- lifecycle --------------------------------------------------------------------------------------------------------
+
+
+def test_start_runs_the_precheck_as_a_job_then_the_loop_then_the_publisher(tmp_path, gate):
+    pub = Pub()
+    seen: list[str] = []
+    r = Rig(tmp_path, publisher=pub, precheck=lambda: seen.append(threading.current_thread().name))
+    step = lambda: None  # noqa: E731
+    r.w.unpublished = type("U", (), {"step": staticmethod(step)})()
+    r.w.start()
+    r.wait_started()
+    assert seen == ["orch-ws-test_0"]  # on the workspace's worker thread (the service's submit)
+    assert pub.calls == ["start"] and r.links == 0  # linked: no first link
+    assert r.loop.aux_steps == [("unpublished", step)]  # R4's seam: one step on the aux thread
+    with pytest.raises(RuntimeError, match="twice"):
+        r.w.start()
+    r.w.stop()
+    assert r.w.join(5) is True
+    assert pub.calls == ["start", "stop", "join"]
+    assert r.session.logouts == 1 and r.rids.closed == 1 and r.ended == 1
+    r.w.stop()
+    assert r.w.join(5) is True and r.ended == 1 and r.session.logouts == 1  # once
+    r.ex.shutdown(wait=True)
+
+
+def test_a_linking_workspace_runs_the_first_link_before_the_loop(tmp_path, gate):
+    order: list[str] = []
+    r = Rig(tmp_path, link_state="linking", first_link=lambda: order.append("link"))
+    real = r.loop.start
+    r.loop.start = lambda: (order.append("loop"), real())  # type: ignore[method-assign]
+    r.w.start()
+    r.wait_started()
+    assert order == ["link", "loop"]
+    r.close()
+
+
+def test_a_failed_first_link_stops_the_worker_with_an_alarm_and_starts_nothing(tmp_path, gate):
+    def boom():
+        raise W.SeamMissing("R6a")
+
+    r = Rig(tmp_path, link_state="linking", first_link=boom)
+    r.w.start()
+    assert r.w.join(5) is True
+    assert r.loop.started == 0 and r.w.stopping and r.w.error == "relay_start_failed: SeamMissing"
+    assert "relay_start_failed" in r.alarms.codes()
+    with pytest.raises(W.WorkerStopped):
+        r.w.submit(lambda: None)
+    r.close()
+
+
+def test_the_convenience_precheck_keeps_the_worker_from_serving(tmp_path, gate):
+    r = Rig(tmp_path, precheck=lambda: "convenience_events_present", link_state="linking")
+    r.w.start()
+    assert r.w.join(5) is True
+    assert r.loop.started == 0 and r.links == 0  # nothing is sent: not even the first link
+    assert r.w.error == "convenience_events_present" and r.alarms.codes() == ["convenience_events_present"]
+    assert r.saved and r.saved[0]["alarms"][0]["code"] == "convenience_events_present"
+    r.close()
+
+
+def test_stop_during_start_never_starts_the_loop(tmp_path, gate):
+    release = threading.Event()
+    r = Rig(tmp_path, precheck=lambda: release.wait(10) and None)
+    r.w.start()
+    time.sleep(0.05)
+    r.w.stop()
+    release.set()
+    assert r.w.join(5) is True
+    assert r.loop.started == 0 and r.ended == 1
+    r.close()
+
+
+def test_stop_before_start_refuses_the_start(tmp_path, gate):
+    r = Rig(tmp_path)
+    r.w.stop()
+    with pytest.raises(W.WorkerStopped):
+        r.w.start()
+    r.close()
+
+
+def test_submit_refuses_once_stop_began_and_jobs_queued_before_run(tmp_path, gate):
+    r = Rig(tmp_path)
+    gate_ev = threading.Event()
+    first = r.w.submit(lambda: gate_ev.wait(5))
+    second = r.w.submit(lambda: "ran")  # queued before stopping: it runs (the worker FIFO)
+    r.w.stop()
+    with pytest.raises(W.WorkerStopped):
+        r.w.submit(lambda: "late")
+    with pytest.raises(W.WorkerStopped):
+        r.w.job(lambda: "late")
+    gate_ev.set()
+    assert first.result(5) is True and second.result(5) == "ran"
+    r.close()
+
+
+def test_join_is_bounded_and_false_while_a_thread_lives_then_finishes_once(tmp_path, gate):
+    r = Rig(tmp_path, stuck=True)
+    r.w.start()
+    r.wait_started()
+    r.w.stop()
+    t0 = time.monotonic()
+    assert r.w.join(0.3) is False
+    assert time.monotonic() - t0 < 2.0
+    assert r.session.logouts == 0 and r.rids.closed == 0 and r.ended == 0  # nothing released while it runs
+    assert r.w.alive() is True and r.w.status()["alive"] is True
+    r.loop.release.set()
+    assert r.w.join(5) is True and r.ended == 1 and r.w.alive() is False
+    r.close()
+
+
+def test_the_loop_is_joined_twice_so_late_spawned_threads_are_caught(tmp_path, gate):
+    r = Rig(tmp_path)
+    r.w.start()
+    r.wait_started()
+    r.w.stop()
+    assert r.w.join(5) is True
+    assert len(r.loop.joins) == 2
+    r.close()
+
+
+def test_status_has_no_secret_and_reports_the_worker(tmp_path, gate):
+    pub = Pub()
+    r = Rig(tmp_path, publisher=pub)
+    r.w.start()
+    r.wait_started()
+    assert _wait(lambda: r.w.status()["serving"])
+    st = r.w.status()
+    assert set(st) == {"alive", "stopping", "serving", "error", "gen", "fenced", "alarms"}
+    assert st["alive"] is True and st["gen"] == 3
+    r.close()
+
+
+# -- seams ------------------------------------------------------------------------------------------------------------
+
+
+def test_the_default_seams_refuse_or_do_nothing():
+    p = W.NoPublisher()
+    p.start()
+    p.stop()
+    assert p.join(0) is True
+    with pytest.raises(W.SeamMissing, match="R3"):
+        p.publish_first(None, None)  # type: ignore[arg-type]
+    src = W.NoLinkSource()
+    for fn in (src.card, src.genesis, src.owner_pk_pub):
+        with pytest.raises(W.SeamMissing):
+            fn()
+
+
+def test_alarms_are_bounded_clipped_and_persisted_when_a_code_first_appears():
+    saved: list[dict] = []
+    a = W.Alarms(now_ms=lambda: 5, persist=saved.append)
+    a("fenced", "x" * 1000)
+    a("fenced", "again")
+    assert len(saved) == 1
+    for i in range(W.MAX_ALARM_CODES + 5):
+        a(f"c{i}", "d")
+    codes = a.codes()
+    assert len(codes) == W.MAX_ALARM_CODES + 1 and "relay_alarm_codes_exhausted" in codes
+    row = a.snapshot()["alarms"][0]
+    assert row["count"] == 2 and row["detail"] == "again" and len(saved) == W.MAX_ALARM_CODES + 1
+
+
+def test_alarms_survive_a_failing_write():
+    def fail(snap):
+        raise OSError("disk full")
+
+    a = W.Alarms(now_ms=lambda: 5, persist=fail)
+    a("relay_quota", "route")
+    assert a.codes() == ["relay_quota"]
+
+
+# -- fork safety ------------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork")
+def test_a_forked_child_cannot_use_or_release_the_parents_worker(tmp_path, gate):
+    r = Rig(tmp_path)
+    r.w.start()
+    r.wait_started()
+    rfd, wfd = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - the child
+        code = 0
+        try:
+            try:
+                r.w.submit(lambda: None)
+                code |= 1
+            except W.WorkerStopped:
+                pass
+            try:
+                r.w.start()
+                code |= 2
+            except (W.WorkerStopped, RuntimeError):
+                pass
+            r.w.stop()
+            r.w.join(0.5)
+            if r.session.logouts or r.rids.closed:
+                code |= 4
+        except BaseException:  # noqa: BLE001
+            code |= 8
+        os.write(wfd, bytes([code]))
+        os._exit(0)
+    os.close(wfd)
+    got = os.read(rfd, 1)
+    os.close(rfd)
+    os.waitpid(pid, 0)
+    assert got == b"\x00"
+    # the parent's worker and its directory lock are intact
+    assert r.w.submit(lambda: 41 + 1).result(5) == 42
+    with pytest.raises(Exception, match="in use"):
+        StateDir(r.state.path)
+    r.close()
+
+
+def test_the_worker_closes_its_state_directory_so_a_next_worker_can_open_it(tmp_path, gate):
+    r = Rig(tmp_path)
+    path = r.state.path
+    r.w.start()
+    r.wait_started()
+    r.w.stop()
+    assert r.w.join(5)
+    again = StateDir(path)  # the lock was released by join's finish
+    again.close()
+    r.ex.shutdown(wait=True)

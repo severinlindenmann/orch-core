@@ -163,6 +163,9 @@ class WorkspaceService:
         self._relay_stuck: Any = None
         #: the bound of waiting for a stopping worker's threads (§11A.7: the longest total deadline, 120 s)
         self.relay_join_seconds = 120.0
+        #: why no relay worker runs (``host.status.relay``): ``not_linked``, ``stopped``, the R6 gate, ``start_failed:
+        #: <code>``, ``convenience_events_present``, ``relay_thread_stuck``, …; ``None`` while one runs or before open
+        self.relay_reason: str | None = None
 
     @property
     def workspace_id(self) -> str:
@@ -224,6 +227,12 @@ class WorkspaceService:
 
                     self.requests.open()
                     recover(self)  # a crash between two appends of a human submission rolls forward (§0.8.1)
+                from .relayentry import register as relay_register
+
+                # R5 (§11A.5 "For R3/R5/R6"): this service's relay_fields hook, before reconcile_all rolls a pending
+                # relay.submit forward. Only the hook: the result builder registers itself at import (relaybuild), and
+                # relay.submit.recover runs in the bridge's start (J9), never here
+                relay_register(self)
                 self.blobs.open()
                 if self.requests is not None:  # the stored requests' file bytes count again (F9)
                     for rid, principal, size in self.requests.held():
@@ -238,6 +247,93 @@ class WorkspaceService:
                 self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
         if self.state != "unavailable":
             self._build_journal(audit=False)
+        self._relay_open()
+
+    # -- the relay worker (§11A.4 "The hook", R5)
+    def _relay_open(self) -> None:
+        """The end of :meth:`open`, on the worker thread: start the relay worker when ``link.json`` exists (§11A.4).
+        Never fails the open: whatever keeps the worker from starting is :attr:`relay_reason`."""
+        from .relaylink import link_path
+
+        if self.state == "unavailable":
+            self.relay_reason = "workspace_unavailable"
+            return
+        if not os.path.lexists(link_path(self.state_dir, self.workspace_id)):
+            self.relay_reason = "not_linked"
+            return
+        with self.relay_cond:
+            self._relay_try_start()
+
+    def _relay_try_start(self) -> bool:
+        """Under :attr:`relay_cond`: start the worker through :attr:`relay_starter` when nothing blocks it (the
+        closing workspace, a running, stopping or stuck worker, :func:`orch.host.relaylink.start_blocker`: the stop
+        marker, the link, the R6 gate). A starter that raises leaves no worker and names why; never raised."""
+        from .relaylink import start_blocker
+
+        if self.closing:
+            self.relay_reason = "closing"
+            return False
+        if self.relay is not None:
+            return False
+        if self._relay_stopping:
+            self.relay_reason = "stop_in_progress"
+            return False
+        if self._stuck_alive():
+            self.relay_reason = "relay_thread_stuck"
+            return False
+        if self.state == "unavailable":
+            self.relay_reason = "workspace_unavailable"
+            return False
+        why = start_blocker(self.state_dir, self.workspace_id, self.host_uid)
+        if why is not None:
+            self.relay_reason = why
+            return False
+        if self.relay_starter is None:
+            self.relay_reason = "no_relay_client"
+            return False
+        try:
+            self.relay_starter(self)
+        except Exception as exc:  # noqa: BLE001 - a failed start never fails the open or the caller: it is reported
+            self.relay = None
+            code = getattr(exc, "code", None) or type(exc).__name__
+            self.relay_reason = f"start_failed: {code}"[:120]
+            LOG.error("relay worker of %s did not start: %s", self.workspace_id, code)
+            return False
+        if self.relay is None:
+            self.relay_reason = "start_failed: no worker"
+            return False
+        self.relay_reason = None
+        return True
+
+    def _relay_halt(self, code: str) -> None:
+        """Stop the running worker because of what the workspace now holds (§11A.6 "Foreign appends":
+        ``convenience_events_present``), on the worker thread: :meth:`stop` at once (no store job is queued from
+        now on), the bounded join on a thread of its own (the relay threads may wait for this very worker thread).
+        Not persisted: the next start checks again."""
+        with self.relay_cond:
+            worker = self._take_relay()
+            self.relay_reason = code
+        if worker is None:
+            return
+        alarm = getattr(worker, "alarm", None)
+        if callable(alarm):
+            try:
+                alarm(code, "the merged history holds an auth convenience event")
+            except Exception:  # noqa: BLE001 - the stop matters, not the alarm bookkeeping
+                LOG.exception("relay alarm of %s failed", self.workspace_id)
+        try:
+            worker.stop()
+        except Exception:  # noqa: BLE001 - _shutdown_relay below retries and reports it
+            LOG.exception("relay worker of %s: stop failed", self.workspace_id)
+
+        def finish() -> None:
+            ended = False
+            try:
+                ended = self._shutdown_relay(worker)
+            finally:
+                self._end_stop(worker, ended)
+
+        threading.Thread(target=finish, name=f"orch-relay-halt-{self.workspace_id[:8]}", daemon=True).start()
 
     # -- the subscription journal (H6a, D-P2-12, F11)
     def _build_journal(self, *, audit: bool) -> None:
@@ -263,6 +359,8 @@ class WorkspaceService:
         try:
             batch = journal.build(store)
         except Exception as exc:  # noqa: BLE001 - whatever failed, there is no journal to serve from
+            if audit:
+                self._relay_audit()
             self.journal = None
             self.journal_failed = f"journal: {getattr(exc, 'code', type(exc).__name__)}: {exc}"[:300]
             LOG.error("audit: workspace %s: the journal cannot be built: %s", self.entry.workspace_id, exc)
@@ -275,8 +373,25 @@ class WorkspaceService:
         store.before_append, store.on_commit = journal.check, journal.committed
         if self.store is not None:
             self._judge()
+        if audit:
+            self._relay_audit()
         if self.publish is not None:
             self.publish(batch)
+
+    def _relay_audit(self) -> None:
+        """§11A.6 "Foreign appends": after a refresh that loaded events this host did not append, a running relay
+        worker is stopped when the history now holds a convenience event (or the mark or flag is set)."""
+        if self.relay is None:
+            return
+        from .relayhook import convenience_block
+
+        try:
+            code = convenience_block(self)
+        except Exception as exc:  # noqa: BLE001 - cannot tell: fail closed, the worker stops
+            LOG.error("relay convenience check of %s failed: %s", self.workspace_id, type(exc).__name__)
+            code = "relay_convenience_check_failed"
+        if code is not None:
+            self._relay_halt(code)
 
     def sub_cursor(self, principal: str) -> str:
         """The ``sub_cursor`` of a snapshot read (§0.9), on the worker thread right where the read takes its state:
@@ -499,6 +614,14 @@ class WorkspaceService:
         self._relay_stuck = None
         return False
 
+    def relay_stuck_alive(self) -> bool:
+        """Under :attr:`relay_cond`: a retained stuck worker still runs (``host.status.relay``)."""
+        return self._stuck_alive()
+
+    def relay_stopping_count(self) -> int:
+        """Under :attr:`relay_cond`: stops in progress (``host.status.relay``)."""
+        return self._relay_stopping
+
     def _stops_done(self) -> bool:
         """Under :attr:`relay_cond`: wait (bounded) until no stop is in progress."""
         return self.relay_cond.wait_for(lambda: self._relay_stopping == 0, timeout=self.relay_join_seconds + 30)
@@ -511,6 +634,7 @@ class WorkspaceService:
 
         with self.relay_cond:
             mark_stopped(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
+            self.relay_reason = "stopped"
             worker = self._take_relay()
             if worker is None:  # "none" only when no worker runs at all, a retained stuck one included
                 return "none" if self._stops_done() and not self._stuck_alive() else "stuck"
@@ -525,7 +649,7 @@ class WorkspaceService:
         """``orch host relay start``: wait for a stop in progress, clear the stop, and start the worker through R5's
         hook when the workspace is linked and served. Returns ``"started"`` or ``"none"``; ``lock.busy`` while a
         stop has not finished or a stuck worker's threads still run (no second worker beside them)."""
-        from .relaylink import clear_stopped, may_start
+        from .relaylink import clear_stopped
 
         with self.relay_cond:
             if self.closing:
@@ -537,22 +661,39 @@ class WorkspaceService:
             if self._stuck_alive():
                 raise HostError("lock.busy", "relay_thread_stuck: a stopped relay thread still runs; restart the host")
             clear_stopped(self.state_dir, self.workspace_id, self.host_uid)
-            if (
-                self.relay is not None
-                or self.relay_starter is None
-                or self.closing
-                or self.state == "unavailable"
-                or not may_start(self.state_dir, self.workspace_id, self.host_uid)
-            ):
-                return "none"
-            self.relay_starter(self)
-            return "started"
+            return "started" if self._relay_try_start() else "none"
+
+    def relay_unlink(self) -> str:
+        """``orch host relay unlink`` (§11A.6): stop the worker (bounded), then, in one worker job holding
+        :attr:`relay_cond` and the store lock, rename ``link.json`` to ``unlinked-<linked_at>.json`` (never
+        deleted: the reader reservation is permanent). Refused while a worker's threads still run (``lock.busy``).
+        Returns the new file name."""
+        from .relayhook import unlink_job
+
+        with self.relay_cond:
+            if self.closing:
+                raise HostError("workspace.unavailable", "the workspace is closing")
+            worker = self._take_relay()
+            if worker is None and (not self._stops_done() or self._stuck_alive()):
+                raise HostError("lock.busy", "relay_thread_stuck: a stopped relay thread still runs; restart the host")
+        if worker is not None:
+            ended = False
+            try:
+                ended = self._shutdown_relay(worker)
+            finally:
+                self._end_stop(worker, ended)
+            if not ended:
+                raise HostError("lock.busy", "relay_thread_stuck: the relay worker did not stop; nothing was renamed")
+        name = self.submit(lambda: unlink_job(self)).result(timeout=60)
+        self.relay_reason = "not_linked"
+        return name
 
     def close(self) -> None:
         # §11A.7 shutdown: the relay worker stops first and its threads are waited for (bounded by 120 s) before the
         # job that closes the store is queued; jobs it queued before stopping run first (the worker FIFO)
         with self.relay_cond:
             self.closing = True  # before the worker is taken: a racing relay_start never starts a new one
+            self.relay_reason = "closing"
             stuck = self._relay_stuck  # an earlier stop's stuck worker: stays tracked while it is joined below
             worker = self._take_relay()
             if worker is None:

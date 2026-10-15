@@ -19,7 +19,9 @@ link reservation's critical section and the persistent stop of ``orch host relay
   convenience event (:func:`orch.ops.readers.restore_held`).
 * **The stop.** ``hosts/<ws>/relay/stopped.json`` (0600) keeps the relay worker stopped across host restarts, the
   operator procedure after a state restore (§11A.4 "Scope of exactly-once"). :func:`may_start` is the check the relay
-  worker's start (R5) must pass: linked, and not stopped. A marker that cannot be read safely counts as stopped.
+  worker's start (R5) must pass: linked, not stopped, and the R6 gate open (:data:`orch.relay.worker.R6_READY`,
+  §11A.1). :func:`start_blocker` names what blocks it (``host.status.relay``). A marker that cannot be read safely
+  counts as stopped.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ __all__ = [
     "may_start",
     "observe_relay_level",
     "relay_dir",
+    "start_blocker",
     "stopped_path",
 ]
 
@@ -211,15 +214,31 @@ def is_stopped(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
     return True
 
 
-def may_start(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
-    """The relay worker may start (R5): the relay directory is a private directory of the host UID with safe
-    ancestors, ``link.json`` is a private JSON object of the host UID and the worker is not stopped. Anything else,
-    including any doubt, is ``False``."""
+def start_blocker(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
+    """What keeps the relay worker from starting (R5), or ``None``: ``stopped`` (the marker, or any doubt about it),
+    ``not_linked`` (no ``link.json``), ``link_unsafe`` (the relay directory is not a private directory of the host
+    UID with safe ancestors, or ``link.json`` is not a private JSON object of the host UID), then the R6 gate
+    (:data:`orch.relay.worker.R6_GATE_REASON` while :data:`orch.relay.worker.R6_READY` is false, §11A.1). The gate is
+    checked last so that ``host.status.relay`` names the operator's own stop first."""
+    from orch.relay import worker
+
     if is_stopped(state_dir, workspace_id, host_uid):
-        return False
+        return "stopped"
+    if not os.path.lexists(link_path(state_dir, workspace_id)):
+        return "not_linked"
     try:
         ensure_private_dir(relay_dir(state_dir, workspace_id), host_uid, create=False)
         link = read_json(link_path(state_dir, workspace_id), host_uid)
     except (HostError, OSError):
-        return False
-    return isinstance(link, dict)
+        return "link_unsafe"
+    if not isinstance(link, dict):
+        return "link_unsafe"
+    if worker.R6_READY is not True:
+        return worker.R6_GATE_REASON
+    return None
+
+
+def may_start(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
+    """The relay worker may start (R5): :func:`start_blocker` names nothing. Anything else, including any doubt and
+    the closed R6 gate, is ``False``."""
+    return start_blocker(state_dir, workspace_id, host_uid) is None

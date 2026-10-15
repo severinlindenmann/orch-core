@@ -804,11 +804,15 @@ def test_host_limit_is_in_the_catalog():
 # --- orch host relay stop: the persistent stop marker ----------------------------------------------------------------
 
 
-def test_the_stop_marker_is_private_and_blocks_a_start(tmp_path):
+def test_the_stop_marker_is_private_and_blocks_a_start(tmp_path, monkeypatch):
     from orch.host import relaylink
+    from orch.relay import worker as relay_worker
 
     state = _state(tmp_path)
     _link(state, WS)
+    assert relaylink.may_start(state, WS, UID) is False  # R5: the R6 gate (11A.1) keeps every start dormant
+    assert relaylink.start_blocker(state, WS, UID) == relay_worker.R6_GATE_REASON
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
     assert relaylink.may_start(state, WS, UID) is True
     relaylink.mark_stopped(state, WS, UID)
     path = relaylink.stopped_path(state, WS)
@@ -947,10 +951,13 @@ def _service(tmp_path: Path) -> Any:
     return WorkspaceService(entry, state, UID)
 
 
-def test_a_start_waits_for_a_stop_in_progress_and_the_stop_returns_after_shutdown(tmp_path):
+def test_a_start_waits_for_a_stop_in_progress_and_the_stop_returns_after_shutdown(tmp_path, monkeypatch):
     import threading
 
     from orch.host import relaylink
+    from orch.relay import worker as relay_worker
+
+    monkeypatch.setattr(relay_worker, "R6_READY", True)  # R5's gate open: this tests H12a's start/stop ordering
 
     svc = _service(tmp_path)
     _link(svc.state_dir, WS)

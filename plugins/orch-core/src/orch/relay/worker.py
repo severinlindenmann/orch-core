@@ -1,0 +1,385 @@
+"""R5: the relay worker of one workspace (contract 11A.4 "The hook", 11A.5 "For R3/R5/R6", 11A.7 "Shutdown").
+
+:class:`RelayWorker` is what ``WorkspaceService`` starts and stops (the host side is ``orch/host/relayhook.py``;
+``orch.host`` is import-banned here). Its contract is the one H12a built the service around: ``start()``,
+``stop()`` and ``join(timeout) -> bool`` (true when every relay thread ended), plus :meth:`RelayWorker.submit`, the
+only way a relay thread reaches the store (a wrapper of ``service.submit`` that refuses once :meth:`stop` began).
+
+It owns, per workspace:
+
+* ONE :class:`orch.relay.state.StateDir` and ONE :class:`orch.relay.session.Session` (11A.5 R7-4: the preflight pass
+  and the sticky refusal are per Session object), shared by every relay thread;
+* the R2 :class:`orch.relay.bridge.BridgeLoop` (threads ``orch-relay-{poll,resp,job0,job1,aux}-<id8>``);
+* the R3 publisher behind the :class:`Publisher` seam (:class:`NoPublisher` until R3 lands) and the R4 consumer behind
+  the :class:`Unpublished` seam (a step on the aux thread; nothing until R4 lands);
+* one short-lived start thread ``orch-relay-start-<id8>``: the convenience check as a worker job (11A.6 "Foreign
+  appends"), then the first link when ``link.json`` is still ``linking`` (11A.5, R1's :func:`first_link`), then the
+  loop and the publisher. ``start()`` itself never waits for the workspace's worker thread: it runs under
+  ``service.relay_lock`` (the starter rule of 11A.4 "As built in H12a").
+
+**The R6 gate.** 11A.1: "``RelayWorker`` does not start the poll thread for a workspace until R6 is merged and its
+integration tests against the real relay pass." :data:`R6_READY` is that gate, a code constant (``False``): the host
+checks it in ``relaylink.start_blocker`` (so ``may_start`` is false and ``host.status.relay`` names
+:data:`R6_GATE_REASON`), and :meth:`RelayWorker.start` checks it again (defence in depth) before any thread exists.
+What flipping it requires is listed in 11A.4 "As built in R5".
+
+**Fork and exec.** The state directory's lock fd is close-on-exec and its fork hook closes a child's copy (R1); the
+relay sockets are not inheritable (Python's default). A worker records its pid: in a forked child :meth:`submit`
+and :meth:`start` refuse, and :meth:`join` never logs out or closes anything (the parent's token and lock stay the
+parent's).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+from collections.abc import Callable, Mapping
+from concurrent.futures import Future
+from typing import Any, Protocol
+
+from .bridge import BridgeLoop
+from .directory import Directory
+from .rids import RidStore
+from .session import Session
+from .state import StateDir, StateError
+
+__all__ = [
+    "R6_GATE_REASON",
+    "R6_READY",
+    "Alarms",
+    "LinkSource",
+    "NoLinkSource",
+    "NoPublisher",
+    "Publisher",
+    "RelayWorker",
+    "SeamMissing",
+    "Unpublished",
+    "WorkerStopped",
+]
+
+log = logging.getLogger("orch.relay.worker")
+
+#: The R6 gate (11A.1): False until R6 (pairing, membership, WK custody, the real ``EpochKeySource`` and ``R6View``)
+#: is merged AND its integration tests against the real relay pass. Flipping it is a reviewed one-line change with
+#: the checklist of 11A.4 "As built in R5"; ``tests/relay/test_worker.py`` pins the literal.
+R6_READY = False
+R6_GATE_REASON = "r6_not_ready: the relay worker stays dormant until R6 is merged and integration-tested (11A.1)"
+
+#: open alarm codes kept per worker (each with a count); a new code past this is counted under one overflow code
+MAX_ALARM_CODES = 64
+ALARM_DETAIL_MAX = 200
+
+
+class WorkerStopped(Exception):  # noqa: N818 - the worker's verdict, not an I/O error
+    """:meth:`RelayWorker.submit` after :meth:`RelayWorker.stop` began (or in a forked child): no new store job."""
+
+
+class SeamMissing(Exception):  # noqa: N818 - a dependency group not built yet
+    """A seam whose group (R3, R4, R6) is not built: the step refuses; nothing is sent or written."""
+
+
+class Publisher(Protocol):
+    """R3's seam (11A.5 "Publisher (R3)"): a thread ``orch-relay-pub-<id8>`` beside the loop, with the worker
+    contract, and the first publication (with catch-up) that :func:`orch.relay.link.first_link` runs as
+    ``LinkSteps.publish``. It reaches the store only through :meth:`RelayWorker.submit` (``job``)."""
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def join(self, timeout: float) -> bool: ...
+
+    def publish_first(self, session: Session, directory: Directory) -> None: ...
+
+
+class NoPublisher:
+    """Until R3: no publisher thread, and the first publication refuses (:class:`SeamMissing`), so a first link never
+    reaches ``state: "linked"`` without one (fail closed: ``mark_linked`` follows ``publish`` in ``first_link``)."""
+
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+    def join(self, timeout: float) -> bool:
+        return True
+
+    def publish_first(self, session: Session, directory: Directory) -> None:
+        raise SeamMissing("R3 (the checkpoint publisher) is not built: the first publication cannot run")
+
+
+class Unpublished(Protocol):
+    """R4's seam (11A.9 "Unpublished evidence"): one bounded step, run on the aux thread after the lease renewal
+    (10 s total deadline per relay call); it holds evidence only through ``job``
+    (``Store.note_forwarded_revocation``)."""
+
+    def step(self) -> None: ...
+
+
+class LinkSource(Protocol):
+    """What the first link needs from R6a and the person path (11A.5 steps 2 and 3; conflict C6): the card (WXK and
+    CK custody), the owner-signed genesis pin with its certificate, and the owner's ``PK`` from the genesis
+    delegation (R1's directory checks the card and the pin under it)."""
+
+    def card(self) -> Mapping[str, Any]: ...
+
+    def genesis(self) -> tuple[Mapping[str, Any], Mapping[str, Any], str]: ...
+
+    def owner_pk_pub(self) -> bytes: ...
+
+
+class NoLinkSource:
+    """Until R6a and the genesis-pin person path: every step refuses (:class:`SeamMissing`) before anything is sent."""
+
+    def card(self) -> Mapping[str, Any]:
+        raise SeamMissing("R6a (card keys) is not built: the card cannot be made")
+
+    def genesis(self) -> tuple[Mapping[str, Any], Mapping[str, Any], str]:
+        raise SeamMissing("the genesis pin's person path (relay.genesis_pin) is not built")
+
+    def owner_pk_pub(self) -> bytes:
+        raise SeamMissing("the first link's owner key source is not built")
+
+
+class Alarms:
+    """The worker's open alarms (11A.3 ``alarms.json``, shown in ``host.status.relay``): per code a count, the first
+    and last time and the last detail (clipped; callers pass classes and routes, never secrets). At most
+    :data:`MAX_ALARM_CODES` codes; ``persist`` (the state directory's atomic write) runs when a code first appears."""
+
+    def __init__(self, *, now_ms: Callable[[], int], persist: Callable[[dict[str, Any]], None] | None = None) -> None:
+        self._now_ms, self._persist = now_ms, persist
+        self._lock = threading.Lock()
+        self._open: dict[str, dict[str, Any]] = {}
+
+    def __call__(self, code: str, detail: str) -> None:
+        code = str(code)[:64]
+        detail = str(detail)[:ALARM_DETAIL_MAX]
+        now = self._now_ms()
+        with self._lock:
+            row = self._open.get(code)
+            new = row is None
+            if new and len(self._open) >= MAX_ALARM_CODES:
+                code, new = "relay_alarm_codes_exhausted", "relay_alarm_codes_exhausted" not in self._open
+                row = self._open.get(code)
+            if row is None:
+                row = self._open[code] = {"code": code, "count": 0, "first_ms": now, "last_ms": now, "detail": ""}
+            row["count"] += 1
+            row["last_ms"], row["detail"] = now, detail
+            snapshot = self._snapshot_locked() if new else None
+        log.warning("relay alarm %s: %s", code, detail)
+        if snapshot is not None:
+            self.save(snapshot)
+
+    def _snapshot_locked(self) -> dict[str, Any]:
+        return {"v": 1, "alarms": [dict(r) for r in self._open.values()]}
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return self._snapshot_locked()
+
+    def codes(self) -> list[str]:
+        with self._lock:
+            return list(self._open)
+
+    def save(self, snapshot: dict[str, Any] | None = None) -> None:
+        if self._persist is None:
+            return
+        try:
+            self._persist(snapshot if snapshot is not None else self.snapshot())
+        except (OSError, StateError, ValueError) as e:  # an alarm is never lost to a write error: it stays in memory
+            log.error("relay alarms could not be written: %s", type(e).__name__)
+
+
+class RelayWorker:
+    """One workspace's relay worker. Build it, :meth:`attach` the loop (whose ``Bridge.job`` is :meth:`job`), then
+    :meth:`start`. ``submit(fn) -> Future`` is the workspace's own ``service.submit``; ``precheck()`` (run as a
+    worker job on the start thread) returns ``None`` or the alarm code that keeps the worker from serving (11A.6:
+    ``convenience_events_present``); ``first_link()`` runs R1's first link when ``link_state()`` is ``"linking"``;
+    ``on_ended()`` runs once, when every thread ended (the host's slot of the 8-per-host cap)."""
+
+    def __init__(
+        self,
+        *,
+        workspace_id: str,
+        state: StateDir,
+        session: Session,
+        submit: Callable[[Callable[[], Any]], Future[Any]],
+        alarms: Alarms,
+        stop_event: threading.Event,
+        link_state: Callable[[], str | None],
+        precheck: Callable[[], str | None] = lambda: None,
+        first_link: Callable[[], None] = lambda: None,
+        publisher: Publisher | None = None,
+        unpublished: Unpublished | None = None,
+        on_ended: Callable[[], None] = lambda: None,
+        mono: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.workspace_id, self.id8 = workspace_id, workspace_id[:8]
+        self.state, self.session, self.alarm = state, session, alarms
+        self._submit, self._stop_event = submit, stop_event
+        self._link_state, self._precheck, self._first_link = link_state, precheck, first_link
+        self.publisher: Publisher = publisher if publisher is not None else NoPublisher()
+        self.unpublished = unpublished
+        self._on_ended, self._mono = on_ended, mono
+        self._lock = threading.Lock()
+        self._pid = os.getpid()
+        self._stopping = False
+        self._started = False
+        self._running = False  # the loop and the publisher were started
+        self._ended = False
+        self.loop: BridgeLoop | None = None
+        self.rids: RidStore | None = None
+        self._start_thread: threading.Thread | None = None
+        #: why the worker stopped by itself (a class name or an alarm code; never a message with relay bytes)
+        self.error: str | None = None
+
+    # -- the store seam ----------------------------------------------------------------------------------------------
+
+    def submit(self, fn: Callable[[], Any]) -> Future[Any]:
+        """``service.submit(fn)``, refused (:class:`WorkerStopped`) once :meth:`stop` began or in a forked child: no
+        relay thread queues a store job after the stop (11A.7 step 1)."""
+        with self._lock:
+            if self._stopping or os.getpid() != self._pid:
+                raise WorkerStopped("the relay worker is stopping")
+            return self._submit(fn)
+
+    def job(self, fn: Callable[[], Any]) -> Any:
+        """R2's ``job``: :meth:`submit` and wait for the result (11A.5 "For R3/R5/R6")."""
+        return self.submit(fn).result()
+
+    # -- lifecycle ---------------------------------------------------------------------------------------------------
+
+    def attach(self, loop: BridgeLoop, rids: RidStore) -> None:
+        if self.loop is not None:
+            raise RuntimeError("the loop is attached once")
+        self.loop, self.rids = loop, rids
+
+    @property
+    def stopping(self) -> bool:
+        return self._stopping
+
+    def start(self) -> None:
+        """Check the R6 gate, then hand off to the start thread. Never blocks on the workspace's worker thread."""
+        if not R6_READY:
+            raise SeamMissing(R6_GATE_REASON)
+        if os.getpid() != self._pid:
+            raise WorkerStopped("a forked child never starts the parent's worker")
+        with self._lock:
+            if self._started:
+                raise RuntimeError("started twice")
+            if self._stopping:
+                raise WorkerStopped("the relay worker was stopped before it started")
+            if self.loop is None:
+                raise RuntimeError("no loop attached")
+            self._started = True
+            t = threading.Thread(target=self._start_main, name=f"orch-relay-start-{self.id8}", daemon=True)
+            self._start_thread = t
+        t.start()
+
+    def _start_main(self) -> None:
+        try:
+            why = self.job(self._precheck)
+            if why is not None:
+                self._fail(str(why), why)
+                return
+            if self._link_state() == "linking":
+                self._first_link()
+            with self._lock:
+                if self._stopping:
+                    return
+                assert self.loop is not None
+                if self.unpublished is not None:
+                    self.loop.aux_steps.append(("unpublished", self.unpublished.step))
+                self.loop.start()
+                self._running = True
+                self.publisher.start()
+        except WorkerStopped:
+            return
+        except BaseException as e:  # noqa: BLE001 - the start failed: the worker stops, by class only
+            self._fail("relay_start_failed", type(e).__name__)
+
+    def _fail(self, code: str, detail: str) -> None:
+        if not self._stopping:
+            self.error = code if code != "relay_start_failed" else f"{code}: {detail}"
+            self.alarm(code, detail)
+        self.stop()
+
+    def stop(self) -> None:
+        """11A.7 shutdown, without blocking: from now on :meth:`submit` refuses; the stop event wakes every wait; the
+        loop shuts its connections down and wakes its queues; the publisher is told to stop. Idempotent."""
+        with self._lock:
+            if self._stopping:
+                return
+            self._stopping = True
+            running = self._running
+        self._stop_event.set()
+        if self.loop is not None:
+            self.loop.stop()
+        if running:
+            self.publisher.stop()
+
+    def join(self, timeout: float) -> bool:
+        """True when every relay thread ended within ``timeout`` (shared): the start thread, the loop (joined twice:
+        threads the poll thread spawned after a first snapshot are caught by the second) and the publisher. Once all
+        ended (in the owning process only): a best-effort logout, then the rid store and the state directory are
+        closed (the lock is released for the next worker) and ``on_ended`` runs, once."""
+        end = self._mono() + timeout
+
+        def left() -> float:
+            return max(0.0, end - self._mono())
+
+        t = self._start_thread
+        if t is not None:
+            t.join(left())
+        ended = t is None or not t.is_alive()
+        if self.loop is not None:
+            ended = self.loop.join(left()) and ended
+            ended = self.loop.join(left()) and ended
+        ended = self.publisher.join(left()) and ended
+        if ended:
+            self._finish()
+        return ended
+
+    def alive(self) -> bool:
+        """Whether any relay thread of this worker still runs (``host.status.relay``)."""
+        t = self._start_thread
+        if t is not None and t.is_alive():
+            return True
+        return self.loop is not None and any(th.is_alive() for th in self.loop.threads())
+
+    def _finish(self) -> None:
+        with self._lock:
+            if self._ended or not self._stopping:
+                return
+            self._ended = True
+        if os.getpid() != self._pid:
+            return  # a forked child: the token, the database and the lock are the parent's
+        if self.loop is not None and self.loop.error is not None and self.error is None:
+            self.error = type(self.loop.error).__name__
+        self.alarm.save()
+        try:
+            self.session.logout()
+        except Exception:  # noqa: BLE001 - best effort (11A.7 step 3)
+            log.info("relay logout failed (ignored)")
+        if self.rids is not None:
+            self.rids.close()
+        self.state.close()
+        try:
+            self._on_ended()
+        except Exception:  # noqa: BLE001 - the host's bookkeeping never keeps a stopped worker alive
+            log.exception("relay worker of %s: on_ended failed", self.workspace_id)
+
+    def status(self) -> dict[str, Any]:
+        """For ``host.status.relay``: no secret, no relay bytes."""
+        return {
+            "alive": self.alive(),
+            "stopping": self._stopping,
+            "serving": self._running and not self._stopping,
+            "error": self.error,
+            "gen": self.session.gen,
+            "fenced": self.session.fenced,
+            "alarms": self.alarm.snapshot()["alarms"],
+        }

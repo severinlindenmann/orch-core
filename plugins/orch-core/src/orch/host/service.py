@@ -370,6 +370,10 @@ class Host:
         service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
         service.git_pool = self.git_pool
         service.runners = self.runners  # H11a: run.list / run.sub
+        backend = self.backend_factory()
+        from .relayhook import make_starter
+
+        service.relay_starter = make_starter(backend)  # R5: the open's hook starts the relay worker through it
         await service.call(service.open)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
@@ -381,7 +385,6 @@ class Host:
         except (HostError, OSError, ValueError) as exc:
             service.state, service.cause = "unavailable", f"socket: {exc}"[:300]  # and no socket at all
             return
-        backend = self.backend_factory()
         welcome = {
             "host": HOST_NAME,
             "workspace": {"id": entry.workspace_id, "prefix": entry.prefix[:10] or "?"},

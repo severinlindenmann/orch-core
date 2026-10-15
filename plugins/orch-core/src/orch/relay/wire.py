@@ -24,6 +24,7 @@ Decisions:
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import re
@@ -39,6 +40,18 @@ from orch.crypto.labels import L
 
 __all__ = [
     "CHALLENGE_LEN",
+    "PAGE_CAP",
+    "PAGE_HEADS",
+    "PageSpec",
+    "build_manifest",
+    "build_page",
+    "check_hash",
+    "manifest_bytes",
+    "page_bytes",
+    "page_digest",
+    "plan_pages",
+    "set_bytes",
+    "sha256_ref",
     "HEADER_LEN",
     "MAX_BODY_DEPTH",
     "MAX_CHUNK",
@@ -457,3 +470,135 @@ def parse_plaintext(pt: bytes) -> tuple[dict[str, Any], bytes]:
     if type(meta) is not dict:
         raise _bad("meta type")
     return meta, pt[4 + n :]
+
+
+# --- staging sets (proto §19.8 P3-D20/P3-D37, contract 11A.5): pages, the manifest, the exact byte counter ------------
+#
+# A page is ``cj({kind, log, after_seq, from_acc, heads, digest})`` with ``digest = "sha256:" + hex(sha256(cj(page
+# without digest)))`` (the relay's ``page_digest``, a transport convention, not an F1 hash domain). The manifest is
+# ``cj({pages: [{i, kind, log, after_seq, count, digest}]})`` sorted by ``(kind, log, after_seq)`` (Python string order,
+# as the relay compares it), with ``i`` the position in that order. The relay counts a set's staged bytes as the sum of
+# the page bodies plus the manifest body (``checkpoint_staging.bytes``), so :func:`set_bytes` is that sum computed from
+# the layout alone (every hash is 71 characters, so the size does not depend on the heads): R3's exact counter.
+
+PAGE_CAP = 4 << 20  # a staging page or manifest body (the relay's PAGE_CAP)
+PAGE_HEADS = (PAGE_CAP - 1024) // 74  # heads per page: 73 JSON bytes per head plus a separator, 1 KiB of framing
+_KINDS_STAGED = ("appended", "abandoned", "retained")
+_HASH = re.compile(r"sha256:[0-9a-f]{64}")
+_LOG = re.compile(r"workspace|[0-9A-HJKMNP-TV-Z]{26}")
+_H0 = "sha256:" + "0" * 64
+
+
+def check_hash(value: object) -> str:
+    if type(value) is not str or not _HASH.fullmatch(value):
+        raise _bad("hash")
+    return value
+
+
+def _check_page_fields(kind: object, log: object, after_seq: object, count: object) -> None:
+    if kind not in _KINDS_STAGED:
+        raise _bad("page kind")
+    if type(log) is not str or not _LOG.fullmatch(log):
+        raise _bad("page log")
+    if type(after_seq) is not int or not 0 <= after_seq <= MAX_SAFE_INT:
+        raise _bad("page after_seq")
+    if type(count) is not int or not 1 <= count <= PAGE_HEADS:
+        raise _bad("page count")
+
+
+def page_digest(page: Mapping[str, Any]) -> str:
+    return "sha256:" + hashlib.sha256(canon.dumps({k: v for k, v in page.items() if k != "digest"})).hexdigest()
+
+
+def sha256_ref(data: bytes) -> str:
+    """``"sha256:" + hex(sha256(data))``."""
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def build_page(
+    kind: str, log: str, after_seq: int, from_acc: str, heads: list[str] | tuple[str, ...]
+) -> tuple[bytes, str]:
+    """The ``cj`` body of one staging page (at most :data:`PAGE_CAP`) and its digest (the manifest's)."""
+    _check_page_fields(kind, log, after_seq, len(heads) if isinstance(heads, list | tuple) else None)
+    check_hash(from_acc)
+    for h in heads:
+        check_hash(h)
+    page: dict[str, Any] = {
+        "kind": kind,
+        "log": log,
+        "after_seq": after_seq,
+        "from_acc": from_acc,
+        "heads": list(heads),
+    }
+    page["digest"] = digest = page_digest(page)
+    data = canon.dumps(page)
+    if len(data) > PAGE_CAP:
+        raise WireError("too_large", "staging page over cap")
+    return data, digest
+
+
+def page_bytes(kind: str, log: str, after_seq: int, count: int) -> int:
+    """``len(build_page(...))`` for a page of ``count`` heads, without the heads (each is 71 characters)."""
+    _check_page_fields(kind, log, after_seq, count)
+    one = {"kind": kind, "log": log, "after_seq": after_seq, "from_acc": _H0, "heads": [_H0], "digest": _H0}
+    return len(canon.dumps(one)) + 74 * (count - 1)
+
+
+@dataclass(frozen=True)
+class PageSpec:
+    """One page of a set's layout: its manifest index ``i`` and what it holds (the heads are read when it is built)."""
+
+    i: int
+    kind: str
+    log: str
+    after_seq: int
+    count: int
+
+
+def plan_pages(parts: list[tuple[str, str, int, int]] | tuple[tuple[str, str, int, int], ...]) -> list[PageSpec]:
+    """The layout of a set: ``parts`` are ``(kind, log, after_seq, count)`` runs (``count`` >= 0; an empty run has no
+    page), each split into pages of at most :data:`PAGE_HEADS` heads, sorted by ``(kind, log, after_seq)`` and
+    indexed in that order. The runs of one ``(kind, log)`` must be contiguous (the relay refuses a gap or overlap)."""
+    pages: list[tuple[str, str, int, int]] = []
+    for kind, log, after_seq, count in parts:
+        if type(count) is not int or count < 0:
+            raise _bad("run count")
+        done = 0
+        while done < count:
+            n = min(PAGE_HEADS, count - done)
+            _check_page_fields(kind, log, after_seq + done, n)
+            pages.append((kind, log, after_seq + done, n))
+            done += n
+    pages.sort(key=lambda p: (p[0], p[1], p[2]))
+    for a, b in zip(pages, pages[1:], strict=False):
+        if (a[0], a[1]) == (b[0], b[1]) and a[2] + a[3] != b[2]:
+            raise _bad("runs of one kind and log are not contiguous")  # the relay's manifest rule
+    return [PageSpec(i, *p) for i, p in enumerate(pages)]
+
+
+def _descriptor(spec: PageSpec, digest: str) -> dict[str, Any]:
+    return {"i": spec.i, "kind": spec.kind, "log": spec.log, "after_seq": spec.after_seq, "count": spec.count,
+            "digest": digest}  # fmt: skip
+
+
+def build_manifest(layout: list[PageSpec], digests: list[str]) -> bytes:
+    """The ``cj`` manifest body of ``layout`` with the page digests (one per page, in index order)."""
+    if len(digests) != len(layout) or any(s.i != k for k, s in enumerate(layout)):
+        raise _bad("manifest layout")
+    data = canon.dumps({"pages": [_descriptor(s, check_hash(d)) for s, d in zip(layout, digests, strict=True)]})
+    if len(data) > PAGE_CAP:
+        raise WireError("too_large", "manifest over cap")
+    return data
+
+
+def manifest_bytes(layout: list[PageSpec]) -> int:
+    """``len(build_manifest(layout, ...))`` (every digest is 71 characters)."""
+    if not layout:
+        return len(canon.dumps({"pages": []}))
+    one = len(canon.dumps({"pages": [_descriptor(layout[0], _H0)]}))
+    return one + sum(len(canon.dumps(_descriptor(s, _H0))) + 1 for s in layout[1:])
+
+
+def set_bytes(layout: list[PageSpec]) -> int:
+    """The staged bytes the relay counts for this set: every page body plus the manifest body (P3-D37)."""
+    return sum(page_bytes(s.kind, s.log, s.after_seq, s.count) for s in layout) + manifest_bytes(layout)

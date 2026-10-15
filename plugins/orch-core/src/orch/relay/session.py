@@ -234,17 +234,21 @@ class Session:
         fenced_stops: bool = True,
         raw: bytes | None = None,
         transport: Transport | None = None,
+        content_type: str = "application/octet-stream",
     ) -> dict[str, Any]:
         """One relay call. ``body`` is built into ``cj`` bytes once; a 401 ``unauthenticated``/``expired`` re-logs in
         once and resends the identical bytes. 2xx bodies must be an object with exactly ``keys``; anything else raises
         :class:`RelayRefused` (or :class:`Fenced` for 409 ``fenced``).
 
         R2: ``raw`` sends those exact bytes as ``application/octet-stream`` (an ORB2 chunk; at most ``request_cap``),
-        instead of a JSON ``body``. ``transport`` is the calling thread's own connection (11A.7: one ``RelayConn``
+        instead of a JSON ``body`` (R3: ``content_type="application/json"`` for a ``cj`` body built and counted once,
+        a staging page or manifest). ``transport`` is the calling thread's own connection (11A.7: one ``RelayConn``
         per thread) while the login, the holder generation and the preflight stay this Session's, shared by the
         workspace's relay threads (round 8, R7-4)."""
         if raw is not None and (body is not None or type(raw) is not bytes or len(raw) > request_cap):
             raise wire.WireError("too_large" if type(raw) is bytes else "malformed", "raw request body")
+        if content_type not in ("application/octet-stream", "application/json"):
+            raise wire.WireError("malformed", "content type")
         if holder and self._fenced:
             raise Fenced("fenced: writes stopped")
         if not self._checked or self._refused is not None:
@@ -257,7 +261,7 @@ class Session:
         while True:
             headers: dict[str, str] = {}
             if data is not None:
-                headers["Content-Type"] = "application/octet-stream" if raw is not None else "application/json"
+                headers["Content-Type"] = content_type if raw is not None else "application/json"
             token = None
             if auth:
                 token = self._ensure_login()

@@ -66,7 +66,7 @@ from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none,
 from .index import Index
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
-from .outbox import Outbox, OutboxEntry, Segment, make_entry, parse_entry
+from .outbox import Outbox, OutboxEntry, RelayPosition, Segment, make_entry, parse_entry
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins, is_forwarded, pair
 
@@ -2945,6 +2945,166 @@ class Store:
             if entry.n != n or entry.hash != hash:
                 raise StoreError("outbox.mismatch", f"outbox entry {n} holds another checkpoint")
             return self._outbox.delete(n)
+
+    # ------------------------------------------------------------------ R3's reads (the relay publisher, §11A.5)
+
+    def relay_segment(
+        self,
+        log: str,
+        after: Mapping[str, Any],
+        upto: Mapping[str, Any],
+        *,
+        skip: int = 0,
+        limit: int | None = None,
+    ) -> Segment:
+        """Heads of ``log`` between two checkpoint entries, for one staging page of R3 (§11A.5).
+
+        ``after`` is ``{seq, acc}`` (and ``head`` when ``seq`` > 0; ``seq`` 0 with the zero accumulator for a log the
+        relay does not hold yet) and ``upto`` is ``{seq, head, acc}``. The path is the current log when both are points
+        of it (O(1) per call: the accumulators are known), else the recorded ancestry (``heads.sqlite``: an abandoned
+        branch, for a republication across an accepted restore), checked whole: exactly ``upto.seq - after.seq`` heads
+        folding from ``after.acc`` to ``upto.acc`` and ending at ``upto.head``. Returns the part ``skip`` heads in, at
+        most ``limit`` heads, with the accumulator before it. Takes the lock. Refuses ``validation.relay`` for a
+        malformed range, ``chain.broken`` for an unreadable or unverified log, ``chain.diverged`` when no verified
+        path joins the two entries."""
+        try:
+            a_seq, a_acc = after["seq"], after["acc"]
+            u_seq, u_head, u_acc = upto["seq"], upto["head"], upto["acc"]
+        except (KeyError, TypeError):
+            raise StoreError("validation.relay", "a relay segment joins two log entries") from None
+        if (
+            type(a_seq) is not int
+            or type(u_seq) is not int
+            or not 0 <= a_seq <= u_seq
+            or type(skip) is not int
+            or not 0 <= skip <= u_seq - a_seq
+            or (limit is not None and (type(limit) is not int or limit < 1))
+        ):
+            raise StoreError("validation.relay", "a relay segment is a range between two entries of one log")
+        span = u_seq - a_seq - skip
+        take = span if limit is None else min(limit, span)
+        with self._locked():
+            if log != WORKSPACE:
+                check_uid(log)
+                self._ensure({log})
+            if log in self._read_errors or log in self._unverified:
+                raise StoreError("chain.broken", f"{log}: unreadable or unverified; nothing is published")
+            info = self._logs.get(log)
+
+            def point(seq: int, acc: object, head: object) -> bool:
+                if info is None:
+                    return seq == 0 and acc == _ZERO_ACC
+                if seq == 0:
+                    return acc == _ZERO_ACC
+                return seq <= info.seq and info.accs[seq - 1] == acc and info.heads[seq - 1] == head
+
+            if point(a_seq, a_acc, after.get("head")) and point(u_seq, u_acc, u_head):
+                assert info is not None or u_seq == 0
+                start = a_seq + skip
+                acc = (info.accs[start - 1] if start else _ZERO_ACC) if info is not None else _ZERO_ACC
+                heads = tuple(info.heads[start : start + take]) if info is not None else ()
+                return Segment(log, start, acc, heads)
+            from .checkpoints import _extension
+
+            old = {"seq": a_seq, "head": after.get("head"), "acc": a_acc}
+            path = [] if u_seq == a_seq else (self._pins.branch(u_head, a_seq) if self._pins else None)
+            if path is None or not _extension(old, {"seq": u_seq, "head": u_head, "acc": u_acc}, path):
+                raise StoreError("chain.diverged", f"{log}: no verified path between the two entries")
+            acc = a_acc
+            for head in path[:skip]:
+                acc = canon.log_acc(acc, head)
+            return Segment(log, a_seq + skip, acc, tuple(path[skip : skip + take]))
+
+    def relay_position(self, checkpoint: Mapping[str, Any] | None) -> RelayPosition:
+        """Classify the relay's held checkpoint H (already verified by R1's reader) against this host, for R3's
+        startup classification (§11A.5): whether the current logs contain it, the host's numbering high-water mark,
+        the newest local workspace checkpoint, and whether H is an abandoned workspace checkpoint. Takes the lock and
+        loads every ticket log. Refuses ``checkpoint.prefix_invalid`` for an H that is not this workspace's WSK
+        checkpoint."""
+        with self._locked():
+            if self._pins is None or self._outbox is None:
+                raise StoreError("validation.host_state", "the relay position needs the host state dir")
+            self._scan_dirs()
+            self._ensure(set(self._exists))
+            held = self._pins.held()
+            mine = [cp for cp in (held, self._checkpoints.workspace()) if cp and "o" in cp]
+            numbering = max(
+                [self._checkpoints.highest_n(), self._pins.high_n(), self._outbox.max_n()]
+                + [cp["o"]["n"] for cp in mine]
+            )
+            newest = max(mine, key=lambda cp: cp["o"]["n"], default=None)
+            current = {"n": newest["o"]["n"], "hash": canon.checkpoint_hash(newest["o"])} if newest else None
+            if checkpoint is None:
+                return RelayPosition(True, numbering, current, False)
+            o = self._relay_checkpoint(checkpoint)
+            contained = True
+            for log, entry in {WORKSPACE: o["workspace_log"], **o["tickets"]}.items():
+                info = self._logs.get(log)
+                seq = entry["seq"]
+                if (
+                    info is None
+                    or log in self._read_errors
+                    or not 1 <= seq <= info.seq
+                    or info.heads[seq - 1] != entry["head"]
+                    or info.accs[seq - 1] != entry["acc"]
+                ):
+                    contained = False
+                    break
+            abandoned = False
+            if not contained:
+                h = canon.checkpoint_hash(o)
+                ab = self._checkpoints.dir / "abandoned"
+                for p in sorted(ab.glob("workspace-*.json")) if ab.is_dir() else []:
+                    try:
+                        cp = loads(read_or_none(p, 4 << 20))
+                        abandoned = canon.checkpoint_hash(cp["o"]) == h
+                    except (ValueError, KeyError, TypeError, canon.HashError):
+                        continue
+                    if abandoned:
+                        break
+            return RelayPosition(contained, numbering, current, abandoned)
+
+    def relay_ancestor(self, older: Mapping[str, Any], newer: Mapping[str, Any]) -> bool:
+        """Whether checkpoint ``older`` is ``newer`` or an ancestor of it: every log of ``older`` is in ``newer`` at or
+        past its ``seq``, with a verified path between (the current log, or the recorded ancestry of an abandoned
+        branch). R3 uses it to explain a relay H that a restore abandoned (§11A.5). Takes the lock."""
+        from .checkpoints import _extension
+
+        with self._locked():
+            if self._pins is None:
+                return False
+            a, b = self._relay_checkpoint(older), self._relay_checkpoint(newer)
+            new = {WORKSPACE: b["workspace_log"], **b["tickets"]}
+            for log, eo in {WORKSPACE: a["workspace_log"], **a["tickets"]}.items():
+                en = new.get(log)
+                if en is None or en["seq"] < eo["seq"]:
+                    return False
+                if en["seq"] == eo["seq"]:
+                    if en != eo:
+                        return False
+                    continue
+                path = self._pins.branch(en["head"], eo["seq"])
+                if path is None or not _extension(eo, en, path):
+                    return False
+            return True
+
+    def _relay_checkpoint(self, cp: Mapping[str, Any]) -> dict[str, Any]:
+        from .checkpoints import verify_object
+
+        wsk = self._wsk_pub()
+        try:
+            ok = (
+                wsk is not None
+                and verify_object(wsk, cp)
+                and cp["o"]["kind"] == "workspace_checkpoint"
+                and cp["o"]["workspace_id"] == self.workspace_id
+                and cp["o"]["genesis"] == self._pin
+            )
+        except (KeyError, TypeError):
+            ok = False
+        if not ok:
+            raise StoreError("checkpoint.prefix_invalid", "not a checkpoint of this workspace's key")
+        return cp["o"]
 
     def _recover_catchup(self) -> None:
         """Finish a catch-up replacement whose journal was committed (§11A.5 step 4): before anything numbers a

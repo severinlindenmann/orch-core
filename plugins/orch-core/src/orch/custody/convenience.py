@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Any, Protocol
 
-from orch import crypto
+from orch import canon, crypto
 
 from .base import (
     DEVICE_KEY_LABELS,
@@ -402,6 +402,9 @@ def _zeroise(buf: bytearray) -> None:
         buf[i] = 0
 
 
+_UNREVIEWED = (canon.LABELS["sig_reader_decl"].encode("ascii"),)  # device labels this backend never signs
+
+
 class ConvenienceBackend:
     """The person-capable backend that asks for no factor. It holds one device key (``dk_sig``) for one workspace,
     signs only device labels, and checks the loaded key against the device the selection names on every load."""
@@ -445,6 +448,8 @@ class ConvenienceBackend:
         check_key_id(key_id)
         if not label_allowed(payload, DEVICE_KEY_LABELS):
             raise CustodyError("a device key does not sign this payload (unknown label or another role's label)")
+        if label_allowed(payload, _UNREVIEWED):  # #463 review L1: no review path yet; H12d-2 decides
+            raise CustodyError("reader_decl signatures are not prompted for in P1")
         key = self._load()
         try:
             sig = crypto.sign(key, payload)

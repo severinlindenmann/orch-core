@@ -844,6 +844,17 @@ class ClickSigner:
                 "(10 minutes), then switch click-to-sign on",
             )
 
+    def _tier_a(self, entry: dict[str, Any]) -> tuple[str, int]:
+        """The switch is tier A only (§0.8.6 item 3a): in tier B the host's flag file belongs to another UID."""
+        wid, uid = entry["workspace_id"], int(entry["host_uid"])
+        if uid != self.uid:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the host runs as another user here (tier B); switch click-to-sign in the terminal: "
+                f"orch host convenience on|off --workspace {entry.get('prefix') or wid}",
+            )
+        return wid, uid
+
     def custody_on(self, args: Mapping[str, Any]) -> dict[str, Any]:
         """Click-to-sign on, from the dashboard (see the invariant above). The slow part (scrypt, the key store write)
         runs before the flag lock and leaves the selection at step ``written``, where nothing signs with the key; under
@@ -857,7 +868,7 @@ class ClickSigner:
 
         entry = self._entry(args.get("workspace_id"))
         pw = self._passphrase(args)
-        wid, uid = entry["workspace_id"], int(entry["host_uid"])
+        wid, uid = self._tier_a(entry)
         st = select.status(self.state, wid)
         if st.get("problem") is not None:
             raise ClickError("custody.unavailable", f"{st['problem']}; see the terminal: orch keys custody status")
@@ -910,7 +921,7 @@ class ClickSigner:
         from orch.host.errors import HostError
 
         entry = self._entry(args.get("workspace_id"))
-        wid, uid = entry["workspace_id"], int(entry["host_uid"])
+        wid, uid = self._tier_a(entry)
         if "passphrase" in args:
             raise ClickError(
                 "custody.terminal_needed",

@@ -397,3 +397,14 @@ def test_l2_a_busy_lock_undoes_the_staged_move(switch, monkeypatch):
     assert select.status(state, WS) == before and legacy_file(state).exists()
     assert not store.exists(WS, before["device"])
     assert on(signer, provider.passphrase)["enabled"] is True  # and a retry works
+
+
+def test_l4_tier_b_is_refused_before_anything_moves(switch):
+    """L4: in tier B the signer (the person UID) cannot write the host-UID flag, so the switch is not offered there."""
+    signer, state, provider, store, _, _ = switch
+    entry = {"workspace_id": WS, "prefix": "INT", "host_uid": os.getuid() + 1}
+    signer._workspaces = lambda: [entry]
+    before = select.status(state, WS)
+    refused(lambda: on(signer, provider.passphrase), TERMINAL)
+    refused(lambda: off(signer), TERMINAL)
+    assert select.status(state, WS) == before and legacy_file(state).exists() and not store.exists(WS, before["device"])

@@ -5524,6 +5524,236 @@ each finding against the code (core `d020aea6`, relay `772d7b0`).
 | 8 | Convenience lifecycle | **Partly** | the draft already checked in the critical section that writes `link.json`; ordering against network writes, unlink and post-start imports were missing and are added. No owner override |
 | 9 | Contract gaps | **Confirmed** | changelog no longer claims "additive" without listing the internal contracts; decision evidence, R6 dependency, first card before login (`directory.py` `login` needs a card), old-epoch refusal exception, `max_publication_bytes`, retention clock all added |
 
+### 11A.14 Phone person events over `relay.submit` (draft, for decision)
+
+**Status: draft, 15 Oct 2026, for the decision process** (draft → Codex challenge → Opus tie-break → orch-52 decides).
+Nothing here is built. It answers orch-f1's questions ahead of R2 and fixes what core must provide. Facts come from F1
+§5.1–§5.6, §11 and the code at `410dcfb1` (`model/engine.py`, `model/questions.py`, `model/authz.py`,
+`model/lifecycle.py`, `canon/hashing.py`, `host/human.py`, `host/reads_ticket.py`, `host/reads_ws.py`). Open choices
+are marked **Q14.n** and listed at the end, each with a recommended answer.
+
+**Scope.** Two event types, one event per `relay.submit`: `question.answered` (answer a question) and
+`ticket.created` (a new ticket). Both are ordinary F1 person events under signed-event contract 1. Nothing in F1's
+log, label or certificate format changes. The detached protocol §13 `decision` stays unserved (11A.4, 11A.12, Q14.7).
+
+**14.1 The envelope a phone builds.** A person event always carries `sig`, `auth` and `roster_v` (F1 §5.2). The phone
+sends the event **without** `seq`, `at`, `prev`, `ws_seq` and `host_sig`. The host chooses those at append, and the
+person's signature does not cover them (F1 §5.3, §5.5). A submitted event with any of them is refused.
+
+| Field | Value for a phone | Source |
+|---|---|---|
+| `v` | `2` | constant |
+| `id` | a fresh ULID (`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`), 80 random bits from the OS CSPRNG | the phone (Q14.1, Q14.8) |
+| `type` | `question.answered` or `ticket.created` | the action |
+| `actor` | `{"kind":"person","id":"p_<32 hex>","device":"d_<32 hex>"}`: the phone's own person and device ids, exactly as in its certificate | the phone's certificate |
+| `auth` | `"secure-enclave-unlocked"` (14.3) | constant for this custody |
+| `hash_v` | `1` | constant |
+| `roster_v` | the current member-list version | `workspace.show` → `members_v` |
+| `based_on` | `question.answered`: the head of an existing event of that ticket's log. `ticket.created`: `null` (always `seq` 1) | `ticket.get` → `doc.head` (**new field**, Q14.1) |
+| `sig` | b64u of the raw 64-byte P-256 signature `r ‖ s` (CryptoKit `rawRepresentation`; high-s is accepted) | 14.2 |
+
+**`question.answered`** (F1 §5.4.1, actor P). Exact payload set: `question`, `hash`, then `option?` and/or `text?`
+(at least one).
+
+| Field | Value | Source |
+|---|---|---|
+| `question` | the question id, `Q<n>` | `ticket.get` → `questions[].id` |
+| `hash` | the question hash, `sha256:` + 64 hex (14.5) | recomputed by the phone, compared with `questions[].hash` |
+| `option?` | an option `key` of that question | `questions[].options[].key` |
+| `text?` | a str under F1 §11.3 (prose, at most 4 096 UTF-8 bytes) | the person |
+
+Log: the ticket's `uid` (`ticket.get` → `doc.uid`). Who may answer: the `to` person or a holder of the `to` role, or an
+owner or maintainer (`model/questions.py may_answer`); a viewer may answer (`VIEWER_MAY`).
+
+```json
+{"actor":{"device":"d_9f3c…","id":"p_6aae…","kind":"person"},"auth":"secure-enclave-unlocked","based_on":"sha256:215b…","hash":"sha256:5d0e…","hash_v":1,"id":"01JA7Q…","option":"csv","question":"Q1","roster_v":3,"sig":"<b64u, 86 chars>","type":"question.answered","v":2}
+```
+
+**`ticket.created`** (F1 §5.4.1, actor A, signed when a person). Exact payload set: `key`, `ticket_type`, `title`,
+`owner`. A person's `new` emits this one event only (H5a item 3): priority, labels, parent and the description are
+separate later events (Q14.6).
+
+| Field | Value | Source |
+|---|---|---|
+| `key` | the key the store would allocate now, `<PREFIX>-<n>` (F1 §11.1) | `workspace.show` → `next_key` (**new field**, Q14.1) |
+| `ticket_type` | `feature`, `bug`, `chore`, `spike` or `epic` | the person |
+| `title` | one line, 1–200 Unicode scalars, F1 §11.3 | the person |
+| `owner` | the actor's person id | the phone's certificate |
+
+Log: a fresh ULID made by the phone, the new ticket's `uid` (Q14.1). It is in the signed bytes (`log`), so it is
+fixed when the phone signs.
+
+```json
+{"actor":{"device":"d_9f3c…","id":"p_6aae…","kind":"person"},"auth":"secure-enclave-unlocked","based_on":null,"hash_v":1,"id":"01JA7R…","key":"DEMO-0013","owner":"p_6aae…","roster_v":3,"sig":"<b64u, 86 chars>","ticket_type":"feature","title":"Check the tariff seeds","type":"ticket.created","v":2}
+```
+
+Both examples are `cj` (keys sorted, no spaces), ids shortened with `…` as in F1. The real values are pinned by the
+vectors (14.7).
+
+**14.2 Signing.** One label: `orch/v2/sig/ticket-event|` (`sig_ticket_event`, already in `DEVICE_KEY_LABELS`). Both
+events are ticket-log events; neither uses `sig/ws-event|` or `sig/decision|`.
+
+```
+signed = "orch/v2/sig/ticket-event|" || cj({"contract":1, "event":E, "log":<ticket uid>, "suite":2, "workspace_id":W})
+sig    = ECDSA-P256-SHA256(dk_sig, signed)   // raw r || s, b64u
+```
+
+`E` is the submitted event without `sig` (it already lacks `seq`, `at`, `prev`, `ws_seq`, `host_sig`). The signature
+covers `id`, `type`, `actor`, `auth`, `based_on`, `roster_v`, `hash_v` and the payload, and binds the workspace and the
+ticket. It cannot be replayed into another ticket, log or workspace (`signatures.json`). `cj` is protocol §2.3 with
+F1's depth limit of 16. Every string must already satisfy F1 §11.3 (UTF-8, NFC with **Unicode 16.0** tables, LF only,
+no C0/C1/bidi controls, no code point unassigned in 16.0): the host refuses (`validation.text`) and never normalises a
+signed string, since that would break `sig`. The phone runs `text.json` against its own normaliser; a character newer
+than Unicode 16.0 is refused on the phone before the sign sheet.
+
+**14.3 `auth` for the phone.** F1 §11.4 allows `passphrase`, `secure-enclave`, `secure-enclave-unlocked`,
+`convenience`, `webauthn`, `tpm`, `windows-hello` (`custody/base.py AUTH_VALUES`, `schema/schemas/common.json`). The
+model accepts all of them; no workspace policy refuses a factor yet (D66). The phone's `dk_sig` is a Secure Enclave key
+with `WhenPasscodeSetThisDeviceOnly` and no `.userPresence` (D49; orch-mobile decisions P4, A6). F1 §5.3 defines exactly
+this case: **`secure-enclave-unlocked`**, "iPhone, D49: signs whenever the phone is unlocked". The others do not fit:
+`secure-enclave` claims a user-presence check per signature (D41), which the phone does not make; `convenience` is the
+no-factor desktop backend, refused on column R (`append_relay`, 11A.6); `passphrase` is false. `auth` is a signed
+custody declaration, not proof (F1 §12 O1): the host cannot check it. The human act is the sign sheet (orch-mobile U7).
+A Simulator or other software key would sign without the Secure Enclave and so must never claim this value against a
+real host (Q14.9). Old cores parse `secure-enclave-unlocked` (it has been in the F1 enum since P1), so these events need
+no reader handshake (§0.8.6 item 9 concerns only `convenience`).
+
+**`signer {device, auth}`** is not an event field. It is the H12d view field (§0.8.6 item 9.11) that `activity.list`,
+`ticket.get` and `needs` add to show who signed. For a phone event it reads
+`{"device":"d_…","auth":"secure-enclave-unlocked"}`. `ticket.get` already returns `questions[].answer.auth`.
+
+**14.4 Chaining, races and retries.**
+- **The phone never knows `seq`, `prev` or `ws_seq`.** The host fills them in at append. `prev` is the log head then,
+  not anything the phone saw. There is no head race.
+- **`based_on`** must be the head of an **existing** event of the same log with a lower `seq`, or `null` exactly on
+  `seq` 1; anything else is `event.bad_base` (`model/engine.py _envelope_check`). It need not be the current head:
+  "staleness is decided by `gate_gen`, `hash` and `base_rev`, not by `based_on`" (F1 §5.1). A head read once stays
+  valid until a `restore` abandons that event.
+- **What can race**, all refused before anything lands, never `partial`:
+
+  | Code | Cause | Envelope-only? | What the phone does |
+  |---|---|---|---|
+  | `members.stale` | `roster_v` ≠ the member-list version at append (`model/authz.py`) | yes | re-read `members_v`, re-sign (Q14.4) |
+  | `event.bad_base` | `based_on` was abandoned by a restore | yes | re-read `doc.head`, re-sign (Q14.4) |
+  | `ticket.exists` | the key or the uid was taken (`model/lifecycle.py`, `model/engine.py`) | yes | re-read `next_key`, new uid, re-sign (Q14.4) |
+  | `question.stale` | the question was re-asked with other text or options | no: content | re-read, new review, new signature |
+  | `question.answered` | another valid answer for this hash won first | no | show who (`questions[].answer.by`); nothing to retry |
+  | `answer.not_allowed`, `answer.bad_option`, `role.denied`, `device.scope`, `device.invalid`, `ticket.not_visible`, `ticket.frozen` | authority or state | no | terminal; fixed local text |
+
+- **Idempotency** (§0.7, 11A.4). Every `relay.submit` carries `idem`; the outcome key is `(ws, "r:<device>", idem)`.
+  The binding covers the arguments, so the signed event is part of it.
+  1. *Lost or unanswered response:* resend the **same** envelope (same rid), or the same signed event under a new
+     rid with the **same** idem. The rid store or the outcome store answers with the stored result
+     (`duplicate:true`). If the event is already in the log, `append_relay` counts it as landed only when its `sig`
+     and `actor` match. **Never re-sign while the outcome is unknown.** Ask `outcome.get {idem}` first.
+  2. *Relay-level "did not run"* (`stale_epoch`, a first `stale_timestamp`, `stale_sequence`): a new envelope with a
+     new rid and seq, the **same** idem and the **same** signed event (orch-mobile U8, host-api v0 §1).
+  3. *A definite model refusal:* it is stored `failed` under that idem, and the same idem replays it. A re-signed event
+     needs a **new idem** (the same idem with other events is `idem.conflict`) and a **new `id`**. U8 holds: a
+     changed answer, title or type is never re-signed without a new review.
+- **The orch-mobile "U8" rule is a phone rule, not a core rule.** It is `docs/decisions.md` U8 and `docs/gaps.md`
+  ("a re-send is never re-signed"). Core's uniqueness rules are: a repeated `id` in a log is `event.duplicate_id`; the
+  first valid answer per question hash wins (`question.answered`); keys are never reused (`ticket.exists`). The relay
+  states "every admitted person-event id is single-use forever, across restores" (protocol §13). F1 refuses a signed
+  answer abandoned by a restore when it comes back (`questions.json`, `question_replayed_decision_after_restore`).
+
+**14.5 Binding the answer to the question's content.** Yes: `question.answered.hash` **is** the question hash of F1
+§5.6, the field that makes an answer to a changed question stale. At append the model compares it with the current
+hash of that question id; a difference is `question.stale` ("the question changed since it was shown",
+`model/questions.py answered`). The phone computes:
+
+```
+qid  = hex(SHA-256("orch/v2/question-id|" || cj({"question":"Q1", "ticket":uid, "workspace_id":W}))[0:16])
+hash = "sha256:" + hex(SHA-256("orch/v2/question|" || cj({"options":options, "question_id":qid, "text":text, "ticket":uid})))
+```
+
+- `options` is the question's list **in its asked order**, each `{key, label}` plus `cost` when present, and `[]` when
+  there are none. `ticket.get` returns them as `questions[].options` in that order, with `text`, `qid` and `hash`.
+- The phone recomputes `qid` and `hash` from `doc.uid`, the workspace id it is paired to and the displayed `text` and
+  `options`. It shows the sign sheet only when both equal `ticket.get`'s values, and signs the recomputed `hash`, never
+  a copied one. This matches the host signer's check (§0.8.1 "Bound hashes": recomputation).
+- **Only `text` and `options` are bound.** `why`, `recommended`, `to` and `blocking` are outside the hash: a re-ask that
+  changes only those keeps the hash, and an existing answer stands (`model/questions.py asked`). The sign sheet should
+  show them as context, not as signed content.
+- **The same digest as protocol §13's `content_hash`,** in another encoding: F1 writes `sha256:` + hex, §13 writes b64u
+  of the same 32 bytes. host-api v0's `content_hash` (b64u), its option `id` and its answer `{"option_id"}` become F1's
+  `hash` (`sha256:` hex), option `key` and `option`.
+
+**14.6 The closed event/scope table (R2, `relay/submit.py`).** `relay.submit` args (R2 framing, Q14.1):
+`{"log": <ticket uid>, "events": [<one event>]}`, no `extras` (no body, no artifacts). Before `append_relay`, inside
+the op's job on the workspace's worker thread, in this order (a failing step answers its code and nothing lands):
+
+| # | Check | `question.answered` | `ticket.created` | Refusal |
+|---|---|---|---|---|
+| 1 | identity (11A.4 steps 1–3 again, `relay_columns`); with H12d, `rd` | as 11A.4 | as 11A.4 | 11A.4 codes |
+| 2 | the type is in the table; exactly one event | yes | yes | `forbidden_scope` |
+| 3 | scope: the certificate's `scopes_max` **and** the member list's scopes for the device contain | `decide` | `decide` (Q14.3) | `forbidden_scope` |
+| 4 | strict shape: `cj`-canonical, F1 schema, exact field set; no `seq`, `at`, `prev`, `ws_seq`, `host_sig`; `v` 2, `hash_v` 1 | yes | yes | `validation.event` |
+| 5 | `actor` = `{person, identity.person_id, identity.device_id}`; `sig` present | yes | yes | `op.not_allowed` (`_signed_by`) |
+| 6 | `auth` in the R2 set `{"secure-enclave-unlocked"}` (Q14.2) | yes | yes | `op.not_allowed` |
+| 7 | the log | an existing ticket the person may see | not an existing uid; `based_on` null | `not_found` / `ticket.exists` |
+| 8 | payload rules the model does not have | none | `owner` = the actor's person; `key` = the store's next key now (Q14.5) | `invalid.input` / Q14.5 |
+| 9 | `sig` verifies under this device's `dk_sig_pub`, over 14.2's bytes | yes | yes | `sig.invalid` |
+| 10 | `HumanOps._judge` under the store lock: `model.preview` with the host's stamp (roster, base, question hash, authority, scopes at the event's position) | yes | yes | the model's code (14.4) |
+| 11 | `append_relay(service, log, events, [{}], person_id=…, device_id=…)` | yes | yes | its codes |
+
+Steps 4 to 10 do not trust the bridge: the store verifies the signature again at append. The host never fills in or
+changes a field of a submitted event, so what lands is byte-for-byte what the phone signed plus the host's stamp.
+
+**14.7 Vectors (core-owned, generated by the independent oracle).** A new file
+`plugins/orch-core/tests/vectors/f1/phone_events.json`, built by a new `phone_events_vector()` in
+`tests/canon/oracle_f1_signed.py`, registered in `oracle_f1.py` and `index.json`, checked by `test_f1_vectors.py`
+(replay through the real model) and vendored by orch-f1 (and orch-29 if wanted). `World.ev` gains an `auth` argument
+(default `passphrase`, so every existing file stays byte-identical). The file carries its own `keys` block (TEST KEYS
+ONLY, KEY_NOTE): `dk_sevp1`, a phone device of `sev` certified with `scopes_max: ["look","decide"]`, added by
+`device.added` signed by `sev1`; `signatures.json`'s `KEYS` list is not touched.
+- **`answer`**: `sev` asks Q1 (two options); `sev`'s phone answers with `auth: "secure-enclave-unlocked"` → ok. Pinned:
+  the submitted form (no `seq`, `at`, `prev`, `ws_seq`, `host_sig`), `person_signing_hex`, `sig`, the appended event,
+  its `head`, and the `qid`/`hash` inputs.
+- **`new`**: `ticket.created` by the phone, `seq` 1 of `TICKET2`, `based_on: null`, key `DEMO-0002`, `owner` = `sev`
+  → ok, with the same pins.
+- **Refusals** (each a scenario step with `expect`): old `hash` after a re-ask with other text → `question.stale`;
+  `roster_v − 1` → `members.stale`; a `based_on` that is no head of this log → `event.bad_base`; a taken key →
+  `ticket.exists`; signed by `dk_sev1` with the phone as `actor.device` → `sig.invalid`; a phone certificate with
+  `["look"]` → `device.scope`; a re-ask changing only `why` → the earlier answer still counts.
+- Host-level refusals (steps 2–8 of 14.6: `convenience`, a foreign actor, an extra envelope field, two events, a
+  type outside the table, a key that is not the next one) are host tests in `tests/relay/` with R2, not F1 vectors.
+
+**14.8 What core must add (with R2).** `doc.head` in `ticket.get` and `next_key` in `workspace.show` (Q14.1);
+`relay/submit.py` with the table of 14.6; the oracle function and file of 14.7; F1 §5.1's `id` row amended (Q14.8);
+the §0.6 code of Q14.5 if it is new. These views gain fields before the first phone release (§0.4: after a release an
+exact-field parser needs a new op version).
+
+**14.9 Open questions, with recommended answers.**
+1. **Where the phone gets `id`, `uid`, `based_on` and the key.** Today `workspace.show` gives `members_v` and
+   `ticket.get` gives `uid`, `qid`, `hash`, `text`, `options`, but no read gives an event head or the next key, and
+   column R has no `human.prepare`. (a) The phone makes `id` and `uid`; `ticket.get` gains `doc.head`
+   (`{"seq", "head"}` of the log's last event) and `workspace.show` gains `next_key`. (b) A new side-effect-free read
+   `relay.draft {type, ref?}` returns the envelope fields the host would prepare. *Recommended: (a).* The phone reads
+   `ticket.get` for its review anyway; no extra round trip, seq or quota charge; nothing stored on the host.
+2. **Which `auth` values `relay.submit` accepts.** *Recommended: exactly `secure-enclave-unlocked` in R2,* as a closed
+   set extended by decision (an Android `tpm` client later). `convenience` stays refused (11A.6).
+3. **The scope for `ticket.created`.** host-api v0 chose `operate`; F1 needs only `decide` (`OPERATE` in
+   `model/authz.py` is administration). *Recommended: `decide`,* F1 parity with the CLI.
+4. **Automatic re-sign after an envelope-only refusal** (`members.stale`, `event.bad_base`, `ticket.exists`).
+   *Recommended: allowed without a new review* only after a **definite** refusal (a sealed host answer, or
+   `outcome.get` = `failed`), with the reviewed value unchanged, a new `id` (and for a ticket a new `uid` and the new
+   key), a new idem, at most 2 times per review. Never after an unknown outcome. Shown as "The workspace changed;
+   sent again". A changed key is not part of the review (a host attestation, §0.8.1).
+5. **A `key` other than the next one.** The model accepts any free key of the prefix, so a phone could jump the
+   counter (`DEMO-9999`). *Recommended:* the host refuses at step 8 with a new code `ticket.key_not_next` (exit 3, not
+   retryable, `next_key` in the answer), which the phone handles like `ticket.exists`.
+6. **Description, labels or epic on a new ticket.** *Recommended: not in R2.* `ticket.created` only, as a person's
+   `new` (H5a item 3). A later table entry for `ticket.updated` (summary, with `base_rev` and section hashes).
+7. **Protocol §13 `decision` for phones.** *Recommended:* phones answer with F1 `question.answered` over
+   `relay.submit`; §13 stays unserved by core (11A.12), and orch-29 marks it so in protocol v2.
+8. **F1 §5.1 `id`** says "in P2 the host prepares it; the signer never chooses it". With Q14.1 (a): *recommended
+   amendment:* "on the person path the host prepares it; on `relay.submit` the signing device makes it (CSPRNG, 80
+   random bits)". The submission journal holds the ids from admission, so outcome planning is unchanged.
+9. **Software keys.** *Recommended:* Simulator and Demo builds never send `secure-enclave-unlocked` events to a real
+   host (Demo is a separate realm, orch-mobile P3). A device key that does not hold the custody its `auth` names is
+   `file`-tier and never signs person events (F1 §5.3).
+
 ## 12. Phase 2: the addons on the host side (#307, #308)
 
 Status: decided 12 Oct 2026 by orch-52 (draft by stream A, Codex challenge, Opus tie-break adopted in full, the

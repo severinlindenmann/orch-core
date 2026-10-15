@@ -103,10 +103,18 @@ def _parser() -> argparse.ArgumentParser:
     relay = sub.add_parser(
         "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
     )
-    relay.add_argument("action", choices=("stop", "start"))
+    relay.add_argument("action", choices=("stop", "start", "unlink"))
     relay.add_argument("--workspace", required=True, help="workspace id or prefix")
     relay.add_argument("--state", type=Path)
     relay.add_argument("--run", type=Path)
+    rdr = sub.add_parser(
+        "readers",
+        help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "
+        "operator step after a known state restore",
+    )
+    rdr.add_argument("action", choices=("reset",))
+    rdr.add_argument("--workspace", required=True, help="workspace id or prefix")
+    rdr.add_argument("--state", type=Path)
     out = sub.add_parser("outcome")
     out.add_argument("idem")
     out.add_argument("--state", type=Path)
@@ -210,6 +218,8 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return _convenience(args, env, out)
         if args.cmd == "relay":
             return _relay(args, env, out)
+        if args.cmd == "readers":
+            return _readers(args, env, out)
         if args.cmd == "enable":
             doc = enable(_state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev)
             out.write(json.dumps(doc, sort_keys=True) + "\n")
@@ -611,6 +621,39 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     return 0
 
 
+def _readers(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
+    """``orch host readers reset --workspace W`` (H12d-3, §0.8.6 item 9.10 "A known state restore"): drop every reader
+    record of the workspace. Fail closed: every device then counts as level 0 (convenience signing is refused while
+    another reader is below level 1, phones get ``declaration_unknown`` and re-declare on their own, cores re-declare
+    with ``orch keys reader declare``). A person's decision, never an agent's (``human_only`` under ``ORCH_GRANT``);
+    it works with the host up or down (removing a record only lowers a level)."""
+    from orch.custody.cli import write_error
+    from orch.store.readerrecs import reset_records
+
+    from .custody import read_json
+    from .registry import registry_path
+
+    state = _state(args.state, env)
+    uid = os.getuid()
+    if env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", "an agent never resets reader records")
+    try:
+        reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    except HostError as exc:
+        return write_error(out, False, exc.code, exc.message)
+    match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
+    if len(match) != 1:
+        return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
+    wid = match[0]["workspace_id"]
+    try:
+        dropped = reset_records(state, wid)
+    except OSError as exc:
+        return write_error(out, False, "custody.unsafe_mode", f"the reader records could not be removed ({exc})")
+    data = {"workspace_id": wid, "dropped": ["d_" + d for d in dropped]}
+    out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+    return 0
+
+
 def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
     """``orch host relay stop|start --workspace W`` (orch-v2-host §11A.4, H12a). ``stop`` writes the persistent stop
     marker itself first (it works with the host down: the operator procedure after a state restore is to keep the
@@ -625,8 +668,8 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
 
     state = _state(args.state, env)
     uid = os.getuid()
-    if args.action == "start" and env.get("ORCH_GRANT"):
-        return write_error(out, False, "human_only", "an agent never restarts the relay worker")
+    if args.action in ("start", "unlink") and env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", f"an agent never runs orch host relay {args.action}")
     try:
         reg = read_json(registry_path(state), uid) or {"workspaces": []}
     except HostError as exc:
@@ -640,7 +683,7 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
             relaylink.mark_stopped(state, wid, uid)
     except HostError as exc:
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
-    op = "host.relay_stop" if args.action == "stop" else "host.relay_start"
+    op = {"stop": "host.relay_stop", "start": "host.relay_start", "unlink": "host.relay_unlink"}[args.action]
     res: dict[str, Any] | None = None
     absent = False  # the host is confirmed not running: no socket, or nobody accepts on it
     try:
@@ -655,11 +698,15 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
             message = (
                 f"host unreachable ({why}): the marker is set, a running worker may continue until the host restarts"
             )
+        elif args.action == "unlink":
+            message = f"host unreachable ({why}): nothing was unlinked"
         else:
             message = f"host unreachable ({why}): the stop was not cleared"
         error = {"code": "host.unavailable", "message": message, "retryable": True}
         out.write(json.dumps({"ok": False, "error": error, "exit": 9}, sort_keys=True) + "\n")
         return 9
+    if absent and args.action == "unlink":  # the rename needs the store lock: only through the host
+        return write_error(out, False, "host.unavailable", "unlink runs through the host: start it first")
     if absent:  # no host: the marker alone decides
         try:
             if args.action == "start":

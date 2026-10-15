@@ -226,7 +226,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
-| `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11) | workspace |
+| `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
 
 
@@ -455,8 +455,8 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1). **H12d-2:** `other_member` and `phone_device` count only readers below level 1 (item 9.9); `Error.detail` carries `{reason, devices}` (the readers below level 1); also the authoritative refusal of a convenience event at the append choke point, in host and direct mode (item 9.4). **H12c-e:** reason `pair_device`: `relay.pair_device` with `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit`, whatever the flag, the readers or any opt-in (11A.15.6); the hint names `orch keys custody passphrase --workspace W --in-place` | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
-| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device; a records push to an unmarked URL, D-P2-34) to a workspace whose history has `auth: "convenience"` events or whose durable `convenience_seen` mark is set (#441); the fix names the readers to update (§0.8.6 item 1); **H12d-2:** `member.add` refuses only a new reader below `required_reader` (reasons `no_declaration`, `reader_too_old`; a level-1 reader is admitted with convenience history and while the flag is on), at prepare, binding, submit and the append (item 9.4); `relay.link` (`relay_too_old`) and `relay.pair` keep item 1's rule until H12d-3; `Error.detail` `{reason, devices}`; **H12c-e:** `relay.pair_device` follows `member.add`'s rule with the phone's pair declaration (11A.15.6 step 9) | — |
-| `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2) | — |
+| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device; a records push to an unmarked URL, D-P2-34) to a workspace whose history has `auth: "convenience"` events or whose durable `convenience_seen` mark is set (#441); the fix names the readers to update (§0.8.6 item 1); **H12d-2:** `member.add` refuses only a new reader below `required_reader` (reasons `no_declaration`, `reader_too_old`; a level-1 reader is admitted with convenience history and while the flag is on), at prepare, binding, submit and the append (item 9.4); `Error.detail` `{reason, devices}`; **H12c-e:** `relay.pair_device` follows `member.add`'s rule with the phone's pair declaration (11A.15.6 step 9); **H12d-3:** `relay.link` refuses only a relay whose `GET /v2/relay-info` level is below `required_reader` (`relay_too_old`); `relay.pair` has no early refusal at the offer: the phone's pair declaration is gated when the host opens the pair request (`no_declaration`, `reader_too_old`; 11A.15.6 step 4) and in the allocation; a column-R request (all but `reader.declare`) whose `rd` is absent, not the device's current record or below `required_reader` while it is 1 (`no_declaration`, `declaration_unknown`, `reader_too_old`; the sealed refusal carries `reason`, and `required`/`declared` for `reader_too_old`, §0.8.6 item 9.5) | — |
+| `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e; H12d-3: the pair gate of 11A.15.6 step 4, `reader.declare` in column R, a `pk_pin` pair declaration whose pin does not name the certificate's person key, reason `who`): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2); a column-R refusal carries it as `reason` (H12d-3) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
@@ -470,6 +470,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
+| `relay.not_linked` | 3 | no | stays | `host.relay_unlink` on a workspace with no `relay/link.json` (R5, §11A.6; 11A.15.9 lists it for R6's ops too) | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
 | `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` (v1.9: on the `Error` only where the host knows the reason; a preview's `blocked.detail` always has it) | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
@@ -1263,10 +1264,14 @@ Errors: `outcome.unknown_idem` (also for another principal's record, F4).
 `host.status {}` →
 
 ```
-{version:str, tier:"A"|"B", uptime_s?:int, state?:"ok"|"degraded"|"unavailable", worker?:bool}
+{version:str, tier:"A"|"B", uptime_s?:int, state?:"ok"|"degraded"|"unavailable", worker?:bool, relay?:RelayStatus}
 ```
 
-Class N gets only `version` and `tier`.
+Class N gets only `version` and `tier`. `relay` (R5, §11A.4 "As built in R5") is present for classes P and G only when
+the workspace has a relay directory or a relay worker: `{link:"none"|"linking"|"linked"|"unreadable",
+worker:"running"|"starting"|"stopping"|"failed"|"stuck"|"off", alive:bool, reason:str|null, stopped:bool,
+gate:{r6_ready:bool, reason:str|null}, outbox_pending:int|null, alarms:[{code, count, first_ms, last_ms, detail}],
+gen?:int}`; never a secret, a token, a link or relay bytes.
 
 **Human ops** (`human.*`, §0.8.1), **job ops** (§0.8.2), **control ops** (§0.8.3): below.
 
@@ -2316,7 +2321,8 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
   (they understand `convenience`), with convenience history and while the flag is on, in host and direct mode, and
   relaxes `relay_paired`, `other_member` and `phone_device` to count only readers below level 1. **H12d-2 built**
   `member.add` with a declaration and the relaxed `other_member` and `phone_device` (item 9 "As built in H12d-2");
-  `relay_paired`, relay links and pairings hold as written until H12d-3.
+  **H12d-3 built** the relaxed `relay_paired`, relay links and pairings and serving bound to `rd` (item 9 "As built
+  in H12d-3").
 
 **2. The `convenience` custody backend** (`orch.custody.convenience`, next to `passphrase` and `secure-enclave`; never
 imported by `orch.custody`'s package init, the host or the dashboard's HTTP process).
@@ -2809,6 +2815,81 @@ leaves room, the strictest reading unless said otherwise:
 - **Not in H12d-2:** the pair-meta `reader_decl` and the gate in the R6 allocation, `rd` in column R, relay-info,
   `relay_reader_old`, `readers reset` (H12d-3; hooks: `readerrecs.relay_level`, the `pair` source, the `pk_pin`
   check), the `needs` item "re-declare readers".
+
+**As built in H12d-3** (the relay part; core, with R6; Opus, orch-52). The strictest reading where the text leaves
+room; JUDGEMENT CALLS marked:
+- **The step-4 gate** (11A.15.6 step 4, 9.4 narrowed by C7): `orch.identity.pairdevice.pair_gate(meta, *,
+  workspace_id, offer_id, who, required, now_ms) -> PairGate` (pure; `orch.relay` may import it) and the host hook
+  **`orch.host.convenience.pair_gate(service, meta, *, offer_id, who)`** that R6c (orch-29) calls when it opens a
+  pair request: after step 3 (`check_pair_meta`, the meta signature, ±300 s, a presented cert), before the offer is
+  consumed, the SAS shown or the primary asked. `who` is `{"pk_pin": <link pin>}` (7b) or `{"person_id": <presented
+  cert's person, bare hex>}` (7a). `verify_decl` with `via:"pair"` only, this offer and `attempt`, the meta's two keys,
+  the `view` surface; freshness: no past window, `created_ms` at most 300 s ahead of the host clock; then the level
+  against `required_reader` (flag, mark, merged history), absent = 0. It returns `PairGate {decl, decl_who, reader,
+  level, digest}`: R6 stores `decl` and `decl_who` verbatim with the offer at step 5 (the first stored declaration
+  wins on a resend; a resend of a consumed offer never runs the gate again) and passes them as
+  `PairDeviceFacts(decl=, decl_who=)` at step 9. Refusals: `HostError` `sign.convenience_readers` (`no_declaration`,
+  `reader_too_old`; `detail.devices` the phone; the hint is the 9.15 Q4 screen text) or `reader.decl_invalid`; R6
+  answers the short `rejected` and moves the offer to `rejected`.
+- **`who` at the allocation** (9.3): `recheck_readers` (prepare, binding, submit, the append) admits a pair
+  declaration only with `who` `{person_id: the certificate's person}` or `{pk_pin: the pin of that person's key}`
+  (`State.person_key`), else `reader.decl_invalid` reason `who` (#555 review F3; `pair_entry` refuses a `person_id` of
+  another person up front). Records keep the H12d-2 read rule (a `pk_pin` record counts
+  only under the pin of the device's person key).
+- **The relay's level** (9.8): `orch.relay.session.fetch_relay_info(conn)` reads `GET /v2/relay-info` (exact `{v:1,
+  reader, max_publication_bytes?}`; 404 = 0; anything else malformed is `RelayMisbehaving`, never a level). R5 reads it
+  at link step 1 and passes it to the reservation: `store.relay_link(link, guard=lambda:
+  relaylink.link_reservation(service, relay_level=info.reader))`. The guard refuses a relay below
+  `required_reader` (`relay_too_old`) and, while no `link.json` exists, stores the level in
+  `hosts/<ws>/relay/reader.json` (`{v:1, reader, at_ms}`, 0600; `None` clears a stale one) inside the same critical
+  section, so a refused relink never changes the existing link's level. **JUDGEMENT CALL:** a file next to
+  `link.json`, not a field in it (the store's only rewrite of `link.json` is `linking`→`linked`); it survives an unlink
+  (an unlinked relay counts with its last level) and a relink overwrites it (the former relay held no convenience
+  event while it was below level 1, and gets nothing more). `Session(…, relay_info=hook)`: every successful R1 login
+  reads relay-info again (on the session's own connection, outside the store lock) and calls the hook;
+  **`relaylink.observe_relay_level(state_dir, ws, host_uid, level, alarm, origin=<the session's link origin>)`** is that
+  hook for R5: under the host-wide `relay-link.lock` it stores the level only while `link.json` is still that link (a
+  stale login of a former relay after a relink writes nothing; #555 review F2) and alarms **`relay_reader_old`** when it
+  is below `required_reader` (flag or mark; no history scan, no store lock). A failed read at login, or a hook that
+  raises (#555 review F5), keeps the last level and never fails the login. `readerrecs.relay_level` reads
+  the stored level (0 when linked and unread or unsafe, `None` without a relay), so `relay_paired` and invariant I
+  count only a relay below level 1. **`orch.ops.readers.restore_held(relay_level, evidence)`** is R3's hold predicate (a
+  restore whose evidence carries a convenience event, relay below 1; the alarm is `relay_reader_old`); R3 wires it.
+- **`relay.pair`** has no early refusal at the offer (11A.15.6 step 1): the offer carries no declaration; the gate is
+  step 4 and, authoritatively, the allocation (`relay.pair_device`).
+- **`rd` in column R** (9.5): `Call._authorize_relay` calls `readerops.check_rd` for every column-R op but
+  `reader.declare`, inside the op's own job. While `required_reader` is 1 (flag or mark, else the merged history,
+  scanned once per store revision: **JUDGEMENT CALL**, the scan reads every log, and a find sets the mark; the key is
+  `Store.revision()`, the log heads and the ticket files' stat signatures, since `Store.state` is a new object at every
+  read: #555 review F1), `rd` must be
+  the `digest` of the device's current record, which must verify for the device now and be at the required level;
+  else `sign.convenience_readers` `no_declaration` (no `rd`), `declaration_unknown`, `reader_too_old` (`detail`
+  `{reason, devices, required, declared}`; the socket's closed `detail` drops the last two). A replay or byte-exact
+  resend is answered from its rid record by the bridge and never reaches the check (11A.4).
+- **`reader.declare` in column R** (9.11, the phone's own device only): `columns.RELAY_OPS` and `DEVICE_SIGNED_OPS`
+  (kind `device_signed` in R; `person_write` on a socket stays). `framing.OPS["reader.declare"]` (backend
+  `reader.declare`, framing kind `read`: **JUDGEMENT CALL**, no idem, since the record is idempotent on the
+  declaration's digest and latest wins; a crash re-issues it; scope `look`). The declaration's device and person must
+  be the request's verified identity (`op.not_allowed` otherwise), `via:"declare"` (±300 s), the `view` surface, no
+  outcome record; it answers `{device, reader, level, digest}`.
+- **The sealed refusal** carries `reason` for `sign.convenience_readers` and `reader.decl_invalid`, and `required` and
+  `declared` with `reader_too_old` (`framing.REASONS`, `refusal_meta`; the bridge's `_refusal_fields` re-checks each
+  value). Both codes are class D in `framing.RETRY` (the `RETRY_NOTES` say: `declaration_unknown` → `reader.declare`,
+  then resend under a new rid with the new `rd`). The R2 framing vectors gain `reader_declare`,
+  `rd_declaration_unknown` and `rd_reader_too_old` (regenerated: signatures and salts are random, the checks are
+  semantic).
+- **`orch host readers reset --workspace W`** (9.10): removes every record file (`<32 hex>.json`) of the workspace;
+  `human_only` under `ORCH_GRANT`; a linked or unreadable `readers/` directory is refused (`custody.unsafe_mode`, #555
+  review F4); it works with the host up or down
+  (removing a record only lowers a level). Answers `{ok, data:{workspace_id, dropped:[device]}}`.
+- **#514:** N2 done (`reader.list` uses the error-catching level wrapper). N1 (bind a record to the adding event) is
+  left open: F1 has no same-id re-add, so the remaining case is a `restore` that revives a device, whose add event is
+  the same; it needs the model to expose the adding event and is not needed for H12d-3.
+- **Not in H12d-3:** R5's wiring (calling `fetch_relay_info` at link step 1, the `relay_info` hook, the alarm sink),
+  R3's hold, R6c's pairing flow (it calls `pair_gate`), the `needs` item "re-declare readers".
+- Tests: `tests/relay/test_relay_info.py`, `tests/host/test_relay_readers.py`, `tests/identity/test_pair_gate.py`
+  (incl. the relay corpus `reader_decl.pair_meta` gates), `tests/relay/test_relay_rd.py`,
+  `tests/host/test_pair_device.py` (the `pk_pin` refusal), `tests/relay/test_r2_vectors.py`.
 
 **9.0 What this can and cannot do.**
 - **A malicious reader can always lie.** It can hard-code any answer and misparse anyway. A person's compromised device
@@ -4021,6 +4102,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     dashboard's closed tables); `op.unsupported` when no relay pairing is registered. The click signer refuses the op
     (`terminal_only`). No F1, hash or schema change; the `device.added` review keeps its frozen `derived`.
 
+53. **Reader gate on the relay (H12d-3, §0.8.6 item 9 "As built in H12d-3"; the number may be renumbered when a
+    parallel change lands first):** `relay.link` and `relay.pair` on the relaxed rule (a relay of `GET /v2/relay-info`
+    level 1 is linked with convenience history and while the flag is on; `relay_too_old` below it; no early refusal at
+    a pair offer); the relay's level is stored with the link and read again at every R1 login (alarm
+    `relay_reader_old`); `relay_paired` counts only a relay below level 1; the step-4 pair gate
+    (`orch.host.convenience.pair_gate`); column R is served only against `rd` while `required_reader` is 1
+    (`sign.convenience_readers` `no_declaration`, `declaration_unknown`, `reader_too_old`); `reader.declare` in
+    column R (the device's own, no idem); the sealed refusal gains `reason` (and `required`/`declared`) for
+    `sign.convenience_readers` and `reader.decl_invalid`; `orch host readers reset --workspace W`. No new code, no F1,
+    hash or socket schema change; the R2 framing table gains `reader.declare`.
 ---
 
 ## 1. Process model
@@ -5038,7 +5129,7 @@ corpus is vendored under `tests/relay/vectors/` (11A.10).
 | `relay/publish.py` | R3: the publisher thread, staging, catch-up planning, final `PUT checkpoint`, publication history |
 | `relay/unpublished.py` | R4: the P3-D31 consumer (on the aux thread) |
 | `relay/state.py` | the files of 11A.3. As built in R1: a stdlib private directory (0700, files 0600, `O_NOFOLLOW` against a directory fd, temp + fsync + rename + directory fsync), the last-signed ledger and the write-once first-link files; `orch.host` is import-banned in `orch.relay`, so R5 may swap it for the host custody helpers behind the same interfaces |
-| `relay/worker.py` | R5: `RelayWorker`, started and stopped by `WorkspaceService` |
+| `relay/worker.py` | R5: `RelayWorker`, started and stopped by `WorkspaceService`. As built (15 Oct 2026): the worker, the `Publisher`/`Unpublished`/`LinkSource` seams and the R6 gate `R6_READY`; the host side is `host/relayhook.py` (11A.4 "As built in R5") |
 | `relay/r6/` | R6 (11A.15): `keys.py` (WK, WXK, CK custody, `EpochKeySource`), `members.py` (membership publication, `R6View`), `pair.py` (`R6Pairing`, the offer state machine), `card.py` (WXK rotation, card keys) |
 
 Groups (each one PR into `develop`, first commit its failing vector or test, merged on green CI):
@@ -5345,8 +5436,8 @@ clock is past the backup's time + 1 500 s (600 s before §11A.14 added the 900 s
 (J), each the fail-closed reading.
 - `host/relayid.py`: `RelayIdentity(workspace_id, device_id, person_id, cert_digest, epoch, list_hash, rd=None)`,
   shape-checked at construction (ids, `sha256:` digests, `epoch` a non-negative int); `.principal` is `r:<device_id>`,
-  `.peer()` the relay `Peer`. `rd` is the H12d hook (§0.8.6 item 9) and is unused in v1.7: its presence qualifies
-  nothing.
+  `.peer()` the relay `Peer`. `rd` is the H12d hook (§0.8.6 item 9): its presence alone qualifies nothing;
+  since H12d-3 `readerops.check_rd` compares it with the device's current reader record (§0.8.6 item 9.5).
 - `host/peer.py`: `Peer.kind "relay"` requires `uid == -1` and a person; every other kind requires a kernel UID ≥ 0.
 - `host/columns.py`: `resolve()` raises for any peer class but person, agent, worker and control; `resolve_relay(ok)`
   takes only a real bool and gives R (viewer `person`) or an N row whose new field `Column.error` refuses **every**
@@ -5426,6 +5517,278 @@ clock is past the backup's time + 1 500 s (600 s before §11A.14 added the 900 s
   `append_relay(service, log, events, extras, person_id=…, device_id=…)`; R1 links only through
   `service.store.relay_link(link, guard=lambda: relaylink.link_reservation(service))` and marks it linked only
   through `store.relay_mark_linked(expect)`.
+
+**As built in R5** (15 Oct 2026; the integration hook. Dormant: the R6 gate below keeps every worker from starting
+until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
+
+- **Code.** `relay/worker.py` (`RelayWorker`, the seams `Publisher`, `Unpublished`, `LinkSource` with their refusing
+  defaults `NoPublisher`, `NoLinkSource`, the alarms book `Alarms`, the gate `R6_READY`), `host/relayhook.py` (the
+  starter, `Seams`/`SEAMS`, the per-process slots, `reserve_link`, `convenience_block`, `status`, `unlink_job`),
+  and in the host: `WorkspaceService` (the open hook `_relay_open`, `_relay_try_start` shared with `relay_start`,
+  `_relay_audit`/`_relay_halt`, `relay_unlink`, `relay_reason`), `relaylink.start_blocker` (`may_start` is now
+  `start_blocker(...) is None`), `Host.serve` sets `service.relay_starter = relayhook.make_starter(backend)` before the
+  open, `host.status.relay` (§0.8), the control op `host.relay_unlink` with `orch host relay unlink --workspace W`,
+  the host code `relay.not_linked` (§0.6), and the relay part of `orch host status`/`doctor`. Two small R2 additions:
+  `BridgeLoop.aux_steps` (R4's seam: `(name, fn)` steps run on the aux thread, guarded like the built-in ones) and
+  `BridgeLoop.threads()`.
+- **The hook.** `open` registers `relayentry.register(service)` (the `relay_fields` hook) right after
+  `human.recover` and **before** `outcomes.reconcile_all()`, once per open, and never runs `relay.submit.recover`
+  (J9: the bridge does at worker start). It ends, on the worker thread, with `_relay_open`: when `link.json` exists,
+  under `relay_cond`, `_relay_try_start` checks `closing`, a running, stopping or stuck worker, the workspace state,
+  then `relaylink.start_blocker` (`stopped`, `not_linked`, `link_unsafe`, then the R6 gate), then calls
+  `relay_starter(service)`. (J) A starter that raises never fails the open or the control op: no worker, and
+  `relay_reason = "start_failed: <code>"`. `orch host relay start` runs the same `_relay_try_start` after it clears
+  the marker; its answer carries `reason` when nothing started.
+- **The starter** (`relayhook.start_worker`, under `relay_lock`, never waiting for the worker thread): the gate again,
+  a per-process slot, ONE `StateDir` on `realpath(<trusted state dir>)/hosts/<ws>/relay` (J: the trusted root resolved
+  once, the components below appended unresolved, so a symlinked `relay/` is still refused, 11A.3 R6-4), `link.json`
+  read through it, the WSK as `BackendSigner(FileBackend(hosts/<ws>/keys), "wsk")` inside `RelaySigner` (with
+  `FileSignLedger`; `last_card_seq` = `link.card_seq` when `linked`, else 0), R6's `(EpochKeySource, R6View)`, ONE
+  `Session` (`FileHolderStore`, the worker's stop event), the `RidStore`, `Bridge(port=RelayEntry(service, backend),
+  job=worker.job)` and `BridgeLoop`; then `service.relay = worker` and only then `worker.start()` (round 2, review R1).
+  Any failure clears `service.relay`, closes what it opened and releases the slot.
+- **The worker.** `start()` checks the gate and spawns `orch-relay-start-<id8>`, which (1) runs the convenience check
+  as a worker job (`convenience_block`: `refuse_reader_op(service, "relay.link", history=True)` under the store lock;
+  a hit is the alarm `convenience_events_present` and the worker stops, nothing sent), (2) while `link.json` is
+  `linking`, runs R1's `first_link` with the host's `LinkSteps` (`card`/`genesis` from `LinkSource`, `publish` =
+  `publisher.publish_first`, `mark_linked` = a worker job `store.relay_mark_linked(expect)`, `expect` the exact record
+  the worker started for), (3) starts the loop (threads `orch-relay-{poll,resp,job0,job1,aux}-<id8>`) and the
+  publisher. `stop()` never blocks: `submit` refuses from then on (`WorkerStopped`), the stop event wakes every wait,
+  the loop shuts its connections down. `join(timeout) -> bool` shares one deadline over the start thread, the loop
+  (joined twice, see the inconsistencies) and the publisher; once every thread ended it logs out (best effort),
+  closes the rid store and the `StateDir` (the lock is free for the next worker) and releases the slot, once. A
+  stuck worker keeps all of them (fail closed). `close()` and `relay_stop()` keep H12a's bounded 120 s wait.
+- **Foreign appends (11A.6).** `_build_journal(audit=True)` (a refresh that loaded events this host did not append)
+  calls `_relay_audit`: with a worker running, `convenience_block` again; a hit (or a check that raises) halts it:
+  taken out under `relay_cond`, alarmed, `stop()` at once on the worker thread (no store job is queued from then on),
+  the bounded join on `orch-relay-halt-<id8>` (the relay threads may be waiting for this very worker thread). (J) Not
+  persisted: the next start checks again and refuses again while the history holds the event.
+- **Lock order** (one line for the whole bridge): `relay_lock` → the workspace store lock → the guard's host-wide
+  `relay-link.lock` → R6's seal lock → the `RidStore` lock. `unlink_job` holds `relay_cond` then the store lock on the
+  worker thread; nothing takes `relay_cond` while holding the store lock (`_relay_audit` runs after the journal's
+  locked check), and nothing holding `relay_cond` waits for the worker thread. The reservation's order is pinned by
+  `test_reserve_link_takes_the_store_lock_first_then_the_host_wide_lock`.
+- **The 8-per-host cap.** At link (H12a, `link_reservation`) and again at start: `relayhook._take_slot` holds one of
+  `MAX_LINKED` slots per state directory and process until every thread of that worker ended; the same workspace
+  twice is `lock.busy`, a ninth `host.limit`.
+- **The reader reservation.** `relayhook.reserve_link(service, origin=, max_publication_bytes=, ca_file=, proxy=)` (a
+  worker job) is 11A.5 step 1: `store.relay_link({v:1, workspace_id, origin, max_publication_bytes, linked_at,
+  card_seq: 1, …}, guard=lambda: relaylink.link_reservation(service))`. (J) `linked_at` is stamped at the reservation
+  (the store's `relay_mark_linked` only flips the state). (J) **Not exposed as a control op or CLI yet:** `link.json`
+  is a permanent reservation (11A.6), and until R6a's card keys and the genesis-pin person path exist the link can
+  never complete; an operator would burn the workspace's convenience signing for nothing. `orch host relay link`
+  lands with R6e's dev path (11A.15.11).
+- **Unlink.** `host.relay_unlink {workspace_id}` (no idem; `orch host relay unlink --workspace W`, human only, host
+  required): stop the worker (refused `lock.busy` while its threads live, nothing renamed), then one worker job holding
+  `relay_cond` and the store lock renames `link.json` to `unlinked-<linked_at>.json` with `os.link` + `unlink`, never
+  over an existing file (`-<n>` suffix); `relay.not_linked` without a link. The marker is left alone; a relink through
+  `reserve_link` is allowed.
+- **`host.status.relay`** (§0.8) and **`orch host status`/`doctor`**: the link, the worker (`failed` for a loop that
+  stopped itself: fenced or a lost session; (J) it stays in `service.relay` until `orch host relay stop` then `start`,
+  never restarted automatically), why none runs, the marker, the gate, the queued outbox entries, the alarms (the
+  worker's book; `alarms.json` once it stopped). `orch host status` lists a linked workspace whose worker cannot start
+  for another reason than the operator's stop as a problem. (J) Both are omitted for a workspace that never had a
+  relay directory, so the §0.8 shape of an unlinked workspace is unchanged.
+- **The alarms book** (`alarms.json`, 11A.3): per code a count, first/last time and the last detail (clipped to 200
+  characters; callers pass classes and routes only), at most 64 codes then one `relay_alarm_codes_exhausted`; written
+  through the `StateDir` when a code first appears and at the end, kept in memory if the write fails.
+- **Fork and exec.** The worker records its pid: in a forked child `submit` and `start` refuse, `stop` does nothing
+  and `join` releases nothing (no logout with the parent's token, no close of the parent's database or lock). The pid
+  is checked before the worker's lock: a lock another parent thread held at the fork stays locked in the child (the
+  mutation pass found the fork test hanging in 2 of 35 runs on exactly that; fixed and tested by forking while a
+  thread holds the lock). Exec: the `StateDir` lock fd is close-on-exec (R1) and Python sockets are not inheritable.
+
+**The R6 gate.** `orch.relay.worker.R6_READY = False`, checked by `relaylink.start_blocker` (so `may_start` is false and
+`host.status.relay` names `R6_GATE_REASON`), by `relayhook.start_worker` and by `RelayWorker.start` before any thread.
+An AST test pins it as the one module-level literal `False` that nothing under `orch/` assigns or names (honest limit:
+same-process code can still set the attribute; tests open it with `monkeypatch`). **Flipping it requires**, in this
+order: (1) R6 merged: the real `EpochKeySource` (`seal_snapshot`, `refusal_key`, the seal lock and `R6Gate.raise_for`
+in the store's critical sections), the real `R6View` (the committed list re-verified at load) and `R6Pairing` for
+`pair` items; (2) `relayhook.SEAMS.r6` set to R6's builder, `SEAMS.link_source` to R6a's card keys and the
+genesis-pin person path, `SEAMS.publisher` to R3 (else the first link stops at `publish` and never reaches `linked`)
+and `SEAMS.unpublished` to R4; (3) R6's integration tests against the real relay pass in the `relay-t2` job,
+including an R5 T2 test: a served workspace linked through the hook with the test owner client
+(`tests/relay/owner.py`, 11A.15.11, 11A.15.14 step 4), a paired device, a column-R read and a write through the
+worker; (4) the Opus security review and orch-52's review of R5 and of the R6 groups; (5) the flip is its own PR that
+changes only the literal and the pinning test.
+
+**The seams** (set on `orch.host.relayhook.SEAMS`; each `None` until its group lands):
+
+| Seam | Signature | Contract |
+|---|---|---|
+| R3 | `publisher(service, worker) -> Publisher`: `start()`, `stop()`, `join(timeout) -> bool`, `publish_first(session, directory)` | thread `orch-relay-pub-<id8>`; the store only through `worker.job`; `publish_first` is `LinkSteps.publish` of the first link (the default refuses, so no link reaches `linked` without R3) |
+| R4 | `unpublished(service, worker) -> Unpublished`: `step()` | appended to `BridgeLoop.aux_steps` before the loop starts; one bounded step per aux turn (10 s per relay call), holding evidence only through `worker.job` |
+| R6 | `r6(service) -> (EpochKeySource, R6View)` | 11A.15.2; R6's own threads (`r6m`, `r6p`) are started by R6 beside these and must follow the worker contract |
+| R6a, person path | `link_source(service) -> LinkSource`: `card()`, `genesis() -> (pin, cert, genesis_hash)`, `owner_pk_pub()` | 11A.5 steps 2 and 3; the default refuses before anything is sent |
+
+With the gate open a worker starts only when **all four** seams are set, and each object they build must conform
+(`worker.check_seam`: the protocol's methods; R6's objects: `current_epoch`, `wk`, `seal_state`, `refusal_key`,
+`member_list`), else `SeamMissing` and nothing starts (round 2, review Low 1). `Seams` is frozen; a group lands by
+replacing `SEAMS` with `dataclasses.replace`. **No factory and no `Publisher.start` may wait for a job of the
+workspace's worker thread** (the starter runs them under `relay_lock`, on the open path on the worker thread itself);
+`Publisher.start` is called outside the worker's lock, so a publisher thread may submit jobs once running. The
+transport is not a seam: production always uses `RelayConn` with `link.json`'s `ca_file`/`proxy`; only a test passes
+`make_starter(…, transport=)` (an AST rule refuses any other value in `src/`).
+
+**Round 2 (15 Oct 2026, Opus review of #532: PASS WITH REQUIRED CHANGES).**
+- **R1 (fixed).** On the `orch host relay start` path the starter set `service.relay` after `worker.start()`, and
+  `_relay_audit` read it without the lock: a foreign convenience event loaded between the start thread's precheck
+  and that assignment was never audited, and the worker served with it in the history. Now `service.relay` is set
+  before the start thread exists, `_relay_audit` reads it under `relay_cond` (it waits for a starter, which never waits
+  for the worker thread), and the start thread runs the check again after a first link, right before the loop. The
+  reviewer's repro is `test_a_foreign_convenience_event_between_the_precheck_and_service_relay_is_caught`.
+- **R2 (tests).** The agent refusal and the host-required paths of `orch host relay unlink`, the audit failing closed
+  (a check that raises, and a failed journal build), the WorkerStop re-raise, `join` waiting for the start thread and
+  the publisher, the halt's join off the worker thread, the convenience check holding the store lock, the `link.json`
+  workspace and origin checks at start, a partial worker cleared after a failed start, the open beside a stop in
+  progress, unlink while closing or beside a stuck worker, the `max_publication_bytes` bound, `host.status` surviving
+  a relay status error, the stored alarms' bound and whitelist.
+- **Lows (fixed).** One gate check, `worker.r6_ready()` (`R6_READY is True`), at all three places (an AST rule refuses
+  any other read); the seam rules above; `Publisher.start` outside the worker's lock; no logout under `relay_cond`:
+  the service's stuck check calls `RelayWorker.alive()` (no join, no I/O), and a `join` that runs out starts a reaper
+  thread `orch-relay-reap-<id8>` that waits for the rest and then releases the directory, the rid store and the slot
+  (logging out first); an unlink whose rename is still queued after 60 s answers `lock.busy` `unlink_pending` (it
+  still runs) instead of `internal`; alarm codes and details lose control characters (also when read back from
+  `alarms.json`). Left as noted by the reviewer: `host.relay_unlink`, like H12a's `relay_start`, is open to any
+  control-socket client of the host UID (the agent refusal is the CLI's); eight stuck workers that outlive `close()`
+  keep their slots until the process restarts (fail closed); a first link in flight at `stop()` runs to its per-call
+  deadlines (the session's own transport is not in the loop's connections), bounded by the 120 s join.
+- **Mutation pass, round 2:** 26 new mutants aimed at the round-2 tests (R1 reverted, a partial worker kept, the audit
+  failing open or skipped after a failed build, the halt joining on the worker thread, the convenience check without
+  the store lock, the `link.json` workspace and origin checks, the seam checks, `Publisher.start` under the lock, `join`
+  ignoring the start thread or the publisher, no reaper, `alive` too early, a truthy gate, WorkerStop swallowed, no
+  re-check after the first link, the CLI unlink refusals, the unlink timeout, alarm text, the stored-alarm and
+  `max_publication_bytes` bounds, `host.status` failing on a relay error): **26 killed**. The pass also found a race,
+  now fixed: the reaper and a later `join` could both report the worker ended while one was still releasing
+  (`_finish` is serialised by its own lock and sets `_ended` last).
+
+**Round 3 (15 Oct 2026, Opus delta of #532: PASS WITH REQUIRED CHANGES).**
+- **D-1 (fixed): the unlink is durable.** `relay_unlink` now writes `relay/unlink-intent.json` (0600) and the stop
+  marker, both under `relay_cond`, before it touches the worker; the rename job clears the intent after the rename
+  and sets `relay_reason = "not_linked"`. While the intent exists `start_blocker` answers `unlink_pending` (first,
+  before the marker), `relay start` is refused (`lock.busy`), and the open hook finishes the unlink instead of
+  starting anything (an intent whose link is already renamed is only cleared: crash between the rename and the clear).
+  (J) The marker stays after an unlink, so a relink needs an explicit `orch host relay start`.
+- **D-2 (tests):** `join` never answers true before the release and releases once (a concurrent stress with a slow
+  logout; `alive()` stays true during the release), the re-stop after a stop during `publisher.start`, a truthy
+  non-`True` gate at `RelayWorker.start` and `start_worker` (and the AST rule now allows `R6_READY` in `worker.py` only
+  in the literal and `r6_ready()`), an ended stuck worker forgotten, the reaper releasing only once everything ended.
+- **Lows (fixed):** the reaper pauses between rounds (`REAP_PAUSE_S`, 1 s; `REAP_JOIN_S`, 60 s; instance attributes a
+  test can shorten); `_conform` (host side) requires every protocol member to be callable (`worker.SEAM_METHODS`),
+  `_check_r6` likewise; a release that raises is alarmed `relay_release_failed` and still runs `on_ended` and ends the
+  worker (`finally`); `relay_lock` is re-entrant, so a seam factory that reaches the foreign-append audit on the open
+  path re-enters instead of wedging the worker thread (test); stored alarms are sanitised and clipped on read-back.
+- **Mutation pass, round 3:** 19 new mutants (no intent, no marker, the intent ignored by `start_blocker`, `relay start`
+  or the open, the intent never cleared, a crash after the rename not finished, the reason kept, `_ended` early,
+  `_finish` unlocked, no re-stop, a truthy gate in `start`, an ended stuck worker kept, the reaper spinning or
+  releasing after one round, non-callable members, a raising release, a plain `relay_lock`, stored alarms unsanitised):
+  **19 killed** (one survivor, the missing intent, was killed by an added assertion).
+
+**Round 4 (15 Oct 2026, orch-52's Codex review of `ac8eb8a8`: CHANGES).**
+- **P1 (fixed):** `unlink_job` fsyncs the relay directory after the archive (`os.link`) and before it removes
+  `link.json`, then again after. A recovery after a crash between the two finds the archive is the same file (same
+  `st_dev`/`st_ino`) and reuses it, so there is never a second archive.
+- **P2 (fixed):** whenever an unlink intent is on disk, `unlink_job` persists the stop marker under `relay_cond` before
+  either completion branch, so a crash between the intent and the marker cannot let a later relink start without
+  `orch host relay start`.
+- **Accepted residual, stated:** `host.relay_unlink` (like H12a's `host.relay_stop`/`host.relay_start`) is open to
+  every control-socket client of the host UID. That is tier-A trust (the control socket admits only the host UID;
+  a same-UID tier-A agent can reach it), not person authorization; the `ORCH_GRANT` refusal of `orch host relay
+  unlink` is the CLI's. Unlink only reduces exposure and keeps the reservation; the worst case is a denial of service
+  for the person's phones.
+- **Checklist for R6c and H12d-3 (notes, no code in R5):**
+  - **R6c:** the `relay.pair_device` source registration (the hook that lets the outcome reconciler roll a pending
+    pairing forward) must be registered in `WorkspaceService.open` **before** `human.recover` (`host/workspace.py`, the
+    `recover(self)` call); the relay starter runs at the end of `open`, too late for it.
+  - **H12d-3:** wired in round 6 (below).
+- **Mutation pass, round 4:** 9 mutants (no fsync between the archive and the unlink, the old fsync order, the unlink
+  before the archive, the same-file reuse removed or disabled, no marker in recovery, the marker only in the rename
+  branch, the intent cleared before the rename, no fsync after the unlink): 8 killed; the last is equivalent
+  (`clear_unlink_intent` fsyncs the same directory right after the unlink).
+
+**Round 5 (15 Oct 2026, Opus micro-delta of rounds 3 and 4: PASS, five Lows, all fixed).**
+- **L1:** `link_reservation` refuses (`lock.busy` `unlink_pending`) while an unlink intent exists, and the intent is
+  bound to the link it was made for (`linked_at`). `unlink_job` discards an intent for another `linked_at` (alarm
+  `relay_unlink_intent_stale` in `alarms.json`, reason `unlink_intent_stale`) without renaming or marking anything,
+  and the open then goes on as usual. An intent that is not a private JSON object with `linked_at` fails closed (it
+  stays, nothing is renamed, nothing starts).
+- **L2:** the gate rule is one checker (`_gate_violations`) with self-tests: a name, an attribute, an alias import, or
+  the string `"R6_READY"` (`getattr`, `globals()`) anywhere but the literal, the body of `r6_ready()` and `__all__` in
+  `worker.py`. Honest limit: a name built at runtime (`"R6_" + "READY"`) is not seen; a runtime test with the gate set
+  to `1` pins every host entry (`relay start`, the open).
+- **L3:** an unserved `host.relay_start` refuses (`lock.busy`) while an unlink intent exists, instead of clearing
+  `stopped.json`.
+- **L4:** `_finish` runs every release step (alarms, logout, rid store, state directory) on its own; one that raises
+  is alarmed with its step and the next still runs, so the state directory's lock never leaks.
+- **L5:** tests pin `unlink_pending`'s fail-closed branches (a dangling symlink intent, an unreadable directory) and
+  the open never falling through to a start after a failed unlink.
+- **Mutation pass, round 5:** 12 mutants (the reservation ignoring a pending unlink, a stale intent acted on, not
+  alarmed or kept, the open stopping after a stale discard, a corrupt intent accepted, an unserved start clearing the
+  marker, the release stopping at the first failing step, E13, E14, E22, a truthy gate in `start_blocker`): **12
+  killed**.
+- **Informational (accepted):** a seam factory that re-enters `relay_stop` (or `relay_start`) on the starter's thread
+  now gets `none` from the re-entrant lock instead of deadlocking, and `_take_slot` still prevents a second worker of
+  the workspace; if both `stopped.json` and `unlink-intent.json` are deleted by hand, the relay serves again once the
+  gate is open (operator action on the state directory, as with any marker).
+
+**Round 6 (15 Oct 2026): the H12d-3 wiring (#555, merged).**
+- **Link step 1.** `relayhook.link_step1(service, origin=, max_publication_bytes=, ca_file=, proxy=)` reads
+  `info = fetch_relay_info(conn)` on the caller's thread (network I/O never runs on the workspace's worker thread),
+  then runs `reserve_link(…, relay_level=info.reader)` as a worker job, whose guard is
+  `lambda: relaylink.link_reservation(service, relay_level=relay_level)`: the reservation is refused
+  (`sign.convenience_readers`) for a relay whose level is below the workspace's required reader level, and the level
+  is stored with the link. Still not exposed as a control op (the reservation is permanent; see above).
+- **Every login.** The starter builds the one `Session` with `relay_info=observe`, where `observe(level)` calls
+  `relaylink.observe_relay_level(state_dir, ws, host_uid, level, alarms, origin=origin)` with the origin exactly as
+  `link.json` stored it when the worker started: a login of a former relay after a relink, or a `link.json` that names
+  another origin, writes nothing. The session never fails a login on the hook (#555 F5).
+- **Lock order (whole R5 path):** `relay_cond` → the workspace store lock → `relay-link.lock` (the reservation's guard
+  and the observer) → R6's seal lock → the `RidStore` lock. The observer takes only `relay-link.lock` (a leaf: no store
+  lock, no `relay_cond`), so it never waits for a holder of either (test). The stored level survives a restart (test).
+- **Mutation pass, round 6:** 7 mutants (the guard without the level, `link_step1` dropping it, relay-info read on the
+  worker thread, the session without the observer, an observer doing nothing, following the current `link.json`
+  origin, or normalising it): **7 killed**.
+
+**Design inconsistencies found (15 Oct 2026).**
+- 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`
+  (`service.relay_starter`, `may_start`), which R5 follows: there is no `relay.worker.start(service)` function.
+- 11A.4 "owns four daemon threads … each with its own connection": R2 runs five (`poll`, `resp`, `job0`, `job1`,
+  `aux`) on three connections (the session's own, the poll's, the poster's; `bridge.py:1068`, `:1070`), plus R5's
+  short-lived start thread; R3's `pub` makes six threads. The memory and connection bounds of 11A.7 are unaffected
+  (the jobs share the poster).
+- 11A.6 "`RelayWorker.start` runs `has_convenience_events` once": `start` must not wait for the worker thread (H12a's
+  starter rule), so R5 runs it as the start thread's first worker job, before anything is sent, and uses
+  `refuse_reader_op(…, history=True)` (history, the durable mark and the flag), the same rule as the reservation.
+- 11A.7 "Shutdown" step 3 joins each thread with a 5 s bound and logs out; R5's `join` takes the caller's bound (120 s
+  from the service) and logs out only once every thread ended (a stuck thread may still use the token).
+- `bridge.py:1020` `BridgeLoop.join` snapshots `_threads`, while `_poll_main` (`bridge.py:1067`) spawns the responder,
+  job and aux threads after `bridge.start()`; a join during a stopping start can return true before they are
+  registered. R5 joins the loop twice (after the poll thread ended no thread is spawned any more).
+- 11A.3 lists `linked_at` in `link.json`, but `Store.relay_mark_linked` (`store/store.py:2882`) only flips the state;
+  R5 stamps `linked_at` at the reservation.
+- 11A.15.9 lists `relay.not_linked` as a code R6 adds; R5 adds it with `host.relay_unlink`.
+- 11A.10 "Not yet covered": R5's T2 needs the test owner client and R6a's card keys (11A.15.14 step 4); neither exists,
+  and with the gate closed the hook cannot run against the real relay outside a test that opens it, so **T2 is not
+  extended in R5** (judgement call). The loopback layer covers the hook (`tests/relay/test_relay_hook.py`).
+
+**Tests.** `tests/relay/test_worker.py` (the worker with fakes: the gate, start/stop/join, stop during start, double
+start, submit after stop, the first link and the convenience step, the seams, alarms, fork safety),
+`tests/relay/test_relay_hook.py` (a served workspace: the dormant hook and `host.status.relay`, the worker over the
+loopback relay through the real `RelayEntry`, stop and close against an in-flight store job, a fenced worker, the
+marker across restarts with `relay_fields` registered once and `submit.recover` never run in `open`, the lock order,
+the convenience halt, the stuck worker, the slots, unlink and relink, `orch host status`), and R5 AST rules in
+`tests/relay/test_import_ban.py` (only `relayhook` builds the relay objects, once each; only the service and the hook
+set `service.relay`; the starter runs only from `_relay_try_start`, after `start_blocker`, under `relay_cond`). Mutation
+pass on a `git archive` scratch copy (36 text mutants: the gate removed at each of its three checks or flipped, the
+starter without `start_blocker` or outside `relay_cond`, the marker ignored, `join` ignoring its timeout, `close` not
+waiting, `register` twice or never, `submit.recover` in `open`, `submit` after stop, `stop` not stopping the loop, the
+precheck or the first link skipped, the loop started while stopping, the state directory or the slot not released
+(worker and failed start), the loop joined once, the cap removed, the convenience check or the audit skipped, the halt
+not stopping at once, no marker, unlink overwriting or ignoring a worker, the reservation without its guard, a double
+start, alarms written on every call, the open beside a stuck worker, class N given the relay, a failed loop shown
+running, a child without the pid check): **36 killed**. The first passes left 5 survivors (the halt's synchronous
+stop, the slot and the directory of a failed start, the unlink job's race guard, the open beside a stuck worker),
+each killed by a new test, and surfaced the fork-lock bug above and a racy assertion.
 
 ### 11A.5 The bridge loop (R2) and the publisher (R3)
 
@@ -5774,19 +6137,21 @@ Session) and `StateDir.open_private`/`file_path` (the checked SQLite open of 11A
 builder's `HostError` is stored as that `failed` outcome (`outcomes._fields`).
 
 **R2 framing (the sheet orch-mobile codes against; data: `tests/relay/r2_vectors/r2_framing.json`, generated by
-`scripts/gen_r2_framing_vectors.py`, never edited by hand; round 3, 15 Oct 2026: 37 cases).**
+`scripts/gen_r2_framing_vectors.py`, never edited by hand; round 3, 15 Oct 2026: 37 cases; H12d-3: 40).**
 
 - Request meta, strict JSON inside the seal, `data` empty: `{"op", "args", "idem"?, "rd"?}`. Checked in this order
   before any column: an `auth` key → `req.invalid`; a grant-shaped string anywhere → `grant.secret_in_args`; an op
   outside the table → `forbidden_scope`; another key, non-object `args`, or non-empty `data` → `req.invalid`; the idem
   rules (a write without `idem` → `idem.required`; a malformed one → `idem.invalid`; one that is not the event id →
-  `invalid.input`, 14.6 P1; an `idem` on a read → `req.invalid`); `rd` must be `sha256:<hex>` (carried into the identity, never a qualification in
-  v1.7; vector `request_with_rd`).
+  `invalid.input`, 14.6 P1; an `idem` on a read → `req.invalid`); `rd` must be `sha256:<hex>` (carried into the identity; vector `request_with_rd`). **H12d-3:** while
+  `required_reader` is 1 the host serves every op but `reader.declare` only against `rd` (§0.8.6 item 9.5; vectors
+  `rd_declaration_unknown`, `rd_reader_too_old`).
 - The one closed op table (`framing.OPS`):
 
   | Relay op | Backend op | Kind | Scope (certificate AND member list) | Event |
   |---|---|---|---|---|
   | `ticket.query`, `ticket.get`, `ticket.text`, `needs`, `activity.list`, `workspace.show`, `workspace.settings`, `member.list`, `whoami`, `outcome.get` | the same | read | `look` | — |
+  | `reader.declare` (H12d-3) | the same (column R kind `device_signed`) | read (no idem: idempotent on the declaration's digest) | `look` | — |
   | `new_ticket` | `relay.submit` | write | `decide` | `ticket.created` |
   | `answer` | `relay.submit` | write | `decide` | `question.answered` |
 
@@ -5826,7 +6191,7 @@ builder's `HostError` is stored as that `failed` outcome (`outcomes._fields`).
   | `stale_epoch` | `epoch` (the committed one; for a burned or gated epoch the pending one, else `EHW + 1`) |
   | `already_done` | `status: "unknown"` |
   | `not_member`, `revoked`, `bad_signature`, `busy`, `malformed`, `forbidden_scope`, `rid_conflict` | none |
-  | every host §0.6 code (`pending` included) | `retryable` (always; DERIVED from the class: A, B true; C-auto, C-review, D false); `seqs` only for a write whose events LANDED (`failed`/`partial`: never for "not run"); `next_key` only for `ticket.key_not_next` (advisory) |
+  | every host §0.6 code (`pending` included) | `retryable` (always; DERIVED from the class: A, B true; C-auto, C-review, D false); `seqs` only for a write whose events LANDED (`failed`/`partial`: never for "not run"); `next_key` only for `ticket.key_not_next` (advisory); **H12d-3:** `reason` only for `sign.convenience_readers` (`no_declaration`, `reader_too_old`, `declaration_unknown`) and `reader.decl_invalid` (its verify reasons), `required` and `declared` (both) only with `reader_too_old` (`framing.REASONS`) |
 
   A refusal never carries a message or request text.
 - **Retry classes** (`framing.RETRY`, authoritative; ruling C): **A** nothing ran and no seq was consumed, or refused
@@ -6071,7 +6436,8 @@ A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-
   then carries `rd`, the digest of the device's current declaration (§8.6), and the host serves a convenience workspace
   only against it. `relay.link` checks the relay's `GET /v2/relay-info` level at link and at every R1 login, an
   operator statement. Qualifying readers are admitted with convenience history; `relay_paired` then counts only a relay
-  below level 1 (the permanent reservation above stays, with the relay's last level). Group H12d-3, with R6.
+  below level 1 (the permanent reservation above stays, with the relay's last level). Group H12d-3, with R6. **Built in
+  H12d-3** (§0.8.6 item 9 "As built in H12d-3"); the strict v1.7 rule above holds only for a relay of level 0.
 
 ### 11A.7 Transport
 
@@ -7252,10 +7618,10 @@ set.
 
 | # | Step | Persisted first | Failure, retry, crash |
 |---|---|---|---|
-| 1 | **Offer creation** (`orch host relay pair`, control op `relay.pair_offer`, human_only, refused under `ORCH_GRANT`). The preconditions are checked in one worker job **under the store lock**: `link.json` is `linked`; the worker is running and holds a gen; a valid `membership/primary.json` (11A.15.1); no live offer and no outstanding cert request; the early reader check (`refuse_reader_op(service, "relay.pair", history=True)` before H12d-2, then `check_readers` against the offer's `required_reader`); no `membership_quota` alarm; the device count is below the cap. R6 then draws `offer_id` (16 bytes), `S` (32), `sas_nonce` (32) and the scopes (default `["look","decide"]`, Q4; a subset of `look,decide`: `operate` and `type` are refused for a phone offer in v1.7, N1), and sets `expires_ms = now + 10 min` | `pairing/<offer>.json` state `open` (this is the pairing reservation of 11A.6, written before the link exists) | any refusal writes nothing. A crash after the write leaves an `open` offer that expires on its own. The CLI shows the link **only after** the write returns |
+| 1 | **Offer creation** (`orch host relay pair`, control op `relay.pair_offer`, human_only, refused under `ORCH_GRANT`). The preconditions are checked in one worker job **under the store lock**: `link.json` is `linked`; the worker is running and holds a gen; a valid `membership/primary.json` (11A.15.1); no live offer and no outstanding cert request; no early reader refusal (H12d-3: `refuse_reader_op(service, "relay.pair")` refuses nothing, since the offer carries no declaration yet; the gate is step 4 and step 9); no `membership_quota` alarm; the device count is below the cap. R6 then draws `offer_id` (16 bytes), `S` (32), `sas_nonce` (32) and the scopes (default `["look","decide"]`, Q4; a subset of `look,decide`: `operate` and `type` are refused for a phone offer in v1.7, N1), and sets `expires_ms = now + 10 min` | `pairing/<offer>.json` state `open` (this is the pairing reservation of 11A.6, written before the link exists) | any refusal writes nothing. A crash after the write leaves an `open` offer that expires on its own. The CLI shows the link **only after** the write returns |
 | 2 | **The link and QR** (11A.15.9): the native `orch://pair?relay=<pct origin>#v2.<ws>.<offer>.<b64u S>.<b64u wsk_pin>.<b64u pk_pin>` (in the QR, Q5) and the HTTPS fallback `https://<relay>/pair#v2.<same five fields>`, both from H12c `pair_link`. `pk_pin` is the pinned owner `PK` from the genesis delegation; `wsk_pin` is the own WSK. The `relay` origin is **byte-equal** to the card's `relay_url` (orch-f1 S7: else the phone refuses `card_origin`) | nothing new | `S` is shown on the person's terminal only. It is never logged, never sent through the control socket's logs and never in `host.status` |
 | 3 | **A pair request** (a poll item, `route:"pair"`). The pair thread runs §8.6 steps 1 to 3 (silence for an unknown offer or one past its tail, or a bad tag under `K_pair`), then §8.3 step 3 in order: meta shape and exact field set (meta v2: the six fields, or the six plus the optional seventh `reader_decl`, protocol §8.3; H1), from the **raw plaintext bytes** with a byte cap of 2 KiB plus margin **before** parsing (H12d-2 note I2); the offer `open` and unused (else the answer of the table above); `device_id(dk_sig_pub)` equal to the header's, and the signature, verified over the **original** meta bytes, the label as the phone sent it (no cleaning or normalisation before verification; D1); ±300 s; a presented `cert` (owner's person, valid, not revoked, these two keys) | none for a refusal. Each refusal is charged to the offer's own budget of 5 per minute (in memory; past it, silence), carries `wsk_pub`, and is sealed and signed (`RelaySigner.pair_answer`) | the answer bytes are appended per `rid` to the `.answers` file **before** the POST. An identical resend of that `rid` replays them byte-exact (the relay refuses other bytes with `chunk_conflict`, `bridge.py`). Pair answers are never re-stored after their 60 s copy expires, so the device re-polls with a new `rid` |
-| 4 | **The reader gate (H12d, early).** `verify_decl` with `via:"pair"` only, on both paths (**JUDGEMENT CALL**, orch-f1 S4 and orch-52: §0.8.6 item 9.4 no longer allows a `via:"declare"` declaration beside a presented cert: conflict C7 resolved by narrowing 9.4). `who` is the link's `pk_pin`, or the presented cert's person; `bind` this offer and this `attempt`; `dk_hash` of the meta's keys. The level is checked against `required_reader`; absent means 0. On resends the **first stored declaration wins** (ECDSA signatures differ per resend) | — | a failure answers the short `rejected` and moves the offer to `rejected` (the host screen gives the reason, §0.8.6 item 9.15 Q4). This happens **before** the SAS is shown and before the primary is asked (§0.8.6 item 9.4) |
+| 4 | **The reader gate (H12d, early).** `verify_decl` with `via:"pair"` only, on both paths (**JUDGEMENT CALL**, orch-f1 S4 and orch-52: §0.8.6 item 9.4 no longer allows a `via:"declare"` declaration beside a presented cert: conflict C7 resolved by narrowing 9.4). `who` is the link's `pk_pin`, or the presented cert's person; `bind` this offer and this `attempt`; `dk_hash` of the meta's keys. The level is checked against `required_reader`; absent means 0. On resends the **first stored declaration wins** (ECDSA signatures differ per resend) | — | a failure answers the short `rejected` and moves the offer to `rejected` (the host screen gives the reason, §0.8.6 item 9.15 Q4). This happens **before** the SAS is shown and before the primary is asked (§0.8.6 item 9.4). **Built in H12d-3:** R6c calls `orch.host.convenience.pair_gate(service, meta, offer_id=, who=)` (pure half `orch.identity.pairdevice.pair_gate`) and stores the returned `PairGate.decl`/`decl_who` with the offer at step 5 |
 | 5 | **Consume** the offer | state `pending` with the keys, `attempt`, the cleaned label (11A.15.13), the cert if presented, the declaration verbatim, and `phone_deadline_ms` | the write **precedes** the `pending` answer (`{state, wsk_pub, sas_nonce, dk_sig_pub, dk_kx_pub}`, exact). A second device with a valid tag (it holds `S` too) then finds the offer used: `pairing_closed`, and the CLI alarms "someone else has this link: reject" (R6 holds `S`, so it knows a second tag-valid key used the offer; Opus L10) |
 | 6 | **The human compares the SAS** on the Mac. The CLI shows the cleaned label ("named by the device") and the requested scopes, and asks the human to **type the six characters the phone shows** (Opus L10: entry, not a y/N prompt). Approval only when the typed code equals `sas(ws, offer, dk_sig_pub, dk_kx_pub, wsk_pub, sas_nonce)`. **Up to 3 typed attempts per offer** (DECIDED 15 Oct 2026, orch-52 re-check of beafc6c8, N3c: a human typo cannot be ground by an attacker, so this is safe and kinder): a wrong code re-prompts, and the third wrong code is Reject; an empty line or an explicit reject is Reject at once. The attempt count is in the offer record | `confirmed`, or `rejected` (the attempt count with each wrong code) | a reject answers the short `rejected`. An unanswered prompt expires with the phone's deadline: state `expired`. A crash keeps `pending`, and the CLI re-attaches with `orch host relay pair --resume` |
 | 7a | **A presented certificate** (the phone is already the owner's device): skip to step 8 with that cert. Its `scopes_max` caps the list scopes. This path needs no `PK` (device ids are global, §4), so every later workspace pairing of the same phone needs no recovery code | — | — |
@@ -8210,7 +8576,7 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `worktree/1` | `worktree.create` | ✓ visible ticket | ✓ own claimed ticket | — | idem create |
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
-| `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R with `rd`: H12d-3) |
+| `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R, H12d-3: the requesting device's own declaration, kind `device_signed`, no idem, exempt from `rd`) |
 | `reader/1` | `reader.list` | ✓ | — | — | read (column R too, trimmed to `{device, person, reader, level}`) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |

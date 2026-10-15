@@ -25,11 +25,12 @@ import copy
 import hashlib
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from orch import canon
 
-from .pairing import clean_label
+from .pairing import PairMeta, clean_label
 
 __all__ = [
     "COMPARISONS",
@@ -39,10 +40,13 @@ __all__ = [
     "PHONE_SCOPES",
     "PairDeviceFacts",
     "PairDeviceInvalid",
+    "PairGate",
+    "PairGateRefused",
     "cert_digest",
     "check_material",
     "device_added",
     "material",
+    "pair_gate",
 ]
 
 #: the person op and the material kind (one name: the op emits only this kind and the kind belongs only to this op)
@@ -322,3 +326,95 @@ def check_material(
     ):
         raise PairDeviceInvalid("comparison", "{kind: sas | cert_code, code: 6 base32 characters}")
     return {k: copy.deepcopy(material[k]) for k in MATERIAL_FIELDS}
+
+
+# --- 11A.15.6 step 4: the reader gate when the host opens the pair request (H12d-3, §0.8.6 item 9.4) ------------------
+
+
+class PairGateRefused(Exception):
+    """Step 4 refused the phone (R6 answers the short ``rejected`` and moves the offer to ``rejected``; the host screen
+    shows the reason, §0.8.6 item 9.15 Q4). ``code`` is ``sign.convenience_readers`` (``reason`` ``no_declaration``
+    or ``reader_too_old``, with ``required`` and ``declared``) or ``reader.decl_invalid`` (``reason`` of
+    :func:`orch.identity.reader.verify_decl`)."""
+
+    def __init__(self, code: str, reason: str, detail: str, *, required: int = 0, declared: int = 0) -> None:
+        super().__init__(f"{code}: {reason}: {detail}")
+        self.code, self.reason, self.detail = code, reason, f"{reason}: {detail}"
+        self.required, self.declared = required, declared
+
+
+@dataclass(frozen=True)
+class PairGate:
+    """What step 4 admitted, for R6 to store with the offer at step 5 (the first stored declaration wins on a
+    resend) and to hand back at step 9 as :class:`PairDeviceFacts` ``decl``/``decl_who``: the declaration verbatim
+    (``None``: the phone sent none, level 0), the ``who`` it was verified for, the declared ``reader``, the ``level``
+    it counts as here and its ``digest`` (the phone's first ``rd``)."""
+
+    decl: dict[str, Any] | None
+    decl_who: dict[str, str] | None
+    reader: int
+    level: int
+    digest: str | None
+
+
+def pair_gate(
+    meta: PairMeta,
+    *,
+    workspace_id: str,
+    offer_id: str,
+    who: dict[str, str],
+    required: int,
+    now_ms: int,
+) -> PairGate:
+    """11A.15.6 step 4, pure (no key, no state; the host computes ``required`` and reads its clock: see
+    ``orch.host.convenience.pair_gate``). ``meta`` passed step 3 (:func:`orch.identity.pairing.check_pair_meta`:
+    shape, the 2 KiB cap before parsing, the signature over the meta); ``who`` is the link's ``{"pk_pin": ...}`` on
+    path 7b, or ``{"person_id": ...}`` of the certificate the phone presented (7a, already checked at step 3.5).
+
+    The declaration is verified with ``via:"pair"`` only (C7: no ``via:"declare"`` at a pairing, on both paths),
+    ``bind`` this offer and this ``attempt``, ``dk_hash`` of the meta's two keys, the ``view`` KAT surface (a phone),
+    and the pairing's freshness: no past window (the single-use 10-minute offer and the attempt bound it, and the
+    pairing can wait in ``cert_pending``), ``created_ms`` at most 300 s ahead of ``now_ms`` (latest wins by
+    ``created_ms``, so a far-future declaration would pin the device's level). Then its level against ``required``:
+    an absent declaration is level 0. Raises :class:`PairGateRefused`."""
+    from . import reader
+
+    if not _hex32(workspace_id) or not _hex32(offer_id) or not _who_ok(who):
+        raise ValueError("pair_gate needs the workspace id, the offer id and exactly one who")
+    if type(required) is not int or required < 0 or type(now_ms) is not int or now_ms < 0:
+        raise ValueError("pair_gate needs required_reader and the host clock in ms")
+    if meta.reader_decl is None:
+        if required >= 1:
+            raise PairGateRefused(
+                "sign.convenience_readers",
+                "no_declaration",
+                f"d_{meta.device_id} sent no reader declaration and this workspace requires reader level {required}",
+                required=required,
+                declared=0,
+            )
+        return PairGate(None, None, 0, 0, None)
+    bind = {"via": "pair", "offer_id": offer_id, "attempt": meta.attempt}
+    try:
+        got = reader.verify_decl(
+            meta.reader_decl,
+            workspace_id=workspace_id,
+            dk_sig_pub=meta.dk_sig_pub,
+            dk_kx_pub=meta.dk_kx_pub,
+            who=dict(who),
+            bind=bind,
+            surfaces=("view",),
+            now_ms=now_ms,
+        )
+    except reader.DeclInvalid as exc:
+        raise PairGateRefused("reader.decl_invalid", exc.reason, str(exc)) from None
+    if got.device_id != meta.device_id:  # verify_decl derives it from dk_sig_pub: a defence in depth
+        raise PairGateRefused("reader.decl_invalid", "device", "the declaration names another device")
+    if got.level < required:
+        raise PairGateRefused(
+            "sign.convenience_readers",
+            "reader_too_old",
+            f"d_{meta.device_id} declared reader level {got.level}, this workspace requires {required}",
+            required=required,
+            declared=got.level,
+        )
+    return PairGate(copy.deepcopy(meta.reader_decl), dict(who), got.reader, got.level, got.digest)

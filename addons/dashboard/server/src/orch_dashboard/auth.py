@@ -7,6 +7,12 @@ from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
+# A launch code lives 30 s; its redirect file lives exactly as long (#542 item 3). Redemption and the expiry timer
+# both go through `_forget` under the lock: the code is invalidated and the file unlinked exactly once, by whichever
+# comes first. A file a paused launcher writes after that holds a dead code (and the launcher refuses to write or keep
+# one past `expires_at`); the next server start's sweep removes any leftover.
+CODE_TTL = 30
+
 
 class Auth:
     def __init__(self, clock=time.time, directory=None):
@@ -27,14 +33,23 @@ class Auth:
     def launch(self, port):
         with self.lock:
             now = self.clock()
-            self.codes = {c: until for c, until in self.codes.items() if until > now}
+            for stale in [c for c, until in self.codes.items() if until <= now]:
+                self._forget(stale)
             code = secrets.token_urlsafe(32)
-            self.codes[code] = now + 30
-            payload = {"instance": self.instance, "port": port, "probe_key": self.probe_key, "code": code}
+            self.codes[code] = now + CODE_TTL
+            payload = {
+                "instance": self.instance,
+                "port": port,
+                "probe_key": self.probe_key,
+                "code": code,
+                # the launcher writes no file, and keeps none, past this; whole seconds (a frame carries no floats),
+                # rounded down so the launcher stops early, never late
+                "expires_at": int(now + CODE_TTL),
+            }
             if self.directory is not None:
                 self.files[code] = Path(self.redirect_path(code))
                 payload["redirect_file"] = str(self.files[code])
-                timer = threading.Timer(60, lambda: self.remove_redirect(code))
+                timer = threading.Timer(CODE_TTL, lambda: self.expire(code))
                 timer.daemon = True
                 timer.start()
             return payload
@@ -50,20 +65,27 @@ class Auth:
     def redirect_path(self, code):
         return self.directory / ("launch-" + hashlib.sha256(code.encode()).hexdigest() + ".html")
 
-    def remove_redirect(self, code):
+    def _forget(self, code):
+        """Hold ``self.lock``. The code is no longer redeemable and its recorded file is unlinked, once."""
+        self.codes.pop(code, None)
         path = self.files.pop(code, None)
-        if path is None and self.directory is not None:
-            path = self.redirect_path(code)
         if path is not None:
             path.unlink(missing_ok=True)
+
+    def expire(self, code):
+        """The timer at the code's expiry: invalidate it and remove its file, unless redemption already did."""
+        with self.lock:
+            self._forget(code)
 
     def exchange(self, code):
         with self.lock:
             now = self.clock()
-            until = self.codes.pop(code, 0)
+            until = self.codes.get(code, 0)
             if now >= until:
+                if code in self.codes:
+                    self._forget(code)  # expired: dead, and its file goes now rather than at the timer
                 return None, 401 if self._attempt(now) else 429
-            self.remove_redirect(code)
+            self._forget(code)
             token = secrets.token_urlsafe(32)
             self.sessions[token] = now, now
             return {"token": token, "expires_at": datetime.fromtimestamp(now + 86400, UTC).isoformat()}, 200

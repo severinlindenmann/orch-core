@@ -235,7 +235,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
-    if name in readerops.READER_HOST_OPS:  # H12d-2: column P (column R with rd is H12d-3)
+    if name in readerops.READER_HOST_OPS:  # H12d-2: column P (column R: device_signed, H12d-3)
         return ("person_write", "write")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
@@ -753,6 +753,14 @@ class RegistryBackend:
             data["state"] = call.service.state
             if self.started is not None:
                 data["uptime_s"] = int(time.monotonic() - self.started())
+            from .relayhook import status as relay_status
+
+            try:  # R5: host.status.relay (§11A.4), for a workspace with a relay directory; never fails the status
+                relay = relay_status(call.service)
+            except Exception as exc:  # noqa: BLE001 - reported, by class only
+                relay = {"error": type(exc).__name__}
+            if relay is not None:
+                data["relay"] = relay
         return data
 
     # -- registry ops

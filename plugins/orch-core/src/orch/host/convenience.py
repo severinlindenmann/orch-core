@@ -41,6 +41,7 @@ __all__ = [
     "check",
     "enabled",
     "refuse_pair_device",
+    "pair_gate",
     "flag_path",
     "pending_handoffs",
     "read",
@@ -100,7 +101,7 @@ def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> 
 
 def _relay_paired(state_dir: Path, workspace_id: str) -> bool:
     """The reader reservation (orch-v2-host §11A.6): a relay link, a former one or the R6 membership state exists
-    (:func:`orch.store.readerrecs.relay_level`: until H12d-3 every pairing counts as level 0)."""
+    (:func:`orch.store.readerrecs.relay_level`): its last verified level is below 1, or was never checked (H12d-3)."""
     from orch.store.readerrecs import relay_level
 
     level = relay_level(state_dir, workspace_id)
@@ -123,8 +124,8 @@ def why(
 ) -> tuple[str, list[str]] | None:
     """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
     H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
-    device whose reader record does not verify counts as 0); ``relay_paired`` counts a relay below level 1 (every
-    pairing until H12d-3); ``reader_version`` qualifies the signing device itself."""
+    device whose reader record does not verify counts as 0); ``relay_paired`` counts a relay whose last verified
+    level is below 1 or was never read (H12d-3); ``reader_version`` qualifies the signing device itself."""
     from orch.ops.readers import below_level, levels
 
     if not enabled(state_dir, workspace_id, host_uid):
@@ -200,8 +201,9 @@ def refuse_reader_op(
     history: bool = False,
     events: list[dict[str, Any]] | None = None,
     readers: list[dict[str, Any]] | None = None,
+    relay_level: int | None = None,
 ) -> None:
-    """The early reader checks of an op that adds a reader (§0.8.6 item 1, H12d-2 item 9.4).
+    """The early reader checks of an op that adds a reader (§0.8.6 item 1, H12d-2 and H12d-3 item 9.4).
 
     ``member.add`` with its prepared ``events`` (H12d-2): the new reader's declaration (``readers``, verified again
     here without the clock, 9.3) against ``required_reader``: 1 while the flag is on, the durable mark is set or, with
@@ -212,16 +214,39 @@ def refuse_reader_op(
 
     ``relay.pair_device`` (H12c-e) with its events: the same as ``member.add``, with the phone's pair declaration.
 
-    ``relay.link`` and ``relay.pair`` (and ``member.add`` without its events): unchanged until H12d-3 brings their
-    declarations (relay-info, the pair meta): refused while the mark is set, the history (``history``) holds a
-    convenience event or the flag is on."""
+    ``relay.link`` (H12d-3, the relaxed rule of 9.4): the relay's level from ``GET /v2/relay-info`` (``relay_level``,
+    read at link step 1; ``None``, not read, counts as 0) against ``required_reader``; below it is
+    ``sign.convenience_readers`` reason ``relay_too_old``. A relay of level 1 is linked with convenience history and
+    while the flag is on.
+
+    ``relay.pair`` (H12d-3): no early refusal at the offer (it carries no declaration yet). The phone's pair
+    declaration is gated when the host opens the pair request (:func:`pair_gate`, 11A.15.6 step 4) and,
+    authoritatively, in the R6 allocation's append (``relay.pair_device``).
+
+    ``member.add`` without its events (the early call before its handler ran): refused while the mark is set, the
+    history (``history``) holds a convenience event or the flag is on; the handler's own check follows."""
     if op not in READER_OPS:
         return
     if op in ("member.add", "relay.pair_device") and events is not None:
         _check_new_readers(service, events, readers or [], history=history)
         return
+    if op == "relay.pair":
+        return
+    if op == "relay.link":
+        required = _required(service, history=history)
+        level = 0 if relay_level is None else relay_level
+        if required >= 1 and level < required:
+            raise HostError(
+                "sign.convenience_readers",
+                f"relay_too_old: the relay declares reader level {level} (GET /v2/relay-info), this workspace "
+                f"requires {required}",
+                hint="the relay must be updated to a release that knows convenience signatures (relay-info reader 1)"
+                ", or link this workspace before it has convenience signatures with convenience off",
+                detail={"reason": "relay_too_old", "devices": []},
+            )
+        return
     seen = convenience_seen(service.state_dir, service.workspace_id)  # #441: the durable mark, in every check
-    reason = "relay_too_old" if op == "relay.link" else "no_declaration"
+    reason = "no_declaration"
     if seen or (history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid)):
         raise HostError(
             "sign.convenience_readers",
@@ -237,6 +262,56 @@ def refuse_reader_op(
             fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
             detail={"reason": reason, "devices": []},
         )
+
+
+def _required(service: Any, *, history: bool) -> int:
+    """``required_reader`` (9.4) for an early check: the flag or the durable mark, and with ``history`` a scan of the
+    merged history (which sets the mark when it finds one)."""
+    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+        return 1
+    if convenience_seen(service.state_dir, service.workspace_id):
+        return 1
+    if history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid):
+        return 1
+    return 0
+
+
+def pair_gate(service: Any, meta: Any, *, offer_id: str, who: dict[str, str]) -> Any:
+    """**The step-4 hook for R6c** (11A.15.6 step 4, H12d-3): call it when the host opens a pair request, after step 3
+    (``check_pair_meta``, the meta signature, ±300 s, a presented cert) and **before** the offer is consumed, the SAS
+    is shown or the primary is asked. ``who`` is ``{"pk_pin": <the link's pk_pin>}`` on path 7b, or ``{"person_id":
+    <the presented cert's person, bare hex>}`` on path 7a. ``required_reader`` is computed here (the flag, the durable
+    mark, the merged history: a rare op), the clock is the host's.
+
+    Returns :class:`orch.identity.pairdevice.PairGate`: R6 stores ``decl`` and ``decl_who`` verbatim with the offer at
+    step 5 (the **first** stored declaration wins on a resend: ECDSA signatures differ per resend, and a resend of a
+    consumed offer never runs this again) and passes them as ``PairDeviceFacts(decl=, decl_who=)`` at step 9, where
+    the authoritative check runs in the allocation's append. Raises :class:`HostError`: ``sign.convenience_readers``
+    (``no_declaration``, ``reader_too_old``; ``detail`` names the device) or ``reader.decl_invalid`` (the reason
+    first in the message). R6 answers either with the short ``rejected``, moves the offer to ``rejected`` and shows the
+    message on the host screen ("This phone's orch app is too old for this workspace ...", §0.8.6 item 9.15 Q4)."""
+    from orch.identity.pairdevice import PairGateRefused
+    from orch.identity.pairdevice import pair_gate as gate
+
+    required = _required(service, history=True)
+    try:
+        return gate(
+            meta,
+            workspace_id=service.workspace_id,
+            offer_id=offer_id,
+            who=who,
+            required=required,
+            now_ms=int(service.clock() * 1000),
+        )
+    except PairGateRefused as exc:
+        if exc.code == "reader.decl_invalid":
+            raise HostError("reader.decl_invalid", exc.detail) from None
+        raise HostError(
+            exc.code,
+            exc.detail,
+            hint="This phone's orch app is too old for this workspace (convenience signing). Update it and scan again.",
+            detail={"reason": exc.reason, "devices": ["d_" + meta.device_id]},
+        ) from None
 
 
 def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]]) -> dict[str, int]:
@@ -275,8 +350,42 @@ def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[di
             raise HostError("reader.decl_invalid", exc.detail) from None
         if got.digest != entry.get("digest") or got.level != entry.get("level"):
             raise HostError("internal", "the stored reader declaration changed")
+        if entry.get("source") == "pair":  # H12d-3 (9.3, #555 review F3): who names the cert's person or its key
+            _check_pair_who(service, ev[READER_EVENTS[ev["type"]]], ctx["who"])
         out[entry["device"]] = got.level
     return out
+
+
+def _check_pair_who(service: Any, cert: Any, who: Any) -> None:
+    """A pair declaration counts only for the certificate's person, as a stored record does (``record_level``):
+    ``who`` is ``{"person_id": <the cert's person>}`` (path 7a) or ``{"pk_pin": <the pin of that person's key>}``
+    (path 7b); anything else is ``reader.decl_invalid`` reason ``who`` (#555 review F3)."""
+    o = cert.get("o") if isinstance(cert, dict) else None
+    pid = o.get("person_id") if isinstance(o, dict) else None
+    if not isinstance(pid, str) or not isinstance(who, dict):
+        raise HostError("reader.decl_invalid", "who: the certificate names no person")
+    if who == {"person_id": pid}:
+        return
+    if set(who) == {"pk_pin"} and isinstance(who["pk_pin"], str):
+        _check_pin(service, "p_" + pid, who["pk_pin"])
+        return
+    raise HostError("reader.decl_invalid", "who: the pair declaration names another person than the certificate's")
+
+
+def _check_pin(service: Any, person: Any, pin: str) -> None:
+    """A pairing declaration signed for the link's ``pk_pin`` (path 7b, before the phone knew the person key) is
+    admitted only when the certificate's person is the member whose person key that pin names (9.3: "the host checks
+    in the R6 allocation that the certificate it got is under the key that pin names"); else ``reader.decl_invalid``
+    reason ``who``."""
+    from orch import crypto
+
+    try:
+        pk_pub = service.store.state.person_key(person) if isinstance(person, str) else None
+        have = None if pk_pub is None else crypto.b64u(crypto.pk_pin(crypto.unb64u(pk_pub, crypto.PUB_LEN)))
+    except (crypto.CryptoError, ValueError, TypeError, AttributeError):
+        have = None
+    if have is None or have != pin:  # public values: a plain comparison
+        raise HostError("reader.decl_invalid", "who: the pairing's pk_pin does not name the certificate's person key")
 
 
 def readers_error(exc: Any) -> HostError:
@@ -287,14 +396,7 @@ def readers_error(exc: Any) -> HostError:
 def _check_new_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]], *, history: bool):
     from orch.ops.readers import ReadersRefused, check_readers
 
-    flag = enabled(service.state_dir, service.workspace_id, service.host_uid)
-    seen = convenience_seen(service.state_dir, service.workspace_id)
-    if flag or seen:
-        required = 1
-    elif history:
-        required = 1 if seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid) else 0
-    else:
-        required = 0
+    required = _required(service, history=history)
     lv: dict[str, int | None] = dict(recheck_readers(service, events, readers))
     try:
         check_readers(service.store.state.workspace, lv, [_no_auth(e) for e in events], required=required,
@@ -309,8 +411,8 @@ def _no_auth(e: dict[str, Any]) -> dict[str, Any]:
 
 
 READER_UPGRADE = (
-    " A member's core declares with orch keys reader declare --enrol (member.add --reader-decl); relay links and phone"
-    " pairings declare with the relay and phone releases of H12d-3."
+    " A member's core declares with orch keys reader declare --enrol (member.add --reader-decl); a relay declares its"
+    " level in GET /v2/relay-info and a phone in its pair request (H12d-3)."
 )
 
 

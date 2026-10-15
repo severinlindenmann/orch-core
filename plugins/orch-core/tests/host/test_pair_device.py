@@ -454,6 +454,42 @@ def test_a_pk_pin_declaration_counts_under_the_owners_pin(served, human):
     assert rd.levels(served.lab.state, served.wid, served.service.store.state)[phone.device] == 1
 
 
+def test_a_pk_pin_declaration_under_another_persons_pin_is_refused(served, human):
+    """H12d-3 (9.3): a pairing declaration signed for a pk_pin counts only when the certificate's person is the member
+    whose key that pin names; a pin of another key is reader.decl_invalid (who) at prepare, before anything lands."""
+    from tests.identity.helpers import Person
+
+    owner = served.lab.ws.owner
+    phone = phone_of(owner)
+    pin = crypto.b64u(crypto.pk_pin(Person().pk_pub))
+    o = decl_o(phone, served.wid, level=1, via="pair", created_ms=T0 * 1000, surfaces=("view",))
+    o["bind"] = {"via": "pair", "offer_id": OFFER, "attempt": ATTEMPT}
+    o["who"] = {"pk_pin": pin}
+    facts, _ = make_facts(served, phone=phone, decl=sign_decl(phone, o), decl_who={"pk_pin": pin})
+    _install(served, facts)
+    res = human.prepare_res("relay.pair_device", {"offer_id": OFFER})
+    assert err(res) == "reader.decl_invalid" and res["error"]["message"].startswith("who")
+    assert not [e for e in _ws_events(served) if e["device"] == phone.device]
+
+
+def test_a_person_id_pair_declaration_of_another_person_is_refused(served, human):
+    """#555 review F3: a pair declaration with ``who: {person_id}`` counts only for the certificate's person (as a
+    stored record does)."""
+    from tests.identity.helpers import Person
+
+    owner = served.lab.ws.owner
+    phone = phone_of(owner)
+    other = {"person_id": crypto.person_id(Person().pk_pub).hex()}
+    o = decl_o(phone, served.wid, level=1, via="pair", created_ms=T0 * 1000, surfaces=("view",))
+    o["bind"] = {"via": "pair", "offer_id": OFFER, "attempt": ATTEMPT}
+    o["who"] = other
+    facts, _ = make_facts(served, phone=phone, decl=sign_decl(phone, o), decl_who=other)
+    _install(served, facts)
+    res = human.prepare_res("relay.pair_device", {"offer_id": OFFER})
+    assert err(res) == "reader.decl_invalid" and res["error"]["message"].startswith("who")
+    assert not [e for e in _ws_events(served) if e["device"] == phone.device]
+
+
 # --- the F1 device.added vectors ------------------------------------------------------------------------------------
 
 

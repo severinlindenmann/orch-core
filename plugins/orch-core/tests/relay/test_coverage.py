@@ -26,6 +26,7 @@ R1_FIXTURES = {
     "members": "test_session (WSK signature and workspace; field set is R6)",
     "checkpoint_get": "test_session (success verified; 404, 410)",
     "genesis": "test_coverage (success; local pin check vs relay refusals)",
+    "relay_info": "test_relay_info (H12d-3: link step 1 and every R1 login, orch-v2-host §0.8.6 item 9.8)",
 }
 NOT_R1 = {
     "accounts": "owner client (P3-D3/D34): needs a device key the host does not hold (11A.5 step 2, 11A.12)",
@@ -59,7 +60,6 @@ NOT_R1 = {
     "transitions": "devices and R3",
     "unpublished_get": "R4",
     "unpublished_ack": "R4",
-    "relay_info": "H12d-3 (GET /v2/relay-info at link step 1 and every R1 login, orch-v2-host §0.8.6 item 9.8)",
 }
 R1_SECTIONS = {
     "relay_auth": "test_wire (signed bytes, every case's signature layer), test_sign, test_adversarial",
@@ -101,7 +101,7 @@ NOT_R1_SECTIONS = {
     "checkpoints_g4": "R3",
     "unpublished": "R4",
     "reader_decl": "identity tests (tests/identity/test_reader_decl.py: decls, pair_meta gates); the pair meta and "
-    "rd in the request meta are H12d-3 with R6",
+    "rd in the request meta: tests/identity/test_pair_gate.py (pair_meta gates), tests/relay/test_relay_rd.py (H12d-3)",
 }
 TOP_LEVEL = {"encodings": "test_wire (strict_parse, b64u)", "labels": "tests/crypto", "constants": "test_wire (bridge)"}
 

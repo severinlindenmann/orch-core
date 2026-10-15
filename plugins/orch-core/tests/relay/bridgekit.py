@@ -48,9 +48,12 @@ class Clock:
 class Phone:
     """A member device: a person key, a device key, its certificate; builds requests and opens answers."""
 
-    def __init__(self, scopes: tuple[str, ...] = ("look", "decide", "operate"), *, expires_ms: int | None = None):
-        self.pk = crypto.generate_private_key()
-        self.dk = crypto.generate_private_key()
+    def __init__(
+        self, scopes: tuple[str, ...] = ("look", "decide", "operate"), *, expires_ms: int | None = None,
+        seed: bytes | None = None,
+    ):  # fmt: skip
+        self.pk = _key(seed, b"pk")
+        self.dk = _key(seed, b"dk")
         self.pk_pub, self.dk_pub = crypto.public_bytes(self.pk), crypto.public_bytes(self.dk)
         self.cert = certs.make_device_cert(
             self.pk_pub, lambda b: crypto.sign(self.pk, b), dk_sig_pub=self.dk_pub,
@@ -117,10 +120,21 @@ def open_chunk(env: bytes, keys: dict[int, bytes], wsk_pub: bytes) -> tuple[wire
     return h, meta, data
 
 
+def _key(seed: bytes | None, what: bytes):
+    """A fresh key, or a deterministic one from ``seed`` (a child process rebuilds the same world)."""
+    if seed is None:
+        return crypto.generate_private_key()
+    d = int.from_bytes(crypto.sha256(seed + what), "big") % (crypto.P256_N - 1) + 1
+    return crypto.private_key_from_scalar(d)
+
+
 class Epochs:
-    def __init__(self, current: int = 2) -> None:
+    def __init__(self, current: int = 2, *, seed: bytes | None = None) -> None:
         self.cur = current
-        self.keys = {e: secrets.token_bytes(32) for e in range(1, current + 1)}
+        self.keys = {
+            e: (secrets.token_bytes(32) if seed is None else crypto.sha256(seed + b"wk%d" % e))
+            for e in range(1, current + 1)
+        }
 
     def current_epoch(self) -> int:
         return self.cur
@@ -287,11 +301,13 @@ class Poster:
 class World:
     """One bridge over a fresh state directory, with its fakes; :meth:`reopen` simulates a restart."""
 
-    def __init__(self, tmp: Path, *, fault: Callable[[str], None] | None = None, start: bool = True) -> None:
+    def __init__(
+        self, tmp: Path, *, fault: Callable[[str], None] | None = None, start: bool = True, seed: bytes | None = None
+    ) -> None:
         self.tmp = tmp
-        self.epochs = Epochs()
+        self.epochs = Epochs(seed=seed)
         self.r6 = R6(self.epochs)
-        self.phone = Phone()
+        self.phone = Phone(seed=seed)
         self.r6.add(self.phone)
         self.clock = Clock()
         self.key = Key()

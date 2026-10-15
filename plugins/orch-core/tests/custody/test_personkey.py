@@ -740,7 +740,10 @@ def test_a_failure_while_deriving_zeroises(fast, no_grant, tty, spy, monkeypatch
 
 
 def test_no_secret_in_repr_or_exception_text(fast, no_grant, tty):
-    mine, other = rec.generate_recovery_code(), rec.generate_recovery_code()
+    # fixed codes, not random ones: the check below is "no word of the secret appears in the text", and the error text
+    # holds ordinary words that are also in the code word list (one, not, code, nothing, ...), so two random codes
+    # collided with it in roughly one run in twenty. These two do not, and the assertions stay exactly as strict.
+    mine, other = rec.code_from_entropy(bytes(range(32))), rec.code_from_entropy(bytes(range(32, 64)))
     secret_words = set(other.split())
     scalar = rec._scalar(other, FAST).to_bytes(32, "big")
     tty(other)

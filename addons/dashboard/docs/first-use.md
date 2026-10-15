@@ -38,8 +38,8 @@ in a pipe or a log); elsewhere it refuses with one line and exit 1. `orch addon 
 
 ## Before you start
 
-- **Python 3.11 or newer** (both packages say `requires-python >=3.11`). macOS ships older; use Homebrew:
-  `brew install python@3.11` (or `python@3.13`).
+- **Python 3.14 or newer** (both packages say `requires-python >=3.14`). macOS ships older; use Homebrew:
+  `brew install python@3.14`.
 - **Node 24 and npm** on `PATH` at install time: the dashboard's build hook runs `npm ci && npm run build` (step 1).
   Check with `node -v`. Not needed at run time.
 - **The repo is private.** Clone it with `gh auth login` done once, or any git credential that can read
@@ -56,7 +56,7 @@ checkout ("the service would keep running whatever that tree holds next", `host/
 directory is fine. The service will run this venv's Python, so do not move or delete the venv while the service is on.
 
 ```sh
-python3.11 -m venv ~/orch-venv
+python3.14 -m venv ~/orch-venv
 
 # the checkout (once); main is orch v1, v2 lives on develop
 git clone -b develop https://github.com/severinlindenmann/orch-core.git ~/src/orch-core   # needs gh auth / a token
@@ -110,7 +110,7 @@ service manager switched off; the foreground host is verified.**
 
 1. Installs an **immutable release** of core to `~/.local/share/orch/releases/<version>+<hash>/` and `.../current`.
 2. Writes the macOS **LaunchAgent** `~/Library/LaunchAgents/io.orch.host.plist` (`RunAtLoad`, `KeepAlive`, `Umask 63`),
-   which runs `<your venv>/bin/python3.11 -I ~/.local/share/orch/releases/current/bin/orch-host run --state
+   which runs `<your venv>/bin/python3.14 -I ~/.local/share/orch/releases/current/bin/orch-host run --state
    ~/.config/orch --run ~/.config/orch/run`, logging to `~/.config/orch/host/host.log`.
 3. `launchctl bootstrap gui/<uid>` it (or `kickstart` when already loaded), then waits up to 20 s for the control socket
    `~/.config/orch/run/control/host.sock`. Output on success: `{"ok": true, "result": {"data": {"mode": "host", "service": "launchd", ...}}}`.

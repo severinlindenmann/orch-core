@@ -32,6 +32,8 @@ WHAT = frozenset(
         "adopted",
         "record_failed",
         "deposit",  # v1.6: a deposit grant's hand-over to the runner (the outcome code only, never a secret)
+        "custody_on",  # §0.8.6 item 3a: the dashboard switched click-to-sign on (the workspace id, never a passphrase)
+        "custody_off",  # and off
     }
 )
 _SAFE = {

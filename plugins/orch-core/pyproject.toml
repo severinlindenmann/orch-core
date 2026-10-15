@@ -3,7 +3,7 @@ name = "orch-core"
 version = "2.0.0.dev0"
 description = "Local markdown ticket system with human-in-the-loop gates for agent harnesses (v2 core)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 dependencies = [

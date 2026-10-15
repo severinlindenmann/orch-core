@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { beforeEach, afterEach, vi } from 'vitest'
 import { api } from '@/api/client'
@@ -235,4 +235,36 @@ describe('terminal workspace layout', () => {
     await user.click(screen.getByRole('button', { name: /Jump to latest/ }))
     expect(screen.queryByRole('button', { name: /Jump to latest/ })).not.toBeInTheDocument()
   })
+})
+
+
+it('cancels the reveal frame and pending writes when the terminal unmounts', async () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, top: 0, left: 0, bottom: 500, right: 900, width: 900, height: 500, toJSON() {},
+  })
+  const pending = new Map<number, FrameRequestCallback>()
+  let id = 0
+  const request = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+    pending.set(++id, cb)
+    return id
+  })
+  const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => { pending.delete(id) })
+  const app = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+  await screen.findByRole('textbox', { hidden: true }, T)
+  expect(pending.size).toBeGreaterThan(0)
+  vi.useFakeTimers()
+  try {
+    app.unmount()
+    const requests = request.mock.calls.length
+    const ran = vi.fn()
+    for (const callback of pending.values()) setTimeout(() => { ran(); callback(performance.now()) }, 16)
+    act(() => vi.advanceTimersByTime(5000))
+    expect(ran).not.toHaveBeenCalled()
+    expect(request.mock.calls.length).toBe(requests)
+    expect(cancel).toHaveBeenCalled()
+    expect(pending.size).toBe(0)
+  } finally {
+    app.unmount()
+    vi.useRealTimers()
+  }
 })

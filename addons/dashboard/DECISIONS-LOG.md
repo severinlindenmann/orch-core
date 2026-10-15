@@ -1842,3 +1842,54 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Why:** An unexpected host key (a path, a token, free text) reached the browser. The list is exactly what the page reads (`ApiErrorBody`); `state` is not read by the page but is the server's own N15 answer (its tests assert it), so it stays, closed per code.
 - **Revert:** Restore the pass-through in `host_response`; the per-key checks are then unused.
 - **Follow-up (Opus review CHANGES, same day):** the response's `exit` is a plain int 1..9 (§0.6), else 1; `HostError` itself turns an error without a valid code (or not a dict) into `internal` (exit 1) and checks `exit`, so every reader of `exc.error["code"]` (hostlink, gateway `host_state`, live, terminals) sees a checked code; hostlink reads `error`/`exit` with `.get`. The terminal `end` frame uses the same `valid_code`/`retry_after` helpers. The server's own keys are bound to their codes: `summary`/`signed_at`/`op` to `intent.done`, `commit` to `records.*`, `request_id`/`why` to `human.click_refused`. `SUMMARY_MAX` is 65536 (a long review no longer loses its summary); a plain-text `fix` is capped at 400 like `hint`.
+
+## 2026-10-15 Cancel terminal and artifact work at teardown
+
+- **Decision:** Dispose both terminal implementations synchronously, cancel the mock terminal reveal frame and hint timers, retain and cancel transcript-download cleanup timers (revoking their URLs on unmount), and cancel artifact pane focus restoration. Disposed real views ignore stale input. A shared adapter cancels the pinned xterm 5.x viewport refresh and neutralizes `syncScrollArea` before disposing the renderer; its constructor timer and reset frame have no retained cancellation handles. No global animation-frame stub is added to the Vitest setup.
+- **Why:** The former write-drain → timer → two animation frames disposal chain scheduled new work after unmount, sometimes after jsdom removed `requestAnimationFrame`. Synchronous disposal alone exposes xterm's viewport callbacks to a destroyed renderer; the narrow adapter addresses that underlying dependency bug. Real-xterm and React regression tests exercise pending work at teardown and fail against the previous implementations.
+- **Revert:** Restore delayed terminal disposal and remove the frame/timer ownership changes. Revisit the private viewport adapter when upgrading xterm; remove it once upstream owns and cancels that work.
+
+## 2026-10-15 No dashboard under an agent's environment; no launch code at rest (#542 items 1+3)
+
+- **Decision (item 1):** core's `orch dashboard` (`plugins/orch-core/src/orch/cli/dashboard.py`) and the addon's own
+  entry point (`orch-dashboard`, `python -m orch_dashboard`; `open`, `launch`, `serve`, and `open_dashboard()`/`serve()`
+  themselves) refuse when `ORCH_GRANT` or `ORCH_SESSION` is set and non-empty, before anything is looked up, started or
+  minted: `<prog>: human_only: <message>` on stderr, exit 3, the text shape of `orch sign`'s refusal
+  (`orch/host/handoff.py`, `human_only` exit 3 in `host/errors.py`). `stop` (and `--stop`) stays allowed: it mints
+  nothing and only ends the person's own server, which an agent of the same UID could kill anyway; refusing it would
+  only keep an agent from cleaning up after a test. `addon-manifest` stays allowed (it writes the packaged manifest and
+  never touches ctl.sock). Core passes only an exact `stop`/`--stop`; the addon checks its parsed arguments.
+- **Decision (item 3):** keep the file handoff and shrink its window. The redirect file (0600, `O_CREAT|O_EXCL|O_NOFOLLOW`,
+  in the private 0700 directory) is removed by the server, which records its exact path at mint. Redemption and the
+  expiry timer (`CODE_TTL`, 30 s, was 60 s) both go through one `Auth._forget` under `Auth.lock`: the code is
+  **invalidated** and the file unlinked exactly once, by whichever comes first (a later timer or exchange finds nothing).
+  An exchange of an expired code and the next mint also forget expired codes. The launch reply carries `expires_at`;
+  the launcher writes no file within 1 s of it and removes a file it just wrote if it got there (a launcher paused for
+  the code's life would otherwise leave a file after the timer ran; its code is dead anyway). The startup sweep removes
+  leftovers older than 30 s (was 60 s). If `webbrowser.open` reports no browser, the launcher deletes the file at once.
+  `--print-url` to a TTY is unchanged.
+- **What the page can and cannot do:** a `file://` page cannot delete itself, and an `http-equiv` Cache-Control meta
+  does nothing for a `file://` document (the first version of this PR had one; removed after review). The page's load
+  is what deletes it in practice: it navigates at once (`location.replace`) to the dashboard, whose first act is
+  redeeming the code, and redemption unlinks the file. The security rests on the code being dead after its first use
+  and at its expiry, not on the file vanishing: a copy of the file read later holds a dead code.
+- **Accepted tier-A residual (review P1):** every client path that sends `launch` calls `refuse_agent()`
+  (`control()` itself, so `open_dashboard`, its retry loop and any direct caller are covered). But ctl.sock checks only
+  the peer UID and cannot tell an agent from the person: an agent that talks to ctl.sock directly (its own socket
+  client, or with `ORCH_GRANT`/`ORCH_SESSION` cleared) still gets a code and a session. Peer-environment inspection was
+  rejected (#542 item 2: racy, evaded by unsetting the variables); per D-P2-31 the UID is the boundary in tier A.
+  What protects the high-value actions is #542 item 4, a fresh person gesture for switching actions (#539).
+- **Rejected: a one-time nonce URL in argv** (`open http://127.0.0.1:<port>/launch/<nonce>`). argv is readable by every
+  UID (`ps`), and the loopback port is reachable by every local user, so another UID could redeem the nonce before the
+  person's browser does and get the person's session: a cross-user takeover, worse than today, where the 0600 file in a
+  0700 directory keeps every other UID out. Anything handed to the browser through argv must be worthless to another
+  UID; a redeemable nonce is not. "The person's browser would then fail and show it" detects the takeover only after it
+  happened.
+- **Rejected: peer-environment inspection on ctl.sock** (item 2, orch-52's decision on #542): racy, and evaded by unsetting
+  the variables.
+- **Why:** smallest window that never exposes the code to another UID. Honest limit: in tier A an agent runs as the
+  person's UID, so it can still read the file within its 30 s or call ctl.sock itself; items 1 and 3 close the easy
+  paths, not a boundary (D-P2-31). A real boundary needs tier B or a user-presence factor (phase 3).
+- **Revert:** drop `refuse_agent()` and the `AgentRefused` branch in `orch_dashboard/__main__.py`, `agent_refusal` in
+  core's `cli/dashboard.py`; set `CODE_TTL` timer and sweep back to 60 s; restore `remove_redirect` (file only) in
+  place of `_forget`/`expire`; drop the `expires_at` checks and the `webbrowser.open` result check.

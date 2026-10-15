@@ -20,7 +20,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -271,6 +271,36 @@ def current_devices(ws: Any) -> list[Any]:
     return [d for _, d in sorted(ws.devices.items()) if not d.removed and not d.revoked]
 
 
+def _accepts(check: Callable[[dict[str, Any]], bool], record: Any) -> bool:
+    try:
+        return bool(check(record))
+    except Exception:  # noqa: BLE001 - an incumbent that cannot be checked never wins
+        return False
+
+
+def _str(v: Any) -> bool:
+    return type(v) is str
+
+
+def _shape_ok(record: Any) -> bool:
+    """Every field of a stored record has its type before anything looks a value up (#513 review: a malformed file
+    is level 0, never an error): the exact field set, ``v`` 1, the ids and digests strings, ``reader`` a non-negative
+    int, ``decl`` ``{o, sig}`` with ``o`` an object whose ``who`` and ``bind`` are objects, ``source`` a known one."""
+    if type(record) is not dict or set(record) != _RECORD_FIELDS:
+        return False
+    if type(record["v"]) is not int or record["v"] != 1 or type(record["reader"]) is not int or record["reader"] < 0:
+        return False
+    if not all(_str(record[k]) for k in ("device_id", "person_id", "dk_hash", "digest", "source", "at")):
+        return False
+    if record["source"] not in SOURCES:
+        return False
+    decl = record["decl"]
+    if type(decl) is not dict or set(decl) != {"o", "sig"} or type(decl["o"]) is not dict or not _str(decl["sig"]):
+        return False
+    o = decl["o"]
+    return type(o.get("who")) is dict and type(o.get("bind")) is dict
+
+
 def _evidence(state: Any, device: str) -> dict[str, Any] | None:
     try:
         return state.device_evidence(device)
@@ -287,11 +317,9 @@ def record_level(record: Any, workspace_id: str, dev: Any, evidence: Any) -> int
     from orch import crypto
     from orch.identity import reader
 
-    if not isinstance(record, dict) or set(record) != _RECORD_FIELDS or record.get("v") != 1:
+    if not _shape_ok(record) or not isinstance(evidence, dict):
         return None
-    source = record.get("source")
-    if source not in SOURCES or not isinstance(record.get("decl"), dict) or not isinstance(evidence, dict):
-        return None
+    source = record["source"]
     if record["device_id"] != _bare(dev.id) or record["person_id"] != _bare(dev.person):
         return None
     keys = _cert_keys(evidence.get("device_cert"))
@@ -342,8 +370,16 @@ def levels(state_dir: Path | None, workspace_id: str, state: Any, uid: int | Non
     out: dict[str, int | None] = {}
     for dev in current_devices(state.workspace):
         rec = read_record(state_dir, workspace_id, _bare(dev.id), uid)
-        out[dev.id] = None if rec is None else record_level(rec, workspace_id, dev, _evidence(state, dev.id))
+        out[dev.id] = None if rec is None else _level_or_none(rec, workspace_id, dev, _evidence(state, dev.id))
     return out
+
+
+def _level_or_none(record: Any, workspace_id: str, dev: Any, evidence: Any) -> int | None:
+    """:func:`record_level`, and any error on a malformed record is "no declaration" (never raised to a read)."""
+    try:
+        return record_level(record, workspace_id, dev, evidence)
+    except Exception:  # noqa: BLE001 - defence in depth behind _shape_ok
+        return None
 
 
 def _o_key(decl: Any) -> str | None:
@@ -358,15 +394,25 @@ def _o_key(decl: Any) -> str | None:
         return None
 
 
-def store_record(state_dir: Path, workspace_id: str, uid: int, record: dict[str, Any]) -> dict[str, Any]:
+def store_record(
+    state_dir: Path,
+    workspace_id: str,
+    uid: int,
+    record: dict[str, Any],
+    *,
+    incumbent_ok: Callable[[dict[str, Any]], bool] | None = None,
+) -> dict[str, Any]:
     """Write ``record`` unless the stored one wins (9.3 "Latest wins", I1), and return the record now current: the
     same declaration (equal ``sha256(cj(o))``, whatever its ``sig``) keeps the stored bytes; a stored declaration with
-    a later ``created_ms`` that is still a well-formed record of this device wins over an older newcomer (a lower
-    declaration lowers the level only when it is newer). Raises when the write fails (the caller refuses its op)."""
+    a later ``created_ms`` wins over an older newcomer (a lower declaration lowers the level only when it is newer).
+    **Only a verified incumbent competes** (#513 review): ``incumbent_ok`` must accept it (``record_level`` against
+    the device now); without it, or for a stored record it refuses (a bad signature, a far-future ``created_ms`` of
+    a corrupt file), the new record replaces it. Raises when the write fails (the caller refuses its op)."""
     from orch.store.readerrecs import read_record, write_record
 
     old = read_record(state_dir, workspace_id, record["device_id"], uid)
-    if isinstance(old, dict) and set(old) == _RECORD_FIELDS and old.get("person_id") == record["person_id"]:
+    trusted = _shape_ok(old) and incumbent_ok is not None and _accepts(incumbent_ok, old)
+    if trusted and old.get("person_id") == record["person_id"]:
         old_o, new_o = (old.get("decl") or {}).get("o"), record["decl"]["o"]
         if _o_key(old.get("decl")) == _o_key(record["decl"]) and old.get("dk_hash") == record["dk_hash"]:
             return old
@@ -382,9 +428,10 @@ def store_record(state_dir: Path, workspace_id: str, uid: int, record: dict[str,
 
 
 def drop_stale(state_dir: Path | None, workspace_id: str, devices: Iterable[str]) -> None:
-    """Remove the records of readers an append adds **without** a declaration (a record left from before the device
-    was removed must not count again once it is re-added: its build may have changed). Raises when a record that is
-    there cannot be removed (the caller refuses the append)."""
+    """Remove the records of **every** reader an append adds, before the admitted declarations are written: a record
+    left from before the device was removed, or from a refused append, must never count once it is (re-)added, in
+    either direction (#513 review: only the level the gate admitted may count). Raises when a record that is there
+    cannot be removed (the caller refuses the append)."""
     from orch.store.readerrecs import remove_record
 
     if state_dir is None:
@@ -408,7 +455,7 @@ def prune(state_dir: Path, workspace_id: str, state: Any, uid: int | None = None
         current = dev is not None and not dev.removed and not dev.revoked
         rec = read_record(state_dir, workspace_id, hexid, uid)
         evidence = _evidence(state, "d_" + hexid) if current else None
-        if current and rec is not None and record_level(rec, workspace_id, dev, evidence) is not None:
+        if current and rec is not None and _level_or_none(rec, workspace_id, dev, evidence) is not None:
             kept.append("d_" + hexid)
             continue
         with contextlib.suppress(OSError):

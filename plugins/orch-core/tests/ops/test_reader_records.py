@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from types import SimpleNamespace
 
@@ -47,7 +48,14 @@ def _admit(state, p: Person, *, level=1, created_ms=NOW, via="declare", source="
         d, workspace_id=WS, cert=p.cert(), person=p.ref, via=via, surfaces=surfaces, now_ms=created_ms
     )
     rec = readers.make_record(got, d, p.ref, source, "2026-10-15T00:00:00Z")
-    return readers.store_record(state, WS, UID, rec), d
+    return readers.store_record(state, WS, UID, rec, incumbent_ok=_verified(p)), d
+
+
+def _verified(p: Person):
+    """``incumbent_ok`` for ``p``'s device: the stored record verifies against it now."""
+    st = _state(_ws(p))
+    dev = st.workspace.devices[p.device]
+    return lambda old: readers.record_level(old, WS, dev, st.device_evidence(p.device)) is not None
 
 
 def test_a_stored_declaration_counts_at_its_level_and_nothing_else_counts(tmp_path):
@@ -114,7 +122,9 @@ def test_the_same_declaration_with_another_signature_keeps_the_stored_record(tmp
     got = readers.verify_admission(
         twin, workspace_id=WS, cert=a.cert(), person=a.ref, via="declare", surfaces=("log",), now_ms=NOW
     )
-    kept = readers.store_record(tmp_path, WS, UID, readers.make_record(got, twin, a.ref, "declare", "later"))
+    kept = readers.store_record(
+        tmp_path, WS, UID, readers.make_record(got, twin, a.ref, "declare", "later"), incumbent_ok=_verified(a)
+    )
     assert kept == rec and readerrecs.read_record(tmp_path, WS, a.device[2:]) == rec
 
 
@@ -228,7 +238,7 @@ def test_a_record_with_any_field_of_the_wrong_type_is_level_0_never_an_error(tmp
     rec, _ = _admit(tmp_path, a)
     _admit(tmp_path, b)
     change(rec)
-    readerrecs.write_record(tmp_path, WS, UID, rec)
+    readerrecs.record_path(tmp_path, WS, a.device[2:]).write_text(json.dumps(rec))  # any bytes, as found on disk
     ws = _ws(a, b)
     assert readers.levels(tmp_path, WS, _state(ws)) == {a.device: None, b.device: 1}
     assert readers.prune(tmp_path, WS, _state(ws)) == {"kept": [b.device], "dropped": [a.device]}  # keeps going

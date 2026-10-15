@@ -56,8 +56,13 @@ def read_required(service: Any) -> int:
     return 1 if convenience_seen(service.state_dir, service.workspace_id) else 0
 
 
-def listing(service: Any) -> dict[str, Any]:
-    """``reader.list``: every current device and what its record says now (verified again on every read)."""
+#: the fields of a ``reader.list`` row a phone (column R) gets (#513 review): no ``decl`` and no ``dk_hash``
+PHONE_FIELDS = ("device", "person", "reader", "level")
+
+
+def listing(service: Any, *, phone: bool = False) -> dict[str, Any]:
+    """``reader.list``: every current device and what its record says now (verified again on every read). ``phone``
+    (column R) trims each row to :data:`PHONE_FIELDS`."""
     from orch.ops import readers as rd
     from orch.store.readerrecs import read_record
 
@@ -81,6 +86,8 @@ def listing(service: Any) -> dict[str, Any]:
                 "decl": rec["decl"] if ok else None,
             }
         )
+    if phone:
+        rows = [{k: r[k] for k in PHONE_FIELDS} for r in rows]
     return {"readers": rows, "required_reader": read_required(service)}
 
 
@@ -140,6 +147,7 @@ def declare(service: Any, person: str, decl: Any) -> dict[str, Any]:
                 service.workspace_id,
                 service.host_uid,
                 rd.make_record(got, decl, person, "declare", stamp),
+                incumbent_ok=lambda old: rd.record_level(old, service.workspace_id, dev, evidence) is not None,
             )
         except HostError:
             raise

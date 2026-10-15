@@ -5678,7 +5678,11 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   `_check_r6` likewise; a release that raises is alarmed `relay_release_failed` and still runs `on_ended` and ends the
   worker (`finally`); `relay_lock` is re-entrant, so a seam factory that reaches the foreign-append audit on the open
   path re-enters instead of wedging the worker thread (test); stored alarms are sanitised and clipped on read-back.
-- **Mutation pass, round 3:** see the PR.
+- **Mutation pass, round 3:** 19 new mutants (no intent, no marker, the intent ignored by `start_blocker`, `relay start`
+  or the open, the intent never cleared, a crash after the rename not finished, the reason kept, `_ended` early,
+  `_finish` unlocked, no re-stop, a truthy gate in `start`, an ended stuck worker kept, the reaper spinning or
+  releasing after one round, non-callable members, a raising release, a plain `relay_lock`, stored alarms unsanitised):
+  **19 killed** (one survivor, the missing intent, was killed by an added assertion).
 
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`

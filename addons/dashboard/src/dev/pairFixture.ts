@@ -75,10 +75,11 @@ export function createPairFixture(opts: PairFixtureOptions = {}): PairFixture {
       return { offer_id, expires_ms, ...fixtureLinks(n) }
     },
     list: async () => (log('list'), { offers: offers.map((o) => ({ ...o })) }),
-    answer: async (_ws, offer_id, approve) => {
-      log('answer', offer_id, approve)
+    answer: async (_ws, offer_id, approve, o) => {
+      log('answer', offer_id, approve, ...(o ? [o] : []))
       const state: PairState = approve ? 'confirmed' : 'rejected'
-      emit(offer_id, state, approve ? { sas: null } : { sas: null, reason: 'Rejected on this Mac.' })
+      const reason = (o?.mismatches ?? 0) >= 3 ? 'The codes differed 3 times: the offer is refused.' : 'Rejected on this Mac.'
+      emit(offer_id, state, approve ? { sas: null } : { sas: null, reason })
       return { state }
     },
     cancel: async (_ws, offer_id) => {

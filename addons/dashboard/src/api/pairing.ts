@@ -31,10 +31,11 @@ export interface PairBlocked {
   code: string
   message: string
   /**
-   * ASSUMPTION (not in the proposal): for `sign.convenience_readers`, whether click-to-sign was ever used here (`true`:
-   * turning it off does not help) or only switched on (`false`). Absent: unknown, the page explains both cases.
+   * ASSUMPTION: for `sign.convenience_readers` (blocked only while click-to-sign is on or the key is in convenience custody,
+   * orch-52), which of the two: `flag` (the switch is on) or `custody` (the workspace key is held for click-to-sign).
+   * Absent: the page shows the turn-off line only. Convenience HISTORY alone is not a block: it comes as a `warning`.
    */
-  history?: boolean
+  cause?: 'flag' | 'custody'
 }
 
 /** `pair.preview {}`: a pure read, the same checks `pair.offer` runs first. */
@@ -126,7 +127,8 @@ export interface PairingApi {
   preview: (ws: string) => Promise<PairPreview>
   offer: (ws: string, args?: { scopes?: string[]; ttl_ms?: number }) => Promise<PairOffer>
   list: (ws: string) => Promise<{ offers: PairOfferStatus[] }>
-  answer: (ws: string, offer_id: string, approve: boolean) => Promise<{ state: PairState }>
+  /** ASSUMPTION: `mismatches` (typed SAS mismatches, at most 3 per offer) lets the host give the reason of the refusal. */
+  answer: (ws: string, offer_id: string, approve: boolean, opts?: { mismatches?: number }) => Promise<{ state: PairState }>
   cancel: (ws: string, offer_id: string) => Promise<{ state: PairState }>
   /** `member.list {}` under the `read_ext` bump that adds the device fields. */
   members: (ws: string) => Promise<{ members: PairMember[] }>
@@ -179,6 +181,10 @@ export function checkSas(typed: string, sas: string | null | undefined): SasChec
   return t === s ? 'match' : 'differ'
 }
 
-/** Where the person confirms on the Mac's primary (ASSUMPTION: the CLI command is not fixed yet). */
+/** Where the person confirms on the Mac's primary (ASSUMPTION: R6 runs it inline in `orch host relay pair`; no name of its own). */
 export const PRIMARY_COMMAND = 'orch keys primary approve'
+/** The `device.added` signature (ASSUMPTION: the existing hand-off command; the code comes with the prepared request). */
+export const SIGN_COMMAND = 'orch sign <code>'
+/** Typed SAS mismatches allowed per offer (orch-52); the third refuses the offer. */
+export const SAS_ATTEMPTS = 3
 export const convenienceOffCommand = (ws: string) => `orch host convenience off --workspace ${ws}`

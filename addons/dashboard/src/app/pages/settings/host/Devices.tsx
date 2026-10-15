@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { encode } from 'uqr'
-import { checkSas, convenienceOffCommand, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PRIMARY_COMMAND, type PairBlocked, deviceRemoveCommand, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
+import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PRIMARY_COMMAND, type PairBlocked, deviceRemoveCommand, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
 import { ApiError, type Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline, Prose } from '@/components/sign/visible'
@@ -197,7 +197,7 @@ function Blocked({ blocked, workspace }: { blocked: PairBlocked; workspace: Work
   return (
     <div role="alert" data-testid="pair-blocked" data-code={blocked.code} className="space-y-2 rounded-md border border-warning/40 px-3 py-3 text-[13px]">
       <p className="font-medium">
-        {convenience ? 'A phone cannot be paired while click-to-sign is on, or was used, on this workspace.' : 'A phone cannot be paired on this workspace now.'}{' '}
+        {convenience ? 'A phone cannot be paired while click-to-sign is on for this workspace.' : 'A phone cannot be paired on this workspace now.'}{' '}
         <Mono>{blocked.code}</Mono>
       </p>
       <p className="text-text-muted" aria-label="What the host says">
@@ -205,13 +205,14 @@ function Blocked({ blocked, workspace }: { blocked: PairBlocked; workspace: Work
       </p>
       {convenience && (
         <div data-testid="pair-blocked-convenience" className="space-y-2">
-          {blocked.history === undefined && <p className="text-text-muted">The host does not say which of these applies:</p>}
-          {blocked.history !== true && (
-            <p data-testid="pair-convenience-off">
-              Turn click-to-sign off first: <code className="select-all break-all rounded bg-surface-3 px-1 font-mono text-[12px] text-text">{convenienceOffCommand(workspace.prefix)}</code>
+          <p data-testid="pair-convenience-off">
+            Turn click-to-sign off first: <code className="select-all break-all rounded bg-surface-3 px-1 font-mono text-[12px] text-text">{convenienceOffCommand(workspace.prefix)}</code>
+          </p>
+          {blocked.cause === 'custody' && (
+            <p data-testid="pair-convenience-custody" className="text-text-muted">
+              Your key for this workspace is held for click-to-sign (convenience custody). Turning it off moves signing back to your passphrase key in the terminal.
             </p>
           )}
-          {blocked.history !== false && <p data-testid="pair-convenience-history">This workspace&apos;s click-to-sign history blocks phones.</p>}
         </div>
       )}
     </div>
@@ -364,12 +365,15 @@ function CompareCode({ ws, status, onCancel, refresh }: { ws: string; status: Pa
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  // Each distinct full-length mismatch is one attempt; the third refuses the offer.
+  const [misses, setMisses] = useState<readonly string[]>([])
   const check = checkSas(typed, status.sas)
-  const answer = async (approve: boolean) => {
+  const left = SAS_ATTEMPTS - misses.length
+  const answer = async (approve: boolean, mismatches?: number) => {
     setBusy(true)
     setError(null)
     try {
-      await pairingApi.answer(ws, status.offer_id, approve)
+      await pairingApi.answer(ws, status.offer_id, approve, mismatches ? { mismatches } : undefined)
     } catch (e) {
       setError(e)
     } finally {
@@ -390,7 +394,17 @@ function CompareCode({ ws, status, onCancel, refresh }: { ws: string; status: Pa
         <input
           id="pair-sas"
           value={typed}
-          onChange={(e) => setTyped(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value
+            setTyped(value)
+            const n = normaliseSas(value)
+            if (checkSas(value, status.sas) === 'differ' && n.length === normaliseSas(status.sas ?? '').length && !misses.includes(n) && misses.length < SAS_ATTEMPTS) {
+              const next = [...misses, n]
+              setMisses(next)
+              if (next.length >= SAS_ATTEMPTS) void answer(false, next.length)
+            }
+          }}
+          disabled={busy || left <= 0}
           maxLength={16}
           autoComplete="off"
           autoCapitalize="characters"
@@ -401,6 +415,11 @@ function CompareCode({ ws, status, onCancel, refresh }: { ws: string; status: Pa
         {check === 'differ' && (
           <p role="alert" data-testid="pair-sas-differ" className="font-medium text-danger">
             The codes differ: reject this phone.
+          </p>
+        )}
+        {misses.length > 0 && (
+          <p data-testid="pair-sas-attempts" className="text-text-muted">
+            {left > 0 ? `${left} ${left === 1 ? 'attempt' : 'attempts'} left. After ${SAS_ATTEMPTS} wrong codes the phone is refused.` : 'No attempts left: the phone is refused.'}
           </p>
         )}
         {check !== 'match' && check !== 'differ' && <p className="text-text-muted">Approve stays off until the codes match. If you are not sure, reject.</p>}
@@ -466,20 +485,13 @@ function OfferView(p: {
   if (state === 'cert_pending')
     return (
       <div className={box} data-testid="pair-cert">
-        {status?.cert_ready ? (
-          <>
-            <p className="font-medium">The primary signed the certificate. Sign to add the phone to this workspace.</p>
-            <Button
-              size="sm"
-              onClick={() => handoff.ask({ title: 'Add the phone', action: { action: 'pair_device', offer: status.offer_id }, autoStart: true })}
-            >
-              Add the phone
-            </Button>
-          </>
-        ) : (
-          <>
-            <p className="font-medium">Confirm on your Mac&apos;s primary.</p>
-            <p>In a terminal on this Mac, run:</p>
+        <p className="font-medium">Two steps in a terminal on this Mac finish the pairing.</p>
+        <p className="text-text-muted">
+          They can&apos;t be done in the browser: a workspace with a paired phone refuses click-to-sign.
+        </p>
+        <ol className="list-decimal space-y-3 pl-5">
+          <li className="space-y-1" data-testid="pair-step-primary">
+            <p>Confirm on your Mac&apos;s primary. Run:</p>
             <CopyText label="Command for the primary" testId="pair-primary-command">
               {PRIMARY_COMMAND}
             </CopyText>
@@ -490,8 +502,22 @@ function OfferView(p: {
             <p className="text-text-muted">
               For <DeviceLabel label={status?.label} />.
             </p>
-          </>
-        )}
+            {status?.cert_ready && <p className="text-success">Done: the primary signed the certificate.</p>}
+          </li>
+          <li className="space-y-1" data-testid="pair-step-sign">
+            <p>Sign the new device into this workspace. Run, with the code the dashboard gives you:</p>
+            <CopyText label="Command to sign the new device" testId="pair-sign-command">
+              {SIGN_COMMAND}
+            </CopyText>
+            {status?.cert_ready ? (
+              <Button size="sm" onClick={() => handoff.ask({ title: 'Add the phone', action: { action: 'pair_device', offer: status.offer_id }, autoStart: true })}>
+                Get the signing code
+              </Button>
+            ) : (
+              <p className="text-text-muted">The code is ready once the primary has signed (step 1).</p>
+            )}
+          </li>
+        </ol>
         <Button size="sm" variant="ghost" onClick={p.onCancel}>
           Cancel pairing
         </Button>

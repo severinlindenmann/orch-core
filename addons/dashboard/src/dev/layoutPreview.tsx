@@ -189,7 +189,7 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
       return { served: false }
     case 'pair-blocked-convenience':
       return {
-        preview: { blocked: { code: 'sign.convenience_readers', message: `click-to-sign is on for this workspace; a phone cannot be added while it is on (${LONG_WORD})`, history: false } },
+        preview: { blocked: { code: 'sign.convenience_readers', message: `click-to-sign is on for this workspace; a phone cannot be added while it is on (${LONG_WORD})`, cause: 'flag' } },
         members: member([]),
       }
     case 'pair-pending':

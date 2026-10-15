@@ -69,29 +69,29 @@ describe('the gate', () => {
 
 describe('before offering', () => {
   const OFF = 'Turn click-to-sign off first: orch host convenience off --workspace DEMO'
-  const HISTORY = "This workspace's click-to-sign history blocks phones."
 
-  it('convenience, turning it off helps: the exact turn-off line, no Create button', async () => {
+  it('convenience flag on: blocked with the exact turn-off line, no Create button', async () => {
     open('pair-blocked-convenience')
     const blocked = await screen.findByTestId('pair-blocked', {}, T)
     expect(blocked).toHaveAttribute('data-code', 'sign.convenience_readers')
     expect(screen.getByTestId('pair-convenience-off').textContent).toBe(OFF)
-    expect(screen.queryByTestId('pair-convenience-history')).toBeNull()
+    expect(screen.queryByTestId('pair-convenience-custody')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
   })
 
-  it('convenience, history blocks it: the exact history line, no command', async () => {
-    open('pair-blocked-convenience', { preview: { blocked: { code: 'sign.convenience_readers', message: 'click-to-sign was used here', history: true } } })
-    await screen.findByTestId('pair-blocked', {}, T)
-    expect(screen.getByTestId('pair-convenience-history').textContent).toBe(HISTORY)
-    expect(screen.queryByTestId('pair-convenience-off')).toBeNull()
-  })
-
-  it('convenience, history unknown: both exact lines', async () => {
-    open('pair-blocked-convenience', { preview: { blocked: { code: 'sign.convenience_readers', message: 'no' } } })
+  it('convenience custody: the turn-off line plus the custody hint', async () => {
+    open('pair-blocked-convenience', { preview: { blocked: { code: 'sign.convenience_readers', message: 'key in convenience custody', cause: 'custody' } } })
     await screen.findByTestId('pair-blocked', {}, T)
     expect(screen.getByTestId('pair-convenience-off').textContent).toBe(OFF)
-    expect(screen.getByTestId('pair-convenience-history').textContent).toBe(HISTORY)
+    expect(screen.getByTestId('pair-convenience-custody')).toHaveTextContent('convenience custody')
+  })
+
+  it('convenience history alone is not a block: a warning before Create pairing link', async () => {
+    const warning = 'This workspace used click-to-sign; only phones with an up-to-date orch app can pair.'
+    open('pair-offer', { preview: { warnings: [warning] } })
+    expect(await screen.findByTestId('pair-warnings', {}, T)).toHaveTextContent(warning)
+    expect(screen.queryByTestId('pair-blocked')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Create pairing link' })).toBeEnabled()
   })
 
   it.each([
@@ -252,6 +252,23 @@ describe('compare the code', () => {
     await waitFor(() => expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['of_' + '7'.repeat(32), true]))
   })
 
+  it('three typed mismatches refuse the offer; the remaining attempts are shown', async () => {
+    const { user } = open('pair-pending')
+    const input = await screen.findByLabelText('Type the six characters your phone shows', {}, T)
+    await user.type(input, 'AAAAAA')
+    expect(screen.getByTestId('pair-sas-attempts')).toHaveTextContent('2 attempts left')
+    await user.type(input, '{Backspace}A') // the same code again is not a new attempt
+    expect(screen.getByTestId('pair-sas-attempts')).toHaveTextContent('2 attempts left')
+    await user.clear(input)
+    await user.type(input, 'BBBBBB')
+    expect(screen.getByTestId('pair-sas-attempts')).toHaveTextContent('1 attempt left')
+    expect(pairPreviewForTests.fixture()!.calls.some((c) => c.op === 'answer')).toBe(false)
+    await user.clear(input)
+    await user.type(input, 'CCCCCC')
+    expect(await screen.findByTestId('pair-end-rejected', {}, T)).toHaveTextContent('The codes differed 3 times')
+    expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['of_' + '7'.repeat(32), false, { mismatches: 3 }])
+  })
+
   it('Reject answers no', async () => {
     const { user } = open('pair-pending')
     await user.click(await screen.findByRole('button', { name: 'Reject' }, T))
@@ -279,16 +296,19 @@ describe('compare the code', () => {
 })
 
 describe('after the code', () => {
-  it('cert_pending shows the cert code and the primary command as text', async () => {
+  it('cert_pending shows the two terminal steps with copyable commands and the cert code', async () => {
     open('pair-cert')
     expect(await screen.findByTestId('pair-cert-code', {}, T)).toHaveTextContent('H4WZ7P')
-    expect(screen.getByTestId('pair-primary-command')).toHaveTextContent('orch keys primary approve')
-    expect(screen.getByTestId('pair-primary-command').closest('a')).toBeNull()
+    expect(screen.getByTestId('pair-primary-command').textContent).toBe('orch keys primary approve')
+    expect(screen.getByTestId('pair-sign-command').textContent).toBe('orch sign <code>')
+    expect(screen.getByTestId('pair-cert')).toHaveTextContent('refuses click-to-sign')
+    for (const id of ['pair-primary-command', 'pair-sign-command']) expect(screen.getByTestId(id).closest('a')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Get the signing code' })).toBeNull()
   })
 
-  it('with the certificate in, Add the phone opens the hand-off for relay.pair_device', async () => {
+  it('with the certificate in, Get the signing code opens the hand-off for relay.pair_device', async () => {
     const { user } = open('pair-cert', { offers: [{ offer_id: 'of_c', state: 'cert_pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'], cert_ready: true }] })
-    const add = await screen.findByRole('button', { name: 'Add the phone' }, T)
+    const add = await screen.findByRole('button', { name: 'Get the signing code' }, T)
     const spy = vi.spyOn(api, 'prepareHandoff')
     await user.click(add)
     await screen.findByRole('dialog', {}, T)

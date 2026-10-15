@@ -170,6 +170,7 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
     host = {
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",
+        "reader.list",  # H12d-2 (§0.8.6 item 9.11): P and R
     }  # fmt: skip
     assert columns.RELAY_OPS == frozenset(reads | host | {"whoami", "outcome.get", "relay.submit"})
     assert columns.DEVICE_SIGNED_OPS == frozenset({"relay.submit"})
@@ -457,6 +458,15 @@ class FakeStore:
             yield
         finally:
             self.lock_depth -= 1
+
+    def refresh(self) -> None:
+        """H12d-2: ``append_signed`` reads the readers' state before a convenience or reader event."""
+
+    @property
+    def state(self) -> Any:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(workspace=SimpleNamespace(devices={}, members={}), device_evidence=lambda d: None)
 
     def logged_event(self, log: str, event_id: str) -> dict[str, Any] | None:
         for e in self.appended:
@@ -1001,7 +1011,9 @@ def test_append_signed_appends_nothing_when_the_mark_cannot_be_written(tmp_path)
     (state / "hosts" / WS).write_text("not a directory")  # the mark's directory cannot exist
     store = FakeStore()
     landed, error = append_signed(MarkService(store, state), "L", [signed(1, auth="convenience")], [{}], signed_by=None)
-    assert landed == [] and error is not None and error.code == "custody.unsafe_mode" and store.appended == []
+    # H12d-2: the readers check runs first and fails closed on the same unreadable directory (a relay may exist)
+    assert landed == [] and error is not None and store.appended == []
+    assert error.code in ("custody.unsafe_mode", "sign.convenience_unavailable")
 
 
 # --- review round 2 ---------------------------------------------------------------------------------------------------

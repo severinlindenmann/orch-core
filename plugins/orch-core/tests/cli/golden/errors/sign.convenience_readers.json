@@ -2,8 +2,8 @@
   "ok": false,
   "error": {
     "code": "sign.convenience_readers",
-    "message": "this workspace's history has convenience signatures",
-    "hint": "update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first",
+    "message": "the new reader has not declared that it understands convenience signatures",
+    "hint": "pass the reader's declaration (orch keys reader declare --enrol, then --reader-decl PATH)",
     "fix": {
       "argv": [
         "orch",

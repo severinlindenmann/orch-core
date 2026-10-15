@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "reader.decl_invalid",
+    "message": "the reader declaration does not verify",
+    "hint": "make a new one with the reader's own orch (orch keys reader declare)",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

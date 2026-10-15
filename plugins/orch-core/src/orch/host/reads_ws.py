@@ -104,7 +104,14 @@ def workspace_show(ctx: ReadCtx) -> dict[str, Any]:
         "members_v": ws.roster_v,
         "state": "degraded" if ctx.service.state == "degraded" else "ok",
         "next_key": _next_key(ctx, ws),
+        "required_reader": _required(ctx),  # H12d-2 (§0.8.6 item 9.11)
     }
+
+
+def _required(ctx: ReadCtx) -> int:
+    from .readerops import read_required
+
+    return read_required(ctx.service)
 
 
 def may_create(column: str, role: str | None, relay: Any, ws: Any, now: float) -> bool:
@@ -160,12 +167,13 @@ def relay_devices(ctx: ReadCtx) -> dict[str, dict[str, Any]]:
 
 
 def reader_levels(ctx: ReadCtx) -> dict[str, int]:
-    """device -> the H12d reader level of its reader record (``readers/<device_id>.json``, §0.8.6 item 9.10).
+    """device -> the H12d reader level of its reader record (``readers/<device_id>.json``, §0.8.6 item 9.10), for the
+    current devices whose record verifies now (H12d-2, :func:`orch.host.readerops.device_levels`). A device without
+    one is absent, so ``member.list`` answers ``reader: null`` (no record), never 0: the gate's "no record counts as 0"
+    is the gate's rule, not a level the device declared."""
+    from .readerops import device_levels
 
-    **The reader records are not built** (H12d-2: no ``reader.declare``, no write at ``member.add`` or pairing), so
-    no device has one and this is empty. ``member.list`` then answers ``reader: null`` (no record), never 0: the gate's
-    "no record counts as 0" is the gate's rule, not a level the device declared."""
-    return {}
+    return device_levels(ctx.service)
 
 
 def _label(record: dict[str, Any] | None) -> str | None:
@@ -229,7 +237,20 @@ def member_list(ctx: ReadCtx) -> dict[str, Any]:
         devices.sort(key=lambda d: d["id"])
         members.append({"person": person, "name": member.name, "role": member.role, "devices": devices})
     members.sort(key=lambda m: m["person"])
-    return {"members": members}
+    return {"members": members, "required_reader": _required(ctx)}
+
+
+# --- reader.list (H12d-2) --------------------------------------------------------------------------------------------
+
+
+@handler("reader.list")
+def reader_list(ctx: ReadCtx) -> dict[str, Any]:
+    """§0.8.6 item 9.11: columns P and R only (G and N: ``op.not_allowed``)."""
+    from .readerops import listing
+
+    if ctx.viewer.column not in ("P", "R"):
+        raise HostError("op.not_allowed", "reader.list is for a person at the terminal, the dashboard or a phone")
+    return listing(ctx.service, phone=ctx.viewer.column == "R")  # a phone: no decl, no dk_hash (#513 review)
 
 
 # --- session.list ----------------------------------------------------------------------------------------------------

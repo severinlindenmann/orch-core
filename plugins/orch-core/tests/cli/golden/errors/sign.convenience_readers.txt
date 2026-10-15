@@ -1,1 +1,1 @@
-err sign.convenience_readers this workspace's history has convenience signatures · retry:false · next: update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first · fix: orch help
+err sign.convenience_readers the new reader has not declared that it understands convenience signatures · retry:false · next: pass the reader's declaration (orch keys reader declare --enrol, then --reader-decl PATH) · fix: orch help

@@ -82,7 +82,7 @@ from jsonschema import Draft202012Validator
 
 from . import diff as git_diff
 from . import quick as quick_list
-from . import reads, sessions, terms
+from . import readerops, reads, sessions, terms
 from . import records as records_ops
 from .agents import AGENT_OPS
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
@@ -210,6 +210,7 @@ def served_ops() -> dict[str, int]:
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     out.update(records_ops.RECORDS_OPS)
+    out.update(readerops.READER_HOST_OPS)  # H12d-2: reader.declare (reader.list is a read, cap reader/1)
     out.update(RUN_OPS)  # H11a: run.list, run.sub; H11b: run.stop
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
@@ -234,6 +235,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
+    if name in readerops.READER_HOST_OPS:  # H12d-2: column P (column R with rd is H12d-3)
+        return ("person_write", "write")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
     if name == "agent.preview":  # H11c: P only, no side effects
@@ -316,7 +319,8 @@ def host_error(e: OrchError, op: Operation | None) -> HostError:
 
     body = render.error_envelope(e, op)["error"]
     fix = (body.get("fix") or {}).get("argv")
-    out = HostError(body["code"], body.get("message") or body["code"], hint=body.get("hint"), fix=fix)
+    detail = getattr(e, "detail", None)  # H12d-2: a reader refusal's closed detail (§0.3, closed per code)
+    out = HostError(body["code"], body.get("message") or body["code"], hint=body.get("hint"), fix=fix, detail=detail)
     out.retryable = bool(body.get("retryable", out.retryable))
     return out
 
@@ -385,7 +389,7 @@ class RegistryBackend:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
-            *WORKTREE_CAPS,
+            *WORKTREE_CAPS, *readerops.CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -597,6 +601,8 @@ class RegistryBackend:
                 result = reads.serve(call)
             elif op in records_ops.RECORDS_OPS:
                 result = records_ops.serve(call)
+            elif op in readerops.READER_HOST_OPS:
+                result = readerops.serve(call)
             elif op in TERM_OPS or op == "run.stop":
                 result = terms.serve(call)
             elif op in AGENT_OPS:

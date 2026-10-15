@@ -148,12 +148,33 @@ _SPECS = [
         "sign.convenience_readers",
         3,
         False,
-        "this workspace's history has convenience signatures",
-        "update every reader (orch-core, orch-relay, orch-mobile) to one that knows auth convenience first",
+        "the new reader has not declared that it understands convenience signatures",
+        "pass the reader's declaration (orch keys reader declare --enrol, then --reader-decl PATH)",
         ["orch", "help"],
         "Adding a reader (a member, a relay pairing, a device) to a workspace whose history has auth convenience "
-        "events is refused until the new readers understand them; switching back to terminal signing does not help "
-        "(orch-v2-host 0.8.6).",
+        "events is refused unless the new reader declares and proves level 1; the reason is no_declaration or "
+        "reader_too_old (orch-v2-host 0.8.6 item 9).",
+    ),
+    _e(
+        "sign.convenience_unavailable",
+        3,
+        False,
+        "a reader of this workspace has not declared that it understands convenience signatures",
+        "declare the readers it names (orch keys reader declare), or remove them; sign with your passphrase key",
+        ["orch", "help"],
+        "A convenience signature is refused while another current reader (a device, another member's core, a relay) "
+        "is below reader level 1; the reason (other_member, phone_device, relay_paired) names them "
+        "(orch-v2-host 0.8.6 item 9.9).",
+    ),
+    _e(
+        "reader.decl_invalid",
+        3,
+        False,
+        "the reader declaration does not verify",
+        "make a new one with the reader's own orch (orch keys reader declare)",
+        ["orch", "help"],
+        "A reader declaration is refused for its shape, signature, workspace, device, keys, person, binding, time "
+        "window or known-answer digests; the message starts with the reason (orch-v2-host 0.8.6 item 9.3).",
     ),
     _e(
         "custody.no_batch",
@@ -507,6 +528,9 @@ GLOBAL_ERRORS = (
     "retry.later",
     "host.required",
     "host.untrusted",
+    # H12d-2 (§0.8.6 item 9.4): any person op signed with convenience custody (direct mode too) is refused while a
+    # reader of the workspace is below level 1
+    "sign.convenience_unavailable",
 )
 
 

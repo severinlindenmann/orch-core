@@ -174,7 +174,12 @@ def test_every_field_equals_the_model_view(w):
     assert q["answer"] == {
         "by": w.lab.owner, "at": answered["at"], "seq": answered["seq"], "option": "a", "text": None,
         "auth": answered["auth"], "id": answered["id"],
+        # H12d-2 (§0.8.6 item 9.11, READER_VIEWS_1): who signed the counting answer, with which custody
+        "signer": {"device": answered["actor"]["device"], "auth": answered["auth"]},
     }  # fmt: skip
+    from orch.identity.reader import parse_signer
+
+    assert parse_signer("ticket.get.questions.answer", q) == answered["auth"]  # the production parser accepts it
     assert (q["qid"], q["hash"]) == (asked["qid"], asked["hash"]) == (view.questions[0].qid, view.questions[0].hash)
 
     # criteria and tasks: the receipt counts as evidence now

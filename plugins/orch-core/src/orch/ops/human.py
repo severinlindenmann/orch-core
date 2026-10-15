@@ -183,6 +183,8 @@ class Human:
         self.op = op
         self._backend: Backend | None = None
         self._who: tuple[str, str] | None = None
+        #: H12d-2: readers this request admits (direct mode; the host keeps them in ``Capture.readers``)
+        self.readers: list[dict[str, Any]] = []
 
     # -- who
     @property
@@ -489,6 +491,60 @@ class Human:
         ):
             raise OrchError("gate.already_approved", f"you already approved {gate} of {view.key} at this generation")
 
+    # -- readers (H12d-2, §0.8.6 item 9.4)
+    def admit_reader(self, entry: dict[str, Any]) -> None:
+        """A reader this request adds, with its verified declaration (``{device, person, decl, source, reader,
+        level, digest}``): the host's ``Capture`` keeps it for the request, direct mode for its own append."""
+        capture = self.ctx.prepare
+        (capture.readers if capture is not None else self.readers).append(entry)
+
+    def _readers_check(self, inner: Callable[[], None] | None, events: list[dict[str, Any]]) -> Callable[[], None]:
+        """``precommit`` of **direct mode's append choke point** (§0.8.6 item 9.4): under the store lock, right before
+        the append, :func:`orch.ops.readers.check_readers` over the current levels plus this request's readers, then
+        their records are written (a record that cannot be written refuses the append)."""
+        from orch.ops import readers as rd
+        from orch.store.readerrecs import relay_level
+
+        state_dir, wid, pending = self.call.ws.state_dir, self.workspace_id, list(self.readers)
+
+        def check() -> None:
+            if inner is not None:
+                inner()
+            self.store.refresh()
+            ws = self.store.state.workspace
+            lv = rd.levels(state_dir, wid, self.store.state)
+            lv.update({p["device"]: p["level"] for p in pending})
+            required = rd.required_reader(self.store, state_dir, wid) if rd.added_readers(events, ws) else 0
+            try:
+                rd.check_readers(ws, lv, events, required=required, relay_level=relay_level(state_dir, wid))
+            except rd.ReadersRefused as exc:
+                raise exc.orch_error() from None
+            stamp = iso(self.ctx.now())
+            try:  # every added device starts clean: only the declaration admitted here may count (#513 review)
+                rd.drop_stale(state_dir, wid, rd.added_readers(events))
+            except Exception as exc:  # noqa: BLE001 - a stale record that stays would count again: refuse
+                raise OrchError(
+                    "internal",
+                    f"a stale reader record could not be removed ({type(exc).__name__}); nothing was appended",
+                    hint="check the state directory: orch doctor",
+                ) from None
+            for p in pending:
+                try:
+                    rd.store_record(
+                        state_dir,
+                        wid,
+                        os.getuid(),
+                        rd.make_record(_Declared(p), p["decl"], p["person"], p["source"], stamp),
+                    )
+                except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
+                    raise OrchError(
+                        "internal",
+                        f"the reader record could not be written ({type(exc).__name__}); nothing was appended",
+                        hint="check the state directory: orch doctor",
+                    ) from None
+
+        return check
+
     # -- checking, signing, appending
     def precheck(self, event: dict[str, Any], log: str) -> None:
         """Judge ``event`` with the model as ``Store.append`` will, without its signature (which does not exist yet).
@@ -536,6 +592,11 @@ class Human:
         person, device = self.who()
         ev = self._envelope(event, log, person, device)
         ev["sig"] = sign_person_event(self.backend, KEY_ID, self.workspace_id, log, ev, action=action)
+        from orch.ops.readers import READER_EVENTS
+
+        typ = ev.get("type")
+        if self.readers or typ in READER_EVENTS or typ == "restore" or ev.get("auth") == "convenience":
+            precommit = self._readers_check(precommit, [ev])  # H12d-2: before the mark, so a refusal sets none
         if ev.get("auth") == "convenience":  # #441: the durable mark, inside the append, before the event is written
             precommit = self._mark_seen(precommit)
         return self.store.append(ev, log=log, precommit=precommit)
@@ -635,6 +696,14 @@ class Human:
             return None
         out = self.call.body_text(raw, what=what)
         return out
+
+
+class _Declared:
+    """The ``Declared`` fields of a pending reader entry (for :func:`orch.ops.readers.make_record`)."""
+
+    def __init__(self, entry: dict[str, Any]) -> None:
+        self.device_id = entry["device"][2:]
+        self.reader, self.level, self.digest = entry["reader"], entry["level"], entry["digest"]
 
 
 def iso(epoch: float) -> str:

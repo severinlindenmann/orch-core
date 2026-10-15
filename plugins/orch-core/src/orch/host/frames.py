@@ -301,6 +301,8 @@ _ERROR = _object(
                 "reason": _str(r"[a-z_]+", 1, 32),
                 "missing": _str(r"[a-z_]+", 1, 32),
                 "next_key": _str(KEY),
+                # H12d-2 (§0.8.6 item 9.9): the readers below the level a reader refusal names
+                "devices": _array(_str(r"d_[0-9a-f]{32}"), 64, 0),
             },
             host=True,
         ),

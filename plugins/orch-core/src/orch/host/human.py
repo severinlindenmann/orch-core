@@ -388,7 +388,8 @@ class HumanOps:
         assert person is not None  # column P only
         now = service.clock()
         store.refresh()
-        convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
+        if name != "member.add":  # member.add: after its handler, with its reader declaration (H12d-2)
+            convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
@@ -430,6 +431,8 @@ class HumanOps:
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
         prepared, extras = self._build(call, name, log, capture, store, now)
+        # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
+        convenience.refuse_reader_op(service, name, events=prepared["events"], readers=capture.readers)
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
@@ -465,6 +468,8 @@ class HumanOps:
             # precommit refuse another one (observe.unavailable), never falling back to the declared copy
             "copies": capture.copies,
             "extras": extras,
+            # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
+            "readers": capture.readers,
             "result": template,
             "submit": None,
             "outcome": None,
@@ -539,6 +544,12 @@ class HumanOps:
             material["review"] = [review.of(e, material) for e in events]
         except review.ReviewError as exc:
             raise HostError("internal", f"the review of {name} cannot be built: {exc}") from None
+        from orch.ops.readers import added_readers
+
+        admitted = {r["device"]: r["level"] for r in capture.readers}
+        for ev, block in zip(events, material["review"], strict=True):
+            if ev["type"] in review.READER_TYPES:  # H12d-2: the reader line (§0.8.6 item 9.11), bound by the digest
+                block["derived"]["reader"] = max((admitted.get(d, 0) for d in added_readers([ev])), default=0)
         digest = review.review_digest(material)
         prepared = {
             "op": name,
@@ -632,7 +643,13 @@ class HumanOps:
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
         call.service.store.refresh()
-        convenience.refuse_reader_op(call.service, record["op"], history=True)  # §0.8.6: fails early, before binding
+        convenience.refuse_reader_op(  # §0.8.6: fails early, before binding (H12d-2: the declaration, rechecked)
+            call.service,
+            record["op"],
+            history=True,
+            events=record["prepared"]["events"],
+            readers=record.get("readers") or [],
+        )
         if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
             convenience.refuse_handoff(call.service)
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
@@ -845,7 +862,13 @@ class HumanOps:
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared
-            convenience.refuse_reader_op(service, record["op"], history=True)
+            convenience.refuse_reader_op(
+                service,
+                record["op"],
+                history=True,
+                events=record["prepared"]["events"],
+                readers=record.get("readers") or [],
+            )
             with contextlib.ExitStack() as stack:
                 if record.get("code"):  # §0.8.6 item 8: the flag read and the journal write are one step against
                     # `convenience on`. Lock order: submit takes store -> convenience, while prepare takes
@@ -1121,6 +1144,65 @@ def _mark_seen(service: WorkspaceService) -> HostError | None:
     return None
 
 
+def _readers_refusal(
+    service: WorkspaceService, log: str, events: list[dict[str, Any]], readers: list[dict[str, Any]]
+) -> HostError | None:
+    """Invariant I at the append (§0.8.6 item 9.4), under the store lock: the refusal, or ``None`` after the admitted
+    readers' records were written. Only the events not in the log yet count (a roll forward of a landed event)."""
+    from pathlib import Path
+
+    from orch.ops import readers as rd
+    from orch.ops.human import _Declared
+    from orch.store.readerrecs import relay_level
+
+    store = service.store
+    new = [e for e in events if store.logged_event(log, e.get("id")) is None]
+    kinds = (*rd.READER_EVENTS, "restore")
+    if not any(e.get("type") in kinds or e.get("auth") == "convenience" for e in new):
+        return None
+    store.refresh()
+    ws = store.state.workspace
+    adds = rd.added_readers(new, ws)
+    state_dir = Path(service.state_dir)
+    lv = rd.levels(state_dir, service.workspace_id, store.state, service.host_uid)
+    try:
+        lv.update(convenience.recheck_readers(service, new, [r for r in readers if r.get("device") in adds]))
+    except HostError as exc:
+        return exc
+    required = 0
+    if adds:
+        flag = convenience.enabled(state_dir, service.workspace_id, service.host_uid)
+        required = rd.required_reader(store, state_dir, service.workspace_id, flag=flag, uid=service.host_uid)
+    try:
+        rd.check_readers(ws, lv, new, required=required, relay_level=relay_level(state_dir, service.workspace_id))
+    except rd.ReadersRefused as exc:
+        return convenience.readers_error(exc)
+    stamp = _iso(service.clock())
+    try:  # every added device starts clean: only the declaration admitted here may count (#513 review)
+        rd.drop_stale(state_dir, service.workspace_id, adds)
+    except Exception as exc:  # noqa: BLE001 - a stale record that stays would count again: refuse
+        return HostError(
+            "custody.unsafe_mode",
+            f"a stale reader record could not be removed ({type(exc).__name__}); nothing appended",
+        )
+    for entry in readers:
+        if entry.get("device") not in adds:
+            continue
+        try:
+            rd.store_record(
+                state_dir,
+                service.workspace_id,
+                service.host_uid,
+                rd.make_record(_Declared(entry), entry["decl"], entry["person"], entry["source"], stamp),
+            )
+        except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
+            return HostError(
+                "custody.unsafe_mode",
+                f"the reader record could not be written ({type(exc).__name__}); nothing was appended",
+            )
+    return None
+
+
 def _signed_by(events: list[dict[str, Any]], person: str, device: str) -> HostError | None:
     """The relay path's precondition of :func:`append_signed`: every event is a person event of exactly this
     (person, device) pair, signed (``sig``), and never ``auth: "convenience"`` (§11A.4, §11A.6). Checked before
@@ -1142,6 +1224,7 @@ def append_signed(
     extras: list[dict[str, Any]],
     *,
     signed_by: tuple[str, str] | None,
+    readers: list[dict[str, Any]] | None = None,
 ) -> tuple[list[int], HostError | None]:
     """**The single choke point for appending signed person events** (§0.8.1, §11A.4): ``human.finish`` and the relay
     path (through :func:`append_relay`, the relay's only entry) both append through it. The one documented exception
@@ -1161,7 +1244,14 @@ def append_signed(
 
     The durable ``convenience_seen`` mark (#441) is written here, under the store lock and before the first append,
     when any event carries ``auth: "convenience"``; if it cannot be written nothing is appended (fail closed). On the
-    relay path ``signed_by`` already refuses convenience events, so the mark is never needed there."""
+    relay path ``signed_by`` already refuses convenience events, so the mark is never needed there.
+
+    **Invariant I (H12d-2, §0.8.6 item 9.4)** is checked here too, under the store lock and before the first append,
+    for the events not in the log yet that add a reader (``member.added``, ``device.added``, ``restore``) or carry
+    ``auth: "convenience"`` (:func:`_readers_refusal`): the current levels, the declarations of ``readers`` (the
+    request's admitted readers) and ``required_reader`` recomputed. Their records are written before the append
+    (``custody.unsafe_mode`` if that fails, nothing appended). Whichever of a convenience event and a reader event
+    appends first, the other refuses."""
     from orch.store import StoreError
 
     if signed_by is not None:
@@ -1181,7 +1271,8 @@ def append_signed(
 
         store.append_check = check
         try:
-            if any(e.get("auth") == "convenience" for e in events):
+            error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
+            if error is None and any(e.get("auth") == "convenience" for e in events):
                 error = _mark_seen(service)  # #441: the durable mark, under the store lock, before the first append
             for ev, extra in zip(events, extras, strict=True) if error is None else ():
                 found = store.logged_event(log, ev["id"])
@@ -1228,11 +1319,13 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     ``seq`` s that landed; it is never ``partial``. Returns the result; raises the stored error for a failed one."""
     store = service.store
     log = record["prepared"]["log"]
-    landed, error = append_signed(service, log, record["submit"]["events"], record["extras"], signed_by=None)
+    landed, error = append_signed(
+        service, log, record["submit"]["events"], record["extras"], signed_by=None, readers=record.get("readers") or []
+    )
     now = service.clock()
     if error is not None:
         seqs = ", ".join(map(str, landed)) or "none"
-        failed = HostError(error.code, f"{error.message} (landed: seq {seqs})"[:400])
+        failed = HostError(error.code, f"{error.message} (landed: seq {seqs})"[:400], detail=error.detail)
         failed.exit, failed.retryable = error.exit, False
         outcome = {"state": "failed", "error": failed.error(), "exit": failed.exit, "seqs": landed}
         requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})

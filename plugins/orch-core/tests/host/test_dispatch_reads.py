@@ -82,6 +82,7 @@ DASHBOARD_READS = {
     "grant.list": lambda ref: {},
     "workspace.settings": lambda ref: {},
     "ticket.text": lambda ref: {"ref": ref, "seq": 1, "field": "text"},
+    "reader.list": lambda ref: {},  # H12d-2
 }
 
 

@@ -3,11 +3,12 @@ the host's run records and the run lifecycle reads.
 
 **The runner socket** ``<run>/runner/host.sock`` (0700 directory, host-owned) accepts peer class ``runner`` only from
 the runner unit's service-manager main PID (:func:`runner_identity`: ``launchctl print gui/<uid>/io.orch.runner``,
-``systemctl --user show -p MainPID orch-runner.service``), and one connection per runner UID (a second one is
-``peer.denied``). Tier A: the runner UID is the host UID, so this is fault separation and hygiene, not a boundary:
-same-UID separation is not containment; runner reports are untrusted and cannot establish authorization; reports are
-accepted only for runs assigned to that runner (its UID and service generation). The runner checks the host too: its
-connect refuses a socket whose peer UID is not the host UID (:func:`orch.host.client.connect_pinned`).
+``systemctl --user show -p MainPID orch-runner.service``; a dev host started with ``--dev-runner`` also admits a
+foreground runner announced in its run directory, :mod:`orch.runner.devmode`), and one connection per runner UID (a
+second one is ``peer.denied``). Tier A: the runner UID is the host UID, so this is fault separation and hygiene, not a
+boundary: same-UID separation is not containment; runner reports are untrusted and cannot establish authorization;
+reports are accepted only for runs assigned to that runner (its UID and service generation). The runner checks the host
+too: its connect refuses a socket whose peer UID is not the host UID (:func:`orch.host.client.connect_pinned`).
 
 **The protocol** (cap ``runner/1``, §12.3.3). After ``welcome`` the runner sends ``runner.hello {version, gen, pid,
 term_socket, runs, grants}``; the answer ``{sub, epoch}`` opens the host's command stream: ``evt`` items ``{id:"<n>.c",

@@ -3732,7 +3732,7 @@ call would start a host as the agent.
 |---|---|---|
 | macOS | LaunchAgent `io.orch.host` (`RunAtLoad`, `KeepAlive`) | `/Users/Shared/orch/run/<host uid>` (D-P2-6, F12), created by the setup helper (H3c) |
 | Linux | systemd user or system unit | `/run/orch/<host uid>`, provisioned by `tmpfiles.d` from the privileged setup. A user unit's `RuntimeDirectory` lives under `$XDG_RUNTIME_DIR`, which agents cannot traverse. |
-| dev and tests | `orch host run --foreground` | `<state>/run` (no agent UIDs) |
+| dev and tests | `orch host run --foreground` (`--dev-runner`: see §12.3.3 "As built in H11a") | `<state>/run` (no agent UIDs) |
 
 **D-P2-3. Every outcome is recoverable.** The store recovers torn appends. The host adds the outcome records and
 their reconciliation (§0.7), so a lost response, an interrupted composite or a human submit is recovered by `idem`,
@@ -5978,6 +5978,20 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - **Logs.** The service manager writes the runner's output to `<state>/runner/runner.out` without rotation (the
   rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
   controlled stop: every managed run is stopped and verified before the runner exits.
+- **Dev-only foreground runner** (dev and tests; terminal follow-ups after #469). Without a service manager the
+  main-PID check can never pass, so a host and a runner run as separate foreground processes need an explicit seam:
+  `orch host run --foreground --dev-runner` (`Host(dev_runner=True)`) also admits a runner that
+  `orch runner run --foreground` announced in `<run>/term/<uid>/dev-runner.json` (`orch.runner.devmode`: 0600 in the
+  runner's 0700 terminal directory, `{v:1, pid, birth, uid}`, removed at exit). Admitted only when the kernel peer UID
+  is the host UID, the file is a private regular file of that UID (no link) in a private directory, it names that
+  UID and the peer PID, and that PID is still the process born at the recorded time (a stale file whose PID was reused
+  is refused); every error denies. The main-PID check still applies first. Refused at start (`invalid.input`): without
+  `--foreground` (the units never pass it), under the service manager (`XPC_SERVICE_NAME` is `io.orch.host` or
+  `io.orch.runner`), and for a service run directory (`/Users/Shared/orch/run`, `/run/orch`, also after resolving
+  links; also in `Host` itself). Any other run directory (`<state>/run`, `--run`, `ORCH_HOST_RUN_DIR`) is a dev one:
+  a short `ORCH_HOST_RUN_DIR` is what tests use for the socket-path limit. The host logs a warning (and the CLI prints
+  one) at start. Tier A: like the main-PID check this is fault separation, not a boundary (any process of the host
+  UID can write the file); it keeps a stale or misdirected process from being taken for the runner.
 - **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
   ticket must be exactly 43 characters; at most 96 term-socket connections are handled at once; the lockout is per
   runner, so one client replaying seen tickets locks every attachment out for 60 s.

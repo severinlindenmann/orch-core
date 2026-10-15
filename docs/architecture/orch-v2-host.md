@@ -2070,11 +2070,13 @@ call `member.list` gets the same list, §0.5). Times are `Time` (whole seconds, 
   the record's `paired_ms` as `Time`, `null` without a record.
 - **`reader`** is the level of the device's H12d reader record (§0.8.6 item 9.10), `null` when it has none. `null` is
   not 0: the gate's "no record counts as 0" is the gate's rule, not a level the device declared.
-- **As built (H12d-2 and R6 not yet built).** Core has neither R6's `membership/devices/` records nor the reader
-  records, so today every device has `label: null`, `paired_at: null`, `relay: false` and `reader: null`; only
-  `cert_expires_at` has a value. The host reads them through two seams in `orch.host.reads_ws` (`relay_devices`,
-  `reader_levels`), which R6 and H12d-2 fill; the field mapping above is already built and tested against them.
-  `required_reader` (§0.8.6 item 9.11) is not part of `read_ext/3`.
+- **As built (H12d-2 built, R6 not yet).** H12d-2 fills `reader` through the seam `reader_levels` in
+  `orch.host.reads_ws` (`orch.host.readerops.device_levels`): the level of the device's reader record, verified again
+  on every read; `null` means no verified record (the gate counts that as level 0). Core has no R6
+  `membership/devices/` records yet, so every device has `label: null`, `paired_at: null` and `relay: false`; R6
+  fills the seam `relay_devices`. The field mapping above is built and tested against both seams.
+  `required_reader` (§0.8.6 item 9.11) is in `member.list` and `workspace.show` (H12d-2) but not part of
+  `read_ext/3`.
 
 **`session.refusals`** (read, cap `refusals/1`, later than H6b) args and result:
 

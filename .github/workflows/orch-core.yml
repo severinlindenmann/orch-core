@@ -122,6 +122,9 @@ jobs:
     needs: [tests, perf-schema, perf-budgets, relay-t2]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: .  # the workflow default is plugins/orch-core, which this job never checks out
     steps:
       - env:
           RESULTS: ${{ join(needs.*.result, ' ') }}

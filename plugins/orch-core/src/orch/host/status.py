@@ -9,6 +9,9 @@ What it reports, each part read on its own so one failure does not hide the rest
   the person this UID is mapped to, and the click-to-sign flag (``orch host convenience``, off by default);
 * **here**: the workspace the CLI finds from the current directory and the mode the CLI uses for it (``host`` when it is
   registered, else ``direct``), exactly as :func:`orch.hostclient.locate` decides;
+* **relay** (R5, orch-v2-host §11A.4), per workspace with a relay directory: the link state, what keeps the relay
+  worker from starting (the stop marker, the link, the R6 gate) and the outbox entries queued for publication; a
+  linked workspace whose worker cannot start for another reason than the operator's stop is a problem;
 * **problems**: what keeps host mode from working, each with the command that fixes it.
 
 Nothing here writes, starts or repairs anything.
@@ -88,6 +91,26 @@ def _here(env: Mapping[str, str], state: Path) -> dict[str, Any] | None:
     return {"root": str(root), "mode": "host", "workspace_id": target.workspace_id, "socket": str(target.socket)}
 
 
+def _relay(state: Path, wid: str, host_uid: int) -> dict[str, Any] | None:
+    """The relay part of a row (R5): ``None`` for a workspace without a relay directory."""
+    from . import relaylink
+
+    if not os.path.lexists(relaylink.relay_dir(state, wid)):
+        return None
+    try:
+        linked = os.path.lexists(relaylink.link_path(state, wid))
+        blocker = relaylink.start_blocker(state, wid, host_uid)
+    except Exception as exc:  # noqa: BLE001 - reported, never the reason the status fails
+        return {"error": type(exc).__name__}
+    try:
+        outbox = sum(1 for n in os.listdir(state / "hosts" / wid / "outbox") if len(n) == 25 and n.endswith(".json"))
+    except FileNotFoundError:
+        outbox = 0
+    except OSError:
+        outbox = None
+    return {"linked": linked, "blocker": blocker, "outbox_pending": outbox}
+
+
 def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]:
     from orch import hostclient
 
@@ -133,6 +156,19 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
             "person": ((entry.get("peers") or {}).get(str(uid)) or {}).get("person"),
             "click_to_sign": bool(isinstance(flag, dict) and flag.get("enabled") is True),
         }
+        relay = _relay(state, wid, host_uid)
+        if relay is not None:
+            row["relay"] = relay
+            why = relay.get("blocker") or relay.get("error")
+            if relay.get("linked") and why and why != "stopped":
+                problems.append(
+                    {
+                        "what": f"{entry.get('prefix')}: relay-linked, but its relay worker cannot start: {why}",
+                        "fix": "nothing to do until R6 lands (orch-v2-host §11A.1)"
+                        if str(why).startswith("r6_not_ready")
+                        else "orch host relay start --workspace " + wid,
+                    }
+                )
         rows.append(row)
         if len(str(sock).encode()) > SOCKET_PATH_MAX:
             problems.append(
@@ -206,6 +242,12 @@ def render(rep: Mapping[str, Any]) -> str:
             f"click-to-sign={'on' if w['click_to_sign'] else 'off'}"
         )
         lines.append(f"  root {w['root']}")
+        if "relay" in w:
+            r = w["relay"]
+            lines.append(
+                f"  relay linked={_yes(r.get('linked'))} worker={'may start' if not r.get('blocker') else r['blocker']}"
+                f" outbox={r.get('outbox_pending')}"
+            )
     here = rep["here"]
     if here is None:
         lines.append("here: not in a workspace")

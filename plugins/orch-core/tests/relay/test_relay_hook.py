@@ -428,3 +428,26 @@ def test_unlink_is_refused_while_a_stuck_worker_runs(served):  # noqa: F811
     assert e.value.code == "lock.busy"
     assert relaylink.link_path(svc.state_dir, served.wid).exists()  # nothing renamed
     stuck.release.set()
+
+
+# -- orch host status / doctor ----------------------------------------------------------------------------------------
+
+
+def test_orch_host_status_names_the_dormant_relay_worker(served, monkeypatch):  # noqa: F811
+    from orch.host import status as host_status
+
+    svc = served.service
+    assert host_status._relay(svc.state_dir, served.wid, UID) is None  # noqa: SLF001 - never linked: no relay part
+    _reserve(served)
+    got = host_status._relay(svc.state_dir, served.wid, UID)  # noqa: SLF001
+    assert got == {"linked": True, "blocker": relay_worker.R6_GATE_REASON, "outbox_pending": 0}
+    relaylink.mark_stopped(svc.state_dir, served.wid, UID)
+    assert host_status._relay(svc.state_dir, served.wid, UID)["blocker"] == "stopped"  # noqa: SLF001
+    rep = {
+        "state_dir": "s", "service": None, "host": {"answers": True, "control": "c"}, "here": None, "problems": [],
+        "ok": True,
+        "workspaces": [{"prefix": "DEMO", "workspace_id": served.wid, "state": "ok", "socket_answers": True,
+                        "person": None, "click_to_sign": False, "root": "/r",
+                        "relay": {"linked": True, "blocker": "stopped", "outbox_pending": 2}}],
+    }  # fmt: skip
+    assert "  relay linked=yes worker=stopped outbox=2" in host_status.render(rep)

@@ -6832,6 +6832,16 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   raises the rotation gate. The host **never** appends `device.revoked` or a restore by itself. It raises a `needs`
   item for the owners ("publish this revocation"), and publication follows only F1 §5.3, through the person path.
 - A failed item is logged with its pair and the reason, and skipped. Unverified data never changes host state.
+- **R4 build plan (15 Oct 2026, orch-29; PR to come, built behind the dormant R6 gate).** `orch/relay/unpublished.py`
+  (`UnpublishedConsumer.step()`, the `Unpublished` seam): one bounded page per aux turn (`GET unpublished`, 10 s,
+  4 MiB); the position in `relay/unpublished.json` `{cursor, last_full_read_ms, gen}` (11A.3); a read from the start
+  after a new holder `gen`, after `cursor_ahead` and daily, else from the stored position when the poll's
+  `notices.unpublished` is non-null and changed (`BridgeLoop` keeps the last poll's notices, read-only); every item
+  held through `worker.job(Store.note_forwarded_revocation)`; the ack (`POST unpublished/ack {cursor}`) only after
+  every item of the page has a result and the position is durable; a store fault: no ack, retried next turn. The
+  owners' `needs` item: the host has no host-originated `needs` yet, so a `held` result raises the relay alarm
+  `unpublished_held` naming the pair (`host.status.relay`) until it does (JUDGEMENT CALL, for the owner). Host seam
+  `orch/host/relayr4.py` `unpublished(service, worker)`.
 
 **Authenticity, not currency.** R1's readers (`GET card`, `members`, `checkpoint`) prove that an object was signed by
 the right key for this workspace, not that it is the newest: a relay can serve an older card, an older WSK-signed member

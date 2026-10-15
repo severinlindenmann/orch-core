@@ -230,11 +230,10 @@ def test_no_person_repos_follow_the_visibility_now(w):
 
 
 def _settle_pins(w, timeout: float = 120) -> None:
-    """The first request after a change of the declared repos pins every one of them (F7, ``sync_git``), one fresh
-    git reader child each (~70 ms apiece on a laptop, several times that on a loaded CI runner: 40 repos took 3 s
-    here and overran the clients' 10 s read deadline on py3.11 runners, #468). That is a one-off setup cost, not
-    what the paging tests measure, so it is paid here under a deadline sized for it; the requests the tests then
-    time against the default deadline find the pins in place. A real hang still fails, after ``timeout``."""
+    """The first request after a change of the declared repos pins every one of them (F7, ``sync_git``). That took
+    one fresh git reader child per repo until #471 (40 repos: 3 s here, over the clients' 10 s read deadline on
+    loaded CI runners, #468) and is one child per 64 repos now; it is still a setup cost, not what the paging tests
+    measure, so it is paid here under a deadline sized for it. A real hang still fails, after ``timeout``."""
     warm = w.client()
     try:
         warm.ws.send("settle", "workspace.settings")
@@ -259,7 +258,10 @@ def test_the_repos_page_32_at_a_time_on_a_stable_snapshot(w):
     # a change between the pages does not change page 2: not the repos, not the durations, not the cursor
     settings(w, grant_hours=3, repos={"zzz": {"path": "/srv/zzz"}})
     w.person_event("policy.changed", gates={"plan": policy(count=2)})
+    started = w.service.git_pool.started
     second = ok(c.req("workspace.settings", {"page": first["next_page"]}))
+    # the changed declared set retries all 41 unpinnable /srv/<name> repos in ONE reader child, not 41 (#471, #468)
+    assert w.service.git_pool.started - started == 1
     assert list(second["settings"]["repos"]) == names[32:] and second["next_page"] is None
     for key in ("gates", "defaults", "sub_cursor", "settings_at", "policy_at"):
         assert second[key] == first[key], key  # every page repeats the scalar part of the same snapshot

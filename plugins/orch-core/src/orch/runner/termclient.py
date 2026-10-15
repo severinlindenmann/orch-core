@@ -14,12 +14,21 @@ never acknowledged when the stream ends is reported by :attr:`lost` (it is never
 runner frame of the wrong shape ends the stream with ``protocol`` (its content is never put into an exception); a
 stream that closes without an ``end`` frame ends with ``closed``. ``send``/``resize`` after the end raise
 :class:`TermEnded`. Terminal bytes are never logged here.
+
+**Writes have their own deadline.** :meth:`send` writes non-blocking with its own bound (``send_timeout``, default
+5 s for the whole frame), independent of :meth:`recv`'s timeout: an ``ack``
+read by ``recv(0.05)`` puts the next input frame on the wire from inside ``recv``, and a slow runner must not end a
+multi-frame paste. A runner that takes no byte for that long ends the stream with ``send_timeout`` (the socket is
+closed: a frame cut short can never be completed); a write error inside ``recv`` ends nothing by itself (the runner's
+``end`` frame, if any, is still read) and ``recv`` returns the frame it read.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import os
+import selectors
 import socket
 import stat
 import time
@@ -33,6 +42,8 @@ from orch.host._socket import peer_credentials
 __all__ = ["CHUNK", "RunnerChanged", "TermClient"]
 
 CHUNK = 64 * 1024
+#: :meth:`TermClient.send`'s write deadline (seconds), independent of ``recv``'s timeout
+SEND_TIMEOUT = 5.0
 
 
 class RunnerChanged(Exception):
@@ -45,9 +56,10 @@ class TermEnded(ConnectionError):
 
 
 class TermClient:
-    def __init__(self, run_dir: Path | str, answer: dict[str, Any]) -> None:
-        """``answer``: the ``result.data`` of ``term.attach``."""
+    def __init__(self, run_dir: Path | str, answer: dict[str, Any], *, send_timeout: float = SEND_TIMEOUT) -> None:
+        """``answer``: the ``result.data`` of ``term.attach``; ``send_timeout``: the write deadline of :meth:`send`."""
         self.run_dir = Path(run_dir)
+        self.send_timeout = send_timeout
         self.answer = answer
         self.sock: socket.socket | None = None
         self.decoder = frames.Decoder()
@@ -114,13 +126,44 @@ class TermClient:
 
     # -- frames
     def send(self, frame: dict[str, Any]) -> None:
-        if self.sock is None:
+        """Write one frame within ``send_timeout`` (non-blocking, whatever timeout ``recv`` left on the socket)."""
+        sock = self.sock
+        if sock is None:
             raise TermEnded(f"the terminal stream ended ({self.ended or 'closed'})")
+        data = memoryview(frames.encode(frame))
+        deadline = time.monotonic() + self.send_timeout
+        previous = sock.gettimeout()
+        sock.setblocking(False)
         try:
-            self.sock.sendall(frames.encode(frame))
+            with selectors.DefaultSelector() as sel:
+                sel.register(sock, selectors.EVENT_WRITE)
+                while data:
+                    try:
+                        data = data[sock.send(data) :]
+                        continue
+                    except (BlockingIOError, InterruptedError):
+                        pass
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not sel.select(remaining):
+                        if deadline - time.monotonic() > 0:
+                            continue  # woken early (a signal): the deadline has not passed
+                        self._end_locally("send_timeout")
+                        raise TermEnded("the runner took no input in time (send_timeout)")
         except OSError as e:  # the runner already shut the stream (e.g. the attachment was ended): its end frame, if
             # any, is still readable, so the socket stays open for recv
             raise TermEnded(f"the terminal stream ended ({self.ended or 'closed'})") from e
+        finally:
+            if self.sock is sock:
+                sock.settimeout(previous)
+
+    def _end_locally(self, reason: str) -> None:
+        """End the stream on this side (``reason``) and close the socket: nothing more can be read or written."""
+        self.ended = self.ended or reason
+        self.buf.clear()
+        sock, self.sock = self.sock, None
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.close()
 
     def recv(self, timeout: float | None = None) -> dict[str, Any] | None:
         """The next frame (state updated), ``None`` at the end of the stream; ``TimeoutError`` when none arrives. A
@@ -154,14 +197,7 @@ class TermClient:
 
     def _protocol(self) -> None:
         """The runner sent something this client does not understand: the stream ends with ``protocol``."""
-        self.ended = self.ended or "protocol"
-        self.buf.clear()
-        if self.sock is not None:
-            try:
-                self.sock.close()
-            except OSError:
-                pass
-            self.sock = None
+        self._end_locally("protocol")
 
     def handle(self, frame: dict[str, Any]) -> None:
         """Update the state from one well-formed frame (:func:`_well_formed`)."""
@@ -173,7 +209,8 @@ class TermClient:
             self.unacked.pop(iid, None)
             if iid == self.inflight:
                 self.inflight = None
-                self._send_next()
+                with contextlib.suppress(TermEnded):  # inside recv: the end is in ``ended``, the frame is returned
+                    self._send_next()
         elif kind == "throttle":
             if self.inflight is not None:  # the same frame again, same id, once its time has come
                 self._resend_at = time.monotonic() + frame["retry_ms"] / 1000

@@ -947,7 +947,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean }
+  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean; why?: string }
 }
 
 export class ApiError extends Error {
@@ -969,6 +969,8 @@ export class ApiError extends Error {
   /** The records child's message had characters that are hidden: it is withheld (null) and the code stands. */
   readonly message_hidden?: boolean
   readonly exit?: number
+  /** M7b: why a runner grant is terminal only (`update_orch`: the signer is too old to hand it to the runner). */
+  readonly why?: string
   constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
     super(body.message ?? body.code)
     this.name = 'ApiError'
@@ -986,6 +988,7 @@ export class ApiError extends Error {
     this.commit = body.commit
     this.message_hidden = body.message_hidden
     this.exit = exit
+    this.why = body.why
   }
 }
 

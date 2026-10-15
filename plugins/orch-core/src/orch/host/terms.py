@@ -14,18 +14,20 @@ found, also for what the viewer may not see), G and N are refused by the matrix 
 attachment by itself when the person leaves, the grant ends, the run's ticket becomes invisible, or a kill switch is
 pulled (the addon revoked or disabled, ``orch runner disable``, ``orch runner terminals off``: ``runner.disabled``)
 (:meth:`orch.host.runners.RunnerHub._watch`), and on ``attach.cancel``. ``term.attach`` is limited to 30 mints per
-minute per person (burst 10; ``rate.limited``).
+minute per person (burst 10; ``rate.limited``). Every retryable refusal (``rate.limited``, ``attach.limit``,
+``run.limit``, ``runner.unavailable``) carries ``error.retry_after_ms`` (§0.6); for the rate buckets it is the time
+until the person's next token.
 
-This is **harness ``shell`` only**: ``claude-code`` and ``codex`` as person-run harnesses come with H11c (their
-registry); asking for one is ``blocked: harness.not_found``. The working directory is the workspace root (worktrees
-come with H11d).
+**Harnesses** (H11c): ``shell`` (``$SHELL -l``), or ``claude-code``/``codex`` from the closed registry as a
+person-run harness (kind ``shell``, ``as_person``, ``ORCH_TICKET`` only: no ``ORCH_GRANT``, no ``ORCH_SESSION``, no
+claim precheck, no runner grant; without ``mode`` it starts interactive, ``mode:"context"`` needs a ticket). The plan
+is :func:`orch.host.agents.plan` (the same digest rules as ``agent.start``). **Working directory** (H11c): ``cwd``
+names the workspace root, a declared repo's working copy or a ticket's registered worktree; without it, with a ticket,
+§12.4.4 (never creating a worktree), else the workspace root.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +53,7 @@ RUNS_PER_RUNNER = 64
 
 _RUN = {"type": "string", "pattern": r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
 _ATT = {"type": "string", "pattern": r"^at_[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
-_MODEL = {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:\[\]/-]{0,63}$"}
+_MODEL = {"type": "string", "maxLength": 200}  # checked by the registry: launch.invalid names the field
 _KEY = {"type": "string", "minLength": 1, "maxLength": 64}
 _CWD = {
     "oneOf": [
@@ -139,12 +141,12 @@ def missing(service: WorkspaceService, hub: RunnerHub, *, addon: bool = True) ->
     return None
 
 
-def runner_info(service: WorkspaceService) -> dict[str, Any]:
-    """``whoami.runner`` (``RunnerInfo``)."""
+def runner_info(service: WorkspaceService, person: str | None = None) -> dict[str, Any]:
+    """``whoami.runner`` (``RunnerInfo``): ``grant`` is the caller person's runner grant (H11c), never another's."""
     hub = getattr(service, "runners", None)
     if hub is None:
         return {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None}
-    return hub.runner_state(service.workspace_id)
+    return hub.runner_state(service.workspace_id, person)
 
 
 def _require_ready(service: WorkspaceService, hub: RunnerHub | None) -> RunnerHub:
@@ -163,67 +165,9 @@ def _require_ready(service: WorkspaceService, hub: RunnerHub | None) -> RunnerHu
 
 def _plan(call: Call, args: dict[str, Any], hub: RunnerHub | None) -> dict[str, Any]:
     """``term.preview``'s answer (and the spec ``term.open`` recomputes): everything the runner will be told."""
-    from orch.runner.link import ENV_FROM_RUNNER
+    from .agents import plan
 
-    service = call.service
-    blocked: dict[str, Any] | None = None
-
-    def block(code: str, message: str) -> None:
-        nonlocal blocked
-        if blocked is None:
-            blocked = {"code": code, "message": message[:400]}
-
-    harness = args.get("harness", "shell")
-    if hub is None:
-        block("runner.unavailable", "this host serves no runner")
-    else:
-        gone = missing(service, hub)
-        if gone is not None:
-            block("runner.disabled", f"{gone} missing")
-        elif not hub.connected:
-            block("runner.unavailable", "no runner is connected")
-    ticket_key = None
-    if args.get("ticket"):
-        try:
-            ticket_key = Viewer.of(call).ticket(service.store, args["ticket"]).key
-        except HostError as exc:
-            block(exc.code, exc.message)
-    if harness != "shell":
-        block("harness.not_found", f"{harness} as a person-run harness comes with H11c")
-    if harness == "shell" and (args.get("mode") or args.get("model")):
-        block("launch.invalid", "a shell takes no mode and no model")
-    if args.get("mode") == "context" and ticket_key is None:
-        block("launch.invalid", "mode context needs a ticket")
-    cwd = args.get("cwd") or {"kind": "workspace"}
-    if cwd["kind"] != "workspace":
-        block("launch.invalid", f"cwd {cwd['kind']} comes with H11d")
-    root = str(service.entry.root)
-    try:
-        st = os.stat(root)
-        pin = {"path": root, "dev": st.st_dev, "ino": st.st_ino}
-    except OSError:
-        pin = {"path": root, "dev": 0, "ino": 0}
-        block("launch.cwd_changed", "the workspace root cannot be read")
-    argv = ["$SHELL", "-l"]
-    env_names = sorted(ENV_FROM_RUNNER)
-    env_fixed = {"ORCH_HARNESS": harness} if harness != "shell" else {}
-    if ticket_key is not None:
-        env_fixed["ORCH_TICKET"] = ticket_key
-    digest = hashlib.sha256(
-        json.dumps(
-            {"v": 1, "harness": harness, "mode": args.get("mode"), "model": args.get("model"), "argv": argv,
-             "cwd": pin, "env_names": env_names, "env_fixed": env_fixed, "as_person": True},
-            sort_keys=True, separators=(",", ":"),
-        ).encode()
-    ).hexdigest()  # fmt: skip
-    return {
-        "spec": digest, "argv": argv, "display": "$SHELL -l", "login_shell": False, "program": None,
-        "cwd": {"kind": "workspace"}, "cwd_path": root,
-        "env": sorted([*env_names, *env_fixed, "TERM", "COLORTERM"]), "as_person": True,
-        "notice": "acts as you, not as an agent", "blocked": blocked,
-        "warnings": [],
-        "_launch": {"argv": argv, "env_names": env_names, "env_fixed": env_fixed, "cwd": pin, "ticket": ticket_key},
-    }  # fmt: skip
+    return plan(call, args, hub, agent=False)
 
 
 # -- the worker half -------------------------------------------------------------------------------------------------
@@ -260,7 +204,8 @@ def serve(call: Call) -> dict[str, Any]:
             raise HostError("launch.changed", "what term.open would start differs from the preview: preview again")
         return ok_result(
             {"launch": plan["_launch"], "idem": str(opts["idem"]), "person": person, "label": args.get("label"),
-             "cols": args.get("cols", 120), "rows": args.get("rows", 40)}
+             "cols": args.get("cols", 120), "rows": args.get("rows", 40), "harness": args.get("harness", "shell"),
+             "mode": args.get("mode"), "model": args.get("model"), "cwd": plan["cwd"]}
         )  # fmt: skip
     if hub is None:
         raise HostError("runner.unavailable", "this host serves no runner", retry_after_ms=1000)
@@ -330,13 +275,15 @@ async def _open(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, A
     if sum(1 for r in live if r.get("runner_uid") == hub.uid) >= RUNS_PER_RUNNER:
         raise HostError("run.limit", "at most 64 runs per runner", retry_after_ms=5000)
     if not hub.take_start(person):
-        raise HostError("rate.limited", "at most 10 starts per minute", retry_after_ms=6000)
+        raise HostError("rate.limited", "at most 10 starts per minute", retry_after_ms=hub.start_retry_ms(person))
     launch = data["launch"]
-    fields = {"run": run, "kind": "shell", "person": person, "ticket": launch["ticket"], "harness": "shell",
-              "label": data.get("label"), "as_person": True, "cwd": {"kind": "workspace"}}  # fmt: skip
+    fields = {"run": run, "kind": "shell", "person": person, "ticket": launch["ticket"],
+              "harness": data.get("harness", "shell"), "mode": data.get("mode"), "model": data.get("model"),
+              "label": data.get("label"), "as_person": True,
+              "cwd": data.get("cwd") or {"kind": "workspace"}}  # fmt: skip
     payload = {"kind": "shell", "argv": launch["argv"], "env_names": launch["env_names"],
                "env_fixed": launch["env_fixed"], "cwd": launch["cwd"], "cols": data["cols"], "rows": data["rows"],
-               "login_shell": False}  # fmt: skip
+               "login_shell": launch["login_shell"], "grant": None, "session": None}  # fmt: skip
     return await hub.spawn(wid, fields, payload)
 
 
@@ -378,7 +325,9 @@ async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
     if mode == "write" and not data["take"] and any(a["writer"] for a in held["atts"]):
         raise HostError("term.writer_busy", "another attachment holds the write lease: take it or attach read-only")
     if not hub.take_mint(person):
-        raise HostError("rate.limited", "at most 30 terminal attaches per minute", retry_after_ms=2000)
+        raise HostError(
+            "rate.limited", "at most 30 terminal attaches per minute", retry_after_ms=hub.mint_retry_ms(person)
+        )
     got = await hub.attach_allow(run, person, mode, take=data["take"], lease_gen=held["lease_gen"],
                                  start_from=data["from"], who=data["who"])  # fmt: skip
     return got

@@ -25,6 +25,8 @@ import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
 import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
+import { agentsApi, type AgentPreview } from '@/api/agents'
+import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 
 export const LAYOUT_SCENARIOS = [
   'quick-normal',
@@ -44,6 +46,11 @@ export const LAYOUT_SCENARIOS = [
   'terminal-take',
   'terminal-exited',
   'terminal-stop',
+  // M7b: core's Start agent dialog with fixture answers (preview, blocked reasons, the runner grant card, outcomes).
+  'agent-dialog',
+  'agent-blocked',
+  'agent-grant',
+  'agent-outcomes',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
   'pair-blocked-convenience',
@@ -168,6 +175,19 @@ const runList = (scenario: LayoutScenario): RunList => {
       fixtureRun('DD', { state: 'exited', replay_until: '2099-01-01T00:00:00Z', exit: ENDED }),
     ],
   }
+}
+const AGENT_GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
+const agentPreview = (scenario: LayoutScenario): AgentPreview => {
+  const base: AgentPreview = {
+    spec: 'f'.repeat(64), ticket: 'DEMO-0043', display: `claude --model opus 'Run orch status, then work on ticket DEMO-0043. Follow AGENTS.orch.md.' ${LONG_WORD}`, display_hidden: false,
+    cwd: { kind: 'worktree', repo: 'billing', ticket: 'DEMO-0043' }, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing.worktrees/0a1b2c3d-DEMO-0043`, cwd_path_hidden: false,
+    will_create_worktree: true, login_shell: true, env: ['TERM', 'COLORTERM', 'ORCH_GRANT', 'ORCH_SESSION', 'ORCH_TICKET', 'ORCH_HARNESS', 'CLAUDE_CODE_SUBAGENT_MODEL'],
+    grant: { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' }, blocked: null,
+    warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
+  }
+  if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
+  if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
+  return base
 }
 /** A fixture socket: `ready` at once (never the lease), then a screenful of output. Nothing leaves this page. */
 function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
@@ -312,6 +332,7 @@ export function resetLayoutPreview() {
   for (const [name, fn] of originals) {
     if (name === 'runs.connect') termTransport.connect = fn as typeof termTransport.connect
     else if (name.startsWith('runs.')) r[name.slice(5)] = fn
+    else if (name.startsWith('agents.')) (agentsApi as unknown as Record<string, unknown>)[name.slice(7)] = fn
     else a[name] = fn
   }
   originals.clear()
@@ -358,6 +379,14 @@ function install() {
   r.ticket = async () => ({ ticket: 'layout-preview', expires_in_ms: 30000 })
   r.stop = async () => ({ state: 'exited', cleanup: 'incomplete' })
   termTransport.connect = fixtureConnect
+  // M7b: the Start agent dialog's routes answer from fixtures.
+  const ag = agentsApi as unknown as Record<string, unknown>
+  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget']) originals.set(`agents.${name}`, ag[name])
+  ag.preview = async () => agentPreview(current)
+  ag.runner = async () => ({ runner: { connected: true, enabled: current !== 'agent-blocked', terminals: false, grant: current === 'agent-dialog' ? { id: AGENT_GRANT, until: '2026-10-15T20:00:00Z', scope: 'workable' } : null } })
+  ag.start = async () => { throw new ApiError(409, { code: 'run.limit', message: `8 agent runs at most ${LONG_WORD}`, retryable: true }) }
+  ag.depositStatus = async () => ({ deposit: 'unknown' })
+  ag.forget = async () => ({ forgotten: true })
   // "Make a normal ticket" reads the ticket fresh: answer with the quick row's labels and status.
   set('getTicket', async (...args: never[]) => {
     const key = args[0] as string
@@ -406,13 +435,18 @@ export function LayoutPreview({ name }: { name: string }) {
       undoDrop = installDropFixture(dropFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'drop']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop']) qc.removeQueries({ queryKey: [key] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
+  if (scenario.startsWith('agent-'))
+    return (
+      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}
+        grantStep={scenario === 'agent-outcomes' ? { kind: 'unknown', grant: AGENT_GRANT } : undefined} />
+    )
   if (scenario.startsWith('drop-'))
     return (
       <div className="min-w-0 space-y-6">

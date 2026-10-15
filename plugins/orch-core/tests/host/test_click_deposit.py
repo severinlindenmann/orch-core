@@ -1,0 +1,182 @@
+"""H11c: the click signer's deposit-only grant mode (§0.8.6 item 6 amended, D-P2-27, §12.4.2).
+
+A ``grant`` prepared with ``deposit:true`` is click + word ``<PREFIX>~<WS8>/GRANT`` when its ``grant.issued`` carries
+``label:"runner"``, at most 12 hours and ``verbs:"agent"`` and this machine has dashboard execution on for the
+workspace. ``sign`` draws the secret, signs, submits and only after the commit hands the secret to the runner through
+``grant.deposit``; the secret is never in a result, a frame to the dashboard, a record or the signer's log.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+from orch.click.protocol import ClickError
+from orch.runner import enablement
+from tests.host.dispatch_helpers import Served
+from tests.host.human_helpers import Human, ok
+from tests.host.lifecycle_helpers import UID
+from tests.host.test_click import Click, refused
+from tests.host.test_runner_socket import Runner
+
+pytestmark = pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the runner is POSIX only")
+
+
+@pytest.fixture
+def world(tmp_path):
+    from tests.host.lifecycle_helpers import Lab
+
+    lab = Lab(tmp_path)
+    served = Served(lab, runner_identity=lambda cred: cred.pid == os.getpid())
+    rstate = tmp_path / "rs"
+    rstate.mkdir(mode=0o700)
+    runner = Runner(served, rstate)
+    click = Click(served)
+    try:
+        yield served, click, runner, Human(served)
+    finally:
+        click.close()
+        runner.close()
+        served.close()
+        lab.close()
+
+
+def execution(served, on: bool = True) -> None:
+    enablement.set_enabled(Path(served.lab.state), served.wid, on, UID, terminals=False, text="t")
+
+
+def word(served) -> str:
+    return f"{served.service.entry.prefix}~{served.wid[-8:]}/GRANT"
+
+
+def flow(click, served, **args):
+    p = click.prepare("grant", {"hours": 8, "scope": "workable", **args}, deposit=True)
+    v = click.view(p["request_id"])
+    click.mono.t += 1.5
+    return p, v
+
+
+def test_grant_without_deposit_stays_terminal_only(world):
+    served, click, _, _ = world
+    execution(served)
+    refused(lambda: click.prepare("grant", {"hours": 8}), "human.click_refused", "terminal_only")
+    refused(lambda: click.prepare("grant", {"hours": 8}, deposit=False), "human.click_refused", "terminal_only")
+    refused(lambda: click.prepare("log", {"ref": "X-1", "text": "x"}, deposit=True), "invalid.input")
+
+
+def test_deposit_needs_dashboard_execution_and_at_most_12_hours_and_no_other_label(world):
+    served, click, _, _ = world
+    refused(lambda: click.prepare("grant", {"hours": 8}, deposit=True), "human.click_refused", "terminal_only")
+    execution(served)
+    refused(lambda: click.prepare("grant", {"hours": 13}, deposit=True), "human.click_refused", "terminal_only")
+    for bad in ({"label": "mine"}, {"verbs": "log"}, {"hours": "8"}, {"extra": 1}):
+        refused(lambda bad=bad: click.prepare("grant", {"hours": 8, **bad}, deposit=True), "invalid.input")
+
+
+def test_a_click_grant_goes_to_the_runner_and_never_to_the_dashboard(world):
+    served, click, runner, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    assert p["confirm"] == "word"
+    view = v["view"]
+    assert view["deposit"] is True
+    assert view["deposit_line"] == "The secret goes to your orch runner on this machine and is never shown"
+    assert view["confirm"] == {"kind": "word", "word": word(served)}
+    assert view["deposit_line"] in view["lines"]
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "confirmed" and res["deposit_id"] == p["request_id"][3:]
+    gid = res["grant"]
+    assert [g["grant"] for g in runner.grants.report()] == [gid]
+    assert res["result"]["data"]["grant"] == gid
+    secret = runner.grants.secret_for(served.wid, served.lab.ws.owner.ref, gid)
+    tail = secret.partition(".")[2]
+    assert tail not in repr(res) and tail not in repr(v)
+    for path in Path(served.lab.state).rglob("*"):  # records, the click log, the host's files
+        if path.is_file() and not path.is_symlink():
+            assert tail.encode() not in path.read_bytes(), path
+    again = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert again["duplicate"] is True and again["deposit"] == "confirmed" and again["grant"] == gid
+    me = ok(served.client().req("whoami", {}))["data"]["runner"]
+    assert me["grant"]["id"] == gid
+
+
+def test_the_view_has_no_deposit_field_for_any_other_op(world):
+    served, click, _, human = world
+    execution(served)
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    view = click.view(p["request_id"])["view"]
+    assert "deposit" not in view and "deposit_line" not in view
+
+
+def test_a_lost_deposit_answer_is_unknown_and_the_status_is_asked_once(world, monkeypatch):
+    served, click, runner, _ = world
+    execution(served)
+    seen = []
+
+    def tamper(op, args, res):
+        seen.append(op)
+        if op == "grant.deposit":
+            raise ConnectionError("lost")
+        return res
+
+    click.tamper = tamper
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] in ("unknown", "confirmed") and "grant" in res  # never a false failure
+    assert seen.count("grant.deposit_status") == 1
+
+
+def test_a_deposit_refused_by_the_host_is_rejected_with_the_grant_named(world):
+    served, click, runner, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    runner.link.stop()  # the runner goes away between prepare and sign
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] in ("rejected", "unknown") and res["grant"].startswith("gr_")  # Revoke uses it
+    assert res["result"]["data"]["grant"] == res["grant"]
+
+
+def test_check_prepared_refuses_a_grant_issued_without_the_runner_label():
+    from orch.click import view as views
+
+    with pytest.raises(ClickError) as e:
+        views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "x", "hours": 8,
+                                                         "verbs": "agent"}]})  # fmt: skip
+    assert getattr(e.value, "reason", None) == "terminal_only"
+    for bad in ({"hours": 13}, {"verbs": ["log"]}, {"label": None}):
+        ev = {"type": "grant.issued", "label": "runner", "hours": 8, "verbs": "agent", **bad}
+        with pytest.raises(ClickError):
+            views.deposit_checks({"op": "grant", "events": [ev]})
+    views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "runner", "hours": 12,
+                                                     "verbs": "agent"}]})  # fmt: skip
+
+
+def test_any_failure_of_the_hand_over_after_the_commit_is_unknown_never_internal(world):
+    """Opus info: a non-ClickError (a framing error from the host client) after the commit reports unknown."""
+    from orch.host.frames import FrameError
+
+    served, click, _, _ = world
+    execution(served)
+
+    def tamper(op, args, res):
+        if op in ("grant.deposit", "grant.deposit_status"):
+            raise FrameError("frame.invalid")
+        return res
+
+    click.tamper = tamper
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "unknown" and res["grant"].startswith("gr_")
+
+
+def test_a_click_deposit_grant_has_no_set_orch_grant_hint(world):
+    served, click, _, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert "ORCH_GRANT" not in repr(res["result"].get("hints")) + repr(res["result"].get("lines"))

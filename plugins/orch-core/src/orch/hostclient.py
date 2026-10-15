@@ -26,7 +26,8 @@ never gets here (``human_only``).
 **``wait``** is one request: the host parks it on its bus (H6a). Its socket timeout is the ``--timeout`` plus a margin.
 
 The run directory is ``ORCH_HOST_RUN_DIR`` when set (tests, dev), else ``<state>/run`` (tier A, as ``orch host`` and
-``orch sign``; H7). It only says where to look: it is **not** a trust
+``orch sign``; H7). ``ORCH_HOST_RUN_DIR`` is the one environment name for it in core (``ORCH_RUN_DIR`` is never
+read). It only says where to look: it is **not** a trust
 input. Whom the socket may belong to comes from the registry or the root-owned pin, checked by the handshake.
 """
 
@@ -664,6 +665,16 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
                 files=wire,
             )
             return dry_text(op, doc["data"])
+        on_secret = None
+        if op.name == "grant" and args.get("runner"):  # H11c: the secret goes to the orch runner, never on screen
+            from orch.identity import new_ulid
+
+            deposit_id = new_ulid()
+
+            def on_secret(secret: str) -> list[str]:
+                out = signer.hand_over(lambda o, a, **kw: link[0].call(o, a, **kw), secret, deposit_id)
+                return signer.deposit_lines(out)
+
         res = signer.run(
             _durable(target, link, idem),
             op.name,
@@ -678,6 +689,7 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
             show_secret=human.show_secret,
             idem=idem,
             files=wire,
+            on_secret=on_secret,
         )
         return in_schema_order(op, result_from(res))
     except OrchError:

@@ -682,6 +682,7 @@ def run(
     show_secret: Callable[[str], None],
     idem: str,
     files: dict[str, Any] | None = None,
+    on_secret: Callable[[str], list[str]] | None = None,
 ) -> dict[str, Any]:
     """The CLI composite of a person op in host mode. ``call(op, args, **opts)`` sends one request on the pinned
     workspace connection and returns its ``result`` (raising the host's error); ``confirm(text, word)`` shows the
@@ -704,7 +705,47 @@ def run(
         show_secret=show_secret,
         idem=idem,
         files=files or {},  # every artifact event must name bytes this client uploaded: none uploaded, none passes
+        on_secret=on_secret,
     )
+
+
+def hand_over(call: Callable[..., Any], secret: str, deposit_id: str) -> dict[str, Any]:
+    """H11c (D-P2-27): give a freshly drawn runner grant to the orch runner (``grant.deposit`` with ``auth.grant``) on
+    the signer's own connection, after the commit. ``{deposit, deposit_id, grant}``; an unknown outcome asks
+    ``grant.deposit_status`` once. Never returns or logs the secret."""
+    from .errors import HostError
+
+    gid = secret.partition(".")[0]
+    outcome, reason = "unknown", None
+    try:
+        got = call("grant.deposit", {"deposit_id": deposit_id}, auth={"grant": secret})["data"]
+        outcome, reason = got.get("deposit", "unknown"), got.get("reason")
+    except HostError as exc:
+        if exc.code not in ("outcome.unknown", "timeout", "host.unavailable"):
+            outcome, reason = "rejected", exc.code
+    except (OSError, ConnectionError, TimeoutError):
+        pass
+    if outcome not in ("confirmed", "rejected"):
+        try:
+            got = call("grant.deposit_status", {"deposit_id": deposit_id})["data"]
+            outcome = got.get("deposit") if got.get("deposit") in ("confirmed", "rejected") else "unknown"
+        except Exception:  # noqa: BLE001 - still unknown
+            outcome = "unknown"
+    out: dict[str, Any] = {"deposit": outcome, "deposit_id": deposit_id, "grant": gid}
+    if reason:
+        out["reason"] = str(reason)[:64]
+    return out
+
+
+def deposit_lines(out: Mapping[str, Any]) -> list[str]:
+    """What the person's terminal says about a hand-over (never the secret)."""
+    gid = out.get("grant")
+    if out.get("deposit") == "confirmed":
+        return [f"{gid} is with your orch runner; it was not shown. Forget it there: the dashboard, or grant.forget"]
+    if out.get("deposit") == "rejected":
+        why = f" ({out['reason']})" if out.get("reason") else ""
+        return [f"the orch runner refused {gid}{why}; revoke it: orch grant revoke {gid}"]
+    return [f"The grant may or may not be with your runner. Revoke it to be sure: orch grant revoke {gid}"]
 
 
 def secret_text(secret: str) -> str:
@@ -730,6 +771,7 @@ def finish(
     artifacts: str | None = None,
     before: Callable[[], None] | None = None,
     prefix: str = "",
+    on_secret: Callable[[str], list[str]] | None = None,
 ) -> dict[str, Any]:
     """The tail every signing client shares (the composite and ``orch sign``): ``before`` (a client's own extra
     checks), :func:`check`, :func:`check_uploads` (when ``files`` is given), the review (``prefix``, then
@@ -754,5 +796,9 @@ def finish(
         raise
     result = call("human.submit", {"request_id": request_id, "events": signed.events}, idem=idem)
     if signed.secret is not None:
-        show_secret(secret_text(signed.secret))
+        if on_secret is not None:  # H11c: the secret goes where on_secret sends it (the runner), its lines are shown
+            lines = on_secret(signed.secret)
+            result = {**result, "lines": [*(result.get("lines") or []), *lines]}
+        else:
+            show_secret(secret_text(signed.secret))
     return result

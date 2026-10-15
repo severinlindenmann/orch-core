@@ -45,6 +45,8 @@ NOTICE = (
     "Any process running as your user can create a request and show you a code."
 )
 CODE = re.compile(r"[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}")
+#: H11c: asked after a runner grant's commit (§12.4.2)
+DEPOSIT_PROMPT = "\n[r] hand to the orch runner  [s] show ORCH_GRANT here: "
 
 
 def normalise_code(text: str) -> str:
@@ -91,6 +93,7 @@ def sign_code(
     idem: str,
     resolved: list[dict[str, Any]] | None = None,
     files: Mapping[str, bytes] | None = None,
+    choose: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """Resolve ``code``, bind, check, review, confirm, sign and submit (see the module doc). ``call(op, args,
     idem=None)`` sends one request on the pinned workspace connection and returns its ``result``. ``resolved`` is the
@@ -106,6 +109,20 @@ def sign_code(
         raise HostError("not_found", f"no pending request of yours has the code {code} in this workspace")
     request_id = found[0]["id"]
     prepared = call("human.get", {"request_id": request_id, "signer": {"device": device, "auth": backend.auth}})["data"]
+
+    def on_secret(secret: str) -> list[str]:
+        """H11c: a runner grant (label ``runner``) may go to the orch runner instead of the screen; the person
+        chooses on their own terminal. Any other grant is shown, as before."""
+        runner = any(e.get("type") == "grant.issued" and e.get("label") == "runner" for e in prepared["events"])
+        if runner and choose is not None:
+            try:
+                wanted = choose(DEPOSIT_PROMPT)
+            except Exception:  # noqa: BLE001 - no terminal to ask on: shown, as without the choice
+                wanted = "s"
+            if wanted == "r":
+                return signer.deposit_lines(signer.hand_over(call, secret, request_id[3:]))
+        show_secret(signer.secret_text(secret))
+        return []
 
     def before() -> None:
         req = prepared.get("request") or {}
@@ -131,6 +148,7 @@ def sign_code(
         artifacts="checked" if files else "unseen",
         before=before,
         prefix=f"{NOTICE}\n\n",
+        on_secret=on_secret,
     )
 
 
@@ -326,6 +344,7 @@ def main(
             idem=new_idem(),
             resolved=found,
             files=files or None,
+            choose=human.secret_destination,
         )
     except signer.SignerRefused as exc:
         return _fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))

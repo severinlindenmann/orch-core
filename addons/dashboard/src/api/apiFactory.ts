@@ -38,7 +38,7 @@ import {
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
+import type { ClickAction, ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
 import type { HostGrant, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
@@ -126,7 +126,7 @@ export function createApi(transport: Transport) {
     prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, ...(retry ? { retry } : {}) }),
     getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     /** Click-to-sign (H5c, real host only; the mock never offers it): the signer's View is shown as it is. */
-    prepareClick: (ws: string, action: HandoffAction, retry = 0) => call<ClickPrepared>('POST', `/api/w/${ws}/click/prepare`, { ...action, ...(retry ? { retry } : {}) }),
+    prepareClick: (ws: string, action: ClickAction, retry = 0) => call<ClickPrepared>('POST', `/api/w/${ws}/click/prepare`, { ...action, ...(retry ? { retry } : {}) }),
     viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
     signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),

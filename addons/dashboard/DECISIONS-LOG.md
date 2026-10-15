@@ -1692,6 +1692,31 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** the primary step is `orch host relay pair --resume --offer <offer_id>` and the hand-off is `orch sign <CODE>` (R6 #473 head a4b7bb0f, per orch-52). Offer ids are 32 lower-case hex characters, as in the contract; the fixtures use that format. Every command the page offers for pasting into a shell is built only from host values that pass `shellWord` (ASCII letters, digits, `._-`, at most 64, not starting with `-`) or, for the offer, exactly 32 lower-case hex characters. Anything else gives a warning and no command (Opus delta N1). The device id in the list is shown through `Inline`, so hidden and bidi characters are visible. `orch device remove <id> --workspace <ws>` is still an assumption: R6 names no removal command.
 - **Revert:** only with a host that guarantees these formats in the contract, and then the checks stay as defence in depth.
 
+## 2026-10-15 The click signer may speak contract 1 or 2
+
+- **Decision:** the dashboard accepts a signer whose `status.contract` is exactly the int 1 or 2 (core H11c-2 #488: 2 adds deposit-only grant mode). Anything else, including `True`, `"2"` or `2.0`, is still `click.contract` ("Update orch-core"). The contract is remembered (`Signer.contract`) so start agent (M7b) can offer the click-issued runner grant only on 2. Nothing else changes here: the sign route still passes no deposit fields until M7b.
+- **Revert:** only together with core going back to a single contract.
+
+## 2026-10-15 M7b Start agent and the runner grant
+
+- **Decision:** Start agent is core's own dialog (`StartAgentDialog`), never an addon frame, reached from the dock menu and the ticket's
+  Actions on a real host with feature `agent_start`. Preview first; Start posts exactly the previewed values plus `spec`, with one idem
+  per dialog opening; a changed field must be previewed again; `launch.changed` previews again and asks for a new Start.
+  **Why:** spec §12.4 (Tier A, no signature; "never a value edited between preview and start"). **Revert:** none planned.
+- **Decision:** the runner grant is a click request of its own typed action `runner_grant` (hours 1..12, scope), not part of the
+  hand-off's `PrepareBody`: the terminal fallback for a grant is `orch grant --runner`, not `orch sign`. The server checks the host's
+  prepared `grant.issued` (runner/agent/hours/scope/the caller as actor) and the View's deposit parts before anything is shown; the
+  sign answer carries only `deposit`, `deposit_id`, `grant`, `deposit_reason`. `grant.deposit` is in a FORBIDDEN set of the host link.
+  **Why:** D-P2-27 and §0.8.6 item 6: the secret never reaches this process or the browser. **Revert:** none.
+- **Decision:** a signer below contract 2 makes the grant terminal only with "This orch version can't hand a grant to the runner;
+  update orch." (`why:"update_orch"`). The check that accepts contract 2 at all is left to the coordinator's separate PR.
+  **Why:** orch-52's answer 9 and the coordinator (15 Oct). **Revert:** when every supported core is contract 2.
+- **Decision (wording, dashboard's own):** the `deposit_reason` sentences and the `launch.no_grant` reasons in `src/api/agents.ts`
+  (core sends codes only). `unknown` asks `grant.deposit_status` 5 times, 2 s apart, then shows "The grant may or may not be with your
+  runner. Revoke it to be sure." with a click **Revoke grant** (the existing `grant_revoke` action).
+- **Decision:** agent runs attach read-only after Start (not with the write lease as a new shell does): an agent's terminal is watched,
+  not typed into. **Revert:** pass `initial: 'write'` from `onStarted` in `RealDock`.
+
 ## 2026-10-15 Drop: Workspace → Drop, fixtures only, behind `drop/1` (PROPOSAL PENDING)
 
 - **Decision:** A real host gains a **Drop** page at `/drop` (`src/app/pages/drop/index.tsx`), with a sidebar entry after Quick tasks.

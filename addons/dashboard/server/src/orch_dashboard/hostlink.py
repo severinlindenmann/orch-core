@@ -70,9 +70,19 @@ OPS = {
         "term.open",
         "term.attach",
         "attach.cancel",
+        # M7b start agent (contract v1.6, section 12.3, H11c): the preview, the start (a write with an idem), and the
+        # person's own runner-grant reads and forget. Never `grant.deposit`: only the click signer child (or the
+        # terminal) sends it, with the secret, on its own host connection (FORBIDDEN below).
+        "agent.preview",
+        "agent.start",
+        "grant.deposit_status",
+        "grant.forget",
     )
 }
-RUN_OPS = {"run.sub", "run.list", "run.stop"}
+RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "grant.deposit_status", "grant.forget"}
+#: ops this process never sends, whatever a caller asks: `grant.deposit` carries the runner grant's secret
+#: (`auth.grant`), which never reaches the dashboard's HTTP process (D-P2-27, section 0.8.6 item 6).
+FORBIDDEN = frozenset({"grant.deposit"})
 TERM_OPS = {"term.preview", "term.open", "term.attach", "attach.cancel"}
 
 QUERY_OPS = {"ticket.query", "ticket.get", "grant.list", "needs", "workspace.show", "member.list"}
@@ -250,6 +260,8 @@ class HostLink:
         dry_run: bool | None = None,
         files: dict | None = None,
     ) -> Any:
+        if op in FORBIDDEN:
+            raise ValueError("this process never sends grant.deposit")
         write = write or op == "human.submit" or op not in OPS
         if dry_run is not None and not (write or op == "human.prepare"):
             raise ValueError("dry_run is only for log writes and human.prepare")

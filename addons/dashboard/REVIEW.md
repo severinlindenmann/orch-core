@@ -576,6 +576,19 @@ it read-only with **Take control**; taking it there shows **Take back** here; **
 when cleanup was incomplete); an ended run whose output is gone says "Output no longer kept". Layout: `/__layout/terminal-dock` (and
 `-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.
 
+## Try start agent (M7b, real host, own terminal)
+
+In-process end to end (core's host, runner and click signer, a fake `codex`): `cd addons/dashboard/server && uv run pytest -m realhost
+tests/test_realhost_agents.py`. On a disposable real host with `start-agent` granted, dashboard execution on and a runner: the dock's
+**New terminal → Start agent on KEY** (or the ticket's **Actions → Start agent**) opens core's dialog. What you should see: the D-P2-31
+line; the host's preview (command, "A worktree for KEY in REPO will be created at …" or "the repository's shared working copy (not a
+separate worktree)", env names, warnings); without a grant the **Runner grant** card with the owner's risk sentence, hours (1–12),
+tickets (workable/all) and **Issue runner grant** (off, with "Turn on dashboard execution (orch runner enable) or use the terminal",
+while execution is off). Issuing shows the signer's View with the deposit line and the word `PREFIX~WS8/GRANT`; after Sign: "Your runner
+holds the grant until …" and the preview no longer blocks; **Start agent** adds the run to the dock. With a contract-1 core the card
+says "This orch version can't hand a grant to the runner; update orch." **Forget runner grant** asks first. Layout:
+`/__layout/agent-dialog` (and `-blocked`, `-grant`, `-outcomes`) in the dev build.
+
 ## Try pairing (fixtures)
 
 Nothing reaches a host: the `pair/1` ops (contract v1.9) are agreed but not served yet. On a real host Settings → **Devices** says "Pairing a phone is not available on

@@ -133,7 +133,8 @@ def test_preview_blocks_in_the_order_addon_machine_terminals_runner(w, rstate, m
         assert pre["cwd"] == {"kind": "workspace"} and pre["cwd_path"] == str(w.service.entry.root)
         assert "ORCH_GRANT" not in pre["env"] and "ORCH_SESSION" not in pre["env"]
         assert preview(c)["spec"] == pre["spec"]  # a stable digest
-        assert preview(c, harness="codex")["blocked"]["code"] == "harness.not_found"
+        codex = preview(c, harness="codex")  # H11c: a person-run harness through the login shell
+        assert codex["blocked"] is None and codex["login_shell"] is True and "ORCH_GRANT" not in codex["env"]
         assert preview(c, mode="context")["blocked"]["code"] == "launch.invalid"
         assert preview(c, ticket="NOPE-999")["blocked"]["code"] == "not_found"
         assert "ORCH_TICKET" in preview(c, ticket=w.ticket()[1])["env"]
@@ -279,7 +280,9 @@ def test_attach_limits_are_refused_by_the_host_from_the_runners_counts(ready):
         for _ in range(4):
             clients.append(attach(w, c, run)[1])
         wait_for(lambda: ok(c.call("run.list", {}))["data"]["runs"][0]["viewers"] == 4)
-        assert err(c.call("term.attach", {"run": run})) == "attach.limit"
+        res = c.call("term.attach", {"run": run})
+        assert err(res) == "attach.limit"
+        assert res["error"]["retryable"] is True and 1 <= res["error"]["retry_after_ms"] <= 3_600_000
         clients.pop().close()
         wait_for(lambda: ok(c.call("run.list", {}))["data"]["runs"][0]["viewers"] == 3)
         clients.append(attach(w, c, run)[1])
@@ -717,6 +720,52 @@ def test_term_attach_is_rate_limited_per_person(ready):
     assert "rate.limited" in codes[10:]
 
 
+def test_term_attach_refusals_carry_retry_after_ms_from_the_bucket(ready):
+    """§0.6: a retryable refusal carries ``error.retry_after_ms``; for the mint bucket (30 per minute) it is the time
+    until the next token, so an immediate retry after it succeeds and none comes back sooner than 2 s."""
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    refused = None
+    for _ in range(12):
+        res = c.call("term.attach", {"run": run})
+        if not res.get("ok"):
+            refused = res
+            break
+    assert refused is not None and refused["error"]["code"] == "rate.limited"
+    wait = refused["error"]["retry_after_ms"]
+    assert refused["error"]["retryable"] is True and 1 <= wait <= 2000
+    time.sleep(wait / 1000 + 0.05)
+    assert c.call("term.attach", {"run": run}).get("ok") is True
+
+
+def test_attach_limit_reported_by_the_runner_keeps_its_code_and_carries_retry_after_ms(ready, monkeypatch):
+    """The runner refuses ``attach.allow`` beyond its pending-capability cap with ``attach.limit``: the host passes
+    that code on (not ``run.spawn_failed``) with ``retry_after_ms``."""
+    from orch.runner import term
+
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    monkeypatch.setattr(term, "MAX_ALLOWS", 0)
+    res = c.call("term.attach", {"run": run})
+    assert err(res) == "attach.limit"
+    assert res["error"]["retryable"] is True and 1 <= res["error"]["retry_after_ms"] <= 3_600_000
+
+
+def test_run_limit_on_term_open_carries_retry_after_ms(ready, monkeypatch):
+    from orch.host import terms
+
+    w = ready
+    c = w.conn()
+    open_shell(c)
+    monkeypatch.setattr(terms, "SHELLS_PER_PERSON", 1)
+    pre = preview(c)
+    res = c.call("term.open", {"spec": pre["spec"]}, idem=True)
+    assert err(res) == "run.limit"
+    assert res["error"]["retryable"] is True and 1 <= res["error"]["retry_after_ms"] <= 3_600_000
+
+
 # -- whoami and the flood ------------------------------------------------------------------------------------------
 
 
@@ -847,6 +896,10 @@ def test_the_host_stays_responsive_while_eight_runs_flood_output(tmp_path):
         enable(w)
         home = tmp_path / "home"
         home.mkdir()
+        # H11c: the runner starts only registry launches and the programs runner.json names
+        cfg = Path(w.lab.state) / "runner.json"
+        cfg.write_text('{"v": 1, "programs": {"codex": "/bin/sh"}}')
+        cfg.chmod(0o600)
         env = {"PATH": os.environ["PATH"], "HOME": str(home), "PYTHONPATH": src, "SHELL": "/bin/sh",
                "ORCH_STATE_DIR": str(w.lab.state), "ORCH_HOST_RUN_DIR": str(w.lab.run)}  # fmt: skip
         code = "import sys; from orch.cli.main import main; sys.exit(main(['runner', 'run', '--foreground']))"
@@ -858,7 +911,7 @@ def test_the_host_stays_responsive_while_eight_runs_flood_output(tmp_path):
         runs = []
         for _ in range(8):
             run = new_run_id()
-            w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/usr/bin/yes", "orch-flood"])))
+            w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "exec yes orch-flood"])))
             runs.append(run)
         viewers = []
         try:

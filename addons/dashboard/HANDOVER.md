@@ -1098,7 +1098,7 @@ M6 follow-up (#454, 2026-10-14): `GET /api/w/<ws>/records/current` checks `recor
 ## Terminals on the real host (M7a, 14 Oct)
 
 Stream B M7a (host contract v1.6 §12.3, §12.6; H11b). The dock is real when the server lists `terminals` (host caps `run/1`, `term/1`
-and the seven ops below); otherwise it is not drawn on a real host. Start agent (H11c) is not wired: no `agent_start` feature.
+and the seven ops below); otherwise it is not drawn on a real host. Start agent is M7b (next section).
 
 | Route | Host op | Notes |
 |---|---|---|
@@ -1126,6 +1126,35 @@ and the seven ops below); otherwise it is not drawn on a real host. Start agent 
 The dashboard and devhost use core's `ORCH_HOST_RUN_DIR`, falling back to `<state>/run`.
 A set legacy `ORCH_RUN_DIR` is accepted silently only when its absolute path matches that directory;
 otherwise dashboard startup exits 1 with a migration message.
+
+## Start agent on the real host (M7b, 15 Oct)
+
+Host contract v1.6 §12.3/§12.4 (H11c #466), D-P2-27 (the runner grant), D-P2-31, §0.8.6 item 6 (the click signer's deposit-only grant
+mode), changelog 40; H11c-2 (core #488, not merged) for signer contract 2, `deposit_reason`, `grant.deposit_status.reason`,
+`grant.list.label` and the `run.sub` `{t:"runner"}` item. Features: `agent_start` (`agent.preview`, `agent.start`, `run.list`,
+`whoami`) and `runner_grant` (`grant.deposit_status`, `grant.forget`, `whoami`). The host link sends these four ops under `run/1`;
+**`grant.deposit` is never sent by this process** (`hostlink.FORBIDDEN`, refused in `HostLink.call` before any I/O).
+
+| Route | Host op / signer frame | Notes |
+|---|---|---|
+| `POST /api/w/{ws}/agents/preview` | `agent.preview` | own body model: harness `claude-code`/`codex`, mode `refine|work|fix|continue|context`, model, subagent_model, label ≤40, worktree (default true). Projection `adapters/runs.agent_preview`: `spec, ticket, display, cwd{kind,repo,ticket}, cwd_path, will_create_worktree, login_shell, env` (names), `grant{id,until,scope}`, `blocked{code,message,detail{reason?,missing?}}`, `warnings` ≤8; never `argv`/`program`; hidden characters withheld |
+| `POST /api/w/{ws}/agents/start` `{…preview args, spec, idem, cols?, rows?}` | `agent.start` (idem write) | one `a_<ULID>` idem per dialog opening, reused on every retry (run id `r_` + its ULID); `launch.changed` → the page previews again |
+| `GET /api/w/{ws}/runner` | `whoami` | `{runner: {connected, enabled, terminals, grant}|null}`; re-read on every live `resync`/`ready` (a runner restart drops the grant) |
+| `GET /api/w/{ws}/runner/deposits/{deposit_id}` | `grant.deposit_status` | `{deposit, reason?}`; `reason` only when rejected, from the closed set, else `other` |
+| `POST /api/w/{ws}/runner/forget` `{grant, idem}` | `grant.forget` (idem write) | "Forget runner grant", after a confirm |
+| `POST /api/w/{ws}/click/prepare` `{action:"runner_grant", hours 1..12 = 8, scope workable|all}` | signer `prepare {op:"grant", args:{hours, scope}, deposit:true}` | click only (not a hand-off action); a signer below contract 2 → `human.click_refused` `terminal_only` with `why:"update_orch"` |
+| `POST /api/w/{ws}/click/view` | signer `view` | `expected()` checks the host's prepared `grant.issued` (label runner, verbs agent, the hours and scope asked, 1..12 h, actor = the caller); the View must have `deposit:true`, `deposit_line` = core's constant (also in `lines`), the owner's risk sentence in `lines`, and the word `<PREFIX>~<WS8>/GRANT`; a non-grant View claiming a deposit is refused |
+| `POST /api/w/{ws}/click/sign` | signer `sign` | a grant's answer is only `{state, duplicate, deposit, deposit_id (= request ULID), grant (gr_ id), deposit_reason? (rejected only, closed set)}`; never `result` or anything else |
+| SSE `runs` | `run.sub` | `{t:"runner", grant}` items (H11c-2) patch the runner card; run rows gain `grant_state` (`ok|ended`); `session` and the run's grant id stay out |
+
+- **Page:** `src/app/terminal/real/StartAgentDialog.tsx` (core's dialog: preview, approved texts, blocked, Start, the runner grant card),
+  `src/api/agents.ts` (routes, texts). Opened from the dock's **Start agent** and the ticket's **Actions → Start agent** on a real host.
+- **Signer contract:** `click_signer.Signer.contract` and `deposits()`; the check that accepts contract 2 is the coordinator's own PR.
+- **Tests:** `server/tests/test_agents.py`, the M7b block of `test_dashboard_click.py`, `test_realhost_agents.py` (core host + runner +
+  core's ClickSigner in process, fake harness); page `StartAgentDialog.test.tsx`, `src/test/signing-surface.test.tsx` (start agent),
+  `src/dev/layoutPreview.test.tsx`. Layout guard: `real-host-agent-dialog|blocked|grant|outcomes`.
+- **Requests for core:** (1) the `deposit_reason` sentence set is the dashboard's own wording (core sends codes only); (2) `run.limit`
+  detail does not reach the socket (#479): the host's message is shown as text.
 
 ## Pair a phone (pair/1, contract v1.9, fixtures only, 15 Oct)
 

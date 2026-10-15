@@ -7,7 +7,7 @@ import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
+import type { ClickAction, ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
 import type { HostGrant, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import {
@@ -245,7 +245,7 @@ const handoff = {
  * the key is in core's signer process and never here.
  */
 const click = {
-  prepareClick: (ws: string, action: HandoffAction, retry = 0) => call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
+  prepareClick: (ws: string, action: ClickAction, retry = 0) => call<ClickPrepared>(`${w(ws)}/click/prepare`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
   signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
     call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),

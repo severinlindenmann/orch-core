@@ -105,6 +105,7 @@ ANSWER_CASES = [
     *S2["bridge"]["pair_answers"],
     *S2["cert_binding"]["challenges"],
     *S2["approved_anchor"]["answers"],
+    *S2["rejected_forms"]["answers"],
 ]
 
 
@@ -175,8 +176,41 @@ def test_sas_of_every_answer_that_shows_the_code(name, ctx, expect, meta):
     assert got == expect["sas"]
 
 
+def _expects_with(key: str) -> int:
+    """How many ``expect`` objects anywhere in the vendored corpus (and the meta v2 extract) carry ``key``."""
+    n = 0
+
+    def walk(o: object) -> None:
+        nonlocal n
+        if isinstance(o, dict):
+            if isinstance(o.get("expect"), dict) and key in o["expect"]:
+                n += 1
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(S2)
+    walk(READER_DECL)
+    return n
+
+
 def test_sas_cases_are_all_found():
-    assert len(SAS_HOST) >= 3 and len(SAS_DEVICE) >= 1
+    """Exact: every corpus expect that shows the pairing code is swept, host side or device side."""
+    assert len(SAS_HOST) + len(SAS_DEVICE) == _expects_with("sas") == 10
+    assert {n for n, _, _ in SAS_HOST} == {
+        "pair_first_time",
+        "pair_resend_then_other_key",
+        "pair_with_a_label_full_of_controls",
+        "pair_with_existing_cert",
+        "pair_resend_keeps_the_attempt_new_attempt_closed",
+        "reader_decl.meta_v1_without_reader_decl_still_pending",
+        "reader_decl.meta_v2_reader_decl_sig_not_a_string_pending",
+        "reader_decl.meta_v2_with_a_declaration_that_fails_the_gate_still_pending",
+        "reader_decl.meta_v2_with_reader_decl_pending",
+    }
+    assert [a[0] for a in SAS_DEVICE] == ["pending_accepted_shows_the_code[0]"]
 
 
 def _sas_args() -> list:
@@ -258,8 +292,18 @@ def test_cert_code_of_every_challenge_a_device_receives(name, ctx, expect, meta)
 
 
 def test_cert_code_cases_are_all_found():
-    shown = [a for a in CHALLENGE_DEVICE if "cert_code" in a[2]]
-    assert len(CHALLENGE_HOST) >= 1 and len(shown) >= 3
+    """Exact: every corpus expect that shows ``cert_code`` is swept (including ``rejected_forms.answers``)."""
+    shown = [a[0] for a in CHALLENGE_DEVICE if "cert_code" in a[2]]
+    assert len(shown) == _expects_with("cert_code") == 5
+    assert shown == [
+        "cert_pending_with_the_primarys_challenge_shows_its_code[0]",
+        "challenge_bound_to_this_attempt_shows_its_code[0]",
+        "second_challenge_for_another_request_after_restart_dropped[0]",
+        "rejection_after_the_challenge_of_the_same_request_denied[0]",
+        "rejection_for_another_request_after_a_challenge_and_restart_unattributed[0]",
+    ]
+    assert [n for n, _ in CHALLENGE_HOST] == ["pair_status_cert_pending_with_the_primarys_challenge"]
+    assert len(CHALLENGE_DEVICE) == 23
     assert any(a[0].startswith("challenge_in_the_old_shape_dropped") for a in CHALLENGE_DEVICE)
 
 
@@ -517,8 +561,10 @@ def test_every_epoch_0_host_case_is_covered():
     assert len(EPOCH0_STEPS) == len(PAIR_REQUESTS) + len(UNOPENED)
     assert all(e["result"] == "drop" for _n, e in UNOPENED), UNOPENED
     assert all(e["result"] != "drop" for *_x, e in PAIR_REQUESTS)
-    assert {n.split("[")[0] for n, *_ in PAIR_REQUESTS} >= {c["name"] for c in S2["cert_binding"]["host"]}
-    assert {n.split("[")[0] for n, *_ in PAIR_REQUESTS} >= {c["name"] for c in READER_DECL_CASES}
+    opened = {n.split("[")[0] for n, *_ in PAIR_REQUESTS}
+    assert opened >= {c["name"] for c in S2["cert_binding"]["host"]}
+    assert opened >= {c["name"] for c in READER_DECL_CASES}
+    assert (len(EPOCH0_STEPS), len(PAIR_REQUESTS), len(UNOPENED)) == (39, 37, 2)
 
 
 @pytest.mark.parametrize("case", READER_DECL_CASES, ids=[c["name"] for c in READER_DECL_CASES])
@@ -625,6 +671,32 @@ def test_check_pair_meta_refuses_every_shape_error(meta):
 )
 def test_clean_label_follows_protocol_2_5(raw, clean):
     assert pairing.clean_label(raw) == clean
+
+
+@pytest.mark.parametrize(
+    ("raw", "clean"),
+    [
+        ("\u1c89x", "\u1c89x"),  # U+1C89, assigned in Unicode 16.0: kept on every interpreter
+        ("\u2ffcx", "\u2ffcx"),  # U+2FFC, assigned in 15.1: kept on every interpreter
+        ("a\U00013439b", "ab"),  # U+13439, Cf since 15.0: removed on every interpreter
+        ("a\u20c1b", "ab"),  # U+20C1, assigned after 16.0 (Unicode 17): unassigned in 16.0, removed
+        ("\u1c89x\u2ffc", "\u1c89x\u2ffc"),  # the review's probe ("x" on a 3.11 interpreter before this fix)
+    ],
+)
+def test_clean_label_uses_unicode_16_0_not_the_interpreter(raw, clean):
+    """Cn and Cf come from core's vendored Unicode 16.0 tables (orch.canon._unicode16), so a label is recorded the same
+    on Python 3.11 (Unicode 14) and 3.14 (Unicode 16) and across an interpreter upgrade."""
+    assert pairing.clean_label(raw) == clean
+
+
+def test_clean_label_never_reads_the_interpreters_unicode_database(monkeypatch):
+    import unicodedata
+
+    def boom(*_a):
+        raise AssertionError("unicodedata used")
+
+    monkeypatch.setattr(unicodedata, "category", boom)
+    assert pairing.clean_label("a\u202eb\u0378c\ue000d\u1c89") == "abcd\u1c89"
 
 
 @pytest.mark.parametrize("bad", [None, b"x", 1, "a\udfffb"])

@@ -8904,7 +8904,7 @@ state; none of it is F1, checkpoint or outbox content (D1).
 |---|---|---|
 | `meta` | `start_ms` (the start fence, written once at creation), `instance_id` (copied from `instance.json` at creation), `holder_gen` (the generation the Drop mirror was last reconciled under) | created in one transaction with the cursor rows |
 | `push_cursor(log, seq, head)` | per log the last event the planner judged | advanced in the same transaction as the intents of the events it passed |
-| `push_intent(key PK, log, seq, kind, id, ticket, label, priority, ttl_s, created_ms, state, targets, outer, epoch, sealed_ms, attempts, next_ms, accepted, reason)` | `key = H(log ‖ seq ‖ kind ‖ id)`; `state` one of `planned`, `sealed`, `sent`, `merged`, `dropped`, `failed` | the primary key makes planning idempotent; `outer` is written inside the seal span before the first send (D6) |
+| `push_intent(key PK, log, seq, kind, id, ticket, label, priority, ttl_s, created_ms, state, targets, outer, epoch, sealed_ms, attempts, next_ms, accepted, reason)` | `key = H(log ‖ seq ‖ kind ‖ id)` for an event's intent, `H("drop" ‖ object ‖ version)` for `drop.new` (`log`, `seq` null); `state` one of `planned`, `sealed`, `sent`, `merged`, `dropped`, `failed` | the primary key makes planning idempotent; `outer` is written inside the seal span before the first send (D6) |
 | `push_ts(id_hash PK, last_ts)` | the last `ts_ms` sealed per `(ws, id)` (Q-H3) | updated in the seal transaction; rows older than 25 h are pruned |
 | `drop_obj(object PK, version, kind, state, n, audience, recipients, author_kind, author_id, origin, ticket, created_ms, expires_ms, tombstone_until_ms, head_hash, claimed_by, descriptor, name, mime, size, verified, local)` | the mirror (11A.16.5); `ticket` is host-local (the relay never learns ticket ids); `name`/`mime` only after the host opened the metadata | rewritten per list page in one transaction with `position` |
 | `drop_pos(position, last_complete_start_ms)` | the stored change position and the start time of the last complete list | moves only forward (D8) |
@@ -8925,7 +8925,9 @@ whose rows are lost are deleted unsent (their objects were never stored, or the 
 
 #### 11A.16.4 H13a: push
 
-**DECISION (D2): kinds and triggers.** The planner maps committed F1 events to intents; nothing else creates a push.
+**DECISION (D2): kinds and triggers.** The planner maps committed F1 events to intents, and the Drop mirror adds a
+`drop.new` intent (key `H("drop" ‖ object ‖ version)`) in the same transaction that first marks an entry live and
+verified or a host upload `stored`; nothing else creates a push.
 
 | Kind | Trigger | `id` | `label` | Targets (narrowing D4) | `priority`, `ttl_s` |
 |---|---|---|---|---|---|

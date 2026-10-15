@@ -235,8 +235,7 @@ class CertJournal:
 
     def with_open(self, req: CertRequest) -> CertJournal:
         """The journal after ``req`` passed both checks: seen, and the workspace's open request."""
-        if type(req) is not CertRequest:
-            raise _bad("req")
+        _mint.check(req, CertRequest)
         rest = tuple(e for e in self.open if e[0] != req.workspace_id)
         return CertJournal(seen=self.seen | {req.request_id}, open=(*rest, (req.workspace_id, req.request_id,
                            req.expires_ms)), closed=self.closed)  # fmt: skip
@@ -249,7 +248,9 @@ class CertJournal:
 
 @dataclass(frozen=True, slots=True)
 class CertRequest:
-    """A request that passed :func:`check_cert_request` (still sealed). ``o`` is the verified object, a copy."""
+    """A request that passed :func:`check_cert_request` (still sealed). Minted (``orch.identity._mint``, #501): only
+    :func:`check_cert_request` builds one, and a changed field is refused. ``o`` is a fresh copy of the verified
+    object on every read (stored as ``cj`` bytes)."""
 
     request_id: str
     workspace_id: str
@@ -263,22 +264,47 @@ class CertRequest:
     expires_ms: int
     sealed: bytes = field(repr=False)
     client_hosted: bool
-    o: dict[str, Any] = field(repr=False, compare=False)
+    o_cj: bytes = field(repr=False)
+    mint: bytes = field(default=b"", repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _mint.check(self, CertRequest)
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _mint.no_subclass(cls)
+
+    @property
+    def o(self) -> dict[str, Any]:
+        return canon.loads_strict(self.o_cj)
 
 
 @dataclass(frozen=True, slots=True)
 class CertInner:
-    """The opened inner of a request. ``label`` is the raw sealed text (at most 80 code points, for the certificate's
+    """The opened inner of a request, carrying the ``request_id`` it was opened from. Minted (#501): only
+    :func:`open_cert_request` builds one, so a hand-built inner with other keys never reaches
+    :func:`make_cert_challenge`. ``label`` is the raw sealed text (at most 80 code points, for the certificate's
     ``label_sealed``); a screen shows :attr:`display_label` (``clean_label`` applied), as named by the device, never
     ``label`` (Opus L5)."""
 
+    request_id: str
     device_id: str
     dk_sig_pub: bytes
     dk_kx_pub: bytes
     label: str
-    scopes_max: tuple[str, ...]
+    scopes_cj: bytes = field(repr=False)
     offer_id: str
     attempt: str
+    mint: bytes = field(default=b"", repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _mint.check(self, CertInner)
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _mint.no_subclass(cls)
+
+    @property
+    def scopes_max(self) -> tuple[str, ...]:
+        return tuple(canon.loads_strict(self.scopes_cj))
 
     @property
     def display_label(self) -> str:
@@ -364,7 +390,8 @@ def check_cert_request(
         created, expires, dk_hash, sealed = _request_steps(o, ws, journal, now_ms)
     except Refused as e:
         raise RequestRefused(e.code, e.detail, rid) from None
-    return CertRequest(
+    return _mint.make(
+        CertRequest,
         request_id=o["request_id"],
         workspace_id=o["workspace_id"],
         person_id=o["person_id"],
@@ -377,7 +404,7 @@ def check_cert_request(
         expires_ms=expires,
         sealed=sealed,
         client_hosted=hosted,
-        o=canon.loads_strict(canon.dumps(o)),
+        o_cj=canon.dumps(o),
     )
 
 
@@ -388,8 +415,7 @@ def open_cert_request(req: CertRequest, unseal: Unseal) -> CertInner:
     (does not open, not strict JSON, not exactly the seven fields, a bad key, ``device_id`` not of ``dk_sig_pub``,
     invalid scopes, or a clear field of the request that differs from the inner: G3b), ``scope_exceeded`` (a
     ``drop:`` scope: scoped agents enrol only through §6.4)."""
-    if type(req) is not CertRequest:
-        raise _bad("req")
+    _mint.check(req, CertRequest)
     try:
         pt = unseal(bytes.fromhex(req.request_id), req.sealed)
         inner = canon.loads_strict(pt) if type(pt) is bytes else None
@@ -414,12 +440,14 @@ def open_cert_request(req: CertRequest, unseal: Unseal) -> CertInner:
         raise Refused("malformed", "the clear binding differs from the sealed inner")
     if scopes[0].startswith("drop:"):
         raise Refused("scope_exceeded", "a drop: scope")
-    return CertInner(
+    return _mint.make(
+        CertInner,
+        request_id=req.request_id,
         device_id=inner["device_id"],
         dk_sig_pub=sig_pub,
         dk_kx_pub=kx_pub,
         label=inner["label"],
-        scopes_max=tuple(scopes),
+        scopes_cj=canon.dumps(list(scopes)),
         offer_id=inner["offer_id"],
         attempt=inner["attempt"],
     )
@@ -449,17 +477,33 @@ def _request_clear(request_o: object) -> dict[str, Any]:
     return request_o
 
 
+def _belong(request: CertRequest, inner: CertInner) -> None:
+    """#501 (Opus D2-2): ``inner`` was opened from ``request``: its ``request_id`` and the clear binding (offer,
+    attempt, device, ``dk_hash`` of both keys) are the request's."""
+    if inner.request_id != request.request_id or (inner.offer_id, inner.attempt, inner.device_id) != (
+        request.offer_id,
+        request.attempt,
+        request.device_id,
+    ):
+        raise Refused("not_for_this_device", "the inner was not opened from this request")
+    if crypto.dk_hash(inner.dk_sig_pub, inner.dk_kx_pub) != request.dk_hash:
+        raise Refused("not_for_this_device", "the inner's keys are not this request's")
+
+
 def make_cert_challenge(
-    pk_pub: bytes, sign: Signer, request_o: Mapping[str, Any], inner: CertInner, primary_nonce: bytes
+    pk_pub: bytes, sign: Signer, request: CertRequest, inner: CertInner, primary_nonce: bytes
 ) -> dict[str, Any]:
     """The primary's PK-signed challenge (§8.4 step 3): the request's ids and expiry, the inner's attempt, device and
-    both keys, and ``primary_nonce`` (32 CSPRNG bytes the caller drew **after** opening the request). ``sign`` signs
-    the exact bytes ``"orch/v2/sig/cert-challenge|" || cj(o)`` with ``PK``. The result is re-checked with
-    :func:`check_cert_challenge` under ``pk_pub`` against ``request_o``, so a wrong key or a mismatched inner is
-    refused here."""
-    req = _request_clear(dict(request_o) if isinstance(request_o, Mapping) else request_o)
-    if type(inner) is not CertInner:
-        raise _bad("inner")
+    both keys, and ``primary_nonce`` (32 CSPRNG bytes the caller drew **after** opening the request). ``request`` is
+    a :class:`CertRequest` from :func:`check_cert_request` and ``inner`` the :class:`CertInner`
+    :func:`open_cert_request` opened from it (both minted, #501); a pair that does not belong together is refused
+    ``not_for_this_device`` before any person-key operation. ``sign`` signs the exact bytes
+    ``"orch/v2/sig/cert-challenge|" || cj(o)`` with ``PK``. The result is re-checked with
+    :func:`check_cert_challenge` under ``pk_pub`` against the request."""
+    _mint.check(request, CertRequest)
+    _mint.check(inner, CertInner)
+    _belong(request, inner)
+    req = _request_clear(request.o)
     o = {
         "v": 2,
         "suite": crypto.SUITE_ID,
@@ -482,10 +526,11 @@ def make_cert_challenge(
     return signed
 
 
-def make_cert_rejection(pk_pub: bytes, sign: Signer, request_o: Mapping[str, Any]) -> dict[str, Any]:
-    """The primary's PK-signed rejection (P3-D11, G3b): every field copied from the request it opened. Re-checked
-    with :func:`check_cert_rejection`."""
-    req = _request_clear(dict(request_o) if isinstance(request_o, Mapping) else request_o)
+def make_cert_rejection(pk_pub: bytes, sign: Signer, request: CertRequest) -> dict[str, Any]:
+    """The primary's PK-signed rejection (P3-D11, G3b): every field copied from ``request``, a :class:`CertRequest`
+    from :func:`check_cert_request` (minted, #501). Re-checked with :func:`check_cert_rejection`."""
+    _mint.check(request, CertRequest)
+    req = _request_clear(request.o)
     o = {
         "v": 2,
         "suite": crypto.SUITE_ID,

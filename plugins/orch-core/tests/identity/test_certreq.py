@@ -5,8 +5,6 @@ orch-relay ``docs/protocol-v2.md`` §8.4 and the corpus; where the design text d
 
 from __future__ import annotations
 
-import dataclasses
-
 import pytest
 
 from orch import canon, crypto
@@ -290,17 +288,26 @@ def test_the_corpus_challenge_attack_challenge_and_rejection_against_their_reque
 # --- 10 (pure half). make_cert_challenge / make_cert_rejection (primary) --------------------------------------------
 
 
-def _inner() -> certreq.CertInner:
-    case = CR["cases"][0]
-    req = certreq.check_cert_request(
-        REQ, _card(case), journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_me(case)
+def _req(signed: dict = REQ) -> certreq.CertRequest:
+    return certreq.check_cert_request(
+        signed, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=signed["o"]["created_ms"], **_OPEN_ME
     )
-    return certreq.open_cert_request(req, _unseal)
+
+
+def _inner(req: certreq.CertRequest | None = None) -> certreq.CertInner:
+    return certreq.open_cert_request(req or _req(), _unseal)
+
+
+def _other_req(**kw) -> certreq.CertRequest:
+    """A second genuine request (another ``request_id`` by default), checked as the primary checks any request."""
+    kw.setdefault("request_id", "0" * 32)
+    return _req(_pk_sign("wsk_a.sig", "sig_cert_request", _build_request(**kw)))
 
 
 def test_make_cert_challenge_rebuilds_the_vector():
+    req = _req()
     got = certreq.make_cert_challenge(
-        PK, _sign_with("person_alice.sig"), REQ["o"], _inner(), bytes.fromhex(CR["primary_nonce"])
+        PK, _sign_with("person_alice.sig"), req, _inner(req), bytes.fromhex(CR["primary_nonce"])
     )
     assert got["o"] == CR["challenge"]["o"]
     assert crypto.L["sig_cert_challenge"] + canon.dumps(got["o"]) == bytes.fromhex(CR["signed_bytes_challenge"])
@@ -310,7 +317,7 @@ def test_make_cert_challenge_rebuilds_the_vector():
 
 def test_make_cert_rejection_rebuilds_the_vector():
     obj = S2["rejected_forms"]["objects"]
-    got = certreq.make_cert_rejection(PK, _sign_with("person_alice.sig"), obj["request"]["o"])
+    got = certreq.make_cert_rejection(PK, _sign_with("person_alice.sig"), _req(obj["request"]))
     assert got["o"] == obj["rejection"]["o"]
     certreq.check_cert_rejection(got, PK, obj["request"]["o"])
 
@@ -319,29 +326,32 @@ def test_make_cert_rejection_rebuilds_the_vector():
     ("call", "code"),
     [
         (
-            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), REQ["o"], _inner(), bytes(31)),
+            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), _req(), _inner(), bytes(31)),
             "malformed",
         ),
         (
-            lambda: certreq.make_cert_challenge(PK, _sign_with("wsk_a.sig"), REQ["o"], _inner(), bytes(32)),
+            lambda: certreq.make_cert_challenge(PK, _sign_with("wsk_a.sig"), _req(), _inner(), bytes(32)),
             "bad_signature",
         ),
-        (lambda: certreq.make_cert_challenge(PK, lambda p: b"\0" * 63, REQ["o"], _inner(), bytes(32)), "malformed"),
-        (
-            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), REQ["o"], INNER, bytes(32)),
+        (lambda: certreq.make_cert_challenge(PK, lambda p: b"\0" * 63, _req(), _inner(), bytes(32)), "malformed"),
+        (  # #501: a hand-built inner (here the corpus dict) is not a minted CertInner
+            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), _req(), INNER, bytes(32)),
             "malformed",
         ),
-        (
-            lambda: certreq.make_cert_challenge(
-                PK, _sign_with("person_alice.sig"), {**REQ["o"], "attempt": "0" * 32}, _inner(), bytes(32)
-            ),
+        (  # #501: a raw request object is not a minted CertRequest
+            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), REQ["o"], _inner(), bytes(32)),
+            "malformed",
+        ),
+        (  # #501: an inner opened from another request
+            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), _other_req(), _inner(), bytes(32)),
             "not_for_this_device",
         ),
-        (lambda: certreq.make_cert_rejection(PK, _sign_with("wsk_a.sig"), REQ["o"]), "bad_signature"),
+        (lambda: certreq.make_cert_rejection(PK, _sign_with("wsk_a.sig"), _req()), "bad_signature"),
         (
             lambda: certreq.make_cert_rejection(PK, _sign_with("person_alice.sig"), {**REQ["o"], "extra": 1}),
             "malformed",
         ),
+        (lambda: certreq.make_cert_rejection(PK, _sign_with("person_alice.sig"), REQ["o"]), "malformed"),
     ],
 )
 def test_make_refuses(call, code):
@@ -504,14 +514,14 @@ def test_make_cert_challenge_checks_the_binding_before_signing():
         return _sign_with("person_alice.sig")(payload)
 
     with pytest.raises(Refused) as e:
-        certreq.make_cert_challenge(PK, sign, {**REQ["o"], "attempt": "0" * 32}, _inner(), bytes(32))
+        certreq.make_cert_challenge(PK, sign, _other_req(), _inner(), bytes(32))
     assert e.value.code == "not_for_this_device" and calls == []
     bob = bytes.fromhex(KEYS["person_bob.sig"]["pub"])
     with pytest.raises(Refused):
-        certreq.make_cert_challenge(bob, sign, REQ["o"], _inner(), bytes(32))  # PK is not the request's person
+        certreq.make_cert_challenge(bob, sign, _req(), _inner(), bytes(32))  # PK is not the request's person
     assert calls == []
     with pytest.raises(Refused):
-        certreq.make_cert_rejection(bob, sign, REQ["o"])
+        certreq.make_cert_rejection(bob, sign, _req())
     assert calls == []
 
 
@@ -553,10 +563,7 @@ def test_expired_and_request_open_burn_the_id():
             REQ, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["expires_ms"], **_OPEN_ME
         )
     assert e.value.code == "expired"
-    other = certreq.check_cert_request(
-        REQ, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_OPEN_ME
-    )
-    blocked = certreq.CertJournal().with_open(dataclasses.replace(other, request_id="0" * 32))
+    blocked = certreq.CertJournal().with_open(_other_req())
     with pytest.raises(certreq.RequestRefused) as e:
         certreq.check_cert_request(REQ, _OPEN_VCARD, journal=blocked, now_ms=REQ["o"]["created_ms"], **_OPEN_ME)
     assert e.value.code == "request_open"
@@ -567,6 +574,6 @@ def test_with_open_replaces_the_workspaces_earlier_entry():
     req = certreq.check_cert_request(
         REQ, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_OPEN_ME
     )
-    j = certreq.CertJournal().with_open(dataclasses.replace(req, request_id="1" * 32)).with_open(req)
+    j = certreq.CertJournal().with_open(_other_req(request_id="1" * 32)).with_open(req)
     assert j.open == ((req.workspace_id, req.request_id, req.expires_ms),)
     assert j.seen == frozenset({"1" * 32, req.request_id})

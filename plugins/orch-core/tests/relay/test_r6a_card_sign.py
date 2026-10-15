@@ -19,7 +19,7 @@ from orch.relay.sign import SignerRefused
 
 from . import corpus
 from .helpers import OWNER_PK, WS, WSK_PUB, Key, MemLedger
-from .r6kit import DELEGATION, DEVICE, Clock, expose_rotation, list_for, open_keys, rotate, signer
+from .r6kit import DELEGATION, DEVICE, Clock, ck_of, expose_rotation, list_for, open_keys, rotate, signer
 
 ORIGIN = "https://relay.example"
 PART = default_part("Demo workspace")
@@ -48,7 +48,7 @@ def test_the_first_card_verifies_under_the_owner_key_and_opens_with_ck_1(tmp_pat
     assert (vc.workspace_id, vc.card_seq, vc.relay_url, vc.wsk_pub) == (WS, 1, ORIGIN, WSK_PUB)
     o = c["o"]
     assert o["wxk_version"] == 1 and o["card_seq"] == 1
-    ck = mk.card_key(1)
+    ck = ck_of(mk, 1)
     assert o["ck_commit"] == relay_card.ck_commit(WS, 1, ck)
     assert relay_card.open_card_part(ck, WS, 1, crypto.unb64u(c["sealed"])) == PART
     wxk = json.loads((tmp_path / "membership" / "keys" / "wxk-1.json").read_bytes())
@@ -257,3 +257,22 @@ def test_wk_grant_needs_a_recorded_wk_commit(mk):
     o = list_for(1, 1, crypto.b64u(bytes(32)))
     with pytest.raises(SignerRefused, match="wk_commit"):
         sig.wk_grant(_grant(1), signed_list=o)
+
+
+def test_wraps_and_sealed_keys_open_only_for_their_device(mk):
+    source(mk).card()
+    kx_priv = corpus.priv("phone.kx")
+    kx_pub = crypto.public_bytes(kx_priv)
+    wrap = mk.card_key_wrap(1, kx_pub, DEVICE)
+    assert crypto.open_sealed(kx_priv, bytes.fromhex(DEVICE), "card", bytes.fromhex(WS), 1, wrap) == ck_of(mk, 1)
+    with pytest.raises(CustodyRefused):
+        mk.card_key_wrap(2, kx_pub, DEVICE)  # no card there
+    rotate(mk)
+    sealed = mk.sealed_wk(1, kx_pub, DEVICE)
+    assert crypto.open_sealed(kx_priv, bytes.fromhex(DEVICE), "wk", bytes.fromhex(WS), 1, sealed) == mk.wk(1)
+    _, e = expose_rotation(mk)
+    mk.abandon()
+    with pytest.raises(CustodyRefused):
+        mk.sealed_wk(e, kx_pub, DEVICE)  # nothing new is sealed under a burned epoch
+    with pytest.raises(CustodyRefused):
+        mk.sealed_wk(99, kx_pub, DEVICE)

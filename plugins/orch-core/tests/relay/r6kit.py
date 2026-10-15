@@ -67,11 +67,21 @@ def expose_rotation(
     return lhw + 1, e
 
 
+def ck_of(mk: MembershipKeys, card_seq: int) -> bytes:
+    """Test-only: ``CK_s`` read from its key file (the store never hands it out raw)."""
+    import json
+
+    from orch import crypto
+
+    raw = (mk.root / "keys" / f"ck-{card_seq}.json").read_bytes()
+    return crypto.unb64u(json.loads(raw)["ck"])
+
+
 def signer(mk: MembershipKeys, origin: str = "https://relay.example", ledger: Any = None) -> sign.RelaySigner:
     return sign.RelaySigner(
         Key(), sign.LinkContext(WS, origin), ledger=ledger if ledger is not None else mk.ledger, burned=mk.is_burned
     )
 
 
-__all__ = ["DELEGATION", "DEVICE", "PERSON", "Clock", "MemLedger", "digest", "expose_rotation", "list_for",
+__all__ = ["DELEGATION", "DEVICE", "PERSON", "Clock", "MemLedger", "ck_of", "digest", "expose_rotation", "list_for",
            "open_keys", "rotate", "signer"]  # fmt: skip

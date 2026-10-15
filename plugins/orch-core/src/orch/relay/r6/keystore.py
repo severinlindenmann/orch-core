@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon, crypto
-from orch.identity import pairing, wscard
+from orch.identity import memberlist, pairing, wscard
 from orch.identity.errors import Refused
 
 from ..keys import SealState
@@ -229,6 +229,7 @@ class MembershipKeys:
     ) -> None:
         crypto.unhex(workspace_id, 16)
         self.workspace_id = workspace_id
+        self.root = Path(root)
         self._now_ms = now_ms
         self._fault = fault or (lambda point: None)
         self._seal = threading.RLock()  # the seal lock (11A.15.2): in-memory seal state only, never any I/O
@@ -813,12 +814,30 @@ class MembershipKeys:
             self._dir.write_json(HEAD, new)
             self._head = new
 
-    def card_key(self, card_seq: int) -> bytes:
-        """``CK_s`` of a stored card (for R6b's card-key wraps); refused for a card_seq without a claimed card."""
+    def card_key_wrap(self, card_seq: int, dk_kx_pub: bytes, device_id: str) -> bytes:
+        """``CK_s`` sealed to one device (purpose ``card``, 11A.15.5; R6b's ``card_key_wraps``), for a card_seq with
+        a claimed card; the raw ``CK`` never leaves this object."""
         with self._writer:
             if not _int(card_seq, 1, MAX_EPOCH) or f"card-{card_seq}.json" not in self._cards.names():
                 raise CustodyRefused("no card at this card_seq")
-            return self._read_key("ck", card_seq, "ck")
+            ck = self._read_key("ck", card_seq, "ck")
+        try:
+            return memberlist.card_key_wrap(dk_kx_pub, device_id, self.workspace_id, card_seq, ck)
+        except Refused as e:
+            raise CustodyRefused(f"card key wrap: {e.code}") from None
+
+    def sealed_wk(self, epoch: int, dk_kx_pub: bytes, device_id: str) -> bytes:
+        """``WK_E`` sealed to one device (purpose ``wk``, 11A.15.4 step 3: the grants are built after the key is
+        claimed and before the ``head.json`` write that exposes them); refused for a burned epoch or one never
+        held. The raw key never leaves this object (R2's ``wk``/``refusal_key`` aside)."""
+        with self._seal:
+            wk = self._wk.get(epoch) if type(epoch) is int and epoch not in self._burned else None
+        if wk is None:
+            raise CustodyRefused("no sealable key for this epoch")
+        try:
+            return memberlist.seal_wk(dk_kx_pub, device_id, self.workspace_id, epoch, wk)
+        except Refused as e:
+            raise CustodyRefused(f"wk seal: {e.code}") from None
 
 
 class R6Gate:

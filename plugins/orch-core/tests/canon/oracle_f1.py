@@ -625,6 +625,7 @@ def _vectors() -> dict[str, dict[str, Any]]:
             "scenarios": sg.revocation_scenarios() + [s for s in restore if s["name"] in plain_revocations],
         },
         "checkpoint.json": sg.checkpoint_vector(),
+        "reader_kat_1.json": sg.reader_kat_vector(),
         "restore.json": {
             "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses "
             "chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",
@@ -710,6 +711,9 @@ INDEX: dict[str, str] = {
     "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10); receiver checks with valid "
     "signatures: pinned delegation, owner-device policy, signed source, line binding, abandoned, T head, position "
     "time, clock ceiling, revoked signers, ticket restores, trust root and strict shape",
+    "reader_kat_1.json": "[shared, new] the reader known-answer test of H12d (orch-v2-host 0.8.6 item 9.2): the "
+    "log variant (three independently signed, separately replayable workspace events differing only in auth), the "
+    "view variant (READER_VIEWS_1) and the expected level-1 digests (11.5)",
     "restore.json": "workspace restore carries effective revocations atomically (5.10); re-signed structural "
     "refusals; host self-revocation",
     "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "

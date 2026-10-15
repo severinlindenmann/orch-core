@@ -14,6 +14,7 @@
   "index.json": "this list",
   "labels.json": "[shared, CHANGED] the F1 domain labels (5.6), prefix-free with the protocol's; H12d adds sig_reader_decl",
   "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
+  "reader_kat_1.json": "[shared, new] the reader known-answer test of H12d (orch-v2-host 0.8.6 item 9.2): the log variant (three independently signed, separately replayable workspace events differing only in auth), the view variant (READER_VIEWS_1) and the expected level-1 digests (11.5)",
   "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the refusal order (5.11)",
   "replay.json": "model scenario: replayed or re-contexted signed events are refused with the real verifier (5.3, 5.11)",
   "repo_identity.json": "[shared, extended] canonical identities, refused forms, and `mapping`: raw remote -> canonical (5.7)",

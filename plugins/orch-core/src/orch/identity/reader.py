@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Iterable, Mapping
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from orch import canon, crypto
@@ -45,13 +46,19 @@ __all__ = [
     "ENROL_MAX_AGE_MS",
     "FUTURE_MS",
     "HOST_MAX",
+    "KAT_DIGESTS",
     "LABEL",
     "LEVEL_MAX",
     "MAX_BYTES",
+    "READER_VIEWS_1",
     "SURFACES",
     "DeclInvalid",
     "Declared",
+    "auth_values",
     "decl_digest",
+    "kat_digest",
+    "parse_signer",
+    "run_kat",
     "verify_decl",
 ]
 
@@ -63,6 +70,22 @@ SURFACES = ("log", "view")
 FUTURE_MS = 300_000
 ENROL_MAX_AGE_MS = 30 * 86_400_000
 CODE = "reader.decl_invalid"
+READER_VIEWS_1 = ("activity.list.items", "ticket.get.log", "ticket.get.gates.decisions")
+"""The view entries that attribute a decision or a history entry and carry ``signer: {device, auth}`` (9.11), in
+corpus order. Provisional: H12d-2 fixes the exact list with orch-f1 (a needs item that shows a past decision would be
+added there; no NeedItem kind shows one today)."""
+KAT_DIGESTS: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        "1": MappingProxyType(
+            {
+                "log": "sha256:70b450df574b6c372005b7504a7f9efe80552cb2841193b960fe538c6aa6fc0e",
+                "view": "sha256:117a2734423b0a97756bb56d4c8ebafbc712226580c152757ccdbaa4d6f2493d",
+            }
+        )
+    }
+)
+"""The expected ``reader_kat_1`` digests per level and surface (``tests/vectors/f1/reader_kat_1.json`` ``expected``;
+``tests/identity/test_reader_kat.py`` checks that core's own runner reproduces them)."""
 
 _FIELDS = frozenset({"v", "kind", "suite", "workspace_id", "device_id", "dk_hash", "who", "reader", "kat", "bind",
                      "created_ms"})  # fmt: skip
@@ -215,7 +238,7 @@ def verify_decl(
     bind: Mapping[str, str],
     surfaces: Iterable[str],
     now_ms: int | None,
-    expected: Mapping[str, Mapping[str, str]],
+    expected: Mapping[str, Mapping[str, str]] = KAT_DIGESTS,
     host_max: int = HOST_MAX,
 ) -> Declared:
     """Check ``decl`` against the request that carries it (9.3) and return what it declares, or raise
@@ -252,3 +275,118 @@ def verify_decl(
         if any(entry[s] != want[s] for s in req):
             raise DeclInvalid("kat_mismatch", f"level {k}: a KAT digest is not the expected one")
     return Declared(o["device_id"], o["reader"], level, decl_digest(decl))
+
+
+# --- the known-answer test (9.2) -------------------------------------------------------------------------------------
+
+
+def kat_digest(results: list[dict[str, Any]]) -> str:
+    """F1 §11.5: ``"sha256:" + hex(sha256(cj(results)))``, the results in corpus order."""
+    return "sha256:" + hashlib.sha256(canon.cj_checked(results)).hexdigest()
+
+
+def auth_values() -> tuple[str, ...]:
+    """The ``auth`` values a reader of level 1 knows: exactly the event schema's enum (F1 §11.4), one source."""
+    from orch.schema import load
+
+    return tuple(load("common")["$defs"]["auth"]["enum"])
+
+
+_DEVICE_REF = re.compile(r"d_[0-9a-f]{32}")
+
+
+def parse_signer(view: object) -> str:
+    """The production parser of ``signer`` in a ``READER_VIEWS_1`` entry (9.11): exactly ``{device, auth}``, a
+    ``d_`` device id and a known ``auth``; returns the ``auth``. Anything else raises :class:`ValueError`: an unknown
+    ``auth`` is refused, never mapped to a known one (level 1). H12d-2 checks every emitted ``signer`` with it."""
+    if type(view) is not dict or "signer" not in view:
+        raise ValueError("a reader view entry carries signer")
+    signer = view["signer"]
+    if type(signer) is not dict or set(signer) != {"device", "auth"}:
+        raise ValueError("signer is exactly {device, auth}")
+    if type(signer["device"]) is not str or not _DEVICE_REF.fullmatch(signer["device"]):
+        raise ValueError("signer.device is a d_ device id")
+    if type(signer["auth"]) is not str or signer["auth"] not in auth_values():
+        raise ValueError(f"unknown signer.auth {signer['auth']!r}")
+    return signer["auth"]
+
+
+def _log_events(context: Mapping[str, Any], lines: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Read ``lines`` as a workspace log with the production line parser; ``None`` if a line is refused."""
+    from orch.store.logs import LINE_ERRORS, MAX_LINE, parse_line
+
+    out = []
+    for seq, e in enumerate(lines, 1):
+        try:
+            line = canon.cj_checked(e) + b"\n"
+            if len(line) > MAX_LINE:
+                return None
+            ev, _ = parse_line(line, seq, "workspace")
+        except LINE_ERRORS:
+            return None
+        out.append(ev)
+    return out
+
+
+def _replays_clean(context: Mapping[str, Any], events: list[dict[str, Any]]) -> bool:
+    from orch.model import replay
+
+    from .verifier import CryptoVerifier
+
+    st = replay(
+        events,
+        {},
+        verifier=CryptoVerifier(),
+        now=context["now"],
+        expected_workspace_id=context["workspace_id"],
+        expected_genesis=context["genesis"],
+    )
+    return not st.chain_errors and not st.workspace.invalid
+
+
+def _run_log(corpus: Mapping[str, Any]) -> list[dict[str, Any]]:
+    part = corpus["log"]
+    context, fixture = part["context"], list(part["fixture"])
+    if context.get("log") != "workspace":
+        raise ValueError("the log variant is a workspace log")
+    base = _log_events(context, fixture)
+    if base is None or not _replays_clean(context, base):
+        raise ValueError("the KAT fixture does not replay cleanly under its pinned context")
+    results = []
+    for case in part["cases"]:
+        e = case["event"]
+        events = _log_events(context, [*fixture, e])
+        ok = events is not None and _replays_clean(context, events)
+        results.append({"head": canon.event_head(e), "accepted": ok, "auth": events[-1]["auth"] if ok else None})
+    return results
+
+
+def _run_view(corpus: Mapping[str, Any]) -> list[dict[str, Any]]:
+    part = corpus["view"]
+    if tuple(part["views"]) != READER_VIEWS_1 or [c["view"] for c in part["cases"][::3]] != list(READER_VIEWS_1):
+        raise ValueError(f"the view variant covers exactly {READER_VIEWS_1}, three cases each")
+    if len(part["cases"]) != 3 * len(READER_VIEWS_1):
+        raise ValueError("three cases per view")
+    results = []
+    for case in part["cases"]:
+        try:
+            auth: str | None = parse_signer(case["object"])
+        except ValueError:
+            auth = None
+        results.append({"view": case["view"], "accepted": auth is not None, "auth": auth})
+    return results
+
+
+def run_kat(corpus: Mapping[str, Any], surface: str) -> tuple[list[dict[str, Any]], str]:
+    """Run ``reader_kat_1`` (``corpus``, the vector object) for ``surface`` with core's PRODUCTION parsers and return
+    ``(results, digest)``: ``log`` reads each case after the fixture with :func:`orch.store.logs.parse_line` and
+    replays it with :class:`orch.identity.CryptoVerifier` under the corpus's pinned context; ``view`` parses each case
+    with :func:`parse_signer`. A corpus that is not well formed (a fixture that does not replay, a missing view)
+    raises :class:`ValueError`. A build declares a level only when the digest equals :data:`KAT_DIGESTS` (9.2)."""
+    if surface == "log":
+        results = _run_log(corpus)
+    elif surface == "view":
+        results = _run_view(corpus)
+    else:
+        raise ValueError(f"surface must be one of {SURFACES}")
+    return results, kat_digest(results)

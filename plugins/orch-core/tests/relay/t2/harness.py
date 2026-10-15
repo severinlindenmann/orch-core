@@ -174,15 +174,34 @@ def spawn(cmd: list[str], *, cwd: Path, env: dict[str, str], log: Path) -> subpr
         )  # fmt: skip
 
 
-def fake_cmd(port: int, *, seconds: int = 60, stubborn: bool = False) -> list[str]:
+def fake_cmd(port: int, *, seconds: int = 60, stubborn: bool = False, ready: Path | None = None) -> list[str]:
     """The self-tests' stand-in for the relay: a sleeper that names :data:`FAKE_MARK` and the port; ``stubborn``
-    ignores SIGTERM and SIGINT, so only a SIGKILL ends it (the escalation paths)."""
-    ign = (
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN); signal.signal(signal.SIGINT, signal.SIG_IGN); "
-        if stubborn
-        else ""
-    )
-    return [sys.executable, "-c", f"import signal, time; {ign}time.sleep({seconds})", FAKE_MARK, "--port", str(port)]
+    ignores SIGTERM and SIGINT, so only a SIGKILL ends it (the escalation paths); ``ready`` is a file it creates once
+    its signal dispositions are set."""
+    code = "import signal, time; "
+    if stubborn:
+        code += "signal.signal(signal.SIGTERM, signal.SIG_IGN); signal.signal(signal.SIGINT, signal.SIG_IGN); "
+    if ready is not None:
+        code += f"open({str(ready)!r}, 'x').close(); "
+    return [sys.executable, "-c", code + f"time.sleep({seconds})", FAKE_MARK, "--port", str(port)]
+
+
+def stand_in_pids(pgid: int) -> list[int]:
+    """The stand-in processes of group ``pgid``: never the supervisor (whose own command line names the stand-in's
+    command too, and which is the only member right after the spawn)."""
+    return [
+        pid for pid, _, cmd in group_members(pgid)
+        if pid != pgid and FAKE_MARK in cmd and str(SUPERVISOR) not in cmd
+    ]  # fmt: skip
+
+
+def wait_stand_in(pgid: int, ready: Path | None = None, timeout: float = 10.0) -> None:
+    """Until the stand-in runs in group ``pgid`` (and, with ``ready``, has set its signal dispositions)."""
+    end = time.monotonic() + timeout
+    while not (stand_in_pids(pgid) and (ready is None or ready.exists())):
+        if time.monotonic() > end:
+            raise AssertionError(f"the stand-in never started in group {pgid}: {group_members(pgid)}")
+        time.sleep(0.05)
 
 
 def names_port(cmd: str, port: int) -> bool:

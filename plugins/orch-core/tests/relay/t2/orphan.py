@@ -21,8 +21,9 @@ signal.alarm(90)
 mode, where = sys.argv[1], Path(sys.argv[2])
 if mode == "fake":
     port = harness.free_port()
-    cmd = harness.fake_cmd(port, stubborn=True)  # only the supervisor's final SIGKILL ends it
+    cmd = harness.fake_cmd(port, stubborn=True, ready=where / "ready")  # only the supervisor's final SIGKILL ends it
     p = harness.spawn(cmd, cwd=where, env={"PATH": "/usr/bin:/bin"}, log=where / "fake.log")
+    harness.wait_stand_in(p.pid, where / "ready")
     print(p.pid, port, flush=True)
 else:
     rp = harness.start_relay(Path(sys.argv[3]), where, None)

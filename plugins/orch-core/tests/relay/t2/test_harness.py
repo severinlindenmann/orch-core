@@ -24,9 +24,12 @@ from .orphan import orphan_test
 
 
 def _sleeper(tmp_path: Path, port: int | None = None, *, stubborn: bool = False) -> tuple[subprocess.Popen[bytes], int]:
+    """A supervised stand-in, already running (and, if ``stubborn``, already ignoring SIGTERM and SIGINT)."""
     port = port or harness.free_port()
-    cmd = harness.fake_cmd(port, stubborn=stubborn)
+    ready = tmp_path / f"ready-{port}"
+    cmd = harness.fake_cmd(port, stubborn=stubborn, ready=ready)
     p = harness.spawn(cmd, cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, log=tmp_path / "fake.log")
+    harness.wait_stand_in(p.pid, ready)
     return p, port
 
 
@@ -35,23 +38,16 @@ def _without_supervisor(tmp_path: Path) -> RelayProcess:
     SIGINT: only the harness's own SIGKILL of the right group can end it."""
     proc, port = _sleeper(tmp_path, stubborn=True)
     rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
-    _wait_stand_in(rp.pgid)
     os.kill(proc.pid, signal.SIGKILL)
     proc.wait(10)
-    assert harness.group_alive(rp.pgid) and rp.owns_group()  # the stand-in still holds the group
+    assert harness.stand_in_pids(rp.pgid), harness.group_members(rp.pgid)  # the stand-in still holds the group
+    assert harness.group_alive(rp.pgid) and rp.owns_group(), harness.group_members(rp.pgid)
     return rp
-
-
-def _wait_stand_in(pgid: int) -> None:
-    end = time.monotonic() + 10
-    while not any(harness.FAKE_MARK in cmd for _, _, cmd in harness.group_members(pgid)):
-        assert time.monotonic() < end, "the stand-in never started"
-        time.sleep(0.05)
 
 
 def _stand_in_alive(pgid: int) -> bool:
     """The stand-in process itself (a zombie supervisor would keep `group_alive` true on its own)."""
-    return any(harness.FAKE_MARK in cmd for _, _, cmd in harness.group_members(pgid))
+    return bool(harness.stand_in_pids(pgid))
 
 
 def _cleanup(rp: RelayProcess) -> None:
@@ -132,7 +128,6 @@ def test_stop_falls_back_to_sigkill(monkeypatch, tmp_path):
     monkeypatch.setattr(harness, "STOP_GRACE_S", 1.5)
     proc, port = _sleeper(tmp_path, stubborn=True)
     rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
-    _wait_stand_in(rp.pgid)
     try:
         t0 = time.monotonic()
         rp.stop()  # SIGTERM and SIGINT are ignored by the stand-in and the supervisor
@@ -168,10 +163,11 @@ signal.alarm(60)
 where = Path(sys.argv[1])
 harness.STOP_GRACE_S = 1.0
 port = harness.free_port()
-p = harness.spawn(harness.fake_cmd(port, stubborn=True), cwd=where, env={"PATH": "/usr/bin:/bin"}, log=where / "l")
+ready = where / "ready"
+p = harness.spawn(harness.fake_cmd(port, stubborn=True, ready=ready), cwd=where, env={"PATH": "/usr/bin:/bin"},
+                  log=where / "l")
 rp = harness.RelayProcess(where, where, port, "ours", None, p, where / "log")
-while not any(harness.FAKE_MARK in c for _, _, c in harness.group_members(rp.pgid)):
-    time.sleep(0.05)  # the stand-in is up before the supervisor goes
+harness.wait_stand_in(rp.pgid, ready)  # the stand-in is up before the supervisor goes
 os.kill(p.pid, signal.SIGKILL)  # no supervisor backstop: only the atexit reaping can end the group
 p.wait(10)
 print(rp.pgid, port, flush=True)
@@ -234,7 +230,6 @@ class _SameGroup:
 def test_a_group_that_is_not_verifiably_ours_is_never_signalled(monkeypatch, tmp_path):
     proc, port = _sleeper(tmp_path)
     rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
-    _wait_stand_in(rp.pgid)
     other_port = port + 1 if port < 65535 else port - 1
     other = RelayProcess(tmp_path, tmp_path, other_port, "x", None, _SameGroup(rp.pgid), tmp_path / "l")  # type: ignore[arg-type]
     try:

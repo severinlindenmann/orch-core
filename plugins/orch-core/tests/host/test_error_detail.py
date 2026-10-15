@@ -11,7 +11,7 @@ ALLOWED = {
     "term.not_attachable": {"state": "starting"},
     "run.limit": {"which": "agent_ws"},
     "launch.no_grant": {"reason": "expiring"},
-    "runner.disabled": {"missing": "machine"},
+    "runner.disabled": {"missing": "terminals"},
     "ticket.key_not_next": {"next_key": "ORCH-0042"},
 }
 
@@ -69,6 +69,12 @@ def test_the_in_process_detail_is_kept_whole():
 def test_stored_round_trips_the_detail():
     err = HostError("run.limit", "m", detail={"which": "runner"}).error()
     assert HostError.stored(err).error() == err
+
+
+@pytest.mark.parametrize("bad", ["abc", ["x"], 5, None])
+def test_stored_drops_a_detail_that_is_not_an_object(bad):
+    stored = HostError.stored({"code": "run.limit", "message": "m", "retryable": True, "detail": bad})
+    assert stored.detail is None and "detail" not in stored.error()
 
 
 def test_frames_accept_detail_and_reject_a_wrong_type():

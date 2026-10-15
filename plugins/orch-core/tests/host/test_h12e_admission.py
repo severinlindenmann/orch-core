@@ -322,6 +322,27 @@ def test_check_target_of_a_creation_takes_exactly_the_next_key(env, phone):
     assert exc.value.code == "ticket.key_not_next"
 
 
+def test_a_viewer_creation_is_role_denied_before_the_key_and_leaks_no_next_key(env):
+    viewer = Person()
+    env.store.append(
+        env.person_event(env.owner, "workspace", "member.added", person=viewer.ref, name="Vi", role="viewer",
+                         pk_pub=crypto.b64u(viewer.pk_pub), device_cert=viewer.cert(created=env.clock[0] * 1000)),
+        log="workspace",
+    )  # fmt: skip
+    phone = Phone(env, viewer)
+    ev = creation(env, phone, new_ulid(), key="DEMO-0099", owner=viewer.ref)
+    with pytest.raises(HostError) as exc:
+        admission.check_target(env.store, new_ulid(), ev)
+    assert exc.value.code == "role.denied" and exc.value.detail is None
+    assert "detail" not in exc.value.error() and env.store.peek_key() not in str(exc.value)
+    stranger = Phone.__new__(Phone)  # a signer that is not a member at all (never added to the roster)
+    stranger.p, stranger.key = Person(), crypto.generate_private_key()
+    stranger.device = certs.device_ref(crypto.public_bytes(stranger.key))
+    with pytest.raises(HostError) as exc:
+        admission.check_target(env.store, new_ulid(), creation(env, stranger, new_ulid(), owner=stranger.p.ref))
+    assert exc.value.code == "role.denied" and exc.value.detail is None
+
+
 def test_check_target_of_a_creation_refuses_a_used_uid_and_another_owner(env, phone):
     uid = env.new_ticket()
     with pytest.raises(HostError) as exc:

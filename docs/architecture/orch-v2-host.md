@@ -163,7 +163,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
   | `term.not_attachable` | `state`: `starting`, `running`, `exited` or `lost` |
   | `run.limit` | `which`: `agent_ws`, `agent_person`, `shell_person` or `runner` |
   | `launch.no_grant` | `reason`: `none`, `expiring`, `scope` or `revoked` |
-  | `runner.disabled` | `missing`: `addon` or `machine` |
+  | `runner.disabled` | `missing`: `addon`, `machine` or `terminals` |
   | `ticket.key_not_next` | `next_key`: the store's next ticket key (advisory, never a reservation) |
 
   The `blocked` object of a preview (§12) keeps its own `detail` with the same keys; it is part of the result, not of

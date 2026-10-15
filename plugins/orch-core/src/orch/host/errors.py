@@ -119,7 +119,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | None]] = {
     "term.not_attachable": {"state": ("starting", "running", "exited", "lost")},
     "run.limit": {"which": ("agent_ws", "agent_person", "shell_person", "runner")},
     "launch.no_grant": {"reason": ("none", "expiring", "scope", "revoked")},
-    "runner.disabled": {"missing": ("addon", "machine")},
+    "runner.disabled": {"missing": ("addon", "machine", "terminals")},
     "ticket.key_not_next": {"next_key": None},
 }
 
@@ -186,13 +186,14 @@ class HostError(Exception):
     @classmethod
     def stored(cls, error: dict[str, Any]) -> HostError:
         fix = (error.get("fix") or {}).get("argv")
+        detail = error.get("detail")
         e = cls(
             error["code"],
             error.get("message"),
             retry_after_ms=error.get("retry_after_ms"),
             hint=error.get("hint"),
             fix=fix,
-            detail=error.get("detail"),
+            detail=detail if isinstance(detail, dict) else None,
         )
         e.retryable = bool(error.get("retryable", e.retryable))
         return e

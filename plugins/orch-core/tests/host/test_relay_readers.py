@@ -307,3 +307,67 @@ def test_relay_pair_has_no_early_refusal_with_convenience_history_or_the_flag(tm
     convenience.set_enabled(state, WS, True, UID)
     ensure_convenience_mark(state, WS, UID)
     convenience.refuse_reader_op(LinkService(state, ConvStore(CONV)), "relay.pair", history=True)
+
+
+# --- 11A.15.6 step 4: the host's pair gate (the hook R6c calls) -----------------------------------------------------
+
+
+class GateService(LinkService):
+    def clock(self) -> float:
+        from tests.identity.helpers import NOW
+
+        return NOW / 1000
+
+
+def _gate_args():
+    from orch import crypto
+    from tests.identity.helpers import Person
+    from tests.identity.test_pair_gate import _pair_decl, _phone_meta, _pin
+
+    phone, owner = Person(), Person()
+    return phone, owner, _phone_meta, _pair_decl, _pin(owner), crypto
+
+
+@pytest.mark.parametrize("why", ["history", "flag", "mark"])
+def test_the_host_pair_gate_requires_level_1_with_convenience_and_names_the_phone(tmp_path, why):
+    from orch.host import convenience
+    from orch.store.convmark import ensure_convenience_mark
+    from tests.identity.test_pair_gate import OFFER
+
+    state = _state(tmp_path)
+    phone, owner, meta_of, decl_of, pin, crypto = _gate_args()
+    svc = GateService(state, ConvStore(CONV if why == "history" else []), "705d40abbb8c1c90354a1acaa94c935c")
+    if why == "flag":
+        convenience.set_enabled(state, svc.workspace_id, True, UID)
+    if why == "mark":
+        ensure_convenience_mark(state, svc.workspace_id, UID)
+    with pytest.raises(HostError) as exc:
+        convenience.pair_gate(svc, meta_of(phone), offer_id=OFFER, who=pin)
+    assert exc.value.code == "sign.convenience_readers" and exc.value.message.startswith("no_declaration:")
+    assert exc.value.detail == {"reason": "no_declaration", "devices": [f"d_{crypto.device_id(phone.sig_pub).hex()}"]}
+    assert "too old" in exc.value.hint
+    got = convenience.pair_gate(svc, meta_of(phone, decl_of(phone, owner)), offer_id=OFFER, who=pin)
+    assert got.level == 1 and got.decl_who == pin
+
+
+def test_the_host_pair_gate_admits_an_undeclared_phone_without_convenience(tmp_path):
+    from orch.host import convenience
+    from tests.identity.test_pair_gate import OFFER
+
+    phone, _owner, meta_of, _decl_of, pin, _crypto = _gate_args()
+    svc = GateService(_state(tmp_path), ConvStore(), "705d40abbb8c1c90354a1acaa94c935c")
+    got = convenience.pair_gate(svc, meta_of(phone), offer_id=OFFER, who=pin)
+    assert (got.decl, got.level) == (None, 0)
+
+
+def test_the_host_pair_gate_refuses_a_bad_declaration_with_reader_decl_invalid(tmp_path):
+    from orch.host import convenience
+    from tests.identity.test_pair_gate import OFFER
+
+    phone, owner, meta_of, decl_of, pin, _crypto = _gate_args()
+    svc = GateService(_state(tmp_path), ConvStore(), "705d40abbb8c1c90354a1acaa94c935c")
+    bad = decl_of(phone, owner, bind={"via": "declare"})
+    with pytest.raises(HostError) as exc:
+        convenience.pair_gate(svc, meta_of(phone, bad), offer_id=OFFER, who=pin)
+    assert exc.value.code == "reader.decl_invalid" and exc.value.message.startswith("bind:")
+    assert (exc.value.exit, exc.value.retryable) == (3, False)

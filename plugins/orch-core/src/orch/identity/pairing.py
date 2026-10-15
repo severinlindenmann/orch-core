@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from orch import canon, crypto
@@ -25,10 +26,15 @@ from .errors import Refused
 __all__ = [
     "CHALLENGE_FIELDS",
     "MAX_EPOCH",
+    "MAX_LABEL",
     "MAX_LINK",
+    "PAIR_META_FIELDS",
     "PairFields",
     "PairLink",
+    "PairMeta",
     "cert_code",
+    "check_pair_meta",
+    "clean_label",
     "pair_link",
     "parse_pair_fragment",
     "parse_pair_link",
@@ -308,3 +314,83 @@ def parse_pair_link(text: str) -> PairLink:
     if render_pair_link(link) != text:
         raise _bad("link not canonical")
     return link
+
+
+# --- 4. the pair request's meta and its label (§8.3 steps 2-3, §2.5) -------------------------------------------------
+
+MAX_LABEL = 80  # code points, protocol §2.5 (the relay reference's MAX_LABEL)
+_REMOVED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Co", "Cn"})
+# Default_Ignorable_Code_Point (Unicode DerivedCoreProperties), the relay reference's table verbatim.
+_IGNORABLE = (
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
+
+
+def _removed(c: str) -> bool:
+    if c == "\n":
+        return False
+    o = ord(c)
+    return unicodedata.category(c) in _REMOVED_CATEGORIES or any(a <= o <= b for a, b in _IGNORABLE)
+
+
+def clean_label(text: str) -> str:
+    """A device-chosen label as the receiving host records it (protocol §2.5, bridge v1 §9.3): every code point of
+    category Cc (except LF), Cf, Zl, Zp, Co and Cn removed, every Default_Ignorable_Code_Point removed, **no
+    normalisation**, then truncated to :data:`MAX_LABEL` code points. Lone surrogates are refused (strict JSON never
+    yields them). ``Cn`` follows this Python's Unicode database. A display shows the result as named by the device,
+    never as an authenticated name."""
+    if type(text) is not str or any(0xD800 <= ord(c) <= 0xDFFF for c in text):
+        raise _bad("label")
+    return "".join(c for c in text if not _removed(c))[:MAX_LABEL]
+
+
+PAIR_META_FIELDS = frozenset({"op", "dk_sig_pub", "dk_kx_pub", "label", "cert", "attempt"})
+
+
+@dataclass(frozen=True, slots=True)
+class PairMeta:
+    """A pair request's meta that passed the §8.3 step 3.1 shape check. ``label`` is cleaned; ``device_id`` is derived
+    from ``dk_sig_pub`` (the caller compares it with the header's, step 3.3); ``cert`` is passed on for step 3.5."""
+
+    dk_sig_pub: bytes
+    dk_kx_pub: bytes
+    device_id: str
+    label: str
+    attempt: str
+    cert: object
+
+
+def check_pair_meta(meta: dict) -> PairMeta:
+    """§8.3 step 3.1 (``malformed``): exactly the six fields ``op`` (= ``"pair"``), ``dk_sig_pub``, ``dk_kx_pub``,
+    ``label``, ``cert``, ``attempt``; both keys canonical b64u of valid suite-2 points; ``attempt`` 32 lower-case hex;
+    ``label`` a string, returned cleaned. ``cert`` is ``null`` or any value: its checks are step 3.5's
+    (``other_person``, ``cert_invalid``, ``cert_expired``, ``revoked``), as in the relay reference."""
+    if type(meta) is not dict or set(meta) != PAIR_META_FIELDS or meta["op"] != "pair":
+        raise _bad("pair meta field set")
+    sig_pub = _b64_pub(meta["dk_sig_pub"], "dk_sig_pub")
+    kx_pub = _b64_pub(meta["dk_kx_pub"], "dk_kx_pub")
+    attempt = crypto.hex_id(_id(meta["attempt"], "attempt"))
+    return PairMeta(
+        dk_sig_pub=sig_pub,
+        dk_kx_pub=kx_pub,
+        device_id=crypto.hex_id(crypto.device_id(sig_pub)),
+        label=clean_label(meta["label"]),
+        attempt=attempt,
+        cert=meta["cert"],
+    )

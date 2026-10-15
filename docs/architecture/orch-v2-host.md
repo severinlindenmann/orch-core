@@ -167,7 +167,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
   | `launch.no_grant` | `reason`: `none`, `expiring`, `scope` or `revoked` |
   | `runner.disabled` | `missing`: `addon`, `machine` or `terminals` |
   | `ticket.key_not_next` | `next_key`: the store's next ticket key (advisory, never a reservation) |
-  | `sign.convenience_unavailable` | `reason`: `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version`; `devices`: the readers below level 1 (H12d-2) |
+  | `sign.convenience_unavailable` | `reason`: `disabled`, `relay_paired`, `other_member`, `phone_device`, `reader_version` or `pair_device` (H12c-e); `devices`: the readers below level 1 (H12d-2; empty for `pair_device`) |
   | `sign.convenience_readers` | `reason`: `no_declaration`, `reader_too_old`, `declaration_unknown`, `relay_too_old` or `unknown_readers`; `devices`: the new reader (H12d-2) |
 
   The `blocked` object of a preview (§12) keeps its own `detail` with the same keys; it is part of the result, not of
@@ -426,7 +426,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `host.version_mismatch` | 1 | no | close | no shared `proto` | — |
 | `req.invalid` | 6 | no | stays | malformed `req` envelope with a readable id | — |
 | `unknown_command` | 2 | no | stays | op not served (any op) | — |
-| `op.unsupported` | 1 | no | stays | op contract version differs | — |
+| `op.unsupported` | 1 | no | stays | op contract version differs; **H12c-e:** `relay.pair_device` on a workspace where no relay pairing (R6's `PairDeviceSource`) is registered, at prepare and at submit (nothing appended) | — |
 | `op.not_allowed` | 3 | no | stays | outside the §0.5 matrix | — |
 | `timeout` | 9 | yes | stays | read or `wait` past its timeout | — |
 | `cancelled` | 9 | yes | stays | §0.2 cancellation | — |
@@ -453,10 +453,10 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
 | `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
-| `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1). **H12d-2:** `other_member` and `phone_device` count only readers below level 1 (item 9.9); `Error.detail` carries `{reason, devices}` (the readers below level 1); also the authoritative refusal of a convenience event at the append choke point, in host and direct mode (item 9.4) | — |
+| `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1). **H12d-2:** `other_member` and `phone_device` count only readers below level 1 (item 9.9); `Error.detail` carries `{reason, devices}` (the readers below level 1); also the authoritative refusal of a convenience event at the append choke point, in host and direct mode (item 9.4). **H12c-e:** reason `pair_device`: `relay.pair_device` with `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit`, whatever the flag, the readers or any opt-in (11A.15.6); the hint names `orch keys custody passphrase --workspace W --in-place` | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
-| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device; a records push to an unmarked URL, D-P2-34) to a workspace whose history has `auth: "convenience"` events or whose durable `convenience_seen` mark is set (#441); the fix names the readers to update (§0.8.6 item 1); **H12d-2:** `member.add` refuses only a new reader below `required_reader` (reasons `no_declaration`, `reader_too_old`; a level-1 reader is admitted with convenience history and while the flag is on), at prepare, binding, submit and the append (item 9.4); `relay.link` (`relay_too_old`) and `relay.pair` keep item 1's rule until H12d-3; `Error.detail` `{reason, devices}` | — |
-| `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2) | — |
+| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device; a records push to an unmarked URL, D-P2-34) to a workspace whose history has `auth: "convenience"` events or whose durable `convenience_seen` mark is set (#441); the fix names the readers to update (§0.8.6 item 1); **H12d-2:** `member.add` refuses only a new reader below `required_reader` (reasons `no_declaration`, `reader_too_old`; a level-1 reader is admitted with convenience history and while the flag is on), at prepare, binding, submit and the append (item 9.4); `relay.link` (`relay_too_old`) and `relay.pair` keep item 1's rule until H12d-3; `Error.detail` `{reason, devices}`; **H12c-e:** `relay.pair_device` follows `member.add`'s rule with the phone's pair declaration (11A.15.6 step 9) | — |
+| `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
@@ -1336,6 +1336,12 @@ Material = {kind:"gate", gate:Gate, input:<orch.model.gates.gate_input>, ticket:
          | {kind:"payload", ticket:{key:Key, uid:Uid} | null, review:[Review]{1..16},
             texts?:{str: str},                          // section id → full text, for every section the events reference
             before?:{str: any}}                         // prior values of the paths a set/section.set/settings.set changes
+         | {kind:"relay.pair_device", review:[Review]{1},  // H12c-e: op relay.pair_device only (and the reverse)
+            workspace_id:WsId, offer_id:Hex32, attempt:Hex32, device:Device,
+            label:str,                                  // clean_label's output; shown, not signed, no NFC
+            scopes:["look"|"decide"]{1..2},             // the offer's list scopes, in that order, within cert.scopes_max
+            cert_digest:Hash,                           // sha256(cj(cert)) of the event's cert
+            comparison:{kind:"sas"|"cert_code", code:str/[A-Z2-7]{6}/}}   // path 7a: the SAS; 7b: cert_code
 Review   = {event_id:ULID, type:str, payload:object, derived:{str: any}}
 ```
 
@@ -3977,6 +3983,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (`orch.click.protocol.click_detail`, exactly `{reason, devices}` against the host's `DETAIL_KEYS` and `DEVICE_ID`;
     an invalid part drops all of it); every other code drops it. `ClickError` gains `detail`; `orch.click.client` now
     imports the stdlib-only `orch.host.errors`. No wire, hash or schema change; the click `contract` stays 2.
+51. **`relay.pair_device` (H12c-e, §11A.15.10 item 12, "As built in H12c-e"; the number may be renumbered when a
+    parallel change lands first):** a host person op (`human.prepare`/`human.submit` only; a plain request is
+    `human_only`; listed in `welcome.ops` at version 1) with args `{offer_id}` and the new `Material` kind
+    `relay.pair_device` (§0.8.1); it emits `device.added {device, cert}` from R6's verified facts. New
+    `sign.convenience_unavailable` reason `pair_device` (also in `Error.detail`, the click signer's and the
+    dashboard's closed tables); `op.unsupported` when no relay pairing is registered. The click signer refuses the op
+    (`terminal_only`). No F1, hash or schema change; the `device.added` review keeps its frozen `derived`.
 
 ---
 
@@ -7530,6 +7543,56 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   outside `identity/_mint.py`, `identity/wscard.py` and `identity/certreq.py`, and a `"_mint"` string everywhere
   (Codex P2 on #512: re-exports and attribute chains through the minting modules). Other consumers re-check a minted
   type with `certreq.require_minted(obj, cls)` (`answers.py`).
+
+**As built in H12c-e (item 12, 15 Oct 2026).**
+- **Pure half: `orch.identity.pairdevice`** (no key, no clock; `orch.relay` may import it). `PairDeviceFacts` is what
+  R6 hands the host at step 9, validated on construction and immutable (the certificate and declaration are kept as
+  canonical bytes, every read is a copy; the code is not in `repr`): `workspace_id`, `offer_id`, `attempt` (32 hex),
+  `cert` (the verified phone certificate; its `scopes_max` must hold `decide` and at most `look`: no `operate`, no
+  `type`, no `drop:`, N1), `label` (a fixed point of `clean_label`, no NFC), `scopes` (a non-empty subset of `look,
+  decide` in that order, within `scopes_max`), `path` `7a`/`7b`, `code` (6 base32 characters: the SAS on 7a,
+  `cert_code` on 7b), and `decl`/`decl_who` (the stored pair declaration and the `who` step 4 verified it for:
+  `{pk_pin}` from the link or `{person_id}` of a presented cert; both or neither). `material(facts)`,
+  `device_added(facts)` (exactly `{type, device, cert}`) and the signer's `check_material`.
+- **The op.** `relay.pair_device {offer_id}` is a host person op (`HOST_PERSON_OPS`, `orch.ops.person_ops`), served
+  only through `human.*`. The request names only the offer: the host asks `WorkspaceService.pair_device` (R6c's
+  `PairDeviceSource`) for the facts; facts of another workspace or offer are `internal`, a certificate of another
+  person than the signer is `role.denied`, no source is `op.unsupported`. The phone's declaration is admitted as its
+  reader with `source:"pair"` (`via:"pair"` with this offer and attempt, the `view` KAT, `decl_who`), verified as a
+  recheck (freshness was step 4's); `orch.ops.readers.admission_context` gives every admitted entry its source's
+  `via`, surfaces, `who` and `bind`, so the binding, submit and append rechecks use the same context.
+- **The material** (§0.8.1): `{kind:"relay.pair_device", workspace_id, offer_id, attempt, device, label, scopes,
+  cert_digest, comparison:{kind, code}, review}`. `host/signer.check` requires this kind for this op and this op for
+  this kind (a cross-kind substitution is refused both ways), exactly these fields, one `device.added` on the
+  workspace log with exactly `device` and `cert`, and binds each field (`check_material`). The review renders a
+  "relay pairing" block with every bound field; the label line says "named by the device; not signed, not
+  authenticated". The `device.added` review block keeps its frozen `derived` (`cert_*`) and H12d-2's reader line.
+- **Convenience refused** (11A.15.6): `sign.convenience_unavailable` reason `pair_device` at prepare (before the
+  readers condition is even asked), at a `human.get` binding, at submit, and in the signer itself (`check` with
+  `auth:"convenience"`); the click signer refuses the op as `terminal_only` (it is in neither click set). The hint
+  names `orch keys custody passphrase --workspace W --in-place`.
+- **Step 9's critical section** (`append_signed(..., hooks=)`, only for this op, from `human.finish`): under the
+  store lock, `precommit(PairAllocation)` (R6's (i) and (ii); a `HostError` refuses, nothing appended, `refused` not
+  called), then invariant I with the phone's declaration and its reader record (iii, v), the append (iv), then
+  `committed(allocation, seq)` (vi, vii). A refusal after `precommit` (the reader gate, the model) calls
+  `refused(allocation, error)` (R6 ends the offer `failed`). A roll-forward of a landed event skips `precommit` and
+  calls `committed` again (it must be idempotent); an exception in `committed` is logged and never undoes the
+  commit. `PairAllocation` = `{offer_id, attempt, device, cert_digest, review_digest, event_id, event_digest,
+  decl_digest}`; `event_digest` is `sha256(cj(event))` of the signed event without the store's stamp keys
+  (`orch.host.pairdevice.event_digest` recomputes it from a log line), so recovery matches the intent by event, never
+  by "same cert, same device".
+- **For R6c (orch-29):** register the source before `recover` runs at open (otherwise an interrupted submit that
+  had not landed fails `op.unsupported`, nothing appended); `facts` refuses outside step 9 with R6's own codes
+  (`relay.pair_closed`, the deadline); the "already in F1" case (same device, same keys and cert, valid) never
+  reaches this op: R6 names the existing event in its intent itself, since the model refuses a second
+  `device.added` with `device.exists`.
+- **JUDGEMENT CALLS.** The material also binds `offer_id` and `attempt` (shown as host attestations), so a review of
+  one pairing cannot allocate another; the confirmation word is the device id's last eight hex (shown in the review);
+  a phone certificate whose `scopes_max` exceeds `look, decide` is refused by the facts and by the signer (N1 made
+  structural at the signature); no source is `op.unsupported` (R6 not running here), not a new code.
+- Tests: `tests/identity/test_pairdevice.py` (every binding, positive and negative), `tests/host/test_pair_device.py`
+  (prepare, review, signer negatives, convenience at every point, the critical section, the H12d-2 reader rules
+  through this path, the hand-off, a roll-forward, the F1 `devices.json` `device_added` vectors).
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 

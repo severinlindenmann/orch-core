@@ -34,7 +34,16 @@ from .errors import StoreError
 from .fsio import fsync_dir, loads, read_or_none, write_atomic
 from .rootfs import RootFS
 
-__all__ = ["INTENT", "Outbox", "OutboxEntry", "Segment", "make_entry", "parse_entry", "pending_linked_appends"]
+__all__ = [
+    "INTENT",
+    "Outbox",
+    "OutboxEntry",
+    "RelayPosition",
+    "Segment",
+    "make_entry",
+    "parse_entry",
+    "pending_linked_appends",
+]
 
 _NAME = re.compile(r"([0-9]{20})\.json")
 INTENT = "catchup.json"
@@ -66,6 +75,20 @@ class Segment:
     after_seq: int
     from_acc: str
     heads: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RelayPosition:
+    """Where a relay's held checkpoint H stands against this host (R3's startup classification, §11A.5), from
+    :meth:`orch.store.Store.relay_position`. ``contained``: every entry of H is a point of the current logs (head and
+    accumulator at its ``seq``); ``numbering``: the highest ``n`` the host ever reserved, signed or queued;
+    ``current``: ``{n, hash}`` of the newest local workspace checkpoint (None when there is none); ``abandoned``: H is
+    one of the workspace checkpoints a restore moved to ``.state/checkpoints/abandoned/``."""
+
+    contained: bool
+    numbering: int
+    current: dict[str, Any] | None
+    abandoned: bool
 
 
 @dataclass(frozen=True)

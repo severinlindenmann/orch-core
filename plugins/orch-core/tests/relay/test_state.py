@@ -509,3 +509,33 @@ def test_canonical_card_keys_are_accepted(tmp_path):
         for k in ("0", "1", "10", "9223372036854775807"):
             led.record("card", k, "aa", "s")
         assert led.keys("card") == sorted(["0", "1", "10", "9223372036854775807"])
+
+
+# -- R3: per-file limits and remove (11A.3 publish-manifest.json, published-restore-<n>.json) ------------------------
+
+
+def test_a_larger_limit_is_per_call_and_bounded(tmp_path):
+    from orch.relay.state import BIG_FILE, MAX_FILE
+
+    s = StateDir(tmp_path / "big")
+    data = b"x" * (MAX_FILE + 1)
+    with pytest.raises(StateError):
+        s.write("publish-manifest.json", data)
+    s.write("publish-manifest.json", data, limit=BIG_FILE)
+    with pytest.raises(StateError):
+        s.read("publish-manifest.json")  # the default read limit still applies
+    assert s.read("publish-manifest.json", limit=BIG_FILE) == data
+    with pytest.raises(StateError):
+        s.write("x.json", b"{}", limit=BIG_FILE + 1)
+    s.close()
+
+
+def test_remove_unlinks_the_entry_itself_and_is_idempotent(tmp_path):
+    s = StateDir(tmp_path / "rm")
+    s.write("publish.json", b"{}")
+    target = tmp_path / "elsewhere"
+    target.write_bytes(b"keep")
+    (tmp_path / "rm" / "link.json").symlink_to(target)
+    assert s.remove("publish.json") and not s.remove("publish.json")
+    assert s.remove("link.json") and target.read_bytes() == b"keep"  # the symlink entry, never its target
+    s.close()

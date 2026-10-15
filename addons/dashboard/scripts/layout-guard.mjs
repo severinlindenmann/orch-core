@@ -23,6 +23,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { waitForTarget, waitForDevTools } from './layout-startup.mjs'
+import { selectsRealHost } from './layout-guard-pages.mjs'
 
 const argv = process.argv.slice(2)
 const opt = (name, fallback) => {
@@ -484,7 +485,7 @@ async function run(send, close) {
 
           // The real-host-only pages (quick tasks, the Records tab, the runner card), drawn from fixtures by the dev-only
           // `__layout/<scenario>` route (src/dev/layoutPreview.tsx): the mock app never shows them.
-          if (!ONLY || ONLY.test('real-host-') || ONLY.source.includes('real-host')) {
+          if (selectsRealHost(ONLY)) {
             const clickText = (sel, rx) =>
               evaluate(async (sel, rx) => {
                 const el = [...document.querySelectorAll(sel)].find((b) => new RegExp(rx).test((b.getAttribute('aria-label') || b.textContent).trim()))
@@ -546,13 +547,12 @@ async function run(send, close) {
               await settle()
               await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR and link is missing'])
             }
-            // The device remove hand-off open.
-            if (!ONLY || ONLY.test('real-host-pair-remove')) {
+            // Removal is CLI only: the "Remove this device" disclosure open with its command.
+            if (!ONLY || ONLY.test('real-host-pair-remove-command')) {
               await go('/__layout/pair-devices')
-              const opened = (await present('[data-testid="device-row"]')) && (await clickText('button', /^Remove$/))
+              const opened = (await present('[data-testid="device-row"]')) && (await clickText('summary', /^Remove this device$/))
               await settle()
-              await check(config, 'real-host-pair-remove', opened ? await need([['the hand-off dialog', '[role="dialog"]'], ['the rotation line', '[data-testid="device-remove-rotates"]']]) : ['the Remove button is missing'])
-              await escape()
+              await check(config, 'real-host-pair-remove-command', opened ? await need([['the remove command', '[data-testid="device-remove-command"]']]) : ['the Remove this device disclosure is missing'])
             }
             // The Limits box open on the quick page, and the "Make a normal ticket" hand-off open.
             if (!ONLY || ONLY.test('real-host-quick-limits')) {

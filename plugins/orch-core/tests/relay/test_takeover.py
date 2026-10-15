@@ -260,8 +260,11 @@ def test_backup_restore_by_recreating_the_directory_refuses(env, tmp_path):
     st, _ = _held_once(tmp_path / "relay")
     st.close()
     shutil.copytree(tmp_path / "relay", tmp_path / "backup")
-    shutil.rmtree(tmp_path / "relay")
+    # keep the old directory (and so its inode) alive while the restored one is created: rmtree + copytree
+    # may reuse the freed inode number on ext4/overlayfs (seen in CI), which no local check can tell apart
+    os.rename(tmp_path / "relay", tmp_path / "relay.gone")
     shutil.copytree(tmp_path / "backup", tmp_path / "relay")
+    shutil.rmtree(tmp_path / "relay.gone")
     os.chmod(tmp_path / "relay", 0o700)
     restored = StateDir(tmp_path / "relay")
     sim.holders[WS] = (3, sim.now - 1)

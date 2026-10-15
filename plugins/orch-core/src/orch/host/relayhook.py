@@ -397,12 +397,16 @@ def unlink_job(service: WorkspaceService) -> str:
     """On the worker thread, holding ``service.relay_cond`` (no worker can start in between) and the store lock (the
     outbox turns off with the rename): ``link.json`` becomes ``unlinked-<linked_at>.json`` (``os.link`` then
     ``unlink``: never over an existing file), then the unlink intent is cleared and ``relay_reason`` is
-    ``not_linked``. Idempotent across a crash: an intent whose link is already renamed is only cleared (the answer is
-    ``"done"``). ``relay.not_linked`` without a link or an intent; ``lock.busy`` while a worker runs."""
-    from orch.store.fsio import fsync_dir
+    ``not_linked``. Crash-safe (round 4, orch-52): with an intent on disk the stop marker is persisted first (a crash
+    between the intent and the marker must not let a later relink start without ``relay start``); the archive is made
+    durable (directory fsync) before ``link.json`` is removed; an archive that is already the same file as
+    ``link.json`` (a crash between the two) is reused, never duplicated; an intent whose link is already renamed is only
+    cleared (the answer is ``"done"``). ``relay.not_linked`` without a link or an intent; ``lock.busy`` while a worker
+    runs."""
+    from orch.store import fsio
 
     from .custody import read_json
-    from .relaylink import clear_unlink_intent, link_path, relay_dir, unlink_pending
+    from .relaylink import clear_unlink_intent, link_path, mark_stopped, relay_dir, unlink_pending
 
     store = service.store
     if store is None:
@@ -410,6 +414,8 @@ def unlink_job(service: WorkspaceService) -> str:
     with service.relay_cond:
         if service.relay is not None:
             raise HostError("lock.busy", "a relay worker runs; stop it first")
+        if unlink_pending(service.state_dir, service.workspace_id):  # before either completion branch (P2)
+            mark_stopped(service.state_dir, service.workspace_id, service.host_uid, clock=service.clock)
         with store.locked():
             path = link_path(service.state_dir, service.workspace_id)
             if not os.path.lexists(path):
@@ -422,17 +428,22 @@ def unlink_job(service: WorkspaceService) -> str:
             at = link.get("linked_at") if isinstance(link, dict) else None
             stamp = at if type(at) is int and at >= 0 else int(service.clock() * 1000)
             d = relay_dir(service.state_dir, service.workspace_id)
+            here = os.lstat(path)
             for i in range(1000):
                 name = f"unlinked-{stamp}.json" if i == 0 else f"unlinked-{stamp}-{i}.json"
                 try:
                     os.link(path, d / name, follow_symlinks=False)
                     break
                 except FileExistsError:
+                    there = os.lstat(d / name)
+                    if (there.st_dev, there.st_ino) == (here.st_dev, here.st_ino):
+                        break  # this very file, archived before a crash: reuse it
                     continue
             else:
                 raise HostError("internal", "no free unlinked-<linked_at> name")
+            fsio.fsync_dir(d)  # the archive is durable before the original goes (P1)
             os.unlink(path)
-            fsync_dir(d)
+            fsio.fsync_dir(d)
             clear_unlink_intent(service.state_dir, service.workspace_id, service.host_uid)
             service.relay_reason = "not_linked"
     return name

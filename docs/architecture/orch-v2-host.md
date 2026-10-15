@@ -5684,6 +5684,27 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   releasing after one round, non-callable members, a raising release, a plain `relay_lock`, stored alarms unsanitised):
   **19 killed** (one survivor, the missing intent, was killed by an added assertion).
 
+**Round 4 (15 Oct 2026, orch-52's Codex review of `ac8eb8a8`: CHANGES).**
+- **P1 (fixed):** `unlink_job` fsyncs the relay directory after the archive (`os.link`) and before it removes
+  `link.json`, then again after. A recovery after a crash between the two finds the archive is the same file (same
+  `st_dev`/`st_ino`) and reuses it, so there is never a second archive.
+- **P2 (fixed):** whenever an unlink intent is on disk, `unlink_job` persists the stop marker under `relay_cond` before
+  either completion branch, so a crash between the intent and the marker cannot let a later relink start without
+  `orch host relay start`.
+- **Accepted residual, stated:** `host.relay_unlink` (like H12a's `host.relay_stop`/`host.relay_start`) is open to
+  every control-socket client of the host UID. That is tier-A trust (the control socket admits only the host UID;
+  a same-UID tier-A agent can reach it), not person authorization; the `ORCH_GRANT` refusal of `orch host relay
+  unlink` is the CLI's. Unlink only reduces exposure and keeps the reservation; the worst case is a denial of service
+  for the person's phones.
+- **Checklist for R6c and H12d-3 (notes, no code in R5):**
+  - **R6c:** the `relay.pair_device` source registration (the hook that lets the outcome reconciler roll a pending
+    pairing forward) must be registered in `WorkspaceService.open` **before** `human.recover` (`host/workspace.py`, the
+    `recover(self)` call); the relay starter runs at the end of `open`, too late for it.
+  - **H12d-3:** `link_reservation(…, relay_level=)` has its natural slot in the guard closure that `reserve_link`
+    passes to `store.relay_link` (`host/relayhook.py`, `guard=lambda: link_reservation(service)`).
+  - **Rebase dependency: #555** (H12d-3, orch-52, in review) changes `observe_relay_level` to take `origin=` (the
+    session's link origin) and adds the `relay-link.lock` handling; R5 rebases onto it when it merges.
+
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`
   (`service.relay_starter`, `may_start`), which R5 follows: there is no `relay.worker.start(service)` function.

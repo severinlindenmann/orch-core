@@ -934,3 +934,88 @@ def test_stored_alarms_are_sanitised_and_clipped_on_read_back(served):  # noqa: 
     write_private(relaylink.relay_dir(svc.state_dir, served.wid) / "alarms.json", {"v": 1, "alarms": [row]})
     (got,) = relayhook.status(svc)["alarms"]
     assert got["code"] == "c?[2J" and got["detail"].startswith("x?") and len(got["detail"]) == 200
+
+
+# -- round 4 (orch-52's Codex review of ac8eb8a8) ---------------------------------------------------------------------
+
+
+def _recording_fs(monkeypatch, crash_unlink_once: bool = False) -> list[str]:
+    """A recording shim over the calls ``unlink_job`` makes: ``link``, ``fsync`` (a directory) and ``unlink`` of
+    ``link.json``, in order; optionally the first unlink of ``link.json`` crashes (a power cut after the archive)."""
+    from orch.store import fsio
+
+    events: list[str] = []
+    real_link, real_unlink, real_fsync = os.link, os.unlink, fsio.fsync_dir
+    crashed: list[int] = []
+
+    def link(src, dst, **kw):
+        if str(src).endswith("link.json"):
+            events.append("link")
+        return real_link(src, dst, **kw)
+
+    def unlink(path, *a, **kw):
+        if str(path).endswith("link.json"):
+            if crash_unlink_once and not crashed:
+                crashed.append(1)
+                raise OSError("power cut")
+            events.append("unlink")
+        return real_unlink(path, *a, **kw)
+
+    def fsync_dir(path):
+        events.append("fsync")
+        return real_fsync(path)
+
+    monkeypatch.setattr(os, "link", link)
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(fsio, "fsync_dir", fsync_dir)
+    return events
+
+
+def test_the_archive_is_durable_before_link_json_is_removed(served, monkeypatch):  # noqa: F811
+    """P1: link, then a directory fsync, and only then the unlink of link.json (then fsync again)."""
+    svc = served.service
+    _reserve(served)
+    events = _recording_fs(monkeypatch)
+    svc.relay_unlink()
+    i_link, i_unlink = events.index("link"), events.index("unlink")
+    assert "fsync" in events[i_link + 1 : i_unlink] and "fsync" in events[i_unlink + 1 :]
+
+
+def test_a_crash_between_the_archive_and_the_unlink_recovers_to_one_archive(served, monkeypatch):  # noqa: F811
+    svc = served.service
+    _reserve(served)
+    _recording_fs(monkeypatch, crash_unlink_once=True)
+    with pytest.raises(OSError):
+        svc.relay_unlink()
+    d = relaylink.relay_dir(svc.state_dir, served.wid)
+    assert (d / "link.json").exists() and len(list(d.glob("unlinked-*.json"))) == 1  # both, the same file
+    assert relaylink.unlink_pending(svc.state_dir, served.wid)
+    _on_worker(served, svc._relay_open)  # noqa: SLF001 - the open after a restart finishes it
+    assert not (d / "link.json").exists() and len(list(d.glob("unlinked-*.json"))) == 1  # reused, not duplicated
+    assert not relaylink.unlink_pending(svc.state_dir, served.wid)
+
+
+def test_a_crash_between_the_intent_and_the_marker_still_leaves_the_worker_stopped(host_lab, monkeypatch):
+    """P2: the intent landed, the marker did not (a crash in between). Recovery persists the marker before it
+    completes the unlink, so a later relink never starts without ``orch host relay start``."""
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    starts: list[str] = []
+    monkeypatch.setattr(relayhook, "make_starter", lambda backend, seams=None, **kw: lambda s: starts.append(1))
+    hl = host_lab
+    with hl.host() as h, h.client() as c:
+        wid = ok(hl.register(c))["data"]["workspace_id"]
+        svc = h.host.services[wid]
+        svc.submit(lambda: relayhook.reserve_link(svc, origin="https://r.example", max_publication_bytes=MIB4)).result(
+            30
+        )
+        relaylink.mark_unlink_intent(hl.state, wid, UID)  # the crash comes before mark_stopped
+        assert not relaylink.is_stopped(hl.state, wid, UID)
+    with hl.host() as h:
+        svc = h.host.services[wid]
+        assert relaylink.is_stopped(hl.state, wid, UID) and not relaylink.unlink_pending(hl.state, wid)
+        svc.submit(lambda: relayhook.reserve_link(svc, origin="https://r.example", max_publication_bytes=MIB4)).result(
+            30
+        )
+        # a relink: the open hook does not start it; only relay start (an operator act) may
+        svc.submit(svc._relay_open).result(30)  # noqa: SLF001
+        assert starts == [] and svc.relay_reason == "stopped"

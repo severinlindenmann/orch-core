@@ -207,6 +207,10 @@ class CertJournal:
     ``(workspace_id, request_id, expires_ms)`` per opened request; ``closed``, the request ids it signed or rejected.
     A request is open while it is unexpired and neither signed nor rejected (``request_open``).
 
+    **Every refusal from step 2.4 on burns the id**, ``expired`` (including "too early" under clock skew) and
+    ``request_open`` too (review round 2 of #495, D1-3): §8.4 accepts only a request id never seen before, so the
+    host retries with a **new** ``request_id``, never by resending the refused bytes.
+
     **One lock, record first (Opus L2).** "One open request per workspace" is the R1 defence, and these checks are
     pure. So the primary runs :func:`check_cert_request`, :func:`open_cert_request` and the journal write
     (:meth:`with_open`) under **one** lock or transaction, and persists the new journal **before** it draws
@@ -350,8 +354,6 @@ def check_cert_request(
     o = _verify_signed(wsk, signed, "cert_request")
     if o is None or o.get("workspace_id") != ws:
         raise Refused("bad_signature", "cert_request")
-    if any(k in o and type(o[k]) is not str for k in (*_REQUEST_IDS, "dk_hash", "sealed")):
-        raise Refused("malformed", "cert_request: an id is not a string")  # before any set or dict lookup (Opus L1)
     if o.get("primary_device_id") != me or o.get("person_id") != me_person:
         raise Refused("not_for_this_device", "cert_request")
     try:

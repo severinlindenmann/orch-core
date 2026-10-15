@@ -5,6 +5,8 @@ orch-relay ``docs/protocol-v2.md`` §8.4 and the corpus; where the design text d
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from orch import canon, crypto
@@ -511,3 +513,60 @@ def test_make_cert_challenge_checks_the_binding_before_signing():
     with pytest.raises(Refused):
         certreq.make_cert_rejection(bob, sign, REQ["o"])
     assert calls == []
+
+
+# --- review round 2 of #495 ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"offer_id": ["x"]},
+        {"offer_id": "zz" * 16},
+        {"attempt": {"a": 1}},
+        {"device_id": 7},
+        {"dk_hash": crypto.b64u(bytes(31))},
+        {"dk_hash": None},
+        {"sealed": "not b64u!"},
+        {"sealed": ["x"]},
+    ],
+    ids=repr,
+)
+def test_a_malformed_clear_field_names_the_request_and_burns_its_id(change):
+    """Codex P2: a correctly signed and addressed request with a valid request_id but a malformed clear field is a
+    RequestRefused naming the id; once recorded, the corrected request under that id is replayed."""
+    signed = _pk_sign("wsk_a.sig", "sig_cert_request", {**REQ["o"], **change})
+    journal = certreq.CertJournal()
+    with pytest.raises(certreq.RequestRefused) as e:
+        certreq.check_cert_request(signed, _OPEN_VCARD, journal=journal, now_ms=REQ["o"]["created_ms"], **_OPEN_ME)
+    assert (e.value.code, e.value.request_id) == ("malformed", REQ["o"]["request_id"])
+    journal = journal.with_seen(e.value.request_id)
+    with pytest.raises(Refused) as e:
+        certreq.check_cert_request(REQ, _OPEN_VCARD, journal=journal, now_ms=REQ["o"]["created_ms"], **_OPEN_ME)
+    assert e.value.code == "replayed"
+
+
+def test_expired_and_request_open_burn_the_id():
+    """D1-3: ``expired`` and ``request_open`` are RequestRefused too, so the host must retry with a new request_id."""
+    with pytest.raises(certreq.RequestRefused) as e:
+        certreq.check_cert_request(
+            REQ, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["expires_ms"], **_OPEN_ME
+        )
+    assert e.value.code == "expired"
+    other = certreq.check_cert_request(
+        REQ, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_OPEN_ME
+    )
+    blocked = certreq.CertJournal().with_open(dataclasses.replace(other, request_id="0" * 32))
+    with pytest.raises(certreq.RequestRefused) as e:
+        certreq.check_cert_request(REQ, _OPEN_VCARD, journal=blocked, now_ms=REQ["o"]["created_ms"], **_OPEN_ME)
+    assert e.value.code == "request_open"
+
+
+def test_with_open_replaces_the_workspaces_earlier_entry():
+    """D1-3: the mutant that keeps the old entry (``rest = self.open``) is killed."""
+    req = certreq.check_cert_request(
+        REQ, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_OPEN_ME
+    )
+    j = certreq.CertJournal().with_open(dataclasses.replace(req, request_id="1" * 32)).with_open(req)
+    assert j.open == ((req.workspace_id, req.request_id, req.expires_ms),)
+    assert j.seen == frozenset({"1" * 32, req.request_id})

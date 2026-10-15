@@ -1655,3 +1655,20 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Revert:** drop `devices` from `HOST_TABS` and its line in `settings/index.tsx`; delete `src/api/pairing.ts`,
   `src/app/pages/settings/host/Devices.tsx`, `src/dev/pairFixture.ts`, the `pair-*` scenarios and guard entries, the two `HandoffAction`
   members, the `summary` pass-through in `useSettingsHandoff`, and `uqr` from package.json.
+
+### 2026-10-15 Pairing: review fixes and orch-52's binding ops decisions (contract v1.9, cap `pair/1`, class P, human_only)
+
+- **Review (Opus, CHANGES) fixed:** M1: the QR, the typed https fallback and **Copy link** all wait for one explicit **Show QR and link**.
+  L1: a link this page copied is overwritten on the clipboard (`writeText('')`, best effort) when the link is dropped; a line says so.
+  L2: a test pins the QR payload to the native link. L3: expiry is also checked every second and on `visibilitychange`/`focus`.
+  I1: an offer-time refusal that the next preview reports as `blocked` shows only the dedicated screen. Not changed: I2 (the guard prints
+  50 characters of overflowing text; fixtures only) and I3 (React DevTools can read component state; accepted).
+- **orch-52:** the op names `pair.preview/offer/list/answer/cancel` and the `pair` sub topic are confirmed. Paired devices come from
+  `member.list` under a `read_ext` bump (`devices[]` gain `label`, `paired_ms`, `relay`, `cert_expires`, `reader`), not a new op; the page
+  lists the devices that carry `relay`, read only, under the gate. **Device removal is not in this round** (it needs the person key; the
+  recovery code is typed): the `device_remove` hand-off is gone, replaced by a "Remove this device" disclosure with the command as text.
+  **ASSUMPTION:** the R6 notes name no removal command; the page shows `orch device remove <device-id> --workspace <PREFIX>`
+  (`deviceRemoveCommand`). Convenience wording is exact: "Turn click-to-sign off first: orch host convenience off --workspace <ws>" and
+  "This workspace's click-to-sign history blocks phones." (both when the host doesn't say which). Labels follow the protocol rule (no
+  normalisation, ≤80 code points, LF kept, default-ignorables removed): rendered with `Prose` (escaped, isolated, LF as a line break, never
+  markup); an empty label shows "phone". Assumptions 1 (op names) and 5 (`device_remove`) above are superseded.

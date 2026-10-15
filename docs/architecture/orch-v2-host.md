@@ -3822,10 +3822,17 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `runner.unavailable`, `other`; never host text) and `grant.deposit_status` gains `reason`; the click signer
     `contract` goes from 1 to 2 (deposit support; a client for contract 2 accepts 1 and 2); `run.sub` gains the
     `{t:"runner", grant}` item (§12.3). No F1, schema or capability change.
+44. **Read-time worktree back-pointers (#486, after #485):** every reader open (`gitdir` and `worktree` profiles,
+    and direct mode) checks git's back-pointers against the pins: a linked gitdir is `<commondir>/worktrees/<id>`
+    whose `gitdir` file names the pinned `<working copy>/.git`, a main gitdir is `<working copy>/.git`, and the
+    working copy's `.git`, read through its pinned fd, names the pinned gitdir (linked) or is it (main); the
+    `gitdir` profile's allow-list gains exactly `<working copy>/.git`. Relative back-pointers (git 2.48+
+    `worktree.useRelativePaths`) are refused, as at pin time. A main repo that a compromised batch pin child passed off as another declared repo's worktree,
+    or a worktree moved since it was pinned, is observe.unavailable. No wire, schema or capability change.
 
 **v1.8 → v1.9 (additive, #479; item numbers may be renumbered when a parallel change lands first).**
 
-44. **`Error.detail`** (§0.3): an optional object on the socket `Error`, closed per code. `HostError.error()` sends it
+45. **`Error.detail`** (§0.3): an optional object on the socket `Error`, closed per code. `HostError.error()` sends it
     and `frames._ERROR` allows it. Only `term.not_attachable` (`state`), `run.limit` (`which`), `launch.no_grant`
     (`reason`), `runner.disabled` (`missing`: `addon`, `machine` or `terminals`) and `ticket.key_not_next` (`next_key`) may carry it; any other code, key
     or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
@@ -3837,6 +3844,19 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     built yet, so they are `null`/`false` until then. Which members and devices a viewer gets is unchanged; `label` is
     `null` for G and N (persons only, orch-52). `read_ext/3` lists `read_ext/1` and `read_ext/2`
     too. No F1, schema or op version change.
+
+46. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10):**
+    `orch.identity.answers` (the six exact §8.3 pair answers; a relayed challenge or rejection enters only as the
+    verified `CertChallenge`/`CertRejection`); `orch.identity.memberlist` (`member_list_o`, `check_member_list`,
+    `seal_wk`, `wk_grant_o`, `check_wk_grant`, `card_key_wrap`); `orch.identity.wscard` (`card_o` for the rotation, and
+    `verify_card -> VerifiedCard`, the only card type a consumer takes); `orch.identity.certreq` (`cert_request_o`,
+    `check_cert_request`/`open_cert_request` with a `CertJournal` kept under one caller lock and recorded before the
+    challenge goes out, `RequestRefused` naming a refused id, `CertInner.display_label`, the host's
+    `check_cert_challenge`/`check_cert_rejection`, and `make_cert_challenge`/`make_cert_rejection` over a sign callable,
+    checked before signing). Every builder runs all matching relay corpus cases. Signature differences from §11A.15.10
+    (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons` without the owner;
+    `check_wk_grant` takes the device id; `check_cert_request` takes a `VerifiedCard`, `now_ms` and `me` as person and
+    device ids; the `make_*` builders take `pk_pub`. No hash, contract or schema change.
 
 ---
 
@@ -4229,6 +4249,14 @@ UID. P2 adds no keychain.**
       path; the commondir is a declared repo's `.git`; the gitdir is that commondir or its `worktrees/<id>`) before it
       is stored, so a child forging pins fails its batch. One child per repo had made the first request after such a
       `settings.changed` cost ~70 ms per repo (#468).
+      The layout check cannot tell a main repo B passed off as `<A>/.git/worktrees/<id>` of another declared repo A
+      from a real worktree of A; every read therefore re-checks git's back-pointers (#486): the worktree's `gitdir`
+      file must name the pinned `<working copy>/.git` (read with `O_NOFOLLOW`), its `commondir` the pinned commondir,
+      and the working copy's `.git`, read through the pinned working copy's fd (`O_NOFOLLOW` walk, device and inode),
+      must be a `gitdir: <path>` file naming the pinned gitdir (or be the pinned gitdir, for a main repo). This runs
+      on every open, in both profiles and in direct mode; the `gitdir` profile admits exactly `<working copy>/.git`
+      for it, the working copy only as an ancestor (#498). A forged or moved pin is refused when it is used.
+      Relative back-pointers (git 2.48+ `worktree.useRelativePaths`) are refused, as they already are at pin time.
     - Every open stays under the pins, with `O_NOFOLLOW` and a regular-file check.
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.

@@ -259,8 +259,8 @@ const dropOptions = (scenario: LayoutScenario): DropFixtureOptions => {
     dropItem({ name: 'scan-from-phone.jpg', mime: 'image/jpeg', claimed: false }),
     doc({ object_id: 'demo-doc-notes', name: 'meeting-notes.md', mime: 'text/markdown', version: 37, versions: 37 }),
     dropItem({ name: 'old-export.zip', mime: 'application/zip', state: 'pruned' }),
-    dropItem({ name: 'expired-photo.heic', mime: 'image/heic', state: 'expired', expires_ms: T0 - DAY }),
-    dropItem({ name: 'deleted-contract.pdf', state: 'retired' }),
+    dropItem({ name: 'expired-photo.heic', mime: 'image/heic', state: 'expired', expires_ms: T0 - DAY, tombstone_until_ms: T0 + 29 * DAY }),
+    dropItem({ name: 'deleted-contract.pdf', state: 'retired', tombstone_until_ms: T0 + 30 * DAY }),
     ...Array.from({ length: 4 }, (_, i) => dropItem({ name: `invoice-${i + 1}.pdf` })),
   ]
   const sent = () => [dropItem({ name: 'handover.pdf', author: ME }), dropItem({ name: 'diagram.svg', mime: 'image/svg+xml', author: ME })]

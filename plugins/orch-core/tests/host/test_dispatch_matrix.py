@@ -12,6 +12,7 @@ import pytest
 
 import orch.ops as ops
 from orch.host import frames
+from orch.host.agents import AGENT_OPS
 from orch.host.columns import refusal, resolve
 from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
@@ -77,7 +78,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(RECORDS_OPS)
     host |= set(RUN_OPS) | set(TERM_OPS)  # H11a, H11b
     host |= set(WORKTREE_OPS)  # H11d
-    host |= set(GRANT_OPS)  # H11c
+    host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
@@ -176,6 +177,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("pg_read", "read")
         elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
             assert kind == (("pg_read", "read") if op == "worktree.list" else ("pg_write", "write"))
+        elif op in AGENT_OPS:  # H11c: P only
+            assert kind == (("person_read", "read") if op == "agent.preview" else ("person_write", "write"))
         elif op in GRANT_OPS:  # H11c: deposit needs a grant; status and forget are P only
             assert kind == {"grant.deposit": ("deposit", "write"), "grant.deposit_status": ("person_read", "read"),
                             "grant.forget": ("person_write", "write")}[op]  # fmt: skip

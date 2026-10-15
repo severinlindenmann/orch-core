@@ -757,6 +757,16 @@ class RunnerHub:
         run = fields.get("run") or new_run_id()
         if run in self.store.records:
             return view(self.store.records[run])
+        await self.intent(workspace_id, {**fields, "run": run}, payload)
+        return await self.dispatch(run, payload)
+
+    async def intent(
+        self, workspace_id: str, fields: dict[str, Any], payload: dict[str, Any], **audit: Any
+    ) -> dict[str, Any]:
+        """The launch intent (D-P2-37), durable before anything is created or sent: state ``starting``, bound to this
+        runner's UID and generation. A host restart before the spawn's ack reconciles it at ``runner.hello`` (a run
+        the runner does not report becomes ``lost``, never spawned again)."""
+        run = fields["run"]
         rec = {
             **{k: fields.get(k, VIEW_DEFAULTS[k]) for k in FIELDS},
             "cols": payload.get("cols", VIEW_DEFAULTS["cols"]),
@@ -771,15 +781,34 @@ class RunnerHub:
             "gen": self.generation,
             "dispatched": True,
         }
-        await self._save(rec)
+        saved = await self._save(rec)
+        if audit:
+            self._audit("run.intent", run=run, workspace_id=workspace_id, person=fields.get("person"), **audit)
+        return saved
+
+    async def fail(self, run: str, code: str) -> None:
+        """A launch that failed before its ``spawn`` was sent (a worktree that could not be created)."""
+        rec = self.store.records.get(run)
+        if rec is not None and rec.get("state") in LIVE:
+            await self._save({**rec, "state": "exited", "exit": _exit("spawn_failed", code), "cleanup": "complete"})
+
+    async def dispatch(self, run: str, payload: dict[str, Any], *, audit: bool = False) -> dict[str, Any]:
+        """Send ``spawn`` for a recorded intent and settle the record from the runner's answer."""
+        workspace_id = self.store.records[run]["workspace_id"]
+        if audit:
+            self._audit("run.dispatch", run=run, workspace_id=workspace_id)
         try:
             res = await self.command("spawn", {**payload, "run": run, "workspace_id": workspace_id})
         except HostError as exc:
             if exc.code in ("outcome.unknown", "runner.unavailable"):
+                if audit:
+                    self._audit("run.outcome", run=run, outcome="unknown")
                 raise HostError(
                     "outcome.unknown", f"the spawn of {run} was sent; the runner did not confirm it"
                 ) from None
             await self._save({**self.store.records[run], "state": "exited", "exit": _exit("spawn_failed", exc.code)})
+            if audit:
+                self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code)
             raise
         cur = self.store.records[run]
         pid = res.get("pid") if isinstance(res.get("pid"), int) and not isinstance(res.get("pid"), bool) else None
@@ -789,6 +818,8 @@ class RunnerHub:
         if cur.get("state") == "starting":
             # running until the runner's exit report says otherwise (that report carries the exit itself)
             await self._save({**cur, "state": "running", "pid": pid, "started_at": started})
+        if audit:
+            self._audit("run.outcome", run=run, outcome="started", pid=pid)
         return view(self.store.records[run])
 
     async def stop(self, run: str, grace_ms: int = 10_000) -> dict[str, Any]:

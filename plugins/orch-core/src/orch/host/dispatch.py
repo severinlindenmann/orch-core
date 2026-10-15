@@ -84,6 +84,7 @@ from . import diff as git_diff
 from . import quick as quick_list
 from . import reads, sessions, terms
 from . import records as records_ops
+from .agents import AGENT_OPS
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
 from .auth import Redactor
@@ -213,6 +214,7 @@ def served_ops() -> dict[str, int]:
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
+    out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
     return out
 
 
@@ -234,6 +236,10 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("read", "read")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
+    if name == "agent.preview":  # H11c: P only, no side effects
+        return ("person_read", "read")
+    if name == "agent.start":  # H11c: P only
+        return ("person_write", "write")
     if name == "grant.deposit":  # H11c: a person with their own verified runner grant (checked by the op)
         return ("deposit", "write")
     if name == "grant.deposit_status":  # H11c: P only, own deposits
@@ -421,6 +427,10 @@ class RegistryBackend:
             return await self._register_runs(call, result)
         if op in TERM_OPS or op == "run.stop":
             return await terms.complete(call, result)
+        if op in AGENT_OPS:  # H11c: the launch intent, the worktree, the spawn
+            from . import agents
+
+            return await agents.complete(call, result)
         if op in GRANT_OPS:  # H11c: the runner grant table and the runner, on the event loop
             from . import runnergrants
 
@@ -589,6 +599,10 @@ class RegistryBackend:
                 result = records_ops.serve(call)
             elif op in TERM_OPS or op == "run.stop":
                 result = terms.serve(call)
+            elif op in AGENT_OPS:
+                from . import agents
+
+                result = agents.serve(call)
             elif op in GRANT_OPS:
                 from . import runnergrants
 

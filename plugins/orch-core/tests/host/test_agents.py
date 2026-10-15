@@ -1,0 +1,312 @@
+"""H11c acceptance: agent.preview / agent.start (D-P2-28, §12.4), term.preview / term.open {harness}, and the canary.
+
+The runner runs in this process; harnesses are fake programs in ``tmp_path`` named by ``runner.json``
+(``login_shell: false``), so no real ``claude`` or ``codex`` is ever started. The login-shell form is checked on the
+preview's argv only (spawning it would run whatever the login shell finds as ``codex``).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+from orch.host.control_client import new_idem
+from orch.host.launch import LOGIN_EXEC, LOGIN_NOTICE
+from orch.identity import new_ulid
+from orch.runner import enablement
+from orch.runner.config import parse
+from tests.host.dispatch_helpers import SESSION, err, ok
+from tests.host.lifecycle_helpers import UID
+from tests.host.live_helpers import world
+from tests.host.test_runner_grants import SECRET_TAIL, deposit, gid_of, issue
+from tests.host.test_runner_socket import Runner, wait_for
+
+pytestmark = pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the runner is POSIX only")
+
+
+@pytest.fixture
+def w(tmp_path):
+    w = world(tmp_path, runner_identity=lambda cred: cred.pid == os.getpid())
+    yield w
+    w.h.stop()
+    w.lab.close()
+
+
+def grant_addon(w, name: str = "start-agent", caps=("spawn_agent",)) -> None:
+    w.person_event("addon.granted", "workspace", name=name, version="0.1.0", package_sha256="sha256:" + "0" * 64,
+                   capabilities=list(caps), fields={}, sections=[], artifact_kinds=[])  # fmt: skip
+
+
+def fake(tmp_path: Path, name: str) -> Path:
+    """A harness stand-in: records its argv and environment, then waits."""
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    path = tmp_path / "bin" / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(
+        "#!/bin/sh\n"
+        f'for a in "$@"; do printf \'%s\\n\' "$a"; done > {out}/{name}.argv.tmp\n'
+        f"env > {out}/{name}.env.tmp\n"
+        f"mv {out}/{name}.argv.tmp {out}/{name}.argv; mv {out}/{name}.env.tmp {out}/{name}.env\n"
+        "exec sleep 60\n"
+    )
+    path.chmod(0o755)
+    return path
+
+
+def write_config(w, doc: dict) -> None:
+    path = Path(w.lab.state) / "runner.json"
+    path.write_text(json.dumps(doc))
+    path.chmod(0o600)
+
+
+@pytest.fixture
+def ready(w, tmp_path, monkeypatch):
+    """start-agent granted, dashboard execution on (no terminals), runner.json naming the fakes, a runner, a runner
+    grant deposited."""
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setenv("SECRET_TOKEN", "must-not-pass")
+    grant_addon(w)
+    enablement.set_enabled(Path(w.lab.state), w.wid, True, UID, terminals=False, text="t")
+    programs = {"codex": str(fake(tmp_path, "codex")), "claude-code": str(fake(tmp_path, "claude"))}
+    doc = {"v": 1, "login_shell": False, "programs": programs}
+    write_config(w, doc)
+    (tmp_path / "rs").mkdir(mode=0o700)
+    r = Runner(w, tmp_path / "rs", config=parse(doc))
+    w.runner, w.out = r, tmp_path / "out"
+    w.value = issue(w)
+    ok(deposit(w.conn(), w.value))
+    try:
+        yield w
+    finally:
+        r.close()
+
+
+def preview(c, **args):
+    return ok(c.call("agent.preview", args))["data"]
+
+
+def start(c, idem: str | None = None, **args):
+    rid = f"s{new_ulid()}"
+    c.ws.send(rid, "agent.start", args, opts={"idem": idem or new_idem()})
+    return c.answer(rid)
+
+
+def read_out(w, name: str) -> tuple[list[str], dict[str, str]]:
+    wait_for(lambda: (w.out / f"{name}.env").exists())
+    argv = (w.out / f"{name}.argv").read_text().splitlines()
+    env = dict(line.split("=", 1) for line in (w.out / f"{name}.env").read_text().splitlines() if "=" in line)
+    return argv, env
+
+
+# -- preview ---------------------------------------------------------------------------------------------------------
+
+
+def test_preview_blocks_in_order_and_has_no_side_effects(w, tmp_path, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    c = w.conn()
+    _, key = w.ticket()
+    args = {"ticket": key, "harness": "codex", "mode": "work"}
+    first = preview(c, **args)["blocked"]
+    assert first["code"] == "runner.disabled" and first["detail"] == {"missing": "addon"}
+    grant_addon(w)
+    assert preview(c, **args)["blocked"]["detail"] == {"missing": "machine"}
+    enablement.set_enabled(Path(w.lab.state), w.wid, True, UID, terminals=False, text="t")  # no terminals needed
+    assert preview(c, **args)["blocked"]["code"] == "runner.unavailable"
+    (tmp_path / "rs").mkdir(mode=0o700)
+    r = Runner(w, tmp_path / "rs")
+    try:
+        got = preview(c, **args)["blocked"]
+        assert got["code"] == "launch.no_grant" and got["detail"] == {"reason": "none"}
+        value = issue(w)
+        ok(deposit(c, value))
+        pre = preview(c, **args)
+        assert pre["blocked"] is None and pre["ticket"] == key and pre["will_create_worktree"] is False
+        assert pre["argv"] == ["$SHELL", "-l", "-c", LOGIN_EXEC, "codex",
+                               f"Run orch status, then work on ticket {key}. Follow AGENTS.orch.md."]  # fmt: skip
+        assert pre["login_shell"] is True and pre["program"] is None and LOGIN_NOTICE in pre["warnings"]
+        assert {"ORCH_GRANT", "ORCH_SESSION", "ORCH_TICKET", "ORCH_HARNESS", "TERM"} <= set(pre["env"])
+        assert pre["cwd"] == {"kind": "workspace"} and pre["grant"]["scope"] == "workable"
+        assert preview(c, **args)["spec"] == pre["spec"]
+        assert ok(c.call("run.list", {"state": "all"}))["data"]["runs"] == []  # nothing was started or recorded
+        assert err(c.call("agent.preview", args, grant=value)) == "op.not_allowed"  # P only
+        assert preview(c, **{**args, "ticket": "NOPE-999"})["blocked"]["code"] == "not_found"
+    finally:
+        r.close()
+
+
+@pytest.mark.parametrize("model", ["-x", "--yolo", "a b", "x;y"])
+def test_a_bad_model_is_launch_invalid_at_preview_and_at_start(ready, model):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work", model=model)
+    assert pre["blocked"]["code"] == "launch.invalid" and "model" in pre["blocked"]["message"]
+    assert err(start(c, ticket=key, harness="codex", mode="work", model=model, spec=pre["spec"])) == "launch.invalid"
+
+
+def test_subagent_model_is_claude_code_only(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    assert preview(c, ticket=key, harness="codex", mode="work", subagent_model="haiku")["blocked"]["code"] == (
+        "launch.invalid"
+    )
+    pre = preview(c, ticket=key, harness="claude-code", mode="refine", subagent_model="haiku")
+    assert pre["blocked"] is None and "CLAUDE_CODE_SUBAGENT_MODEL" in pre["env"]
+
+
+def test_a_live_claim_refuses(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    ok(c.call("claim", {"ref": key}, grant=w.grant, session=SESSION, idem=True))
+    assert preview(c, ticket=key, harness="codex", mode="work")["blocked"]["code"] == "launch.claimed"
+
+
+def test_fish_as_shell_is_harness_shell_unsupported(ready, monkeypatch):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    write_config(w, {"v": 1})  # the login-shell form
+    monkeypatch.setenv("SHELL", "/usr/local/bin/fish")
+    assert preview(c, ticket=key, harness="codex", mode="work")["blocked"]["code"] == "harness.shell_unsupported"
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    w.runner.link._config = parse({"v": 1})
+    w.runner.link.env["SHELL"] = "/usr/local/bin/fish"  # the runner's own $SHELL decides at spawn
+    w.runner.link.env["PATH"] = str(w.out)  # and nothing named codex could be found anyway
+    assert err(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])) == "harness.shell_unsupported"
+
+
+# -- start -------------------------------------------------------------------------------------------------------------
+
+
+def test_start_spawns_exactly_the_preview_with_the_grant_only_in_the_agents_env(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work", model="o3")
+    assert pre["blocked"] is None and pre["login_shell"] is False and pre["program"] == pre["argv"][0]
+    run = ok(start(c, ticket=key, harness="codex", mode="work", model="o3", spec=pre["spec"]))["data"]["run"]
+    assert run["kind"] == "agent" and run["as_person"] is False and run["harness"] == "codex"
+    assert run["session"].startswith("s_") and run["grant"] == gid_of(w.value) and run["grant_state"] == "ok"
+    argv, env = read_out(w, "codex")
+    assert [pre["program"], *argv] == pre["argv"]  # the spawned argv is the previewed one
+    assert env["ORCH_GRANT"] == w.value and env["ORCH_SESSION"] == run["session"]
+    assert env["ORCH_TICKET"] == key and env["ORCH_HARNESS"] == "codex"
+    assert "SECRET_TOKEN" not in env
+    allowed = set(pre["env"]) | {"PWD", "SHLVL", "_", "OLDPWD"}  # the shell's own bookkeeping
+    assert set(env) <= allowed, set(env) - allowed
+
+
+def test_an_idem_retry_starts_one_process(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="fix")
+    idem = new_idem()
+    first = ok(start(c, idem, ticket=key, harness="codex", mode="fix", spec=pre["spec"]))["data"]["run"]
+    again = ok(start(c, idem, ticket=key, harness="codex", mode="fix", spec=pre["spec"]))["data"]["run"]
+    assert first["run"] == again["run"]
+    assert [r["run"] for r in w.runner.sup.runs()] == [first["run"]]
+
+
+def test_a_changed_value_or_grant_between_preview_and_start_is_launch_changed(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    assert err(start(c, ticket=key, harness="codex", mode="refine", spec=pre["spec"])) == "launch.changed"
+    assert err(start(c, ticket=key, harness="codex", mode="work", spec="0" * 64)) == "launch.changed"
+    ok(deposit(c, issue(w)))  # a newer runner grant: the spec names the grant id
+    assert err(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])) == "launch.changed"
+    assert err(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"], cols=10)) == "invalid.input"
+    assert w.runner.sup.runs() == []
+
+
+def test_start_is_p_only_and_needs_the_switch(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    assert (
+        err(
+            c.call(
+                "agent.start",
+                {"ticket": key, "harness": "codex", "mode": "work", "spec": pre["spec"]},
+                grant=w.value,
+                idem=True,
+            )
+        )
+        == "op.not_allowed"
+    )  # an agent (its ORCH_GRANT) never starts one
+    assert err(c.call("agent.start", {"ticket": key, "harness": "codex", "mode": "work", "spec": pre["spec"]})) == (
+        "idem.required"
+    )
+    enablement.set_enabled(Path(w.lab.state), w.wid, False, UID)
+    assert err(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])) == "runner.disabled"
+    assert w.runner.sup.runs() == []
+
+
+def test_a_revoked_grant_ends_grant_state_but_not_the_run(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    run = ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))["data"]["run"]
+    w.person_event("grant.revoked", grant=gid_of(w.value))
+    wait_for(lambda: ok(c.call("run.list", {}))["data"]["runs"][0]["grant_state"] == "ended")
+    assert ok(c.call("run.list", {}))["data"]["runs"][0]["state"] == "running" and run["run"]
+    assert preview(c, ticket=key, harness="codex", mode="work")["blocked"]["detail"] == {"reason": "none"}
+
+
+def test_the_secret_is_in_the_agents_env_and_nowhere_else(ready, tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    res = start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])
+    ok(c.call("run.list", {}))
+    ok(c.call("whoami", {}))
+    _, env = read_out(w, "codex")
+    assert env["ORCH_GRANT"].endswith(SECRET_TAIL)
+    assert SECRET_TAIL not in repr(c.frames) + repr(res) + caplog.text
+    agent_env = (w.out / "codex.env").resolve()
+    for path in Path(tmp_path).rglob("*"):
+        if path.is_file() and not path.is_symlink() and path.resolve() != agent_env:
+            assert SECRET_TAIL.encode() not in path.read_bytes(), path
+
+
+# -- person-run harnesses --------------------------------------------------------------------------------------------
+
+
+def test_a_person_run_harness_has_no_grant_no_session_no_claim_precheck(ready):
+    w = ready
+    grant_addon(w, "terminals", ("pty",))
+    enablement.set_terminals(Path(w.lab.state), w.wid, True, UID, text="t")
+    c = w.conn()
+    _, key = w.ticket()
+    ok(c.call("claim", {"ref": key}, grant=w.grant, session=SESSION, idem=True))
+    pre = ok(c.call("term.preview", {"harness": "claude-code", "ticket": key, "mode": "context"}))["data"]
+    assert pre["blocked"] is None and pre["as_person"] is True
+    assert "ORCH_GRANT" not in pre["env"] and "ORCH_SESSION" not in pre["env"] and "ORCH_HARNESS" not in pre["env"]
+    assert pre["argv"][-1] == f"Run orch show {key} --section current_state, then wait for my instructions."
+    rid = c.send("term.open", {"harness": "claude-code", "ticket": key, "mode": "context", "spec": pre["spec"]},
+                 idem=True)  # fmt: skip
+    run = ok(c.answer(rid))["data"]["run"]
+    assert (
+        run["kind"] == "shell" and run["session"] is None and run["grant"] is None and run["harness"] == "claude-code"
+    )
+    argv, env = read_out(w, "claude")
+    assert "ORCH_GRANT" not in env and "ORCH_SESSION" not in env and env["ORCH_TICKET"] == key
+    assert [pre["program"], *argv] == pre["argv"]
+    inter = ok(c.call("term.preview", {"harness": "codex"}))["data"]
+    assert inter["blocked"] is None and inter["argv"] == [str(w.out.parent / "bin" / "codex")]

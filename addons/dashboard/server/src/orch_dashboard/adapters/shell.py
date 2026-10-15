@@ -1,11 +1,14 @@
 """Shell projections: workspaces, members and identity. Unavailable fields are null, never guessed."""
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel
 
 from ..text import hidden
 from .addons import runner
+
+DEVICE = re.compile(r"d_[0-9a-f]{32}")
 
 
 class Member(BaseModel):
@@ -41,6 +44,8 @@ def click_card(row):
     }
     if isinstance(row.get("problem"), str):
         out["problem"] = row["problem"][:200]
+    if isinstance(row.get("device"), str) and DEVICE.fullmatch(row["device"]):
+        out["device"] = row["device"]  # the key the switch would move (shown before the person types the passphrase)
     return out
 
 

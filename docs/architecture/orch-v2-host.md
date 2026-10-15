@@ -5340,7 +5340,7 @@ same backup cannot be detected (inherent to any local state), nor can a block-le
 | `rids.sqlite` | `rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem)`, `submission(device, rid, log, events)`, `chunk(device, rid, idx, epoch, bytes, state)`, `window(device, high, bitmap)`, `cursor(after)`, `meta(start_ms)` | chunk bytes are ciphertext; `submission.events` are device-signed events (below) | the state machine of 11A.4 |
 | `publish.json` | `{entry, source_hash, target_hash, pages:[{i, digest, count, put}], manifest_put, cap}` | no | staging resumes from it: pages are immutable and an identical PUT is a free 200 |
 | `published.jsonl`, `published/` | append-only: one line `{n, hash, kind, at_ms}` per accepted publication; `published/restore-<n>.json` (the full final body of every accepted restore, kept forever) and `published/last.json` (the last accepted plain checkpoint) | no | appended after a 200 and before the outbox entry is deleted; used to rebuild after a relay rollback (11A.5) |
-| `unpublished.json` | `{cursor, last_full_read_ms}` | no | the cursor is acked only after every item up to it is settled by the store (11A.9) |
+| `unpublished.json` | `{v, cursor, scan, gen, last_full_ms, notice, held, scan_held, ack}` | no | the cursor is acked only after every item up to it is settled by the store; `ack` is the pending ack, cleared only once the relay accepted it (11A.9) |
 | `alarms.json` | the H8 counters and open alarms (`host.status`) | no | rewritten atomically |
 
 **Read through the host store, never copied.**
@@ -6848,7 +6848,15 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   page is read again. Then `relay/unpublished.json` `{v, cursor, scan, gen, last_full_ms, notice, held,
   scan_held}` is written atomically, and only then `POST unpublished/ack {cursor}` (exactly that field). 429 waits
   `Retry-After` (else 60 s); other refusals and transport errors back off 30 s, one alarm per class; the session's
-  `Fenced`/`SessionError` reach the aux guard (the worker stops). **R2 change (minimal, read-only):**
+  `Fenced`/`SessionError` reach the aux guard (the worker stops). **Review fixes (15 Oct 2026, Codex review orch-07):**
+  (P2-1) a changed holder `gen` resets `scan`, `scan_held` and `ack` at once, independent of how far an inherited
+  scan got: a crash mid-scan never lets the next generation continue the old scan or inherit its held pairs.
+  (P2-2) the ack is a **pending ack**: `unpublished.json` carries `ack` (the cursor owed), written atomically before
+  the POST and cleared only after the relay accepted it (also across a restart). Every turn retries a pending ack
+  first and does nothing else; the same retry classes apply (`cursor_ahead` drops the ack and restarts the scan, 429
+  waits `Retry-After`, other refusals and transport errors back off 30 s, `Fenced`/`SessionError` reach the aux guard
+  with the ack still owed). A pending ack of an older generation is dropped (decided): the new generation reads from
+  the start and acks every position again, so an old position is never sent under a new `gen`. **R2 change (minimal, read-only):**
   `BridgeLoop.notices` keeps a copy of the last poll's `notices`; nothing in the bridge acts on it.
 - **Held evidence, interim for #572 (DECIDED 15 Oct 2026, orch-d6 with orch-52):** the host has no host-originated
   `needs` items yet, so a `held` result raises the relay alarm `unpublished_held` naming the pair, and the pair joins

@@ -19,7 +19,9 @@ holds as worker jobs, then the durable position, then one ack of at most 10 s):
   A store fault (an exception) means no result: nothing after it is stored or acked; the page is read again.
 * **Order.** All items of the page have a result (``held``/``pending`` are durable in ``HostPins``), then the new
   position is written atomically (``unpublished.json``), and only then the page's ``cursor`` is acked
-  (``POST unpublished/ack {cursor}``, exactly that field: the relay refuses any other). An ack is not publication.
+  (``POST unpublished/ack {cursor}``, exactly that field: the relay refuses any other). An ack is not publication. The ack is owed
+  (``ack`` in the file) from the write until the relay accepted it: a failed one is retried first, later or after a
+  restart.
 * **Held evidence.** The host has no host-originated ``needs`` items yet (issue #572), so a ``held`` result raises
   the relay alarm ``unpublished_held`` naming the pair, and the pair joins ``held`` in ``unpublished.json``
   (bounded; every completed full read replaces it with the pairs that read held, so a published revocation leaves
@@ -70,7 +72,7 @@ def _position(value: object) -> str:
 
 def _empty() -> dict[str, Any]:
     return {"v": 1, "cursor": None, "scan": None, "gen": None, "last_full_ms": 0, "notice": None, "held": [],
-            "scan_held": []}  # fmt: skip
+            "scan_held": [], "ack": None}  # fmt: skip
 
 
 class UnpublishedConsumer:
@@ -113,7 +115,7 @@ class UnpublishedConsumer:
         st = _empty()
         if type(obj) is not dict:
             return st
-        for key in ("cursor", "scan", "notice"):
+        for key in ("cursor", "scan", "notice", "ack"):
             v = obj.get(key)
             if v is None or (type(v) is str and (v == "" or _POSITION.fullmatch(v))):
                 st[key] = v
@@ -140,10 +142,18 @@ class UnpublishedConsumer:
             return  # no holder generation: nothing is read before this holder's own host/hold
         st = self.load()
         now = self._now_ms()
-        if st["scan"] is None and (st["gen"] != gen or now - st["last_full_ms"] >= FULL_EVERY_MS):
-            st["scan"] = ""  # a full read from the start: a new holder generation, or the daily read
-            st["gen"], st["scan_held"] = gen, []
+        if st["gen"] != gen:
+            # A new holder generation always starts over, whatever a crashed predecessor left mid-scan (the scan
+            # position, its held pairs) or still owed (a pending ack: the new full read re-reads and re-acks every
+            # position from the start, so an older generation's ack is dropped, never sent).
+            st["scan"], st["gen"], st["scan_held"], st["ack"] = "", gen, [], None
             self._save(st)
+        elif st["scan"] is None and now - st["last_full_ms"] >= FULL_EVERY_MS:
+            st["scan"], st["scan_held"] = "", []  # the daily full read from the start
+            self._save(st)
+        if st["ack"] is not None:
+            self._send_ack(st)  # an ack owed from an earlier turn or run: retried first, nothing else this turn
+            return
         notice = self._notice()
         if st["scan"] is not None:
             position, full = st["scan"] or None, True
@@ -174,13 +184,21 @@ class UnpublishedConsumer:
             st["cursor"] = cursor  # a read from the stored position only moves forward; a full read ends past all
         if not more:
             st["notice"] = notice  # this notice is answered: read again only when it changes
+        st["ack"] = cursor  # the ack is owed from here on, also across a restart, until the relay accepts it
         self._save(st)  # durable before the ack (obligation 4)
+        self._send_ack(st)
+
+    def _send_ack(self, st: dict[str, Any]) -> None:
         try:
-            self._ack(cursor)
+            self._ack(st["ack"])
         except RelayRefused as e:
-            self._refused(e, st)
+            self._refused(e, st)  # the retry-class table; the pending ack stays (except cursor_ahead)
+            return
         except TransportError as e:
             self._backoff("unpublished_transport", type(e).__name__, BACKOFF_S)
+            return
+        st["ack"] = None  # only now: the relay accepted it
+        self._save(st)
 
     # -- relay calls ---------------------------------------------------------------------------------------------------
 
@@ -210,7 +228,8 @@ class UnpublishedConsumer:
 
     def _refused(self, e: RelayRefused, st: dict[str, Any]) -> None:
         if e.status == 409 and e.code == "cursor_ahead":
-            st["scan"], st["scan_held"] = "", []  # obligation 1: restart from the start; the store deduplicates
+            # obligation 1: restart from the start; the store deduplicates
+            st["scan"], st["scan_held"], st["ack"] = "", [], None
             self._save(st)
             self._alarm("unpublished_cursor_ahead", "the relay refused the stored position: reading from the start")
             return

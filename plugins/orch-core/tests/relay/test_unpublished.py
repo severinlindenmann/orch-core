@@ -153,6 +153,113 @@ def test_a_daily_full_read_and_a_new_generation_restart_from_the_start(state):
     assert relay.calls[n][1].endswith("unpublished?limit=64") and c.load()["gen"] == 2
 
 
+def test_a_new_generation_discards_a_crashed_predecessors_scan_even_mid_scan(state):
+    relay = Relay(state, {None: ([_it()], pos(1), True), pos(1): ([], pos(2), False)})
+    c, _, _ = make(state, relay, lambda i: "held")
+    c.step()  # gen 1: page 1 read, held, acked; the scan is mid-way
+    mid = c.load()
+    assert mid["scan"] == pos(1) and mid["scan_held"] and mid["gen"] == 1
+    relay.acked.clear()
+    relay.gen = 2  # the holder crashed; a NEW generation takes over
+    n = len(relay.calls)
+    c.step()
+    assert relay.calls[n][1].endswith("unpublished?limit=64")  # from the start, not from pos(1)
+    after = c.load()
+    assert after["gen"] == 2 and after["scan"] == pos(1) and [h["device_id"] for h in after["scan_held"]] == ["ab" * 16]
+    assert relay.acked == [pos(1)]
+    # the pair the predecessor held is no longer served (published meanwhile): the new scan must not inherit it
+    relay.pages[None] = ([], pos(1), True)
+    relay.gen = 3
+    c.step()
+    assert c.load()["scan_held"] == []
+
+
+def test_the_same_generation_continues_its_scan(state):
+    relay = Relay(state, {None: ([], pos(1), True), pos(1): ([], pos(2), False)})
+    c, _, _ = make(state, relay, lambda i: "pending")
+    c.step()
+    n = len(relay.calls)
+    c.step()
+    assert relay.calls[n][1].endswith(f"cursor={pos(1)}&limit=64")
+
+
+ACK = "POST /v2/workspaces/{ws}/unpublished/ack"
+
+
+def test_a_failed_ack_is_persisted_first_and_retried_after_backoff(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    relay.fail[ACK] = TransportError("deadline", "test")
+    c, clock, _ = make(state, relay, lambda i: "pending")
+    c.step()
+    post = next(call for call in relay.calls if call[0] == "POST")
+    assert post[3]["ack"] == pos(1)  # durable before the send
+    assert c.load()["ack"] == pos(1) and relay.acked == []
+    n = len(relay.calls)
+    c.step()
+    assert len(relay.calls) == n  # backoff: nothing sent yet
+    clock.mono += up.BACKOFF_S + 1
+    c.step()
+    assert relay.acked == [pos(1)] and c.load()["ack"] is None
+    assert [call[0] for call in relay.calls[n:]] == ["POST"]  # the retry is the ack, not a new read
+
+
+def test_a_pending_ack_is_retried_after_a_restart(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    relay.fail[ACK] = RelayRefused(503, "unavailable")
+    c, _, _ = make(state, relay, lambda i: "pending")
+    c.step()
+    assert relay.acked == [] and c.load()["ack"] == pos(1)
+    c2, _, _ = make(state, relay, lambda i: "pending")  # a new process: no in-memory backoff
+    n = len(relay.calls)
+    c2.step()
+    assert relay.acked == [pos(1)] and c2.load()["ack"] is None
+    assert [call[0] for call in relay.calls[n:]] == ["POST"]
+
+
+def test_a_pending_ack_is_not_cleared_until_the_relay_accepted_it(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    relay.fail[ACK] = RelayRefused(429, "rate_limited", retry_after=30)
+    c, clock, alarms = make(state, relay, lambda i: "pending")
+    c.step()
+    assert c.load()["ack"] == pos(1) and alarms[0][0] == "unpublished_rate_limited"
+    clock.mono += 29
+    n = len(relay.calls)
+    c.step()
+    assert len(relay.calls) == n and c.load()["ack"] == pos(1)
+
+
+def test_a_fence_error_on_the_ack_stops_the_worker_and_keeps_the_ack_owed(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    relay.fail[ACK] = Fenced("fenced")
+    c, _, _ = make(state, relay, lambda i: "pending")
+    with pytest.raises(Fenced):
+        c.step()
+    assert c.load()["ack"] == pos(1)
+
+
+def test_a_pending_ack_of_an_older_generation_is_dropped_and_the_read_restarts(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    relay.fail[ACK] = TransportError("deadline", "test")
+    c, clock, _ = make(state, relay, lambda i: "pending")
+    c.step()
+    assert c.load()["ack"] == pos(1)
+    relay.gen = 2
+    clock.mono += up.BACKOFF_S + 1
+    n = len(relay.calls)
+    c.step()
+    assert [call[0] for call in relay.calls[n:]] == ["GET", "POST"]  # re-read from the start, acked fresh
+    assert relay.calls[n][1].endswith("unpublished?limit=64") and c.load()["ack"] is None
+
+
+def test_cursor_ahead_on_the_ack_drops_it_and_restarts(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    relay.fail[ACK] = RelayRefused(409, "cursor_ahead")
+    c, _, _ = make(state, relay, lambda i: "pending")
+    c.step()
+    st = c.load()
+    assert st["ack"] is None and st["scan"] == ""
+
+
 # -- failures -----------------------------------------------------------------------------------------------------
 
 

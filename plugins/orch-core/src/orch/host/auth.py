@@ -250,6 +250,7 @@ class Redactor:
             retry_after_ms=error.retry_after_ms,
             hint=self.text(error.hint) if error.hint else None,
             fix=[self.text(a) for a in error.fix] if error.fix else None,
+            detail=error.detail,  # only closed_detail() of it is ever sent (errors.py)
         )
         out.exit, out.retryable = error.exit, error.retryable
         return out

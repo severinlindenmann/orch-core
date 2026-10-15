@@ -41,3 +41,5 @@ The fixtures in `test/fixtures` are real orch-core output. After a change to wha
 ```bash
 uv run --project plugins/orch-core python plugins/orch-session/test/make_fixtures.py plugins/orch-session/test/fixtures
 ```
+
+> **Parked (v2):** this plugin reads orch v1 output (`orch list --mine --json`, `orch.core`). It is not carried over to orch v2 (see docs/architecture/orch-v2-carryover.md, "Later / maybe": P01), is no longer listed in the marketplace, and has no CI. Kept for reference only.

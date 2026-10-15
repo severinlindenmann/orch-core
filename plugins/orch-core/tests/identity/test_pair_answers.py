@@ -8,13 +8,16 @@ from __future__ import annotations
 import pytest
 
 from orch import canon, crypto
-from orch.identity import Refused, pairing
+from orch.identity import Refused, answers, certreq
 
+from ..relay import corpus
 from .test_pairing import ANSWERS, EPOCH0_SOURCES, _steps
 
 _b = crypto.unb64u
 
-FORMS = pairing.ANSWER_FORMS
+FORMS = answers.ANSWER_FORMS
+OWNER_PK = corpus.pub("person_alice.sig")  # the host's pinned PK in every corpus answer
+PRIMARY = corpus.S2["ids"]["device_primary"]
 
 
 def _form(meta: dict) -> str | None:
@@ -25,16 +28,43 @@ def _form(meta: dict) -> str | None:
     return None
 
 
+def _request_for(o: dict) -> dict:
+    """The host's own request that a challenge or rejection names (its clear fields; the sealed inner is not needed):
+    the host checks every relayed object against its stored request (11A.15.6 7c/7d)."""
+    try:
+        keys = o.get("dk_hash") or crypto.b64u(crypto.dk_hash(_b(o["dk_sig_pub"]), _b(o["dk_kx_pub"])))
+        created = o["expires_ms"] - certreq.CERT_PENDING_MS
+    except (KeyError, TypeError, ValueError, crypto.CryptoError):
+        raise Refused("malformed", "no request for this object") from None
+    ids = ("request_id", "workspace_id", "person_id", "offer_id", "attempt", "device_id")
+    return {"v": 2, "suite": 2, "kind": "cert_request", "primary_device_id": PRIMARY, "dk_hash": keys,
+            "created_ms": created, "sealed": "AAAA", **{k: o.get(k) for k in (*ids, "expires_ms")}}  # fmt: skip
+
+
+def _challenge(signed: dict | None) -> certreq.CertChallenge | None:
+    if signed is None:
+        return None
+    if type(signed) is not dict or type(signed.get("o")) is not dict:
+        raise Refused("malformed", "challenge")
+    return certreq.check_cert_challenge(signed, OWNER_PK, _request_for(signed["o"]))
+
+
+def _rejection(signed: dict) -> certreq.CertRejection:
+    if type(signed) is not dict or type(signed.get("o")) is not dict:
+        raise Refused("malformed", "rejection")
+    return certreq.check_cert_rejection(signed, OWNER_PK, _request_for(signed["o"]))
+
+
 def _build(name: str, meta: dict) -> dict:
     w = _b(meta["wsk_pub"])
     if name == "pending":
-        return pairing.answer_pending(w, _b(meta["sas_nonce"]), _b(meta["dk_sig_pub"]), _b(meta["dk_kx_pub"]))
+        return answers.answer_pending(w, _b(meta["sas_nonce"]), _b(meta["dk_sig_pub"]), _b(meta["dk_kx_pub"]))
     if name == "cert_pending":
-        return pairing.answer_cert_pending(
-            w, primary_label=meta["primary_label"], pk_pub=_b(meta["pk_pub"]), challenge=meta["challenge"]
+        return answers.answer_cert_pending(
+            w, primary_label=meta["primary_label"], pk_pub=_b(meta["pk_pub"]), challenge=_challenge(meta["challenge"])
         )
     if name == "approved":
-        return pairing.answer_approved(
+        return answers.answer_approved(
             w,
             scopes=meta["scopes"],
             cert=meta["cert"],
@@ -45,11 +75,11 @@ def _build(name: str, meta: dict) -> dict:
             baseline=meta["baseline"],
         )
     if name == "rejected_short":
-        return pairing.answer_rejected_short(w)
+        return answers.answer_rejected_short(w)
     if name == "rejected_long":
-        return pairing.answer_rejected_long(w, pk_pub=_b(meta["pk_pub"]), rejection=meta["rejection"])
+        return answers.answer_rejected_long(w, rejection=_rejection(meta["rejection"]))
     assert name == "expired"
-    return pairing.answer_expired(w)
+    return answers.answer_expired(w)
 
 
 # Every state answer (not a refusal) in the corpus: the device-side answers that open under the link's secret, and
@@ -81,7 +111,22 @@ def test_every_corpus_answer_is_built_byte_for_byte_or_cannot_be_built(name, exp
             _build(form, meta)
         assert e.value.code == "malformed"
         return
+    if _unverifiable(form, meta):
+        # a challenge or rejection the host cannot verify under its pinned PK against a request: never relayed, and
+        # the phone never shows or attributes it either
+        assert exp.get("result") == "drop" or exp.get("attributed") is False
+        return
     assert canon.dumps(_build(form, meta)) == canon.dumps(meta)
+
+
+def _unverifiable(form: str, meta: dict) -> bool:
+    if form not in ("cert_pending", "rejected_long"):
+        return False
+    try:
+        _build(form, meta)
+    except Refused:
+        return True
+    return False
 
 
 def test_answer_cases_are_all_found():
@@ -90,15 +135,24 @@ def test_answer_cases_are_all_found():
     assert len(ANSWERS) == 77
     assert len(DEVICE) == 72 and len(HOST) == 19
     forms = [_form(m) for _n, _e, m in STATE_ANSWERS]
-    built = [f for (_n, e, _m), f in zip(STATE_ANSWERS, forms, strict=True) if f and not _malformed(e)]
+    rows = [(n, e, m, f) for (n, e, m), f in zip(STATE_ANSWERS, forms, strict=True)]
+    built = [f for _n, e, m, f in rows if f and not _malformed(e) and not _unverifiable(f, m)]
     assert {f: built.count(f) for f in FORMS} == {
         "pending": 16,
-        "cert_pending": 26,
+        "cert_pending": 23,
         "approved": 14,
         "rejected_short": 4,
-        "rejected_long": 19,
+        "rejected_long": 16,
         "expired": 1,
     }
+    assert [n for n, e, m, f in rows if f and not _malformed(e) and _unverifiable(f, m)] == [
+        "challenge_signed_by_the_host_not_pk[0]",
+        "cert_pending_with_a_pk_not_of_the_pin[0]",
+        "challenge_in_the_old_shape_dropped[0]",
+        "pk_not_of_the_pin_unattributed[0]",
+        "rejection_signed_by_the_host_unattributed[0]",
+        "rejection_in_the_old_shape_unattributed[0]",
+    ]
     refused = [f for (_n, e, _m), f in zip(STATE_ANSWERS, forms, strict=True) if f and _malformed(e)]
     assert refused == ["approved"] * 4
     assert sum(f is None for f in forms) == 7
@@ -118,7 +172,7 @@ def _approved(**kw):
     a = {k: _P[k] for k in ("scopes", "cert", "epoch", "list_seq", "card_seq", "baseline")}
     a["pk_pub"] = _PK
     a.update(kw)
-    return pairing.answer_approved(_W, **a)
+    return answers.answer_approved(_W, **a)
 
 
 @pytest.mark.parametrize(
@@ -161,20 +215,23 @@ def test_answer_approved_takes_a_null_baseline():
 @pytest.mark.parametrize(
     "call",
     [
-        lambda: pairing.answer_pending(_OFF, bytes(32), _PK, _PK),
-        lambda: pairing.answer_pending(_W, bytes(31), _PK, _PK),
-        lambda: pairing.answer_pending(_W, bytes(32), _OFF, _PK),
-        lambda: pairing.answer_pending(_W, bytes(32), _PK, _PK[:-1]),
-        lambda: pairing.answer_rejected_short(crypto.b64u(_W)),
-        lambda: pairing.answer_expired(_W[:-1]),
-        lambda: pairing.answer_cert_pending(_W, primary_label="Mac​Book", pk_pub=_PK, challenge=None),
-        lambda: pairing.answer_cert_pending(_W, primary_label=b"Mac", pk_pub=_PK, challenge=None),
-        lambda: pairing.answer_cert_pending(_W, primary_label="Mac", pk_pub=_OFF, challenge=None),
-        lambda: pairing.answer_cert_pending(_W, primary_label="Mac", pk_pub=_PK, challenge={"o": {}}),
-        lambda: pairing.answer_cert_pending(_W, primary_label="Mac", pk_pub=_PK, challenge=_C["challenge"]["o"]),
-        lambda: pairing.answer_rejected_long(_W, pk_pub=_PK, rejection=None),
-        lambda: pairing.answer_rejected_long(_W, pk_pub=_PK, rejection={**_R["rejection"], "x": 1}),
-        lambda: pairing.answer_rejected_long(_W, pk_pub=_OFF, rejection=_R["rejection"]),
+        lambda: answers.answer_pending(_OFF, bytes(32), _PK, _PK),
+        lambda: answers.answer_pending(_W, bytes(31), _PK, _PK),
+        lambda: answers.answer_pending(_W, bytes(32), _OFF, _PK),
+        lambda: answers.answer_pending(_W, bytes(32), _PK, _PK[:-1]),
+        lambda: answers.answer_rejected_short(crypto.b64u(_W)),
+        lambda: answers.answer_expired(_W[:-1]),
+        lambda: answers.answer_cert_pending(_W, primary_label="Mac​Book", pk_pub=_PK, challenge=None),
+        lambda: answers.answer_cert_pending(_W, primary_label=b"Mac", pk_pub=_PK, challenge=None),
+        lambda: answers.answer_cert_pending(_W, primary_label="Mac", pk_pub=_OFF, challenge=None),
+        lambda: answers.answer_cert_pending(_W, primary_label="Mac", pk_pub=_PK, challenge={"o": {}}),
+        # Opus L7: a raw (unverified) challenge or rejection is refused, even a well-formed one
+        lambda: answers.answer_cert_pending(_W, primary_label="Mac", pk_pub=_PK, challenge=_C["challenge"]),
+        lambda: answers.answer_cert_pending(
+            _W, primary_label="Mac", pk_pub=corpus.pub("person_bob.sig"), challenge=_challenge(_C["challenge"])
+        ),  # verified under another PK than the one the answer names
+        lambda: answers.answer_rejected_long(_W, rejection=None),
+        lambda: answers.answer_rejected_long(_W, rejection=_R["rejection"]),
     ],
 )
 def test_answer_builders_refuse(call):
@@ -185,8 +242,8 @@ def test_answer_builders_refuse(call):
 
 def test_relayed_objects_are_copied_unchanged():
     """The challenge and the rejection are relayed byte-identical (11A.15.6 7c/7d) and not aliased to the caller's."""
-    a = pairing.answer_cert_pending(_W, primary_label="Mac", pk_pub=_PK, challenge=_C["challenge"])
+    a = answers.answer_cert_pending(_W, primary_label="Mac", pk_pub=_PK, challenge=_challenge(_C["challenge"]))
     assert canon.dumps(a["challenge"]) == canon.dumps(_C["challenge"]) and a["challenge"] is not _C["challenge"]
-    r = pairing.answer_rejected_long(_W, pk_pub=_PK, rejection=_R["rejection"])
+    r = answers.answer_rejected_long(_W, rejection=_rejection(_R["rejection"]))
     assert canon.dumps(r["rejection"]) == canon.dumps(_R["rejection"]) and r["rejection"] is not _R["rejection"]
-    assert pairing.answer_cert_pending(_W, primary_label="", pk_pub=_PK, challenge=None)["challenge"] is None
+    assert answers.answer_cert_pending(_W, primary_label="", pk_pub=_PK, challenge=None)["challenge"] is None

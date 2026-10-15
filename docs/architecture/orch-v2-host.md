@@ -3769,16 +3769,17 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `refused` (14.4), the identity check lives in the result builder with no digest in `Planned` (14.6 L7, 14.9),
     start-up recovery runs in R2's `Bridge.start` (H12a R5). No hash, contract or schema change.
 43. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10; the number may be renumbered if another item lands first):**
-    `orch.identity.pairing` gains the six pair answers (`answer_pending`, `answer_cert_pending`, `answer_approved`,
-    `answer_rejected_short`, `answer_rejected_long`, `answer_expired`, exact §8.3 shapes); `orch.identity.memberlist`
-    (`member_list_o`, `check_member_list`, `seal_wk`, `wk_grant_o`, `check_wk_grant`, `card_key_wrap`);
-    `orch.identity.certreq` (`cert_request_o`, `check_cert_request`/`open_cert_request` with a `CertJournal` and an
-    unseal callable, `check_cert_challenge`/`check_cert_rejection` for the host, `make_cert_challenge`/
-    `make_cert_rejection` over a sign callable). Every builder runs all matching relay corpus cases. Signature
-    differences from §11A.15.10 (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons`
-    without the owner; `check_wk_grant` takes the device id; `check_cert_request` takes `now_ms` and `me` as person
-    and device ids; the `make_*` builders take `pk_pub` to re-check what they signed. No hash, contract or schema
-    change.
+    `orch.identity.answers` (the six exact §8.3 pair answers; a relayed challenge or rejection enters only as the
+    verified `CertChallenge`/`CertRejection`); `orch.identity.memberlist` (`member_list_o`, `check_member_list`,
+    `seal_wk`, `wk_grant_o`, `check_wk_grant`, `card_key_wrap`); `orch.identity.wscard` (`card_o` for the rotation, and
+    `verify_card -> VerifiedCard`, the only card type a consumer takes); `orch.identity.certreq` (`cert_request_o`,
+    `check_cert_request`/`open_cert_request` with a `CertJournal` kept under one caller lock and recorded before the
+    challenge goes out, `RequestRefused` naming a refused id, `CertInner.display_label`, the host's
+    `check_cert_challenge`/`check_cert_rejection`, and `make_cert_challenge`/`make_cert_rejection` over a sign callable,
+    checked before signing). Every builder runs all matching relay corpus cases. Signature differences from §11A.15.10
+    (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons` without the owner;
+    `check_wk_grant` takes the device id; `check_cert_request` takes a `VerifiedCard`, `now_ms` and `me` as person and
+    device ids; the `make_*` builders take `pk_pub`. No hash, contract or schema change.
 
 ---
 

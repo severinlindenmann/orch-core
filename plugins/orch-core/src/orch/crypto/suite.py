@@ -39,6 +39,7 @@ __all__ = [
     "aes_gcm_open",
     "aes_gcm_seal",
     "device_id",
+    "dk_hash",
     "ecdh",
     "generate_private_key",
     "hkdf",
@@ -199,6 +200,14 @@ def device_id(dk_sig_pub: bytes) -> bytes:
 
 def pk_pin(pk_pub: bytes) -> bytes:
     return _suite_hash("h_pin_person", validate_public_key(pk_pub))
+
+
+def dk_hash(dk_sig_pub: bytes, dk_kx_pub: bytes) -> bytes:
+    """``H("orch/v2/dk-hash|" || suite || lp16(dk_sig_pub) || lp16(dk_kx_pub))`` (protocol §8.4, P3-D28): both keys of
+    one device, 32 raw bytes (``b64u`` on the wire). Each key is validated first."""
+    sig, kx = validate_public_key(dk_sig_pub), validate_public_key(dk_kx_pub)
+    lp16 = [len(k).to_bytes(2, "big") + k for k in (sig, kx)]
+    return sha256(L["h_dk_hash"] + bytes([SUITE_ID]) + lp16[0] + lp16[1])
 
 
 def wsk_pin(wsk_pub: bytes) -> bytes:

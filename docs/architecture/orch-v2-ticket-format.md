@@ -446,6 +446,9 @@ field is refused. Payload fields never reuse an envelope name.
   default accepts any. The weaker guarantees stay as stated where they were decided: `secure-enclave-unlocked`
   signs whenever the phone is unlocked (D49), `passphrase` does not protect a passphrase typed into a terminal
   an agent can read (D65, orch-v2-portable-custody.md §3), and `convenience` asks for no factor at all (D-P2-23).
+- **Readers of `auth` (H12d).** Which readers may see `convenience` events, and how a reader declares and proves that
+  it understands the value, is orch-v2-host §0.8.6 item 9: a device-signed declaration under
+  `orch/v2/sig/reader-decl|` with the known-answer digests of §11.5 (`reader_kat_1`). Not part of the log.
 - `presence` (in the 8 Oct draft) is replaced by `auth`.
 - **Phone decisions (P3/P4).** A phone answers a question with protocol §13's `decision`, signed over
   `"orch/v2/sig/decision|" || cj({workspace_id, question_id, content_hash, decision_id, answer})`. **These signed
@@ -613,6 +616,10 @@ the field it belongs to; no code looks a hash up by value alone.
 - New labels (`orch/v2/gate|`, `section|`, `value|`, `policy|`, `people|`, `question-id|`, `event|`,
   `grant-secret|`, `checkpoint-hash|`, `log-acc|`, `sig/ticket-event|`, `sig/ws-event|`, `sig/host-event|`, `sig/checkpoint|`) go into the
   orch-relay `vectors_v2.json` label list; the table stays prefix-free.
+- **H12d (orch-v2-host §0.8.6 item 9.3, 9.11):** one more label, `orch/v2/sig/reader-decl|` (`sig_reader_decl`), the
+  signature domain of a reader's declaration, signed only by a device key (`DEVICE_KEY_LABELS`). It is an F1 label
+  (`orch.canon.LABELS`, `labels.json`), listed by the relay corpus under the same key, and prefix-free against every
+  label of both tables (`tests/crypto/test_reader_decl_label.py`).
 
 ### 5.7 Gates
 
@@ -2281,6 +2288,16 @@ Vectors to add to orch-relay `vectors_v2.json` and to the core tests, before C1 
 | `question_id` | `qid` derivation and the question hash with it |
 | `checkpoint` | the §2.4 shape; lower `seq` refused, equal `seq` with another head refused, source-bound restores carrying revocations, accumulator ancestry and atomic oversize refusal |
 | `repo_identity` | https, ssh with and without a port, scp-like forms mapped to one canonical URL; an https URL with `user:token@` loses it; `file://` → `local:` |
+| `reader_kat_1` (H12d, core-owned) | the reader known-answer test of orch-v2-host §0.8.6 item 9.2: `log` (three complete workspace-log person events of the vector workspace that differ only in `auth`: `convenience`, `passphrase`, `bogus`; each re-signed and replayable on the fixture under a pinned context) and `view` (`READER_VIEWS_1` = the answer of a `ticket.get` question: three answered Questions differing only in `answer.signer.auth`), with the expected digests |
+| `checkpoint` convenience cases (H12d) | a restore line with `auth: "convenience"` accepted, one with an unknown `auth` refused (the relay's `AUTH_KINDS`) |
+
+**The KAT digest (normative, H12d).** A reader runs its production parser over each case of a surface of
+`reader_kat_1`, in corpus order, and records one result per case: for `log`, `{"head": head(e), "accepted": bool,
+"auth": <e.auth> | null}`; for `view`, `{"view": <view id>, "accepted": bool, "auth": <the signer's auth> | null}`; `auth` is
+`null` exactly when `accepted` is false. The digest of the surface is `"sha256:" + hex(sha256(cj(results)))`, `results`
+the JSON array in corpus order, `hex` lower case. The expected results are accepted, accepted, refused with `auth:
+null` for each triple: an unknown `auth` is refused, never mapped to a known one. The expected digests are pinned by
+`reader_kat_1.json` `expected` and are what a level-1 declaration carries in `kat["1"]` (orch-v2-host §0.8.6 item 9.3).
 
 ## 12. Needs owner
 
@@ -2474,6 +2491,8 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 151 | Out-of-band verification and signer matching (raised by the Opus review of #387; decided by orch-52; rewritten by row 152) | An out-of-band revocation is independently verified (person-key derivation, certificate signature and device-key derivation, revocation signature, matching person/device fields) and retained under `(device_id, person_id)`. Receivers match a restore signer against held revocations by that pair. `local_revocations` is never filtered (only the `unpublished` output may be). The former "first verified evidence wins" binding for a device without a known binding is deleted: out-of-band evidence never creates or replaces a binding (row 152) (§5.10). | Any person can certify another's device public key; device-only matching let a stranger strand a receiver, and a filtered input would drop C3 for exactly the out-of-band devices. |
 | 152 | Row-151 fail-open fix: revocations per (device, person) (raised by the relay stream's PoC; draft orch-52, Codex challenge, adopted with all amendments; relay Opus review additions) | Out-of-band evidence never creates or replaces `known_devices` bindings; associations prove no key ownership and never drop, suppress or reattribute another person's evidence. Every verified revocation is retained per `(device_id, person_id)`; any held one matching the restore's signer pair refuses, every reason, regardless of `known_devices`. Carried entries are checked against `known_devices` only; completeness and `revocation.unpublished` are per pair with the verified person key; the restore list is unique per pair. Alarms match committed restores' recorded pairs (legacy bare ids via the pinned card owner, then `known_devices`, else no alarm). Harvesting is bounded before any signature, T's included; held out-of-band evidence is capped per person (members included, the pinned owner exempt), per device and in total; a forwarded upgrade of a chain pair is never carried in a restore (the bridge publishes it via `device.revoked`); no proof of possession at `device.added` is an accepted limit; membership is read at eviction time; a new non-member never evicts, a member evicts the oldest non-member; chain provenance is sticky per pair. Tombstone-only devices count as unknown for forwarding and carrying. Publication: durable queue, poll/retry without a new restore, evidence or authenticated references, acknowledgements are not publication; the host matches by pair (§5.10). | Bob could certify the id of Alice's unknown laptop and revoke it; delivered first, it bound the device to Bob and Alice's genuine compromised revocation was discarded, so a restore signed with the stolen laptop key was accepted. |
 | 153 | `convenience` auth value (owner decision 12 Oct 2026, orch-v2-host D-P2-23, H5c) | A seventh `auth` value, `convenience`: a device key held without any factor, for phase-1 click-to-sign. The signed bytes and `contract` 1 are unchanged (`auth` is already signed). A reader-compatibility change: a core without the value refuses such an event on schema (`auth.invalid_event` on replay), so every reader of a workspace must know it before its first convenience event; the host enforces this per workspace (orch-v2-host §0.8.6). Supersedes D41's presence for phase 1 (§5.3, §11.4, T16). | The owner wants signing easy in phase 1; the factor is declared honestly in every event. |
+| 154 | Reader declaration (H12d, orch-v2-host §0.8.6 item 9, owner decision of 13 Oct 2026; H12d-1) | F1 gains the label `orch/v2/sig/reader-decl\|` (`sig_reader_decl`, device key only, prefix-free), the core-owned `reader_kat_1` vectors with the normative KAT digest construction (§11.5), and the convenience cases of `checkpoint`. The log, the signed-event contract and the device certificate stay unchanged: the declaration is verifiable against the signed log, not carried in it. **`reader` moves into the device certificate with the proof-of-possession certificate change (Q3)**, not before: a certificate field now would break every old reader as soon as any new device is certified. | Admit readers that understand `convenience` without a global format cutover. |
+
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).

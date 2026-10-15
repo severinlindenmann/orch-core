@@ -37,6 +37,7 @@ LABELS = {
     "sig_ws_event": "orch/v2/sig/ws-event|",
     "sig_host_event": "orch/v2/sig/host-event|",
     "sig_checkpoint": "orch/v2/sig/checkpoint|",
+    "sig_reader_decl": "orch/v2/sig/reader-decl|",
 }
 
 
@@ -624,6 +625,7 @@ def _vectors() -> dict[str, dict[str, Any]]:
             "scenarios": sg.revocation_scenarios() + [s for s in restore if s["name"] in plain_revocations],
         },
         "checkpoint.json": sg.checkpoint_vector(),
+        "reader_kat_1.json": sg.reader_kat_vector(),
         "restore.json": {
             "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses "
             "chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",
@@ -685,7 +687,8 @@ INDEX: dict[str, str] = {
     "repo_paths.json": "repo paths: NFC before ASCII-only collision comparison; "
     "owner-signed paths may leave the workspace (1, 11.3)",
     "canon.json": "[shared, unchanged] strict parse depth 16/17 and -0 -> 0 (ticket-format 11.2)",
-    "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
+    "labels.json": "[shared, CHANGED] the F1 domain labels (5.6), prefix-free with the protocol's; H12d adds "
+    "sig_reader_decl",
     "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)",
     "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id and hash, "
     "grant secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7)",
@@ -708,6 +711,9 @@ INDEX: dict[str, str] = {
     "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10); receiver checks with valid "
     "signatures: pinned delegation, owner-device policy, signed source, line binding, abandoned, T head, position "
     "time, clock ceiling, revoked signers, ticket restores, trust root and strict shape",
+    "reader_kat_1.json": "[shared, new] the reader known-answer test of H12d (orch-v2-host 0.8.6 item 9.2): the "
+    "log variant (three independently signed, separately replayable workspace events differing only in auth), the "
+    "view variant (READER_VIEWS_1) and the expected level-1 digests (11.5)",
     "restore.json": "workspace restore carries effective revocations atomically (5.10); re-signed structural "
     "refusals; host self-revocation",
     "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "

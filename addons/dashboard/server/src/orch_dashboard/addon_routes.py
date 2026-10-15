@@ -61,6 +61,14 @@ def register(app, gateway):
         # The host is the authority: its owner/maintainer refusal is returned unchanged.
         return adapt.records(link.call("records.status", {}))
 
+    @app.get("/api/w/{ws}/records/current")
+    def current(query: Annotated[ContentQuery, Query()], ws: str = Depends(workspace)):
+        link = records_link(ws)
+        if link is None:
+            raise fail("op.unsupported", exit=1)
+        link.call("records.status", {})
+        return child.run(ws, status=True, state=gateway.state, run_dir=gateway.run)
+
     def run(ws, *, push=False, auto_off=False):
         link = records_link(ws, write=not auto_off, push=push, auto_off=auto_off)
         if link is None:

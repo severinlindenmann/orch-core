@@ -53,7 +53,7 @@ export interface RecordsStatus {
   last?: { commit: string; at: string; by: string; ws_seq: number; pushed_at: string | null } | null
   last_noted?: { by: string; at: string } | null
   auto?: { on: boolean; every_min: number; push: boolean } | null
-  remote?: { url: string | null; url_hidden: boolean; private: boolean | null; export: string | null } | null
+  remote?: { current_url?: string | null; current_url_hidden?: boolean; current_private?: boolean | null; matches_last?: boolean | null; url: string | null; url_hidden: boolean; private: boolean | null; export: string | null } | null
 }
 export interface RecordsRun {
   ok: true

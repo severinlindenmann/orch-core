@@ -1,16 +1,19 @@
 """Every suite-2 vector of ``vectors_v2.json`` that the crypto layer owns (protocol v2 §1, §3, §4, §5).
 
 Sections of ``suites.2`` consumed elsewhere: ``certs``, ``revocations`` and ``card`` (delegation cases) in
-``tests/identity/test_certs.py``; ``question_hash``, ``decisions``, ``webauthn`` and ``publish`` by canon/schema tests.
+``tests/identity/test_certs.py``; ``question_hash``, ``decisions``, ``webauthn`` and ``publish`` by canon/schema tests;
+``relay_auth`` and ``card`` (sealed part, relay update rules) by ``tests/relay`` (R1).
 
 Sections **deferred**, with the phase that owns them (nothing in C2 builds those objects; they need the relay,
-bridge or Drop code): ``card`` (card/sealed part, relay update rules), ``wk_grants`` and ``member_lists`` (relay
+bridge or Drop code): ``wk_grants`` and ``member_lists`` (relay
 member lists, P2/P3), ``cert_request``, ``cert_binding``, ``rejected_forms``, ``approved_anchor``
 (pairing attempt binding, P3-D28; the formulas are checked in ``test_pairing_binding.py``), ``enroll`` and
-``bridge`` (pairing and bridge v2, P2/P3), ``member_list_snapshots`` and ``wk_commit`` (membership publication
+``bridge`` (pairing and bridge v2, P2/P3; R1 checks only its ORB2 codec layer in ``tests/relay/test_wire.py``),
+``member_list_snapshots`` and ``wk_commit`` (membership publication
 and WK commitments, P3), ``p3`` (relay HTTP, restore and queue vectors, P3), ``checkpoints`` (relay checkpoint
 transport and restore, P3), ``revocation_op`` (host revocation op, P2), ``push`` (P3), ``drop`` and
-``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth`` (relay login, P3).
+``ws_envelopes`` (Drop and ws-to-ws, P2+), ``checkpoints_g4`` (relay checkpoint isolation, R3), ``unpublished``
+(P3-D31 evidence, R4).
 ``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
 listed, so a vector update cannot go unconsumed silently.
 """
@@ -174,11 +177,11 @@ def test_key_pair_round_trip_on_vector_keys():
 
 
 CONSUMED = {"keys", "ids", "sign", "hkdf", "salted_aead", "seal", "seal_open", "label_sealed", "certs", "revocations"}
-OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish"}
+OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish", "relay_auth", "card"}
 DEFERRED = {
-    "card", "wk_grants", "member_lists", "cert_request", "enroll", "bridge", "revocation_op", "push", "drop",
-    "ws_envelopes", "relay_auth", "cert_binding", "rejected_forms", "approved_anchor",
-    "member_list_snapshots", "wk_commit", "p3", "checkpoints",
+    "wk_grants", "member_lists", "cert_request", "enroll", "bridge", "revocation_op", "push", "drop",
+    "ws_envelopes", "cert_binding", "rejected_forms", "approved_anchor",
+    "member_list_snapshots", "wk_commit", "p3", "checkpoints", "checkpoints_g4", "unpublished",
 }  # fmt: skip
 
 

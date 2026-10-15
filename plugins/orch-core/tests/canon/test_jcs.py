@@ -10,11 +10,10 @@ from hypothesis import strategies as st
 
 from orch.canon import jcs
 
+from ..relay import corpus
 from .rfc8785_oracle import dumps_general
 
-VECTORS = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_v2.json").read_text(encoding="utf-8"))[
-    "encodings"
-]
+VECTORS = corpus.VECTORS["encodings"]  # the one vendored copy (tests/relay/vectors, xz-compressed)
 
 
 def _f(bits: int) -> float:

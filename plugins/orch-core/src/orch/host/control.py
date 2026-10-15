@@ -10,6 +10,8 @@
 * ``host.restart``: drain (D-P2-4).
 * ``host.relay_stop``, ``host.relay_start`` (H12a, §11A.4): keep a workspace's relay worker stopped (persisted, it
   outlives a restart: the operator procedure after a state restore), or clear that stop. Idempotent; no idem.
+* ``host.relay_unlink`` (R5, §11A.6): stop the worker and rename ``link.json`` to ``unlinked-<linked_at>.json`` (the
+  reader reservation stays: never deleted). No idem; ``relay.not_linked`` when there is no link.
 
 The three writes are control writes: ``opts.idem`` is required, an intent is fsynced before anything changes, and
 :meth:`ControlOps.recover` finishes or rolls back every ``started`` intent at host start.
@@ -89,6 +91,7 @@ _SCHEMAS = {
     "host.unregister": _closed({"workspace_id": _WS}),
     "host.relay_stop": _closed({"workspace_id": _WS}),
     "host.relay_start": _closed({"workspace_id": _WS}),
+    "host.relay_unlink": _closed({"workspace_id": _WS}),
     "host.outcome": _closed({"idem": {"type": "string", "pattern": r"^a_" + frames.ULID + "$"}}),
     "host.bootstrap": _closed(
         {
@@ -385,7 +388,7 @@ class ControlOps:
         return ok_result({"workspace_id": workspace_id, "stopped": True, "worker": worker})
 
     def relay_start(self, args: dict[str, Any]) -> dict[str, Any]:
-        from .relaylink import clear_stopped
+        from .relaylink import clear_stopped, unlink_pending
 
         workspace_id = args["workspace_id"]
         if self.host.registry.get(workspace_id) is None:
@@ -394,9 +397,24 @@ class ControlOps:
         if service is not None:
             worker = service.relay_start()
         else:
+            if unlink_pending(self.state_dir, workspace_id):  # round 5 L3: never clear the marker under an intent
+                raise HostError("lock.busy", "unlink_pending: an unlink of this workspace has not finished yet")
             clear_stopped(self.state_dir, workspace_id, self.host_uid)
             worker = "none"
-        return ok_result({"workspace_id": workspace_id, "stopped": False, "worker": worker})
+        data: dict[str, Any] = {"workspace_id": workspace_id, "stopped": False, "worker": worker}
+        if service is not None and worker == "none":
+            data["reason"] = service.relay_reason  # why nothing started (the R6 gate, not linked, …): host.status
+        return ok_result(data)
+
+    def relay_unlink(self, args: dict[str, Any]) -> dict[str, Any]:
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        name = service.relay_unlink()
+        return ok_result({"workspace_id": workspace_id, "unlinked": name})
 
     # -- host.bootstrap
     def bootstrap(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
@@ -728,6 +746,7 @@ class ControlGate:
                 "host.outcome": lambda: ops.outcome(args),
                 "host.relay_stop": lambda: ops.relay_stop(args),
                 "host.relay_start": lambda: ops.relay_start(args),
+                "host.relay_unlink": lambda: ops.relay_unlink(args),
             }[op]
             result = await asyncio.to_thread(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})

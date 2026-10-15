@@ -3,8 +3,9 @@
 * A loose ref wins over ``packed-refs`` (git's order: a loose file that disagrees with ``packed-refs`` is the ref).
 * ``HEAD`` must be exactly ``ref: refs/heads/<branch>\\n``.
 * The repository is refused (:class:`~orch.gitread.errors.Unavailable`) when a loose ref is itself a symref (or a
-  symlink), when two ref names differ only in ASCII case (in either store or across them: on a case-insensitive
-  file system they are one file, so which one git reads depends on the machine), when a loose ref or a
+  symlink; the one exception, skipped and never followed, is git clone's ``refs/remotes/<remote>/HEAD``), when two
+  ref names differ only in ASCII case (in either store or across them: on a case-insensitive file system they are one
+  file, so which one git reads depends on the machine), when a loose ref or a
   ``packed-refs`` line cannot be parsed, or when ``packed-refs`` names one ref twice.
 * Loose files whose names git would not accept as refs (``*.lock``, a leading dot, ...) are skipped, as git skips
   them. ``refs/replace/`` is never used for lookups.
@@ -18,7 +19,7 @@ from . import limits
 from .errors import Unavailable
 from .fs import Dir
 
-__all__ = ["RefStore", "check_refname", "read_head"]
+__all__ = ["RefStore", "check_refname", "read_head", "read_head_any"]
 
 _BAD_CHARS = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
 
@@ -45,6 +46,31 @@ def read_head(gitdir: Dir) -> str:
     if not check_refname(name):
         raise Unavailable("HEAD names an invalid branch")
     return name
+
+
+def read_head_any(gitdir: Dir, hexlen: int) -> tuple[str | None, str | None]:
+    """Direct mode (#565): ``HEAD`` as ``(branch ref, None)`` for ``ref: refs/heads/<branch>\\n`` or ``(None, id)``
+    for a detached ``HEAD`` (a full object id of this repository's format and a newline, as git writes it). Anything
+    else is refused, as :func:`read_head` refuses it; host mode keeps :func:`read_head` (a branch only)."""
+    data = gitdir.read("HEAD", limits.SMALL_FILE_MAX)
+    if re.fullmatch(rb"[0-9a-f]{%d}\n" % hexlen, data):
+        return None, data[:-1].decode("ascii")
+    return read_head(gitdir), None
+
+
+def _remote_head(full: str, data: bytes) -> bool:
+    """The one symbolic loose ref git itself writes in an ordinary repository: ``refs/remotes/<remote>/HEAD`` naming a
+    branch of the same remote (``git clone``, ``git remote set-head``). It is skipped, never followed: orch resolves
+    only ``HEAD`` and ``refs/heads/*``, so it changes no answer, and refusing it made every clone unreadable (#565).
+    Any other symbolic loose ref still refuses the repository (F7)."""
+    parts = full.split("/")
+    if len(parts) != 4 or parts[:2] != ["refs", "remotes"] or parts[3] != "HEAD":
+        return False
+    m = re.fullmatch(rb"ref: (refs/remotes/[^\n]+)\n", data)
+    if not m:
+        return False
+    target = m.group(1).decode("ascii", errors="replace")
+    return target.startswith(f"refs/remotes/{parts[2]}/") and target != full and check_refname(target)
 
 
 class RefStore:
@@ -88,6 +114,8 @@ class RefStore:
                 raise Unavailable("too many loose refs")
             data = d.read(name, limits.SMALL_FILE_MAX)
             if data.startswith(b"ref:"):
+                if _remote_head(full, data):
+                    continue  # git clone's refs/remotes/<r>/HEAD: never followed, never a ref here (#565)
                 raise Unavailable(f"the loose ref {full!r} is a symbolic ref")
             if len(data) != self.hexlen + 1 or data[-1:] != b"\n" or not self._hex.fullmatch(data[:-1]):
                 raise Unavailable(f"the loose ref {full!r} cannot be parsed")

@@ -35,7 +35,8 @@ def test_a_ref_that_names_no_object_is_reported_not_signed(ws, cli):
     (repo / ".git" / "refs" / "heads" / "feat").mkdir(parents=True, exist_ok=True)
     (repo / ".git" / "refs" / "heads" / "feat" / "x").write_text("ab" * 20 + "\n")
     r = cli("show")
-    assert "observe: proj: refs/heads/feat/x names no commit object; nothing was recorded" in r.out
+    # #565: orch's reader (no git process) finds no object for the id: a problem line, never a recorded head
+    assert "observe: proj: " in r.out and "its code cannot be observed" in r.out, r.out
     assert "branch.pushed" not in types(ws)
 
 
@@ -81,8 +82,8 @@ def test_submit_reads_git_before_it_takes_the_lock(ws, cli, monkeypatch):
     claimed(cli)
     cli("set", "1", LINKS)
     order = []
-    real_git = observe.git
-    monkeypatch.setattr(observe, "git", lambda *a, **k: order.append("git") or real_git(*a, **k))
+    real_look = observe._LOCAL.look  # the in-process reader (#565): no git process, still before the lock
+    monkeypatch.setattr(observe._LOCAL, "look", lambda *a, **k: order.append("git") or real_look(*a, **k))
     real_locked = Store.locked
     from contextlib import contextmanager
 

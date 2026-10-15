@@ -8,8 +8,8 @@ Handlers never touch ``os.environ``, ``open()`` or ``subprocess`` themselves; th
 | ``env``    | fixed and minimal, never the client's   | the CLI's environment                     |
 | ``files``  | only under the roots; no cwd, no stdin  | any path the CLI names; cwd; stdin        |
 | ``exec``   | none (raises :class:`CapabilityDenied`) | the subprocess runner (``verify.cmd``)    |
-| ``git``    | reader children under pins (H3b1)       | the git CLI (``store.observe``); ``diff`` |
-|            |                                         | through orch's reader in-process          |
+| ``git``    | reader children under pins (H3b1)       | the same reader in-process, no git        |
+|            |                                         | process (``store.observe``, #565)         |
 | ``signer`` | none                                    | custody                                   |
 | ``clock``  | host clock                              | system clock                              |
 
@@ -418,8 +418,10 @@ class WorkingCopy:
 class Git:
     """Reading the linked repositories.
 
-    * **Direct mode** (``reader`` ``None``): P1's behaviour, unchanged: the git CLI on a scrubbed environment
-      (``orch.store.observe``); :meth:`diff` (new) uses orch's own reader in-process (:mod:`orch.gitread.local`).
+    * **Direct mode** (``reader`` ``None``): orch's own reader in-process (:data:`orch.gitread.local.READER`, through
+      ``orch.store.observe``; :meth:`diff` through :mod:`orch.gitread.local`). No git process (#565): nothing the
+      repository's config says can run, and there is no gate-then-spawn window to race. What the reader cannot read
+      is ``None`` ("cannot be told"), never clean.
     * **Host mode** (``reader`` a :class:`orch.gitread.client.HostGitReader`): no git process; every read is a
       ``python -I -m orch.gitread`` child under the repo's pins (D-P2-19). :meth:`dirty` is the ``tree.check`` job
       (H10a, :mod:`orch.gitread.treejob`): orch's own index and worktree reader in a ``worktree``-profile child, never

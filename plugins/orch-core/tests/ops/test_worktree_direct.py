@@ -175,10 +175,17 @@ def test_a_repos_own_config_and_hooks_run_nothing_in_any_command(d):
     assert d.run("list", "--check").code == 0
     open(os.path.join(path, "scratch.txt"), "w").write("x\n")
     assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
-    d.ws.git("config", "filter.x.clean", str(script))  # planted after create: remove and list --check refuse git
-    assert doc(d.run("remove", d.key))["code"] == "observe.unavailable"
+    # planted after create (#565): list --check and remove's clean check are orch's reader (no git process), so the
+    # filter never runs and the answer is the real one; git's remove itself is still gated, and refused
+    open(os.path.join(path, ".gitattributes"), "w").write("* filter=x\n")
+    d.ws.git("config", "filter.x.clean", str(script))
+    assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
     listed = doc(d.run("list", "--check"))["data"][0]
-    assert listed["dirty"] is None and listed["head"] is None
+    assert listed["dirty"] == 2 and listed["head"], listed
+    os.remove(os.path.join(path, "scratch.txt"))
+    os.remove(os.path.join(path, ".gitattributes"))
+    assert doc(d.run("remove", d.key))["code"] == "observe.unavailable"  # clean: git's remove is next, the gate refuses
+    assert os.path.exists(path)
     d.ws.git("config", "--unset-all", "filter.x.clean")
     assert d.run("remove", d.key, "--force").code == 0
     assert not marker.exists()
@@ -398,12 +405,24 @@ def test_d58_direct_precommit_refuses_a_registration_changed_since_the_first_loo
     assert not any("working tree is on refs/heads/main" in p for p in got)  # never judged on the declared copy
 
 
-def test_d58_direct_refuses_a_registered_worktree_whose_config_names_a_program(problems):
+def test_d58_direct_runs_nothing_a_registered_worktrees_config_names(problems):
+    """#565: direct D58 reads the registered worktree with orch's reader (no git process): a clean filter its config
+    names never runs, and the tree's answer is the real one. Positive control: plain git status runs it."""
     path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
-    problems.d.ws.git("config", "filter.x.clean", "/bin/false")
+    marker = problems.d.ws.tmp / "d58-filter-ran"
+    script = problems.d.ws.tmp / "d58-filter.sh"
+    script.write_text(f"#!/bin/sh\necho x >> {marker}\ncat\n")
+    script.chmod(0o755)
+    problems.d.ws.git("config", "filter.x.clean", str(script))
+    with open(os.path.join(path, ".git"), "rb") as f:
+        assert f.read().startswith(b"gitdir: ")
+    open(os.path.join(path, ".gitattributes"), "w").write("* filter=x\n")
     got = problems.run()
-    assert any("filter.x.clean" in p for p in got), got
-    assert path
+    assert any("uncommitted changes" in p for p in got), got  # .gitattributes is untracked: dirty, read without git
+    assert not any("cannot be read" in p for p in got), got
+    assert not marker.exists()
+    subprocess.run(["git", "-C", path, "add", "-A"], capture_output=True, check=False)  # control: git runs it
+    assert marker.exists()
 
 
 def test_forced_remove_keeps_observe_unavailable_from_a_gate_refusal(d):
@@ -440,7 +459,8 @@ def _submodule_in(path: str, tmp, marker) -> None:
 
 def test_a_populated_submodule_is_never_inspected_or_reported_clean(d):
     """Codex #439 High/Medium: direct ``list --check`` and ``remove`` never run a submodule's own filter and never call
-    a tree with a checked-out submodule clean (``dirty`` null: unknown)."""
+    a tree with a checked-out submodule clean (``dirty`` null: unknown; remove: ``observe.unavailable``, orch's reader
+    refuses it, #565)."""
     path = doc(d.run("create", d.key))["data"]["path"]
     marker = d.ws.tmp / "submodule-filter-ran"
     _submodule_in(path, d.ws.tmp, marker)

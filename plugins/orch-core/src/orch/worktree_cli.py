@@ -7,12 +7,13 @@ for a workspace no host serves.
 
 The same safety contract as the host: one worktree per (ticket, linked repo) at ``<repo path>.worktrees/<WS8>-<KEY>`` on
 the ticket's current ``links.branches`` branch (``worktree.no_branch`` without one). git runs only through the runner's
-own helpers in :mod:`orch.runner.wtgit` (:func:`~orch.runner.wtgit.run_git` for add and remove,
-:func:`~orch.runner.wtgit.read_git` for rev-parse and status), each behind the gate of :mod:`orch.gitsafe`: orch never
+own helper :func:`~orch.runner.wtgit.run_git` (add and remove), behind the gate of :mod:`orch.gitsafe`: orch never
 runs git against a repository whose local/worktree config or attributes could make git execute a program or read
 config from elsewhere (such a repo is ``observe.unavailable``, git is not started); hooks, fsmonitor and network are
 off on every command, the environment is built from scratch, 30 s, no symlink followed under ``<repo>.worktrees``.
-Nothing here calls ``orch.store.observe``. The new worktree is pinned in process
+Revisions, ``HEAD`` and the clean check are read with orch's own reader (:data:`orch.gitread.local.READER`, #565: no
+git process), and git's ``worktree remove`` always runs ``--force`` after that check.
+The new worktree is pinned in process
 (:func:`orch.gitread.pinning.pin_repo`: ``O_NOFOLLOW`` walks, git's layout checked exactly) and registered with a new
 generation in ``<state>/hosts/<ws>/git-pins.json``, the file a host reads when the workspace is registered later.
 A clean tree is required to remove (``--force`` skips it; in direct mode the person is at the terminal and could
@@ -23,7 +24,7 @@ works underneath a host (``host.required``), as the records tool (:mod:`orch.rec
 ``remove`` also hold an **exclusive** per-workspace ``flock`` (``<state>/hosts/<ws>/worktrees.lock``, 10 s, then
 ``lock.busy``) from loading the pin file through git and the write of the registration, so two direct commands never
 lose each other's registrations (Codex #439). ``list --check`` observes as the host does: the pins verified again
-(``moved``), ``HEAD`` read from the pinned gitdir (``stale_branch``), the tree through the gated reader. Windows answers
+(``moved``), ``HEAD`` read from the pinned gitdir (``stale_branch``), the tree through the reader. Windows answers
 ``unsupported.platform`` (exit 3): no reparse-point-safe resolution yet. A call under ``ORCH_GRANT`` is refused
 (``op.not_allowed``): agents ask the host's ``worktree.*`` ops, never this person-side tool.
 """
@@ -40,7 +41,8 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch import gitsafe
-from orch.runner.wtgit import read_git, tree_dirty
+from orch.gitread.errors import Unavailable
+from orch.gitread.local import READER
 
 __all__ = ["main"]
 
@@ -236,9 +238,20 @@ class Direct:
         return {k: v for k, v in self.env.items() if k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME")}
 
     def _rev(self, repo: str, rev: str) -> str | None:
-        """A commit id through the hardened reader (never ``observe.git``: the repo's own config must run nothing)."""
-        got = read_git(repo, "commit", self._own(), rev=rev)
-        return got if got and len(got) in (40, 64) else None
+        """The commit ``rev`` (``HEAD`` or ``refs/heads/<name>``) names, ``None`` when there is none. Read with orch's
+        own reader (#565: no git process, so the repo's own config can run nothing); a repository the reader refuses
+        is ``observe.unavailable``, never "no such branch"."""
+        try:
+            return READER.head(repo)[1] if rev == "HEAD" else READER.commit(repo, rev)
+        except Unavailable as exc:
+            raise WtError("observe.unavailable", exc.reason[:300]) from None
+
+    def _dirty(self, repo: str) -> str | None:
+        """Uncommitted work in the worktree (``""``: clean), ``None`` when it cannot be told: the reader, never git."""
+        try:
+            return READER.dirty(repo, self.env)
+        except Unavailable:
+            return None
 
     def _git(self, args: dict[str, Any]) -> None:
         from orch.runner.supervise import SpawnError
@@ -277,7 +290,7 @@ class Direct:
     def _observe(self, view: Any, repo: str, slot: dict[str, Any]) -> dict[str, Any]:
         """One check, as the host's ``worktree.list {check}``: the pins verified again in process (a re-pointed ``.git``
         file or a swapped directory is ``moved``), ``HEAD`` read from the pinned gitdir without git (another branch, or
-        a relinked ticket, is ``stale_branch``), the tree through the gated reader."""
+        a relinked ticket, is ``stale_branch``), the tree through the reader (no git process, #565)."""
         from orch.gitread.errors import Unavailable
         from orch.gitread.fs import RepoPins, open_pin
         from orch.gitread.pinning import verify_worktree_pins
@@ -308,9 +321,9 @@ class Direct:
             out["state"] = "stale_branch"
         try:
             out["head"] = self._rev(reg["path"], "HEAD")
-            d = tree_dirty(reg["path"], self._own())
-        except gitsafe.Unsafe:
-            return out  # the repo's own config could run a program: git is not started, nothing is known
+        except WtError:
+            return out  # the reader refuses the repository: nothing is known
+        d = self._dirty(reg["path"])
         out["dirty"] = None if d is None else len([ln for ln in d.splitlines() if ln])
         return out
 
@@ -397,9 +410,12 @@ class Direct:
         reg = slot["reg"]
         if reg is None:
             raise WtError("worktree.none", f"{view.key} has no worktree for {repo}")
-        if os.path.lexists(reg["path"]) and not force:
-            dirty = tree_dirty(reg["path"], self._own())
-            if dirty is None or dirty.strip():
+        if os.path.lexists(reg["path"]) and not force:  # orch's own clean check: git's remove always runs --force
+            try:
+                dirty = READER.dirty(reg["path"], self.env)
+            except Unavailable as exc:  # unknown is never clean (a checked-out submodule, an index it cannot read)
+                raise WtError("observe.unavailable", f"the worktree cannot be checked: {exc.reason}"[:300]) from None
+            if dirty.strip():
                 raise WtError("worktree.dirty", "the worktree has uncommitted changes (or cannot be checked); "
                               "commit them, or remove with --force")  # fmt: skip
         _declared, dpins = self._declared(repo)

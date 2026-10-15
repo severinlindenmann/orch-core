@@ -554,6 +554,11 @@ def _git(root: Path, op: str, *, caps: Capabilities, path: str | None = None) ->
     (host mode) nothing runs."""
     if not caps.exec.enabled:
         return None
+    # RACE NOTE (#565): gitsafe.command gates the repo's config and git starts afterwards, so a concurrent writer of
+    # .git/config could change it in between. Accepted here only: staged_raw compares the index with HEAD by object id
+    # and staged_blob prints a stored blob as stored, so no work-tree file is read and no clean/smudge filter,
+    # textconv or diff driver applies; and this runs inside the person's own `git commit` (the pre-commit hook), whose
+    # git has already read and acted on that same config as the person. Every other read is orch.gitread's.
     try:
         argv, env = gitsafe.command(os.path.abspath(root), op, caps.env, operand=path)
         done = caps.exec.run(

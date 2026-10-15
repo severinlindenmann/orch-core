@@ -6,21 +6,21 @@ child in its own process group with a 30 s limit that kills the group (only that
 
 **What git is allowed to run** (the invariant of :mod:`orch.gitsafe`: orch never runs git against a repository whose
 local/worktree config or attributes could make git execute a program or read config from elsewhere). Before **every**
-git command (:func:`orch.gitsafe.gate`, called by :func:`run_git`, :func:`read_git` and so :func:`tree_dirty`) the
+git command (:func:`orch.gitsafe.gate`, called by :func:`run_git`) the
 repository's config files must be owned by the person and its own local and worktree configuration is listed and
 refused (``observe.unavailable``) when any key is not on the allow-list of :func:`orch.gitsafe.exec_risk` (no filter,
 driver, hook, include, alias, pager, editor, credential, ssh/proxy/askpass or gpg program, no unknown section); on
-remove the worktree's own configuration is checked too; :func:`tree_dirty` also refuses a populated submodule
-(:func:`orch.gitsafe.submodules`: its state is unknown, never clean). Defence in depth on every command: ``-c
+remove the worktree's own configuration is checked too. ``worktree remove`` always runs with ``--force``: the clean
+check is orch's own, before the command, with the reader (no git process, #565), so git's own ``status`` never runs.
+Defence in depth on every command: ``-c
 core.hooksPath=/dev/null`` (no hook), ``-c core.fsmonitor=false``, ``-c protocol.allow=never`` and an empty
 ``GIT_ALLOW_PROTOCOL`` (no network), ``-c submodule.recurse=false``, no terminal prompt, no pager, no editor, and an
 environment built from scratch (``HOME``, ``PATH``, ``LANG=C``, ``TMPDIR``): no ``GIT_DIR``, ``GIT_WORK_TREE``,
 ``GIT_CONFIG_*`` or other ``GIT_*`` variable of the runner reaches it. What can still run: a driver the **person**
 configured globally or system-wide (e.g. ``filter=lfs`` after ``git lfs install``) when an attribute selects it, as
 the person, exactly as when they run git: :func:`run_git` is the one documented exception to
-:data:`orch.gitsafe.ISOLATION` (the site table of :mod:`orch.gitsafe`). :func:`read_git` is isolated like every read
-(:func:`orch.gitsafe.command`: an operation of the closed set, system and global config off), so nothing runs
-there.
+:data:`orch.gitsafe.ISOLATION` (the site table of :mod:`orch.gitsafe`), with a race note at its spawn (#565). The
+direct-mode tool's reads (revisions, ``HEAD``, cleanliness) use :data:`orch.gitread.local.READER`, never git.
 
 **Confinement (H11d).** The worktree path must be exactly ``<repo>.worktrees/<WS8>-<KEY>`` (strict name regex, no
 ``..``, no NUL). The parent of the repo and ``<repo>.worktrees`` are opened from ``/`` one component at a time with
@@ -55,7 +55,7 @@ from orch import gitsafe
 
 from .supervise import SpawnError
 
-__all__ = ["GIT_SECONDS", "git_argv", "git_env", "read_git", "run_git", "tree_dirty"]
+__all__ = ["GIT_SECONDS", "git_argv", "git_env", "run_git"]
 
 GIT_SECONDS = 30.0
 _SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -112,7 +112,12 @@ def git_argv(args: Mapping[str, Any], repo: str, *, present: bool | None = None)
     if op == "worktree.remove":
         if not (os.path.lexists(path) if present is None else present):
             return [*base, "prune"]  # the directory is gone: only git's own record of it is left
-        return [*base, "remove", *(["--force"] if args.get("force") is True else []), "--", path]
+        # ALWAYS --force (#565): without it git runs its own `status` in the worktree to check that it is clean, and
+        # that status runs any clean filter the repo's (or the worktree's) config names, read at that moment: a writer
+        # of that config racing the gate could make it run a program. The clean check is orch's own instead, done
+        # before this command with the reader (no git process): the host's tree.check child, `orch worktree remove`'s
+        # LocalGitReader; only a person's explicit force skips it. `args["force"]` only records that choice.
+        return [*base, "remove", "--force", "--", path]
     raise SpawnError("invalid.input", "git: unknown op")
 
 
@@ -304,7 +309,7 @@ def run_git(
             raise SpawnError("worktree.exists", "git: the worktree path is not empty")
         argv = git_argv(args, repo, present=conf.present)
         _gated(repo, own)
-        if op == "worktree.remove" and conf.present:  # git remove runs status in the worktree: its config too
+        if op == "worktree.remove" and conf.present:  # remove reads the worktree's config: gated too (#565)
             _gated(conf.path, own, "the worktree")
         if conf.fd >= 0:
             conf.check_cwd()
@@ -313,6 +318,21 @@ def run_git(
         # gated above, but the person's system and global config stays on (git_env) by design. A worktree add or
         # remove is a checkout in the person's own repo, as the person: it must run their checkout filters (the smudge
         # of `git lfs install`) exactly as `git worktree add` in their terminal would.
+        #
+        # RACE NOTE (#565): the gate above checked the config; git reads it again when it starts, so a concurrent
+        # writer of the repo's .git/config (or the worktree's config, or a swapped .git file) could change it in
+        # between. Why that is accepted here, per command:
+        # * remove: always `--force` (git_argv), after orch's own clean check with the reader (no git process), so
+        #   git's own `status` never runs and no clean filter is read; `remove --force` checks out nothing.
+        # * prune: reads only <repo>/.git/worktrees; no checkout, no status, no filter.
+        # * add: NOT closed (residual, #565). A checkout runs the smudge filters configuration names at that moment,
+        #   by design (the person's LFS, selected by the tree's own .gitattributes, so attributes cannot be switched
+        #   off either), and filters cannot be disabled by command-scope config. A filter added to the declared
+        #   repo's config inside the window would run once, as the person. A linked worktree's commondir IS the
+        #   declared repo's .git, so an agent that can commit in its worktree can write that config, and an agent
+        #   session (column G) may ask the host for `worktree.create` on its own ticket. NOT accepted silently: named
+        #   in §12.7 and in #565's PR as the one open residual for a decision (the gate still refuses a config that
+        #   already names a filter; the window is from the gate to git reading its config).
         out = _spawn(argv, own, timeout, log, op)
         if conf.fd >= 0:
             conf.after(op)
@@ -352,58 +372,3 @@ def _spawn(
         code = _classify(op, text)
         raise SpawnError(code, f"git {op.split('.')[-1]} failed" + f" (exit {proc.returncode})")
     return {"ok": True}
-
-
-def read_git(
-    repo: str,
-    op: str,
-    own: Mapping[str, str],
-    *,
-    rev: str | None = None,
-    timeout: float = GIT_SECONDS,
-    strip: bool = True,
-) -> str | None:
-    """Operation ``op`` of :data:`orch.gitsafe.OPS` for the direct-mode tool (``commit`` of ``rev``, ``status``,
-    ``index_flags``, ``staged_tree``), isolated like every read (:func:`orch.gitsafe.command`: the gate first, every
-    time; a populated submodule refused for ``status``; no free argv; system and global config off; own process
-    group, 30 s). Stdout stripped (unless ``strip`` is off); ``None`` when git fails, times out or is missing. Raises
-    :class:`orch.gitsafe.Unsafe` when the operation, its operand or the repository is refused (git is then not
-    started). ``repo`` is a verified absolute path (``-C``)."""
-    _clean_abs(repo)
-    argv, env = gitsafe.command(repo, op, own, operand=rev)
-    try:
-        proc = subprocess.Popen(  # noqa: S603 - an operation of orch.gitsafe.OPS
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
-            start_new_session=True, close_fds=True,
-        )  # fmt: skip
-    except OSError:
-        return None
-    try:
-        out, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        with contextlib.suppress(OSError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        with contextlib.suppress(Exception):
-            proc.communicate(timeout=5)
-        return None
-    if proc.returncode != 0:
-        return None
-    text = out.decode("utf-8", "surrogateescape")
-    return text.strip() if strip else text
-
-
-def tree_dirty(repo: str, own: Mapping[str, str]) -> str | None:
-    """Uncommitted work in the working copy at ``repo`` (``""`` clean, lines when not, ``None`` when it cannot be told):
-    ``status`` (which refuses a populated submodule, :class:`orch.gitsafe.Unsafe`: its state is unknown, never
-    "clean", and never opens a submodule), a staged gitlink change (index against ``HEAD``: ``status`` hides
-    submodules), and the files git is told to ignore (``skip-worktree``, ``assume-unchanged``)."""
-    _clean_abs(repo)
-    status = read_git(repo, "status", own)
-    staged = read_git(repo, "staged_tree", own, strip=False)  # the whole repository
-    listing = read_git(repo, "index_flags", own)
-    if status is None or staged is None or listing is None:
-        return None
-    lines = [status] if status else []
-    lines += [f"staged submodule change: {p}" for p in gitsafe.gitlinks(staged.encode("utf-8", "surrogateescape"))]
-    lines += [f"hidden change flag: {ln[2:]}" for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]
-    return "\n".join(lines)

@@ -446,8 +446,8 @@ def _local_repo(ctx: Any, linked: list[str]) -> tuple[str | None, Path | None]:
     top = observe.toplevel(here)
     if top is None:
         why = observe.refusal(here)
-        if why is not None:  # a working copy orch does not run git in: say why, not "not a linked repo"
-            raise OrchError("verify.failed", f"orch does not run git here: {why}"[:400])
+        if why is not None:  # a working copy orch's reader refuses: say why, not "not a linked repo"
+            raise OrchError("verify.failed", f"orch cannot read the repository here: {why}"[:400])
         raise OrchError(
             "invalid.input",
             f"run this in the working copy of a linked repo ({', '.join(linked)}): the host takes a receipt for a "
@@ -517,11 +517,11 @@ def _client_receipt(
 
         state = observe.dirty(path)
         if state is None:  # unknown is never clean: refuse before the verify command runs (Opus delta on #561)
-            why = observe.refusal(path)
+            why = observe.dirty_refusal(path)
             raise OrchError(
                 "verify.failed",
                 f"orch cannot tell whether the working tree of {repo} is clean"
-                + (f": orch does not run git there: {why}" if why else ": git cannot be asked"),
+                + (f": orch cannot read the repository there: {why}" if why else ": it cannot be read"),
             )
         if state:
             raise OrchError(

@@ -1,7 +1,9 @@
-"""#546: ``store/observe`` and ``ops/health`` meet the invariant of :mod:`orch.gitsafe`
+"""#546, #565: ``store/observe`` and ``ops/health`` meet the invariant of :mod:`orch.gitsafe`
 (:data:`orch.gitsafe.ISOLATION`): no configuration the person or a repo controls is read except through an explicit
 allow-list, and git runs only the closed set of operations of :data:`orch.gitsafe.OPS` (no caller-chosen argument
-reaches git as an option).
+reaches git as an option). Since #565 ``store/observe`` (every direct-mode read) runs no git process at all: it is
+orch's reader in-process (:data:`orch.gitread.local.READER`), and :data:`orch.gitsafe.OPS` holds only
+``check --staged``'s two operations.
 
 Every vector has a **positive control**: plain git with the hostile configuration runs the vector's program, so the
 test would catch a regression. Then every operation of the caller runs on an identical fresh repository: no program
@@ -19,6 +21,8 @@ from pathlib import Path
 import pytest
 
 from orch import gitsafe
+from orch.gitread.errors import Unavailable
+from orch.gitread.local import READER
 from orch.ops import health
 from orch.ops.caps import Capabilities
 from orch.store import observe
@@ -182,7 +186,7 @@ def make_repo(w, where: str, *, attrs: str | None = None) -> Path:
 
 def sample_operands(spec: gitsafe.Op) -> tuple[str, ...] | None:
     """A valid operand for each slot of ``spec``."""
-    sample = {"rev": "refs/heads/main", "path": "b.txt", "context": "3"}
+    sample = {"path": "b.txt"}
     return tuple(sample[k] for k in spec.operands) or None
 
 
@@ -193,10 +197,8 @@ def run_all(caller: str, repo: Path) -> dict:
             "head": observe.head(repo),
             "symbolic_head": observe.symbolic_head(repo),
             "toplevel": observe.toplevel(repo),
-            "porcelain": observe.porcelain(repo),
             "dirty": observe.dirty(repo),
-            "ref": observe.git(repo, "ref", rev="refs/heads/main"),
-            "commit": observe.git(repo, "commit", rev="refs/heads/main"),
+            "commit": READER.commit(repo, "refs/heads/main"),
             "identity": observe.repo_identity(repo, "r"),
         }
         if out["toplevel"] is not None:
@@ -258,7 +260,7 @@ def test_a_hostile_global_config_runs_nothing_and_changes_no_result(world, calle
     w.monkeypatch.setenv("HOME", str(w.empty))
     assert got == run_all(caller, make_repo(w, "base"))
     if caller == "observe":
-        assert got["head"] is not None and got["porcelain"] is not None and got["commit"] == got["head"]
+        assert got["head"] is not None and got["dirty"] and got["commit"] == got["head"]
     else:
         assert got["staged_raw"] is not None and got["blob_b"] == b"bee2\n"
 
@@ -302,7 +304,7 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
     scopes = {line.split("\t", 1)[0] for line in listing.splitlines()}
     assert scopes <= {"local", "command"}, scopes
     keys = {line.split("\t", 1)[1].split("=", 1)[0] for line in listing.splitlines() if line.startswith("command")}
-    person = {"core.excludesfile"} if op == "status" else set()
+    person = set()
     if gitsafe.OPS[op].args[0] == "diff":  # orch's own pins of every diff knob (orch-52 on #561)
         person |= {kv.split("=", 1)[0].lower() for kv in gitsafe._DIFF_PINS[1::2]}
         person |= {f"diff.{d}.{n}" for d in gitsafe.BUILTIN_DRIVERS for n in ("binary", "xfuncname", "funcname")}
@@ -314,14 +316,16 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
     assert w.fired() == set()
 
 
-def test_status_keeps_only_its_own_allow_list_and_the_global_ignore_still_counts(world):
+def test_dirty_honours_the_persons_global_ignore_file_and_runs_nothing(world):
+    """#565: the reader reads the person's ``core.excludesFile`` as data (their idea of "clean"), nothing else."""
     w = world
     _all_hostile(w)
     (w.home / "ignore").write_text("*.ignored\n")
     repo = make_repo(w, "r")
     (repo / "x.ignored").write_text("x\n")
-    status = observe.porcelain(repo)
-    assert status is not None and "x.ignored" not in status and "a.g" in status
+    (repo / "y.other").write_text("y\n")
+    status = observe.dirty(repo)
+    assert status is not None and "x.ignored" not in status and "a.g" in status and "y.other" in status
     assert w.fired() == set()
 
 
@@ -354,33 +358,36 @@ def test_no_operation_runs_a_pager_even_on_a_terminal(world):
 
 
 def test_operations_are_a_closed_set_with_no_network_subcommand():
-    allowed = {"rev-parse", "symbolic-ref", "merge-base", "status", "ls-files", "diff", "cat-file"}
-    assert {op.args[0] for op in gitsafe.OPS.values()} <= allowed
+    assert set(gitsafe.OPS) == {"staged_raw", "staged_blob"}  # #565: every other read is orch's reader
+    assert {op.args[0] for op in gitsafe.OPS.values()} <= {"diff", "cat-file"}
     assert not hasattr(gitsafe, "argv")  # the free-argv builder is gone
     from orch.ops.caps import Git
+    from orch.runner import wtgit
 
     assert not hasattr(Git, "run")  # ops/caps.Git.run (free argv) is gone
+    for gone in ("git", "lookup", "porcelain", "NoAnswer"):
+        assert not hasattr(observe, gone), gone  # observe starts no git process (#565)
+    assert not hasattr(wtgit, "read_git") and not hasattr(wtgit, "tree_dirty")
 
 
-INJECTED_REVS = [
-    "-c", "-ccore.fsmonitor=/tmp/x", "-C/tmp/hostile", "--git-dir=/tmp/x", "--work-tree=/tmp/x", "--exec-path=/tmp",
-    "--namespace=x", "--config-env=core.pager=X", "-p", "--upload-pack=/tmp/x", "--output=/tmp/x", "refs/heads/-x",
-    "refs/heads/a..b", "refs/heads/x@{1}", "refs/heads/x/", "refs/heads/x.lock", "HEAD:a", "x", "refs/tags/v1",
-    "refs/heads/x\n--all", "",
-]  # fmt: skip
+def test_no_direct_mode_read_starts_a_process(world, monkeypatch):
+    """#565, structurally: every read of ``store/observe`` (and so ``ops/caps.Git`` in direct mode, ``hostclient``,
+    D58 and the dev host) runs with process creation forbidden, on a repository whose own config names a program."""
+    w = world
+    repo = _hostile_repo(w, "r")
+    w.git(repo, "remote", "add", "origin", "https://github.com/acme/x")
 
+    def no(*a, **k):
+        raise AssertionError(f"a process was started: {a[:1]}")
 
-@pytest.mark.parametrize("rev", INJECTED_REVS)
-def test_an_injected_revision_never_reaches_git(world, monkeypatch, rev):
-    repo = make_repo(world, "r")
-    ran: list = []
-    real = subprocess.run
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: ran.append(a) or real(*a, **k))
-    for op in ("ref", "commit"):
-        with pytest.raises(gitsafe.Unsafe):
-            gitsafe.command(str(repo), op, os.environ, operand=rev)
-        assert observe.git(repo, op, rev=rev) is None
-    assert ran == []  # refused before the gate: not even the gate's git ran
+    monkeypatch.setattr(subprocess.Popen, "__init__", no)
+    monkeypatch.setattr(os, "posix_spawn", no)
+    monkeypatch.setattr(os, "fork", no)
+    got = run_all("observe", repo)
+    assert got["head"] and got["dirty"] and got["identity"] == "https://github.com/acme/x"
+    assert observe.refusal(repo) is None and observe.dirty_refusal(repo) is None
+    assert READER.diff(repo, branch="main", default_branch=None)["head_sha"] == got["head"]
+    assert w.fired() == set()
 
 
 @pytest.mark.parametrize("op,operand", [("-c", None), ("status", "-c"), ("head", "x"), ("push", None),
@@ -402,17 +409,6 @@ def test_a_leading_dash_or_special_path_is_only_ever_an_index_path(world, path):
     (repo / path.replace("/", "_")).write_text("dash\n")
     w.git(repo, "--literal-pathspecs", "add", "--", path.replace("/", "_"))
     assert health._git(repo, "staged_blob", caps=caps, path=path.replace("/", "_")) == b"dash\n"
-    assert w.fired() == set()
-
-
-def test_the_repository_is_always_the_one_named_never_one_an_argument_names(world):
-    w = world
-    hostile = make_repo(w, "hostile")
-    w.git(hostile, "config", "filter.r.clean", w.prog("repo-clean"))  # would be refused by the gate
-    repo = make_repo(w, "plain")
-    for rev in (f"-C{hostile}", f"--git-dir={hostile}/.git"):
-        assert observe.git(repo, "ref", rev=rev) is None
-    assert observe.head(repo) is not None  # the named repo still reads
     assert w.fired() == set()
 
 
@@ -447,13 +443,10 @@ def test_a_populated_submodule_with_a_hostile_filter_runs_nothing(world, monkeyp
     w.clear()
     repo = make_repo(w, "repo")
     _populated_submodule(w, repo)
-    assert observe.porcelain(repo) is None and observe.dirty(repo) is None  # refused: unknown, never clean
+    assert observe.dirty(repo) is None  # orch's reader refuses it: unknown, never clean
+    assert "submodule" in observe.dirty_refusal(repo)
     raw = health._git(repo, "staged_raw", caps=Capabilities.direct())  # diff --cached never opens a submodule
-    assert raw is not None and gitsafe.gitlinks(raw) == ["sub"]
-    assert w.fired() == set()
-    # the operation itself shields: even with the refusal switched off, status never opens the submodule
-    monkeypatch.setattr(gitsafe, "submodules", lambda *a, **k: None)
-    assert observe.porcelain(repo) is not None
+    assert raw is not None and b"160000" in raw and b"\0sub\0" in raw
     assert w.fired() == set()
 
 
@@ -464,7 +457,7 @@ def test_a_staged_gitlink_change_is_still_uncommitted_work(world):
     shutil.rmtree(sub)
     sub.mkdir()  # unpopulated, as after a clone without --recurse-submodules
     got = observe.dirty(repo)
-    assert got is not None and "staged submodule change: sub" in got.splitlines()
+    assert got is not None and "modified: sub" in got.splitlines()
     assert w.fired() == set()
 
 
@@ -488,8 +481,9 @@ def test_observe_runs_no_program_of_a_hostile_repo_config(world):
     w.clear()
     repo = _hostile_repo(w, "repo")
     got = run_all("observe", repo)
-    assert {k: v for k, v in got.items() if k != "identity"} == dict.fromkeys(got.keys() - {"identity"})
-    # reading the repo's config as data (F1 5.7's identity) is the gate's own listing: it runs nothing
+    # #565: no git process, so the repo's filter cannot run; and every answer is the real one (before: None)
+    assert all(v is not None for v in got.values()) and "modified: a.g" in got["dirty"]
+    # reading the repo's config as data (F1 5.7's identity): orch's own parser, it runs nothing
     w.git(repo, "remote", "add", "origin", "https://github.com/acme/x")
     assert observe.repo_identity(repo, "x") == "https://github.com/acme/x"
     assert w.fired() == set()
@@ -513,7 +507,7 @@ def test_a_local_hookspath_or_fsmonitor_program_never_runs_through_observe(world
     w.git(plain, "config", "core.fsmonitor", str(w.bin / "fsmonitor"))
     w.control(plain, "status", "--porcelain", fires=["fsmonitor"])
     w.clear()
-    assert observe.porcelain(repo) is None  # a program as core.fsmonitor: refused
+    assert observe.dirty(repo) is not None  # a program as core.fsmonitor: never read by orch's reader (#565)
     assert w.fired() == set()
 
 
@@ -579,7 +573,7 @@ def test_no_operation_runs_git_when_the_gate_refuses(world, monkeypatch, exc):
     repo = make_repo(world, "r")
     ran = _no_git_after_a_failed_gate(monkeypatch, exc)
     got = run_all("observe", repo)
-    assert {k: v for k, v in got.items() if k != "identity"} == dict.fromkeys(got.keys() - {"identity"})
+    assert got["head"] is not None and got["dirty"]  # #565: observe needs no gate, it starts no git
     got = run_all("health", repo)
     assert got == {"gate": exc.reason, "staged_raw": None, "blob_b": None, "blob_a": None}
     assert ran == []  # git itself was never started
@@ -589,7 +583,7 @@ def test_an_unexpected_gate_error_propagates_and_never_falls_through_to_git(worl
     repo = make_repo(world, "r")
     ran = _no_git_after_a_failed_gate(monkeypatch, RuntimeError("boom"))
     with pytest.raises(RuntimeError):
-        observe.porcelain(repo)
+        health._git(repo, "staged_raw", caps=Capabilities.direct())
     assert ran == []
 
 
@@ -599,8 +593,8 @@ def test_a_config_that_cannot_be_listed_is_refused(world):
     cfg = repo / ".git" / "config"
     cfg.chmod(0o000)
     try:
-        assert observe.head(repo) is None and observe.porcelain(repo) is None
-        assert observe.repo_identity(repo, "r") == "local:r"  # the listing failed: local, never a guess
+        assert observe.head(repo) is None and observe.dirty(repo) is None  # the reader refuses: unknown
+        assert observe.repo_identity(repo, "r") == "local:r"  # the config cannot be read: local, never a guess
     finally:
         cfg.chmod(0o644)
     assert observe.head(repo) is not None  # the same repo, readable again
@@ -627,64 +621,38 @@ def test_a_git_too_old_for_the_isolation_is_refused(world, monkeypatch):
     monkeypatch.setitem(gitsafe._VERSIONS, path, (2, 31))  # GIT_CONFIG_GLOBAL would be ignored silently
     with pytest.raises(gitsafe.Unsafe, match="too old"):
         gitsafe.gate(str(repo), os.environ)
-    assert observe.head(repo) is None
+    assert health._git(repo, "staged_raw", caps=Capabilities.direct()) is None
+    assert observe.head(repo) is not None  # #565: orch's reader needs no git at all
     monkeypatch.setitem(gitsafe._VERSIONS, path, (2, 32))
-    assert observe.head(repo) is not None
+    assert health._git(repo, "staged_raw", caps=Capabilities.direct()) is not None
 
 
-def test_refusal_names_the_gates_reason_only_for_a_repository(world, tmp_path):
+def test_refusal_names_the_readers_reason_only_for_a_repository(world, tmp_path):
+    """#565: ``observe.refusal`` is why orch's reader cannot read the repository (an extension it does not support),
+    ``None`` for a repository it reads (a hostile filter in the config is data, it runs nothing) or no repository."""
     w = world
-    repo = _hostile_repo(w, "r")
-    assert "filter.r.clean" in observe.refusal(repo)
-    assert observe.refusal(make_repo(w, "ok")) is None
+    assert observe.refusal(_hostile_repo(w, "hostile")) is None
+    repo = make_repo(w, "r")
+    w.git(repo, "config", "core.repositoryformatversion", "1")
+    w.git(repo, "config", "extensions.worktreeConfig", "true")
+    assert "worktreeconfig" in observe.refusal(repo).lower()
+    assert observe.head(repo) is None and observe.dirty(repo) is None  # unknown, never clean
     (tmp_path / "nogit").mkdir()
     assert observe.refusal(tmp_path / "nogit") is None
     assert w.fired() == set()
 
 
-def test_every_revision_of_a_diff_operation_is_validated_and_followed_by_the_end_of_revisions(world):
-    repo = make_repo(world, "r")
-    head = observe.head(repo)
-    for op in ("diff_numstat", "diff_names", "diff_patch", "merge_base"):
-        spec = gitsafe.OPS[op]
-        argv, _env = gitsafe.command(str(repo), op, os.environ, operand=sample_operands(spec))
-        assert argv[-1] == "--" and "--ignore-submodules=dirty" in argv or op == "merge_base"
-        for bad in ("--output=/tmp/x", "-c", f"{head}..{head}", "HEAD~1"):
-            values = list(sample_operands(spec))
-            values[-1] = bad
-            with pytest.raises(gitsafe.Unsafe):
-                gitsafe.command(str(repo), op, os.environ, operand=tuple(values))
-    with pytest.raises(gitsafe.Unsafe):  # the context is 0 to 10 lines, nothing else
-        gitsafe.command(str(repo), "diff_patch", os.environ, operand=("11", head, head))
-    assert observe.git(repo, "diff_numstat", rev=(head, head)) == ""
-
-
-def test_a_unicode_branch_name_works_and_its_revision_follows_end_of_options(world):
+def test_a_branch_name_the_reader_refuses_is_unknown_never_another_branch(world):
+    """#565 behaviour change: orch's reader takes ASCII ref names only (git's rules otherwise; a Unicode name could be
+    two files on a normalising file system), so a Unicode branch is "cannot be observed" in direct mode, as in host
+    mode. An ASCII name with git's other allowed characters works."""
     w = world
     repo = make_repo(w, "r")
-    for name in ("übung", "feat/Ärger-ß", "日本語/ブランチ", "a.b_c+d@e"):
-        w.git(repo, "branch", name)
-        head = observe.git(repo, "commit", rev=f"refs/heads/{name}")
-        assert head is not None and head == observe.head(repo), name
-        argv, _env = gitsafe.command(str(repo), "commit", os.environ, operand=f"refs/heads/{name}")
-        assert argv[-2:] == ["--end-of-options", f"refs/heads/{name}^{{commit}}"]
-    assert observe.git(repo, "merge_base", rev=(observe.head(repo), "refs/heads/übung")) == observe.head(repo)
-    for op in ("ref", "commit", "parent", "merge_base", "diff_numstat", "diff_names", "diff_patch"):
-        argv, _env = gitsafe.command(str(repo), op, os.environ, operand=sample_operands(gitsafe.OPS[op]))
-        first_rev = next(i for i, a in enumerate(argv) if a.startswith("refs/heads/"))
-        assert argv[first_rev - 1] == "--end-of-options" or argv[first_rev - 2] == "--end-of-options", op
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["-x", "a..b", "a@{1}", "a:b", "a\\b", "a~1", "a^", "a?", "a*", "a[b", "a b", "a\tb", "a b", "a b",
-     "x.lock", "x/", "a//b", "a\x01b", "a\x7fb", "a\u0085b", ".hidden", "a/.b", "x.", "@", "", "a" * 256],
-)  # fmt: skip
-def test_each_form_git_refuses_in_a_branch_name_is_refused(world, name):
-    repo = make_repo(world, "r")
-    with pytest.raises(gitsafe.Unsafe):
-        gitsafe.command(str(repo), "commit", os.environ, operand=f"refs/heads/{name}")
-    assert observe.git(repo, "commit", rev=f"refs/heads/{name}") is None
+    w.git(repo, "branch", "a.b_c+d@e")
+    assert READER.commit(repo, "refs/heads/a.b_c+d@e") == observe.head(repo)
+    w.git(repo, "branch", "übung")
+    with pytest.raises(Unavailable):
+        READER.commit(repo, "refs/heads/übung")
 
 
 def test_the_too_old_message_says_what_is_needed(monkeypatch):
@@ -693,27 +661,6 @@ def test_the_too_old_message_says_what_is_needed(monkeypatch):
     with pytest.raises(gitsafe.Unsafe) as e:
         gitsafe.git_version(os.environ)
     assert "2.32 or newer" in e.value.reason and "update git" in e.value.reason
-
-
-def test_merge_base_returns_the_real_fork_point_of_two_branches(world):
-    """A fork point with commits on both sides: ``merge_base`` names the fork, not either head or a parent (a5283877
-    ended the operation with ``--``, which merge-base rejects, so it returned nothing)."""
-    w = world
-    repo = make_repo(w, "r")
-    commit = ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m"]
-    w.git(repo, *commit, "fork")
-    fork = observe.head(repo)
-    w.git(repo, "switch", "-q", "-c", "side")
-    w.git(repo, *commit, "side 1")
-    w.git(repo, *commit, "side 2")
-    w.git(repo, "switch", "-q", "main")
-    w.git(repo, *commit, "main 1")
-    main = observe.git(repo, "commit", rev="refs/heads/main")
-    side = observe.git(repo, "commit", rev="refs/heads/side")
-    assert len({fork, main, side}) == 3
-    assert observe.git(repo, "merge_base", rev=(side, "refs/heads/main")) == fork
-    assert observe.git(repo, "merge_base", rev=("refs/heads/side", main)) == fork
-    assert observe.git(repo, "parent", rev=side) != fork  # the fallback would be wrong here
 
 
 # ------------------------------------------------- Opus delta 2 on #561: subdirectory roots, pointer moves, operands
@@ -761,8 +708,7 @@ def test_the_submodule_refusal_covers_the_whole_repo_even_from_a_subdirectory(wo
     w.clear()
     assert observe.dirty(repo) is None
     assert observe.dirty(repo / "d") is None  # refused from the subdirectory too, never "" (clean)
-    with pytest.raises(gitsafe.Unsafe, match="submodule"):
-        gitsafe.submodules(str(repo / "d"), os.environ)
+    assert "submodule" in observe.dirty_refusal(repo / "d")
     assert w.fired() == set()
 
 
@@ -775,67 +721,44 @@ def test_a_staged_pointer_move_outside_the_subdirectory_still_counts(world):
     sub.mkdir()  # unpopulated now
     w.clear()
     got = observe.dirty(repo / "d")
-    assert got is not None and "staged submodule change: sub" in got.splitlines()
+    assert got is not None and "modified: sub" in got.splitlines()
     assert w.fired() == set()
+
+
+def _review(w, repo: Path, base: str, head: str) -> dict:
+    """The dev host's diff read (``READER.diff``, #565) of ``base..head``: two refs pointing at them."""
+    w.git(repo, "update-ref", "refs/heads/rv-base", base)
+    w.git(repo, "update-ref", "refs/heads/rv-head", head)
+    got = READER.diff(repo, branch="rv-head", default_branch="rv-base")
+    assert (got["base_sha"], got["head_sha"]) == (base, head)
+    import base64
+
+    return {**got, "text": base64.b64decode(got["patch"]).decode("utf-8", "replace")}
 
 
 def test_a_pointer_move_between_commits_is_visible_and_runs_nothing(world):
-    """L1: diffs between two commits never open a submodule, so they keep ``--ignore-submodules=dirty`` and show the
-    pointer move (``=all`` hid it from the dashboard's diff)."""
+    """L1, now in orch's reader (#565): a diff between two commits shows the pointer move and opens no submodule."""
     w = world
     repo, sub = _super_with_armed_submodule(w)
-    before = observe.git(repo, "commit", rev="refs/heads/main")
+    before = READER.commit(repo, "refs/heads/main")
     w.git(sub, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "move")
     w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump sub")
-    after = observe.git(repo, "commit", rev="refs/heads/main")
+    after = READER.commit(repo, "refs/heads/main")
     w.clear()
-    assert "sub" in observe.git(repo, "diff_names", rev=(before, after)).split()
-    assert "sub" in observe.git(repo, "diff_numstat", rev=(before, after))
-    assert "Subproject commit" in observe.git(repo, "diff_patch", rev=("3", before, after))
+    got = _review(w, repo, before, after)
+    assert "sub" in [f["path"] for f in got["files"]] and "Subproject commit" in got["text"]
     assert w.fired() == set()
 
 
-@pytest.mark.parametrize("operand", [5, 3.0, b"refs/heads/main", ["refs/heads/main"], {"x": 1}, object()])
+@pytest.mark.parametrize("operand", [5, 3.0, b"b.txt", ["b.txt"], {"x": 1}, object()])
 def test_an_operand_of_the_wrong_type_is_refused_not_a_type_error(world, operand):
     repo = make_repo(world, "r")
     with pytest.raises(gitsafe.Unsafe):
-        gitsafe.command(str(repo), "ref", os.environ, operand=operand)
-    assert observe.git(repo, "ref", rev=operand) is None
+        gitsafe.command(str(repo), "staged_blob", os.environ, operand=operand)
+    assert health._git(repo, "staged_blob", caps=Capabilities.direct(), path=operand) is None
 
 
 # ------------------------------ Codex on 0a887514: an operation's fixed options are the only source of its behaviour
-
-
-def _bumped_submodule(w) -> tuple[Path, str, str]:
-    """A superproject whose second commit only moves its submodule's pointer; the submodule's own config arms a
-    textconv, an external diff and an fsmonitor program."""
-    repo, sub = _super_with_armed_submodule(w)
-    (sub / ".gitattributes").write_text("*.g diff=x\n")
-    w.git(sub, "config", "diff.x.textconv", w.prog("sub-textconv"))
-    w.git(sub, "config", "diff.external", w.prog("sub-external"))
-    before = observe.git(repo, "commit", rev="refs/heads/main")
-    w.git(sub, "add", "-A")
-    w.git(sub, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "move")
-    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump sub")
-    after = observe.git(repo, "commit", rev="refs/heads/main")
-    w.clear()
-    return repo, before, after
-
-
-def test_an_allowed_looking_diff_submodule_never_opens_a_submodule(world, monkeypatch):
-    w = world
-    repo, before, after = _bumped_submodule(w)
-    # positive control: a child diff runs inside the submodule (its external diff wins over its textconv)
-    w.control(repo, "-c", "diff.submodule=diff", "diff", before, after, fires=["sub-external"])
-    w.clear()
-    w.git(repo, "config", "diff.submodule", "diff")  # tolerated by the gate (orch-52): neutralised, not refused
-    gitsafe.gate(str(repo), os.environ)
-    for op, operand in (("diff_patch", ("3", before, after)), ("diff_names", (before, after)),
-                        ("diff_numstat", (before, after))):  # fmt: skip
-        out = observe.git(repo, op, rev=operand)
-        assert out is not None and "sub" in out, op
-    assert "Subproject commit" in observe.git(repo, "diff_patch", rev=("3", before, after))
-    assert w.fired() == set()
 
 
 def test_diff_relative_never_hides_a_staged_gitlink_outside_the_subdirectory(world, monkeypatch):
@@ -849,24 +772,10 @@ def test_diff_relative_never_hides_a_staged_gitlink_outside_the_subdirectory(wor
     plain = w.git(repo / "d", "diff", "--cached", "--raw").stdout
     assert "sub" not in plain  # positive control: the config hides it in plain git
     w.clear()
-    gitsafe.gate(str(repo), os.environ)  # tolerated (orch-52): neutralised by --no-relative, not refused
-    got = observe.dirty(repo / "d")  # --no-relative still shows the whole repository
-    assert got is not None and "staged submodule change: sub" in got.splitlines()
+    gitsafe.gate(str(repo), os.environ)  # tolerated (orch-52), not refused
+    got = observe.dirty(repo / "d")  # orch's reader reads no diff.* key and covers the whole repository (#565)
+    assert got is not None and "modified: sub" in got.splitlines()
     assert w.fired() == set()
-
-
-@pytest.mark.parametrize("name", ["a.lock/b", "x/y.lock/z", "a.lock"])
-def test_lock_is_refused_at_the_end_of_every_component(world, name):
-    repo = make_repo(world, "r")
-    with pytest.raises(gitsafe.Unsafe):
-        gitsafe.command(str(repo), "ref", os.environ, operand=f"refs/heads/{name}")
-
-
-def test_a_lock_inside_a_component_is_fine(world):
-    w = world
-    repo = make_repo(w, "r")
-    w.git(repo, "branch", "a.locks/b.lockx")
-    assert observe.git(repo, "ref", rev="refs/heads/a.locks/b.lockx") is not None
 
 
 # --------------------------- orch-52 on #561: diff.* is tolerated by the gate and neutralised by every operation
@@ -912,6 +821,7 @@ def _diff_repo(w, where: str) -> tuple[Path, str, str]:
     w.git(repo, "update-index", "--cacheinfo", f"160000,{'2' * 40},sub")
     w.git(repo, *commit, "c2")
     c2 = w.git(repo, "rev-parse", "HEAD").stdout.strip()
+    w.git(repo, "branch", "rv-base", c1)  # the review diff's base (orch's reader, #565)
     (repo / "b.txt").write_text("bee2\n")
     w.git(repo, "add", "b.txt")
     w.git(repo, "update-index", "--cacheinfo", f"160000,{'3' * 40},sub")  # a staged pointer move
@@ -921,23 +831,19 @@ def _diff_repo(w, where: str) -> tuple[Path, str, str]:
 
 
 def _every_operation_bytes(repo: Path, c1: str, c2: str) -> dict:
+    """Every operation of :data:`gitsafe.OPS` (git, from the top and a subdirectory) and every read of orch's reader
+    (#565: the dirty answer, the review diff c1..c2), as bytes."""
     out = {}
     for where in (repo, repo / "d"):
         for op, spec in gitsafe.OPS.items():
-            sample = {"rev": c2, "path": "x" if where.name == "d" else "b.txt", "context": "3"}
+            sample = {"path": "x" if where.name == "d" else "b.txt"}
             operand = tuple(sample[k] for k in spec.operands) or None
-            if op in ("diff_numstat", "diff_names", "merge_base"):
-                operand = (c1, c2)
-            elif op == "diff_patch":
-                operand = ("3", c1, c2)
             argv, env = gitsafe.command(str(where), op, os.environ, operand=operand)
             done = subprocess.run(argv, env=env, cwd="/", capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
-            text = done.stdout.replace(os.fsencode(os.path.realpath(repo)), b"<r>")
-            if op == "diff_patch":  # what observe.git returns for it: hunk headers without repo-chosen text
-                text = gitsafe.plain_hunk_headers(text.decode("utf-8", "surrogateescape")).encode(
-                    "utf-8", "surrogateescape"
-                )
-            out[(where.name, op)] = (done.returncode, text)
+            out[(where.name, op)] = (done.returncode, done.stdout.replace(os.fsencode(os.path.realpath(repo)), b"<r>"))
+        out[(where.name, "dirty")] = observe.dirty(where)
+    got = READER.diff(repo, branch="main", default_branch="rv-base")
+    out["diff"] = (got["base_sha"], got["files"], got["patch"])
     return out
 
 
@@ -964,7 +870,8 @@ def test_every_hostile_diff_key_is_neutralised_byte_for_byte(world):
     gitsafe.gate(str(hostile), os.environ)  # tolerated, not refused
     want, got = _every_operation_bytes(clean, c1, c2), _every_operation_bytes(hostile, c1, c2)
     assert {k: (want[k], got[k]) for k in want if want[k] != got[k]} == {}
-    assert want[("r", "diff_patch")][0] == 0 and b"diff --git a/a.g b/a.g" in want[("r", "diff_patch")][1]
+    assert want[("r", "staged_raw")][0] == 0 and b"b.txt" in want[("r", "staged_raw")][1]
+    assert want["diff"][0] == c1 and any(f["path"] == "a.g" for f in want["diff"][1])
     assert w.fired() == set()
 
 
@@ -983,7 +890,8 @@ def test_a_diff_key_outside_the_closed_list_is_refused_by_name(world, key, value
     named = key.lower() if key.count(".") == 1 else f"diff.x.{key.rsplit('.', 1)[1].lower()}"
     assert e.value.reason == f"this repo sets {named}, which orch doesn't support yet; remove it or tell us"
     assert value not in e.value.reason or value == "x"
-    assert observe.head(repo) is None
+    assert health._git(repo, "staged_raw", caps=Capabilities.direct()) is None
+    assert observe.head(repo) is not None  # #565: orch's reader reads no diff.* key
 
 
 def test_git_lfs_diff_textconv_is_tolerated_and_never_runs(world):
@@ -994,27 +902,27 @@ def test_git_lfs_diff_textconv_is_tolerated_and_never_runs(world):
     w.clear()
     gitsafe.gate(str(repo), os.environ)
     assert observe.dirty(repo) is not None and run_all("health", repo)["staged_raw"] is not None
-    head = observe.head(repo)
-    assert observe.git(repo, "diff_patch", rev=("3", head, head)) == ""
     assert w.fired() == set()
 
 
 def test_hunk_headers_carry_no_repo_chosen_text(world):
+    """orch's reader (#565) reads no ``diff.<driver>.xfuncname``: a hunk header's text is chosen by its own fixed rule
+    (git's default), never by the repository's regex."""
     w = world
     repo = make_repo(w, "r", attrs="*.g diff=x\n")
-    w.git(repo, "config", "diff.x.xfuncname", "^(.*)$")
+    w.git(repo, "config", "diff.x.xfuncname", "^(line 1)$")
     (repo / "a.g").write_text("".join(f"line {i}\n" for i in range(40)))
     w.git(repo, "add", "a.g")
     w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "long")
+    c1 = observe.head(repo)
     (repo / "a.g").write_text("".join(f"line {i}\n" if i != 30 else "changed\n" for i in range(40)))
     w.git(repo, "add", "a.g")
     w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c2")
     c2 = observe.head(repo)
-    c1 = observe.git(repo, "parent", rev=c2)
-    plain = w.git(repo, "diff", c1, c2).stdout
-    assert any(ln.startswith("@@") and not ln.endswith("@@") for ln in plain.splitlines())  # positive control
-    patch = observe.git(repo, "diff_patch", rev=("3", c1, c2))
-    assert patch and all(ln.endswith("@@") for ln in patch.splitlines() if ln.startswith("@@"))
+    plain = [ln for ln in w.git(repo, "diff", c1, c2).stdout.splitlines() if ln.startswith("@@")]
+    assert plain and all(ln.endswith("@@ line 1") for ln in plain)  # positive control: the repo's regex chose it
+    headers = [ln for ln in _review(w, repo, c1, c2)["text"].splitlines() if ln.startswith("@@")]
+    assert headers and not any(ln.endswith("@@ line 1") for ln in headers), headers
 
 
 # ------------------------------------------------------------------------- final Opus delta on #561: false cleans
@@ -1049,7 +957,7 @@ def test_a_flagged_file_outside_the_subdirectory_is_still_seen(world):
     w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "d")
     w.git(repo, "update-index", "--skip-worktree", "b.txt")
     got = observe.dirty(repo / "d")
-    assert got is not None and "hidden change flag: b.txt" in got.splitlines()
+    assert got is not None and "flag: b.txt" in got.splitlines()
 
 
 def _three_commits(w) -> tuple[Path, str, str, str]:
@@ -1065,14 +973,16 @@ def _three_commits(w) -> tuple[Path, str, str, str]:
 
 
 def test_grafts_never_shift_the_base_of_a_review(world):
-    """MC: info/grafts could make c3's parent c1; GIT_GRAFT_FILE=/dev/null keeps the true parent."""
+    """MC: info/grafts could make c3's parent c1; orch's reader never reads grafts (#565)."""
     w = world
     repo, c1, c2, c3 = _three_commits(w)
     (repo / ".git" / "info").mkdir(exist_ok=True)
     (repo / ".git" / "info" / "grafts").write_text(f"{c3} {c1}\n")
     assert w.git(repo, "rev-parse", f"{c3}^1").stdout.strip() == c1  # positive control
-    assert observe.git(repo, "parent", rev=c3) == c2
-    assert observe.git(repo, "merge_base", rev=(c3, c2)) == c2
+    w.git(repo, "update-ref", "refs/heads/rv-head", c3)
+    w.git(repo, "branch", "-f", "side", c2)
+    got = READER.diff(repo, branch="rv-head", default_branch="side")
+    assert got["base_sha"] == c2 and [c["sha"] for c in got["commits"]] == [c3]
 
 
 def test_a_forged_commit_graph_never_changes_the_reviewed_tree(world):
@@ -1082,7 +992,7 @@ def test_a_forged_commit_graph_never_changes_the_reviewed_tree(world):
 
     w = world
     repo, c1, c2, c3 = _three_commits(w)
-    honest = observe.git(repo, "diff_patch", rev=("1", c2, c3))
+    honest = _review(w, repo, c2, c3)["text"]
     benign = w.git(repo, "rev-parse", f"{c2}^{{tree}}").stdout.strip()
     w.git(repo, "commit-graph", "write", "--reachable")
     path = repo / ".git" / "objects" / "info" / "commit-graph"
@@ -1099,7 +1009,7 @@ def test_a_forged_commit_graph_never_changes_the_reviewed_tree(world):
     path.chmod(0o644)
     path.write_bytes(bytes(data))
     assert w.git(repo, "diff", c2, c3).stdout == ""  # positive control: plain git believes the forged graph
-    assert observe.git(repo, "diff_patch", rev=("1", c2, c3)) == honest and "curl evil" in honest
+    assert _review(w, repo, c2, c3)["text"] == honest and "curl evil" in honest  # the reader reads no graph
 
 
 def test_trustctime_and_checkstat_never_hide_a_same_size_change(world):
@@ -1119,7 +1029,7 @@ def test_trustctime_and_checkstat_never_hide_a_same_size_change(world):
     w.git(repo, "config", "core.trustctime", "false")
     w.git(repo, "config", "core.checkStat", "minimal")
     assert "b.txt" not in w.git(repo, "--no-optional-locks", "status", "--porcelain").stdout  # positive control
-    assert "b.txt" in observe.porcelain(repo)
+    assert "modified: b.txt" in observe.dirty(repo)
 
 
 def test_big_file_threshold_never_turns_the_review_into_binary(world):
@@ -1128,7 +1038,7 @@ def test_big_file_threshold_never_turns_the_review_into_binary(world):
     repo, c1, c2, c3 = _three_commits(w)
     w.git(repo, "config", "core.bigFileThreshold", "1")
     assert "Binary files" in w.git(repo, "diff", c2, c3).stdout  # positive control
-    patch = observe.git(repo, "diff_patch", rev=("3", c2, c3))
+    patch = _review(w, repo, c2, c3)["text"]
     assert "Binary files" not in patch and "curl evil" in patch
 
 
@@ -1154,41 +1064,14 @@ def _redos_repo(w, where: str) -> tuple[Path, str, str]:
     return repo, w.git(repo, "rev-parse", "HEAD~1").stdout.strip(), c2
 
 
-def _raw_hunk_headers(repo: Path, c1: str, c2: str) -> list[str]:
-    """The hunk headers of orch's OWN ``diff_patch`` argv and environment, run raw: no ``plain_hunk_headers``, so
-    what git itself honoured is visible."""
-    argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", c1, c2))
-    done = subprocess.run(argv, env=env, cwd="/", capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
-    assert done.returncode == 0, done.stderr
-    return [ln for ln in done.stdout.splitlines() if ln.startswith("@@")]
-
-
-def test_the_funcname_pins_are_honoured_by_git_itself(world, monkeypatch):
-    """R7-M1 / Opus R8-L1, platform-independent: with a benign repo funcname ``^\\(a*b\\)$``, plain git puts its
-    match in the hunk header; orch's own argv and environment, run WITHOUT the header stripping, give bare headers
-    (the pins are honoured by git); with the funcname pins removed, the same raw run carries the match again."""
-    w = world
-    repo, h1, h2 = _redos_repo(w, "r")
-    w.git(repo, "config", "diff.x.funcname", r"^\(a*b\)$")
-    match = "a" * 28 + "b"
-    plain = [ln for ln in w.git(repo, "diff", h1, h2).stdout.splitlines() if ln.startswith("@@")]
-    assert plain and all(ln.endswith(match) for ln in plain), plain  # positive control
-    pinned = _raw_hunk_headers(repo, h1, h2)
-    assert pinned and all(ln.endswith("@@") for ln in pinned), pinned
-    real = gitsafe._driver_pins
-    monkeypatch.setattr(gitsafe, "_driver_pins", lambda local: [(k, v) for k, v in real(local) if "funcname" not in k])
-    assert all(ln.endswith(match) for ln in _raw_hunk_headers(repo, h1, h2))  # the mutant shows the match
-
-
 def test_a_builtin_driver_is_pinned_too(world):
     """Opus R8 I1: a built-in driver (selected by an attribute, no repo config) is pinned like the repo's own."""
     w = world
     repo, h1, h2 = _redos_repo(w, "r")
     (repo / ".gitattributes").write_text("*.g diff=cpp\n")
-    _argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", h1, h2))
+    _argv, env = gitsafe.command(str(repo), "staged_raw", os.environ)  # the one diff operation left (#565)
     pins = {(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(int(env["GIT_CONFIG_COUNT"]))}
     assert {("diff.cpp.xfuncname", "^$"), ("diff.cpp.funcname", "^$"), ("diff.cpp.binary", "false")} <= pins
-    assert all(ln.endswith("@@") for ln in _raw_hunk_headers(repo, h1, h2))
 
 
 def test_a_backtracking_funcname_never_stalls_the_review_patch(world):
@@ -1206,9 +1089,9 @@ def test_a_backtracking_funcname_never_stalls_the_review_patch(world):
         with pytest.raises(subprocess.TimeoutExpired):
             subprocess.run(["git", "-C", str(repo), "diff", h1, h2], env=w.env(w.empty), capture_output=True, timeout=5)
     started = time.monotonic()
-    got = observe.git(repo, "diff_patch", rev=("3", h1, h2))
+    got = _review(w, repo, h1, h2)["patch"]  # orch's reader (#565): no driver, no regex of the repo's
     assert time.monotonic() - started < 5
-    assert got is not None and got == observe.git(clean, "diff_patch", rev=("3", c1, c2))
+    assert got == _review(w, clean, c1, c2)["patch"]
 
 
 def test_an_empty_driver_name_is_refused_and_the_algorithm_is_pinned(world, monkeypatch):
@@ -1252,9 +1135,9 @@ def test_an_empty_driver_name_is_refused_and_the_algorithm_is_pinned(world, monk
     assert w.git(repo, "diff", h1, h2).stdout != w.git(clean, "diff", c1, c2).stdout  # positive control
     with pytest.raises(gitsafe.Unsafe, match=r"diff\.\.algorithm"):
         gitsafe.gate(str(repo), os.environ)
-    assert observe.git(repo, "diff_patch", rev=("3", h1, h2)) is None
-    monkeypatch.setattr(gitsafe, "gate", lambda *a, **k: [])  # past the gate, the option still decides
-    assert observe.git(repo, "diff_patch", rev=("3", h1, h2)) == observe.git(clean, "diff_patch", rev=("3", c1, c2))
+    assert health._git(repo, "staged_raw", caps=Capabilities.direct()) is None
+    # orch's reader (#565) has one algorithm of its own: the review diff equals the clean repo's
+    assert _review(w, repo, h1, h2)["patch"] == _review(w, clean, c1, c2)["patch"]
 
 
 def _snapshot(repo: Path) -> dict[str, tuple[int, int, str]]:
@@ -1282,9 +1165,7 @@ def test_cachetextconv_never_makes_an_orch_read_write_a_notes_commit(world):
         os.utime(repo / f, ns=(st.st_atime_ns, st.st_mtime_ns + 5 * 10**9))
     before = _snapshot(repo)
     _every_operation_bytes(repo, c1, c2)
-    for op in ("diff_patch", "diff_numstat", "diff_names"):
-        operand = ("3", c1, c2) if op == "diff_patch" else (c1, c2)
-        assert observe.git(repo, op, rev=operand) is not None
+    assert READER.diff(repo, branch="main", default_branch="rv-base")["files"]
     assert observe.dirty(repo) is not None and run_all("health", repo)["staged_raw"] is not None
     assert _snapshot(repo) == before and w.count("diff-textconv") == 0
     # positive controls: plain status rewrites the index; the same diff in plain git runs the textconv and writes
@@ -1311,39 +1192,6 @@ def _timeout_for(monkeypatch, marker: str):
     monkeypatch.setattr(subprocess, "run", run)
 
 
-def test_observe_dirty_is_unknown_when_its_diff_times_out(world, monkeypatch):
-    repo = make_repo(world, "r")
-    assert observe.dirty(repo) is not None
-    _timeout_for(monkeypatch, "--no-relative")  # staged_tree
-    assert observe.dirty(repo) is None  # unknown, never "clean"
-
-
-def test_observe_diff_operations_answer_none_when_they_time_out(world, monkeypatch):
-    repo, c1, c2 = _diff_repo(world, "r")
-    _timeout_for(monkeypatch, "--end-of-options")
-    for op, operand in (("diff_patch", ("3", c1, c2)), ("diff_numstat", (c1, c2)), ("diff_names", (c1, c2))):
-        assert observe.git(repo, op, rev=operand) is None, op  # None, never "" (an empty diff)
-
-
-def test_tree_dirty_is_unknown_when_its_diff_times_out(world, monkeypatch):
-    from orch.runner import wtgit
-
-    w = world
-    repo = make_repo(w, "r")
-    own = dict(os.environ)
-    assert wtgit.tree_dirty(str(repo), own) is not None
-    real = subprocess.Popen
-
-    def popen(argv, *a, **k):  # the staged_tree diff never finishes in time
-        if isinstance(argv, list) and "--no-relative" in argv:
-            argv = ["sleep", "5"]
-        return real(argv, *a, **k)
-
-    monkeypatch.setattr(subprocess, "Popen", popen)
-    monkeypatch.setitem(wtgit.read_git.__kwdefaults__, "timeout", 0.5)
-    assert wtgit.tree_dirty(str(repo), own) is None
-
-
 @pytest.mark.parametrize("marker,what", [("--relative", "git cannot list the staged files here"),
                                          ("cat-file", "git cannot read the staged file")])  # fmt: skip
 def test_check_staged_says_git_is_unavailable_when_its_diff_times_out(world, monkeypatch, ws, marker, what):
@@ -1360,76 +1208,12 @@ def test_check_staged_says_git_is_unavailable_when_its_diff_times_out(world, mon
 # ------------------------------------- Opus R9 on #561: every exit but 0 and 1 is no answer; git's built-ins
 
 
-def _fake_git(monkeypatch, script: str) -> None:
-    """Every operation's argv becomes ``sh -c <script>`` (after the real gate)."""
-    real = gitsafe.command
-
-    def command(repo, op, own, **kw):
-        _argv, env = real(repo, op, own, **kw)
-        return ["sh", "-c", script], env
-
-    monkeypatch.setattr(gitsafe, "command", command)
-
-
-LOOKUP_OPERANDS = {
-    "ref": "refs/heads/main", "commit": "refs/heads/main", "parent": "refs/heads/main",
-    "merge_base": ("refs/heads/main", "refs/heads/main"),
-}  # fmt: skip
-
-
-@pytest.mark.parametrize("op", sorted(LOOKUP_OPERANDS))
-@pytest.mark.parametrize(
-    "script", ["exit 128", "exit 2", "kill -9 $$", "sleep 5"], ids=["128", "2", "signal", "timeout"]
-)
-def test_a_lookup_exit_other_than_0_or_1_is_no_answer(world, monkeypatch, op, script):
-    """R9-L1: exit 0 is the answer, exit 1 git's honest "no result" (None), anything else no answer (NoAnswer)."""
-    repo = make_repo(world, "r")
-    monkeypatch.setattr(observe, "_TIMEOUT", 1)
-    _fake_git(monkeypatch, script)
-    with pytest.raises(observe.NoAnswer):
-        observe.lookup(repo, op, rev=LOOKUP_OPERANDS[op])
-    assert observe.git(repo, op, rev=LOOKUP_OPERANDS[op]) is None  # observe.git still answers None for all of them
-
-
-@pytest.mark.parametrize("op", sorted(LOOKUP_OPERANDS))
-def test_a_lookup_exit_1_is_no_result_and_exit_0_the_answer(world, monkeypatch, op):
-    repo = make_repo(world, "r")
-    _fake_git(monkeypatch, "exit 1")
-    assert observe.lookup(repo, op, rev=LOOKUP_OPERANDS[op]) is None
-    _fake_git(monkeypatch, "echo " + "a" * 40)
-    assert observe.lookup(repo, op, rev=LOOKUP_OPERANDS[op]) == "a" * 40
-
-
 def test_ini_is_one_of_gits_builtin_drivers_and_pinned(world):
     """R9-L2: git 2.54 has 27 built-in drivers, ``ini`` among them."""
     w = world
     repo, h1, h2 = _redos_repo(w, "r")
     assert len(gitsafe.BUILTIN_DRIVERS) == 27 and "ini" in gitsafe.BUILTIN_DRIVERS
     (repo / ".gitattributes").write_text("*.g diff=ini\n")
-    _argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", h1, h2))
+    _argv, env = gitsafe.command(str(repo), "staged_raw", os.environ)
     pins = {(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(int(env["GIT_CONFIG_COUNT"]))}
     assert {("diff.ini.xfuncname", "^$"), ("diff.ini.funcname", "^$")} <= pins
-
-
-def test_the_hunk_header_stripping_is_the_backstop_for_an_unpinned_builtin(world, monkeypatch):
-    """R9-L2: a built-in a newer git adds is not on BUILTIN_DRIVERS, so it is unpinned; its function text in the
-    hunk header still never reaches a person: store/observe strips it. Simulated by un-listing ``cpp``."""
-    w = world
-    base = w.tmp / "b"
-    base.mkdir()
-    repo = base / "r"
-    w.git(base, "init", "-q", "-b", "main", str(repo))
-    (repo / ".gitattributes").write_text("*.c diff=cpp\n")
-    body = "".join(f"    x{i} = {i};\n" for i in range(20))
-    (repo / "f.c").write_text(f"int important_function(void)\n{{\n{body}}}\n")
-    w.git(repo, "add", "-A")
-    w.git(repo, "commit", "-qm", "1")
-    (repo / "f.c").write_text(f"int important_function(void)\n{{\n{body.replace('x15 = 15', 'x15 = 99')}}}\n")
-    w.git(repo, "commit", "-qam", "2")
-    c1, c2 = (w.git(repo, "rev-parse", r).stdout.strip() for r in ("HEAD~1", "HEAD"))
-    monkeypatch.setattr(gitsafe, "BUILTIN_DRIVERS", tuple(d for d in gitsafe.BUILTIN_DRIVERS if d != "cpp"))
-    raw = _raw_hunk_headers(repo, c1, c2)
-    assert raw and all("important_function" in ln for ln in raw), raw  # positive control: unpinned, git's text
-    patch = observe.git(repo, "diff_patch", rev=("3", c1, c2))
-    headers = [ln for ln in patch.splitlines() if ln.startswith("@@")]
-    assert headers and all(ln.endswith("@@") for ln in headers) and "important_function" not in "".join(headers)

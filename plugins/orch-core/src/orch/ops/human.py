@@ -336,15 +336,8 @@ class Human:
                 except Unavailable as exc:
                     out.append(f"{name}: {exc.reason}"[:300])
                     continue
-                from orch import gitsafe
-
-                try:  # the invariant of orch.gitsafe before P1's git reads the registered worktree
-                    gitsafe.gate(os.fspath(path), self.ctx.caps.env)
-                    # a populated submodule (Codex #439): its own config is not gated and status would hide or run it
-                    gitsafe.submodules(os.fspath(path), self.ctx.caps.env)
-                except gitsafe.Unsafe as exc:
-                    out.append(f"{name}: {exc.reason}"[:300])
-                    continue
+                # no git gate here any more (#565): direct mode reads the worktree with orch's own reader, which runs
+                # no program and refuses a populated submodule itself (unknown, never clean)
             if self.ctx.prepare is not None:
                 self.ctx.prepare.copies.append(copy.binding(view.uid, name))
             ref = f"refs/heads/{branch}"
@@ -357,10 +350,13 @@ class Human:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")
             elif on != ref:
                 out.append(f"{name}: the working tree is on {on or 'a detached commit'}, the decision binds {ref}")
-            if git.reader is None:  # direct mode: P1's git status (the person's own terminal)
+            if git.reader is None:  # direct mode: the reader in-process (no git process, #565)
                 dirty = git.dirty(path, name)
                 if dirty is None:
-                    out.append(f"{name}: git cannot be asked about the working tree")
+                    from orch.store.observe import dirty_refusal
+
+                    why = dirty_refusal(path)
+                    out.append((f"{name}: the working tree cannot be read" + (f": {why}" if why else ""))[:300])
                 elif dirty:
                     out.append(f"{name}: the working tree has uncommitted changes; the decision binds a commit")
                 continue

@@ -12,7 +12,9 @@ What it compares:
   unchanged counts as changed (conservative). Any other file type (FIFO, socket, device) at a tracked path is
   ``why: "type"`` and is never opened.
 * **Untracked files**: the worktree is walked minus the ``.gitignore`` files and ``info/exclude`` (git's pattern
-  rules; ``core.excludesFile`` is config and is not read, so a file only it ignores counts as untracked).
+  rules; ``core.excludesFile`` is config and is not read here, so a file only it ignores counts as untracked. In
+  direct mode the caller may pass the person's own global ignore file as data, ``excludes``, at the lowest
+  precedence: :mod:`orch.gitread.local`, #565).
 * **Flags**: ``skip-worktree`` and ``assume-unchanged`` (``assume-valid``) entries are reported as ``why: "flag"``.
 
 No config key other than the reader's three, and no attributes, filter, ``core.fsmonitor``, hook or
@@ -386,9 +388,13 @@ def _read_ignore(d: Dir, rel: str) -> bytes | None:
 
 
 class _Check:
-    def __init__(self, repo: Repo, worktree: Dir) -> None:
+    def __init__(self, repo: Repo, worktree: Dir, *, detached_ok: bool = False, excludes: bytes | None = None) -> None:
         self.repo = repo
         self.worktree = worktree
+        #: direct mode (#565): a detached ``HEAD`` is compared like a branch (``head_ref`` ``None``); host mode refuses
+        self.detached_ok = detached_ok
+        #: direct mode (#565): the person's global ignore file, read as data by the caller (lowest precedence)
+        self.excludes = excludes
         self.algo = repo.algo
         self.changed: dict[bytes, str] = {}
         self.walked = 0
@@ -442,8 +448,18 @@ class _Check:
 
     def head_tree(self) -> dict[bytes, tuple[int, str]]:
         """``HEAD``'s paths; sets :attr:`head_ref` and :attr:`head` (``None`` on an unborn branch: the empty tree)."""
-        self.head_ref = ref = self.repo.head_ref()  # refuses a detached or malformed HEAD
-        self.head = sha = self.repo.resolve_commit(ref)
+        if self.detached_ok:
+            from .refs import read_head_any
+
+            ref, detached = read_head_any(self.repo.gitdir, self.repo.hexlen)  # refuses a malformed HEAD
+            self.head_ref = ref
+            if detached is not None:
+                self.repo.commit(detached)  # a detached HEAD must name a commit (missing or another type: unknown)
+            sha = detached if ref is None else self.repo.resolve_commit(ref)
+            self.head = sha
+        else:
+            self.head_ref = ref = self.repo.head_ref()  # refuses a detached or malformed HEAD
+            self.head = sha = self.repo.resolve_commit(ref)
         if sha is None:
             return {}
         out: dict[bytes, tuple[int, str]] = {}
@@ -646,6 +662,8 @@ class _Check:
 
     def _walk_all(self) -> None:
         ignores = _Ignores()
+        if self.excludes is not None:  # git's order: core.excludesFile, then info/exclude, then .gitignore files
+            ignores.levels.append(parse_ignore(self.excludes, b""))
         exclude = _read_ignore(self.repo.commondir, "info/exclude")
         if exclude is not None:
             ignores.levels.append(parse_ignore(exclude, b""))
@@ -680,6 +698,8 @@ class _Check:
         }
 
 
-def check(repo: Repo, worktree: Dir) -> dict[str, Any]:
-    """The raw ``tree.check`` answer for the repository ``repo`` whose pinned working copy is ``worktree``."""
-    return _Check(repo, worktree).run()
+def check(repo: Repo, worktree: Dir, *, detached_ok: bool = False, excludes: bytes | None = None) -> dict[str, Any]:
+    """The raw ``tree.check`` answer for the repository ``repo`` whose pinned working copy is ``worktree``.
+    ``detached_ok`` and ``excludes``: direct mode only (:mod:`orch.gitread.local`, #565); the host's ``tree_check``
+    request passes neither (a detached ``HEAD`` is unknown there, and no file outside the pins is read)."""
+    return _Check(repo, worktree, detached_ok=detached_ok, excludes=excludes).run()

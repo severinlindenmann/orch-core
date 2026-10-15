@@ -119,6 +119,33 @@ def test_a_symlinked_ref_and_a_loose_symref_are_refused(make_repo):
         observe(r)
 
 
+@pytest.mark.parametrize(
+    "name,target,ok",
+    [
+        ("refs/remotes/origin/HEAD", "refs/remotes/origin/main", True),  # what git clone writes
+        ("refs/remotes/origin/HEAD", "refs/heads/main", False),  # not its own remote's branch
+        ("refs/remotes/origin/HEAD", "refs/remotes/other/main", False),
+        ("refs/remotes/origin/main", "refs/remotes/origin/x", False),  # only <remote>/HEAD
+        ("refs/remotes/a/b/HEAD", "refs/remotes/a/b/main", False),
+    ],
+)
+def test_only_a_clones_remote_head_symref_is_tolerated_and_never_followed(make_repo, name, target, ok):
+    """#565: every clone has ``refs/remotes/origin/HEAD -> refs/remotes/origin/main``; it is skipped (orch resolves
+    only ``HEAD`` and ``refs/heads/*``), so a clone is readable. Any other loose symref still refuses the repo (F7)."""
+    r = make_repo()
+    two_commits(r)
+    (r.gitdir / name).parent.mkdir(parents=True, exist_ok=True)
+    (r.gitdir / name).write_text(f"ref: {target}\n")
+    if not ok:
+        with pytest.raises(Unavailable, match="symbolic ref"):
+            observe(r)
+        return
+    got = observe(r)
+    assert got["head_sha"]
+    with Repo(pin_repo(os.path.realpath(r.path), None)) as repo:
+        assert repo.refs.resolve(name) is None  # skipped, never followed
+
+
 # ---------------------------------------------------------------- extensions, reftable
 
 

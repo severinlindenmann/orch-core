@@ -6409,7 +6409,8 @@ before any `reconcile_all`), does NOT run `submit.recover` in `open` (the bridge
 threads are `orch-relay-{poll,resp,job0,job1,aux}-<id8>`, the aux thread renews the lease, sweeps, retries stuck
 writes and flushes (R4 adds its pages there), `job` must be `RelayWorker.submit(fn).result()`. R6's
 `EpochKeySource` must implement `seal_state()` and `refusal_key(e)` and raise the gate / commit a rotation inside
-`BridgeKeys.serialised()`, and none of its methods may take the store lock (the lock order above). R3 adds its publisher thread beside these; the store side of the outbox is H12b's.
+`BridgeKeys.serialised()`, and none of its methods may take the store lock (the lock order above). **R6a:** the
+seal lock is the source's own (`seal_snapshot()`/`serialised()`), 11A.15.18 J-R6a-1. R3 adds its publisher thread beside these; the store side of the outbox is H12b's.
 
 #### As built in R3 (the checkpoint publisher, 15 Oct 2026)
 
@@ -8766,6 +8767,109 @@ The Simulator uses `relay.dev.severin.io`; `--relay local` stays for the Python 
 offer's scopes, never `operate` in v1.7), and F1 §5.3 gates admin events on the certificate's `operate`, so a phone signs
 no admin event. `auth ∈ {secure-enclave-unlocked, passphrase}` matches the phone's
 certificate. R6 appends `device.added` (step 9) before the phone's first `relay.submit` can verify (step 10 follows).
+
+#### 11A.15.18 As built in R6a (15 Oct 2026, orch-29; PR #554)
+
+**Modules.** `orch/relay/r6/keystore.py` (`MembershipKeys`: key custody, `head.json`, recovery, the R2
+`EpochKeySource`, the seal lock, `R6Gate`, the first card), `orch/relay/r6/firstcard.py` (`R6LinkSource`, R5's
+`LinkSource`), `orch/host/relayr6.py` (the seams `r6(service)` and `link_source(service)`), additions to
+`relay/sign.py` (`member_list`, `wk_grant`), `relay/keys.py` (the seal lock moves to the source), `relay/state.py`
+(`names`, `discard_temps`, ledger key rules), `host/custody.check_workspace_files` (membership) and
+`Store.genesis_event()`. The 11A.1 layout's `relay/r6/keys.py` is named `keystore.py` (no second `keys` module next to
+R2's `relay/keys.py`).
+
+**What is built.**
+- `membership/` (0700), `keys/` and `cards/` (0700), every file 0600, all I/O relative to locked directory fds
+  (`StateDir`; three instances, one per directory, each with its `flock`). `keys/wk-<e>.json` is claimed (`os.link` of
+  a fsynced temp file) before the head write that exposes `e`; `wxk-<v>`, `ck-<s>` before the card is signed;
+  `cards/card-<s>.json` before the first `PUT card`. A crashed claim's temp file (it may hold a key) is unlinked at load.
+- Never reuse an epoch: at load `ehw := max(head.ehw, wk-* files, ledger wk_commit epochs)`, `lhw := max(head.lhw,
+  ledger member lists)`, written durably before anything is served; `new_epoch_key(E)` refuses `E ≤ ehw` (the
+  in-memory floor moves with the claim), above the clamp, and an existing file. The orphan rule: a key file above
+  `e_c` that `head.json` never exposed is burned at load (named `EHW + 1`).
+- H7 (`unsafe`: `head_lost`, `head_unreadable`, `head_shape`, `key_missing`, `key_unreadable`, `wk_commit_mismatch`,
+  `ledger_unreadable`): no key served, `seal_state` gated, `check_start()` raises `MembershipUnsafe` (R5 refuses the
+  worker start; alarm `membership_state_unsafe` is R5's/R6b's to raise); `recover_h7(relay_lhw, relay_ehw)` (R6b calls
+  it after the verified `GET members`) raises both marks by 1024 above everything known, burns every held key, raises
+  the gate (`h7`) and rebuilds the card numbers as pending.
+- The head transitions R6b drives: `new_epoch_key` (step 2), `sealed_wk` (step 3, the grant's sealed key, never the raw
+  key), `expose` (step 4: the one atomic write; a superseded exposure burns its `list_seq` and epoch), `commit` (H3:
+  only the exposed body; a late 2xx is `False`), `abandon` (H4), `flush_gate`, `card_accepted`, `card_key_wrap`.
+- `EpochKeySource`: `current_epoch`, `wk`, `refusal_key`, `seal_state`, `seal_snapshot`, `serialised`, as the 11A.15.2
+  table (an exposed uncommitted epoch: nothing; a burned epoch above `e_c`: `refusal_key` only; `e_c` under the gate:
+  `refusal_key` too). `R6Gate.raise_for(device, reason)` and `R6Gate.on_commit(log, event)` (a `Store.on_commit`-shaped
+  hook for `device.removed`/`device.revoked`; an unparseable device raises the gate for all).
+- `RelaySigner.member_list` (the H4 floor: burned epoch refused through R6's `is_burned` callback, below the highest
+  `wk_commit` epoch refused, one `wk_commit` per epoch; one list per `list_seq`, none below the highest) and
+  `RelaySigner.wk_grant` (the device in the list recorded at that `list_seq`, one grant per `(device, epoch)`).
+- The first card: `R6LinkSource.card()` (convenience check first, then `first_card`: WXK, CK, sign, verify under the
+  owner `PK`, claim, head); `genesis()` raises `GenesisPathMissing` until the person path exists; `owner_pk_pub()` from
+  the workspace's genesis (`check_genesis`).
+- Tests: `tests/relay/test_r6a_keys.py`, `test_r6a_card_sign.py`, `test_r6a_crash_bridge.py` (a fault at every
+  durable step of key creation and of the first card, a SIGKILLed child, the real store behind R2's `Bridge`),
+  `tests/host/test_relay_r6a.py` (a real registered workspace), `tests/relay/t2/test_r6a_real_relay.py` (the real
+  relay: the R6 first card accepted and served back verified; an R6-signed list and grant accepted, the reference
+  phone opens R6's `WK_e`, R2 answers it), the import-ban additions. Mutation pass: 38 mutants on a `git archive` copy,
+  35 killed in round 1, the 3 survivors (a late 2xx for a superseded body, a key in `repr`, an unverified card claimed)
+  closed by new tests, 38 of 38.
+
+**Judgement calls (15 Oct 2026, orch-29; fail closed).**
+- J-R6a-1 **One seal lock, owned by the source.** 11A.15.2 says R6 owns the seal lock; R2 as built
+  (`relay/keys.py`, before R6a) held its own `RLock` in `BridgeKeys`. `BridgeKeys.sealing`/`serialised` now take the
+  source's `seal_snapshot()`/`serialised()` (`relay/keys.py:163`, `:170`), so `R6Gate` (store hook) and every seal take
+  one lock. The R2 fixtures got a `SealLockFixture`.
+- J-R6a-2 **`seal_state()` kept, `SealSnapshot` folded into R2's `SealState`.** `epoch` = `current`; `sealable` = not
+  `gated`, where `gated` is also true before the first commit and while unsafe; `announce` = `stale_target` = the
+  exposed rotation's epoch, else `min(EHW + 1, e_c + 2^16)` (also with the gate down: R2 sends it only for a gated or
+  burned request); `burned_above` is answered per epoch by `refusal_key` (R2's `BridgeKeys.burned`), one named epoch for
+  all (the persisted per-epoch name in `head.burned` is informational).
+- J-R6a-3 **The card is signed by R6's own `RelaySigner`** over the same WSK with the ledger `membership/sign-ledger.json`
+  (cards, member lists, `wk_commit`, grants): R5's `link_source(service)` seam hands no signer
+  (`host/relayhook.py:83` on `feat/relay-r5-hook`), and R5's signer holds the relay directory's ledger
+  (`relayhook.py:248`). **R5 MUST NOT sign cards** with its signer, or the "one card per `card_seq`" ledger splits.
+- J-R6a-4 **The first card's numbers.** An orphan `wxk`/`ck` file, or a card signed (ledger) but never claimed, is never
+  reused: the next attempt draws `v`/`s` above every file, ledger entry and the head, so the first card can carry
+  `card_seq` 2 (or more) after a crash. The relay accepts any first `card_seq`.
+- J-R6a-5 **The first card's sealed part** is `{name: <genesis prefix>, description: "", capabilities: [], hosted_by:
+  null}`; R6d can change it under a new `card_seq`.
+- J-R6a-6 **"Custody refuses convenience" (owner rule Q4) for R6a** means: the keys have no convenience (or keychain)
+  custody at all (0600 files under the host UID, no backend parameter, `orch.custody` banned in `orch/relay`, a test),
+  and no card is drawn or signed while 11A.6 would refuse `relay.link` (`R6LinkSource.card` checks first).
+- J-R6a-7 **WXK key generation inside `orch/relay`.** The import ban refuses `generate_private_key`/`private_scalar` in
+  the package; `r6/keystore.py` alone is excepted (`KEYGEN_ALLOWED`, WXK is an exchange key). Honest limit: the AST
+  cannot tell what a drawn key is used for.
+- J-R6a-8 **The clamp before any list** is `2^16` (first-list rule) while `lhw == 0`; after H7 (no committed list but a
+  previous one at the relay) it is `2^32 − 1`, as R6b's rotation after H7 needs.
+- J-R6a-9 **Orphans below `e_c`** cannot be told from old keys (no epoch history is kept); they are served as old
+  keys. Harmless: an orphan was never exposed, so no device holds it.
+- J-R6a-10 **The ledger's `wk_commit` entry** is `digest = wk_commit`, `sig = ""` (a commitment, not a signature).
+- J-R6a-11 **The gate is lowered only by `commit`** of a rotation whose list leaves out every gated device, after the
+  durable write, and only if no raise is still queued in memory (a raise during the commit keeps it up).
+- J-R6a-12 **One store per membership directory per host process** (`relayr6._OPEN`): both seams and every worker
+  restart share it; R5 has no close hook, so it is released only by `relayr6.close` (unlink, tests).
+
+**Design inconsistencies found.**
+- 11A.15.2 (the `seal_snapshot` table and "What R2 must provide" item 1: "`seal_state()` of the first draft is
+  dropped") vs R2 as merged (#467: `seal_state()` kept, the lock in `BridgeKeys`; 11A.5 "For R3/R5/R6",
+  `docs/architecture/orch-v2-host.md:6020`): resolved by J-R6a-1/2.
+- 11A.15.3 (`head.json` written with `host/custody.write_private`) vs the `orch.host` import ban in `orch/relay`:
+  `StateDir` (the same rules, without the ACL check, 11A.3) is used; `check_workspace_files` covers `membership/`.
+- 11A.15.2 "R6 raises the gate where the cause is written" needs a store hook R6a cannot install: `Store.on_commit` is
+  one callable owned by the host's subscription journal (`store/store.py:243`) and `note_forwarded_revocation` has
+  none. **R5/R6b must chain** `R6Gate.on_commit` after the journal's hook and call `raise_for` inside
+  `note_forwarded_revocation`'s critical section for a `held` result.
+
+**What R6b, R6c and R5 must know.**
+- R5: `SEAMS.r6 = relayr6.r6` and `SEAMS.link_source = relayr6.link_source`; `r6()` raises `MembershipUnsafe` on an
+  unsafe store (refuse the start, alarm `membership_state_unsafe`); the returned view serves no member until R6b; after
+  the first `PUT card` is accepted call `keys_for(service).card_accepted(seq)`; never sign a card with R5's signer.
+- R6b: drive the transitions above from the membership thread in the 11A.15.4 order; `flush_gate()` before any
+  publication work; build grants with `sealed_wk` and wraps with `card_key_wrap` (no raw key); sign through
+  `member_list`/`wk_grant` of the R6 signer (`relayr6.link_source`'s, or one built the same way); call `recover_h7`
+  after a verified `GET members`; replace `_NoView` with the verified committed list; wire the store hooks (above).
+  `head.json`'s `holders`, `excluded`, `h8` and `unmatched_rotation_ms` are R6b's (carried verbatim by R6a).
+- R6c: `grants/`, `devices/`, `primary.json`, `pairing/` and `alarms.json` (11A.15.3) do not exist yet; nothing in
+  R6a seals a `WK` before R6b exposes a list.
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

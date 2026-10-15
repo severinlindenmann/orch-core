@@ -260,7 +260,6 @@ def _on(codes, check):
 #: the codes that own this server's own keys (review I4 L3): any other code drops them
 CLICK_REFUSED = ("human.click_refused",)
 INTENT_DONE = ("intent.done",)
-RECORDS = ("records.",)
 
 #: key -> check(value, code). `code` and `message` are handled by `allowed_error` (required on the page).
 TOP_KEYS = {
@@ -277,7 +276,8 @@ TOP_KEYS = {
     ),
     "op": _on(INTENT_DONE, _match(OP, OP_MAX)),
     "summary": _on(INTENT_DONE, lambda v, code: isinstance(v, str) and len(v) <= SUMMARY_MAX),
-    "commit": _on(RECORDS, _match(COMMIT, 64)),
+    # a landed local commit rides on any push failure, host refusals included (core records/cli.py)
+    "commit": _match(COMMIT, 64),
     # a bool says only that the message was replaced: on any code (the records child sets it for host codes too)
     "message_hidden": lambda v, code: isinstance(v, bool),
 }

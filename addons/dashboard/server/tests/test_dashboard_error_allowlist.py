@@ -294,8 +294,6 @@ def test_l2_the_terminal_end_frame_checks_code_and_retry_after():
         ("intent.ended", "summary", "[]"),
         ("host.busy", "signed_at", "2026-10-15T12:00:00Z"),
         ("host.busy", "op", "answer"),
-        ("host.busy", "commit", SHA1),
-        ("intent.done", "commit", SHA1),
         ("host.busy", "request_id", RID),
         ("host.busy", "why", "update_orch"),
     ],
@@ -314,3 +312,13 @@ def test_i2_a_plain_text_fix_is_capped():
     assert body(base("host.busy", fix="update the readers first"))[1]["error"]["fix"] == "update the readers first"
     assert "fix" not in body(base("host.busy", fix="x" * (errors.FIX_TEXT_MAX + 1)))[1]["error"]
     assert "fix" not in body(base("host.busy", fix=""))[1]["error"]
+
+
+@pytest.mark.parametrize("code", ["records.push_failed", "host.busy", "lock.busy", "store.busy"])
+def test_a_landed_commit_rides_on_any_push_failure(code):
+    """Core attaches the landed local commit to every push failure, a host refusal included (review I4 delta N1): the
+    Records page then says only the push failed."""
+    _, got = body(base(code, commit=SHA1))
+    assert got["error"]["commit"] == SHA1
+    _, bad = body(base(code, commit="not-a-sha"))
+    assert "commit" not in bad["error"]

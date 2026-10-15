@@ -753,6 +753,12 @@ def test_a_valid_convenience_detail_is_forwarded_unchanged(click, served, human,
         ("sign.convenience_readers", {"reason": "no_declaration", "devices": {DEV: 1}}),
         ("sign.convenience_readers", {"reason": ["no_declaration"], "devices": [DEV]}),
         ("sign.convenience_readers", {}),
+        ("sign.convenience_readers", {"reason": "no_declaration"}),  # the host always sends both keys
+        ("sign.convenience_unavailable", {"devices": [DEV]}),
+        ("sign.convenience_unavailable", {"reason": True, "devices": [DEV]}),  # bools are not strings
+        ("sign.convenience_unavailable", {"reason": "disabled", "devices": [True]}),
+        ("sign.convenience_unavailable", {"reason": "disabled", "devices": True}),
+        ("sign.convenience_readers", {"reason": None, "devices": []}),
         ("sign.convenience_readers", ["no_declaration"]),
     ],
 )
@@ -760,6 +766,34 @@ def test_an_invalid_convenience_detail_gives_no_detail_at_all(click, served, hum
     e = _detail_from(click, human, code, detail)
     assert e.detail is None and "detail" not in e.error()
     assert ClickError.of({"code": code, "detail": detail}).detail is None
+
+
+def test_the_forwarded_detail_follows_the_hosts_closed_schema():
+    """One source of truth (#517): the signer's sets are the host's, and the host sends exactly ``{reason, devices}``
+    for both codes; a host change that adds a reason or a key shows up here, not as silently dropped detail."""
+    from orch.click import protocol
+    from orch.host import convenience as hconv
+    from orch.host.errors import DETAIL_KEYS, DEVICE_ID, DEVICES, DEVICES_MAX, closed_detail
+    from orch.ops.readers import ReadersRefused
+
+    codes = ("sign.convenience_unavailable", "sign.convenience_readers")
+    assert set(protocol.DETAIL_REASONS) == set(codes)
+    for code in codes:
+        assert set(DETAIL_KEYS[code]) == protocol.DETAIL_FIELDS and DETAIL_KEYS[code]["devices"] == DEVICES
+        assert protocol.DETAIL_REASONS[code] == frozenset(DETAIL_KEYS[code]["reason"])
+    assert set(protocol.REASONS) == protocol.DETAIL_REASONS["sign.convenience_unavailable"]
+    assert set(hconv._TEXT) <= protocol.DETAIL_REASONS["sign.convenience_unavailable"]
+    assert DEVICES_MAX == 64 and DEVICE_ID.pattern == r"d_[0-9a-f]{32}"
+    assert DEVICE_ID.fullmatch(DEV)
+    # what the host raises, through its own socket filter, is forwarded whole
+    for exc in (
+        hconv.unavailable("phone_device", [DEV]),
+        hconv.unavailable("disabled", []),
+        ReadersRefused("sign.convenience_readers", "reader_too_old", "x", devices=[DEV]),
+        ReadersRefused("sign.convenience_unavailable", "other_member", "x", devices=[DEV]),
+    ):
+        wire = closed_detail(exc.code, exc.detail)
+        assert wire == exc.detail and ClickError.of({"code": exc.code, "detail": wire}).detail == wire
 
 
 def test_any_other_code_drops_its_detail(click, served, human):

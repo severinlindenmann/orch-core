@@ -2440,7 +2440,7 @@ envelope.
 - **Packaging and versions (normative).** The dashboard depends on orch-core at **runtime** (`orch-core>=2.0.0.dev0`
   in `[project].dependencies`, from the repo path source while it is a dev version; once published, at least the first
   release with `orch/click/`). No extra is needed: `orch.click.spawn` and `orch.click.client` import only the standard
-  library and `orch.host.frames`; the signer needs `cryptography` (a core dependency) and, on macOS, only ctypes.
+  library, `orch.host.frames` and the stdlib-only leaf `orch.host.errors` (#517: the closed `detail` schema); the signer needs `cryptography` (a core dependency) and, on macOS, only ctypes.
   `spawn.start()` runs `sys.executable`, so the child uses the dashboard venv's own orch-core; `-I` ignores
   `PYTHONPATH` and the user site, so nothing outside the venv can shadow `orch`. On each workspace connection the
   signer requires `welcome.proto` to hold 1, `welcome.ops` to name `human.prepare`, `human.get`, `human.submit`,
@@ -2459,10 +2459,11 @@ envelope.
     `{"t":"res", "id":<same>, "ok":false, "error":{"code":str, "message":str, "retryable":bool, "reason"?:str,
     "retry_after_ms"?:int, "detail"?:{reason?:str, devices?:[Device]{0..64}}}}`. `message` is display text; clients
     branch on `code`, `reason` and `detail` only. **`detail` (#517)** is the host's `Error.detail` (§0.3), forwarded
-    only for `sign.convenience_unavailable` and `sign.convenience_readers` and re-validated whole first: only the keys
-    `reason` (from that code's closed set in §0.3) and `devices` (a list of at most 64 `d_` + 32 lowercase hex ids);
-    anything else drops the whole `detail` (never a partial one), and every other code answers without `detail`. No
-    contract change (`contract` stays 2): a client ignores unknown `Error` keys.
+    only for `sign.convenience_unavailable` and `sign.convenience_readers` and re-validated whole first against the
+    host's own §0.3 schema (`orch.host.errors.DETAIL_KEYS`): exactly the keys the host sends, `reason` (from that
+    code's closed set) and `devices` (a list of at most 64 `d_` + 32 lowercase hex ids, maybe empty); anything else
+    drops the whole `detail` (never a partial one), and every other code answers without `detail`. No contract change
+    (`contract` stays 2): a client ignores unknown `Error` keys.
   - A malformed frame, an unknown `op` or bad `args` answers `invalid.input` (a framing error closes the channel).
 
 ```
@@ -3973,8 +3974,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
 50. **The click signer forwards `Error.detail` (#517, §0.8.6 "Frames"; the number may be renumbered when a parallel
     change lands first):** a channel `Error` carries the host's `detail` `{reason, devices}` for
     `sign.convenience_unavailable` and `sign.convenience_readers` only, re-validated whole by the signer
-    (`orch.click.protocol.click_detail`; an invalid part drops all of it); every other code drops it. `ClickError`
-    gains `detail`. No wire, hash or schema change; the click `contract` stays 2.
+    (`orch.click.protocol.click_detail`, exactly `{reason, devices}` against the host's `DETAIL_KEYS` and `DEVICE_ID`;
+    an invalid part drops all of it); every other code drops it. `ClickError` gains `detail`; `orch.click.client` now
+    imports the stdlib-only `orch.host.errors`. No wire, hash or schema change; the click `contract` stays 2.
 
 ---
 

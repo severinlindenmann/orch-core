@@ -5,8 +5,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# a stdlib-only leaf (no custody, no I/O): the dashboard side may import it (§0.8.6 "Packaging and versions")
+from orch.host.errors import DETAIL_KEYS as _HOST_DETAIL
+from orch.host.errors import DEVICE_ID, DEVICES_MAX
+
 __all__ = [
     "CLICK_OPS",
+    "DETAIL_FIELDS",
     "DETAIL_REASONS",
     "DEPOSIT_LINE",
     "DEPOSIT_REASONS",
@@ -42,8 +47,8 @@ DEPOSIT_RISK = (
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = 12
 OPS = ("prepare", "view", "sign", "cancel", "status")
-#: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1)
-REASONS = ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
+#: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
+REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)
 REFUSALS = (
     "terminal_only",
@@ -59,15 +64,14 @@ REFUSALS = (
     "already_signed",
     "record_unavailable",
 )
-#: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3)
+#: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3).
+#: Taken from the host's own closed schema (:data:`orch.host.errors.DETAIL_KEYS`): one source of truth
 DETAIL_REASONS: dict[str, frozenset[str]] = {
-    "sign.convenience_unavailable": frozenset(REASONS),
-    "sign.convenience_readers": frozenset(
-        {"no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"}
-    ),
+    code: frozenset(_HOST_DETAIL[code]["reason"])  # type: ignore[arg-type]
+    for code in ("sign.convenience_unavailable", "sign.convenience_readers")
 }
-DETAIL_DEVICES_MAX = 64
-DEVICE = re.compile(r"d_[0-9a-f]{32}")
+#: the exact key set the host sends for both codes (``devices`` may be empty): anything else is not forwarded
+DETAIL_FIELDS = frozenset({"reason", "devices"})
 FRAME_ID = re.compile(r"[A-Za-z0-9_-]{1,32}")
 WS_ID = re.compile(r"[0-9a-f]{32}")
 REQ = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
@@ -132,26 +136,21 @@ def op_class(op: str, events: list[dict[str, Any]] | None = None) -> str:
 
 
 def click_detail(code: str, detail: Any) -> dict[str, Any] | None:
-    """The ``detail`` the signer forwards for ``code`` (#517), re-validated whole: only the two convenience codes, only
-    the keys ``reason`` (from that code's closed set) and ``devices`` (a list of at most 64 device ids). Anything else,
-    or any invalid part, gives ``None``: never a partial detail."""
+    """The ``detail`` the signer forwards for ``code`` (#517), re-validated whole: only the two convenience codes, and
+    exactly the shape the host sends for them, ``{reason, devices}``: ``reason`` from that code's closed set,
+    ``devices`` a list of at most 64 device ids (maybe empty). Anything else, or any invalid part, gives ``None``:
+    never a partial detail."""
     reasons = DETAIL_REASONS.get(code)
-    if reasons is None or type(detail) is not dict or not detail or not set(detail) <= {"reason", "devices"}:
+    if reasons is None or type(detail) is not dict or set(detail) != DETAIL_FIELDS:
         return None
-    out: dict[str, Any] = {}
-    if "reason" in detail:
-        reason = detail["reason"]
-        if type(reason) is not str or reason not in reasons:
-            return None
-        out["reason"] = reason
-    if "devices" in detail:
-        devices = detail["devices"]
-        if type(devices) is not list or len(devices) > DETAIL_DEVICES_MAX:
-            return None
-        if not all(type(d) is str and DEVICE.fullmatch(d) for d in devices):
-            return None
-        out["devices"] = list(devices)
-    return out
+    reason, devices = detail["reason"], detail["devices"]
+    if type(reason) is not str or reason not in reasons:
+        return None
+    if type(devices) is not list or len(devices) > DEVICES_MAX:
+        return None
+    if not all(type(d) is str and DEVICE_ID.fullmatch(d) for d in devices):
+        return None
+    return {"reason": reason, "devices": list(devices)}
 
 
 class ClickError(Exception):

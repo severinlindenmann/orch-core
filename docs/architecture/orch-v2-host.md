@@ -3746,6 +3746,11 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `phone_events.json` and a changed `text.json`; amendments A–D to §11A.14 (known identity before freshness,
     re-seal under a new rid, the retry table authoritative, a same-rid resend after the chunk expired). No hash,
     contract or schema change.
+40. **Device liveness and judge hardening (H12e-2, §11A.14 "As built in H12e-2"; the number may be renumbered when
+    H11c lands):** `orch.host.admission.device_standing` (the API for column R's `standing()`); `judge_events` maps
+    unexpected model exceptions to `validation.event`; §11A.14 amended: a `failed` outcome with nothing landed counts as
+    `refused` (14.4), the identity check lives in the result builder with no digest in `Planned` (14.6 L7, 14.9),
+    start-up recovery runs in R2's `Bridge.start` (H12a R5). No hash, contract or schema change.
 
 ---
 
@@ -4965,7 +4970,7 @@ column, the principal and the viewer come from the relay identity alone.
 | `host/outcomes.py` | `principal_of()` raises for column R; `NO_PARTIAL` gains `relay.submit`; a reconciler hook `relay_fields` (as `human.outcome_fields`) registered at open |
 | `host/human.py` | the append loop of `finish()` is extracted as `append_signed(service, log, events, extras) -> (landed, error)` and shared by `finish()` and `relay/submit.py` |
 | every `column.name` comparison (24 sites today in `host/{dispatch,sessions,runners,diff,visibility,workspace}.py`) | each site is listed in a table test, `test_column_r_sites`, stating R's answer; a new site fails the test until listed |
-| `WorkspaceService.open` | after `human.recover`, `relay.submit.recover(service)` (below), before anything is served |
+| `WorkspaceService.open` | ~~`relay.submit.recover(service)` after `human.recover`~~ amended H12e-2: recovery runs in R2's `Bridge.start` (honours the restore hold-off), not in `open` |
 
 **The `rd` field (H12d).** A request's signed meta (inside the seal) carries `rd`, the digest of the device's current
 declaration. On a replay or a byte-exact resend, `rd` is the one of the **first** send: the host matches a replay by its
@@ -5122,8 +5127,9 @@ clock is past the backup's time + 1 500 s (600 s before §11A.14 added the 900 s
   that is not the pinned one) keeps the marker and exits 9 (`host.unavailable`, "the marker is set, a running worker
   may continue until the host restarts"). `orch host relay start` clears the marker only through the host or with the
   host confirmed absent, and is refused under `ORCH_GRANT` (`human_only`).
-- R5 interface: register `service.outcomes.relay_fields` and run `relay.submit.recover(service)` in `open` after
-  `human.recover`; start the worker through `service.relay_starter` (or in `open`) only under `service.relay_lock`
+- R5 interface: register `service.outcomes.relay_fields`; start-up recovery (`relay.submit.recover(service)`) is **not**
+  run in `open` (amended H12e-2): R2 runs it in `Bridge.start`, honouring the restore hold-off (a stopped worker runs
+  nothing); start the worker through `service.relay_starter` (or in `open`) only under `service.relay_lock`
   after `relaylink.may_start`, setting `service.relay` to a worker with `stop()` and `join(timeout) -> bool`.
   `relay_starter(service)` runs **under** `relay_lock`: it must not take that lock, wait for a job of the workspace's
   worker thread, or block on anything that does (`close()` and `relay_stop()` take the lock; a starter that waits
@@ -5939,9 +5945,13 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   |---|---|---|---|
   | **A** not run | resend the same idem and the same signed bytes (a new rid and seq where the protocol needs them) | relay: unsigned 409 `stale_epoch` hint, sealed `stale_epoch`, `stale_timestamp`, `stale_sequence` (new rid), §8.6 step-4 silence or no answer; host: `timeout`, `cancelled`, `store.busy`, `lock.busy`, `rate.limited`, `quota.host`, `host.restarting`, `conn.overloaded`, `outcome.unknown` | resend |
   | **B** unknown | same idem only; resolve with `outcome.get`, then by a log read | `already_done{status:"unknown"}`, `rid_conflict`, `outcome.get` = `pending` (admitted, not run), `outcome.unknown_idem` before ULID time + 900 s + 300 s; `idem.expired` (resolve by the log only: answer → `questions[].answer.id` = own id; creation → `ticket.get(uid)` exists) | resolve; never re-sign |
-  | **C** definite, zero landed | a stored `refused` (never `failed`); a new signature is allowed | **C-auto** (14.4 re-sign may skip the review): `members.stale`, `ticket.key_not_next`. **C-review** (new review first): `event.bad_base`, `question.stale`, `event.expired`, `event.abandoned`, and `outcome.unknown_idem` after the bound when the log read shows the event absent | re-sign (C-auto) or re-review |
+  | **C** definite, zero landed | a stored `refused` (never `failed`; but see the H12e-2 note below: core records a refusal as `failed` with an empty landed list, and that counts as `refused`); a new signature is allowed | **C-auto** (14.4 re-sign may skip the review): `members.stale`, `ticket.key_not_next`. **C-review** (new review first): `event.bad_base`, `question.stale`, `event.expired`, `event.abandoned`, and `outcome.unknown_idem` after the bound when the log read shows the event absent | re-sign (C-auto) or re-review |
   | **D** terminal or landed | never re-sign for this review | landed: `committed` (incl. `duplicate:true`), any `failed`; question: `question.answered`, `question.unknown`, `answer.not_allowed`, `answer.bad_option`; authority and visibility: `role.denied`, `member.unknown`, `device.scope`, `device.invalid`, `device.unknown`, `ticket.frozen`, `freeze.active`, `ticket.not_visible`, `not_found`; collisions: `ticket.exists` (uid), `ticket.bad_reference`, `event.duplicate_id`; request: `forbidden_scope`, `op.not_allowed`, `sig.invalid`, `validation.event`, `validation.text`, `invalid.input`, `idem.conflict`, `idem.required`; the 11A.4 identity codes | show; stop |
 
+- **`refused` is a reading, not a state (H12e-2, decided by orch-52).** There is no `refused` outcome step. A `failed`
+  outcome whose landed list is empty and which was recorded under the lock after the log check counts as "refused":
+  the class is decided by the error code (C or D by the table above), not by the state name. A `failed` with landed
+  events is D. No new outcome state.
 - **Auto re-sign (no new review), only when all hold:**
   1. the last attempt is C-auto: a host answer in state `refused` for that exact idem, and no earlier idem of the same
      review is unresolved (A or B);
@@ -6012,7 +6022,7 @@ One `store.locked()` span (re-entrant), held through the append and the outcome:
 | L4 | answer: the ticket exists and the person may see it; creation: the uid is unused | `not_found` (uniform for missing and invisible) / `ticket.exists` |
 | L5 | creation: `owner` = the actor's person; `key` == `store._next_key()`, computed here after `refresh` | `invalid.input` / `ticket.key_not_next` |
 | L6 | `judge_events(store, log, [ev])`: `model.preview` with `peek_stamp` (roster, base, hash, authority, scopes at the position) | the model's code |
-| L7 | `outcomes.plan(intent, [Planned(log, id, type, actor, digest)], key)`, fsync | — |
+| L7 | `outcomes.plan(intent, [Planned(log, id, type, actor)], key)`, fsync (no digest in `Planned`: H12e-2) | — |
 | L8 | `append_relay(...)`: re-checks `_signed_by` and `logged_event`; the store re-verifies the signature and the certificate | its codes |
 | L9 | classify: on an error, ask `logged_event(log, id)` **before** recording (landed → `committed`, else `refused` + code); `outcomes.commit` / `refuse` | — |
 
@@ -6023,6 +6033,20 @@ fills in or changes a submitted field: what lands is what the phone signed, plus
   C-auto). It carries `detail.next_key`, advisory and never a reservation. `ticket.exists` means only that the uid
   exists; for our own landed event L3 has already answered. `workspace.show.next_key` is `null` for a principal that
   may not create (a viewer, or no `decide`).
+
+**As built in H12e-2 (15 Oct 2026, decided by orch-52 after the core review of #467).**
+- **`orch.host.admission.device_standing(store, person_id, device_id) -> "ok" | "removed" | "unknown"`**: the
+  liveness of a device in the F1 log (`device.added`, `device.removed`, `device.revoked` and tombstones, and a
+  `member.removed` that removes the person's devices). R2's column-R `standing()` **must** use it (never
+  `state._core`, never `device_person`, which also answers for a removed device); `"removed"` and `"unknown"` both end
+  the standing. It takes the store lock itself (re-entrant), so it is safe inside R2's `store.locked()` span. Certificate
+  expiry is not part of it (`verify_cert`).
+- **`judge_events` never lets a model exception escape**: any exception other than a model `Refusal` (`KeyError`,
+  `TypeError`, `ValueError`... on malformed but signed input) is `HostError("validation.event")`, a definite D. The
+  model's own refusal codes are unchanged, and `HumanOps._judge` behaves as before for valid input.
+- **Identity check (L7, 14.9):** the O6 identity check lives in the `relay.submit` result builder (`relay_fields`);
+  `Planned` carries no digest or key.
+- **Recovery (R5):** `relay.submit.recover` runs in R2's `Bridge.start`, not in `WorkspaceService.open`.
 
 **As built in H12e (core side, 15 Oct 2026).** Core now has everything the R2 handler calls from the step table;
 R2 (orch-29, `orch/relay/submit.py`) owns the order, the outcome plan, `append_relay` and the classification.
@@ -6037,7 +6061,7 @@ R2 (orch-29, `orch/relay/submit.py`) owns the order, the outcome plan, `append_r
     `event.abandoned` for a known id; checks the window only for a never-seen event (`event.expired`).
   - `dedup(store, log, event) -> int | None` and `lookup(store, log, id) -> Logged(seq, digest, actor) |
     "abandoned" | None`: the parts of L3. `signed_digest(ws, log, event)` is `"sha256:" + hex(sha256(
-    person_signing_bytes))`, the digest L7 records in `Planned` and `relay_fields` matches.
+    person_signing_bytes))`, the digest R2's result builder compares for the O6 identity check (not recorded in `Planned`, H12e-2).
   - `check_window(id, now)` and `ulid_ms(id)`: the window, both edges included, in ms (`WINDOW_PAST_S` = 900,
     `WINDOW_FUTURE_S` = 300); a malformed id is `validation.event`.
   - `check_target(store, log, event)`: L4 and L5 (`not_found` with one message for missing and invisible;

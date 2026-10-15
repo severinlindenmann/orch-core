@@ -136,3 +136,75 @@ def test_a_dot_git_symlink_in_the_worktree_is_refused(declared_wt, tmp_path):
         host.observe(w)
     with pytest.raises(Unavailable, match=r"\.git"):
         host.tree_check(w, "w", principal="p")
+
+
+# ---------------------------------------------------------------- round 1 of #498: one fd-based .git check everywhere
+
+
+def _plant(a, name, target_dotgit):
+    """An agent that can write A's commondir plants ``A/.git/worktrees/<name>`` whose back-pointer names
+    ``target_dotgit``: the pins a compromised batch child would hand out for it."""
+    gd = a.gitdir / "worktrees" / name
+    gd.mkdir(parents=True)
+    (gd / "HEAD").write_text("ref: refs/heads/main\n")
+    (gd / "commondir").write_text("../..\n")
+    (gd / "gitdir").write_text(f"{target_dotgit}\n")
+    st = os.stat(gd)
+    a_pins = pin_repo(str(a.path), [str(a.path)])
+    from orch.gitread.fs import DirPin
+
+    return DirPin(str(gd), st.st_dev, st.st_ino), a_pins.commondir
+
+
+def _refused_everywhere(host, path):
+    with pytest.raises(Unavailable):
+        host.observe(path)
+    with pytest.raises(Unavailable):
+        host.diff(path, branch="main", default_branch="main")
+    with pytest.raises(Unavailable):
+        host.tree_check(path, "x", principal="p")
+
+
+def test_c_a_real_linked_worktree_forged_as_a_planted_worktree_of_another_repo(make_repo, tmp_path):
+    """(c): B is a real linked worktree of declared C, so its ``.git`` is a regular file; the forged pins make it A's
+    planted worktree, whose back-pointer names ``B/.git``. B's ``.git`` names C's gitdir, not the planted one."""
+    a, c = committed(make_repo, "a"), committed(make_repo, "c")
+    b = tmp_path.resolve() / "b"
+    c.git("worktree", "add", "-q", str(b), "-b", "side")
+    gd, cd = _plant(a, "evil", f"{b}/.git")
+    forged = RepoPins(pin_repo(str(b), [str(b), str(c.path)]).worktree, gd, cd)
+    host = HostGitReader(Forging(str(b), forged), PinStore(), tree_checks=True)
+    assert host.sync([a.path, c.path, b]) == {str(a.path): None, str(c.path): None, str(b): None}
+    assert host.pins.get(str(b)) == forged  # the premise: stored
+    _refused_everywhere(host, b)
+    assert host.observe(a.path)["head_ref"] == "refs/heads/main"
+
+
+def test_d_a_parent_directory_swapped_for_a_symlink_is_refused(make_repo, tmp_path):
+    """(d): main repo M under ``pp``; after pinning, ``pp`` becomes a symlink to a directory where ``M/.git`` is a
+    regular ``.git`` file naming the planted gitdir. The working copy is opened by the ``O_NOFOLLOW`` walk: refused."""
+    a, m = committed(make_repo, "a"), committed(make_repo, "pp/m")
+    gd, cd = _plant(a, "evil", f"{m.path}/.git")
+    forged = RepoPins(pin_repo(str(m.path), [str(m.path)]).worktree, gd, cd)
+    host = HostGitReader(Forging(str(m.path), forged), PinStore(), tree_checks=True)
+    assert host.sync([a.path, m.path]) == {str(a.path): None, str(m.path): None}
+    base = tmp_path.resolve()
+    os.rename(base / "pp", base / "pp-real")
+    (base / "pp2" / "m").mkdir(parents=True)
+    (base / "pp2" / "m" / ".git").write_text(f"gitdir: {gd.path}\n")
+    os.symlink(base / "pp2", base / "pp")
+    _refused_everywhere(host, m.path)
+
+
+def test_a_dot_git_file_changed_after_pinning_refuses_every_operation(declared_wt):
+    """Codex P2: the ``.git`` check runs for every request in every profile, not only ``tree_check``."""
+    a, w, host = declared_wt
+    other = a.gitdir / "worktrees" / "elsewhere"
+    (w / ".git").write_text(f"gitdir: {other}\n")
+    for op in (
+        lambda: host.observe(w),
+        lambda: host.diff(w, branch="side", default_branch="main"),
+        lambda: host.tree_check(w, "w", principal="p"),
+    ):
+        with pytest.raises(Unavailable, match="does not name the pinned gitdir"):
+            op()

@@ -91,3 +91,20 @@ describe('the socket', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('a large paste (review L1)', () => {
+  it('is split into messages of at most 64 KiB, each with its tag', () => {
+    vi.stubGlobal('WebSocket', FakeSocket)
+    let sock!: FakeSocket
+    const c = connectTerm('T', handlers(), (u) => (sock = new FakeSocket(u)) as unknown as WebSocket)
+    sock.open()
+    const big = Uint8Array.from({ length: 150_000 }, (_, i) => i % 251)
+    c.sendInput(0, big)
+    const frames = sock.sent.slice(1) as Uint8Array[]
+    expect(frames.length).toBe(3)
+    expect(frames.every((f) => f.length <= 65536 && f[0] === 0)).toBe(true)
+    const joined = frames.flatMap((f) => Array.from(f.subarray(1)))
+    expect(joined).toEqual(Array.from(big))
+    vi.unstubAllGlobals()
+  })
+})

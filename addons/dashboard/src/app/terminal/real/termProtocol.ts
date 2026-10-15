@@ -84,6 +84,9 @@ export interface TermConnection {
 /** The terminal socket's address: this page's own origin, path `/term` (the server allows nothing else). */
 export const termUrl = (loc: Pick<Location, 'protocol' | 'host'> = window.location) => `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}/term`
 
+/** Payload bytes per input message: 64 KiB minus the tag byte. */
+export const MAX_INPUT = 65535
+
 const int = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
 
 /** Open the socket, present the ticket, and route the server's messages. Malformed messages are ignored. */
@@ -137,10 +140,14 @@ export function connectTerm(ticket: string, h: TermHandlers, make: (url: string)
   return {
     sendInput(tag, bytes) {
       if (!open() || bytes.length === 0) return
-      const frame = new Uint8Array(bytes.length + 1)
-      frame[0] = tag
-      frame.set(bytes, 1)
-      sock.send(frame)
+      // One message is at most 64 KiB with its tag (the server's max_size; review L1): a big paste goes in pieces.
+      for (let at = 0; at < bytes.length; at += MAX_INPUT) {
+        const part = bytes.subarray(at, at + MAX_INPUT)
+        const frame = new Uint8Array(part.length + 1)
+        frame[0] = tag
+        frame.set(part, 1)
+        sock.send(frame)
+      }
     },
     resize(cols, rows) {
       if (open()) sock.send(JSON.stringify({ t: 'resize', cols, rows }))

@@ -553,9 +553,16 @@ def test_a_foreign_convenience_event_between_the_precheck_and_service_relay_is_c
     def start(self):
         real_start(self)
         assert prechecked.wait(10)
-        # the foreign-append refresh lands on the worker thread while the starter still holds relay_cond (it must
-        # not wait for it: the starter rule)
+        # the foreign-append refresh lands on the worker thread while the starter still holds relay_cond. Give it up
+        # to 1 s to run before this start returns (the reviewer's repro waited for it): with the fix it is blocked
+        # on relay_cond until the starter is done, so the wait times out and the start goes on
+        from concurrent.futures import TimeoutError as FutureTimeout
+
         audits.append(svc.submit(lambda: svc._build_journal(audit=True)))  # noqa: SLF001
+        try:
+            audits[0].result(timeout=1.0)
+        except FutureTimeout:
+            pass
 
     monkeypatch.setattr(relay_worker.RelayWorker, "start", start)
     assert svc.relay_start() == "started"
@@ -689,6 +696,9 @@ def test_a_starter_whose_worker_fails_to_start_leaves_no_partial_worker(served, 
         raise RuntimeError("start failed")
 
     monkeypatch.setattr(relay_worker.RelayWorker, "start", boom)
+    with svc.relay_cond, pytest.raises(RuntimeError):  # start_worker itself clears what it set (not only its caller)
+        svc.relay_starter(svc)
+    assert svc.relay is None and relayhook.running_slots(svc.state_dir) == set()
     assert svc.relay_start() == "none" and svc.relay is None
     assert svc.relay_reason == "start_failed: RuntimeError"
     assert relayhook.running_slots(svc.state_dir) == set()

@@ -258,6 +258,7 @@ class RelayWorker:
         self._running = False  # the loop and the publisher were started
         self._ended = False
         self._reaping = False
+        self._finish_lock = threading.Lock()
         self.loop: BridgeLoop | None = None
         self.rids: RidStore | None = None
         self._start_thread: threading.Thread | None = None
@@ -424,26 +425,29 @@ class RelayWorker:
         return self._stopping
 
     def _finish(self) -> None:
+        """Release, once: the logout, the rid store, the state directory, ``on_ended``. Serialised by its own lock
+        (never the worker's): the reaper and a later ``join`` may both get here, and the second returns only once the
+        first has released everything; ``_ended`` is set last, so ``alive()`` stays true until then."""
         if os.getpid() != self._pid:
             return  # a forked child: the token, the database and the lock are the parent's
-        with self._lock:
+        with self._finish_lock:
             if self._ended or not self._stopping:
                 return
+            if self.loop is not None and self.loop.error is not None and self.error is None:
+                self.error = type(self.loop.error).__name__
+            self.alarm.save()
+            try:
+                self.session.logout()
+            except Exception:  # noqa: BLE001 - best effort (11A.7 step 3)
+                log.info("relay logout failed (ignored)")
+            if self.rids is not None:
+                self.rids.close()
+            self.state.close()
+            try:
+                self._on_ended()
+            except Exception:  # noqa: BLE001 - the host's bookkeeping never keeps a stopped worker alive
+                log.exception("relay worker of %s: on_ended failed", self.workspace_id)
             self._ended = True
-        if self.loop is not None and self.loop.error is not None and self.error is None:
-            self.error = type(self.loop.error).__name__
-        self.alarm.save()
-        try:
-            self.session.logout()
-        except Exception:  # noqa: BLE001 - best effort (11A.7 step 3)
-            log.info("relay logout failed (ignored)")
-        if self.rids is not None:
-            self.rids.close()
-        self.state.close()
-        try:
-            self._on_ended()
-        except Exception:  # noqa: BLE001 - the host's bookkeeping never keeps a stopped worker alive
-            log.exception("relay worker of %s: on_ended failed", self.workspace_id)
 
     def status(self) -> dict[str, Any]:
         """For ``host.status.relay``: no secret, no relay bytes. ``serving`` only while the loop runs without an

@@ -228,7 +228,10 @@ def test_out_queue_ends_with_overflow_when_controls_pile_up(monkeypatch):
 class FakePump:
     def __init__(self):
         self.inbox = queue.SimpleQueue()
-        self.pending = 0
+        self.pending = self.queued = 0
+
+    def put(self, item):
+        self.inbox.put(item)
 
     def sent(self):
         out = []
@@ -376,3 +379,36 @@ def test_pump_writes_input_with_its_own_timeout_not_the_reads_review_m2():
     pump.thread.join(2)
     runner.close()
     assert bytes(got) == payload and pump.delivered == []
+
+
+def test_input_waiting_for_the_pump_counts_toward_the_pause_review_l5():
+    """Bytes queued for the pump (not only unacknowledged ones) stop the server reading the browser."""
+    sock = TermSocket(None, None, None, None, None)
+    sock.read_only, sock.writer = False, True
+    sock.pump = terminals.Pump(None, None, None)  # not started: nothing drains the inbox
+    for _ in range(15):
+        sock.on_binary(b"\x00" + b"y" * 65535)
+    assert not sock.input_full()
+    for _ in range(2):
+        sock.on_binary(b"\x00" + b"y" * 65535)
+    assert sock.input_full() and sock.pump.queued == 17 * 65535
+
+
+def test_rate_state_of_idle_sessions_is_pruned_review_i1():
+    now = [0.0]
+    tickets = Tickets(clock=lambda: now[0])
+    for i in range(50):
+        tickets.mint(f"tok{i}", "ws", RUN, "read", False, None)
+    now[0] += 61
+    tickets.mint("fresh", "ws", RUN, "read", False, None)
+    assert len(tickets.minted) == 1
+
+
+def test_an_out_of_range_offset_ends_the_socket_review_i4():
+    async def run():
+        sock = socket_for()
+        sock.post(("frame", {"t": "out", "off": 2**64, "b64": "eA=="}, False))
+        return sock.final, list(sock.out.items)
+
+    _, items = asyncio.run(run())
+    assert [i[0] for i in items] == ["ctl"] and items[0][1] == {"t": "_end", "reason": "runner.lost", "lost": False}

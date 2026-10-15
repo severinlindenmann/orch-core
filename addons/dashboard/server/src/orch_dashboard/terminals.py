@@ -123,6 +123,8 @@ class Tickets:
         with self.lock:
             now = self.clock()
             self.items = {h: i for h, i in self.items.items() if i.expires > now}
+            # Sessions with no ticket in the last minute keep no rate state (review I1).
+            self.minted = {k: d for k, d in self.minted.items() if d and d[-1] > now - 60}
             recent = self.minted.setdefault(_digest(token), deque())
             while recent and recent[0] <= now - 60:
                 recent.popleft()
@@ -346,10 +348,19 @@ class Pump:
         self.inbox: queue.SimpleQueue = queue.SimpleQueue()
         self.stopped = threading.Event()
         self.pending = 0  # unacknowledged input bytes (read by the loop; written here)
+        self.queued = 0  # input bytes put into the inbox and not yet taken by the pump (review L5)
+        self.queued_lock = threading.Lock()
         self.thread = threading.Thread(target=self.run, name="orch-dashboard-term", daemon=True)
 
     def start(self):
         self.thread.start()
+
+    def put(self, item):
+        """From the loop: input is counted until the pump takes it, so the browser pause sees it too."""
+        if item[0] == "in":
+            with self.queued_lock:
+                self.queued += len(item[1])
+        self.inbox.put(item)
 
     def stop(self):
         self.stopped.set()
@@ -368,6 +379,9 @@ class Pump:
                         kind, *rest = self.inbox.get_nowait()
                     except queue.Empty:
                         break
+                    if kind == "in":
+                        with self.queued_lock:
+                            self.queued -= len(rest[0])
                     # Writes get their own timeout (review M2): `recv` leaves 10..50 ms on the socket, too short for a
                     # 64 KiB frame through an 8 KiB AF_UNIX buffer while the runner is busy. `recv` sets its own again.
                     if client.sock is not None:
@@ -583,6 +597,9 @@ class TermSocket:
                 except ValueError:
                     self.out.put({"t": "_end", "reason": "runner.lost", "lost": lost})
                     return
+                if not 0 <= frame["off"] < 2**63:  # 8-byte offset prefix (review I4): a runner fault, not a stall
+                    self.out.put({"t": "_end", "reason": "runner.lost", "lost": lost})
+                    return
                 self.out.put_out(frame["off"], data)
             elif t == "gap":
                 self.out.put({"t": "gap", "from": frame["from"], "to": frame["to"]})
@@ -635,7 +652,7 @@ class TermSocket:
             wait = self.paused_until - time.monotonic()
             if wait > 0:  # throttled: stop reading the browser until the runner wants input again
                 await asyncio.sleep(wait)
-            while self.pump is not None and self.pump.pending > PENDING_INPUT:
+            while self.input_full():
                 await asyncio.sleep(0.02)
             message = await ws.receive()
             if message.get("type") == "websocket.disconnect":
@@ -652,6 +669,10 @@ class TermSocket:
             if self.done.is_set():
                 return
 
+    def input_full(self) -> bool:
+        """Input not yet written (queued for the pump) plus not yet acknowledged, against the 1 MiB bound."""
+        return self.pump is not None and self.pump.pending + self.pump.queued > PENDING_INPUT
+
     def on_binary(self, data: bytes) -> None:
         if not data or len(data) > MAX_MESSAGE:
             return self.end(Closed("protocol"))
@@ -667,7 +688,7 @@ class TermSocket:
             if self.bucket < 1:
                 return  # over the reply rate: dropped
             self.bucket -= 1
-        self.pump.inbox.put(("in", bytes(body)))
+        self.pump.put(("in", bytes(body)))
 
     def on_text(self, text: str) -> None:
         if len(text) > FIRST_MESSAGE_MAX:
@@ -698,7 +719,7 @@ class TermSocket:
         size, self.resize_next = self.resize_next, None
         if size is not None and self.pump is not None:
             self.resize_at = time.monotonic()
-            self.pump.inbox.put(("resize", *size))
+            self.pump.put(("resize", *size))
 
 
 def _ready(frame: dict) -> dict:

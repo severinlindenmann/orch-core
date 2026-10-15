@@ -995,7 +995,8 @@ def test_a_crash_between_the_archive_and_the_unlink_recovers_to_one_archive(serv
     assert not relaylink.unlink_pending(svc.state_dir, served.wid)
 
 
-def test_a_crash_between_the_intent_and_the_marker_still_leaves_the_worker_stopped(host_lab, monkeypatch):
+@pytest.mark.parametrize("renamed", [False, True])
+def test_a_crash_between_the_intent_and_the_marker_still_leaves_the_worker_stopped(host_lab, monkeypatch, renamed):
     """P2: the intent landed, the marker did not (a crash in between). Recovery persists the marker before it
     completes the unlink, so a later relink never starts without ``orch host relay start``."""
     monkeypatch.setattr(relay_worker, "R6_READY", True)
@@ -1009,6 +1010,9 @@ def test_a_crash_between_the_intent_and_the_marker_still_leaves_the_worker_stopp
             30
         )
         relaylink.mark_unlink_intent(hl.state, wid, UID)  # the crash comes before mark_stopped
+        if renamed:  # and (both completion branches) after the rename too
+            link = relaylink.link_path(hl.state, wid)
+            os.rename(link, link.parent / "unlinked-1.json")
         assert not relaylink.is_stopped(hl.state, wid, UID)
     with hl.host() as h:
         svc = h.host.services[wid]

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+
 from tests.ops.test_task_ac import claimed, fill_and_approve, py
 
 LINKS = 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}'
@@ -80,12 +83,23 @@ def test_a_read_only_store_observes_nothing(ws, cli):
     assert "branch.pushed" not in [e["type"] for e in ws.read_events(uid)]
 
 
+#: the variables orch.gitsafe.isolated_env sets itself
+_OURS = {
+    "LANG", "LC_ALL", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "GIT_ALLOW_PROTOCOL", "GIT_NO_LAZY_FETCH",
+    "GIT_ATTR_NOSYSTEM", "GIT_NO_REPLACE_OBJECTS", "GIT_PAGER", "GIT_EDITOR", "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_COUNT", "GIT_GRAFT_FILE",
+}  # fmt: skip
+
+
 def test_git_environment_is_scrubbed(tmp_path, monkeypatch):
+    from orch import gitsafe
     from orch.store import observe
 
     monkeypatch.setenv("GIT_DIR", "/nowhere")
     monkeypatch.setenv("git_work_tree", "/nowhere")
-    assert not any(k.upper().startswith("GIT_") for k in observe.git_env())
+    env = gitsafe.isolated_env(os.environ)  # the environment observe.git runs git in (#546)
+    assert "GIT_DIR" not in env and "git_work_tree" not in env
+    assert {k for k in env if k.upper().startswith("GIT_")} <= _OURS  # only what the isolation sets itself
     assert observe.head(tmp_path) is None  # not a repository, and GIT_DIR did not make it one
 
 
@@ -112,18 +126,21 @@ def test_credentials_in_a_remote_are_never_stored_printed_or_passed_on(ws, cli, 
 
 
 def test_git_runs_with_an_allow_listed_environment(monkeypatch):
-    from orch.store import observe
 
     for k in ("GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK", "ORCH_GRANT", "GIT_ASKPASS"):
         monkeypatch.setenv(k, "x")
     monkeypatch.setenv("LC_ALL", "C")
-    env = observe.git_env()
-    assert all(k in {"PATH", "HOME", "LANG", "TMPDIR", "TERM"} or k.startswith("LC_") for k in env)
+    from orch import gitsafe
+
+    env = gitsafe.isolated_env(os.environ)  # the environment observe.git runs git in (#546)
+    assert all(k in {"PATH", "HOME", "LANG", "TMPDIR", "USER", "LOGNAME", "XDG_CONFIG_HOME"} or k in _OURS for k in env)
     assert env["LC_ALL"] == "C"
 
 
 def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
-    """A clean filter set in the repository runs inside ``git status``; it must not be able to open the person's tty."""
+    """A clean filter set in the repository's own config would run inside ``git status``: since #546 the gate of
+    orch.gitsafe refuses the repository (``None``, unknown) and the filter never runs; nothing observe starts could
+    open the person's tty anyway (own session)."""
     import sys
     import time
 
@@ -142,8 +159,11 @@ def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
     ws.git("config", "filter.probe.clean", f"{sys.executable} {script}")
     time.sleep(1.1)
     (repo / "impl.txt").write_text("broken\n")  # same content, new mtime: git runs the filter to compare
-    observe.dirty(repo)
-    assert marker.read_text() == "no tty"
+    assert observe.dirty(repo) is None
+    assert not marker.exists()
+    # positive control: plain git status runs that filter, so the assertions above can fail
+    done = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, check=False)
+    assert done.returncode == 0 and marker.exists()
 
 
 def test_observe_refuses_remote_mismatch_and_accepts_ascii_case_match(ws, cli):

@@ -128,7 +128,7 @@ Details: [harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.m
 
 ## Get started
 
-You need [uv](https://docs.astral.sh/uv/) and Python 3.14 or newer (uv installs it for you).
+You need [uv](https://docs.astral.sh/uv/) and Python 3.14 or newer (uv installs it for you). You also need git 2.32 or newer: orch refuses to run an older git, because older versions silently ignore the setting orch uses to keep your own git configuration out of its git calls.
 
 ```bash
 # Claude Code

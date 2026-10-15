@@ -27,9 +27,10 @@ import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
-import { clickProblem } from '@/api/click'
+import { clickProblem, type ClickCard } from '@/api/click'
 import { signerProblem } from '@/api/refusals'
 import type { RosterMember } from '@/api/settings'
+import type { Workspace } from '@/api/types'
 import { ClickProblemBox } from '@/components/sign/RefusalDevices'
 import { readersOf, readersRoster, refusalSamples } from './readersFixture'
 
@@ -67,6 +68,12 @@ export const LAYOUT_SCENARIOS = [
   // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
   'readers-devices',
   'convenience-refusals',
+  // The Settings → General signing card ("Sign in the dashboard"): the five states of #578, with a long name, prefix and device.
+  'signing-on',
+  'signing-off',
+  'signing-terminal-on',
+  'signing-unsafe',
+  'signing-unknown',
   // Drop (proposed drop/1): Workspace → Drop with the fixture drop api.
   'drop-unavailable',
   'drop-list',
@@ -80,6 +87,23 @@ export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
 const LONG_URL = 'https://git.example.test/' + 'a-very-long-organisation-name/'.repeat(6) + 'records-of-the-workspace-with-an-unbreakable-name.git'
 const LONG_WORD = 'U'.repeat(90)
+
+// The signing card fixtures: a placeholder device id (d_ + 32 hex of an obvious pattern), never a real key, and no passphrase prefilled.
+const PLACEHOLDER_DEVICE = 'd_' + '0123456789abcdef'.repeat(2)
+const SIGNING_LONG_NAME = 'The quarterly orchestration workspace of the very long named organisation ' + LONG_WORD
+const SIGNING_LONG_PREFIX = 'LONGPREFIX-' + 'WORKSPACE-'.repeat(5) + 'END' // 64 characters at most: a safe shell word
+const signingCard = (scenario: LayoutScenario): ClickCard =>
+  scenario === 'signing-on' || scenario === 'signing-unknown'
+    ? { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true, device: PLACEHOLDER_DEVICE }
+    : scenario === 'signing-off'
+      ? { custody: 'convenience', enabled: true, available: true, switchable: true, device: PLACEHOLDER_DEVICE }
+      : { custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true, device: PLACEHOLDER_DEVICE }
+const signingWorkspace = (scenario: LayoutScenario, workspace: Workspace): Workspace => ({
+  ...workspace,
+  name: SIGNING_LONG_NAME,
+  prefix: scenario === 'signing-unsafe' ? 'X;rm -rf ~' : SIGNING_LONG_PREFIX,
+  click: signingCard(scenario),
+})
 
 const quickRow = (i: number, over: Partial<QuickRow> = {}): QuickRow =>
   ({
@@ -392,7 +416,7 @@ function install() {
   if (installed) return
   installed = true
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
-  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket }
+  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
     originals.set(name, a[name])
     a[name] = fn
@@ -438,6 +462,13 @@ function install() {
   })
   set('recordsAutoOff', async () => ({ ok: true }))
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
+  // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
+  // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.
+  set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  set('switchClick', async (...args: never[]) => {
+    if (!current.startsWith('signing-')) return original.switchClick(...args)
+    throw new TypeError('fixture: the connection was lost')
+  })
   set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => request(action))
   set('getHostSettings', async () => ({
     available: true,
@@ -476,7 +507,7 @@ export function LayoutPreview({ name }: { name: string }) {
       undoDrop = installDropFixture(dropFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers', 'click-status']) qc.removeQueries({ queryKey: [key] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
@@ -532,7 +563,7 @@ export function LayoutPreview({ name }: { name: string }) {
     )
   return (
     <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-      <HostGeneral workspace={workspace} />
+      <HostGeneral workspace={scenario.startsWith('signing-') ? signingWorkspace(scenario, workspace) : workspace} />
     </SettingsFrame>
   )
 }

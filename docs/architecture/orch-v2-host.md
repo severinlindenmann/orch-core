@@ -4226,6 +4226,33 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     in-place move back refuses when a key file is already there. The dashboard's route takes a passphrase with `on`
     only; its card shows the terminal commands instead of a new-passphrase form. A dashboard passphrase never resumes
     a staged conversion (only the terminal does). No contract, wire or F1 change.
+61. **Git isolation for every read-only git call (#546, follow-up to #541; §12.7 "Isolation"; the number may be
+    renumbered when a parallel change lands first):** `orch.gitsafe` holds the one mechanism of the invariant "no git
+    invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list":
+    `isolated_env`, `config_env`, `person_entries`, and `command`, a **closed set of operations** (`gitsafe.OPS`:
+    `head`, `symbolic_head`, `toplevel`, `ref`, `commit`, `parent`, `merge_base`, `status`, `index_flags`,
+    `staged_raw`, `staged_tree`, `staged_blob`, `diff_numstat`, `diff_names`, `diff_patch`; every diff operation pins
+    each `diff` knob it tolerates, the gate's own closed list of `diff.*` keys) with validated operands (a revision is
+    `HEAD`, a full commit id or `refs/heads/<name>`, followed by `--`) and no free argv. `ops/caps.Git.run` (free argv) is removed. Every operation runs the gitsafe
+    gate first: a repository whose own config sets a key outside the allow-list, such as a filter its
+    `.gitattributes` selects, gives `None` in `store/observe` (D58's "git cannot be asked", never clean) and
+    `git.unavailable` naming the key in `orch check --staged`. `status` refuses a populated submodule anywhere in
+    the repository, even when the path points into a subdirectory, and otherwise runs with `--ignore-submodules=dirty`,
+    so a gitlink path replaced by a file or deleted shows; the diffs never open a submodule and keep `=dirty`, so a
+    pointer move shows; a staged gitlink change and a `skip-worktree`/`assume-unchanged` flag anywhere in the
+    repository count as uncommitted work. No commit-graph and no grafts are read (`core.commitGraph=false`,
+    `GIT_GRAFT_FILE=/dev/null`, replace objects off), so a forged one cannot change the tree or the base a person
+    reviews; the stat checks are pinned at git's defaults (`core.trustctime`, `core.checkStat`), and the review patch
+    is `--text`. `staged_blob` reads `:0:./<path>`, relative to the workspace, so a
+    workspace in a subdirectory of its repository is checked file for file.
+    System and global config are off; `status` keeps only the person's `core.excludesFile`, `core.autocrlf` and
+    `core.eol`. The gate refuses git older than 2.32. `wtgit.run_git` stays the documented exception. **Behaviour
+    changes:** the repository identity (F1 5.7) reads `remote.origin.url` from the repository's own local and
+    worktree config only, without includes (a URL set globally or in an included file is now `local:<name>`, so a
+    declared `remote` reports `repo.remote_mismatch`); a host-mode `task done --run` with a verify command refuses
+    (`verify.failed`, with the gate's reason) before running it when the working tree's state cannot be told; the
+    dashboard's Changes tab shows hunk headers without function context, and a diff git cannot produce as "Diff
+    unavailable". No op, code, wire, hash or schema change.
 
 ---
 
@@ -11396,7 +11423,8 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     - The signing switches only: `commit.gpgSign`, `tag.gpgSign`, `gpg.format`.
     - LFS's own `lfs.repositoryformatversion` and `lfs.<url>.access`.
   - **What it never holds:** anything that names a program, a command, a driver, a hook or another config file. That
-    excludes `filter.*`, `diff.<driver>.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
+    excludes `diff.<driver>.*` and `diff.external` (but see "`diff.*`: its own closed list" below), `status.submoduleSummary`
+    (a summary opens submodules), `filter.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
     `credential.*`, `gc.recentObjectsHook`, `remote.<n>.{vcs,uploadpack,receivepack}`, `*.cmd` tools, editors, gpg
     programs, `core.attributesFile` and any unknown section. A non-boolean `core.fsmonitor` is refused.
   - **Why an allow-list.** The class "a config key that runs a program" is open-ended, and each git release can add
@@ -11404,14 +11432,70 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     which `-c core.hooksPath` does not turn off. The deny-list of known keys stays only as documentation
     (`gitsafe.KNOWN_EXEC`) and as tests.
   - **Records.** The records tool's `check_local` applies the same function before its stricter rules.
+  - **Isolation (#541, #546).** The invariant's second half: *no git invocation by orch reads configuration the
+    person or a repo controls, except through an explicit allow-list.* The repo's half is the gate above. The person's
+    half is one mechanism in `orch.gitsafe`: `isolated_env` (built from scratch, no `GIT_*` of the caller,
+    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (an operation's own allow-list of the
+    person's keys, passed as command-scope config; `person_entries` reads them, which executes nothing) and `command`
+    (a closed set of operations, `gitsafe.OPS`, each with fixed arguments and at most one validated operand: no
+    caller can pass `-c`, `-C`, `--git-dir` or any option; the argv is `NEUTRAL` plus `core.attributesFile=/dev/null`
+    and `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff --no-textconv` on `diff`). Every invocation
+    site:
+
+    | Site | Isolation |
+    |---|---|
+    | `gitsafe` gate's own reads | its fixed reads, `isolated_env`, no person keys |
+    | `gitsafe.person_entries` (`config --list --show-scope --includes -z`, no repository) | reads the person's system and global config as data, keeps only the operation's allow-list, executes nothing |
+    | `gitsafe.git_version` (`git --version`) | `isolated_env`; once per `PATH`; the gate refuses git older than 2.32 |
+    | `store/observe.git` (`head`, `symbolic_head`, `toplevel`, `porcelain`, `dirty`, `ref`, `commit`; `ops/caps.Git` and `hostclient` in direct mode) | `gitsafe.command`: operations of `gitsafe.OPS` only, the gate before every one, `submodules` and `--ignore-submodules=dirty` for `status`; `index_flags` over the whole repository; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (and git's default global ignore file). The identity's `remote.origin.url` (F1 5.7) comes from `gitsafe.local_config`, the gate's own listing. `ops/caps.Git.run` (free argv) is removed (#546) |
+    | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546) |
+    | `runner/wtgit.read_git`, `tree_dirty`, `worktree_cli` revisions | `gitsafe.command`: `commit`, `status`, `staged_tree`, `index_flags` |
+    | dashboard dev host `devhost/reads.diff` (through `store/observe.git`) | `gitsafe.command`: `commit`, `ref`, `merge_base`, `parent`, `diff_numstat`, `diff_names`, `diff_patch` |
+    | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
+    | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
+    | `records/git.open_repo` probe | reads configuration only |
+    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would |
+    | `gitread/*` | no git process |
   - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
     be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git
     itself checks only the directory's owner.
   - **Local filters are refused.** A repository with `git lfs install --local` or git-crypt has its filters in the
     local config, so it is refused. Install such filters globally.
-  - **Attributes only *select* drivers.** After the gate, the repo's config defines no program. An attribute can
-    therefore select only a built-in behaviour or a driver the person configured globally (LFS after
+  - **Attributes only *select* drivers.** After the gate, the repo's config defines no program except a tolerated
+    `diff` driver, which no orch git command runs (see below). An attribute can therefore select only a built-in behaviour or a driver the person configured globally (LFS after
     `git lfs install`). That driver runs as the runner's UID, the person in tier A, as when they run git.
+  - **`diff.*`: its own closed list (orch-52, #561).** git-lfs and editors set `diff` keys, so the gate does not
+    refuse them wholesale. It tolerates exactly the keys of `gitsafe.DIFF_TOLERATED` and `DIFF_DRIVER_TOLERATED`,
+    each neutralised by every diff operation as written next to it in the code:
+    - `diff.algorithm`, `indentHeuristic`, `context`, `interHunkContext`: pinned at git's defaults (`-U<n>` on the
+      patch);
+    - `diff.renames`: `--no-renames`, or `-M50%` where renames are reported;
+    - `diff.submodule`: `--submodule=short`;
+    - `diff.relative`: `--no-relative`, or `--relative` where it is meant;
+    - `diff.noprefix`, `mnemonicPrefix`, `srcPrefix`, `dstPrefix`: `--src-prefix=a/ --dst-prefix=b/` and pinned
+      values;
+    - `diff.external`, `diff.<driver>.command`: `--no-ext-diff`;
+    - `diff.<driver>.textconv`, `.cachetextconv`: `--no-textconv` (git-lfs's `diff.lfs.textconv` is tolerated);
+    - `diff.<driver>.binary`: `diff.<driver>.binary=false` for every driver the repository defines, plus `--text` on
+      the patch;
+    - `diff.<driver>.xfuncname`, `.funcname`: pinned to `^$` for every driver the repository defines, so its regex
+      never runs (a backtracking one stalled the patch until the timeout), and for git's built-in drivers too
+      (`gitsafe.BUILTIN_DRIVERS`: git's userdiff set as of git 2.54, 27 drivers; a built-in a newer git adds stays
+      unpinned until it is listed, which is harmless: its regex is git's, and the stripping below is the backstop);
+      the text it would choose after a hunk header's second `@@` is shown in the dashboard's diff (it draws whole hunk lines), so `store/observe` also
+      strips it from `diff_patch` (`gitsafe.plain_hunk_headers`);
+    - `diff.<driver>.wordRegex`: only `--word-diff`, which no operation uses.
+
+    An empty driver name (`[diff ""]`, which an empty `diff=` attribute selects) is never read as a top-level key:
+    it is refused, and every diff passes `--diff-algorithm=default`. A diff git cannot produce (it fails, is refused
+    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch; so
+    is a revision lookup (head, default branch, merge base, parent) git gives no answer to (`observe.lookup` tells
+    git's honest "no result" from no answer).
+    Any other `diff.*` key is refused, naming it: "this repo sets diff.X, which orch doesn't support yet; remove it
+    or tell us". A key a future git adds is therefore refused by default. No other operation reads diff config, and
+    the runner's `worktree add`/`remove` run no diff. A test sets every tolerated key to a hostile value and gets
+    byte-identical output to a clean repository from every operation. The shared allow-list (`exec_risk`, which the
+    records tool also applies) still refuses the program-running `diff` keys.
   - **Overridden keys.** A local `core.hooksPath` (husky) and a boolean `core.fsmonitor` are on the list, because
     `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false` override them on every command.
 - **Submodules (Codex #439):** orch does not inspect submodules.

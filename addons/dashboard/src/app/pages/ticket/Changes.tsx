@@ -132,6 +132,8 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
                 Try again
               </Button>
             </>
+          ) : changes.error instanceof ApiError && changes.error.code === 'observe.unavailable' && /diff unavailable/.test(changes.error.message) ? (
+            'Diff unavailable: git could not produce this diff (it failed or took too long). Nothing is shown rather than an incomplete diff.'
           ) : changes.error instanceof ApiError && changes.error.code === 'observe.unavailable' ? (
             'The host cannot show this branch right now: it moved since the host last looked, or has no observed head yet.'
           ) : (

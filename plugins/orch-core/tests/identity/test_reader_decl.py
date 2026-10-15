@@ -293,23 +293,15 @@ def test_a_bad_context_is_a_programming_error(changes):
 
 def _relay_cases():
     section = S2.get("reader_decl")
-    return section["decls"] if section else []
+    if not section:
+        return []
+    gates = [{"name": "pair_meta/" + m["name"], "decl": m["steps"][0]["expect"]["reader_decl"], **m["gate"]}
+             for m in section["pair_meta"] if "gate" in m]  # fmt: skip
+    return section["decls"] + gates
 
 
-@pytest.mark.skipif(
-    "reader_decl" not in S2,
-    reason="TODO(H12d-1): the vendored relay corpus has no reader_decl section yet; it lands with the rev-12 "
-    "corpus after orch-core #442 merges (scripts/sync-vectors.sh), and this test then runs every case",
-)
-@pytest.mark.parametrize("case", _relay_cases(), ids=lambda c: c["name"])
-def test_relay_reader_decl_vectors(case):
-    """The relay's `reader_decl` cases (its `kat` digests are FAKE stand-ins, `kat_standin`, so a case without its own
-    expected digests is checked against the stand-in; the time windows are core's and the vector `created_ms` is the
-    relay's NOW)."""
-    section, c = S2["reader_decl"], case["ctx"]
-    assert section["label"] == reader.LABEL.decode() and section["max_bytes"] == reader.MAX_BYTES
-    expected = c.get("kat") or {"1": {s: section["kat_standin"] for s in reader.SURFACES}}
-    ctx = {
+def _relay_ctx(c, **changes):
+    return {
         "workspace_id": c["workspace_id"],
         "dk_sig_pub": crypto.unb64u(c["dk_sig_pub"]),
         "dk_kx_pub": crypto.unb64u(c["dk_kx_pub"]),
@@ -317,9 +309,29 @@ def test_relay_reader_decl_vectors(case):
         "bind": c["bind"],
         "surfaces": tuple(c["surfaces"]),
         "host_max": c["host_max"],
-        "now_ms": NOW,
-        "expected": expected,
+        # the relay models no time window (orch_protocol_ref.verify_reader_decl): its cases are judged as a recheck,
+        # and core's admission windows are pinned by core's own tests above
+        "now_ms": None,
+        "recheck": True,
+        "expected": c.get("kat") or reader.KAT_DIGESTS,
+        **changes,
     }
+
+
+def test_the_relay_corpus_carries_cores_kat_digests():
+    if "reader_decl" not in S2:
+        pytest.skip("no reader_decl section in the vendored corpus")
+    section = S2["reader_decl"]
+    assert section["label"] == reader.LABEL.decode() and section["max_bytes"] == reader.MAX_BYTES
+    assert section["host_max"] == reader.HOST_MAX
+    assert {s: section["kat_core"][s] for s in reader.SURFACES} == dict(reader.KAT_DIGESTS["1"])
+
+
+@pytest.mark.skipif("reader_decl" not in S2, reason="no reader_decl section in the vendored corpus")
+@pytest.mark.parametrize("case", _relay_cases(), ids=lambda c: c["name"])
+def test_relay_reader_decl_vectors(case):
+    """Every relay `reader_decl` case (and the gate of each pair-meta case) gives the relay's verdict in core."""
+    ctx = _relay_ctx(case["ctx"])
     if "ok" in case["expect"]:
         got = reader.verify_decl(case["decl"], **ctx)
         assert got._asdict() == case["expect"]["ok"]
@@ -327,3 +339,15 @@ def test_relay_reader_decl_vectors(case):
         with pytest.raises(reader.DeclInvalid) as exc:
             reader.verify_decl(case["decl"], **ctx)
         assert (exc.value.code, exc.value.reason) == (case["expect"]["refuse"], case["expect"]["reason"])
+
+
+def test_a_far_future_relay_case_is_refused_at_admission():
+    """`created_ms_2_53_minus_1_accepted` is accepted by form (the relay models no clock); at admission core refuses
+    any created_ms more than 300 s ahead, for every via (9.3 "Latest wins"; H12d-1 judgement call 4)."""
+    cases = {c["name"]: c for c in _relay_cases()}
+    if "created_ms_2_53_minus_1_accepted" not in cases:
+        pytest.skip("no such relay case")
+    c = cases["created_ms_2_53_minus_1_accepted"]
+    with pytest.raises(reader.DeclInvalid) as exc:
+        reader.verify_decl(c["decl"], **_relay_ctx(c["ctx"], now_ms=NOW, recheck=False))
+    assert exc.value.reason == "time"

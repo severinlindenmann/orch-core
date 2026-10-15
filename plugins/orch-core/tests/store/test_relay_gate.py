@@ -193,3 +193,19 @@ def test_the_model_state_changes_only_through_the_setter():
                             writes[x.attr].add(fn.name)
     assert writes == {"_state_v": {"__init__", "_state"}, "_state": {"_load", "_commit"}}, writes
     assert "_gate_lost_standing(old, new)" in src
+
+
+def test_a_device_that_vanishes_from_the_state_counts_as_lost():
+    """A restore that abandons a device.added (the device is no longer in the state at all) loses its standing."""
+    from types import SimpleNamespace as NS
+
+    from orch.store.store import Store
+
+    calls = []
+    s = Store.__new__(Store)
+    s._state_v = None  # noqa: SLF001
+    s.relay_gate = lambda d, r: calls.append((d, r))
+    dev = "d_" + "1" * 32
+    s._state = NS(workspace=NS(devices={dev: NS(removed=False, revoked=False)}))  # noqa: SLF001
+    s._state = NS(workspace=NS(devices={}))  # noqa: SLF001
+    assert calls == [("1" * 32, "f1_standing")]

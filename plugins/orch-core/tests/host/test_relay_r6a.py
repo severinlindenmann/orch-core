@@ -237,6 +237,8 @@ def test_previously_linked_reads_link_card_and_fails_closed(tmp_path):
 
 
 def test_r6_rebinds_after_the_store_is_replaced(lab):
+    import types
+
     """X5 (R3): the key store follows the live service.store; a replaced store (reopen) gates until r6 runs again."""
     with lab.host() as h, h.client() as c:
         wid, service = _linked(lab, h, c)
@@ -251,6 +253,13 @@ def test_r6_rebinds_after_the_store_is_replaced(lab):
             service.submit(service.open).result(30)  # replaces service.store (on the worker thread)
             assert service.store is not old and mk.seal_state().gated
             relayr6.r6(service)
+            assert not mk.seal_state().gated
+            live = service.store
+            service.store = types.SimpleNamespace(relay_gate=None)  # replaced, the old one NOT closed (still hooked)
+            try:
+                assert mk.seal_state().gated  # bound to service.store as it is now, not to the store it saw
+            finally:
+                service.store = live
             assert not mk.seal_state().gated
         finally:
             relayr6.close(service)

@@ -606,3 +606,19 @@ def test_listed_devices_include_the_exposed_rotation(tmp_path):
         assert set(mk.listed_devices()) == {(DEVICE, PERSON), (OTHER, PERSON)}
     finally:
         mk.close()
+
+
+def test_a_malformed_committed_member_lists_as_every_device(tmp_path):
+    """N11 / mutant 18: an entry without ids is listed as ("", "") so the rebuild gates every device."""
+    mk = open_keys(tmp_path)
+    rotate(mk)
+    mk.close()
+    p = tmp_path / "membership" / "head.json"
+    h = json.loads(p.read_bytes())
+    h["committed"]["list"]["members"].append({"scopes": ["look"]})
+    _replace(p, json.dumps(h).encode())
+    mk = open_keys(tmp_path)
+    try:
+        assert ("", "") in mk.listed_devices()
+    finally:
+        mk.close()

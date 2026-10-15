@@ -4162,9 +4162,8 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
 58. **H13-0: push and Drop crypto builders, host recovery envelope (§11A.16.14 "As built in H13-0"; the number may be
     renumbered when a parallel change lands first):** pure `orch.crypto.push`, `orch.crypto.drop` and
     `orch.crypto.recovery`; two planned host-local labels in `orch.crypto.labels.PLANNED_LABELS`
-    (`kdf_host_drop_recovery`, `sig_drop_handoff`, the latter on no signing role until H13b-4). The vendored relay
-    corpus moves to orch-relay `d84f706` (D39a1: `drop.upload_frame`, `drop.relay_put`, six Drop HTTP fixtures,
-    MANIFEST revision 13). Nothing served; no F1, wire or schema change.
+    (`kdf_host_drop_recovery`, `sig_drop_handoff`, the latter on no signing role until H13b-4). The vectors it
+    reproduces (orch-relay `d84f706`, D39a1, MANIFEST revision 13) were vendored separately in #575. Nothing served; no F1, wire or schema change.
 
 ---
 

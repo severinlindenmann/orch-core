@@ -293,3 +293,182 @@ def test_cert_code_refuses_a_challenge_outside_the_exact_shape(o):
     with pytest.raises(Refused) as e:
         pairing.cert_code(o)
     assert e.value.code == "malformed"
+
+
+# --- 3. pair links (protocol §8.3 step 1, D45/D46; corpus ``bridge.links``) ------------------------------------------
+
+LINKS = S2["bridge"]["links"]
+_VALID = next(c for c in LINKS if c["name"] == "valid")
+_P = _VALID["parsed"]
+_ST = next(c for c in HOST_CASES if c["name"] == "pair_first_time")["state"]
+ORIGIN = "https://relay.example.org"
+ORIGIN_ENC = "https%3A%2F%2Frelay.example.org"
+
+
+def _fields(parsed: dict) -> dict:
+    return {
+        "workspace_id": parsed["workspace"],
+        "offer_id": parsed["offer"],
+        "secret": bytes.fromhex(parsed["secret"]),
+        "wsk_pin": bytes.fromhex(parsed["wsk_pin"]),
+        "pk_pin": bytes.fromhex(parsed["pk_pin"]),
+    }
+
+
+def _as_dict(f) -> dict:
+    return {k: getattr(f, k) for k in ("workspace_id", "offer_id", "secret", "wsk_pin", "pk_pin")}
+
+
+def _build(origin: str = ORIGIN) -> tuple[str, str]:
+    return pairing.pair_link(
+        origin, _P["workspace"], _P["offer"], bytes.fromhex(_P["secret"]), _b(_ST["wsk_pub"]), _b(_ST["owner_pk_pub"])
+    )
+
+
+def test_pair_link_builds_the_vector_fragment_in_both_forms():
+    """The pins come from the keys: the host passes its WSK and the owner's PK, never pins."""
+    assert crypto.wsk_pin(_b(_ST["wsk_pub"])).hex() == _P["wsk_pin"]
+    assert crypto.pk_pin(_b(_ST["owner_pk_pub"])).hex() == _P["pk_pin"]
+    https, native = _build()
+    assert https == f"{ORIGIN}/pair#{_VALID['fragment']}"
+    assert native == f"orch://pair?relay={ORIGIN_ENC}#{_VALID['fragment']}"
+
+
+@pytest.mark.parametrize("case", LINKS, ids=[c["name"] for c in LINKS])
+def test_parse_pair_fragment_vectors(case):
+    """The relay's fragment rule (an optional leading ``#``), accept and refuse."""
+    if case["parsed"] is None:
+        with pytest.raises(Refused) as e:
+            pairing.parse_pair_fragment(case["fragment"])
+        assert e.value.code == "malformed"
+    else:
+        assert _as_dict(pairing.parse_pair_fragment(case["fragment"])) == _fields(case["parsed"])
+
+
+@pytest.mark.parametrize("case", LINKS, ids=[c["name"] for c in LINKS])
+@pytest.mark.parametrize("form", ["https", "native"])
+def test_parse_pair_link_vectors_in_both_forms(case, form):
+    """Every corpus fragment inside each whole link. The link carries exactly one ``#``, so the ``with_hash`` fragment
+    is accepted once its own ``#`` is the link's and refused when doubled."""
+    frag = case["fragment"].removeprefix("#")
+    head = f"{ORIGIN}/pair" if form == "https" else f"orch://pair?relay={ORIGIN_ENC}"
+    text = f"{head}#{frag}"
+    if case["parsed"] is None:
+        with pytest.raises(Refused):
+            pairing.parse_pair_link(text)
+    else:
+        link = pairing.parse_pair_link(text)
+        assert link.origin == ORIGIN and link.native is (form == "native")
+        assert _as_dict(link.fields) == _fields(case["parsed"])
+    if case["fragment"].startswith("#"):
+        with pytest.raises(Refused):
+            pairing.parse_pair_link(f"{head}#{case['fragment']}")
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["https://relay.example.org", "https://relay.example.org:8443", "http://127.0.0.1:8787", "http://localhost"],
+)
+def test_pair_link_round_trips(origin):
+    https, native = _build(origin)
+    for text, is_native in ((https, False), (native, True)):
+        link = pairing.parse_pair_link(text)
+        assert (link.origin, link.native) == (origin, is_native)
+        assert _as_dict(link.fields) == _fields(_P)
+    assert pairing.render_pair_link(pairing.parse_pair_link(native)) == native
+
+
+def test_pair_link_repr_never_shows_the_secret():
+    link = pairing.parse_pair_link(_build()[1])
+    assert _P["secret"] not in repr(link) and _b(_VALID["fragment"].split(".")[3]).hex() not in repr(link.fields)
+    assert _VALID["fragment"].split(".")[3] not in repr(link)
+
+
+_F = _VALID["fragment"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"{ORIGIN}/app/pair#{_F}",  # an alias, not the canonical spelling
+        f"{ORIGIN}/pair/#{_F}",
+        f"{ORIGIN}//pair#{_F}",
+        f"{ORIGIN}/pair?x=1#{_F}",
+        f"{ORIGIN}/pair",
+        f"{ORIGIN}/pair#",
+        f"https://user@relay.example.org/pair#{_F}",
+        f"https://RELAY.example.org/pair#{_F}",
+        f"HTTPS://relay.example.org/pair#{_F}",
+        f"http://relay.example.org/pair#{_F}",  # http only for loopback
+        f"https://relay.example.org:0/pair#{_F}",
+        f"https://relay.example.org:08443/pair#{_F}",
+        f"https://relay.example.org:65536/pair#{_F}",
+        f" {ORIGIN}/pair#{_F}",
+        f"{ORIGIN}/pair#{_F}\n",
+        f"{ORIGIN}/pair#{_F}#",
+        f"{ORIGIN}/pair#{_F}.",
+        f"{ORIGIN}/pair#{_F.replace('v2.', 'V2.')}",
+        f"orch://pair#{_F}",  # no relay origin
+        f"orch://pair?relay={ORIGIN}#{_F}",  # not percent-encoded
+        f"orch://pair?relay=https%3a%2f%2frelay.example.org#{_F}",  # lower-case escapes are not canonical
+        f"orch://pair?relay=https%3A%2F%2Frelay%2Eexample.org#{_F}",  # an unreserved character escaped
+        f"orch://pair?relay={ORIGIN_ENC}&relay={ORIGIN_ENC}#{_F}",
+        f"orch://pair?relay={ORIGIN_ENC}&x=1#{_F}",
+        f"orch://pair?x=1&relay={ORIGIN_ENC}#{_F}",
+        f"orch://pair?relay=http%3A%2F%2Fevil.example.org#{_F}",
+        f"orch://pair?relay={ORIGIN_ENC}%2Fpath#{_F}",
+        f"orch://pair?relay=https%3A%2F%2Fuser%40relay.example.org#{_F}",
+        f"orch://pair?relay=%ZZ#{_F}",
+        f"orch://pair?relay=#{_F}",
+        f"orch://pair/?relay={ORIGIN_ENC}#{_F}",
+        f"ORCH://pair?relay={ORIGIN_ENC}#{_F}",
+        f"orch://Pair?relay={ORIGIN_ENC}#{_F}",
+        f"orch://pair?relay={ORIGIN_ENC}#{_F}x",
+        f"{ORIGIN}/pair#{_F}" + "A" * 2048,
+        "",
+        "é" + f"{ORIGIN}/pair#{_F}",
+    ],
+)
+def test_parse_pair_link_refuses_every_non_canonical_spelling(text):
+    with pytest.raises(Refused) as e:
+        pairing.parse_pair_link(text)
+    assert e.value.code == "malformed"
+
+
+@pytest.mark.parametrize("bad", [None, b"https://x/pair#v2", 1])
+def test_parse_pair_link_refuses_non_text(bad):
+    with pytest.raises(Refused):
+        pairing.parse_pair_link(bad)
+    with pytest.raises(Refused):
+        pairing.parse_pair_fragment(bad)
+
+
+@pytest.mark.parametrize(
+    ("i", "bad"),
+    [
+        (0, "https://relay.example.org/"),
+        (0, "http://relay.example.org"),
+        (0, "https://relay.example.org/pair"),
+        (0, "https://Relay.example.org"),
+        (1, _P["workspace"].upper()),
+        (2, bytes.fromhex(_P["offer"])),
+        (3, bytes.fromhex(_P["secret"])[:31]),
+        (3, _P["secret"]),
+        (4, _OFF_CURVE),
+        (4, bytes.fromhex(_P["wsk_pin"])),  # a pin is not a key: the builder takes the key
+        (5, _OFF_CURVE),
+    ],
+)
+def test_pair_link_refuses_bad_inputs(i, bad):
+    args = [
+        ORIGIN,
+        _P["workspace"],
+        _P["offer"],
+        bytes.fromhex(_P["secret"]),
+        _b(_ST["wsk_pub"]),
+        _b(_ST["owner_pk_pub"]),
+    ]
+    args[i] = bad
+    with pytest.raises(Refused) as e:
+        pairing.pair_link(*args)
+    assert e.value.code == "malformed"

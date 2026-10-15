@@ -3,6 +3,7 @@ of ``member.list`` and ``workspace.show``."""
 
 from __future__ import annotations
 
+from orch import crypto
 from orch.store import readerrecs
 from tests.host import human_helpers
 from tests.host.human_helpers import err
@@ -27,7 +28,11 @@ def test_a_person_declares_their_own_device_and_every_read_shows_it(served):
     before = ok(c.req("reader.list"))
     assert before["required_reader"] == 0
     (row,) = [r for r in before["readers"] if r["device"] == owner.device]
-    assert row == {"device": owner.device, "person": owner.ref, "reader": 0, "level": 0, "digest": None, "decl": None}
+    dk_hash = crypto.b64u(crypto.dk_hash(owner.sig_pub, owner.kx_pub))
+    assert row == {
+        "device": owner.device, "person": owner.ref, "dk_hash": dk_hash, "reader": 0, "level": 0, "digest": None,
+        "decl": None,
+    }  # fmt: skip
     d = decl(owner, served.wid, via="declare", created_ms=_now_ms(served))
     got = ok(_declare(served, d))
     assert got["device"] == owner.device and got["reader"] == 1 and got["level"] == 1

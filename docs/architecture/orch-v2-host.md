@@ -2699,7 +2699,8 @@ leaves room, the strictest reading unless said otherwise:
   emits one) whose new reader is below `required_reader` (`no_declaration`, `reader_too_old`), and a convenience
   event while another current reader is below level 1 (the relaxed reasons, 9.9). A convenience event in the same
   request makes `required_reader` at least 1. The admitted reader's record is written there, before the append; a
-  record that cannot be written refuses the append. `tests/host/test_append_paths.py` lists every log append.
+  record that cannot be written refuses the append. A reader added **without** a declaration has any stale record
+  of its device removed there (a removed and re-added device must not count with a record from before). `tests/host/test_append_paths.py` lists every log append.
 - **Direct mode tightens:** a convenience-signed direct append (convenience custody in direct mode) is refused
   while another current reader is below level 1, with `sign.convenience_unavailable` (now a P1 global code).
 - **`member.add`** (9.11): `reader_decl` is an `x-file` argument (`--reader-decl PATH`), read with a 4 KiB cap

@@ -8933,6 +8933,18 @@ structurally: the invariant is named and enforced in one place.
   (`device.removed` etc., `h7`, `""`). The lowering is durable before the in-memory gate goes down. Called by
   `relayr6._rebuild_gate` (every `r6()`), and **R6b's planning must call it** (under the store lock) before it
   decides a rotation. A real removal is never pruned (the device is not `ok`).
+- J-R6a-25 (round 5, an automated review's "validator differential" flag) **One standing function for every relay
+  gate decision:** `orch.store.store.device_standing_ok(state, device, person=None)`. The store chokepoint (setter),
+  `Store.device_ok` (relayr6's start-up raise and prune) and R2's `host.admission.device_standing` ("ok") all call
+  it. Found and fixed before push: the first round-5 prune asked the person-agnostic question while the rebuild's
+  raise asked "this device AS the listed person's", so a reason raised for a device listed under the wrong person
+  could be pruned in the same span; now both use the same function and the same question (a listed device is ok
+  only as the device of every person it is listed for), inside one store-lock span. A differential test feeds ok,
+  removed, revoked, member-removed, unknown, another person's device, a new device after a removal and an expired
+  certificate to all of them; a structural test pins that relayr6 has no other standing code. `host/auth.py` and
+  `host/human.py` keep their own removed/revoked checks for local socket peers (not relay decisions). No relayr6 path
+  returns a usable key source with a stale or unbound gate: `r6()` binds only after the rebuild and prune, and
+  `seal_state` re-checks the live binding; the link source signs only the card, which no gate governs.
 - Mutation, round 4: 16 new mutants of the round-4 code on a `git archive` copy (the pre-write gate, the pregated
   skip, the per-device loop, the fallback, the gate-first raise, the hook identity and live-error checks, the
   `load_budget` hook, close, a vanished device, held evidence): 16 killed; one malformed mutant definition discarded.

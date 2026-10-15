@@ -421,17 +421,14 @@ class Store:
 
     @staticmethod
     def _standing_ok(state: State, device: str) -> bool:
-        """``host.admission.device_standing``'s ``ok``: known, neither removed (also by ``member.removed``) nor
-        revoked (also by a restore's revocations)."""
-        view = state.workspace.devices.get(device)
-        return view is not None and not view.removed and not view.revoked
+        return device_standing_ok(state, device)
 
-    def device_ok(self, device: str) -> bool:
-        """``device`` (``d_<hex>``) has F1 standing ``ok`` now (known, not removed, not revoked). Call it inside
-        :meth:`locked` when the answer drives a decision (R6's stale gate-reason prune)."""
+    def device_ok(self, device: str, person: str | None = None) -> bool:
+        """:func:`device_standing_ok` on the current state (``d_<hex>``, ``p_<hex>``). Call it inside :meth:`locked`
+        when the answer drives a decision (R6's start-up rebuild and stale gate-reason prune)."""
         with self._locked():
             assert self._state is not None
-            return self._standing_ok(self._state, device)
+            return device_standing_ok(self._state, device, person)
 
     def _gate_lost_standing(self, old: State, new: State) -> None:
         for device in list(old.workspace.devices):
@@ -3588,6 +3585,16 @@ class Store:
             if result == "held":  # R6a: the relay gate invariant for HostPins evidence, under the store lock
                 self._raise_relay_gate(device, "held_evidence")
             return result
+
+
+def device_standing_ok(state: State, device: str, person: str | None = None) -> bool:
+    """THE F1 standing ``ok`` (R6a round 5, one implementation): ``device`` (``d_<hex>``) is known, belongs to
+    ``person`` (``p_<hex>``) when one is given, and is neither removed (also by ``member.removed``) nor revoked (also
+    by a restore's revocations). Certificate expiry is not part of it. Used by the store's relay-gate chokepoint
+    (the ``_state`` setter), ``Store.device_ok`` (R6's rebuild and prune) and ``host.admission.device_standing``
+    (R2's per-request standing), so no two of them can disagree."""
+    view = state.workspace.devices.get(device)
+    return view is not None and (person is None or view.person == person) and not view.removed and not view.revoked
 
 
 def _restore_evidence(transition: Mapping[str, Any]) -> dict[str, Any]:

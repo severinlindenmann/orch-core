@@ -194,22 +194,24 @@ def test_the_custody_check_walks_r6cs_subdirectories(lab):
 
 
 class _FakeLiveStore:
-    """locked() and device_ok() for the rebuild's prune (nothing is ok: nothing pruned)."""
+    """locked() and device_ok() for the rebuild (``bad``: the devices whose standing is lost)."""
+
+    def __init__(self, bad=()):
+        self.bad = {"d_" + b for b in bad}
 
     def locked(self):
         import contextlib
 
         return contextlib.nullcontext()
 
-    def device_ok(self, device):
-        return False
+    def device_ok(self, device, person=None):
+        return device not in self.bad
 
 
 def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path, monkeypatch):
     """X6 / N11: an exposed rotation's member whose standing is lost, and a malformed entry, raise the gate."""
     import types
 
-    from orch.host import admission
     from tests.relay.r6kit import DEVICE, expose_rotation, open_keys, rotate
 
     other = "ab" * 16
@@ -217,8 +219,7 @@ def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path,
     try:
         rotate(mk, devices=[DEVICE])
         expose_rotation(mk, devices=[DEVICE, other])
-        monkeypatch.setattr(admission, "device_standing", lambda st, p, d: "removed" if d == "d_" + other else "ok")
-        relayr6._rebuild_gate(types.SimpleNamespace(store=_FakeLiveStore()), mk)  # noqa: SLF001
+        relayr6._rebuild_gate(types.SimpleNamespace(store=_FakeLiveStore([other])), mk)  # noqa: SLF001
         assert mk.gate_up() and {"device": other, "reason": "f1_standing"} in mk.head()["gate"]["reasons"]
         calls = []
         fake = types.SimpleNamespace(

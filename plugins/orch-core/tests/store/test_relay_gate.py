@@ -7,6 +7,7 @@ the model state changes only through the ``_state`` setter."""
 from __future__ import annotations
 
 import ast
+import json
 import threading
 from pathlib import Path
 
@@ -384,15 +385,20 @@ def test_the_prune_keeps_other_reasons_and_waits_for_queued_raises(env, tmp_path
     try:
         mk.raise_gate(d2[2:], "f1_standing")  # stale: d2 is ok
         mk.raise_gate("", "h7")
+        mk.raise_gate("", "f1_standing")  # every device (an unparseable id): never pruned
         mk.raise_gate(d2[2:], "device.removed")  # another kind: never pruned
         with env.store.locked():
             assert mk.prune_stale_reasons(lambda d: env.store.device_ok("d_" + d)) == 1
-        assert mk.seal_state().gated and len(mk.head()["gate"]["reasons"]) == 2
+        assert mk.seal_state().gated and len(mk.head()["gate"]["reasons"]) == 3
+        on_disk = json.loads((tmp_path / "k" / "membership" / "head.json").read_bytes())
+        assert on_disk["gate"] == mk.head()["gate"]  # the prune is durable
+        mk.raise_gate(d2[2:], "f1_standing")  # stale again, durable
         real = mk._dir.write_json  # noqa: SLF001
         monkeypatch.setattr(mk._dir, "write_json", _boom)  # noqa: SLF001
-        mk.raise_gate(d2[2:], "f1_standing")  # queued: its durable write failed
+        mk.raise_gate("cd" * 16, "f1_standing")  # queued: its durable write failed
         monkeypatch.setattr(mk._dir, "write_json", real)  # noqa: SLF001
         assert mk.prune_stale_reasons(lambda d: True) == 0  # nothing pruned while a raise is queued
+        assert {"device": d2[2:], "reason": "f1_standing"} in mk.head()["gate"]["reasons"]
     finally:
         mk.close()
 
@@ -417,3 +423,94 @@ def test_no_setattr_or_vars_writes_on_the_store():
             name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
             if name in ("setattr", "vars", "__setattr__"):
                 raise AssertionError(f"{name} at line {n.lineno}")
+
+
+# -- round 5: no validator differential (one standing function for every gate decision) -----------------------
+
+
+class _RecordingKeys:
+    """The key store as the rebuild sees it: one listed device, its raises and the prune's answer recorded."""
+
+    def __init__(self, dev, person, raised, pruned):
+        self.dev, self.person, self.raised, self.pruned = dev, person, raised, pruned
+
+    def listed_devices(self):
+        return [(self.dev[2:], self.person[2:])]
+
+    def raise_gate(self, d, r):
+        self.raised.append((d, r))
+
+    def prune_stale_reasons(self, ok):
+        self.pruned.append(ok(self.dev[2:]))
+        return 0
+
+
+def test_every_gate_decision_uses_the_same_standing_function(env, tmp_path):
+    """Feed the same states to R2's ``device_standing``, ``Store.device_ok``, the store chokepoint's per-device
+    function, and the relayr6 start-up rebuild (raise) and prune (drop): every decision agrees. Cases: ok, removed,
+    revoked, member removed, unknown, another person's device, a new device after a removal, an expired cert."""
+    import types
+
+    from orch.host import relayr6
+    from orch.store.store import device_standing_ok
+
+    s = env.store
+    owner = env.owner.ref
+    ok_dev, _ = env.add_device()
+    removed, _ = env.add_device()
+    revoked, _ = env.add_device()
+    expired, _ = env.add_device(expires_ms=(env.clock[0] + 1) * 1000)
+    other = Person()
+    s.append(
+        env.person_event(env.owner, "workspace", "member.added", person=other.ref, name="Mara", role="member",
+                         pk_pub=crypto.b64u(other.pk_pub), device_cert=other.cert(created=env.clock[0] * 1000)),
+        log="workspace",
+    )  # fmt: skip
+    s.append(env.person_event(env.owner, "workspace", "device.removed", device=removed), log="workspace")
+    env.revoke_device(revoked)
+    s.append(env.person_event(env.owner, "workspace", "member.removed", person=other.ref), log="workspace")
+    readded, _ = env.add_device()  # a new device of the same person after the removals
+    env.clock[0] += 100  # the expired cert is past its expiry now
+    unknown = "d_" + "ab" * 16
+    cases = {  # (device, listed person) -> expected ok
+        "ok": (ok_dev, owner, True),
+        "removed": (removed, owner, False),
+        "revoked": (revoked, owner, False),
+        "member_removed": (other.device, other.ref, False),
+        "unknown": (unknown, owner, False),
+        "other_persons_device": (ok_dev, other.ref, False),
+        "readded": (readded, owner, True),
+        "expired_cert": (expired, owner, True),  # expiry is not standing (R6b desired())
+    }
+    for name, (dev, person, want) in cases.items():
+        r2 = admission.device_standing(s, person, dev) == "ok"
+        store_ok = s.device_ok(dev, person)
+        with s.locked():
+            pure = device_standing_ok(s.state, dev, person)
+            raised, pruned = [], []
+
+            mk = _RecordingKeys(dev, person, raised, pruned)
+            relayr6._rebuild_gate(types.SimpleNamespace(store=s), mk)  # noqa: SLF001
+        rebuild_ok = raised == []
+        assert r2 == store_ok == pure == rebuild_ok == pruned[0] == want, (name, r2, store_ok, pure, rebuild_ok, pruned)
+        # the chokepoint asks about the device as its own person's (person-agnostic): equal to device_ok(dev, None)
+        own = s.state.workspace.devices.get(dev)
+        if own is not None:
+            assert s._standing_ok(s.state, dev) == s.device_ok(dev, own.person)  # noqa: SLF001
+
+
+def test_no_second_standing_implementation_in_the_relay_gate_paths():
+    """Structural: relayr6 decides standing only through Store.device_ok (device_standing_ok); R2's
+    device_standing takes its "ok" from device_standing_ok; the chokepoint's per-device test is device_standing_ok.
+    (Limit: host/auth.py and host/human.py judge local socket peers with their own removed/revoked checks; they are
+    not relay gate decisions.)"""
+    from orch.host import admission, relayr6
+
+    rr = Path(relayr6.__file__).read_text()
+    assert "device_standing(" not in rr and ".removed" not in rr and ".revoked" not in rr
+    assert rr.count("store.device_ok(") >= 3
+    adm = Path(admission.__file__).read_text()
+    assert "device_standing_ok(state, device_id, person_id)" in adm
+    src = Path(store_mod.__file__).read_text()
+    assert "return device_standing_ok(state, device)" in src
+    assert src.count("view.removed") == 1 and src.count("view.revoked") == 1  # only inside device_standing_ok

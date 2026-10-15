@@ -94,19 +94,29 @@ def _rebuild_gate(service: Any, mk: Any) -> None:
     F-1) every durable ``f1_standing`` reason whose device is ``ok`` in the live store is pruned, under the store
     lock: the one lowering path besides a rotation. (Forwarded ``HostPins`` evidence of a device F1 still holds is
     R6b's ``desired()``.)"""
-    from .admission import device_standing
-
     store = service.store
-    for dev, person in mk.listed_devices():
-        if not dev or not person:
-            mk.raise_gate("", "h7")
-        elif device_standing(store, "p_" + person, "d_" + dev) != "ok":
-            mk.raise_gate(dev, "f1_standing")
-    # round 5 (F-1): a durable f1_standing reason for a device that is ok in the live store (an append that failed
-    # before its commit point after the gate was written) is dropped, under the store lock, so no removal lands
-    # between the standing check and the prune
-    with store.locked():
-        mk.prune_stale_reasons(lambda dev: store.device_ok("d_" + dev))
+    with store.locked():  # one store-lock span: no standing change lands between the checks, the raises and the prune
+        listed: dict[str, set[str]] = {}
+        for dev, person in mk.listed_devices():
+            if not dev or not person:
+                mk.raise_gate("", "h7")
+                continue
+            listed.setdefault(dev, set()).add(person)
+            # THE standing function (orch.store.store.device_standing_ok), as the listed person's device
+            if not store.device_ok("d_" + dev, "p_" + person):
+                mk.raise_gate(dev, "f1_standing")
+
+        def standing_ok(dev: str) -> bool:
+            """The same function and the same question as the raise above: a listed device is ok only as the device
+            of every person it is listed for; an unlisted one by F1 alone."""
+            persons = listed.get(dev)
+            if not persons:
+                return bool(store.device_ok("d_" + dev))
+            return all(store.device_ok("d_" + dev, "p_" + p) for p in persons)
+
+        # round 5 (F-1): a durable f1_standing reason for a device that is ok in the live store (an append that
+        # failed before its commit point after the gate was written) is dropped
+        mk.prune_stale_reasons(standing_ok)
 
 
 def r6(service: Any) -> tuple[Any, Any]:

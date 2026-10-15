@@ -305,8 +305,11 @@ def _unlock(typed: bytearray, scalar: bytearray, derive: Callable[[str], int] | 
     ``except`` and :class:`BadRecoveryCode` is raised after it, so it has no ``__context__``; the parser's frames
     (which hold the text) are cleared first. A failed derivation of a valid code clears the failure's frames and
     raises a fresh :class:`PersonKeyError` (or a fresh exception of the same type for a ``BaseException`` such as
-    ``KeyboardInterrupt``) without cause or context. The caller zeroises ``typed`` and, on failure, ``scalar``."""
+    ``KeyboardInterrupt``; a ``SystemExit`` keeps an ``int`` exit code) without cause or context; so does any other
+    exception or interrupt inside the parser itself (Opus N1). The caller zeroises ``typed`` and, on failure,
+    ``scalar``."""
     reason: str | None = None
+    failed: BaseException | None = None
     text: str | None = None
     try:
         text = recovery.check_recovery_code(bytes(typed).decode("utf-8"))
@@ -316,9 +319,14 @@ def _unlock(typed: bytearray, scalar: bytearray, derive: Callable[[str], int] | 
     except recovery.RecoveryCodeError as e:
         traceback.clear_frames(e.__traceback__)
         reason = e.code if e.code in _REASONS else "recovery.words"
+    except BaseException as e:  # noqa: BLE001 - Opus N1: an interrupt inside the parser; replaced below
+        traceback.clear_frames(e.__traceback__)
+        failed = _fresh(e)
+    if failed is not None:
+        text = None
+        raise failed
     if reason is not None:
         raise BadRecoveryCode(reason)
-    failed: type[BaseException] | None = None
     key: Any = None
     d: int | None = None
     try:
@@ -328,14 +336,28 @@ def _unlock(typed: bytearray, scalar: bytearray, derive: Callable[[str], int] | 
         key = crypto.private_key_from_scalar(d)
     except BaseException as e:  # noqa: BLE001 - re-raised below without the frames that hold the code
         traceback.clear_frames(e.__traceback__)
-        failed = type(e)
+        failed = _fresh(e)
     text = d = None
     if failed is None:
         return key
     key = None
-    if issubclass(failed, Exception):
-        raise PersonKeyError("the person key could not be derived from the recovery code; nothing was signed")
-    raise failed()
+    raise failed
+
+
+def _fresh(e: BaseException) -> BaseException:
+    """The replacement for ``e`` (raised by the caller outside its ``except``, so without context): an ``Exception``
+    becomes :class:`PersonKeyError`; any other ``BaseException`` a new one of the same type with no arguments, except
+    that a ``SystemExit`` keeps an ``int`` or ``None`` exit code (Opus N2; a ``str`` code is dropped, it could be
+    text)."""
+    if isinstance(e, Exception):
+        return PersonKeyError("the person key could not be derived from the recovery code; nothing was signed")
+    if isinstance(e, SystemExit):
+        code = e.code if e.code is None or type(e.code) is int else None
+        return SystemExit(code)
+    try:
+        return type(e)()
+    except Exception:  # noqa: BLE001 - a BaseException subclass that needs arguments
+        return KeyboardInterrupt()
 
 
 def _prompt(action: str, person_id: bytes) -> str:

@@ -205,8 +205,9 @@ def check_target(store: Any, log: str, event: dict[str, Any]) -> None:
     * Any type but ``ticket.created``: the ticket exists and the actor's person may see it, else ``not_found`` (one
       message for missing and invisible).
     * ``ticket.created``: the uid is unused (``ticket.exists``); ``owner`` is the actor's person (``invalid.input``);
-      the signer must be a member who is not a viewer (else ``role.denied``, before any key is compared, so the
-      advisory ``next_key`` never reaches a principal that may not create: the rule of ``reads_ws.may_create``);
+      the signer must be a member who is not a viewer, on a device whose standing is ``ok`` with ``decide`` (else
+      ``role.denied``, before the uid or any key is compared, so the advisory ``next_key`` never reaches a
+      principal that may not create: the rule of ``reads_ws.may_create``);
       ``key`` is exactly :func:`next_key` (``ticket.key_not_next``, with ``detail = {"next_key": ...}``: advisory,
       never a reservation; exit 3, not retryable). A taken key is never the next key, so a key race is always
       ``ticket.key_not_next``, never ``ticket.exists``."""
@@ -223,7 +224,12 @@ def check_target(store: Any, log: str, event: dict[str, Any]) -> None:
         ws = store.state.workspace
         member = ws.members.get(actor.get("id"))
         dev = ws.devices.get(actor.get("device"))
-        if member is None or member.role == "viewer" or (dev is not None and "decide" not in dev.scopes):
+        if (
+            member is None
+            or member.role == "viewer"
+            or device_standing(store, str(actor.get("id")), str(actor.get("device"))) != "ok"
+            or (dev is not None and "decide" not in dev.scopes)
+        ):
             # who may not create learns nothing about the key counter (M1, #499): the model's own code, no detail
             raise HostError("role.denied", "this signer may not create tickets")
         if view is not None:

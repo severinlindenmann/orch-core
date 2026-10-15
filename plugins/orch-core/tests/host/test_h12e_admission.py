@@ -7,6 +7,7 @@ P6 freshness window. Everything runs on a real store with real signatures."""
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import shutil
 from typing import Any
@@ -341,6 +342,57 @@ def test_a_viewer_creation_is_role_denied_before_the_key_and_leaks_no_next_key(e
     with pytest.raises(HostError) as exc:
         admission.check_target(env.store, new_ulid(), creation(env, stranger, new_ulid(), owner=stranger.p.ref))
     assert exc.value.code == "role.denied" and exc.value.detail is None
+
+
+def test_a_members_device_without_decide_is_role_denied_with_no_detail(env):
+    import types
+    from contextlib import nullcontext
+
+    ws = env.store.state.workspace
+    dev = dataclasses.replace(ws.devices[next(iter(ws.devices))], scopes=("look",))  # no certificate can omit decide
+    owner = ws.members[env.owner.ref]
+    fake = types.SimpleNamespace(
+        locked=nullcontext,
+        ticket=lambda *a, **k: None,
+        peek_key=lambda: "DEMO-0001",
+        state=types.SimpleNamespace(
+            workspace=types.SimpleNamespace(members={env.owner.ref: owner}, devices={dev.id: dev}),
+            revocation_evidence=lambda: set(),
+        ),
+    )
+    ev = {"type": "ticket.created", "owner": env.owner.ref, "key": "DEMO-0099",
+          "actor": {"kind": "person", "id": dev.person, "device": dev.id}}  # fmt: skip
+    with pytest.raises(HostError) as exc:
+        admission.check_target(fake, new_ulid(), ev)
+    assert exc.value.code == "role.denied" and exc.value.detail is None and "detail" not in exc.value.error()
+
+
+def test_a_removed_or_unknown_device_is_role_denied_with_no_detail(env):
+    phone = Phone(env, env.owner)
+    ghost = Phone.__new__(Phone)  # a device the log never saw
+    ghost.p, ghost.key = env.owner, crypto.generate_private_key()
+    ghost.device = certs.device_ref(crypto.public_bytes(ghost.key))
+    env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=phone.device), log="workspace")
+    for bad in (phone, ghost):
+        ev = creation(env, bad, new_ulid(), key="DEMO-0099")
+        with pytest.raises(HostError) as exc:
+            admission.check_target(env.store, new_ulid(), ev)
+        assert exc.value.code == "role.denied" and exc.value.detail is None
+        assert "detail" not in exc.value.error()
+
+
+def test_a_non_creator_targeting_an_existing_uid_is_role_denied_not_ticket_exists(env):
+    uid = env.new_ticket()
+    viewer = Person()
+    env.store.append(
+        env.person_event(env.owner, "workspace", "member.added", person=viewer.ref, name="Vi", role="viewer",
+                         pk_pub=crypto.b64u(viewer.pk_pub), device_cert=viewer.cert(created=env.clock[0] * 1000)),
+        log="workspace",
+    )  # fmt: skip
+    ev = creation(env, Phone(env, viewer), uid, owner=viewer.ref)
+    with pytest.raises(HostError) as exc:
+        admission.check_target(env.store, uid, ev)
+    assert exc.value.code == "role.denied" and exc.value.detail is None and "detail" not in exc.value.error()
 
 
 def test_check_target_of_a_creation_refuses_a_used_uid_and_another_owner(env, phone):

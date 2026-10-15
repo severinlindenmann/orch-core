@@ -3800,7 +3800,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
 
 44. **`Error.detail`** (§0.3): an optional object on the socket `Error`, closed per code. `HostError.error()` sends it
     and `frames._ERROR` allows it. Only `term.not_attachable` (`state`), `run.limit` (`which`), `launch.no_grant`
-    (`reason`), `runner.disabled` (`missing`) and `ticket.key_not_next` (`next_key`) may carry it; any other code, key
+    (`reason`), `runner.disabled` (`missing`: `addon`, `machine` or `terminals`) and `ticket.key_not_next` (`next_key`) may carry it; any other code, key
     or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
     `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
     (§0.4), so no cap or op version changes.

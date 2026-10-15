@@ -285,6 +285,10 @@ def pair_entry(facts: Any, workspace_id: str) -> dict[str, Any] | None:
     decl = facts.decl
     if decl is None:
         return None
+    if "person_id" in facts.decl_who and "p_" + facts.decl_who["person_id"] != facts.person:  # #555 review F3
+        from orch.identity import reader
+
+        raise reader.DeclInvalid("who", "the pair declaration names another person than the certificate's")
     entry: dict[str, Any] = {
         "source": "pair",
         "who": facts.decl_who,

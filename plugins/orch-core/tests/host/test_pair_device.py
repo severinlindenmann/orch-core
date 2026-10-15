@@ -472,6 +472,24 @@ def test_a_pk_pin_declaration_under_another_persons_pin_is_refused(served, human
     assert not [e for e in _ws_events(served) if e["device"] == phone.device]
 
 
+def test_a_person_id_pair_declaration_of_another_person_is_refused(served, human):
+    """#555 review F3: a pair declaration with ``who: {person_id}`` counts only for the certificate's person (as a
+    stored record does)."""
+    from tests.identity.helpers import Person
+
+    owner = served.lab.ws.owner
+    phone = phone_of(owner)
+    other = {"person_id": crypto.person_id(Person().pk_pub).hex()}
+    o = decl_o(phone, served.wid, level=1, via="pair", created_ms=T0 * 1000, surfaces=("view",))
+    o["bind"] = {"via": "pair", "offer_id": OFFER, "attempt": ATTEMPT}
+    o["who"] = other
+    facts, _ = make_facts(served, phone=phone, decl=sign_decl(phone, o), decl_who=other)
+    _install(served, facts)
+    res = human.prepare_res("relay.pair_device", {"offer_id": OFFER})
+    assert err(res) == "reader.decl_invalid" and res["error"]["message"].startswith("who")
+    assert not [e for e in _ws_events(served) if e["device"] == phone.device]
+
+
 # --- the F1 device.added vectors ------------------------------------------------------------------------------------
 
 

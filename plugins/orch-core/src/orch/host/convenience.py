@@ -350,10 +350,26 @@ def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[di
             raise HostError("reader.decl_invalid", exc.detail) from None
         if got.digest != entry.get("digest") or got.level != entry.get("level"):
             raise HostError("internal", "the stored reader declaration changed")
-        if "pk_pin" in ctx.get("who", {}):  # H12d-3 (9.3): a pk_pin declaration counts only under the cert's person
-            _check_pin(service, ev.get("person") or entry["person"], ctx["who"]["pk_pin"])
+        if entry.get("source") == "pair":  # H12d-3 (9.3, #555 review F3): who names the cert's person or its key
+            _check_pair_who(service, ev[READER_EVENTS[ev["type"]]], ctx["who"])
         out[entry["device"]] = got.level
     return out
+
+
+def _check_pair_who(service: Any, cert: Any, who: Any) -> None:
+    """A pair declaration counts only for the certificate's person, as a stored record does (``record_level``):
+    ``who`` is ``{"person_id": <the cert's person>}`` (path 7a) or ``{"pk_pin": <the pin of that person's key>}``
+    (path 7b); anything else is ``reader.decl_invalid`` reason ``who`` (#555 review F3)."""
+    o = cert.get("o") if isinstance(cert, dict) else None
+    pid = o.get("person_id") if isinstance(o, dict) else None
+    if not isinstance(pid, str) or not isinstance(who, dict):
+        raise HostError("reader.decl_invalid", "who: the certificate names no person")
+    if who == {"person_id": pid}:
+        return
+    if set(who) == {"pk_pin"} and isinstance(who["pk_pin"], str):
+        _check_pin(service, "p_" + pid, who["pk_pin"])
+        return
+    raise HostError("reader.decl_invalid", "who: the pair declaration names another person than the certificate's")
 
 
 def _check_pin(service: Any, person: Any, pin: str) -> None:

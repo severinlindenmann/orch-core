@@ -10070,6 +10070,258 @@ I/O; `BridgeKeys`, `CardKeys` and `RelaySigner` call them in H13-1.
   including `upload_frame`, every 200/201 `relay_put` frame and the same-DEK rewrap case. They are hostile-tested:
   truncation, a wrong label domain, a wrong epoch, oversized inputs, reordered chunks, foreign wraps.
 
+### 11A.17 Simulator dev-only convenience answers (owner option 2, design)
+
+**Status: design, docs only, 15 Oct 2026 (orch-52's stream; written for orch-52 with orch-29 on the core and relay
+side and orch-f1 on the phone side). Every item marked DECIDED-pending-review needs the Opus review before the
+design merges; nothing here is built.** It replaces the "open OWNER decision" in 11A.14.3 and narrows, for one
+throwaway case, the rejection in 11A.14.10 item 1.
+
+**The owner decision (15 Oct 2026, relayed by orch-d6).** "Allow convenience answers through the relay ONLY on a dev
+host started with an explicit dev switch, ONLY on throwaway dev-pair sandbox workspaces, off by default, refused on
+every real workspace. Design + Opus review before merge."
+
+**Why it needs a design.** The Simulator has no Secure Enclave, so a Simulator key is a software key without a
+presence check: its honest custody is `convenience` (F1 §11.4), not `secure-enclave-unlocked` and not `passphrase`
+(the Simulator asks for no passphrase). Today column R refuses `convenience` everywhere (11A.14.3, P5 in 11A.14.6),
+because of owner rule Q4 (11A.11): **a workspace never picks up the permanent click-to-sign mark through the relay**.
+One accepted convenience event writes `convenience_seen` (§0.8.6 item 1), which nothing clears, and from then on
+`required_reader` is 1 forever (§0.8.6 item 9.4). Option 2 keeps that rule for every real workspace and accepts the
+permanent mark only on a workspace that is thrown away anyway. Physical-device tests (TestFlight, `secure-enclave-unlocked`)
+stay the release evidence; this path is for the Simulator end-to-end loop only.
+
+#### 11A.17.1 The terms
+
+- **Dev host:** a host process started with the dev switch (17.2) whose start-up proof passed. The proof is checked
+  once at start and the result is fixed for the life of the process.
+- **Sandbox workspace:** a workspace that passes every check of 17.3 on a dev host. On any other host no workspace is
+  a sandbox workspace.
+- **The dev gate:** `dev_gate(service, ws) -> DevGate | None`, the one function that answers "may column R accept
+  `auth:"convenience"` for this workspace now". It returns `None` unless the host is a dev host and `ws` is a sandbox
+  workspace. Every other rule in this section calls it; nothing else decides.
+
+#### 11A.17.2 The dev switch (requirement 1)
+
+**DECIDED-pending-review: a host start flag plus a sandbox-only host config written by `dev-pair`; both are
+required, neither suffices alone. No environment variable is involved** (the narrowing rule of 11A.15.11: an
+environment variable read by production code may only narrow, never select a weaker path).
+
+- **The flag.** `orch host run --foreground --dev-sim-convenience`. It is accepted only together with
+  `--foreground`. `orch host enable` and every unit writer (launchd plist, systemd unit) **refuse** to write it into a
+  unit (`invalid.input`, `detail.flag`), and the runner unit never gets it. A service-managed host therefore never runs as a dev host. The flag is not a socket op and not a control op:
+  nothing can turn it on in a running host.
+- **The sandbox host config.** `<root>/state/host/dev.json` (0600, this UID, a regular file opened `O_NOFOLLOW`
+  through the pinned state directory), written by `dev-pair up` before it starts the host, never by production code:
+  `{"v":1, "sim_convenience":true, "sandbox_id":"<manifest id>", "root":{"st_dev":int, "st_ino":int}}`.
+  Production code only **reads** it, and only when the flag is given. Without the flag the file is ignored, so a
+  stray `dev.json` in a real state directory changes nothing.
+- **The start-up proof** (`orch.host.devmode.prove(state)`, run once before the control socket binds; any failure is
+  a start-up refusal `host.dev_refused` with a reason, the host does not start at all, it never falls back to a
+  normal host):
+  1. `--foreground` is set, and `orch host enable`'s unit for this UID, if one is installed, does not name this
+     state directory (JUDGEMENT CALL, open item O3; no environment marker of the service manager is trusted);
+  2. the state directory is `<root>/state` where `<root>` holds the dev-pair manifest `<root>/.orch-dev-sandbox`
+     (0600, this UID, JSON with `id` and `root:{st_dev, st_ino}` equal to the root's, checked through a directory
+     descriptor of the root with `O_NOFOLLOW` traversal: the existing `check_manifest(root)`, moved from
+     `tests/relay/personkey_sandbox.py` into `orch.devsandbox` so that production code and `dev-pair` share one
+     check; orch-29's open point in 11A.15.10);
+  3. `dev.json` exists, is valid, and its `sandbox_id` and `root` equal the manifest's;
+  4. the manifest names the sandbox person (`person_id`, written by `dev-pair` after `orch init`) and the state
+     directory holds no registered workspace that fails 17.3 (a dev host serves sandbox workspaces only, 17.3 rule
+     R5);
+  5. the passphrase is the only person custody in the sandbox's `HOME` (no keychain selection, no `custody.json`
+     with `convenience`: the dev path never mixes the click signer in).
+- **Off by default.** No flag means no dev host, whatever files exist. `dev-pair up` passes the flag only with its
+  own new option `--sim-convenience`; without it `dev-pair` behaves exactly as 11A.15.11 says and writes no
+  `dev.json`.
+- **Visible everywhere.**
+  - The host log: one line at start, `DEV HOST: Simulator convenience answers ON for sandbox <id8> (throwaway
+    workspaces only)`, and again at every hour of uptime.
+  - `host.status` gains `dev?:{sim_convenience:true, sandbox:<id8>}` for classes P and G, present only on a dev host
+    (absent, not `false`, elsewhere, so existing goldens stay byte-identical). `orch host status` prints a first line
+    `DEV HOST (Simulator convenience answers on, sandbox <id8>)` and the per-workspace `sandbox`/`not sandbox`.
+  - **Column-R `whoami`** gains `relay.dev?:{sim_convenience:true, sandbox:<id8>}`, present only when
+    `dev_gate(service, ws)` is not `None` for the workspace of the request (17.5). It rides in the WSK-signed,
+    sealed answer, so the relay can neither add nor strip it without breaking the seal.
+  - The dashboard card shows a red `DEV SANDBOX` badge from `host.status.dev` (dashboard follow-up, not a blocker).
+
+#### 11A.17.3 Which workspaces are sandbox workspaces (requirement 2)
+
+**DECIDED-pending-review.** On a dev host, `ws` is a sandbox workspace only while **all** of these hold. They are
+checked at registration, at host start, and again by `dev_gate` inside the column-R job under the store lock (L2 of
+11A.14.6), so a change between start and the request is seen:
+
+| # | Check | Why |
+|---|---|---|
+| S1 | the workspace root is `<root>/ws` (or `<root>/ws-<n>`), reached from the pinned root descriptor without following a link, and its `st_dev`/`st_ino` equal the pair the manifest recorded for this workspace id | a copy or a move breaks it (17.3 "Copies") |
+| S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch init` in that root | the sandbox owns the workspace, not the other way round |
+| S3 | the signed genesis `workspace.created` has `owner.person` = the manifest's sandbox person and `prefix` = `SBX` | an immutable, signed, creation-time marker without an F1 change: a real workspace's genesis owner is a real person and can never be rewritten |
+| S4 | the member list holds exactly one person, the sandbox person; no `member.added` in the merged history | a sandbox workspace has no other reader whose history we would poison |
+| S5 | the workspace-local marker `<ws>/.state/dev-sandbox.json` (0600) exists and names the same `sandbox_id` and workspace id | the narrowing marker below; it travels with a copy |
+| S6 | the workspace's `link.json` origin is in the dev allow-list `{http://127.0.0.1:*, http://localhost:*, https://relay.dev.severin.io}` (the list of 11A.15.11 step 3), or there is no link | a sandbox never talks to a production relay |
+
+- **R5: a dev host serves sandbox workspaces only.** `orch host register` on a dev host refuses a workspace that
+  fails any of S1 to S5 (`host.dev_refused`, reason `not_sandbox`), and the start-up proof refuses a state directory
+  that holds one. A real workspace can therefore not even be registered on a dev host; `dev_gate` still re-checks per
+  request (defence in depth, and the test in 17.8 drives it directly).
+- **The workspace marker only narrows.** `<ws>/.state/dev-sandbox.json` enables nothing by itself. On a **normal**
+  host it refuses: `orch host register` (`host.dev_refused`, reason `sandbox_workspace`), `relay.link` to an origin
+  outside the dev allow-list, and a records push (the D-P2-34 export check). So a stray marker in a real workspace
+  only makes that workspace refuse registration with a clear message; it can never turn anything on (17.7).
+- **Copies.** A sandbox workspace copied or moved elsewhere fails S1 (another path, another `st_ino`) and on a dev host
+  is neither registered nor served. On a normal host its marker (S5) makes registration refuse. Copied without the
+  marker (a deliberate `rm`), a normal host treats it as an ordinary workspace whose history already holds convenience
+  events: `required_reader` is 1 from its first check (§0.8.6 item 1, "an existing workspace counts as seen at its
+  first check"), no convenience events are accepted (no dev gate), and its owner is still the throwaway person whose
+  recovery code sits in a plain file in the old sandbox. That is visible (`SBX` keys, the sandbox owner name) and
+  harmless to every real workspace.
+- **Creation.** `dev-pair up --sim-convenience` runs `orch init --prefix SBX` (owner name `orch dev sandbox <id8>`) in
+  `<root>/ws`, then writes the workspace marker and the manifest's `workspaces` entry (`id`, `st_dev`, `st_ino`) and
+  `person_id`, then `dev.json`, then starts the host. Production `orch init` is unchanged: `SBX` is an ordinary prefix
+  and by itself proves nothing (S3 is one of six).
+
+#### 11A.17.4 What changes in core admission (the only gate)
+
+**DECIDED-pending-review: core's column-R admission is the only gate; the relay neither knows nor decides.**
+
+- **P5 (11A.14.6)** becomes: `auth` ∈ {`secure-enclave-unlocked`, `passphrase`}, or `auth` = `convenience` and
+  `dev_gate(service, ws)` is not `None` (checked before the lock from the start-up proof and the cached S1 to S6, and
+  again at L2 on fresh state). Otherwise `op.not_allowed`, unchanged. A real workspace on any host, and every
+  workspace on a normal host, answers exactly as today.
+- **`_signed_by` and the append** (L8) accept `convenience` on column R only with the same `DevGate` passed down
+  from L2 (the token proves the gate ran in this job; the append re-asks `dev_gate` rather than trusting a flag).
+- **`convenience.check` (§0.8.6 item 1)** for a column-R event: the dev gate stands in for the per-workspace flag, so
+  reason `disabled` does not apply; every other reason stays (`relay_paired` and `phone_device` as relaxed by H12d to
+  readers below level 1, `other_member`, `reader_version`). The click-to-sign flag `convenience.json` is not used and
+  not written by this path.
+- **`required_reader(ws)` is 1 while `dev_gate(service, ws)` is not `None`**, exactly as while the flag is on
+  (§0.8.6 item 9.4), so the phone must pair with a level-1 `reader_decl`, every column-R request must carry `rd`
+  (9.5), and the relay must report level 1 at link (9.8). This makes a missing reader declaration fail at pairing,
+  not at the first answer.
+- **The sandbox Mac device needs a reader record.** Invariant I counts every valid device except the signing device;
+  for a phone-signed event the sandbox's own passphrase device is "another device". `dev-pair up --sim-convenience`
+  runs `orch keys reader declare --workspace W` for it before pairing. (Open item O4: whether the sandbox primary's
+  device is a workspace device that also needs one.)
+- **The mark.** The first accepted convenience answer writes `convenience_seen` for the sandbox workspace at the
+  append choke point, as any convenience event does. Nothing about the mark changes.
+- **`ORCH_NO_CONVENIENCE` (11A.15.11) also refuses the dev gate** (narrowing, allowed): with any non-empty value
+  `dev_gate` returns `None`. `dev-pair` keeps setting it by default and omits it only for the host process under
+  `--sim-convenience`. The click-to-sign functions keep their refusal through the start-up proof's check 5 and through
+  `dev-pair` never running `orch keys custody convenience`.
+- **The relay worker start check** (`convenience_block`, 11A.4 "As built in R5"; H12d-3 relaxed `refuse_reader_op`
+  for `relay.link` to `relay_too_old`) must pass with convenience history when the relay's level is 1; a worker
+  restart in a used sandbox is in the test list.
+
+#### 11A.17.5 The relay side (requirement 3, orch-29)
+
+**DECIDED-pending-review: no relay code change and no relay `ref/` or T2 change for the gate.**
+- `relay.submit` carries the person event inside the sealed column-R payload; the relay never sees `auth` there and
+  cannot tell a dev host from a normal one. `whoami.relay.dev` is likewise sealed.
+- **But the relay does parse `auth` elsewhere:** checkpoints, refs and restore evidence carry person events, and the
+  relay's `AUTH_KINDS` must hold `convenience` (relay reader level `N = 1`, §0.8.6 item 9.8). Because 17.4 makes
+  `required_reader` 1 on a dev-gated workspace, the dev relays must report level 1 at link and at every R1 login,
+  otherwise `relay.link` refuses with `relay_too_old` and the sandbox cannot be linked. **Dependency for orch-29:**
+  the pinned local relay (`tests/relay/vectors/SOURCE`) and `relay.dev.severin.io` must serve `GET /v2/relay-info`
+  with level 1 and have vendored the convenience checkpoint vectors (9.8 rollout steps 1 and 2) before the first
+  Simulator convenience answer. If they already do, the relay side is empty.
+- **Vectors.** Core adds R2 cases (`tests/relay/r2_vectors/`): a `relay.submit` with `auth:"convenience"` refused
+  `op.not_allowed` on a normal host, and the column-R `whoami` with and without `relay.dev`. These are core vectors;
+  the relay corpus does not change.
+
+#### 11A.17.6 The phone side (requirement 4, orch-f1)
+
+**DECIDED-pending-review.**
+- **Only Simulator builds can sign `convenience`.** The custody is compiled in only under `targetEnvironment(simulator)`
+  and DEBUG; TestFlight and App Store builds have no such code path (they sign `secure-enclave-unlocked` only,
+  11A.14.3). The key is a software P-256 key in the Simulator's keychain, no presence check.
+- **It signs only when the host says so, per workspace.** Before every review the Simulator reads the column-R
+  `whoami` of that workspace; it offers the sign sheet only when `relay.dev.sim_convenience` is `true`. Absent →
+  the Simulator signs nothing (today's rule) and shows "This host does not accept Simulator answers". The flag comes
+  from the sealed, WSK-signed answer the phone already verifies, so the relay cannot fake it.
+- **The phone pairs at reader level 1** (`reader_decl` in the pair meta, `rd` on every request), which the dev host
+  requires anyway (17.4).
+- **Visible.** A red "DEV SANDBOX: convenience signing" banner on every screen of that workspace and on the sign
+  sheet, with the sandbox id from `whoami.relay.dev.sandbox`.
+- **No other change.** The event, the signing bytes (11A.14.2), idem, freshness and the retry table are unchanged;
+  only `auth` differs. A dev host that answers `op.not_allowed` to a convenience event (the gate went away, e.g. the
+  host restarted without the flag) is class D: show and stop.
+
+#### 11A.17.7 Consequences and threat model (requirements 5 and 6)
+
+- **The mark and readers on the sandbox:** accepted. After the first answer the sandbox workspace has
+  `convenience_seen` and `required_reader` 1 forever; every later reader must be level 1. That is fine for a
+  workspace that `dev-pair down` deletes.
+- **No promotion.** A sandbox workspace can never become a real one: (a) its genesis owner is the throwaway person
+  whose recovery code is a plain file in `<root>/secrets/` (S3 is signed and immutable); (b) its workspace marker
+  makes a normal host refuse registration (17.3); (c) `dev-pair down` deletes the root. There is no op that changes
+  the prefix or the genesis owner, and none is added. A person who wants real data starts a real workspace.
+- **Same-UID attacker (tier A).** Code running as the person can forge the manifest, `dev.json` and the workspace
+  marker (11A.15.11: "the marker is accident prevention, not containment"), and start its own dev host against a sandbox it
+  made. What it **cannot** do through this switch: make a **production** host
+  (the service-managed one) accept convenience on column R. That host has no flag (the unit writers refuse it), it
+  ignores `dev.json`, and its state directory has no manifest. To abuse the path the attacker would have to stop the
+  person's service host and run a dev host against a state directory under a sandbox root; the real workspaces would
+  then fail S1 to S4 (their genesis owner is the real person) and the dev host refuses to register or start with them
+  (R5). Getting a real workspace through S3 would need a genesis signed by the sandbox person, i.e. it would already
+  not be the real workspace. Tier A does not defend against same-UID code in general (§0.8.6 item 0); this design
+  adds no new same-UID capability against real workspaces.
+- **A stray file in a real workspace or state directory** (the owner's explicit concern): `dev.json` is read only
+  under the flag; `.orch-dev-sandbox` is read only under the flag; `.state/dev-sandbox.json` only narrows. None of
+  them flips anything on a production host.
+- **Logging and alarms.** The start line and the hourly line (17.2); every accepted column-R convenience event logs
+  `dev convenience answer accepted ws=<id8> device=<id8> seq=<n>`; `host.status.dev` and `whoami.relay.dev` are always
+  shown on a dev host. A normal host that sees a convenience event on column R logs and counts it in the existing
+  refusal path (`op.not_allowed`), and an alarm `dev_convenience_refused` (count, first, last) in `host.status.relay.alarms`
+  tells the person a Simulator build tried this against a real host.
+
+#### 11A.17.8 Build plan and tests (requirement 7)
+
+| PR | Owner | Content | Estimate |
+|---|---|---|---|
+| core D1 | orch-52 (Sonnet, Opus review) | `orch.devsandbox` (manifest check moved from the test tree, shared with `dev-pair`), `orch.host.devmode.prove`, the `--dev-sim-convenience` flag and its refusal in the unit writers, `dev_gate`, P5/L2/L8/`_signed_by`/`convenience.check`/`required_reader` changes, the narrowing marker on normal hosts, `host.status.dev`, `whoami.relay.dev`, the log lines and the alarm, the R2 vectors, new codes in §0.6 (`host.dev_refused`) | 1.5 to 2 days |
+| core D2 | orch-29 | `dev-pair up --sim-convenience`: `--prefix SBX`, the manifest's `person_id` and `workspaces`, the workspace marker, `dev.json`, `orch keys reader declare` for the sandbox device, the flag on `orch host run`, `ORCH_NO_CONVENIENCE` omitted for the host only; `down` unchanged | 0.5 day |
+| relay | orch-29 | none, if the pinned relay and `relay.dev.severin.io` already serve level 1 (17.5); otherwise the 9.8 rollout steps 1 and 2 and a redeploy | 0 to 0.5 day |
+| phone | orch-f1 | Simulator-only `convenience` custody behind the compile-time switch, the `whoami.relay.dev` check per review, the banner, a test that a Release build has no convenience symbol | 1 day |
+
+Order: D1, then D2, then the phone PR; the relay item before the first end-to-end run.
+
+Tests (core unless marked):
+- `dev_flag_requires_foreground`, `unit_writers_refuse_dev_flag` (launchd and systemd), `dev_flag_without_dev_json_refuses_start`,
+  `dev_json_without_flag_is_ignored`, `dev_flag_with_real_state_dir_refuses_start` (no manifest),
+  `dev_flag_manifest_mismatch_refuses_start` (`st_dev`/`st_ino`, `sandbox_id`), `dev_host_never_falls_back_to_normal`;
+- `real_workspace_on_dev_host_refuses_convenience` (registration refused; with the registry written directly, the
+  start refuses; `dev_gate` called directly returns `None`; a column-R submit answers `op.not_allowed`);
+- `sandbox_workspace_on_normal_host_refuses_convenience` (register refused by the marker; with the marker removed,
+  register succeeds and a convenience submit answers `op.not_allowed`);
+- one test per S1 to S6 failing alone (moved root, copied root, unlisted workspace id, other genesis owner, other
+  prefix, a second member, missing or mismatched marker, a production relay origin);
+- `stray_dev_json_in_real_state_changes_nothing`, `stray_workspace_marker_only_narrows`;
+- `no_convenience_env_refuses_dev_gate` (any non-empty value);
+- `dev_gate_rechecked_under_lock` (S4 broken between P5 and L2: a `member.added` lands first);
+- `dev_gate_sets_required_reader` (level-0 phone pairing refused; request without `rd` refused);
+- `first_dev_convenience_answer_writes_mark` and `worker_restart_with_convenience_history_on_level1_relay`;
+- `whoami_relay_dev_only_on_dev_gated_workspace`, `host_status_dev_absent_on_normal_host` (goldens unchanged);
+- `secure_enclave_and_passphrase_unchanged_on_dev_host`;
+- R2 vectors: convenience refused on a normal host, `whoami` with and without `relay.dev`;
+- T2 dev path (Linux CI, `--relay local`): `dev-pair up --sim-convenience`, the reference test phone answers one
+  question with `auth:"convenience"`, `committed`; the same run without `--sim-convenience` gets `op.not_allowed`;
+- phone (orch-f1): no convenience custody in a Release build; no sign sheet without `whoami.relay.dev`; the banner.
+
+#### 11A.17.9 Open items (for orch-52, orch-29 and orch-f1)
+
+- **O1 (orch-29):** do the pinned local relay and `relay.dev.severin.io` already serve `relay-info` level 1 and the
+  convenience checkpoint vectors? If not, the 9.8 rollout steps come first.
+- **O2 (orch-52):** the dev allow-list of S6 names `relay.dev.severin.io` in production code. Acceptable as a narrowing
+  list, or should `dev.json` carry the origin and S6 compare against the manifest instead?
+- **O3 (orch-52):** start-up proof check 1 (not service-managed). Comparing against the installed unit is a heuristic;
+  the simpler alternative is to rely on the unit writers' refusal alone.
+- **O4 (orch-29):** is the sandbox primary's device a device of the sandbox workspace (then it needs a reader record
+  too), or only a relay-account device?
+- **O5 (orch-52):** `SBX` as a required prefix (S3) is a visible convention; keep it, or rely on the genesis owner
+  alone?
+- **O6 (orch-f1):** does the phone check `whoami` before every review (one extra read) or cache it per session with a
+  refresh on `op.not_allowed`?
+
 ## 12. Phase 2: the addons on the host side (#307, #308)
 
 Status: decided 12 Oct 2026 by orch-52 (draft by stream A, Codex challenge, Opus tie-break adopted in full, the

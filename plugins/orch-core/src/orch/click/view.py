@@ -11,9 +11,9 @@ from typing import Any
 from orch import canon
 from orch.host import signer
 
-from .protocol import RISK, op_class, refused
+from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, RISK, op_class, refused
 
-__all__ = ["MAX_EVENTS", "MAX_VIEW_BYTES", "build", "check_prepared", "digest", "invariant", "word"]
+__all__ = ["MAX_EVENTS", "MAX_VIEW_BYTES", "build", "check_prepared", "deposit_checks", "digest", "invariant", "word"]
 
 MAX_EVENTS = 16
 MAX_VIEW_BYTES = 1024 * 1024
@@ -37,12 +37,33 @@ def word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str]
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")
     tag = f"{signer._clean(known[1])}~{wid[-8:]}"
+    if op == "grant":  # v1.6: only a deposit grant gets this far (check_prepared)
+        return f"{tag}/GRANT"
     ticket = prepared["material"].get("ticket")
     if op in ("policy.set", "settings.set") and ticket is None:
         return f"{tag}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"
     if op in ("addon.grant", "addon.purge"):
         return f"{signer._clean(prepared['events'][0].get('name'))}~{wid[-8:]}"
     return signer.confirm_word(prepared)
+
+
+def deposit_checks(prepared: Mapping[str, Any]) -> None:
+    """The one exception to "``grant`` is terminal-only" (v1.6, D-P2-27): exactly one ``grant.issued`` with
+    ``label:"runner"``, ``verbs:"agent"`` and 1 to 12 hours. Anything else is ``terminal_only``."""
+    events = prepared.get("events")
+    ok = (
+        prepared.get("op") == "grant"
+        and isinstance(events, list)
+        and len(events) == 1
+        and isinstance(events[0], Mapping)
+        and events[0].get("type") == "grant.issued"
+        and events[0].get("label") == "runner"
+        and events[0].get("verbs") == "agent"
+        and type(events[0].get("hours")) is int
+        and 1 <= events[0]["hours"] <= DEPOSIT_MAX_HOURS
+    )
+    if not ok:
+        raise refused("terminal_only", "only a runner grant of at most 12 hours is handed to the runner by a click")
 
 
 def check_prepared(
@@ -52,9 +73,11 @@ def check_prepared(
     person: str,
     device: str,
     files: Mapping[str, Any] | None,
+    deposit: bool = False,
 ) -> str:
     """Every §0.8.1 signer check, then the click rules; returns the op class (``click`` or ``word``). Raises
-    ``human.click_refused`` (``check_failed`` or ``terminal_only``)."""
+    ``human.click_refused`` (``check_failed`` or ``terminal_only``). ``deposit``: the request was prepared in
+    deposit-only grant mode; only :func:`deposit_checks`' grant passes then, as ``word``."""
     if not isinstance(prepared, Mapping) or prepared.get("workspace_id") != workspace_id:
         raise refused("check_failed", "the host answered for another workspace")
     events = prepared.get("events")
@@ -66,9 +89,13 @@ def check_prepared(
             signer.check_uploads(prepared, files)
     except signer.SignerRefused as exc:
         raise refused("check_failed", str(exc)) from None
-    kind = op_class(str(prepared["op"]), events)
-    if kind == "terminal" or any(e.get("type") == "grant.issued" for e in events):
-        raise refused("terminal_only", f"{prepared['op']} is signed in the terminal (orch sign CODE)")
+    if deposit:
+        deposit_checks(prepared)
+        kind = "word"
+    else:
+        kind = op_class(str(prepared["op"]), events)
+        if kind == "terminal" or any(e.get("type") == "grant.issued" for e in events):
+            raise refused("terminal_only", f"{prepared['op']} is signed in the terminal (orch sign CODE)")
     for c in prepared.get("checks") or []:
         if c.get("clean") is not True or c.get("attested_by") != "worker":
             raise refused("check_failed", "a worker check is not clean")
@@ -83,9 +110,11 @@ def build(
     device: str,
     expires_at: str,
     artifacts: str | None,
+    deposit: bool = False,
 ) -> dict[str, Any]:
     """The View (after :func:`check_prepared`). ``checks`` are listed apart from ``lines`` so their time can change
-    without changing :func:`digest`."""
+    without changing :func:`digest`. A deposit grant (and only one) gets ``deposit: true`` and ``deposit_line``, and
+    its ``lines`` end with the tier-A sentence and that line."""
     known = workspace(prepared["workspace_id"])
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")
@@ -116,6 +145,11 @@ def build(
         "device": device,
         "artifacts": artifacts,
     }
+    if deposit:
+        deposit_checks(prepared)
+        view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
+        view["deposit"] = True
+        view["deposit_line"] = DEPOSIT_LINE
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:
         raise refused("terminal_only", "the review is too large for the dashboard; use the terminal")
     return view

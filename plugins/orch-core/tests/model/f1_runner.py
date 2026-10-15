@@ -89,6 +89,9 @@ def check_after(st: Any, after: dict[str, Any]) -> None:
             assert not t.source_list, uid
         if "policy" in exp:
             assert {g: thaw(t.gates[g].policy) for g in t.gates} == exp["policy"], uid
+        for q, want in exp.get("answers", {}).items():  # H12e: the answer event that counts, per question
+            core = st._core.tickets[uid].questions[q]
+            assert (core.answer["event"] if core.answer else None) == want, (uid, q)
         if "policy_hash" in exp:
             assert {g: t.gates[g].policy_hash for g in exp["policy_hash"]} == exp["policy_hash"], uid
 

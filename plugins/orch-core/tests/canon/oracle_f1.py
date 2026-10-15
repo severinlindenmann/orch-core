@@ -104,6 +104,7 @@ def text_vectors() -> dict[str, Any]:
         ("trailing_space_kept", "x  \n", "x  \n"),
         ("no_final_newline_kept", "x", "x"),
         ("tab_kept", "a\tb", "a\tb"),
+        ("lf_kept", "a\nb", "a\nb"),
         ("compat_not_folded", "\ufb01", "\ufb01"),
         ("unicode_16_new_char", "\U00010d40", "\U00010d40"),
     ]
@@ -129,6 +130,9 @@ def text_vectors() -> dict[str, Any]:
         ("unassigned_max", "\U0010ffff"),
         ("lone_surrogate", "a\ud800"),
         ("unassigned_cr_survivor", "\r\u0378"),
+        # unassigned in Unicode 16.0, assigned in 17.0 (CJK Extension J, Sidetic): newer tables must not admit them
+        ("newer_than_16_cjk_ext_j", "\U000323b0"),
+        ("newer_than_16_sidetic", "\U00010940"),
     ]
     for cp, parts in NEW_IN_16:
         normalize.append((f"nfc16_{cp:x}", "".join(map(chr, parts)), chr(cp)))
@@ -626,6 +630,7 @@ def _vectors() -> dict[str, dict[str, Any]]:
         },
         "checkpoint.json": sg.checkpoint_vector(),
         "reader_kat_1.json": sg.reader_kat_vector(),
+        "phone_events.json": sg.phone_events_vector(),
         "restore.json": {
             "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses "
             "chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",
@@ -689,7 +694,9 @@ INDEX: dict[str, str] = {
     "canon.json": "[shared, unchanged] strict parse depth 16/17 and -0 -> 0 (ticket-format 11.2)",
     "labels.json": "[shared, CHANGED] the F1 domain labels (5.6), prefix-free with the protocol's; H12d adds "
     "sig_reader_decl",
-    "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)",
+    "text.json": "[shared, CHANGED] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3); "
+    "H12e (orch-v2-host 11A.14 14.8) adds LF kept and code points unassigned in 16.0 but assigned in Unicode 17.0 "
+    "(a phone with newer tables must refuse them before the sign sheet)",
     "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id and hash, "
     "grant secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7)",
     "chain.json": "[shared, unchanged] three chained events: heads, prev, canonical lines, signing bytes; the sig and "
@@ -724,6 +731,11 @@ INDEX: dict[str, str] = {
     "approvals.json": "model scenarios: who may approve (5.7), host events (5.2, 5.12), gate.incomplete, "
     "gate.not_applicable, a stale source_sha",
     "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
+    "phone_events.json": "[shared, new] phone person events over relay.submit (orch-v2-host 11A.14, H12e): "
+    "question.answered and ticket.created signed by a phone of sev (dk_sevp1, look+decide), secure-enclave-unlocked "
+    "and passphrase; per accepted case the submitted form, signing bytes, digest, sig, appended event and head; "
+    "refusals (question.stale, members.stale, event.bad_base, sig.invalid, device.scope, event.duplicate_id, "
+    "ticket.exists, an abandoned answer replayed); high-s; a why-only re-ask; A -> B -> A then a delayed A answer",
     "index.json": "this list",
 }
 

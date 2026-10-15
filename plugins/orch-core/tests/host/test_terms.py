@@ -133,7 +133,8 @@ def test_preview_blocks_in_the_order_addon_machine_terminals_runner(w, rstate, m
         assert pre["cwd"] == {"kind": "workspace"} and pre["cwd_path"] == str(w.service.entry.root)
         assert "ORCH_GRANT" not in pre["env"] and "ORCH_SESSION" not in pre["env"]
         assert preview(c)["spec"] == pre["spec"]  # a stable digest
-        assert preview(c, harness="codex")["blocked"]["code"] == "harness.not_found"
+        codex = preview(c, harness="codex")  # H11c: a person-run harness through the login shell
+        assert codex["blocked"] is None and codex["login_shell"] is True and "ORCH_GRANT" not in codex["env"]
         assert preview(c, mode="context")["blocked"]["code"] == "launch.invalid"
         assert preview(c, ticket="NOPE-999")["blocked"]["code"] == "not_found"
         assert "ORCH_TICKET" in preview(c, ticket=w.ticket()[1])["env"]
@@ -895,6 +896,10 @@ def test_the_host_stays_responsive_while_eight_runs_flood_output(tmp_path):
         enable(w)
         home = tmp_path / "home"
         home.mkdir()
+        # H11c: the runner starts only registry launches and the programs runner.json names
+        cfg = Path(w.lab.state) / "runner.json"
+        cfg.write_text('{"v": 1, "programs": {"codex": "/bin/sh"}}')
+        cfg.chmod(0o600)
         env = {"PATH": os.environ["PATH"], "HOME": str(home), "PYTHONPATH": src, "SHELL": "/bin/sh",
                "ORCH_STATE_DIR": str(w.lab.state), "ORCH_HOST_RUN_DIR": str(w.lab.run)}  # fmt: skip
         code = "import sys; from orch.cli.main import main; sys.exit(main(['runner', 'run', '--foreground']))"
@@ -906,7 +911,7 @@ def test_the_host_stays_responsive_while_eight_runs_flood_output(tmp_path):
         runs = []
         for _ in range(8):
             run = new_run_id()
-            w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/usr/bin/yes", "orch-flood"])))
+            w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "exec yes orch-flood"])))
             runs.append(run)
         viewers = []
         try:

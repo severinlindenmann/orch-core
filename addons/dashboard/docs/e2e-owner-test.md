@@ -5,8 +5,8 @@ the phone over the relay. It doesn't repeat the install commands; those are in [
 was verified and how. Here each step names the runbook step to follow, then **what to check** and **what counts as a
 failure**. Note anything odd with the time (`date`) so it can be matched against `~/.config/orch/host/host.log`.
 
-Written 14 Oct 2026 against `develop`. Parts A–C cover core and the dashboard. Part D (phone and relay) is added when
-the relay bridge (streams C/D) and the mobile relay client work end to end.
+Written 14 Oct 2026 against `develop`. Parts A–C cover core and the dashboard. Part D (phone and relay) is written
+from the decided design and becomes runnable when the relay pairing ships.
 
 > **Choose your signing path first.** Click-to-sign (convenience custody) is refused by the host once the workspace has
 > a second device or is paired with a relay (first-use step 6, "Conditions"). If you plan Part D on the same
@@ -45,11 +45,39 @@ the relay bridge (streams C/D) and the mobile relay client work end to end.
 | C2 | Restart the host (`orch host disable` + `enable`, or Ctrl-C the foreground host and start it again) | the dashboard shows the host as unavailable while it is down and recovers by itself |
 | C3 | Undo: step 8 table | nothing of orch keeps running (`orch host status`: not running); your workspace folder and its history stay |
 
-## Part D: the phone over the relay (to be written)
+## Part D: the phone over the relay
 
-Added when stream C/D's relay bridge and the mobile relay client work end to end: pairing the phone with the
-workspace over the relay, signing on the phone, the dashboard seeing the phone's signatures live, and what the
-dashboard shows for a second device (click-to-sign off, see the box at the top).
+**Status: planned, not run yet.** Written 15 Oct 2026 from the decided design: R6 draft #473 §11A.15, orch-52's
+`pair/1` decisions and the dashboard's "Pair a phone" screen (#480). It becomes runnable when three things are in: the
+relay link (R5) and pairing (R6) on the host, orch-52's `pair/1` ops, and the orch app with the `orch://pair` handler.
+Until then, Settings → Devices says "Pairing a phone is not available on this host yet". Command names marked
+*(R6 draft)* may still change; this section gets updated when they land.
+
+**Before you start:**
+- Use a workspace where click-to-sign is **off** (`orch host convenience off --workspace TEST`). If you used
+  click-to-sign there before, pairing still works, but only with an up-to-date orch app on the phone.
+- Your Mac's primary key exists (`orch keys primary init`, once, in a terminal; it asks for your recovery code)
+  *(R6 draft)*.
+- The workspace is linked to the relay (the R5 link command) *(R6 draft)*.
+
+| # | Do | Check | Failure looks like |
+|---|---|---|---|
+| D1 | Dashboard: Settings → Devices → "Pair a phone" | no block; if click-to-sign was used before, a warning that only up-to-date apps can pair. "Create pairing link" | "Turn click-to-sign off first" (it's still on); `relay.not_linked` |
+| D2 | "Create pairing link", then "Show QR" | a QR and a countdown; nothing secret is visible before "Show QR" | the link visible before the click; a QR that never expires |
+| D3 | Scan the QR with the orch app (or open the `orch://pair?…` link on the phone) | the app shows a review screen and connects only after you accept there; the dashboard switches to "compare the code" and the QR disappears | the dashboard keeps showing the QR after the phone connected |
+| D4 | Type the six characters the phone shows into the dashboard | Approve is enabled only when the codes match; a wrong code uses up one of 3 attempts | Approve works without a match; a typo ends the pairing at once |
+| D5 | Approve, then in a terminal on the Mac: `orch host relay pair --resume --offer <id>` (the dashboard shows the exact command) *(R6 draft)* | the terminal shows a second code; it equals the code the dashboard shows; confirm with your recovery code | the codes differ (reject!) |
+| D6 | Then `orch sign <CODE>` with the code the dashboard gives you | the dashboard goes through "adding" to "paired"; the phone shows the workspace | the dashboard stays on "signing" after the terminal says `signed` |
+| D7 | Settings → Devices | the phone is listed (label as the phone named itself, paired just now, relay yes) | the phone missing; the Mac listed as a phone |
+| D8 | On the phone, approve a gate or answer a question on a ticket | the dashboard shows it live (Today, the ticket's history), signed by the phone's device | it appears only after a reload, or never |
+| D9 | Try click-to-sign in the dashboard on this workspace | refused: a workspace with a phone signs with the phone or in the terminal | Sign works by click |
+| D10 | Remove the phone: the "Remove this device" disclosure shows the command; run it in a terminal (it asks for your recovery code) | the device leaves the list; the phone loses access | the phone can still act on the workspace |
+
+**Also check (security):**
+- While the QR shows, switch to another app and back: the QR may stay, but a lost link is never fetched again; cancel
+  and create a new one.
+- Let a link expire (or press Cancel): the phone then gets "link used or expired", and the dashboard shows "expired"
+  or "cancelled".
 
 ## When something fails
 

@@ -7,7 +7,7 @@
     "cli": "orch grant",
     "summary": "Issue a standing grant for agents; the secret is printed once, on your terminal.",
     "who": "human",
-    "usage": "orch grant [--hours N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--dry-run]",
+    "usage": "orch grant [--hours N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--runner] [--dry-run]",
     "pre": [
       "workspace_exists",
       "role_allows",
@@ -48,6 +48,10 @@
           "type": "string",
           "description": "short label",
           "x-metavar": "TEXT"
+        },
+        "runner": {
+          "type": "boolean",
+          "description": "hand the secret to the orch runner on this machine instead of showing it (label runner, 12 h max)"
         }
       },
       "required": [],

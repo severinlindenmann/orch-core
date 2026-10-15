@@ -31,6 +31,7 @@ WHAT = frozenset(
         "cancelled",
         "adopted",
         "record_failed",
+        "deposit",  # v1.6: a deposit grant's hand-over to the runner (the outcome code only, never a secret)
     }
 )
 _SAFE = {

@@ -221,12 +221,12 @@ def test_an_event_whose_own_step_is_above_the_cap_is_held_and_nothing_is_sent(ma
 
 
 def test_an_unexpected_too_large_lowers_the_cap_and_replans_never_resends_unchanged(make, sized):
-    k = make(tickets=6, events=4, info={"v": 1, "reader": 1, "max_publication_bytes": 16 << 20})
-    k.sim.max_pub = 3000  # the relay's real maximum is lower than it announced and than link.json
-    k.drain(limit=300)
-    assert k.current()["hash"] == k.sim.accepted[-1][1]
-    assert max(sized) <= 3000
-    assert k.publisher.cap() < 16 << 20
+    k = make(tickets=20, events=4, info={"v": 1, "reader": 1, "max_publication_bytes": 16 << 20})
+    k.sim.max_pub = 9000  # the relay's real maximum is lower than it announced and than link.json
+    k.drain(limit=400)
+    assert k.current()["hash"] == k.sim.accepted[-1][1], k.alarms
+    assert max(sized) <= 9000
+    assert publish.MIN_CAP <= k.publisher.cap() < 16 << 20
 
 
 def test_too_large_more_than_four_times_an_hour_stops_with_relay_too_large(make):
@@ -574,16 +574,21 @@ def test_ignored_for_a_staged_extension_is_a_lie_even_when_the_relay_holds_it(ma
 def test_the_cap_is_lowered_at_most_four_times_an_hour(make):
     k = make(tickets=1)
     p = k.publisher
-    pub = publish._Pub("plain", {}, 1, "sha256:" + "1" * 64, None)
-    for i in range(publish.LOWERINGS_PER_HOUR):
+    run = publish._Run("appended", "workspace", {"seq": 0, "acc": publish.ZERO},
+                       {"seq": 1, "head": publish.ZERO, "acc": publish.ZERO})  # fmt: skip
+    pub = publish._Pub("plain", {}, 1, "sha256:" + "1" * 64, None, runs=[run])
+    for i in range(4):  # the literal design number (11A.5), not the constant
         with pytest.raises(publish._Again):
-            p._too_large(pub, 10_000 >> i)
+            p._too_large(pub, 10_000_000 >> i)
     with pytest.raises(PublishHeld) as e:
-        p._too_large(pub, 100)
+        p._too_large(pub, 100_000)
     assert e.value.code == "relay_too_large"
     k.clock.advance(3601)  # the window rolls
     with pytest.raises(publish._Again):
-        p._too_large(pub, 100)
+        p._too_large(pub, 100_000)
+    with pytest.raises(PublishHeld) as e:  # never below the floor (review R6): held, not collapsed
+        p._too_large(pub, 2 * publish.MIN_CAP - 2)
+    assert e.value.code == "relay_too_large"
 
 
 def test_a_target_lower_than_the_source_in_any_log_is_not_an_extension():

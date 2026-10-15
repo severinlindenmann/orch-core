@@ -549,13 +549,21 @@ class Session:
         self._alarm("relay_takeover_refused", why)
         raise TakeoverRefused(why)
 
-    def _hold_call(self, body: dict[str, Any], deadline_s: float, *, takeover: bool, fenced_stops: bool = True) -> Hold:
+    def _hold_call(
+        self,
+        body: dict[str, Any],
+        deadline_s: float,
+        *,
+        takeover: bool,
+        fenced_stops: bool = True,
+        transport: Transport | None = None,
+    ) -> Hold:
         path = f"/v2/workspaces/{self.workspace_id}/host/hold"
         route = "POST /v2/workspaces/{ws}/host/hold"
         try:
             obj = self.call(
                 "POST", path, route, body=body, deadline_s=deadline_s, keys={"gen", "lease_s", "cursor"},
-                fenced_stops=fenced_stops,
+                fenced_stops=fenced_stops, transport=transport,
             )  # fmt: skip
             return Hold(_int(obj["gen"], 1), _int(obj["lease_s"], 1), _int(obj["cursor"]))
         except RelayMisbehaving as e:
@@ -563,8 +571,21 @@ class Session:
                 self._refuse(f"the relay's hold answer carried no valid gen ({e})")
             raise
 
-    def _renew(self, gen: int, deadline_s: float, *, running: bool) -> Hold:
-        got = self._hold_call({"gen": gen, "take_over": False}, deadline_s, takeover=False, fenced_stops=running)
+    def renew(self, *, deadline_s: float = AUX_HOLD_DEADLINE_S, transport: Transport | None = None) -> Hold:
+        """Renew the RUNNING lease (``{gen, take_over: false}``; a ``fenced`` answer stops, as a running renewal does)
+        over the caller's own connection. R3's first link uses it: R5 starts the aux renewal only after the link, and
+        a first publication can outlast the 40 s lease (review R2). Never a probe: without a generation it refuses."""
+        if self._fenced:
+            raise Fenced("fenced: writes stopped")
+        gen = self._gen
+        if gen is None:
+            raise NotHolder("no holder generation to renew")
+        return self._renew(gen, deadline_s, running=True, transport=transport)
+
+    def _renew(self, gen: int, deadline_s: float, *, running: bool, transport: Transport | None = None) -> Hold:
+        got = self._hold_call(
+            {"gen": gen, "take_over": False}, deadline_s, takeover=False, fenced_stops=running, transport=transport
+        )
         if got.gen != gen:
             raise RelayMisbehaving("hold renewed another generation")
         self._gen = gen

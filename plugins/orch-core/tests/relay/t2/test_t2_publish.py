@@ -167,7 +167,9 @@ def test_a_backlog_above_c_is_published_by_catch_up_in_several_checkpoints(relay
     assert h.publisher.cap() == 2400
 
 
-def test_a_ticket_restore_with_its_abandoned_suffix_is_accepted_by_the_relay(relay, host, R):
+def _restore_queued(host, R):
+    """Linked and published, the ticket's lost suffix published, the logs rolled back and the owner's restore queued
+    (the owner device in the relay's member list with operate, the relay's restore owner policy)."""
     h = host(link_cap=16 << 20, tickets=2, events=1)
     sess = h.sess
     # the owner device is in the relay's member list with operate (the relay's restore owner policy)
@@ -203,6 +205,12 @@ def test_a_ticket_restore_with_its_abandoned_suffix_is_accepted_by_the_relay(rel
     h.store.append(h.env.person_event(h.env.owner, uid, "restore", **facts, reason="rollback"), log=uid)
     entry = h.store.outbox_first()
     assert entry is not None and entry.kind == "restore"
+    return h, entry
+
+
+def test_a_ticket_restore_with_its_abandoned_suffix_is_accepted_by_the_relay(relay, host, R):
+    h, entry = _restore_queued(host, R)
+    sess, uid = h.sess, h.uids[0]
     h.publisher = h.make_publisher()
     h.publisher.link_publish(sess, directory(sess))
     assert h.relay_holds_current() and not h.alarms, h.alarms
@@ -210,6 +218,62 @@ def test_a_ticket_restore_with_its_abandoned_suffix_is_accepted_by_the_relay(rel
     h.env.log(uid, "after the restore")
     h.publisher.link_publish(sess, directory(sess))
     assert h.relay_holds_current()
+
+
+class Crash(BaseException):
+    pass
+
+
+def test_a_restore_whose_acknowledgement_was_lost_is_finished_not_held(relay, host, R, monkeypatch):
+    """Review R1: the relay commits the restore, the host dies before reading the answer; the next start sees H =
+    the restore's target and finishes the history and the delete (it never re-sends: the relay would refuse it)."""
+    h, entry = _restore_queued(host, R)
+    sess = h.sess
+    h.publisher = h.make_publisher()
+    real_final = h.publisher._final
+
+    def final(pub, source_hash):
+        real_final(pub, source_hash)  # the relay commits the restore ...
+        raise Crash()  # ... and the host dies before it reads the answer
+
+    monkeypatch.setattr(h.publisher, "_final", final)
+    with pytest.raises(Crash):
+        h.publisher.publish_first(sess, directory(sess))
+    assert directory(sess).get_checkpoint(genesis=h.store.genesis).hash == entry.hash
+    h.publisher = h.make_publisher()
+    h.publisher.publish_first(sess, directory(sess))
+    assert h.store.outbox_entries() == [] and h.relay_holds_current() and not h.alarms, h.alarms
+    assert [r["n"] for r in h.publisher.history.restores()] == [entry.n]
+
+
+def test_the_first_link_renews_the_lease_while_it_publishes(relay, host, monkeypatch):
+    """Review R2: publish_first renews the lease on its own connection while it runs (here every 0.5 s through a
+    2 s stalled page). The real lease is 40 s, beyond the T2 budget: the outlived-lease case runs in the layer-1
+    tests against the simulator's clock."""
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.5)
+    h = host(link_cap=16 << 20, tickets=2, events=1)
+    renewals = []
+    real_renew = h.sess.renew
+
+    def renew(**kw):
+        renewals.append(1)
+        return real_renew(**kw)
+
+    monkeypatch.setattr(h.sess, "renew", renew)
+    real = h.sess.call
+    stalled = {"n": 0}
+
+    def call(method, target, route, **kw):
+        if "/pages/" in target and not stalled["n"]:
+            stalled["n"] = 1
+            import time
+
+            time.sleep(2.0)
+        return real(method, target, route, **kw)
+
+    monkeypatch.setattr(h.sess, "call", call)
+    h.publisher.publish_first(h.sess, directory(h.sess))
+    assert len(renewals) >= 2 and h.relay_holds_current() and not h.sess.fenced
 
 
 def test_publish_module_constants_match_the_relay(relay):

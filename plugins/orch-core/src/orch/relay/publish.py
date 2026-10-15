@@ -61,7 +61,7 @@ from . import wire
 from .directory import Directory, VerifiedCheckpoint
 from .http import RedirectRefused, Transport, TransportError
 from .retry import PERMANENT_QUOTAS, RelayRefused, delay
-from .session import NotHolder, RelayMisbehaving, Session
+from .session import NotHolder, RelayMisbehaving, Session, SessionError
 from .state import StateDir, StateError
 
 __all__ = [
@@ -101,6 +101,9 @@ INCOMPLETE_LIMIT = 3
 START_POLL_S = 0.5
 IDLE_POLL_S = 2.0  # an idle publisher checks the outbox locally this often (R5's wake() is immediate)
 IDLE_RECHECK_S = 60.0  # and reads H from the relay again at least this often
+RENEW_EVERY_S = 15.0  # publish_first renews the 40 s lease this often (review R2; the aux thread does it once running)
+MIN_CAP = 4 * 1024  # an in-memory lowering never goes below this: below it the publication is held (review R6)
+MISMATCH_LIMIT = 2  # plain restore_source_mismatch answers in a row before relay_misbehaving (review R4)
 HISTORY_SEGMENT = 1024  # lines per published.jsonl segment; older segments are kept as published-<k>.jsonl
 RECORD_LIMIT = 8 << 20  # published-restore-<n>.json and publish-manifest.json (StateDir.BIG_FILE)
 ZERO = "sha256:" + "0" * 64
@@ -218,6 +221,8 @@ class History:
 
     def __init__(self, state: StateDir) -> None:
         self._s = state
+        self._count: int | None = None  # archived segments, probed once per process (review R5)
+        self._restores: list[dict[str, Any]] | None = None  # every accepted restore's record, loaded once
 
     @staticmethod
     def _parse(raw: bytes | None, name: str) -> list[dict[str, Any]]:
@@ -239,15 +244,22 @@ class History:
             out.append(obj)
         return out
 
+    @staticmethod
+    def _segment(k: int) -> str:
+        return f"published-{k:06d}.jsonl"
+
     def _segments(self) -> list[str]:
-        names, k = [], 1
-        while self._s.read(f"published-{k:06d}.jsonl") is not None:
-            names.append(f"published-{k:06d}.jsonl")
-            k += 1
-        return names
+        if self._count is None:
+            k = 0
+            while self._s.read(self._segment(k + 1)) is not None:
+                k += 1
+            self._count = k
+        return [self._segment(k) for k in range(1, self._count + 1)]
 
     def lines(self) -> list[dict[str, Any]]:
-        """Every line, oldest first (archived segments, then the current one)."""
+        """Every line, oldest first (archived segments, then the current one). Reads every segment: only for the
+        rare explanation of an H the logs do not contain, and for tests; a step uses :meth:`last` and
+        :meth:`restores`, which are bounded (review R5)."""
         out: list[dict[str, Any]] = []
         for name in [*self._segments(), self.CURRENT]:
             out += self._parse(self._s.read(name), name)
@@ -264,23 +276,28 @@ class History:
     def contains(self, hash: str) -> bool:
         return any(line["hash"] == hash for line in self.lines())
 
+    def _record(self, n: int, h: str) -> dict[str, Any]:
+        raw = self._s.read(f"published-restore-{n}.json", limit=RECORD_LIMIT)
+        try:
+            rec = wire.loads_body(raw or b"", cap=RECORD_LIMIT)
+        except wire.WireError:
+            raise StateError(f"the record of accepted restore {n} is missing or unreadable") from None
+        if type(rec) is not dict or set(rec) != {"body", "source", "acc_from"}:
+            raise StateError(f"the record of accepted restore {n} is malformed")
+        return {"n": n, "hash": h, **rec}
+
     def restores(self) -> list[dict[str, Any]]:
-        """Every accepted restore's record, by ``n``: ``{n, hash, body, source, acc_from}``. A restore line whose record
-        is missing or unreadable is a :class:`StateError` (no degrade, no guess)."""
-        out, seen = [], set()
-        for line in self.lines():
-            if line["kind"] != "restore" or line["n"] in seen:
-                continue
-            seen.add(line["n"])
-            raw = self._s.read(f"published-restore-{line['n']}.json", limit=RECORD_LIMIT)
-            try:
-                rec = wire.loads_body(raw or b"", cap=RECORD_LIMIT)
-            except wire.WireError:
-                raise StateError(f"the record of accepted restore {line['n']} is missing or unreadable") from None
-            if type(rec) is not dict or set(rec) != {"body", "source", "acc_from"}:
-                raise StateError(f"the record of accepted restore {line['n']} is malformed")
-            out.append({"n": line["n"], "hash": line["hash"], **rec})
-        return sorted(out, key=lambda r: r["n"])
+        """Every accepted restore's record, by ``n``: ``{n, hash, body, source, acc_from}``. Scanned once per process
+        and kept up to date by :meth:`append`. A restore line whose record is missing or unreadable is a
+        :class:`StateError` (no degrade, no guess)."""
+        if self._restores is None:
+            out, seen = [], set()
+            for line in self.lines():
+                if line["kind"] == "restore" and line["n"] not in seen:
+                    seen.add(line["n"])
+                    out.append(self._record(line["n"], line["hash"]))
+            self._restores = sorted(out, key=lambda r: r["n"])
+        return list(self._restores)
 
     def append(
         self,
@@ -299,6 +316,7 @@ class History:
             self._s.write(f"published-restore-{n}.json", canon.dumps(rec), limit=RECORD_LIMIT)
         else:
             self._s.write(self.LAST, canon.dumps(dict(target)), limit=RECORD_LIMIT)
+        restores = self.restores()  # loaded before the line: a new restore is added below, once
         with self._s.lock:
             cur = self._s.read(self.CURRENT) or b""
             lines = self._parse(cur, self.CURRENT)
@@ -306,10 +324,17 @@ class History:
                 return  # a repeat after a crash between the line and the outbox delete
             line = canon.dumps({"n": n, "hash": hash, "kind": kind, "at_ms": at_ms}) + b"\n"
             if len(lines) >= HISTORY_SEGMENT:
-                k = len(self._segments()) + 1
-                self._s.claim(f"published-{k:06d}.jsonl", cur)
+                segs = self._segments()
+                # idempotent (review R10): a crash after the claim and before the rewrite left the same lines in both
+                if not segs or self._s.read(segs[-1]) != cur:
+                    name = self._segment(len(segs) + 1)
+                    if not self._s.claim(name, cur) and self._s.read(name) != cur:
+                        raise StateError(f"{name} exists with other lines")
+                    self._count = len(segs) + 1
                 cur = b""
             self._s.write(self.CURRENT, cur + line)
+        if kind == "restore" and all(r["n"] != n for r in restores):
+            self._restores = sorted([*restores, self._record(n, hash)], key=lambda r: r["n"])
 
 
 # -- the staging journal (11A.3 publish.json) ------------------------------------------------------------------------
@@ -419,7 +444,10 @@ class Publisher:
         self._time_refusals = 0
         self._incomplete = 0
         self._diverged_claims = 0
+        self._mismatch_claims = 0
         self._replans = 0
+        self._last_renew = 0.0
+        self._sync_renew = False
         self.error: BaseException | None = None
         self.published: list[tuple[int, str, str]] = []  # (n, hash, kind) accepted in this run, for R5 and tests
 
@@ -488,7 +516,14 @@ class Publisher:
             self._wake.clear()
             if self._stop.is_set() or self._mono() - since >= IDLE_RECHECK_S:
                 return
-            if self._job(lambda: self._store.outbox_first()) is not None:
+            try:
+                queued = self._job(lambda: self._store.outbox_first())
+            except StoreError as e:  # review R3: a store fault never stops the publisher; only a fence or session error
+                if e.code == "store.busy":
+                    continue  # another process holds the workspace lock: poll again
+                self._raise(_store_alarm(e.code), "")
+                return  # the step meets it again and holds with its backoff
+            if queued is not None:
                 return
 
     # -- R1's first link -----------------------------------------------------------------------------------------
@@ -501,13 +536,60 @@ class Publisher:
         if session is not self._session:
             raise ValueError("the first link publishes through this publisher's own session")
         del directory  # the publisher reads through its own verified reader (same session, own connection)
-        while not self._stop.is_set():
-            state, wait = self.step(raise_held=True)
-            if state == "idle":
-                return
-            if wait > 0 and self._stop.wait(wait):
-                break
+        done = threading.Event()
+        renewer = None
+        if self._conn_factory is not None:  # a renewal thread with its own connection covers a long single call too
+            renewer = threading.Thread(target=self._renew_loop, args=(done,), name=f"orch-relay-renew-{self.id8}",
+                                       daemon=True)  # fmt: skip
+            renewer.start()
+        self._last_renew = self._mono()
+        self._sync_renew = renewer is None
+        try:
+            while not self._stop.is_set():
+                self._tick()
+                state, wait = self.step(raise_held=True)
+                if state == "idle":
+                    return
+                while wait > 0 and not self._stop.is_set():  # waits are cut at the renewal period
+                    part = min(wait, RENEW_EVERY_S)
+                    if self._stop.wait(part):
+                        break
+                    wait -= part
+                    self._tick()
+        finally:
+            self._sync_renew = False
+            done.set()
+            if renewer is not None:
+                renewer.join(SMALL_DEADLINE_S)
         raise PublishHeld("relay_stopped", "the publisher was stopped during the first link")
+
+    def _tick(self) -> None:
+        """Without a renewal thread (no connection factory): renew the first link's lease before a request once
+        :data:`RENEW_EVERY_S` passed."""
+        if self._sync_renew and self._mono() - self._last_renew >= RENEW_EVERY_S:
+            self._session.renew(transport=self._transport())
+            self._last_renew = self._mono()
+
+    def _renew_loop(self, done: threading.Event) -> None:
+        """The first link's lease renewal (review R2): every :data:`RENEW_EVERY_S` over its own connection while
+        :meth:`publish_first` runs. A fence ends it (the session then refuses every later write); any other failure is
+        logged and retried at the next tick."""
+        conn = self._conn_factory() if self._conn_factory is not None else None
+        try:
+            while not done.wait(RENEW_EVERY_S):
+                try:
+                    self._session.renew(transport=conn)
+                except SessionError as e:
+                    log.warning("relay first-link renewal stopped: %s", type(e).__name__)
+                    return
+                except (RelayRefused, TransportError) as e:
+                    log.info("relay first-link renewal failed: %s", type(e).__name__)
+        finally:
+            if conn is not None:
+                try:
+                    conn.shutdown()
+                except Exception:  # noqa: BLE001 - best effort
+                    pass
 
     link_publish = publish_first
 
@@ -623,6 +705,15 @@ class Publisher:
                 return None  # nothing lies beyond H: the newest local checkpoint holds the same logs
             raise _Again()
         if entry.kind == "restore":
+            if H is not None and entry.n <= H.n:
+                # review R1: the relay already holds this restore (a lost acknowledgement, a crash before the delete)
+                # or a later checkpoint descending from it: finish the history and the delete, never hold for ever
+                if entry.hash == H.hash or self._job(
+                    lambda: self._store.relay_ancestor(entry.checkpoint, H.checkpoint)
+                ):
+                    self._accepted(self._restore_done(entry))
+                    raise _Again()
+                raise PublishHeld("restore_source_mismatch", f"restore n {entry.n} is at or below the relay's n {H.n}")
             return self._restore(H, entry, cap)
         if H is not None and entry.n <= H.n:
             if entry.hash == H.hash:
@@ -686,6 +777,15 @@ class Publisher:
         runs = _restore_runs(src, entry.checkpoint, line, lg, r["acc_from"], evidence=r)
         return self._restore_pub(H, entry.checkpoint, line, lg, r, runs, cap, entry=entry, acc_from=r["acc_from"])
 
+    def _restore_done(self, entry: OutboxEntry) -> _Pub:
+        """The publication record of a restore entry the relay already holds (no set, no PUT)."""
+        r = entry.restore
+        assert r is not None
+        bundle = {"line": r["event"], "cert": r["device_cert"], "authz": {"delegation": r["delegation"]},
+                  "log": r["log"]}  # fmt: skip
+        return _Pub("restore", entry.checkpoint, entry.n, entry.hash, None, restore=bundle, entry=entry, direct=True,
+                    record_source=r["source"], acc_from=r["acc_from"])  # fmt: skip
+
     def _stored_restore(self, H: VerifiedCheckpoint | None, rec: dict[str, Any], cap: int) -> _Pub:
         body = rec["body"]
         try:
@@ -730,6 +830,8 @@ class Publisher:
 
     def _publish(self, pub: _Pub, H: VerifiedCheckpoint | None, cap: int) -> None:
         source_hash = None if H is None else H.hash
+        if len(canon.dumps(_final_body(pub, source_hash))) > FINAL_CAP:  # review R7: held before anything is staged
+            raise PublishHeld("relay.too_large", f"n {pub.n}: the final body is above {FINAL_CAP} bytes")
         if not pub.direct:
             self._stage(pub, source_hash, cap)
         ack = self._final(pub, source_hash)
@@ -828,6 +930,7 @@ class Publisher:
         keys: set[str] | None = None,
         cap: int = STAGE_RESPONSE_CAP,
     ) -> dict[str, Any]:
+        self._tick()
         try:
             return self._session.call(
                 "PUT", target, route, raw=data, content_type="application/json", holder=True,
@@ -835,7 +938,7 @@ class Publisher:
                 keys=keys if keys is not None else set(), transport=self._transport(),
             )  # fmt: skip
         except RelayRefused as e:
-            if e.code == "too_large" and e.status in (400, 413):
+            if e.status == 413 or (e.code == "too_large" and e.status == 400):
                 self._too_large(pub, size)
             if e.status == 409 and e.code == "staging_conflict":
                 self._journal.clear()
@@ -844,9 +947,8 @@ class Publisher:
             raise
 
     def _final(self, pub: _Pub, source_hash: str | None) -> dict[str, Any]:
-        body: dict[str, Any] = {"checkpoint": pub.target, "source_hash": source_hash}
-        if pub.restore is not None:
-            body["restore"] = pub.restore
+        body = _final_body(pub, source_hash)
+        self._tick()
         try:
             obj = self._session.call(
                 "PUT", f"{self._base()}/checkpoint", "PUT /v2/workspaces/{ws}/checkpoint", body=body, holder=True,
@@ -900,7 +1002,7 @@ class Publisher:
 
     def _final_refused(self, pub: _Pub, e: RelayRefused) -> None:
         code = e.code
-        if e.status in (400, 413) and code == "too_large":
+        if e.status == 413 or (e.status == 400 and code == "too_large"):
             self._too_large(pub, wire.set_bytes(_layout(pub.runs)))
         if e.status != 409:
             return
@@ -923,7 +1025,10 @@ class Publisher:
             raise _Wait(self._backoff()) from None
         if code == "restore_source_mismatch":
             if pub.kind == "plain":
-                raise _Again() from None  # H moved: plan again from the new H
+                self._mismatch_claims += 1  # H moved: plan again from the new H, but never in a hot loop (review R4)
+                if self._mismatch_claims >= MISMATCH_LIMIT:
+                    raise RelayMisbehaving("restore_source_mismatch for a source read from this relay") from None
+                raise _Again() from None
             raise PublishHeld("restore_source_mismatch", f"restore n {pub.n}: re-read H; the owner signs again")
         if code == "restore_missing_revocation":
             raise PublishHeld("restore_missing_revocation", f"restore n {pub.n}: fetch the evidence; the owner signs "
@@ -936,13 +1041,18 @@ class Publisher:
         self._journal.clear()
         if pub.kind == "restore":
             raise PublishHeld("relay.too_large", f"restore n {pub.n}: the relay refused its set of {size} bytes")
+        if pub.direct or not pub.runs:  # no set was sent: the final body itself was refused (review R6)
+            raise PublishHeld("relay.too_large", f"n {pub.n}: the relay refused the final body")
         now = self._mono()
         while self._lowerings and now - self._lowerings[0] > 3600.0:
             self._lowerings.popleft()
         if len(self._lowerings) >= LOWERINGS_PER_HOUR:
             raise PublishHeld("relay_too_large", "the relay's maximum is below link.json's; correct link.json")
+        lowered = min(self.cap(), size // 2)
+        if lowered < MIN_CAP:
+            raise PublishHeld("relay_too_large", f"the relay refused {size} bytes; below {MIN_CAP} nothing is lowered")
         self._lowerings.append(now)
-        self._lowered = min(self.cap(), max(1, size // 2))
+        self._lowered = lowered
         log.warning("relay publish: too_large for %d bytes; cap lowered to %d", size, self._lowered)
         raise _Again()
 
@@ -960,12 +1070,12 @@ class Publisher:
             self._transient += 1
             return delay(self._transient - 1, e.retry_after, self._rng)
         self._raise("relay_publish_refused", f"{e.status} {e.code}")
-        return self._backoff()
+        return HELD_RECHECK_S  # a permanent answer is never retried unchanged at once (11A.7, review R8)
 
     def _store_error(self, e: StoreError, raise_held: bool) -> float:
         if e.code == "store.busy":
             return self._backoff()
-        code = {"store.torn_write": "relay_outbox_torn"}.get(e.code, e.code)
+        code = _store_alarm(e.code)
         self._raise(code, "")
         if raise_held:
             raise PublishHeld(code, "") from None
@@ -977,6 +1087,7 @@ class Publisher:
 
     def _settled(self) -> None:
         self._transient = self._quota = self._time_refusals = self._incomplete = self._diverged_claims = 0
+        self._mismatch_claims = 0
         self._alarmed.clear()
 
     def _raise(self, code: str, detail: str) -> None:
@@ -1036,6 +1147,23 @@ class _Wait(Exception):  # noqa: N818 - internal: wait this long, then step agai
     def __init__(self, seconds: float) -> None:
         super().__init__(f"wait {seconds}")
         self.seconds = seconds
+
+
+def _store_alarm(code: str) -> str:
+    """A store refusal as a host alarm, never mistaken for a relay fork (review R9): ``chain.diverged`` from the
+    store (no verified path, a diverged log) is ``relay_store_chain_diverged``, not R3's ``chain.diverged``."""
+    if code == "store.torn_write":
+        return "relay_outbox_torn"
+    if code == "relay.too_large":
+        return code
+    return "relay_store_" + code.replace(".", "_")
+
+
+def _final_body(pub: _Pub, source_hash: str | None) -> dict[str, Any]:
+    body: dict[str, Any] = {"checkpoint": pub.target, "source_hash": source_hash}
+    if pub.restore is not None:
+        body["restore"] = pub.restore
+    return body
 
 
 # -- set layouts ---------------------------------------------------------------------------------------------------

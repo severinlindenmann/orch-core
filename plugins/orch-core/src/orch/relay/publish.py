@@ -763,7 +763,7 @@ class Publisher:
             cur = pos.current
             if cur is None or cur["hash"] == hh or (H is not None and cur["n"] <= H.n):
                 return None
-            if not self._mint(H, cap):  # 3: the relay is behind the logs with nothing queued (first link, a rollback)
+            if not self._catch_up(H, cap):  # 3: the relay is behind the logs, nothing queued (first link, a rollback)
                 return None  # nothing lies beyond H: the newest local checkpoint holds the same logs
             raise _Again()
         if entry.kind == "restore":
@@ -803,11 +803,11 @@ class Publisher:
     def _replan(self, H: VerifiedCheckpoint | None, cap: int) -> NoReturn:
         """Catch-up for a queued plain entry that is too large or not an extension of H: the minted entries
         supersede it; plan again."""
-        if not self._mint(H, cap):
+        if not self._catch_up(H, cap):
             raise PublishHeld("relay_outbox_unpublishable", "catch-up found nothing beyond H for a queued entry")
         raise _Again()
 
-    def _mint(self, H: VerifiedCheckpoint | None, cap: int) -> list[OutboxEntry]:
+    def _catch_up(self, H: VerifiedCheckpoint | None, cap: int) -> list[OutboxEntry]:
         share = cap * CATCHUP_SHARE[0] // CATCHUP_SHARE[1]
         try:
             minted = self._job(

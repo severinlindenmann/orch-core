@@ -28,6 +28,54 @@ every git release can add a key, so the rule is an **allow-list** (owner decisio
 * **Kept, defence in depth:** :data:`NEUTRAL` (``-c`` on every command: hooks to ``/dev/null``, fsmonitor off, no
   network protocol, no submodule recursion) and a from-scratch environment (the callers').
 
+**Isolation: the second half of the invariant (#541, #546).** *No git invocation by orch reads configuration the
+person or a repo controls, except through an explicit allow-list.* The repo's half is :func:`gate` (above). The
+person's half is ONE mechanism here, used by every read-only caller (the gate itself, :func:`orch.store.observe.git`,
+``orch.ops.health``'s staged check, :func:`orch.runner.wtgit.read_git`) and, for its config part, by the records tool:
+
+* :func:`isolated_env`: the whole environment, built from scratch (``HOME``, ``PATH``, ``TMPDIR``, ``USER``,
+  ``LOGNAME``, ``XDG_CONFIG_HOME``; never a ``GIT_*`` variable, token or ``ORCH_*`` of the caller), with
+  ``GIT_CONFIG_NOSYSTEM=1``, ``GIT_CONFIG_GLOBAL=/dev/null``, no system attributes, no replace objects, no prompt, no
+  network protocol, no lazy fetch, ``GIT_PAGER=cat`` and ``GIT_EDITOR=true``;
+* :func:`config_env`: the person's configuration the caller allows, passed explicitly as command-scope entries
+  (``GIT_CONFIG_COUNT``), never by reading their files; :func:`person_entries` reads those files once (reading
+  configuration executes nothing) and keeps only the keys of the caller's own allow-list (``section.name``, no
+  subsection). Each caller names its own list: observe's ``status`` keeps ``core.excludesFile``, ``core.autocrlf``
+  and ``core.eol`` (the person's own idea of "clean"), every other read keeps nothing; the records tool keeps its
+  lists in :func:`orch.records.git.person_config`;
+* :func:`argv`: :data:`HARDEN` (:data:`NEUTRAL` plus :data:`PINNED`: ``core.attributesFile=/dev/null``, git's default
+  ``$XDG_CONFIG_HOME/git/attributes`` is not read, and ``i18n.commitEncoding=UTF-8``), ``--no-pager``,
+  ``--no-optional-locks``, ``-C <repo>``, and ``--no-ext-diff --no-textconv`` on ``diff``, ``show`` and ``log``.
+
+**Every git invocation site** and how it meets the invariant:
+
+======================================================  ===========================================================
+Site                                                    Isolation
+======================================================  ===========================================================
+``gitsafe._run`` (the gate's own reads)                 :func:`argv`, :func:`isolated_env`, no person keys
+``store/observe.git`` (``head``, ``porcelain``,         :func:`gate` (and :func:`submodules` for ``status``), then
+``dirty``, ``repo_identity``, ``ops/caps.Git`` and      :func:`argv`, :func:`isolated_env`; person keys only for
+``hostclient`` in direct mode)                          ``status`` (``core.excludesFile``, ``core.autocrlf``,
+                                                        ``core.eol``) (#546)
+``ops/health._git`` (``check --staged``: ``diff         :func:`gate` once per check, then :func:`argv`,
+--cached --raw``, ``show :path``)                       :func:`isolated_env`, no person keys, through ``caps.exec``
+                                                        (#546)
+``runner/wtgit.read_git``, ``tree_dirty``               :func:`gate` (and :func:`submodules`), :func:`argv`,
+                                                        :func:`isolated_env`, no person keys
+``records/git.Git.run``, ``records/tool`` fast-import   :func:`config_env` with ``person_config``'s lists, the
+                                                        records ``HARDEN`` (incl. :data:`PINNED`), ``check_local``
+                                                        on top of :func:`exec_risk` (#541)
+``records`` ``git init --template=`` (repo and          system and global config off, no frozen config (#541)
+transport)
+``records/git.open_repo`` probe                         reads configuration only (executes nothing)
+``runner/wtgit.run_git`` (``worktree add/remove/        **The one exception.** :func:`gate` on the repo (and the
+prune``)                                                worktree) plus :data:`NEUTRAL`, but the person's system and
+                                                        global configuration stays on **by design**: a checkout
+                                                        runs their checkout filters (``git lfs install``'s smudge),
+                                                        exactly as when they run ``git worktree add`` themselves
+``gitread/*``                                           no git process (a pure-Python reader in a sandbox)
+======================================================  ===========================================================
+
 Two keys are on the allow-list only because a command-scope ``-c`` in :data:`NEUTRAL` overrides them on every command
 and command scope always wins: ``core.hooksPath`` (husky and similar tools set it in the local config) and a boolean
 ``core.fsmonitor`` (``true``/``false``: git's built-in daemon, no configured program). A non-boolean
@@ -46,16 +94,20 @@ import os
 import signal
 import stat
 import subprocess
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 __all__ = [
-    "ALLOWED", "ALLOWED_SUB", "INVARIANT", "KNOWN_EXEC", "NEUTRAL", "Unsafe", "config_files", "exec_risk", "gate",
-    "local_config", "submodules",
+    "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "NEUTRAL", "PINNED", "Unsafe", "argv",
+    "config_env", "config_files", "exec_risk", "gate", "isolated_env", "local_config", "person_entries", "submodules",
 ]  # fmt: skip
 
 INVARIANT = (
     "orch never runs git against a repository whose local/worktree config or attributes could make git execute a "
     "program or read config from elsewhere"
+)
+
+ISOLATION = (
+    "no git invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list"
 )
 
 #: command-scope overrides on every git command (defence in depth; command scope wins over every config file)
@@ -65,6 +117,18 @@ NEUTRAL = (
     "-c", "protocol.allow=never",
     "-c", "submodule.recurse=false",
 )  # fmt: skip
+#: the keys #541 pins on top: not even git's default ``$XDG_CONFIG_HOME/git/attributes`` is read, and a repo's own
+#: ``i18n.commitEncoding`` (on the allow-list: it runs nothing) never changes a commit orch writes
+PINNED = (
+    "-c", "core.attributesFile=/dev/null",
+    "-c", "i18n.commitEncoding=UTF-8",
+)  # fmt: skip
+#: every isolated command (:func:`argv`)
+HARDEN = (*NEUTRAL, *PINNED)
+#: subcommands that take ``--no-ext-diff --no-textconv`` (no diff program, no textconv program)
+_NO_PROGRAMS = frozenset({"diff", "show", "log"})
+#: the only variables of the caller an isolated command sees
+_KEEP = ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "XDG_CONFIG_HOME")
 
 GATE_SECONDS = 10.0
 
@@ -231,12 +295,85 @@ def _parse(raw: bytes) -> list[tuple[str, str, str]]:
     return out
 
 
-def gate_env(own: Mapping[str, str]) -> dict[str, str]:
-    env = {k: own[k] for k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME") if k in own}
+def isolated_env(own: Mapping[str, str], person: Sequence[tuple[str, str]] = ()) -> dict[str, str]:
+    """THE environment of every isolated git command (:data:`ISOLATION`, #541, #546): built from scratch out of
+    ``own`` (:data:`_KEEP` only: never a ``GIT_*`` variable, a token or an ``ORCH_*`` variable of the caller), system
+    and global configuration off, and of the person's configuration exactly ``person`` (already filtered by the
+    caller's own allow-list, :func:`person_entries`), passed by :func:`config_env`."""
+    env = {k: own[k] for k in _KEEP if own.get(k) and "\0" not in own[k]}
     env.setdefault("PATH", "/usr/bin:/bin:/usr/local/bin")
-    env.update(LANG="C", LC_ALL="C", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0",
-               GIT_OPTIONAL_LOCKS="0", GIT_ALLOW_PROTOCOL="", GIT_NO_LAZY_FETCH="1")  # fmt: skip
+    env.update(
+        LANG="C", LC_ALL="C", GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0", GIT_ALLOW_PROTOCOL="",
+        GIT_NO_LAZY_FETCH="1", GIT_ATTR_NOSYSTEM="1", GIT_NO_REPLACE_OBJECTS="1", GIT_PAGER="cat", GIT_EDITOR="true",
+    )  # fmt: skip
+    env.update(config_env(person))
     return env
+
+
+def gate_env(own: Mapping[str, str]) -> dict[str, str]:
+    """The gate's own environment: :func:`isolated_env` with no person keys."""
+    return isolated_env(own)
+
+
+def config_env(entries: Sequence[tuple[str, str]]) -> dict[str, str]:
+    """System and global configuration off, and ``entries`` (the caller's allow-listed subset of the person's
+    configuration) passed as command-scope configuration: the one way the person's configuration reaches orch's
+    git (the records tool uses it too)."""
+    env = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_COUNT": str(len(entries))}
+    for i, (k, v) in enumerate(entries):
+        env[f"GIT_CONFIG_KEY_{i}"] = k
+        env[f"GIT_CONFIG_VALUE_{i}"] = v
+    return env
+
+
+def argv(repo: str, args: Sequence[str]) -> list[str]:
+    """The argv of one isolated git command against ``repo`` (absolute): :data:`HARDEN`, no pager, no optional locks,
+    and ``--no-ext-diff --no-textconv`` right after ``diff``, ``show`` or ``log``."""
+    rest = list(args)
+    if rest and rest[0] in _NO_PROGRAMS:
+        rest[1:1] = ["--no-ext-diff", "--no-textconv"]
+    return ["git", *HARDEN, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
+
+
+def person_entries(
+    own: Mapping[str, str], allow: Iterable[str], *, timeout: float = GATE_SECONDS
+) -> list[tuple[str, str]]:
+    """The person's system and global configuration entries (includes expanded) whose ``section.name`` (no
+    subsection, case-insensitive) is in ``allow``: the caller's own allow-list. Read with git itself, outside any
+    repository (reading configuration executes nothing). ``[]`` when ``allow`` is empty or the configuration cannot be
+    read (then nothing of the person's reaches git: fail closed)."""
+    wanted = {a.lower() for a in allow}
+    if not wanted:
+        return []
+    env = {k: own[k] for k in _KEEP if own.get(k) and "\0" not in own[k]}
+    env.setdefault("PATH", "/usr/bin:/bin:/usr/local/bin")
+    env.update(LANG="C", LC_ALL="C", GIT_TERMINAL_PROMPT="0", GIT_DIR="/dev/null/none")  # no repository at all
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - fixed argv
+            ["git", "config", "--list", "--show-scope", "--includes", "-z"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
+            start_new_session=True, close_fds=True,
+        )  # fmt: skip
+    except OSError:
+        return []
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)  # the group this call created, nothing else
+        with contextlib.suppress(Exception):
+            proc.communicate(timeout=5)
+        return []
+    if proc.returncode != 0:
+        return []
+    picked: list[tuple[str, str]] = []
+    for scope, key, value in _parse(out):
+        if scope in ("local", "worktree", "command"):
+            continue
+        section, sub, name = _split(key)
+        if sub is None and f"{section}.{name}" in wanted:
+            picked.append((key, value))
+    return picked
 
 
 def _run(repo: str, args: list[str], own: Mapping[str, str], timeout: float, what: str) -> bytes:
@@ -244,8 +381,8 @@ def _run(repo: str, args: list[str], own: Mapping[str, str], timeout: float, wha
     Raises :class:`Unsafe` when it cannot run or fails."""
     try:
         proc = subprocess.Popen(  # noqa: S603 - fixed argv
-            ["git", *NEUTRAL, "--no-optional-locks", "-C", repo, *args],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=gate_env(own), cwd="/",
+            argv(repo, args),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=isolated_env(own), cwd="/",
             start_new_session=True, close_fds=True,
         )  # fmt: skip
     except OSError:

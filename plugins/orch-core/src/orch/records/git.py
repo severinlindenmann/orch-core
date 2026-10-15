@@ -42,6 +42,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from orch import gitsafe
+
 from . import RecordsError
 
 __all__ = [
@@ -62,8 +64,9 @@ _HARDEN = (
     "-c", "maintenance.auto=false",
     "-c", "core.commitGraph=false",  # a forged commit-graph could lie about ancestry (Opus #430 finding 2)
     "-c", "fetch.writeCommitGraph=false",
-    "-c", "core.attributesFile=/dev/null",  # not even git's default $XDG_CONFIG_HOME/git/attributes (#541)
-    "-c", "i18n.commitEncoding=UTF-8",  # the repo's own config may set it (it runs nothing): commits stay records-only
+    # core.attributesFile=/dev/null (not even git's default $XDG_CONFIG_HOME/git/attributes) and
+    # i18n.commitEncoding=UTF-8 (the repo's own config may set it, it runs nothing: commits stay records-only), #541
+    *gitsafe.PINNED,
 )  # fmt: skip
 HARDEN = _HARDEN
 #: the only sections of the person's frozen configuration a network call keeps: authentication and transport
@@ -265,17 +268,10 @@ class Git:
         # every call in the transport repo, network or not, sees the transport subset only (never ``url.*``)
         entries = person_config(self.frozen, network=network or self.bare)
         env = dict(self.base_env)
-        env.update(
-            GIT_DIR=str(self.git_dir),
-            GIT_CONFIG_NOSYSTEM="1",
-            GIT_CONFIG_GLOBAL=os.devnull,
-            GIT_CONFIG_COUNT=str(len(entries)),
-        )
+        env["GIT_DIR"] = str(self.git_dir)
+        env.update(gitsafe.config_env(entries))  # the shared mechanism of orch.gitsafe (#546), records' own lists
         if not self.bare:
             env["GIT_WORK_TREE"] = str(self.root)
-        for i, (k, v) in enumerate(entries):
-            env[f"GIT_CONFIG_KEY_{i}"] = k
-            env[f"GIT_CONFIG_VALUE_{i}"] = v
         if index is not None:
             env["GIT_INDEX_FILE"] = str(index)
         if network and not any(k.lower() == "core.sshcommand" for k, _ in entries):

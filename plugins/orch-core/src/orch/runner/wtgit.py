@@ -17,7 +17,9 @@ core.hooksPath=/dev/null`` (no hook), ``-c core.fsmonitor=false``, ``-c protocol
 environment built from scratch (``HOME``, ``PATH``, ``LANG=C``, ``TMPDIR``): no ``GIT_DIR``, ``GIT_WORK_TREE``,
 ``GIT_CONFIG_*`` or other ``GIT_*`` variable of the runner reaches it. What can still run: a driver the **person**
 configured globally or system-wide (e.g. ``filter=lfs`` after ``git lfs install``) when an attribute selects it, as
-the person, exactly as when they run git; :func:`read_git` turns system and global config off, so nothing runs there.
+the person, exactly as when they run git: :func:`run_git` is the one documented exception to
+:data:`orch.gitsafe.ISOLATION` (the site table of :mod:`orch.gitsafe`). :func:`read_git` is isolated like every read
+(:func:`orch.gitsafe.isolated_env`: system and global config off), so nothing runs there.
 
 **Confinement (H11d).** The worktree path must be exactly ``<repo>.worktrees/<WS8>-<KEY>`` (strict name regex, no
 ``..``, no NUL). The parent of the repo and ``<repo>.worktrees`` are opened from ``/`` one component at a time with
@@ -63,7 +65,10 @@ NEUTRAL = list(gitsafe.NEUTRAL)
 
 
 def git_env(own: Mapping[str, str]) -> dict[str, str]:
-    """The child's whole environment: built from scratch (never the runner's ``GIT_*``)."""
+    """The environment of :func:`run_git`'s worktree commands: built from scratch (never the runner's ``GIT_*``), with
+    the person's system and global configuration **on**: the documented exception to
+    :data:`orch.gitsafe.ISOLATION` (their checkout filters must run). Read-only commands use
+    :func:`orch.gitsafe.isolated_env` instead."""
     env = {k: own[k] for k in ("HOME", "PATH", "TMPDIR", "USER", "LOGNAME") if k in own}
     env.setdefault("PATH", "/usr/bin:/bin:/usr/local/bin")
     env.update(
@@ -302,6 +307,11 @@ def run_git(
             _gated(conf.path, own, "the worktree")
         if conf.fd >= 0:
             conf.check_cwd()
+        # The one exception to orch.gitsafe.ISOLATION ("no git invocation by orch reads configuration the person or a
+        # repo controls, except through an explicit allow-list"), listed in its site table: the repo's own config is
+        # gated above, but the person's system and global config stays on (git_env) by design. A worktree add or
+        # remove is a checkout in the person's own repo, as the person: it must run their checkout filters (the smudge
+        # of `git lfs install`) exactly as `git worktree add` in their terminal would.
         out = _spawn(argv, own, timeout, log, op)
         if conf.fd >= 0:
             conf.after(op)
@@ -348,19 +358,20 @@ def read_git(
 ) -> str | None:
     """A read-only git command for the direct-mode tool, hardened exactly as :func:`run_git` (the gate of
     :mod:`orch.gitsafe` first, the same ``NEUTRAL`` config, the same from-scratch environment, no network, own process
-    group, 30 s) and, since nothing here needs the person's filters, also with the system and global config off.
+    group, 30 s) and, since nothing here needs the person's filters, isolated like every read
+    (:func:`orch.gitsafe.argv`, :func:`orch.gitsafe.isolated_env`: system and global config off, nothing of the
+    person's kept).
     Stdout stripped; ``None`` when git fails, times out or is missing. Raises :class:`orch.gitsafe.Unsafe` when the
     repository's own config could make git run a program (git is then not started). ``repo`` is a verified absolute
     path (``-C``). ``gated``: the caller ran :func:`orch.gitsafe.gate` on ``repo`` right before (``tree_dirty``)."""
     _clean_abs(repo)
     if not gated:
         gitsafe.gate(repo, own)
-    env = git_env(own)
-    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
     try:
         proc = subprocess.Popen(  # noqa: S603 - fixed argv
-            ["git", *NEUTRAL, "--no-optional-locks", "-C", repo, *args],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd="/",
+            gitsafe.argv(repo, args),  # the one isolation of orch.gitsafe (#546): no config of the person's at all
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=gitsafe.isolated_env(own),
+            cwd="/",
             start_new_session=True, close_fds=True,
         )  # fmt: skip
     except OSError:

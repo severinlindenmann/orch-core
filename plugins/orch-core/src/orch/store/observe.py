@@ -1,9 +1,20 @@
 """Reading the linked git repositories (F1 5.7 "the host appends any pending ``branch.pushed``", D58).
 
 One place that talks to git for the core: ``orch.ops.runner`` (the commit and the cleanliness of the tree around a
-``task done --run``) and :func:`observe` (the source list of a ticket). Every git call runs with a **scrubbed
-environment**: all ``GIT_*`` variables are dropped (a caller cannot choose the repository, the index or the object store
-through them), ``core.fsmonitor`` is off and nothing is read from the user's terminal.
+``task done --run``) and :func:`observe` (the source list of a ticket). Every git call meets the invariant of
+:mod:`orch.gitsafe` (:data:`orch.gitsafe.ISOLATION`, #546): no configuration the person or the repository controls is
+read except through an explicit allow-list.
+
+* **The repository's own configuration:** :func:`orch.gitsafe.gate` before every command (a key outside the
+  allow-list, such as a ``filter.<d>.clean`` that a ``.gitattributes`` selects, or a config file another account can
+  write: git is not started and the answer is ``None``, "cannot be told"); ``status`` also refuses a populated
+  submodule (:func:`orch.gitsafe.submodules`: its own config is not gated).
+* **The person's configuration:** system and global configuration off; ``status`` keeps only :data:`STATUS_KEYS`
+  (passed explicitly), every other command nothing.
+* **The environment** is built from scratch (:func:`orch.gitsafe.isolated_env`): no ``GIT_*`` variable of the caller
+  (it cannot choose the repository, the index or the object store through them), no token, no ``ORCH_*``. Hooks,
+  fsmonitor, the network, pagers and diff programs are off (:func:`orch.gitsafe.argv`), and git has no controlling
+  terminal.
 """
 
 from __future__ import annotations
@@ -11,58 +22,47 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from orch import canon
+from orch import canon, gitsafe
 
-__all__ = ["git", "git_env", "head", "observe", "porcelain", "repo_identity", "repo_path"]
+__all__ = ["STATUS_KEYS", "git", "head", "observe", "porcelain", "repo_identity", "repo_path"]
 
 _HEX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _TIMEOUT = 30
 
-
-_ENV_ALLOW = ("PATH", "HOME", "LANG", "TMPDIR", "TERM")
-
-
-def git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """The environment git runs in: an allow-list (``PATH``, ``HOME``, ``LANG``, ``LC_*``, ``TMPDIR``, ``TERM``). No
-    ``GIT_*`` variable (a caller cannot choose the repository, the index or a credential helper through them) and no
-    token, key or ``ORCH_*`` variable reaches git or the hooks and helpers it may start."""
-    src = os.environ if base is None else base
-    return {
-        k: v for k, v in src.items() if (k in _ENV_ALLOW or k.startswith("LC_")) and not k.upper().startswith("GIT_")
-    }
+#: the person's (system and global) configuration ``status`` keeps, so that "clean" means what it means in their own
+#: terminal: their global ignore file and their line-ending conversion. Each names a file of patterns or a setting,
+#: never a program. Every other command observe runs keeps none of the person's configuration.
+STATUS_KEYS = frozenset({"core.excludesfile", "core.autocrlf", "core.eol"})
 
 
-def git(path: Path, *args: str, strip: bool = True) -> str | None:
-    """``git -C path ...`` on a scrubbed environment; stdout stripped (unless ``strip`` is off), ``None`` if git fails
-    or is missing."""
+def git(path: Path, *args: str, strip: bool = True, person: Iterable[str] = (), whole_tree: bool = False) -> str | None:
+    """``git -C path ...`` isolated (:mod:`orch.gitsafe`): the gate on the repository's own configuration first, then
+    git with system and global configuration off, keeping only the ``person`` keys of the person's configuration;
+    stdout stripped (unless ``strip`` is off). ``None`` if the gate refuses, git fails or is missing. ``whole_tree``:
+    the command reads the working tree (``status``), so a populated submodule is refused too."""
+    own = os.environ
+    repo = os.path.abspath(path)
     try:
+        gitsafe.gate(repo, own)
+        if whole_tree:
+            gitsafe.submodules(repo, own)
+        entries = gitsafe.person_entries(own, person)
         done = subprocess.run(
-            [
-                "git",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "core.attributesFile=/dev/null",
-                "-c",
-                "protocol.allow=never",
-                "--no-optional-locks",
-                "-C",
-                str(path),
-                *args,
-            ],
+            gitsafe.argv(repo, args),
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,
             check=False,
-            env={**git_env(), "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_LAZY_FETCH": "1"},
+            env=gitsafe.isolated_env(own, entries),
+            cwd="/",
             stdin=subprocess.DEVNULL,
-            start_new_session=True,  # no controlling terminal: a repository's filter cannot reach the person's tty
+            start_new_session=True,  # no controlling terminal: nothing git starts can reach the person's tty
         )
-    except (OSError, subprocess.SubprocessError):
+    except (gitsafe.Unsafe, OSError, subprocess.SubprocessError):
         return None
     if done.returncode != 0:
         return None
@@ -77,17 +77,17 @@ def head(path: Path) -> str | None:
 
 def porcelain(path: Path) -> str | None:
     """``git status --porcelain`` (empty: a clean tree, untracked files count); ``None`` if git fails."""
-    return git(path, "status", "--porcelain=v1", "--untracked-files=normal")
+    return git(path, "status", "--porcelain=v1", "--untracked-files=normal", person=STATUS_KEYS, whole_tree=True)
 
 
 def dirty(path: Path) -> str | None:
     """Best effort: what a person would call uncommitted work. ``git status --porcelain`` (untracked files included)
     plus
     the files git is told to ignore changes of (``skip-worktree`` and ``assume-unchanged``, from ``git ls-files -v``).
-    Empty means clean as far as this can tell; ``None`` means git could not be asked. It cannot see everything (files
-    matched by ``.gitignore`` or ``info/exclude``, a ``filter`` in the repository's own config): a receipt is
-    attested by
-    the agent's environment anyway (F1 10.7)."""
+    Empty means clean as far as this can tell; ``None`` means git could not be asked, or the repository's own
+    configuration is outside orch's allow-list, or it has a checked-out submodule (:mod:`orch.gitsafe`). It cannot see
+    everything (files matched by ``.gitignore`` or ``info/exclude``): a receipt is attested by the agent's environment
+    anyway (F1 10.7)."""
     status = porcelain(path)
     listing = git(path, "ls-files", "-v")
     if status is None or listing is None:

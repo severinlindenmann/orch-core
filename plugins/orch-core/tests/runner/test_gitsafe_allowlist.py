@@ -276,24 +276,8 @@ def test_plain_rebase_switches_pass(key):
 
 
 def test_no_lazy_fetch_in_every_scrubbed_environment():
-    from orch.store import observe
-
     assert gitsafe.gate_env({})["GIT_NO_LAZY_FETCH"] == "1"
     assert wtgit.git_env({})["GIT_NO_LAZY_FETCH"] == "1"
-    calls = []
-
-    def fake(argv, **kw):
-        calls.append((argv, kw["env"]))
-        raise OSError
-
-    import subprocess
-
-    orig = subprocess.run
-    subprocess.run = fake
-    try:
-        observe.git(Path("/"), "status")
-    finally:
-        subprocess.run = orig
-    argv, env = calls[0]
-    assert env["GIT_NO_LAZY_FETCH"] == "1"
-    assert "protocol.allow=never" in argv
+    # store/observe.git, ops/health._git and wtgit.read_git share orch.gitsafe's isolation (#546)
+    assert gitsafe.isolated_env({})["GIT_NO_LAZY_FETCH"] == "1"
+    assert "protocol.allow=never" in gitsafe.argv("/", ["status"])

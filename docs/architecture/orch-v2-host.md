@@ -1205,8 +1205,8 @@ column G (judgement call of H12e: an agent's `new` allocates its own key), and a
 `grant.list {active?:bool = true}` (read, R2) →
 
 ```
-{grants:[{id:str, person:Person, scope:"all"|"workable", verbs:"agent" | [OpName], issued_at:Time, expires_at:Time,
-          revoked_at:Time | null, sessions:int,
+{grants:[{id:str, person:Person, scope:"all"|"workable", verbs:"agent" | [OpName], label:str | null,   // label: the grant.issued label (H11c-2)
+          issued_at:Time, expires_at:Time, revoked_at:Time | null, sessions:int,
           // v1.5, read_ext/2 (§0.8.5):
           revoked?:{by:Person, at:Time, seq:int}, session_ids?:[str]{0..100}, sessions_more?:bool}]}
 ```

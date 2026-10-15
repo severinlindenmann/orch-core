@@ -1668,7 +1668,21 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
   lists the devices that carry `relay`, read only, under the gate. **Device removal is not in this round** (it needs the person key; the
   recovery code is typed): the `device_remove` hand-off is gone, replaced by a "Remove this device" disclosure with the command as text.
   **ASSUMPTION:** the R6 notes name no removal command; the page shows `orch device remove <device-id> --workspace <PREFIX>`
-  (`deviceRemoveCommand`). Convenience wording is exact: "Turn click-to-sign off first: orch host convenience off --workspace <ws>" and
-  "This workspace's click-to-sign history blocks phones." (both when the host doesn't say which). Labels follow the protocol rule (no
+  (`deviceRemoveCommand`). Convenience wording: see the correction below. Labels follow the protocol rule (no
   normalisation, ≤80 code points, LF kept, default-ignorables removed): rendered with `Prose` (escaped, isolated, LF as a line break, never
   markup); an empty label shows "phone". Assumptions 1 (op names) and 5 (`device_remove`) above are superseded.
+
+### 2026-10-15 Pairing: orch-52's correction of the convenience decision, SAS attempts, terminal steps
+
+- **Convenience:** `pair.preview` is `blocked` (`sign.convenience_readers`) only while the click-to-sign flag is on or the key is in
+  convenience custody. The page says "Turn click-to-sign off first: orch host convenience off --workspace <PREFIX>", plus a custody hint when
+  `blocked.cause` is `custody` (**ASSUMPTION:** `cause: 'flag' | 'custody'` replaces the earlier `history` field). History alone is not a
+  block: the host lists it in `warnings` (e.g. "This workspace used click-to-sign; only phones with an up-to-date orch app can pair."),
+  shown before **Create pairing link**.
+- **SAS attempts:** up to 3 per offer. Each distinct full-length mismatch counts one; the page shows the attempts left; the third calls
+  `pair.answer {approve:false}` and shows the host's `rejected` reason. **ASSUMPTION:** the page counts (per mounted offer) and passes
+  `mismatches` with the refusal so the host can give the reason; if the host counts itself, the page should read its count instead.
+- **Terminal steps:** cert_pending shows two numbered steps with copyable commands: the primary approval and `orch sign <code>` for the
+  `device.added` hand-off (**Get the signing code** opens the existing hand-off, which shows the real code). Not in the browser: a paired
+  workspace refuses click-to-sign. **ASSUMPTIONS:** R6 runs the primary step inline in `orch host relay pair` and names no command of its
+  own, so the page shows the placeholder `orch keys primary approve`; `orch sign <code>` is the existing hand-off command.

@@ -1135,10 +1135,10 @@ Host ops (names confirmed by orch-52: cap `pair/1`, class P, human_only; none se
 
 | Page call (`pairingApi`) | Proposed host op | Notes |
 |---|---|---|
-| `preview(ws)` | `pair.preview {}` | `{blocked, warnings, scopes_default, ttl_max_ms, live_offer}`; assumed optional `blocked.history` |
+| `preview(ws)` | `pair.preview {}` | `{blocked, warnings, scopes_default, ttl_max_ms, live_offer}`; convenience blocks only for flag/custody (assumed `blocked.cause`); history is a warning |
 | `offer(ws)` | `pair.offer {scopes?, ttl_ms?}` | `{offer_id, expires_ms, native_link, link}`: the link; never cached, stored or logged (server: no body logging, `no-store`) |
 | `list(ws)` | `pair.list {}` | rows `{offer_id, state, created_ms, expires_ms, scopes, label?, sas?, cert_code?, reason?}`; assumed `cert_ready`, `needs_remove` |
-| `answer(ws, id, approve)` | `pair.answer` | only after the typed SAS matches; Reject default |
+| `answer(ws, id, approve)` | `pair.answer` | only after the typed SAS matches; Reject default; 3 typed mismatches refuse (assumed `mismatches` arg) |
 | `cancel(ws, id)` | `pair.cancel` | |
 | `members(ws)` | `member.list {}` under a `read_ext` bump | `devices[]` gain `label, paired_ms, relay, cert_expires, reader`; listed when `relay` is present |
 | `subscribe(ws, fn)` | `sub.open {topics:["pair"]}` | items `{t:"pair", offer_id, state}`, no secrets; the page refetches `list` |

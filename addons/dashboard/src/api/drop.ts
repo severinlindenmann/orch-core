@@ -310,12 +310,16 @@ export async function uploadBlob(ws: string, file: Blob, opts: { onProgress?: (s
   const check = () => {
     if (signal?.aborted) throw new UploadCancelled()
   }
+  // Cancel also ends the wait for a chunk in flight (the host may answer it later; the blob is dropped either way).
+  const aborted = new Promise<never>((_, reject) => signal?.addEventListener('abort', () => reject(new UploadCancelled()), { once: true }))
+  aborted.catch(() => {})
   check()
   const data = new Uint8Array(await bytesOf(file))
   const sha256 = `sha256:${hex(await crypto.subtle.digest('SHA-256', data))}`
   const total = data.length
   const upload_key = randomKey()
   let blob: string | undefined
+  let inflight: Promise<{ blob: string }> | null = null
   let offset = 0
   onProgress?.(0, total)
   try {
@@ -323,13 +327,15 @@ export async function uploadBlob(ws: string, file: Blob, opts: { onProgress?: (s
       check()
       const end = Math.min(total, offset + CHUNK_BYTES)
       const last = end === total
-      const r = await dropApi.blobPut(ws, {
+      const put = dropApi.blobPut(ws, {
         ...(blob ? { blob } : { upload_key, size: total }),
         offset,
         b64: b64(data.subarray(offset, end)),
         last,
         ...(last ? { sha256 } : {}),
       })
+      inflight = put
+      const r = await Promise.race([put, aborted])
       blob = r.blob
       offset = Math.max(end, r.received)
       onProgress?.(offset, total)
@@ -337,7 +343,12 @@ export async function uploadBlob(ws: string, file: Blob, opts: { onProgress?: (s
     } while (offset < total)
     return blob!
   } catch (e) {
-    if (e instanceof UploadCancelled && blob) void dropApi.blobDrop(ws, blob).catch(() => {})
+    if (e instanceof UploadCancelled) {
+      // Drop the allocation: known already, or the one the first chunk in flight will answer with.
+      const drop = (id: string) => void dropApi.blobDrop(ws, id).catch(() => {})
+      if (blob) drop(blob)
+      else inflight?.then((r) => drop(r.blob), () => {})
+    }
     throw e
   }
 }

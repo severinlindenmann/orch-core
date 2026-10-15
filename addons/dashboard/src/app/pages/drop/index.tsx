@@ -507,7 +507,7 @@ function Upload({ ws, info, onSent, target, initial }: { ws: string; info: DropI
       started.current = true
       void start(initial)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for the dev preview
+    // Once, for the dev preview only.
   }, [initial])
   const pickFiles = (files: FileList | null) => {
     const f = files?.[0]

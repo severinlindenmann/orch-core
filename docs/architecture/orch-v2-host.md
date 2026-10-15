@@ -6500,7 +6500,7 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   a re-sent restore at `n <= held n`). A restore entry at or below H on another branch still holds
   `restore_source_mismatch`.
 - R2 `publish_first` renews the 40 s lease while it runs: `Session.renew(transport=)` (a running renewal, never a
-  probe; `fenced` stops) every `RENEW_EVERY_S` (15 s) on a renewal thread with its own connection, which also covers
+  probe; `fenced` stops) every `RENEW_EVERY_S` (10 s since the delta round) on a renewal thread with its own connection, which also covers
   one long call; without a connection factory, before each request and inside every wait. R5's aux thread renews
   once the loop runs.
 - R3 The idle outbox check never stops the publisher on a store fault: `store.busy` polls again, any other store code
@@ -6534,6 +6534,22 @@ store API exists for it to degrade the host itself (gap, below). The store passe
 - H12d-3 (#555): `_restore_pub` is the one place every restore publication is built. A TODO marks where
   `readers.restore_held(readerrecs.relay_level(...), evidence)` will go once #555 merges; a seam test pins that both
   restore paths pass through it.
+
+**Review round 2 delta (Opus, 15 Oct 2026).**
+- F1 Without a connection factory, a transient renewal failure (5xx, transport, `LoginHeldOff`) is retried after
+  `RENEW_RETRY_S` and never escapes `publish_first`. Only a fence or another session error ends it.
+- F2 The renewal thread hands a fence or another session error (a malformed hold answer, say) to `publish_first`,
+  which raises it at once. A failed renewal is retried after `RENEW_RETRY_S` (2 s), and renewals run every
+  `RENEW_EVERY_S` (10 s). Even two renewals in a row that each time out after 10 s stay inside the 40 s lease:
+  10 + 10 + 2 + 10 < 40, pinned by a test.
+- F3 `publish_first`'s waits wake at once on a renewal error or a stop, and check `session.fenced`. During the first
+  link a permanent refusal raises `PublishHeld("relay_publish_refused")` for R1/R5 to decide, instead of an hour's
+  sleep inside the link.
+- F4 Tests now pin the R1 gate's store check (order and a verified path), the finished restore's record (re-sent
+  after a relay rollback), `Session.renew` (no probe without a generation, a fence sets `fenced`, refused locally
+  afterwards), the renewal thread (it ends with `publish_first` and has its own connection), the synchronous renewal
+  period, the idle `store.busy` poll, the re-plan limit, the set-less check, a codeless 413 on the final PUT, and a
+  conflicting archived history segment.
 
 **Design inconsistencies found.**
 - `docs/architecture/orch-v2-host.md` 11A.7 table (staging and final answers 16 KiB) vs orch-relay

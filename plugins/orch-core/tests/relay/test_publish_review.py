@@ -5,6 +5,7 @@ a restore's too_large, LINE_CAP, publication_complete, the H7 boundary, the answ
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -204,6 +205,10 @@ def test_r3_idle_store_busy_and_torn_keep_the_publisher(kit, monkeypatch):
 
         monkeypatch.setattr(k.store, "outbox_first", fail)
         time.sleep(0.4)
+        if code == "store.torn_write":  # under load the idle period may begin later: wait for the alarm itself
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and "relay_outbox_torn" not in k.alarms.codes():
+                time.sleep(0.05)
         monkeypatch.setattr(k.store, "outbox_first", real)
         assert p._thread.is_alive() and p.error is None and errors == []  # noqa: SLF001
     assert "relay_outbox_torn" in k.alarms.codes()
@@ -479,6 +484,7 @@ def test_r4_the_mismatch_count_restarts_after_a_settled_step(kit):
 def test_r2_the_renewal_thread_survives_a_transient_failure(kit, monkeypatch):
     k = kit
     monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+    monkeypatch.setattr(publish, "RENEW_RETRY_S", 0.02)
     holds = {"n": 0}
     real_hold = k.sim._hold
 
@@ -654,3 +660,245 @@ def test_every_restore_publication_is_built_in_restore_pub(kit, tmp_path, monkey
     k.publisher = k.make_publisher()
     k.drain()
     assert entry.n in seen  # the stored record's republication
+
+
+# -- review round 2 delta (Opus): renewal liveness (F1 to F3) and the tests F4 asked for -----------------------------
+
+
+def _count_holds(k, monkeypatch, answers=()):
+    """Count the sim's hold calls; the first answers come from ``answers`` (callables), then the real hold."""
+    real = k.sim._hold
+    n = {"c": 0}
+
+    def hold(s, ws):
+        n["c"] += 1
+        if n["c"] <= len(answers):
+            return answers[n["c"] - 1]()
+        return real(s, ws)
+
+    monkeypatch.setattr(k.sim, "_hold", hold)
+    return n
+
+
+def _slow_first_page(k, monkeypatch, steps=5, each_s=10, sleep=0.2):
+    real_call = k.session.call
+    st = {"done": False}
+
+    def slow(method, target, route, **kw):
+        if "/pages/" in target and not st["done"]:
+            st["done"] = True
+            for _ in range(steps):
+                k.sim.advance(each_s)
+                time.sleep(sleep)
+        return real_call(method, target, route, **kw)
+
+    monkeypatch.setattr(k.session, "call", slow)
+
+
+def test_d1_a_transient_sync_renewal_failure_is_retried_not_raised(kit, monkeypatch):
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.0)
+    p = k.make_publisher(conn=None)
+    n = _count_holds(k, monkeypatch, [lambda: _err(503, "overloaded")])
+    p.publish_first(k.session, None)  # the 503 on the renewal is retried later, never raised
+    assert k.store.outbox_entries() == [] and n["c"] >= 1 and not k.session.fenced
+
+
+def test_d2_a_malformed_renewal_answer_stops_publish_first_at_once(kit, monkeypatch):
+    from orch.relay.session import Fenced, RelayMisbehaving
+
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+    _count_holds(k, monkeypatch, [lambda: json_reply(200, {"gen": 999, "lease_s": 40, "cursor": 0})])
+    _slow_first_page(k, monkeypatch)
+    n = {"c": 0}
+    real_renew = k.session.renew
+    monkeypatch.setattr(k.session, "renew", lambda **kw: n.__setitem__("c", n["c"] + 1) or real_renew(**kw))
+    with pytest.raises((RelayMisbehaving, Fenced)):
+        k.publisher.publish_first(k.session, None)
+    assert n["c"] == 1  # stopped: no renewal after the session error
+
+
+def test_d2_a_failed_renewal_is_retried_soon(kit, monkeypatch):
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.3)
+    monkeypatch.setattr(publish, "RENEW_RETRY_S", 0.02)
+    n = _count_holds(k, monkeypatch, [lambda: _err(503, "overloaded")])
+    _slow_first_page(k, monkeypatch, steps=1, each_s=1, sleep=0.5)
+    k.publisher.publish_first(k.session, None)
+    assert n["c"] >= 2  # the retry came well before the next 0.3 s period would have
+
+
+def test_d3_a_fenced_renewal_is_noticed_during_a_wait(kit, monkeypatch):
+    from orch.relay.session import Fenced
+
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+    monkeypatch.setattr(publish, "HELD_RECHECK_S", 3.0)
+    k.sim.fault = lambda s: _err(503, "overloaded", retry_after=3) if _final(s) else None
+    n = _count_holds(k, monkeypatch, [lambda: _err(409, "fenced")])
+    t0 = time.monotonic()
+    with pytest.raises(Fenced):
+        k.publisher.publish_first(k.session, None)
+    assert time.monotonic() - t0 < 2.0 and k.session.fenced and n["c"] == 1  # one fenced renewal, never another
+
+
+def test_d3_a_permanent_refusal_during_the_first_link_is_held_not_slept(kit):
+    k = kit
+    k.sim.fault = lambda s: _err(403, "not_eligible") if _final(s) else None
+    t0 = time.monotonic()
+    with pytest.raises(PublishHeld) as e:
+        k.publisher.publish_first(k.session, None)
+    assert e.value.code == "relay_publish_refused" and time.monotonic() - t0 < 5
+
+
+def test_the_renewal_thread_ends_with_publish_first_and_uses_its_own_connection(kit, monkeypatch):
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+    made = []
+    p = k.make_publisher(conn=lambda: made.append(1) or k.conn())
+    _slow_first_page(k, monkeypatch, steps=2, each_s=1, sleep=0.2)
+    p.publish_first(k.session, None)
+    assert not [t for t in threading.enumerate() if t.name.startswith("orch-relay-renew-")]
+    assert len(made) == 2  # the publisher's and the renewal thread's
+    n = _count_holds(k, monkeypatch)
+    k.env.log(k.uids[0], "later")
+    p.step()  # after the link no renewal of R3's: R5's aux thread renews
+    time.sleep(0.2)
+    assert n["c"] == 0
+
+
+def test_sync_renewal_respects_its_period_and_stops_after_the_link(kit, monkeypatch):
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 3600.0)
+    p = k.make_publisher(conn=None)
+    n = _count_holds(k, monkeypatch)
+    p.publish_first(k.session, None)
+    assert n["c"] == 0  # the period has not passed: no renewal at all
+    assert p._sync_renew is False  # noqa: SLF001
+
+
+def test_sync_waits_are_cut_at_the_renewal_period(kit, monkeypatch):
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.2)
+    p = k.make_publisher(conn=None, mono=time.monotonic)
+    once = {"n": 0}
+
+    def fault(s):
+        if _final(s) and not once["n"]:
+            once["n"] = 1
+            return _err(503, "overloaded", retry_after=2)
+        return None
+
+    k.sim.fault = fault
+    n = _count_holds(k, monkeypatch)
+    p.publish_first(k.session, None)
+    assert n["c"] >= 4 and k.store.outbox_entries() == []
+
+
+def test_the_renewal_timing_fits_the_lease():
+    from orch.relay.session import AUX_HOLD_DEADLINE_S, LEASE_S
+
+    assert publish.RENEW_EVERY_S == 10.0 and publish.RENEW_RETRY_S == 2.0 and AUX_HOLD_DEADLINE_S == 10.0
+    # a renewal that times out, then its retry that times out, still lands inside the lease
+    assert publish.RENEW_EVERY_S + AUX_HOLD_DEADLINE_S + publish.RENEW_RETRY_S + AUX_HOLD_DEADLINE_S < LEASE_S
+
+
+def test_session_renew_is_a_running_renewal_only(kit):
+    from orch.relay.session import Fenced, NotHolder
+
+    k = kit
+    before = len(k.mock.seen)
+    gen = k.session.gen
+    k.session._gen = None  # noqa: SLF001
+    with pytest.raises(NotHolder):
+        k.session.renew()
+    k.session._gen = gen  # noqa: SLF001
+    assert len(k.mock.seen) == before  # no probe without a generation
+    k.sim.holders[k.sim.ws] = (gen + 1, k.sim.now + 40_000)  # another holder took over
+    with pytest.raises(Fenced):
+        k.session.renew()
+    assert k.session.fenced
+    sent = len(k.mock.seen)
+    with pytest.raises(Fenced):
+        k.session.renew()
+    assert len(k.mock.seen) == sent  # refused locally once fenced
+
+
+def test_idle_store_busy_does_not_spin(kit, monkeypatch):
+    monkeypatch.setattr(publish, "IDLE_POLL_S", 0.1)
+    k = kit
+    p = k.make_publisher()
+    calls = {"n": 0}
+
+    def busy():
+        calls["n"] += 1
+        raise StoreError("store.busy", "test")
+
+    monkeypatch.setattr(k.store, "outbox_first", busy)
+    t = threading.Thread(target=p._idle, daemon=True)  # noqa: SLF001
+    t.start()
+    time.sleep(0.55)
+    p.stop()
+    t.join(2)
+    assert 3 <= calls["n"] <= 8
+
+
+def test_r4_the_second_mismatch_in_a_row_is_misbehaving(kit):
+    k = kit
+    k.drain()
+    k.env.log(k.uids[0], "x")
+    k.sim.fault = lambda s: _err(409, "restore_source_mismatch") if _final(s) else None
+    assert k.publisher.step() == ("progress", 0.0)
+    state, _ = k.publisher.step()
+    assert state == "wait" and k.alarms.codes() == ["relay_misbehaving"]
+
+
+def test_a_plain_pub_without_a_set_is_held_on_too_large(kit):
+    k = kit
+    pub = publish._Pub("plain", {}, 1, "sha256:" + "1" * 64, None)  # not direct, but no runs: nothing was staged
+    with pytest.raises(PublishHeld) as e:
+        k.publisher._too_large(pub, 10_000_000)
+    assert e.value.code == "relay.too_large" and k.publisher.cap() == k.link_cap
+
+
+def test_a_413_without_a_code_on_the_final_put_is_too_large(kit):
+    from .mock import Reply
+
+    k = kit
+    k.sim.fault = lambda s: Reply(status=413, body=b"") if _final(s) else None
+    k.publisher.step()
+    assert set(k.alarms.codes()) & {"relay_too_large", "relay.too_large"}
+    assert "relay_publish_refused" not in k.alarms.codes()
+
+
+def test_a_conflicting_archived_segment_is_a_state_error(tmp_path, monkeypatch):
+    from orch.relay.state import StateError
+
+    monkeypatch.setattr(publish, "HISTORY_SEGMENT", 3)
+    st = StateDir(tmp_path / "h")
+    h = History(st)
+    for n in range(1, 4):
+        h.append(n=n, hash=f"sha256:{n:064x}", kind="plain", at_ms=n, target={"o": {}})
+    h.lines()  # the segment count is probed (none yet)
+    st.claim("published-000001.jsonl", b"other lines\n")
+    with pytest.raises(StateError):
+        h.append(n=4, hash=f"sha256:{4:064x}", kind="plain", at_ms=4, target={"o": {}})
+    st.close()
+
+
+def test_a_finished_restores_record_resends_it_after_a_relay_rollback(kit, tmp_path):
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    k.sim.after = lambda s, r: json_reply(503, {"error": "overloaded"}) if _final(s) else r
+    k.publisher.step()  # accepted at the relay; the answer lost
+    k.sim.after = None
+    k.drain(10)  # finished from the fresh read
+    (rec,) = k.publisher.history.restores()
+    assert rec["source"] is not None and rec["body"]["restore"]["log"] == k.uids[0] and rec["acc_from"]
+    k.sim.roll_back_to(k.sim.accepted[0][1])
+    k.sim.restore_ids.clear()
+    k.publisher = k.make_publisher()
+    k.drain(20)
+    assert [h for _, h in k.sim.accepted].count(entry.hash) == 2  # re-sent from the record, accepted again
+    assert k.current()["hash"] == canon.checkpoint_hash(k.sim.held["o"])

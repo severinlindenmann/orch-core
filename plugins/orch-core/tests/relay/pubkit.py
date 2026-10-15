@@ -72,10 +72,11 @@ class Kit:
     def make_publisher(self, **kw: Any) -> Publisher:
         kw.setdefault("max_publication_bytes", self.link_cap)
         kw.setdefault("conn", self.conn)
+        kw.setdefault("mono", self.clock.mono)
         return Publisher(
             self.store, job=lambda fn: fn(), session=self.session, owner_pk_pub=self.env.owner.pk_pub,
             wsk_pub=self.env.wsk_pub, state=self.state, alarm=self.alarms,
-            on_diverged=self.diverged.append, now_ms=lambda: self.sim.now, mono=self.clock.mono,
+            on_diverged=self.diverged.append, now_ms=lambda: self.sim.now,
             rng=random.Random(7), **kw,
         )  # fmt: skip
 

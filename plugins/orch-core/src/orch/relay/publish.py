@@ -61,7 +61,7 @@ from . import wire
 from .directory import Directory, VerifiedCheckpoint
 from .http import RedirectRefused, Transport, TransportError
 from .retry import PERMANENT_QUOTAS, RelayRefused, delay
-from .session import NotHolder, RelayMisbehaving, Session, SessionError
+from .session import Fenced, LoginHeldOff, NotHolder, RelayMisbehaving, Session, SessionError
 from .state import StateDir, StateError
 
 __all__ = [
@@ -101,7 +101,8 @@ INCOMPLETE_LIMIT = 3
 START_POLL_S = 0.5
 IDLE_POLL_S = 2.0  # an idle publisher checks the outbox locally this often (R5's wake() is immediate)
 IDLE_RECHECK_S = 60.0  # and reads H from the relay again at least this often
-RENEW_EVERY_S = 15.0  # publish_first renews the 40 s lease this often (review R2; the aux thread does it once running)
+RENEW_EVERY_S = 10.0  # publish_first renews the 40 s lease this often (review R2; the aux thread does it once running)
+RENEW_RETRY_S = 2.0  # and retries this soon after a failed renewal: 10 + 10 (deadline) + 2 + 10 < 40 (review delta F2)
 MIN_CAP = 4 * 1024  # an in-memory lowering never goes below this: below it the publication is held (review R6)
 MISMATCH_LIMIT = 2  # plain restore_source_mismatch answers in a row before relay_misbehaving (review R4)
 HISTORY_SEGMENT = 1024  # lines per published.jsonl segment; older segments are kept as published-<k>.jsonl
@@ -448,6 +449,9 @@ class Publisher:
         self._replans = 0
         self._last_renew = 0.0
         self._sync_renew = False
+        self._alert = threading.Event()
+        self._renew_error: BaseException | None = None
+        self._permanent = False
         self.error: BaseException | None = None
         self.published: list[tuple[int, str, str]] = []  # (n, hash, kind) accepted in this run, for R5 and tests
 
@@ -463,6 +467,7 @@ class Publisher:
         """Set the stop event and end a blocked call (``shutdown`` of this thread's connection, 11A.7)."""
         self._stop.set()
         self._wake.set()
+        self._alert.set()
         c = self._conn
         if c is not None:
             try:
@@ -537,6 +542,8 @@ class Publisher:
             raise ValueError("the first link publishes through this publisher's own session")
         del directory  # the publisher reads through its own verified reader (same session, own connection)
         done = threading.Event()
+        self._alert.clear()
+        self._renew_error = None
         renewer = None
         if self._conn_factory is not None:  # a renewal thread with its own connection covers a long single call too
             renewer = threading.Thread(target=self._renew_loop, args=(done,), name=f"orch-relay-renew-{self.id8}",
@@ -546,15 +553,18 @@ class Publisher:
         self._sync_renew = renewer is None
         try:
             while not self._stop.is_set():
+                self._first_check()
                 self._tick()
                 state, wait = self.step(raise_held=True)
                 if state == "idle":
                     return
                 while wait > 0 and not self._stop.is_set():  # waits are cut at the renewal period
+                    self._first_check()
                     part = min(wait, RENEW_EVERY_S)
-                    if self._stop.wait(part):
-                        break
+                    self._alert.wait(part)  # the renewal thread or stop() wakes it at once (review delta F3)
+                    self._alert.clear()
                     wait -= part
+                    self._first_check()
                     self._tick()
         finally:
             self._sync_renew = False
@@ -563,27 +573,48 @@ class Publisher:
                 renewer.join(SMALL_DEADLINE_S)
         raise PublishHeld("relay_stopped", "the publisher was stopped during the first link")
 
+    def _first_check(self) -> None:
+        """During the first link: a renewal that ended the session (a fence, a malformed hold answer) or a fenced
+        session stops ``publish_first`` at once (review delta F2, F3)."""
+        err = self._renew_error
+        if err is not None:
+            raise err
+        if self._session.fenced:
+            raise Fenced("fenced during the first link")
+
     def _tick(self) -> None:
         """Without a renewal thread (no connection factory): renew the first link's lease before a request once
-        :data:`RENEW_EVERY_S` passed."""
+        :data:`RENEW_EVERY_S` passed. A transient failure (5xx, transport, a login hold-off) is retried after
+        :data:`RENEW_RETRY_S`; only a fence or another session error propagates (review delta F1)."""
         if self._sync_renew and self._mono() - self._last_renew >= RENEW_EVERY_S:
-            self._session.renew(transport=self._transport())
+            try:
+                self._session.renew(transport=self._transport())
+            except (RelayRefused, TransportError, LoginHeldOff) as e:
+                log.info("relay first-link renewal failed: %s", type(e).__name__)
+                self._last_renew = self._mono() - RENEW_EVERY_S + RENEW_RETRY_S
+                return
             self._last_renew = self._mono()
 
     def _renew_loop(self, done: threading.Event) -> None:
         """The first link's lease renewal (review R2): every :data:`RENEW_EVERY_S` over its own connection while
-        :meth:`publish_first` runs. A fence ends it (the session then refuses every later write); any other failure is
-        logged and retried at the next tick."""
+        :meth:`publish_first` runs; a transient failure (5xx, transport, a login hold-off) is retried after
+        :data:`RENEW_RETRY_S`, so one timed-out renewal does not lose the lease. A fence or another session error ends
+        it AND is handed to ``publish_first``, which raises it at once (review delta F2)."""
         conn = self._conn_factory() if self._conn_factory is not None else None
+        period = RENEW_EVERY_S
         try:
-            while not done.wait(RENEW_EVERY_S):
+            while not done.wait(period):
                 try:
                     self._session.renew(transport=conn)
+                    period = RENEW_EVERY_S
+                except (RelayRefused, TransportError, LoginHeldOff) as e:
+                    log.info("relay first-link renewal failed: %s", type(e).__name__)
+                    period = RENEW_RETRY_S
                 except SessionError as e:
                     log.warning("relay first-link renewal stopped: %s", type(e).__name__)
+                    self._renew_error = e
+                    self._alert.set()
                     return
-                except (RelayRefused, TransportError) as e:
-                    log.info("relay first-link renewal failed: %s", type(e).__name__)
         finally:
             if conn is not None:
                 try:
@@ -613,7 +644,11 @@ class Publisher:
             self._raise("relay_misbehaving", str(e))
             return "wait", self._backoff()
         except RelayRefused as e:
-            return "wait", self._refused(e)
+            self._permanent = False
+            wait = self._refused(e)
+            if raise_held and self._permanent:  # the first link: a permanent answer is R1/R5's to decide (delta F3)
+                raise PublishHeld("relay_publish_refused", f"{e.status} {e.code}") from None
+            return "wait", wait
         except RedirectRefused:
             self._raise("relay_redirect", "a 3xx answer: no redirect is followed (11A.7)")
             return "wait", HELD_RECHECK_S
@@ -1100,6 +1135,7 @@ class Publisher:
         if e.status == 429 and e.code == "quota_exceeded":
             if e.quota in PERMANENT_QUOTAS:
                 self._raise("relay_quota", f"permanent quota {e.quota}")
+                self._permanent = True
                 return HELD_RECHECK_S
             self._quota += 1
             if self._quota > QUOTA_RETRIES:
@@ -1110,6 +1146,7 @@ class Publisher:
             self._transient += 1
             return delay(self._transient - 1, e.retry_after, self._rng)
         self._raise("relay_publish_refused", f"{e.status} {e.code}")
+        self._permanent = True
         return HELD_RECHECK_S  # a permanent answer is never retried unchanged at once (11A.7, review R8)
 
     def _store_error(self, e: StoreError, raise_held: bool) -> float:

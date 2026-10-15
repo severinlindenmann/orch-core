@@ -222,3 +222,38 @@ def test_an_ancestry_walk_above_the_bound_is_refused(grown, monkeypatch):
     with pytest.raises(StoreError) as e:
         s.relay_ancestor(older, newer)
     assert e.value.code == "validation.relay"
+
+
+def test_ancestry_needs_order_and_a_verified_path(grown):
+    """The R1 gate's store check (review delta F4): another head at the same seq, a log behind, a head that is not
+    on the recorded path, a path whose fold does not reach the accumulator: none is an ancestor."""
+    env, uid = grown
+    s = env.store
+    older = s.outbox_entries()[0].checkpoint
+    newer = workspace_cp(env)
+
+    def resigned(cp, f):
+        o = json.loads(json.dumps(cp["o"]))
+        f(o)
+        return sign_object(env.signer.sign, o)
+
+    same_seq = resigned(older, lambda o: o["workspace_log"].update(head="sha256:" + "1" * 64))
+    assert not s.relay_ancestor(same_seq, older)
+    behind = resigned(newer, lambda o: o["tickets"][uid].update(seq=1)) if uid in older["o"]["tickets"] else None
+    if behind is not None:
+        assert not s.relay_ancestor(older, behind)
+    off_path = resigned(newer, lambda o: o["tickets"][uid].update(head="sha256:" + "2" * 64))
+    assert not s.relay_ancestor(older, off_path)
+    bad_acc = resigned(newer, lambda o: o["tickets"][uid].update(acc="sha256:" + "3" * 64))
+    assert not s.relay_ancestor(older, bad_acc)
+    assert s.relay_ancestor(older, newer)
+
+
+def test_an_abandoned_entry_that_is_not_a_file_is_skipped(grown):
+    env, uid = grown
+    forked = _forked(env, uid)
+    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    (ab / "workspace-1.json").mkdir(parents=True)  # (highest_n's own reader trips on it; this reader skips it)
+    (ab / "workspace-2.json").write_bytes(canon.cj_checked(forked))
+    found = list(env.store._abandoned_workspace_checkpoints())  # noqa: SLF001
+    assert found == [canon.cj_checked(forked)]

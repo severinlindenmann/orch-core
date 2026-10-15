@@ -5577,7 +5577,7 @@ Records tool (python -I -m orch.records, one shot, person UID): from `orch recor
 | **D-P2-24** | **A separate per-UID runner service** (`python -I -m orch.runner`) supervises agent runs, terminals and worktree git; never the host (its only spawn stays `orch.gitread`, D-P2-9) and never the dashboard server. Tier A: LaunchAgent `io.orch.runner` / systemd user unit `orch-runner.service`, person UID, installed by `orch runner enable` like H7's unit. Tier B: one system service per agent UID. **Same-UID separation is not containment: runner reports are untrusted and cannot establish authorization; reports are accepted only for runs assigned to that runner.** The runner accepts commands (and `grant.put`) only after checking that the peer UID of `<run>/runner/host.sock` is the host UID (`getpeereid`/`SO_PEERCRED`); one runner connection per runner UID, bound to the runner unit's main PID and to the runner's generation (§12.4). The runner concentrates every deposited grant: compromising it (or, in tier A, any agent) yields all of them; tier B confines this per agent UID. | Sessions outlive host and dashboard restarts; the key-holding host never parents workspace code; tier B needs the spawner to be the agent UID. | **SC** |
 | **D-P2-25** | **Control through the host, terminal bytes direct.** Clients call host ops (§12.3). The host mints an attach capability, registers it at the runner over the command stream (`attach.allow`) and can end it (`attach.end`); the dashboard server connects to the runner's term socket and presents the ticket once (§12.6). The host relays no terminal byte and has no stream router. | Keeps terminal floods out of the failure domain of signing, revocation and the D58 precommit; the dashboard server is already trusted (it can click-sign); the enforcement point does not move. | **SC** |
 | **D-P2-26** | **Columns** (§12.3.1): start, stop, open, attach, write, resize are **P only**, attach/write/resize only for the run's own person; **G never** (F1 §8: `pty` is never granted to agents); **N never**. `run.list`/`run.sub`: P sees its own person's runs; G sees only `kind:"agent"` runs on tickets inside its grant's scope, never shells; owners and maintainers do not see other persons' runs; viewers see none. Worktrees: P on a visible ticket; G only on the ticket its session holds the live claim on, rechecked when the runner executes. Records: owners and maintainers. Authorization is rechecked at execution and before every delivery of queued data. Recovery without the host or membership: `orch runner stop RUN\|--all` (terminal, local). | Typing into a PTY is code execution; agents must not drive each other or the person's shell; a removed person must still be able to stop their own processes. | **SC** |
-| **D-P2-27** | **The runner grant** (**owner decision, 12 Oct 2026: click-issued agent grants allowed**, at most 12 h, the typed word `<PREFIX>~<WS8>/GRANT`, handed straight to the runner, never shown in the browser). The runner holds at most one runner grant per (workspace, person), in memory only, and reuses it for every agent it starts (F1 A3 standing grants). It gets it only through `grant.deposit`, a **P-class** op that also carries the secret in `auth.grant`, sent by the process that drew the secret: the click signer in **deposit-only grant mode** (amends §0.8.6 item 6), `orch grant --runner`, or `orch sign CODE` (it asks "show or hand to the runner"). Only a grant whose `grant.issued` has `label:"runner"` can be deposited; a forgotten or replaced runner grant id cannot be deposited again (`grant.forgotten`). Every deposit has a `deposit_id` with outcome `confirmed`, `rejected` or `unknown`. Owner's plain-language risk: *"Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours."* | Start-from-dashboard as one daily flow, while the secret stays out of the HTTP process and the browser; an agent cannot re-point the runner to its own grant. | **SC** |
+| **D-P2-27** | **The runner grant** (**owner decision, 12 Oct 2026: click-issued agent grants allowed**, at most 12 h, the typed word `<PREFIX>~<WS8>/GRANT`, handed straight to the runner, never shown in the browser). The runner holds at most one runner grant per (workspace, person), in memory only, and reuses it for every agent it starts (F1 A3 standing grants). It gets it only through `grant.deposit`, a person-class op that also carries the secret in `auth.grant` (**amended in H11c review, owner decision of 15 Oct 2026:** at the permission matrix it is column G, a verified `auth.grant`; the op itself then requires a person-class peer whose UID maps to a valid member and a grant that is that same person's `label:"runner"` grant, which is equivalent to "P-class plus `auth.grant`"), sent by the process that drew the secret: the click signer in **deposit-only grant mode** (amends §0.8.6 item 6), `orch grant --runner`, or `orch sign CODE` (it asks "show or hand to the runner"). Only a grant whose `grant.issued` has `label:"runner"` can be deposited; a forgotten or replaced runner grant id cannot be deposited again (`grant.forgotten`). Every deposit has a `deposit_id` with outcome `confirmed`, `rejected` or `unknown`. Owner's plain-language risk: *"Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours."* | Start-from-dashboard as one daily flow, while the secret stays out of the HTTP process and the browser; an agent cannot re-point the runner to its own grant. | **SC** |
 | **D-P2-28** | **Launch specs are computed by core** from a closed harness registry (`claude-code`, `codex`, `shell`; the F1 `actor.id` values) and validated values (ticket, mode, model, subagent model). Argv only; the prompt is one element ("data to the OS, instructions to the harness"). `agent.preview` returns a `spec` digest; `agent.start {…, spec}` recomputes it and refuses `launch.changed` on any difference; preview has no side effects. **Agents start through the person's login shell** in exec form `[$SHELL, "-l", "-c", 'exec "$0" "$@"', argv…]` (a POSIX shell is required, else `harness.shell_unsupported`); the preview says "the program is found and started through your login shell; your shell profile runs first and can change what runs". Opt-out: `runner.json {login_shell:false, programs:{…absolute paths…}}`. Environment allow-list (§12.5.3) with a `pass_env` deny-list. | The client chooses values, never a command; without the login shell launchd-started harnesses are not found on a normal Mac. | **SC** |
 | **D-P2-29** | **Supervision.** Every child starts through a fixed trampoline (`python -I -m orch.runner.exec`). Linux: each run enters its own cgroup **before** `exec` and stops with `cgroup.kill` until `populated=0`. macOS: process group plus a sweep of the run's session id, **best-effort cleanup, not containment** (a `setsid()` descendant escapes). `run.stop` answers `cleanup:"complete"\|"incomplete"\|"unknown"`. Every signal targets a (pid, birth time) pair re-read right before `kill`; the runner kills only its own runs, never by name, never UID-wide. **No CPU, memory or process-count limits in phase 2** (agents are the person's own programs; revisit with tier B). | Honest claims; "kill only own PIDs" on a shared machine. | **SC** |
 | **D-P2-30** | **Terminal transport.** The runner reads every PTY continuously into a 1 MiB ring; a slow or absent viewer never blocks an agent. **Attach is read-only by default**; the write lease is taken only when the capability is consumed, only if nobody holds it, or with explicit `take:true`; a reconnect or remount never takes it implicitly. Writes and resizes carry the **lease generation** and an **input id**, both checked at the runner; replay never generates input; a `gap` resets the client's parser. Control frames are never dropped. xterm.js runs with the hardened configuration of §12.6.7 (no links in phase 2). A separate restricted origin for terminal rendering is **deferred to phase 3** (accepted risk, owner FYI). | Fixes double input, lease ping-pong and answerback injection. | **SC** |
@@ -5596,8 +5596,11 @@ Records tool (python -I -m orch.records, one shot, person UID): from `orch recor
 Every op follows §0.5 (filter first, rechecked per request) and the §0.6 precedence. New ops are at version 1 under
 new caps (§0.4). "Idem create" is the idempotent-create category of §0.7 (an optional `opts.idem` returns the same
 object on a retry). `dry_run` is refused by all of them (`invalid.input`). A request with `auth.grant` on a P-only op
-answers `op.not_allowed`, never `human_only`. `grant.deposit` is the one op that requires both: person class without a
-grant column (it is evaluated as P) **and** a verified `auth.grant` naming a `label:"runner"` grant of that person.
+answers `op.not_allowed`, never `human_only`. `grant.deposit` is the one op that requires both a person and a grant. **As amended (H11c review, owner decision of 15 Oct
+2026):** the permission matrix admits it in column G only (a verified `auth.grant`; P without a grant, N, W, C and R
+are `op.not_allowed`, an unverified grant `grant.expired`), and the op then requires a person-class peer, the UID's
+valid mapping to a member, and that the grant is that person's own `label:"runner"` grant (an agent-class peer is
+`op.not_allowed` there). This is equivalent to "person class evaluated as P plus a verified `auth.grant`".
 
 #### 12.3.1 Caps and columns
 
@@ -5607,7 +5610,7 @@ grant column (it is evaluated as P) **and** a verified `auth.grant` naming a `la
 | `run/1` | `agent.preview` | ✓ | — | — | read (no side effects) |
 | `run/1` | `agent.start` | ✓ | — | — | idem create |
 | `run/1` | `run.stop` | ✓ own runs | — | — | side effect |
-| `run/1` | `grant.deposit` | ✓ with `auth.grant` | — | — | side effect, `deposit_id` |
+| `run/1` | `grant.deposit` | ✓ with `auth.grant` (matrix: G with a verified grant; the op: person class, valid member, own `label:"runner"` grant) | — | — | side effect, `deposit_id` |
 | `run/1` | `grant.deposit_status`, `grant.forget` | ✓ own grants | — | — | read / side effect |
 | `term/1` | `term.preview` | ✓ | — | — | read (no side effects) |
 | `term/1` | `term.open` | ✓ | — | — | idem create |
@@ -5948,13 +5951,15 @@ Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the co
   hint only (when it is set); the runner is authoritative. With `login_shell:false` the preview checks that the
   program is executable (`harness.not_found`).
 - **`runner.json`** (`<state>/runner.json`, 0600 of the person, terminal-only): `{v:1, login_shell, programs,
-  pass_env}`, every key optional. A `pass_env` name on the deny-list (§12.4.3, plus `BASH_FUNC_*`, `TERM`,
+  pass_env}`, every key optional; only a missing file means defaults (`null` or anything but an object is invalid). A `pass_env` name on the deny-list (§12.4.3, plus `BASH_FUNC_*`, `TERM`,
   `COLORTERM`, `CLAUDE_CODE_SUBAGENT_MODEL`), an unknown key or a bad path makes the **whole file invalid**: every
   launch is `launch.invalid` until it is fixed (never a fallback to defaults). The host reads it for the plan, the
   runner again at every spawn.
 - **Run ids and sessions.** `agent.start` needs `opts.idem`; the run id is `r_` + the idem's ULID, so a retry with the
-  same idem answers the recorded run without recomputing or starting anything (another person's, workspace's or
-  kind's run under that id is `idem.conflict`). The **host** draws the agent's `s_<ULID>` session and sends it in
+  same idem answers the recorded run without recomputing or starting anything (another person's, workspace's,
+  kind's or spec's run under that id is `idem.conflict`). The identity check, the limits, the start-rate charge and
+  the reservation of the run id are one step on the event loop, so two concurrent requests with one idem record one
+  session and charge one start. The **host** draws the agent's `s_<ULID>` session and sends it in
   `spawn` (§12.3.3 lists it; §12.4.3's "drawn by the runner" is read as "set by the runner"), so `Run.session` is
   known at the intent.
 - **Intent first.** `agent.start` persists the intent (state `starting`, audit `run.intent` with idem and spec), then
@@ -5977,21 +5982,30 @@ Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the co
   when the runner grant changed since the preview. Limits: 8 agent runs per person per workspace, 16 in all, 64 per
   runner, 10 starts a minute (§0.11).
 - **`grant.deposit`** refuses with `op.not_allowed` a caller that is not person class, a UID without a valid mapping
-  or mapped to another person than the grant's, a grant without `label:"runner"`, with `verbs` other than `"agent"`,
-  longer than 12 hours or with under 15 minutes left; `grant.forgotten`; `runner.disabled` (machine switch);
-  `runner.unavailable`. The outcome per `deposit_id` is kept in `<state>/hosts/<ws>/runner-grants.json` (0600; never a
+  or mapped to another person than the grant's, and a grant longer than 12 hours; with `grant.not_runner` a grant
+  without `label:"runner"`, `grant.verbs` one with `verbs` other than `"agent"`, `grant.expiring` one with under 15
+  minutes left; `grant.forgotten`; `runner.disabled` (machine switch); `runner.unavailable`; `rate.limited` (10 a
+  minute per person, burst 5). Deposits, forgets and the watcher's drops of one (workspace, person) run one at a time
+  (a lock); a deposit whose grant was forgotten or replaced while its `grant.put` was in flight is `rejected`
+  (`grant.forgotten`) and dropped at the runner. **Every grant the host drops is forgotten for good** (owner decision
+  of 15 Oct 2026): replaced, forgotten, revoked or expired, its member removed, dashboard execution switched off, or
+  cleared because the runner no longer holds it (a runner restart); re-enabling never brings an old grant back, a
+  new one has to be issued. At every `runner.hello` the persisted table of every served workspace is settled, loaded
+  or not. Pending deposit records are never pruned. The outcome per `deposit_id` is kept in `<state>/hosts/<ws>/runner-grants.json` (0600; never a
   secret): `pending` is written before `grant.put` is sent and reads as `unknown`; a runner refusal is `rejected`
   with its code; the next `runner.hello` settles `pending` (reported: `confirmed`; not reported: `rejected`,
-  `runner_restarted`). The same `deposit_id` again answers the recorded outcome. Dashboard execution switched off for
-  the workspace drops its runner grants at the runner (fail closed; §12.4.2 names revocation, removal and expiry).
+  `runner_restarted`; a pending deposit of the grant that is already current settles `confirmed` too). The same
+  `deposit_id` again answers the recorded outcome. Dashboard execution switched off for the workspace drops its runner
+  grants at the runner (fail closed; §12.4.2 names revocation, removal and expiry).
 - **The click signer** derives `deposit_id` from the request (`hr_<ULID>` → the ULID), so it is stable across
   restarts without a new record field; the secret lives only in the `sign` call's frame (never in the approval, the
-  durable record, the log or a result). The signer sets `label:"runner"` and `verbs:"agent"` itself (a dashboard
-  `label` or `verbs` is `invalid.input`); more than 12 hours or no dashboard execution is `terminal_only`. The View's
+  durable record, the log or a result). The signer sets `label:"runner"`, `verbs:"agent"` and `runner:true` itself
+  (a dashboard `label` or `verbs` is `invalid.input`), so the op is a runner grant with no `ORCH_GRANT` hint; more than 12 hours or no dashboard execution is `terminal_only`. The View's
   `lines` end with the tier-A sentence ("Anything that takes over the dashboard can give agents standing authority to
   act for you on tickets for up to 12 hours.") and the deposit line. A repeated `sign` answers the settled outcome or
   asks `grant.deposit_status` once (after a restart the secret is gone: `unknown` unless the host says `confirmed` or
-  `rejected`).
+  `rejected`). Any failure of the hand-over after the commit (a host error, a broken or garbled connection) is
+  `unknown`, never a failed `sign`.
 - **Terminal.** `orch grant --runner` (host mode only; direct mode is `invalid.input`) prepares a grant with
   `runner:true` (label `runner`, at most 12 h, verbs `agent`) and hands the secret over after the commit; `orch sign
   CODE` asks `[r] hand to the orch runner  [s] show ORCH_GRANT here` on `/dev/tty` only for a grant whose

@@ -13,7 +13,7 @@ import pytest
 import orch.ops as ops
 from orch.host import frames
 from orch.host.agents import AGENT_OPS
-from orch.host.columns import refusal, resolve
+from orch.host.columns import Column, refusal, resolve
 from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
@@ -424,3 +424,20 @@ def test_errors_and_results_are_valid_frames(served):
 
 def test_the_design_doc_is_where_the_catalog_test_reads_it():
     assert Path(REPO / "docs" / "architecture" / "orch-v2-host.md").is_file()
+
+
+def test_grant_deposit_is_a_person_with_their_own_verified_grant():
+    """D-P2-27 as amended (#466 review, owner decision): at the matrix ``grant.deposit`` needs a verified
+    ``auth.grant`` (column G); the op itself then requires the person class, the UID's valid mapping to a member and
+    that the grant is that person's own runner grant (tests/host/test_runner_grants.py). Without a grant (P), with an
+    unverified or malformed one, and in every non-workspace column it is refused at the matrix."""
+    kind = op_kind("grant.deposit")
+    assert kind == ("deposit", "write")
+    for row, (peer, grant, valid) in ROWS.items():
+        got = refusal(resolve(peer, grant, valid), kind[0])
+        if grant == "verified":
+            assert got is None, row  # person or agent class: the op decides (an agent class peer is refused there)
+        else:
+            assert got is not None, row
+    for name in ("W", "C"):
+        assert refusal(Column(name, "none"), "deposit") == "op.not_allowed"

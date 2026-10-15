@@ -388,3 +388,14 @@ def test_pending_deposits_are_never_pruned(tmp_path, monkeypatch):
                       for i in range(5)}  # fmt: skip
     table.save()
     assert "00" in table.deposits and len(table.deposits) == 3  # the pending one plus the two newest
+
+
+def test_an_agent_class_peer_cannot_deposit_even_its_own_runner_grant(ready):
+    """D-P2-27 (amended): the op requires the person class on top of the verified grant."""
+    from tests.host.test_dispatch_matrix import as_agent_class
+
+    w = ready
+    value = issue(w)
+    as_agent_class(w)
+    assert err(deposit(w.conn(), value)) == "op.not_allowed"
+    assert w.runner.grants.report() == []

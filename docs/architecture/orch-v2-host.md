@@ -202,6 +202,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `query/1` | `ticket.query`, `ticket.get`, `needs`, `workspace.show`, `member.list`, `session.list`, `grant.list` (all 1) | workspace |
 | `read_ext/1` | no ops of its own: a host that lists it sends **every** optional field that v1.4 adds to `ticket.query`, `ticket.get` and `needs` (§0.8) | workspace |
 | `read_ext/2` | no ops of its own (v1.5): a host that lists it sends **every** optional field that v1.5 adds to `ticket.query`, `ticket.get` and `grant.list` (§0.8.5), and also lists `read_ext/1` | workspace |
+| `read_ext/3` | no ops of its own (v1.9): a host that lists it sends the `member.list` device fields `label`, `paired_at`, `relay`, `cert_expires_at` and `reader` (§0.8.5), and also lists `read_ext/1` and `read_ext/2` | workspace |
 | `settings/1` | `workspace.settings` (1) (v1.5) | workspace |
 | `text/1` | `ticket.text` (1) (v1.5) | workspace |
 | `sub_ext/1` | no ops of its own (v1.5): `sub.open` accepts `detail` (§0.9) | workspace |
@@ -240,6 +241,8 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
     `session_ids`, `sessions_more` and `revoked` beside them. The one behaviour change, the per-type filter of `sub.open
     {topics:["workspace"]}` (§0.9), only withholds items, so a v1.4 client keeps working and sees fewer items. A v1.4 client
     connected to a v1.5 host sees no difference except that.
+  - **v1.9 adds `read_ext/3`** the same way: five optional keys on each `member.list` device (§0.8.5), no op version
+    change. A client that wants them checks for `read_ext/3`.
 - **`registry`** is a diagnostic digest. Nothing is refused because of it.
 - **Forward compatibility.**
   - Clients ignore unknown keys in `welcome`, `res`, `result.data`, `evt` and its items, `fatal`, and `Error`; an unknown
@@ -1208,7 +1211,10 @@ column G (judgement call of H12e: an agent's `new` allocates its own key), and a
 
 ```
 {members:[{person:Person, name:str, role:"owner"|"maintainer"|"member"|"viewer",
-           devices:[{id:Device, auth:str | null, scopes:[str], valid:bool}]}]}
+           devices:[{id:Device, auth:str | null, scopes:[str], valid:bool,
+                     // v1.9, read_ext/3 (§0.8.5):
+                     label?:str | null, paired_at?:Time | null, relay?:bool, cert_expires_at?:Time | null,
+                     reader?:int | null}]}]}
 ```
 
 `session.list {active?:bool = true}` (read) →
@@ -2031,6 +2037,28 @@ RepoSetting = {default_branch:str | null, path?:str, remote?:str | null}      //
   descending and session id ascending. `sessions_more` is true exactly when `sessions > len(session_ids)`. The list follows
   `grant.list` visibility; embedded claims and leases (in `session.list`) retain their ticket visibility filters. These are
   host session records (the ones `session.list {active:false}` lists), not sessions reconstructed from F1 events.
+
+**`member.list` device fields (v1.9, `read_ext/3`; for the dashboard's "Pair a phone").** A host that lists
+`read_ext/3` sends all five on every device. Which members and devices a viewer gets is unchanged (every column that may
+call `member.list` gets the same list, §0.5). Times are `Time` (whole seconds, as `grant.list` `expires_at`).
+- **`label` is for persons only (orch-52, #505):** column P, and R, which reads exactly as P (11A.4), get it; G (an
+  agent grant) and N (no-person) get `label: null` on every device. Every other field is the same for every column.
+- **`cert_expires_at`** is the device certificate's `expires_ms` from F1 (`device.added`, `member.added`,
+  `workspace.created`; the review's `derived.cert_expires`, §0.8.1) as `Time`, `null` for a certificate that never
+  expires, and also `null` for a value outside the RFC 3339 range (before 1970 or after year 9999; a verified
+  certificate may carry year 10000): one odd certificate never fails the read. `paired_at` follows the same rule.
+- **`relay`** is true exactly when the device was paired through the relay: it has R6's record
+  `membership/devices/<device_id>.json` (11A.15.3) for the same person. **`label`** is that record's label, cleaned
+  per protocol §2.5 by `orch.identity.pairing.clean_label` (the one cleaner, 11A.15.10 item 4), `null` without a record
+  or when nothing is left after cleaning; it is the device's own name, never an authenticated one. **`paired_at`** is
+  the record's `paired_ms` as `Time`, `null` without a record.
+- **`reader`** is the level of the device's H12d reader record (§0.8.6 item 9.10), `null` when it has none. `null` is
+  not 0: the gate's "no record counts as 0" is the gate's rule, not a level the device declared.
+- **As built (H12d-2 and R6 not yet built).** Core has neither R6's `membership/devices/` records nor the reader
+  records, so today every device has `label: null`, `paired_at: null`, `relay: false` and `reader: null`; only
+  `cert_expires_at` has a value. The host reads them through two seams in `orch.host.reads_ws` (`relay_devices`,
+  `reader_levels`), which R6 and H12d-2 fill; the field mapping above is already built and tested against them.
+  `required_reader` (§0.8.6 item 9.11) is not part of `read_ext/3`.
 
 **`session.refusals`** (read, cap `refusals/1`, later than H6b) args and result:
 
@@ -3811,7 +3839,6 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
     `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
     (§0.4), so no cap or op version changes.
-
 46. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10):**
     `orch.identity.answers` (the six exact §8.3 pair answers; a relayed challenge or rejection enters only as the
     verified `CertChallenge`/`CertRejection`); `orch.identity.memberlist` (`member_list_o`, `check_member_list`,
@@ -3824,6 +3851,12 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons` without the owner;
     `check_wk_grant` takes the device id; `check_cert_request` takes a `VerifiedCard`, `now_ms` and `me` as person and
     device ids; the `make_*` builders take `pk_pub`. No hash, contract or schema change.
+47. **`member.list` device fields under `read_ext/3`** (§0.4, §0.8, §0.8.5; for the dashboard's "Pair a phone"):
+    each device gains `label`, `paired_at` (Time), `relay`, `cert_expires_at` (Time) and `reader`. `cert_expires_at`
+    comes from the F1 certificate; the other four come from R6's relay record and H12d's reader record, which are not
+    built yet, so they are `null`/`false` until then. Which members and devices a viewer gets is unchanged; `label` is
+    `null` for G and N (persons only, orch-52). `read_ext/3` lists `read_ext/1` and `read_ext/2`
+    too. No F1, schema or op version change.
 
 ---
 

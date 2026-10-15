@@ -118,7 +118,7 @@ class Env:
             label="tests",
         )
 
-    def add_device(self, p: Person | None = None) -> tuple[str, bytes]:
+    def add_device(self, p: Person | None = None, expires_ms: int | None = None) -> tuple[str, bytes]:
         """``device.added`` of a second device of ``p`` (signed by the first); returns (device ref, its dk_sig key)."""
         p = p or self.owner
         sig_key, kx_key = crypto.generate_private_key(), crypto.generate_private_key()
@@ -130,7 +130,7 @@ class Env:
             dk_kx_pub=crypto.public_bytes(kx_key),
             label_sealed=b"second",
             created_ms=T0 * 1000,
-            expires_ms=None,
+            expires_ms=expires_ms,
             scopes_max=["look", "decide", "operate", "type"],
         )
         ref = certs.device_ref(sig_pub)

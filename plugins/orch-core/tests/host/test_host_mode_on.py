@@ -339,7 +339,8 @@ def dashboard_query(env: dict[str, str], wid: str) -> list[dict[str, Any]] | Non
         "link = Gateway(Path(sys.argv[1])).link(sys.argv[2])\n"
         "print(json.dumps(link.call('ticket.query', {})))\n"
     )
-    child_env = {**os.environ, "ORCH_STATE_DIR": env["ORCH_STATE_DIR"], "ORCH_RUN_DIR": env["ORCH_HOST_RUN_DIR"]}
+    run = env["ORCH_HOST_RUN_DIR"]  # the canonical name; ORCH_RUN_DIR too while the dashboard still reads that one
+    child_env = {**os.environ, "ORCH_STATE_DIR": env["ORCH_STATE_DIR"], "ORCH_HOST_RUN_DIR": run, "ORCH_RUN_DIR": run}
     res = subprocess.run(
         [str(python), "-c", script, env["ORCH_STATE_DIR"], wid],
         capture_output=True, text=True, timeout=60, env=child_env, cwd=DASHBOARD,

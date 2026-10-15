@@ -71,7 +71,11 @@ def _parser() -> argparse.ArgumentParser:
     st.add_argument("--run", type=Path)
     st.add_argument("--json", action="store_true")
     run = sub.add_parser("run", help="run the runner (the service manager runs this)")
-    run.add_argument("--foreground", action="store_true")
+    run.add_argument(
+        "--foreground",
+        action="store_true",
+        help="dev and tests: announce this runner to a host started with orch host run --foreground --dev-runner",
+    )
     run.add_argument("--state", type=Path)
     run.add_argument("--run", type=Path)
     unit = sub.add_parser("unit", help="print the runner's launchd or systemd unit")
@@ -241,6 +245,16 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     grants = GrantStore()  # in memory only (D-P2-27): a restart loses every grant
     for handler in logging.getLogger().handlers:  # defence in depth: no held secret ever reaches runner.out
         handler.addFilter(RedactFilter(grants))
+
+    announced = None
+    if args.foreground:  # dev and tests: a host with --dev-runner admits this process without a service manager
+        from . import devmode
+
+        try:
+            announced = devmode.announce(Path(run_dir), uid)
+            log.warning("dev runner: announced in %s (only a host started with --dev-runner admits it)", announced)
+        except OSError as exc:
+            log.warning("dev runner: not announced: %s", exc)
     # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
     link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
                     config=lambda: read_config(state, uid), grants=grants)  # fmt: skip
@@ -258,6 +272,10 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
         finally:
             if term is not None:
                 term.close()
+            if announced is not None:
+                from . import devmode
+
+                devmode.withdraw(announced, os.getpid())
     return 0
 
 

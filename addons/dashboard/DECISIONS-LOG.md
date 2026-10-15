@@ -1691,3 +1691,8 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 
 - **Decision:** the primary step is `orch host relay pair --resume --offer <offer_id>` and the hand-off is `orch sign <CODE>` (R6 #473 head a4b7bb0f, per orch-52). Offer ids are 32 lower-case hex characters, as in the contract; the fixtures use that format. Every command the page offers for pasting into a shell is built only from host values that pass `shellWord` (ASCII letters, digits, `._-`, at most 64, not starting with `-`) or, for the offer, exactly 32 lower-case hex characters. Anything else gives a warning and no command (Opus delta N1). The device id in the list is shown through `Inline`, so hidden and bidi characters are visible. `orch device remove <id> --workspace <ws>` is still an assumption: R6 names no removal command.
 - **Revert:** only with a host that guarantees these formats in the contract, and then the checks stay as defence in depth.
+
+## 2026-10-15 The click signer may speak contract 1 or 2
+
+- **Decision:** the dashboard accepts a signer whose `status.contract` is exactly the int 1 or 2 (core H11c-2 #488: 2 adds deposit-only grant mode). Anything else, including `True`, `"2"` or `2.0`, is still `click.contract` ("Update orch-core"). The contract is remembered (`Signer.contract`) so start agent (M7b) can offer the click-issued runner grant only on 2. Nothing else changes here: the sign route still passes no deposit fields until M7b.
+- **Revert:** only together with core going back to a single contract.

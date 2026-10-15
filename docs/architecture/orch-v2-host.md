@@ -1758,7 +1758,10 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    value has its control characters escaped. It changes nothing. Exit 0 without problems, else 1.
    **Run directory, tier A:** `orch host`, the thin CLI and `orch sign` all use `--run`, else `ORCH_HOST_RUN_DIR`, else
    `<state>/run` (`enable.run_dir_for`). A path that merely exists under the tier-B `/Users/Shared/orch/run/<uid>` is
-   no longer preferred: any local account can create it (H4b preferred it).
+   no longer preferred: any local account can create it (H4b preferred it). **`ORCH_HOST_RUN_DIR` is the only
+   environment name for the run directory**: core reads it in `enable.run_dir_for` alone (host, runner, thin CLI,
+   `orch sign`, the runner unit's environment) and never reads `ORCH_RUN_DIR`; a client in another package (the
+   dashboard server) uses the same name and the same fallback to `<state>/run`.
    **`orch host disable`** is the reverse of `enable`, through the same unit plan and `Manager`: it stops and unloads the
    service (`launchctl bootout gui/<uid>/io.orch.host`; `systemctl --user disable --now orch-host.service`, then a
    `daemon-reload`) and removes the unit file. The state dir always stays. `--purge-releases` also deletes the release
@@ -3761,7 +3764,17 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     show or hand to the runner; the runner commands `grant.put`, `grant.drop` and the `spawn` fields `grant`,
     `session`, `person`; `<state>/runner.json` (`login_shell`, `programs`, `pass_env`); first-party manifest
     `addons/start-agent`. No F1 log or certificate change ("As built in H11c", §12.4).
-41. **Start-agent dashboard follow-ups (H11c-2; the number may be renumbered):** `grant.list` items gain `label`
+41. **Terminal follow-ups (after #469):** `orch host run --foreground
+    --dev-runner` admits a foreground runner of the host UID announced in `<run>/term/<uid>/dev-runner.json` (dev and
+    tests only; never a service run directory or another UID; §12.3.3 "As built in H11a"); the retryable refusals of
+    `term.attach`/`term.open` carry `retry_after_ms` (bucket-derived for `rate.limited`; the runner's `attach.limit`
+    keeps its code); `ORCH_HOST_RUN_DIR` is the one run-dir env name (core never reads `ORCH_RUN_DIR`);
+    `TermClient.send` has its own write deadline (`send_timeout`). No wire schema change.
+42. **Device liveness and judge hardening (H12e-2, §11A.14 "As built in H12e-2"):** `orch.host.admission.device_standing` (the API for column R's `standing()`); `judge_events` maps
+    unexpected model exceptions to `validation.event`; §11A.14 amended: a `failed` outcome with nothing landed counts as
+    `refused` (14.4), the identity check lives in the result builder with no digest in `Planned` (14.6 L7, 14.9),
+    start-up recovery runs in R2's `Bridge.start` (H12a R5). No hash, contract or schema change.
+43. **Start-agent dashboard follow-ups (H11c-2):** `grant.list` items gain `label`
     (`issued_at` was already there); the click signer's `sign` answer gains `deposit_reason` when `deposit` is
     `rejected` (closed set `grant.forgotten`, `grant.not_runner`, `grant.verbs`, `grant.expiring`, `rate.limited`,
     `runner.unavailable`, `other`; never host text) and `grant.deposit_status` gains `reason`; the click signer
@@ -3790,7 +3803,7 @@ call would start a host as the agent.
 |---|---|---|
 | macOS | LaunchAgent `io.orch.host` (`RunAtLoad`, `KeepAlive`) | `/Users/Shared/orch/run/<host uid>` (D-P2-6, F12), created by the setup helper (H3c) |
 | Linux | systemd user or system unit | `/run/orch/<host uid>`, provisioned by `tmpfiles.d` from the privileged setup. A user unit's `RuntimeDirectory` lives under `$XDG_RUNTIME_DIR`, which agents cannot traverse. |
-| dev and tests | `orch host run --foreground` | `<state>/run` (no agent UIDs) |
+| dev and tests | `orch host run --foreground` (`--dev-runner`: see §12.3.3 "As built in H11a") | `<state>/run` (no agent UIDs) |
 
 **D-P2-3. Every outcome is recoverable.** The store recovers torn appends. The host adds the outcome records and
 their reconciliation (§0.7), so a lost response, an interrupted composite or a human submit is recovered by `idem`,
@@ -4151,6 +4164,14 @@ UID. P2 adds no keychain.**
     - Both must lie under that repo's declared `path`, or the pin must belong to another repo declared in
       `settings.repos` (a linked worktree). Anything else is observe.unavailable.
     - Only `settings.changed` re-pins. A later mismatch is observe.unavailable.
+    - **As built (#471):** the repos to pin are pinned in **one** reader child per 64 of them (`pin_many`, profile
+      `pin`, the same declared roots and audit hook as a single `pin`), answered per repo: one repo's refusal never
+      touches the others. A batch that fails as a whole (the child dies, overruns a limit or answers malformed) decides
+      nothing and each of its repos is pinned again in its own child; `quota.host` is not retried repo by repo. The
+      host checks every answered pin against git's layout under the declared repos (the working copy is the asked
+      path; the commondir is a declared repo's `.git`; the gitdir is that commondir or its `worktrees/<id>`) before it
+      is stored, so a child forging pins fails its batch. One child per repo had made the first request after such a
+      `settings.changed` cost ~70 ms per repo (#468).
     - Every open stays under the pins, with `O_NOFOLLOW` and a regular-file check.
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.
@@ -4986,7 +5007,7 @@ column, the principal and the viewer come from the relay identity alone.
 | `host/outcomes.py` | `principal_of()` raises for column R; `NO_PARTIAL` gains `relay.submit`; a reconciler hook `relay_fields` (as `human.outcome_fields`) registered at open |
 | `host/human.py` | the append loop of `finish()` is extracted as `append_signed(service, log, events, extras) -> (landed, error)` and shared by `finish()` and `relay/submit.py` |
 | every `column.name` comparison (24 sites today in `host/{dispatch,sessions,runners,diff,visibility,workspace}.py`) | each site is listed in a table test, `test_column_r_sites`, stating R's answer; a new site fails the test until listed |
-| `WorkspaceService.open` | after `human.recover`, `relay.submit.recover(service)` (below), before anything is served |
+| `WorkspaceService.open` | ~~`relay.submit.recover(service)` after `human.recover`~~ amended H12e-2: recovery runs in R2's `Bridge.start` (honours the restore hold-off), not in `open` |
 
 **The `rd` field (H12d).** A request's signed meta (inside the seal) carries `rd`, the digest of the device's current
 declaration. On a replay or a byte-exact resend, `rd` is the one of the **first** send: the host matches a replay by its
@@ -5143,8 +5164,9 @@ clock is past the backup's time + 1 500 s (600 s before §11A.14 added the 900 s
   that is not the pinned one) keeps the marker and exits 9 (`host.unavailable`, "the marker is set, a running worker
   may continue until the host restarts"). `orch host relay start` clears the marker only through the host or with the
   host confirmed absent, and is refused under `ORCH_GRANT` (`human_only`).
-- R5 interface: register `service.outcomes.relay_fields` and run `relay.submit.recover(service)` in `open` after
-  `human.recover`; start the worker through `service.relay_starter` (or in `open`) only under `service.relay_lock`
+- R5 interface: register `service.outcomes.relay_fields`; start-up recovery (`relay.submit.recover(service)`) is **not**
+  run in `open` (amended H12e-2): R2 runs it in `Bridge.start`, honouring the restore hold-off (a stopped worker runs
+  nothing); start the worker through `service.relay_starter` (or in `open`) only under `service.relay_lock`
   after `relaylink.may_start`, setting `service.relay` to a worker with `stop()` and `join(timeout) -> bool`.
   `relay_starter(service)` runs **under** `relay_lock`: it must not take that lock, wait for a job of the workspace's
   worker thread, or block on anything that does (`close()` and `relay_stop()` take the lock; a starter that waits
@@ -5926,7 +5948,7 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   compares `digest = sha256(person_signing_bytes(ws, log, event))` plus `actor`. Under the lock (L3): the id logged with
   the same digest and actor → `committed`, `duplicate:true`, with its `seq`; with other content →
   `event.duplicate_id`; the id abandoned by a restore (in `lc.ids`, not logged) → `event.abandoned`. The outcome plan
-  records the digest, and `relay_fields` reconciliation matches it.
+  does not record the digest: the result builder (`relay_fields`) checks the identity (H12e-2).
 - **Known identity first (amendment A, decided 15 Oct 2026 by orch-52).** A known identity is answered **before**
   the freshness check: first the outcome store by `(ws, "r:<device>", idem = id)`, then the log dedup by `(log, id)`
   plus the signed-content digest and `actor` (L3). Only a never-seen event gets the ULID window check
@@ -5960,9 +5982,13 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   |---|---|---|---|
   | **A** not run | resend the same idem and the same signed bytes (a new rid and seq where the protocol needs them) | relay: unsigned 409 `stale_epoch` hint, sealed `stale_epoch`, `stale_timestamp`, `stale_sequence` (new rid), §8.6 step-4 silence or no answer; host: `timeout`, `cancelled`, `store.busy`, `lock.busy`, `rate.limited`, `quota.host`, `host.restarting`, `conn.overloaded`, `outcome.unknown` | resend |
   | **B** unknown | same idem only; resolve with `outcome.get`, then by a log read | `already_done{status:"unknown"}`, `rid_conflict`, `outcome.get` = `pending` (admitted, not run), `outcome.unknown_idem` before ULID time + 900 s + 300 s; `idem.expired` (resolve by the log only: answer → `questions[].answer.id` = own id; creation → `ticket.get(uid)` exists) | resolve; never re-sign |
-  | **C** definite, zero landed | a stored `refused` (never `failed`); a new signature is allowed | **C-auto** (14.4 re-sign may skip the review): `members.stale`, `ticket.key_not_next`. **C-review** (new review first): `event.bad_base`, `question.stale`, `event.expired`, `event.abandoned`, and `outcome.unknown_idem` after the bound when the log read shows the event absent | re-sign (C-auto) or re-review |
-  | **D** terminal or landed | never re-sign for this review | landed: `committed` (incl. `duplicate:true`), any `failed`; question: `question.answered`, `question.unknown`, `answer.not_allowed`, `answer.bad_option`; authority and visibility: `role.denied`, `member.unknown`, `device.scope`, `device.invalid`, `device.unknown`, `ticket.frozen`, `freeze.active`, `ticket.not_visible`, `not_found`; collisions: `ticket.exists` (uid), `ticket.bad_reference`, `event.duplicate_id`; request: `forbidden_scope`, `op.not_allowed`, `sig.invalid`, `validation.event`, `validation.text`, `invalid.input`, `idem.conflict`, `idem.required`; the 11A.4 identity codes | show; stop |
+  | **C** definite, zero landed | a stored `refused` (never `failed`; but see the H12e-2 note below: core records a refusal as `failed` with an empty landed list, and that counts as `refused`); a new signature is allowed | **C-auto** (14.4 re-sign may skip the review): `members.stale`, `ticket.key_not_next`. **C-review** (new review first): `event.bad_base`, `question.stale`, `event.expired`, `event.abandoned`, and `outcome.unknown_idem` after the bound when the log read shows the event absent | re-sign (C-auto) or re-review |
+  | **D** terminal or landed | never re-sign for this review | landed: `committed` (incl. `duplicate:true`), any `failed` with landed events; question: `question.answered`, `question.unknown`, `answer.not_allowed`, `answer.bad_option`; authority and visibility: `role.denied`, `member.unknown`, `device.scope`, `device.invalid`, `device.unknown`, `ticket.frozen`, `freeze.active`, `ticket.not_visible`, `not_found`; collisions: `ticket.exists` (uid), `ticket.bad_reference`, `event.duplicate_id`; request: `forbidden_scope`, `op.not_allowed`, `sig.invalid`, `validation.event`, `validation.text`, `invalid.input`, `idem.conflict`, `idem.required`; the 11A.4 identity codes | show; stop |
 
+- **`refused` is a reading, not a state (H12e-2, decided by orch-52).** There is no `refused` outcome step. A `failed`
+  outcome whose landed list is empty and which was recorded under the lock after the log check counts as "refused":
+  the class is decided by the error code (C or D by the table above), not by the state name. A `failed` with landed
+  events is D. No new outcome state.
 - **Auto re-sign (no new review), only when all hold:**
   1. the last attempt is C-auto: a host answer in state `refused` for that exact idem, and no earlier idem of the same
      review is unresolved (A or B);
@@ -6033,7 +6059,7 @@ One `store.locked()` span (re-entrant), held through the append and the outcome:
 | L4 | answer: the ticket exists and the person may see it; creation: the uid is unused | `not_found` (uniform for missing and invisible) / `ticket.exists` |
 | L5 | creation: `owner` = the actor's person; `key` == `store._next_key()`, computed here after `refresh` | `invalid.input` / `ticket.key_not_next` |
 | L6 | `judge_events(store, log, [ev])`: `model.preview` with `peek_stamp` (roster, base, hash, authority, scopes at the position) | the model's code |
-| L7 | `outcomes.plan(intent, [Planned(log, id, type, actor, digest)], key)`, fsync | — |
+| L7 | `outcomes.plan(intent, [Planned(log, id, type, actor)], key)`, fsync (no digest in `Planned`: H12e-2) | — |
 | L8 | `append_relay(...)`: re-checks `_signed_by` and `logged_event`; the store re-verifies the signature and the certificate | its codes |
 | L9 | classify: on an error, ask `logged_event(log, id)` **before** recording (landed → `committed`, else `refused` + code); `outcomes.commit` / `refuse` | — |
 
@@ -6044,6 +6070,22 @@ fills in or changes a submitted field: what lands is what the phone signed, plus
   C-auto). It carries `detail.next_key`, advisory and never a reservation. `ticket.exists` means only that the uid
   exists; for our own landed event L3 has already answered. `workspace.show.next_key` is `null` for a principal that
   may not create (a viewer, or no `decide`).
+
+**As built in H12e-2 (15 Oct 2026, decided by orch-52 after the core review of #467).**
+- **`orch.host.admission.device_standing(store, person_id, device_id) -> "ok" | "removed" | "unknown"`**: the
+  liveness of a device in the F1 log (`device.added`, `device.removed`, `device.revoked` and tombstones, and a
+  `member.removed` that removes the person's devices). R2's column-R `standing()` **must** use it (never
+  `state._core`, never `device_person`, which also answers for a removed device); `"removed"` and `"unknown"` both end
+  the standing. It takes the store lock itself (re-entrant), so it is safe inside R2's `store.locked()` span. Certificate
+  expiry is not part of it (`verify_cert`). Every entry into the store lock re-checks freshness.
+  **A removal is not durable across a restore:** a restore that abandons a `device.removed` revives the device (existing F1
+  behaviour, bounded by the 11A.4 hold-off and `readers reset`), so a lost phone must be **revoked**, not just removed.
+- **`judge_events` never lets a model exception escape**: any exception other than a model `Refusal` (`KeyError`,
+  `TypeError`, `ValueError`... on malformed but signed input) is `HostError("validation.event")`, a definite D. The
+  model's own refusal codes are unchanged, and `HumanOps._judge` behaves as before for valid input.
+- **Identity check (L7, 14.9):** the O6 identity check lives in the `relay.submit` result builder (`relay_fields`);
+  `Planned` carries no digest or key.
+- **Recovery (R5):** `relay.submit.recover` runs in R2's `Bridge.start`, not in `WorkspaceService.open`.
 
 **As built in H12e (core side, 15 Oct 2026).** Core now has everything the R2 handler calls from the step table;
 R2 (orch-29, `orch/relay/submit.py`) owns the order, the outcome plan, `append_relay` and the classification.
@@ -6058,7 +6100,7 @@ R2 (orch-29, `orch/relay/submit.py`) owns the order, the outcome plan, `append_r
     `event.abandoned` for a known id; checks the window only for a never-seen event (`event.expired`).
   - `dedup(store, log, event) -> int | None` and `lookup(store, log, id) -> Logged(seq, digest, actor) |
     "abandoned" | None`: the parts of L3. `signed_digest(ws, log, event)` is `"sha256:" + hex(sha256(
-    person_signing_bytes))`, the digest L7 records in `Planned` and `relay_fields` matches.
+    person_signing_bytes))`, the digest R2's result builder compares for the O6 identity check (not recorded in `Planned`, H12e-2).
   - `check_window(id, now)` and `ulid_ms(id)`: the window, both edges included, in ms (`WINDOW_PAST_S` = 900,
     `WINDOW_FUTURE_S` = 300); a malformed id is `validation.event`.
   - `check_target(store, log, event)`: L4 and L5 (`not_found` with one message for missing and invisible;
@@ -6130,7 +6172,7 @@ only for one signature at the signer's prompt (a TTY or the phone's sign sheet)"
 - `ticket.get` gains `doc.head` (`{"seq", "head"}` of the log's last event), `questions[].answer.id` (the counting
   event's id) and `members_v`, all from one snapshot, so a review needs one read. `workspace.show` gains `next_key`.
   These view fields ship before the first phone release (§0.4).
-- `relay/submit.py` (14.6), `judge_events`, the digest in `Planned` and in `relay_fields`.
+- `relay/submit.py` (14.6), `judge_events`, the identity check in the `relay_fields` result builder (no digest in `Planned`).
 - New codes: `event.expired`, `event.abandoned`, `ticket.key_not_next`.
 - The +1 500 s hold-off (11A.4), the F1 §5.1 amendment (14.7), and the vectors and the class table (14.8).
 - orch-29: protocol §8.7 (the one op) and §13 (single-use scope). orch-f1: the F1 question parser, `passphrase`
@@ -7580,6 +7622,22 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - **Logs.** The service manager writes the runner's output to `<state>/runner/runner.out` without rotation (the
   rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
   controlled stop: every managed run is stopped and verified before the runner exits.
+- **Dev-only foreground runner** (dev and tests; terminal follow-ups after #469). Without a service manager the
+  main-PID check can never pass, so a host and a runner run as separate foreground processes need an explicit seam:
+  `orch host run --foreground --dev-runner` (`Host(dev_runner=True)`) also admits a runner that
+  `orch runner run --foreground` announced in `<run>/term/<uid>/dev-runner.json` (`orch.runner.devmode`: 0600 in the
+  runner's 0700 terminal directory, `{v:1, pid, birth, uid}`, removed at exit). Admitted only when the kernel peer UID
+  is the host UID, the file is a private regular file of that UID (no link) in a private directory, it names that
+  UID and the peer PID, and that PID is still the process born at the recorded time (a stale file whose PID was reused
+  is refused); every error denies. The main-PID check still applies first. Refused at start (`invalid.input`): without
+  `--foreground` (the units never pass it), under the service manager (`XPC_SERVICE_NAME` is `io.orch.host` or
+  `io.orch.runner`), and for a service run directory (`/Users/Shared/orch/run`, `/run/orch`; decided by identity:
+  as written and resolved, case-folded on macOS, and by `(st_dev, st_ino)` of every existing ancestor against each
+  existing root; also in `Host` itself). The file is opened `O_NONBLOCK | O_NOFOLLOW` and must be a regular file
+  (`custody.read_json`), so a FIFO in its place never blocks the accept loop. Any other run directory (`<state>/run`, `--run`, `ORCH_HOST_RUN_DIR`) is a dev one:
+  a short `ORCH_HOST_RUN_DIR` is what tests use for the socket-path limit. The host logs a warning (and the CLI prints
+  one) at start. Tier A: like the main-PID check this is fault separation, not a boundary (any process of the host
+  UID can write the file); it keeps a stale or misdirected process from being taken for the runner.
 - **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
   ticket must be exactly 43 characters; at most 96 term-socket connections are handled at once; the lockout is per
   runner, so one client replaying seen tickets locks every attachment out for 60 s.
@@ -7634,7 +7692,11 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   the event loop at `term.open` and `term.attach`; `run.stop` and `attach.cancel` never need it.
 - **Limits.** The host refuses `attach.limit` from the runner's `runner.term` counts (pending capabilities count
   toward none) and `run.limit` (16 shells per person, 64 runs per runner), `rate.limited` (10 starts per minute,
-  burst 5; 30 `term.attach` mints per minute per person, burst 10). The runner's connection cap is 96 (64 attachments
+  burst 5; 30 `term.attach` mints per minute per person, burst 10). Each of these refusals carries
+  `retry_after_ms` as the `Error` member of §0.2 (there is no `detail` field; terminal follow-ups after #469):
+  `rate.limited` the time until the person's next token in that bucket (at most 6 s for starts, 2 s for mints),
+  `attach.limit` 2 000, `run.limit` 5 000. The runner's own `attach.limit` (256 pending capabilities) reaches the
+  caller as `attach.limit` with `retry_after_ms` 2 000, not `run.spawn_failed`. The runner's connection cap is 96 (64 attachments
   plus handshakes); at most 256 capabilities wait to be presented (`attach.allow` beyond: `attach.limit`). Per
   attachment the runner queues at most 4 096 control frames and reads ahead at most 64 frames while a PTY write waits
   for room; beyond either the attachment is revoked, its write lease is released at once, and it ends with
@@ -7658,7 +7720,11 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   the client's own run directory, directory owner and mode, peer UID and PID, `hello.gen`), owns `input_id` and
   `lease_gen`, keeps one input frame in flight, resends on `throttle` with the same id and reports unacknowledged ids
   as `lost`. A runner frame of the wrong shape ends the stream with `protocol`; a stream that closes without `end`
-  ends with `closed`; `send`/`resize` after the end raise `TermEnded`.
+  ends with `closed`; `send`/`resize` after the end raise `TermEnded`. `send` writes non-blocking under its own
+  deadline (`send_timeout`, default 5 s per frame), independent of `recv`'s timeout, so the next input frame that an
+  `ack` puts on the wire from inside `recv` is never cut by a short read timeout; a runner that takes no input for that
+  long ends the stream with `send_timeout` (socket closed; the unacknowledged ids are `lost`). The dashboard server
+  may treat `send_timeout` like `runner.lost` (4503, retry with backoff). Terminal follow-ups after #469.
 - **Terminals addon.** `addons/terminals/orch-addon.json` (capability `pty`, no fields); the host requires it granted
   and enabled. `orch runner terminals on|off --workspace W`: `on` needs the person's own terminal and the prefix (never
   under `ORCH_GRANT`), `off` needs none; both only with dashboard execution already on.

@@ -859,3 +859,43 @@ def test_the_prune_takes_its_starting_head_before_its_snapshot(env, tmp_path):
         assert {"device": d3[2:], "reason": "f1_standing"} in mk.head()["gate"]["reasons"] and mk.seal_state().gated
     finally:
         mk.close()
+
+
+# -- delta 6 nits (orch-52) ---------------------------------------------------------------------------------------
+
+
+def test_t1_lock_held_is_false_while_another_thread_holds_the_lock(env):
+    import threading
+
+    inside, release = threading.Event(), threading.Event()
+
+    def hold():
+        with env.store.locked():
+            inside.set()
+            release.wait(10)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    try:
+        assert inside.wait(10)
+        assert not env.store.lock_held()  # held, but by the other thread
+    finally:
+        release.set()
+        t.join(10)
+
+
+def test_t2_the_snapshot_factory_never_enters_the_store_lock():
+    """The prune's snapshot factory (``standing_now`` in ``_rebuild_gate``) must not call ``store.locked()`` (or any
+    re-entering store call): it runs inside R6's writer lock, so entering the store lock there would invert the
+    order (store, then writer) and could reload."""
+    from orch.host import relayr6
+
+    tree = ast.parse(Path(relayr6.__file__).read_text())
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "standing_now")
+    calls = {
+        n.func.attr
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "store"
+    }  # fmt: skip
+    assert calls <= {"lock_held"}, calls

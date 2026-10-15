@@ -2,6 +2,7 @@ name: orch-core
 on:
   pull_request:
     branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]  # a draft is not tested until it is ready
   push:
     branches: [develop]
 permissions:
@@ -15,6 +16,7 @@ defaults:
 jobs:
   tests:
     name: core tests (py${{ matrix.python }})
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -38,12 +40,14 @@ jobs:
           ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}
   perf:
     name: core perf (py${{ matrix.python }})
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.14"]
+        # a PR measures on 3.14 only; the push to develop after the merge measures on both
+        python: ${{ fromJSON(github.event_name == 'pull_request' && '["3.14"]' || '["3.11","3.14"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -64,6 +68,7 @@ jobs:
     # tests/relay/vectors/SOURCE, on loopback only (no deployed relay is ever contacted). Its own job, so the main
     # matrix is not slowed; the tests fail (never skip) here if the relay checkout is missing.
     name: relay T2 (real relay, py3.14)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

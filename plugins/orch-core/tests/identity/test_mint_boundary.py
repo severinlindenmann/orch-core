@@ -1,12 +1,14 @@
-"""#501 (Opus D2-1): ``orch.identity._mint.make`` forges a valid checked result in-process, so only the two checkers
-that mint, ``identity/wscard.py`` and ``identity/certreq.py``, may reach it. By AST over every module of ``orch``:
+"""#501 (Opus D2-1, Codex P2 on #512): ``orch.identity._mint.make`` forges a valid checked result in-process, so only
+the two checkers that mint, ``identity/wscard.py`` and ``identity/certreq.py``, may reach ``_mint`` at all. By AST
+over every module of ``orch``, structurally (no alias tracking):
 
-* ``_mint`` is reached only as a module bound by ``from . import _mint`` / ``from orch.identity import _mint [as x]``
-  / ``import orch.identity._mint as x``, and only as ``x.check`` or ``x.no_subclass``; ``x.make`` only in the two
-  minting modules;
-* never ``from orch.identity._mint import …`` (a bare ``make`` or the key would be unreachable for this scan), never
-  the dotted path (``orch.identity._mint.make``), never the bare module (``getattr(_mint, …)``, passing it on), and
-  never the string ``"_mint"`` (``import_module``, ``getattr``).
+* outside ``_mint.py``, ``wscard.py`` and ``certreq.py``, **any** occurrence of the identifier ``_mint`` is a
+  violation: an import alias name or ``as`` name, a segment of an ``import``/``from`` module path, an attribute name,
+  a plain name. So a re-export (``from orch.identity.certreq import _mint``) and an attribute chain
+  (``orch.identity.certreq._mint.make``) are both refused;
+* a string constant containing ``_mint`` as a dotted segment (``importlib.import_module``, ``__import__``,
+  ``getattr``) is a violation everywhere outside ``_mint.py``;
+* a consumer elsewhere re-checks a minted type through ``certreq.require_minted``.
 
 Defence in depth, as the import ban: same-process code can always reach the key; this keeps orch's own code honest.
 """
@@ -21,100 +23,81 @@ import pytest
 import orch
 
 ROOT = Path(orch.__file__).resolve().parent
-MINT = "orch.identity._mint"
-MAKERS = frozenset({"identity/wscard.py", "identity/certreq.py"})
-SAFE = frozenset({"check", "no_subclass"})
+MINTERS = frozenset({"identity/wscard.py", "identity/certreq.py"})
+NAME = "_mint"
 
 
-def _package(rel: str) -> str:
-    parts = ("orch", *Path(rel).with_suffix("").parts)
-    return ".".join(parts[:-1])
-
-
-def _resolve(node: ast.ImportFrom, package: str) -> str:
-    if node.level == 0:
-        return node.module or ""
-    base = package.split(".")
-    base = base[: len(base) - (node.level - 1)]
-    return ".".join([*base, node.module] if node.module else base)
-
-
-def uses(source: str, rel: str) -> list[str]:
-    """Every way ``source`` (the module at ``rel`` under ``orch/``) reaches ``_mint``, as short tokens."""
-    tree = ast.parse(source)
-    aliases: set[str] = set()
+def uses(source: str) -> list[str]:
+    """Every occurrence of the identifier ``_mint`` in ``source``, as short tokens."""
     found: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for a in node.names:
-                if a.name == MINT and a.asname:
-                    aliases.add(a.asname)
-                elif a.name == MINT or a.name.startswith(MINT + "."):
-                    found.append("import-dotted")
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.alias):
+            if NAME in node.name.split(".") or node.asname == NAME:
+                found.append("alias")
         elif isinstance(node, ast.ImportFrom):
-            mod = _resolve(node, _package(rel))
-            if mod == MINT or mod.startswith(MINT + "."):
-                found += [f"from-mint:{a.name}" for a in node.names]
-            elif mod == "orch.identity":
-                for a in node.names:
-                    if a.name == "_mint":
-                        aliases.add(a.asname or "_mint")
-                    elif a.name == "*":
-                        found.append("star")
-    held = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id in aliases:
-                held.add(id(node.value))
-                found.append(f"attr:{node.attr}")
-            elif node.attr == "_mint":
-                found.append("attr-chain")
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and "_mint" in node.value.split("."):
-            found.append("string")
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in aliases and id(node) not in held:
-            found.append("bare")
+            if node.module and NAME in node.module.split("."):
+                found.append("from-path")
+        elif isinstance(node, ast.Attribute):
+            if node.attr == NAME:
+                found.append("attr")
+        elif isinstance(node, ast.Name):
+            if node.id == NAME:
+                found.append("name")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if NAME in node.value.replace("/", ".").split("."):
+                found.append("string")
     return found
 
 
 def violations(source: str, rel: str) -> list[str]:
-    allowed = {f"attr:{a}" for a in SAFE} | ({"attr:make"} if rel in MAKERS else set())
-    return [u for u in uses(source, rel) if u not in allowed]
+    found = uses(source)
+    if rel in MINTERS:
+        return [u for u in found if u == "string"]
+    return found
 
 
-def test_only_the_two_checkers_mint():
+def test_only_the_two_checkers_reach_mint():
     bad = {}
-    makers = set()
     for path in sorted(ROOT.rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
         if rel == "identity/_mint.py":
             continue
-        source = path.read_text(encoding="utf-8")
-        if v := violations(source, rel):
+        if v := violations(path.read_text(encoding="utf-8"), rel):
             bad[rel] = v
-        if "attr:make" in uses(source, rel):
-            makers.add(rel)
     assert bad == {}
-    assert makers == MAKERS  # both still mint (the rule is not vacuous)
+
+
+def test_both_checkers_still_mint():
+    """The rule is not vacuous: both minting modules call ``_mint.make``."""
+    for rel in MINTERS:
+        assert "_mint.make(" in (ROOT / rel).read_text(encoding="utf-8"), rel
 
 
 @pytest.mark.parametrize(
     ("source", "rel", "want"),
     [
-        ("from . import _mint\n_mint.make(X)\n", "identity/answers.py", ["attr:make"]),
-        ("from . import _mint\n_mint.check(x, X)\n", "identity/answers.py", []),
         ("from . import _mint\n_mint.make(X)\n", "identity/certreq.py", []),
-        ("from ._mint import make\n", "identity/certreq.py", ["from-mint:make"]),
-        ("from orch.identity._mint import _KEY\n", "relay/x.py", ["from-mint:_KEY"]),
-        ("from ..identity import _mint as m\nm.make(X)\n", "relay/x.py", ["attr:make"]),
-        ("from orch.identity import _mint\n_mint._KEY\n", "host/x.py", ["attr:_KEY"]),
-        ("import orch.identity._mint\norch.identity._mint.make(X)\n", "host/x.py", ["import-dotted", "attr-chain"]),
-        ("import orch.identity._mint as m\nm.make(X)\n", "host/x.py", ["attr:make"]),
-        ("from . import _mint\ngetattr(_mint, 'make')(X)\n", "identity/answers.py", ["bare"]),
-        ("from . import _mint\nf(_mint)\n", "identity/answers.py", ["bare"]),
+        ("from . import _mint\n_mint.check(x, X)\n", "identity/answers.py", ["alias", "name"]),
+        ("from . import _mint\n_mint.make(X)\n", "identity/answers.py", ["alias", "name"]),
+        ("from ._mint import make\n", "identity/answers.py", ["from-path"]),
+        ("from orch.identity._mint import _KEY\n", "relay/x.py", ["from-path"]),
+        ("from ..identity import _mint as m\nm.make(X)\n", "relay/x.py", ["alias"]),
+        ("import orch.identity._mint as m\nm.make(X)\n", "host/x.py", ["alias"]),
+        ("import orch.identity._mint\norch.identity._mint.make(X)\n", "host/x.py", ["alias", "attr"]),
+        # re-exports through the two minting modules (Codex P2 on #512)
+        ("from orch.identity.certreq import _mint as m\nm.make(X)\n", "host/x.py", ["alias"]),
+        ("from orch.identity.wscard import _mint as m\nm.make(X)\n", "host/x.py", ["alias"]),
+        ("from .certreq import _mint\n_mint.make(X)\n", "identity/answers.py", ["alias", "name"]),
+        ("from orch.identity import certreq\ncertreq._mint.make(X)\n", "host/x.py", ["attr"]),
+        ("import orch.identity.certreq\norch.identity.certreq._mint.make(X)\n", "host/x.py", ["attr"]),
+        ("from orch.identity import wscard\nwscard._mint.make(X)\n", "host/x.py", ["attr"]),
+        # dynamic access by string
         ("import importlib\nimportlib.import_module('orch.identity._mint')\n", "host/x.py", ["string"]),
-        ("from orch import identity\ngetattr(identity, '_mint')\n", "host/x.py", ["string"]),
-        ("from orch.identity import *\n", "host/x.py", ["star"]),
+        ("__import__('orch.identity._mint')\n", "host/x.py", ["string"]),
+        ("from orch.identity import certreq\ngetattr(certreq, '_mint')\n", "host/x.py", ["string"]),
+        ("import importlib\nimportlib.import_module('orch.identity._mint')\n", "identity/certreq.py", ["string"]),
+        # other identifiers are not ``_mint``
+        ("self._mints = {}\ntake_mint(p)\n", "host/x.py", []),
     ],
 )
 def test_the_scan_catches(source, rel, want):

@@ -66,6 +66,7 @@ __all__ = [
     "make_cert_challenge",
     "make_cert_rejection",
     "open_cert_request",
+    "require_minted",
 ]
 
 CERT_PENDING_MS = 600_000  # §8.4: expires_ms = created_ms + 10 min
@@ -599,6 +600,15 @@ class CertRejection:
     def signed(self) -> dict[str, Any]:
         """A fresh copy of the verified signed rejection, to relay unchanged."""
         return canon.loads_strict(self.signed_cj)
+
+
+def require_minted(obj: object, cls: type) -> None:
+    """Refuse (``malformed``) unless ``obj`` is exactly a ``cls`` minted over its content, for a consumer outside this
+    module (``answers``). ``cls`` is one of this module's minted types. Only ``wscard.py`` and ``certreq.py`` reach
+    ``_mint`` (#501, ``tests/identity/test_mint_boundary.py``)."""
+    if cls not in (CertRequest, CertInner, CertChallenge, CertRejection):
+        raise _bad("not a minted cert type")
+    _mint.check(obj, cls)
 
 
 def _binding(o: Mapping[str, Any], req: Mapping[str, Any], keys_hash: str) -> None:

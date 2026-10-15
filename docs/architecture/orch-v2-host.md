@@ -7046,8 +7046,10 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   `not_for_this_device` and before any person-key operation, an inner whose `request_id` or clear binding (offer,
   attempt, device, `dk_hash`) is not the request's; `make_cert_rejection(pk_pub, sign, request)` takes the minted
   request. A raw `request_o` or a hand-built inner is `malformed`. `tests/identity/test_mint_boundary.py` (AST over
-  `orch`) allows `_mint.make` only in `identity/wscard.py` and `identity/certreq.py`, and elsewhere only
-  `_mint.check`/`_mint.no_subclass` through a bound module name.
+  `orch`) refuses any occurrence of the identifier `_mint` (import name or path segment, attribute, name)
+  outside `identity/_mint.py`, `identity/wscard.py` and `identity/certreq.py`, and a `"_mint"` string everywhere
+  (Codex P2 on #512: re-exports and attribute chains through the minting modules). Other consumers re-check a minted
+  type with `certreq.require_minted(obj, cls)` (`answers.py`).
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 

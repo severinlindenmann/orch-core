@@ -20,6 +20,7 @@ import { HostGeneral } from './host/General'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
 import { HostRecords } from './host/Records'
+import { HostDevices } from './host/Devices'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
 import { useMe } from '@/app/useMe'
 
@@ -49,6 +50,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {tab === 'gates' && <HostGates workspace={workspace} />}
         {tab === 'grants' && <HostGrants workspace={workspace} />}
         {tab === 'records' && <HostRecords key={workspace.id} workspace={workspace} />}
+        {tab === 'devices' && <HostDevices key={workspace.id} workspace={workspace} />}
       </SettingsFrame>
     )
   }

@@ -196,6 +196,26 @@ def test_an_owner_sees_every_grant_and_anyone_else_their_own(worlds, team):
     assert seen(mara) == [grants["mara"]]  # a maintainer is not an owner
 
 
+def test_a_grant_carries_its_label_from_grant_list(worlds, team):
+    """H11c-2: `grant.list` items name the grant.issued label (`runner` marks the runner grant)."""
+    env, people, grants = team
+    owner = worlds(env.owner.ref)
+    rows = {g["id"]: g for g in owner.get(f"/api/w/{owner.stub.ws}/grants").json()}
+    assert rows[grants["tom"]]["label"] == "tests"
+
+
+@pytest.mark.parametrize(
+    ("label", "shown"),
+    [("runner", "runner"), (None, None), ("Not A Label", None), ("x" * 33, None), (7, None), ("\u202erunner", None)],
+)
+def test_a_grant_label_is_shown_only_as_the_schema_allows(label, shown):
+    row = {"id": "gr_" + "0" * 26, "person": "p_a", "scope": "all", "verbs": "agent", "issued_at": "t",
+           "expires_at": "t", "revoked_at": None, "sessions": 0}  # fmt: skip
+    if label is not None:
+        row["label"] = label
+    assert adapters.settings.grants({"grants": [row]}, False)[0].label == shown
+
+
 def test_a_revoked_grant_has_who_and_when_only_from_a_read_ext_2_host(worlds, team):
     env, people, grants = team
     env.tick()

@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { encode } from 'uqr'
-import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PRIMARY_COMMAND, type PairBlocked, deviceRemoveCommand, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
+import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, primaryCommand, type PairBlocked, deviceRemoveCommand, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
 import { ApiError, type Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline, Prose } from '@/components/sign/visible'
@@ -206,7 +206,12 @@ function Blocked({ blocked, workspace }: { blocked: PairBlocked; workspace: Work
       {convenience && (
         <div data-testid="pair-blocked-convenience" className="space-y-2">
           <p data-testid="pair-convenience-off">
-            Turn click-to-sign off first: <code className="select-all break-all rounded bg-surface-3 px-1 font-mono text-[12px] text-text">{convenienceOffCommand(workspace.prefix)}</code>
+            Turn click-to-sign off first:{' '}
+            {convenienceOffCommand(workspace.prefix) !== null ? (
+              <code className="select-all break-all rounded bg-surface-3 px-1 font-mono text-[12px] text-text">{convenienceOffCommand(workspace.prefix)}</code>
+            ) : (
+              <span data-testid="pair-command-unsafe">run orch host convenience off for this workspace (its prefix has characters that can&apos;t be put in a command safely)</span>
+            )}
           </p>
           {blocked.cause === 'custody' && (
             <p data-testid="pair-convenience-custody" className="text-text-muted">
@@ -492,9 +497,13 @@ function OfferView(p: {
         <ol className="list-decimal space-y-3 pl-5">
           <li className="space-y-1" data-testid="pair-step-primary">
             <p>Confirm on your Mac&apos;s primary. Run:</p>
-            <CopyText label="Command for the primary" testId="pair-primary-command">
-              {PRIMARY_COMMAND}
-            </CopyText>
+            {primaryCommand(status?.offer_id) !== null ? (
+              <CopyText label="Command for the primary" testId="pair-primary-command">
+                {primaryCommand(status?.offer_id)!}
+              </CopyText>
+            ) : (
+              <p role="alert" data-testid="pair-command-unsafe" className="text-warning">The offer id can&apos;t be put in a command safely. Cancel this pairing and start again.</p>
+            )}
             <p>It shows a code. Confirm only if it is this one:</p>
             <p data-testid="pair-cert-code" className="select-all font-mono text-2xl tracking-[0.3em] text-text">
               {status?.cert_code ?? '……'}
@@ -598,15 +607,19 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                   <TableCell className="max-w-64 whitespace-normal">
                     <DeviceLabel label={d.label} named={false} />
                     <div>
-                      <Mono className="break-all text-text-muted">{d.id}</Mono>
+                      <Mono className="break-all text-text-muted"><Inline>{d.id}</Inline></Mono>
                     </div>
                     <details data-testid="device-remove" className="mt-1 text-[12px]">
                       <summary className="cursor-pointer text-text-muted">Remove this device</summary>
                       <div className="mt-1 space-y-1">
                         <p className="text-text-muted">Removing needs your person key, so it is done in a terminal on this Mac (you type your recovery code). It also rotates the relay keys.</p>
-                        <CopyText label="Command to remove this device" testId="device-remove-command">
-                          {deviceRemoveCommand(d.id, workspace.prefix)}
-                        </CopyText>
+                        {deviceRemoveCommand(d.id, workspace.prefix) !== null ? (
+                          <CopyText label="Command to remove this device" testId="device-remove-command">
+                            {deviceRemoveCommand(d.id, workspace.prefix)!}
+                          </CopyText>
+                        ) : (
+                          <p role="alert" data-testid="device-remove-unsafe" className="text-warning">This device&apos;s id has characters that can&apos;t be put in a command safely. Don&apos;t remove it from here; ask for help.</p>
+                        )}
                       </div>
                     </details>
                   </TableCell>

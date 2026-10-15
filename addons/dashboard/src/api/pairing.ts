@@ -111,8 +111,15 @@ export interface PairDevice extends MemberDevice {
 export const pairedDevices = (members: PairMember[]): PairDevice[] =>
   members.flatMap((m) => m.devices.filter((d) => d.relay !== undefined).map((d) => ({ ...d, person: m.person, name: m.name })))
 
-/** CLI-only removal (needs the person key; the recovery code is typed). ASSUMPTION: R6 names no command; this one is a guess. */
-export const deviceRemoveCommand = (device: string, ws: string) => `orch device remove ${device} --workspace ${ws}`
+/** A word that is safe to put into a command the person pastes into a shell: plain ASCII letters, digits and `._-`, no
+ * metacharacters, no invisible or bidi characters (review N1). Host-served values that fail it are never put in a command. */
+const SHELL_WORD = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+export const shellWord = (value: unknown): value is string => typeof value === 'string' && SHELL_WORD.test(value)
+
+/** CLI-only removal (needs the person key; the recovery code is typed). ASSUMPTION: R6 names no command; this one is a guess.
+ * Null when the device id or workspace prefix can't be put in a command safely. */
+export const deviceRemoveCommand = (device: string, ws: string): string | null =>
+  shellWord(device) && shellWord(ws) ? `orch device remove ${device} --workspace ${ws}` : null
 
 /** A `pair` sub item: no secrets, so the page doesn't poll. */
 export interface PairItem {
@@ -181,10 +188,12 @@ export function checkSas(typed: string, sas: string | null | undefined): SasChec
   return t === s ? 'match' : 'differ'
 }
 
-/** Where the person confirms on the Mac's primary (ASSUMPTION: R6 runs it inline in `orch host relay pair`; no name of its own). */
-export const PRIMARY_COMMAND = 'orch keys primary approve'
-/** The `device.added` signature (ASSUMPTION: the existing hand-off command; the code comes with the prepared request). */
-export const SIGN_COMMAND = 'orch sign <code>'
+/** The primary's approval of a dashboard-created offer (R6 #473, orch-52): the offer id is 32 lower-case hex characters,
+ * anything else is never put in a command. */
+export const primaryCommand = (offerId: string | null | undefined): string | null =>
+  typeof offerId === 'string' && /^[0-9a-f]{32}$/.test(offerId) ? `orch host relay pair --resume --offer ${offerId}` : null
+/** The `device.added` signature: the existing hand-off command; the code comes with the prepared request. */
+export const SIGN_COMMAND = 'orch sign <CODE>'
 /** Typed SAS mismatches allowed per offer (orch-52); the third refuses the offer. */
 export const SAS_ATTEMPTS = 3
-export const convenienceOffCommand = (ws: string) => `orch host convenience off --workspace ${ws}`
+export const convenienceOffCommand = (ws: string): string | null => (shellWord(ws) ? `orch host convenience off --workspace ${ws}` : null)

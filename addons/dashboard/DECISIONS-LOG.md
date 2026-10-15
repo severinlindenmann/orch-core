@@ -1635,7 +1635,7 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
   3. `pair.list` rows may carry `cert_ready: true` (certificate in, ready for the `relay.pair_device` signature) and `needs_remove`
      (the host's "remove the device" text after a post-add failure). Without them: cert_pending shows only the primary step; failed
      shows a core sentence about removing the device.
-  4. The primary command is shown as `orch keys primary approve` (the CLI name is not fixed; `PRIMARY_COMMAND`).
+  4. The primary command is shown as `orch host relay pair --resume --offer <offer_id>` (the CLI name is not fixed; `PRIMARY_COMMAND`).
   5. Hand-off actions `pair_device {offer}` and `device_remove {device}` are new `HandoffAction`s for the server's `/handoff` route;
      neither is click-eligible (terminal only). The server refuses them today (unknown action): they are only reachable behind the gate.
   6. Offer TTL: always the host's `expires_ms` (5-minute class); nothing is hard-coded.
@@ -1682,7 +1682,12 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **SAS attempts:** up to 3 per offer. Each distinct full-length mismatch counts one; the page shows the attempts left; the third calls
   `pair.answer {approve:false}` and shows the host's `rejected` reason. **ASSUMPTION:** the page counts (per mounted offer) and passes
   `mismatches` with the refusal so the host can give the reason; if the host counts itself, the page should read its count instead.
-- **Terminal steps:** cert_pending shows two numbered steps with copyable commands: the primary approval and `orch sign <code>` for the
+- **Terminal steps:** cert_pending shows two numbered steps with copyable commands: the primary approval and `orch sign <CODE>` for the
   `device.added` hand-off (**Get the signing code** opens the existing hand-off, which shows the real code). Not in the browser: a paired
   workspace refuses click-to-sign. **ASSUMPTIONS:** R6 runs the primary step inline in `orch host relay pair` and names no command of its
-  own, so the page shows the placeholder `orch keys primary approve`; `orch sign <code>` is the existing hand-off command.
+  own, so the page shows the placeholder `orch host relay pair --resume --offer <offer_id>`; `orch sign <CODE>` is the existing hand-off command.
+
+## 2026-10-15 Pairing commands: confirmed names, and only plain words from the host go into a shell command
+
+- **Decision:** the primary step is `orch host relay pair --resume --offer <offer_id>` and the hand-off is `orch sign <CODE>` (R6 #473 head a4b7bb0f, per orch-52). Offer ids are 32 lower-case hex characters, as in the contract; the fixtures use that format. Every command the page offers for pasting into a shell is built only from host values that pass `shellWord` (ASCII letters, digits, `._-`, at most 64, not starting with `-`) or, for the offer, exactly 32 lower-case hex characters. Anything else gives a warning and no command (Opus delta N1). The device id in the list is shown through `Inline`, so hidden and bidi characters are visible. `orch device remove <id> --workspace <ws>` is still an assumption: R6 names no removal command.
+- **Revert:** only with a host that guarantees these formats in the contract, and then the checks stay as defence in depth.

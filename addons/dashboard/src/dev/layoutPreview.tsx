@@ -172,7 +172,7 @@ function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
 
 const LONG_LABEL = `Severin’s iPhone 17 Pro Max ${LONG_WORD}`.slice(0, 80)
 const pairOffer = (state: PairOfferStatus['state'], over: Partial<PairOfferStatus> = {}): PairOfferStatus => ({
-  offer_id: 'of_' + '7'.repeat(32), state, created_ms: Date.now() - 60_000, expires_ms: Date.now() + 240_000, scopes: ['look', 'decide'], label: LONG_LABEL, ...over,
+  offer_id: '7'.repeat(32), state, created_ms: Date.now() - 60_000, expires_ms: Date.now() + 240_000, scopes: ['look', 'decide'], label: LONG_LABEL, ...over,
 })
 const pairDevice = (i: number, over: Partial<MemberDevice> = {}): MemberDevice => ({
   id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`, paired_ms: Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000, relay: true,
@@ -198,7 +198,7 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
       return { offers: [pairOffer('cert_pending', { cert_code: 'H4WZ7P' })], members }
     case 'pair-failed':
       // A failed offer is not live: the scenario follows it as the page would right after the failure.
-      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: 'of_' + '7'.repeat(32) }, members }
+      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: '7'.repeat(32) }, members }
     case 'pair-devices':
       return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
     default:

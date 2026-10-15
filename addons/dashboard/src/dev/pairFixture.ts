@@ -68,7 +68,7 @@ export function createPairFixture(opts: PairFixtureOptions = {}): PairFixture {
         throw new ApiError(409, { ...refused, retryable: false })
       }
       n += 1
-      const offer_id = 'of_' + hex(n)
+      const offer_id = hex(n)
       const now = Date.now()
       const expires_ms = now + (opts.ttlMs ?? 300_000)
       offers = [...offers, { offer_id, state: 'open', created_ms: now, expires_ms, scopes: ['look', 'decide'] }]

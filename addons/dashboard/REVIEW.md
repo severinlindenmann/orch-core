@@ -589,6 +589,6 @@ this host yet." To see the page, run `npm run dev` and open the dev-only scenari
   link is dropped) and the https fallback as selectable text (not a link); **Cancel pairing**.
 - `/__layout/pair-pending`: type the phone's code. Reject has the focus; Approve stays off until the code matches (`K7Q2MA`; `k7q-2ma`
   works too); a different code says "The codes differ: reject this phone." and counts an attempt: after 3 wrong codes the phone is refused.
-- `/__layout/pair-cert`: two terminal steps with copyable commands (primary approval with the cert code; `orch sign <code>`). `/__layout/pair-failed`: the reason and "remove the device".
+- `/__layout/pair-cert`: two terminal steps with copyable commands (primary approval with the cert code; `orch sign <CODE>`). `/__layout/pair-failed`: the reason and "remove the device".
 - `/__layout/pair-devices`: the list from `member.list` (the Mac itself is not listed; a two-line label; an empty one shows "phone");
   **Remove this device** opens the CLI command as text (removal is CLI only this round).

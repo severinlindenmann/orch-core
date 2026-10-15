@@ -27,7 +27,7 @@ from .errors import NotFound, Unavailable
 from .fs import RepoPins, open_pin
 from .patchtext import Change, diff_trees, quote_path, render
 from .pinning import pin_repo
-from .repo import Repo, check_dot_git
+from .repo import Repo
 
 __all__ = ["PROFILES", "allowed_paths", "run"]
 
@@ -51,8 +51,9 @@ def _str(args: dict[str, Any], key: str, *, optional: bool = False) -> str | Non
 
 
 def allowed_paths(profile: str, hello: dict[str, Any]) -> list[str]:
-    """The directories the profile may open: the pins (``gitdir``: gitdir and ``commondir``; ``worktree``: those and
-    the working copy) or, for ``pin``, the declared repo paths."""
+    """The directories the profile may open: the pins (``gitdir``: gitdir, ``commondir`` and the working copy's
+    ``.git`` alone; ``worktree``: gitdir, ``commondir`` and the working copy) or, for ``pin``, the declared repo
+    paths."""
     if profile == "pin":
         roots = hello.get("roots")
         if not isinstance(roots, list) or not roots or not all(isinstance(r, str) and r.startswith("/") for r in roots):
@@ -62,6 +63,8 @@ def allowed_paths(profile: str, hello: dict[str, Any]) -> list[str]:
     out = [pins.gitdir.path, pins.commondir.path]
     if profile == "worktree":
         out.append(pins.worktree.path)
+    else:  # #486: exactly the working copy's .git (the Repo open checks it), the working copy only as an ancestor
+        out.append(pins.worktree.path.rstrip("/") + "/.git")
     return out
 
 
@@ -400,7 +403,6 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
                 raise Unavailable("bad request: tree_check takes no arguments")
             worktree = open_pin(pins.worktree)  # device and inode checked: still the pinned working copy
             try:
-                check_dot_git(pins, worktree)  # #486: its .git still names the pinned gitdir
                 return treecheck.check(repo, worktree)
             finally:
                 worktree.close()

@@ -6,8 +6,9 @@ Opening checks, every time (F7):
   ``commondir`` file (if any) still names the pinned ``commondir``;
 * git's back-pointers still match the pins (#486, :func:`check_back_pointers`): a linked worktree's gitdir is
   ``<commondir>/worktrees/<id>`` and its ``gitdir`` file names the pinned ``<working copy>/.git``; a main
-  repository's gitdir is ``<working copy>/.git``; and the working copy's ``.git`` is a regular file (linked) or the
-  pinned gitdir itself (main). Pins a compromised pin child forged, or a worktree moved since, are refused here;
+  repository's gitdir is ``<working copy>/.git``; and the working copy's ``.git``, read through the pinned working
+  copy's fd (:func:`check_dot_git`), names the pinned gitdir (linked) or is it (main). Pins a compromised pin child
+  forged, or a worktree moved since, are refused here;
 * no ``reftable/`` directory and an allowed config (:mod:`orch.gitread.config`);
 * ``objects/`` is a real directory (a symlinked ``objects/`` is refused by ``O_NOFOLLOW``).
 
@@ -75,10 +76,9 @@ def check_back_pointers(pins: RepoPins, gitdir: Dir) -> None:
     * a linked gitdir is ``<commondir>/worktrees/<id>`` and its ``gitdir`` file (read with ``O_NOFOLLOW``) names the
       pinned working copy's ``.git``, byte for byte, as :func:`orch.gitread.pinning.pin_repo` requires (a worktree
       moved since it was pinned names its new place and is refused too);
-    * a main repository's gitdir is the pinned working copy's ``.git``;
-    * the working copy's ``.git`` (by ``lstat`` of its path: the ``gitdir`` profile may not open the working copy)
-      is a regular file for a linked worktree and the pinned gitdir directory itself for a main repository. This
-      only adds refusals; the ``worktree`` profile also reads the file itself (:func:`check_dot_git`).
+    * a main repository's gitdir is the pinned working copy's ``.git``.
+
+    The working copy's own ``.git`` is checked by :func:`check_dot_git` (fd-based), which :class:`Repo` runs too.
 
     ``gitdir``: the pinned gitdir, opened by :func:`~orch.gitread.fs.open_pin`. Anything else is
     :class:`Unavailable`."""
@@ -96,22 +96,14 @@ def check_back_pointers(pins: RepoPins, gitdir: Dir) -> None:
         back = gitdir.read_optional("gitdir", limits.SMALL_FILE_MAX)
         if back is None or back.rstrip(b"\n") != own.encode():
             raise Unavailable("the worktree's gitdir back-pointer does not name the pinned working copy")
-    try:
-        st = os.stat(own, follow_symlinks=False)
-    except OSError:
-        raise Unavailable("the working copy's .git cannot be found") from None
-    if main:
-        if not stat.S_ISDIR(st.st_mode) or (st.st_dev, st.st_ino) != (pins.gitdir.dev, pins.gitdir.ino):
-            raise Unavailable("the working copy's .git is not the pinned gitdir")
-    elif not stat.S_ISREG(st.st_mode):
-        raise Unavailable("the working copy's .git is not a .git file")
 
 
 def check_dot_git(pins: RepoPins, worktree: Dir) -> None:
-    """The ``worktree`` profile's part of :func:`check_back_pointers` (#486): ``worktree`` is the pinned working copy
-    (opened by :func:`~orch.gitread.fs.open_pin`); its ``.git`` must be a regular file whose ``gitdir: <path>`` names
-    the pinned gitdir (a linked worktree), or the pinned gitdir directory itself (a main repository), with
-    ``O_NOFOLLOW``. Anything else is :class:`Unavailable`."""
+    """The working copy's ``.git``, checked on every open in every profile and in direct mode (#486, #498):
+    ``worktree`` is the pinned working copy (opened by :func:`~orch.gitread.fs.open_pin`: the ``O_NOFOLLOW`` walk,
+    then device and inode; the ``gitdir`` profile admits it only as an ancestor of ``<working copy>/.git``). Its
+    ``.git`` must be a regular file whose ``gitdir: <path>`` names the pinned gitdir (a linked worktree), or the
+    pinned gitdir directory itself (a main repository), with ``O_NOFOLLOW``. Anything else is :class:`Unavailable`."""
     if pins.gitdir == pins.commondir:
         if worktree.kind(".git") != "dir":
             raise Unavailable("the working copy's .git is not the pinned gitdir")
@@ -148,6 +140,11 @@ class Repo:
                 if target != pins.commondir.path:
                     raise Unavailable("the gitdir names another commondir than the pinned one")
             check_back_pointers(pins, self.gitdir)
+            wt = open_pin(pins.worktree)  # the O_NOFOLLOW walk: a parent swapped for a symlink is refused
+            try:
+                check_dot_git(pins, wt)
+            finally:
+                wt.close()
             if self.commondir.kind("reftable") is not None:
                 raise Unavailable("the reftable ref storage is not supported")
             self.config: RepoConfig = read_config(self.commondir.read("config", limits.CONFIG_MAX))

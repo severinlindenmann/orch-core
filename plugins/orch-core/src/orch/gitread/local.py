@@ -11,7 +11,7 @@ from typing import Any
 
 from . import ops
 from .pinning import pin_repo
-from .repo import Repo, check_dot_git
+from .repo import Repo
 
 __all__ = ["diff", "observe", "tree_check"]
 
@@ -57,7 +57,6 @@ def tree_check(path: str | os.PathLike[str], roots: list[str] | None = None) -> 
     with Repo(pins) as repo:
         worktree = open_pin(pins.worktree)
         try:
-            check_dot_git(pins, worktree)
             return treejob.result_of(treecheck.check(repo, worktree))
         finally:
             worktree.close()

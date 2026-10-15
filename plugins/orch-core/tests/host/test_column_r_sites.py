@@ -46,6 +46,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("runners.py", "serve"): (1, "unreachable (run.list is not an R op); RunnerHub.visible gives R nothing"),
     ("sessions.py", "record"): (2, "R records no session (G only)"),
     ("terms.py", "serve"): (1, "unreachable (term.* are not R ops)"),
+    ("runnergrants.py", "_deposit_plan"): (2, "unreachable (grant.deposit is not an R op; G with a verified grant only)"),
     ("visibility.py", "Viewer.manager"): (1, "R as P: an owner's or maintainer's device is a manager"),
     ("visibility.py", "Viewer.needs_person"): (2, "R as P: its own person, another one only as an owner"),
     ("visibility.py", "Viewer.of"): (3, "R as P: owner and role from the device's person"),

@@ -49,6 +49,11 @@ def _wait_stand_in(pgid: int) -> None:
         time.sleep(0.05)
 
 
+def _stand_in_alive(pgid: int) -> bool:
+    """The stand-in process itself (a zombie supervisor would keep `group_alive` true on its own)."""
+    return any(harness.FAKE_MARK in cmd for _, _, cmd in harness.group_members(pgid))
+
+
 def _cleanup(rp: RelayProcess) -> None:
     if harness.group_alive(rp.pgid) and rp.owns_group():
         os.killpg(rp.pgid, signal.SIGKILL)
@@ -127,10 +132,12 @@ def test_stop_falls_back_to_sigkill(monkeypatch, tmp_path):
     monkeypatch.setattr(harness, "STOP_GRACE_S", 1.5)
     proc, port = _sleeper(tmp_path, stubborn=True)
     rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
+    _wait_stand_in(rp.pgid)
     try:
         t0 = time.monotonic()
         rp.stop()  # SIGTERM and SIGINT are ignored by the stand-in and the supervisor
-        assert not harness.group_alive(rp.pgid) and time.monotonic() - t0 < 8
+        # ended by stop()'s own SIGKILL at the grace, before the supervisor's pipe backstop could (4 s after EOF)
+        assert not harness.group_alive(rp.pgid) and time.monotonic() - t0 < 3.5
     finally:
         _cleanup(rp)
 
@@ -227,21 +234,22 @@ class _SameGroup:
 def test_a_group_that_is_not_verifiably_ours_is_never_signalled(monkeypatch, tmp_path):
     proc, port = _sleeper(tmp_path)
     rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
+    _wait_stand_in(rp.pgid)
     other_port = port + 1 if port < 65535 else port - 1
     other = RelayProcess(tmp_path, tmp_path, other_port, "x", None, _SameGroup(rp.pgid), tmp_path / "l")  # type: ignore[arg-type]
     try:
         other.stopped = True
         assert not other.owns_group()  # another port's tag
         other.kill_leaked()
-        assert harness.group_alive(rp.pgid)  # untouched
+        assert _stand_in_alive(rp.pgid)  # untouched
         other.port, other.started = port, time.time() + 3600  # members born before the spawn are not ours either
         assert not other.owns_group()
         other.kill_leaked()
-        assert harness.group_alive(rp.pgid)
+        assert _stand_in_alive(rp.pgid)
         monkeypatch.setattr(harness, "STOP_GRACE_S", 0.5)
         other.stopped = False
         other.stop()  # its "supervisor" is reaped (returncode set): stop() too signals only a group that is ours
-        assert harness.group_alive(rp.pgid)
+        assert _stand_in_alive(rp.pgid)
     finally:
         harness._STARTED[:] = [x for x in harness._STARTED if x is not other]
         rp.finish()

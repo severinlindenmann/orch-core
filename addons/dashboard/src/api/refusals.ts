@@ -23,7 +23,7 @@ export const UNAVAILABLE_SENTENCE: Record<UnavailableReason, string> = {
     'You have another device in this workspace whose orch app cannot yet read click-signed entries. Update orch on it (it then declares what it reads), or remove it; until then, sign in the terminal.',
   reader_version: 'The host’s orch-core does not accept click-signed entries. Update orch-core on this Mac.',
   pair_device:
-    'Adding a paired phone is signed in the terminal with your passphrase (orch sign CODE), never with click-to-sign. If this Mac’s key was switched to click-to-sign, switch it back first: orch keys custody passphrase --workspace W --in-place.',
+    'Adding a phone to this workspace is signed in the terminal with your passphrase (orch sign CODE), never with click-to-sign. If this Mac’s key was switched to click-to-sign, switch it back first in a terminal (orch keys custody passphrase --in-place, for this workspace).',
 }
 
 /** `sign.convenience_readers`: adding a reader is refused while click-to-sign is on or the history has click-signed entries. */

@@ -75,6 +75,23 @@ def _hex32(v: object) -> bool:
     return type(v) is str and _HEX32.fullmatch(v) is not None
 
 
+def _who_ok(who: Any) -> bool:
+    """Exactly one of ``{"person_id": 32 hex}`` and ``{"pk_pin": b64u of 32 bytes}`` (protocol §8.3, reader 9.3)."""
+    if type(who) is not dict or len(who) != 1:
+        return False
+    if "person_id" in who:
+        return _hex32(who["person_id"])
+    if "pk_pin" in who and type(who["pk_pin"]) is str:
+        from orch import crypto
+
+        try:
+            crypto.unb64u(who["pk_pin"], 32)
+        except crypto.EncodingError:
+            return False
+        return True
+    return False
+
+
 def cert_digest(cert: Any) -> str:
     """``sha256:`` + hex of ``sha256(cj(cert))``: the digest the review shows of the signed certificate."""
     return "sha256:" + hashlib.sha256(canon.dumps(cert)).hexdigest()
@@ -162,10 +179,8 @@ class PairDeviceFacts:
             raise PairDeviceInvalid("code", "6 base32 characters")
         if (decl is None) != (decl_who is None):
             raise PairDeviceInvalid("decl", "a declaration and the who it was verified for come together")
-        if decl_who is not None and (
-            type(decl_who) is not dict or len(decl_who) != 1 or not all(type(v) is str for v in decl_who.values())
-        ):
-            raise PairDeviceInvalid("decl", "decl_who is {person_id} or {pk_pin}")
+        if decl_who is not None and not _who_ok(decl_who):
+            raise PairDeviceInvalid("decl", "decl_who is exactly {person_id: 32 hex} or {pk_pin: b64u of 32 bytes}")
         try:
             raw_cert = canon.dumps(cert)
             raw_decl = None if decl is None else canon.dumps(decl)

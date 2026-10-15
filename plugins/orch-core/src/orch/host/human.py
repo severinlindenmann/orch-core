@@ -651,6 +651,8 @@ class HumanOps:
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
         call.service.store.refresh()
+        if record["op"] == pairdevice.OP:  # H12c-e: the pair readers are bound to the reviewed offer and attempt
+            pairdevice.check_entries(record["prepared"], record.get("readers") or [])
         convenience.refuse_reader_op(  # §0.8.6: fails early, before binding (H12d-2: the declaration, rechecked)
             call.service,
             record["op"],
@@ -868,8 +870,10 @@ class HumanOps:
             if record["state"] == "expired":
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
-            if record["op"] == pairdevice.OP and any(e.get("auth") == "convenience" for e in events):
-                raise convenience.refuse_pair_device()  # H12c-e: also when a bound request was altered
+            if record["op"] == pairdevice.OP:
+                if any(e.get("auth") == "convenience" for e in events):
+                    raise convenience.refuse_pair_device()  # H12c-e: also when a bound request was altered
+                pairdevice.check_entries(record["prepared"], record.get("readers") or [])
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,

@@ -37,7 +37,17 @@ from .errors import HostError
 if TYPE_CHECKING:
     from .workspace import WorkspaceService
 
-__all__ = ["OP", "PairAllocation", "PairDeviceSource", "facts_for", "hooks", "is_pair", "source_of"]
+__all__ = [
+    "OP",
+    "PairAllocation",
+    "PairDeviceSource",
+    "check_entries",
+    "event_digest",
+    "facts_for",
+    "hooks",
+    "is_pair",
+    "source_of",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -51,7 +61,9 @@ _STAMP = frozenset({"seq", "at", "prev", "ws_seq", "host_sig"})
 class PairAllocation:
     """What the append tells R6 about the event it is allocating (11A.15.6 step 9 (ii), the allocation intent):
 
-    * ``offer_id``, ``attempt``, ``device``, ``cert_digest``: the reviewed material's (bound by ``review_digest``);
+    * ``offer_id``, ``attempt``, ``device``, ``cert_digest``, ``scopes``: the reviewed material's, exactly as the
+      person saw them (bound by ``review_digest``); R6 writes ``devices/<id>.json`` with these ``scopes``, never its
+      own copy;
     * ``review_digest``: ``sha256(cj(material))`` of the prepared request, the reviewed prepared material;
     * ``event_id``: the ``device.added`` event's id (a CSPRNG ULID: one event);
     * ``event_digest``: ``sha256:`` + hex of ``sha256(cj(event))`` of the **signed** event as submitted (with ``sig``,
@@ -63,6 +75,7 @@ class PairAllocation:
     attempt: str
     device: str
     cert_digest: str
+    scopes: tuple[str, ...]
     review_digest: str
     event_id: str
     event_digest: str
@@ -83,14 +96,21 @@ class PairDeviceSource(Protocol):
     def precommit(self, allocation: PairAllocation) -> None:
         """Steps (i) and (ii): the offer is still at step 9 with this certificate and attempt, within its deadline;
         the allocation intent is written durably. Raise :class:`HostError` to refuse: nothing is appended (and
-        :meth:`refused` is **not** called: the refusal is R6's own)."""
+        :meth:`refused` is **not** called: the refusal is R6's own).
+
+        **A repeat with an equal allocation must be accepted** (the host died between the intent and the append, and
+        the start-up roll-forward runs this again): the same intent, already written, is not a conflict. Before it
+        is called, the host has re-fetched :meth:`facts` and refused unless they rebuild the reviewed material
+        exactly (``human.request_mismatch``)."""
         ...
 
     def committed(self, allocation: PairAllocation, seq: int) -> None:
         """Steps (vi) and (vii), after the append (the F1 line is the commit): ``membership/devices/<id>.json`` and
-        the offer ``allocated``. Must be idempotent (a roll-forward calls it again). An exception is logged, never
-        undoes the commit: R6's recovery at open matches the intent to the log line (``event_id``,
-        ``event_digest``)."""
+        the offer ``allocated``. Must be idempotent (a roll-forward calls it again). **R6 checks the log line too:**
+        the ``device.added`` with ``event_id`` must have ``event_digest`` (:func:`event_digest` of the line) before it
+        writes anything; the host already refuses a landed id of other content, and never calls this then. An
+        exception is logged, never undoes the commit: R6's recovery at open matches the intent to the log line
+        (``event_id``, ``event_digest``)."""
         ...
 
     def refused(self, allocation: PairAllocation, error: HostError) -> None:
@@ -120,6 +140,16 @@ def facts_for(service: WorkspaceService, args: dict[str, Any]) -> pairdevice.Pai
     return facts
 
 
+def check_entries(prepared: dict[str, Any], readers: list[dict[str, Any]]) -> None:
+    """The admitted pair readers of a ``relay.pair_device`` request are bound to the reviewed offer and attempt
+    (``bind`` equal to the material's) and name its device: checked at binding, at submit and at the append."""
+    material = prepared["material"]
+    want = {"via": "pair", "offer_id": material.get("offer_id"), "attempt": material.get("attempt")}
+    for entry in readers:
+        if entry.get("source") != "pair" or entry.get("bind") != want or entry.get("device") != material.get("device"):
+            raise HostError("human.request_mismatch", "a pair declaration is bound to another offer, attempt or device")
+
+
 def event_digest(event: dict[str, Any]) -> str:
     """``sha256:`` + hex of ``sha256(cj(event))`` without the store's stamp keys (a submitted or a logged event)."""
     body = {k: v for k, v in event.items() if k not in _STAMP}
@@ -135,6 +165,7 @@ def allocation(record: dict[str, Any], event: dict[str, Any]) -> PairAllocation:
         attempt=material["attempt"],
         device=material["device"],
         cert_digest=material["cert_digest"],
+        scopes=tuple(material["scopes"]),
         review_digest=prepared["review_digest"],
         event_id=event["id"],
         event_digest=event_digest(event),
@@ -155,13 +186,30 @@ def hooks(service: WorkspaceService, record: dict[str, Any]) -> Hooks:
     """The source's step-9 calls for ``record``'s single ``device.added`` (under the store lock)."""
     event = record["submit"]["events"][0]
     alloc = allocation(record, event)
-    state = {"precommitted": False}
+    state = {"precommitted": False, "mismatch": False}
 
     def before(new: list[dict[str, Any]]) -> HostError | None:
         if not new:  # a roll-forward of a landed event: the intent was written before it landed
+            logged = service.store.logged_event("workspace", alloc.event_id)
+            if logged is None or event_digest(logged) != alloc.event_digest:  # same id, other content: never ours
+                error = HostError("human.request_mismatch", "an event with this id and other content is in the log")
+                try:
+                    source_of(service).refused(alloc, error)
+                except Exception as exc:  # noqa: BLE001 - R6's deadline ends the offer anyway
+                    _log.warning("relay.pair_device: refused raised %s", type(exc).__name__)
+                state["mismatch"] = True
+                return error
             return None
         try:
-            source_of(service).precommit(alloc)
+            check_entries(record["prepared"], record.get("readers") or [])
+            source = source_of(service)
+            current = facts_for(service, {"offer_id": alloc.offer_id})
+            reviewed = {k: v for k, v in record["prepared"]["material"].items() if k != "review"}
+            if canon.dumps(pairdevice.material(current)) != canon.dumps(reviewed):
+                return HostError(
+                    "human.request_mismatch", "the pairing changed since it was reviewed; prepare it again"
+                )
+            source.precommit(alloc)
         except HostError as exc:
             return exc
         except Exception as exc:  # noqa: BLE001 - any doubt refuses the append
@@ -171,6 +219,8 @@ def hooks(service: WorkspaceService, record: dict[str, Any]) -> Hooks:
         return None
 
     def after(seqs: list[int]) -> None:
+        if state["mismatch"]:
+            return
         try:
             source_of(service).committed(alloc, max(seqs))
         except Exception as exc:  # noqa: BLE001 - the F1 line is the commit; R6's recovery matches the intent

@@ -538,3 +538,105 @@ def test_a_roll_forward_of_a_landed_pair_event_calls_committed_again_without_a_n
     record = {**record, "outcome": None, "state": "bound"}  # as if the host died after the append
     host_human.finish(served.service, served.service.requests, record)
     assert [c[0] for c in src.calls] == ["precommit", "committed", "committed"]  # committed() is idempotent for R6
+
+
+# --- review round 1 of #528 (Opus, Codex) ---------------------------------------------------------------------------
+
+
+def test_a_roll_forward_over_a_same_id_event_of_other_content_refuses_and_never_commits(served, human):
+    from orch.host import human as host_human
+
+    facts, phone = make_facts(served)
+    src = _install(served, facts)
+    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
+    ok(_submit(human, prepared))
+    record = served.service.requests.read(prepared["request"]["id"])
+    events = copy.deepcopy(record["submit"]["events"])
+    events[0]["sig"] = events[0]["sig"][:-2] + ("AA" if not events[0]["sig"].endswith("AA") else "BB")
+    record = {**record, "outcome": None, "state": "bound", "submit": {**record["submit"], "events": events}}
+    src.calls.clear()
+    fut = served.service.executor.submit(host_human.finish, served.service, served.service.requests, record)
+    with pytest.raises(Exception):  # noqa: B017 - the stored failure (a landed id with other content)
+        fut.result()
+    assert [c[0] for c in src.calls] == ["refused"]  # never committed, never precommitted
+    assert src.calls[0][2] == "human.request_mismatch"
+
+
+def test_the_allocation_carries_the_reviewed_scopes(served, human):
+    facts, _ = make_facts(served, scopes=("look",))
+    src = _install(served, facts)
+    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
+    ok(_submit(human, prepared))
+    assert src.calls[0][1].scopes == ("look",) == tuple(prepared["material"]["scopes"])
+
+
+def test_submit_refuses_when_r6s_facts_no_longer_rebuild_the_reviewed_material(served, human):
+    facts, phone = make_facts(served, scopes=("look",))
+    src = _install(served, facts)
+    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
+    signed = human.sign(prepared)
+    wider, _ = make_facts(served, phone=phone, scopes=("look", "decide"))
+    src.facts_ = wider  # R6's record changed since the human reviewed it
+    res = human.submit_res(prepared["request"]["id"], signed.events)
+    assert err(res) == "human.request_mismatch"
+    assert src.calls == []  # refused before R6's precommit: nothing allocated
+    assert not [e for e in _ws_events(served) if e["device"] == phone.device]
+
+
+def test_precommit_is_repeated_with_the_same_allocation_after_a_crash_before_the_append(served, human, monkeypatch):
+    from orch.host import human as host_human
+
+    facts, phone = make_facts(served)
+    src = _install(served, facts)
+    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
+    signed = human.sign(prepared)
+    store = served.service.store
+    real = type(store).append
+    crashed = []
+
+    def crash_once(self, *a, **k):
+        if not crashed:
+            crashed.append(1)
+            raise RuntimeError("the host died between the intent and the append")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(store), "append", crash_once)
+    res = human.submit_res(prepared["request"]["id"], signed.events)
+    assert not res["ok"]
+    record = served.service.requests.read(prepared["request"]["id"])
+    assert record["submit"] and record.get("outcome") is None
+    served.service.executor.submit(host_human.finish, served.service, served.service.requests, record).result()
+    names = [c[0] for c in src.calls]
+    assert names == ["precommit", "precommit", "committed"]
+    assert src.calls[0][1] == src.calls[1][1]  # the same allocation: R6 accepts the repeat
+    assert served.service.store.state.workspace.devices[phone.device].person == human.person.ref
+
+
+@pytest.mark.parametrize(
+    "who", [{"person_id": "c" * 32, "pk_pin": "x"}, {"device_id": "c" * 32}, {"person_id": "C" * 32}, {"pk_pin": "!"}]
+)
+def test_decl_who_is_exactly_one_well_formed_person_id_or_pk_pin(served, who):
+    owner = served.lab.ws.owner
+    phone = phone_of(owner)
+    with pytest.raises(pd.PairDeviceInvalid) as e:
+        make_facts(served, phone=phone, decl=pair_decl(phone, served.wid), decl_who=who)
+    assert e.value.reason == "decl"
+
+
+def test_the_recheck_refuses_a_pair_entry_bound_to_another_offer_or_attempt(served, human):
+    facts, phone = make_facts(served, level=1)
+    _install(served, facts)
+    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER}, handoff=True)
+    rid = prepared["request"]["id"]
+    record = served.service.requests.read(rid)
+    record["readers"][0]["bind"] = {"via": "pair", "offer_id": OFFER, "attempt": "b2" * 16}
+    served.service.requests.write(record)
+    assert err(human.get(rid, signer=human.signer)) == "human.request_mismatch"  # at binding
+    record["readers"][0]["bind"] = {"via": "pair", "offer_id": OFFER, "attempt": ATTEMPT}
+    served.service.requests.write(record)
+    bound = ok(human.get(rid, signer=human.signer))["data"]
+    signed = human.sign(bound)
+    record = served.service.requests.read(rid)
+    record["readers"][0]["bind"] = {"via": "pair", "offer_id": "c" * 32, "attempt": ATTEMPT}
+    served.service.requests.write(record)
+    assert err(human.submit_res(rid, signed.events)) == "human.request_mismatch"  # at submit

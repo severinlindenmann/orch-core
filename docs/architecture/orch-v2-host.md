@@ -6411,6 +6411,119 @@ writes and flushes (R4 adds its pages there), `job` must be `RelayWorker.submit(
 `EpochKeySource` must implement `seal_state()` and `refusal_key(e)` and raise the gate / commit a rotation inside
 `BridgeKeys.serialised()`, and none of its methods may take the store lock (the lock order above). R3 adds its publisher thread beside these; the store side of the outbox is H12b's.
 
+#### As built in R3 (the checkpoint publisher, 15 Oct 2026)
+
+Code: `relay/publish.py` (`Publisher`, `History`, `measure`), the staging builders and the exact counter in
+`relay/wire.py` (`plan_pages`, `build_page`, `build_manifest`, `page_bytes`, `manifest_bytes`, `set_bytes`), and three
+store reads under the lock (`Store.relay_segment`, `Store.relay_position`, `Store.relay_ancestor`, with
+`orch.store.outbox.RelayPosition`). Small R1 changes: `StateDir.read/write(limit=)` (at most `BIG_FILE`, 8 MiB) and
+`StateDir.remove`, `Directory(transport=)` (the publisher thread reads through its own connection),
+`Session.call(content_type=)` (a staging body is sent as the exact `cj` bytes that were counted).
+
+**Interface for R5.** `Publisher(store, job=, session=, owner_pk_pub=, wsk_pub=, state=, max_publication_bytes=,
+alarm=, conn=, on_diverged=, on_error=)`; `start()`, `stop()`, `join(timeout) -> bool` (thread
+`orch-relay-pub-<id8>`), `error`; `link_publish(session, directory)` is `LinkSteps.publish` for R1's `first_link`
+(it raises `PublishHeld` while publication is held, so the link stays `linking`). `job(fn)` must be
+`RelayWorker.submit(fn).result()`; every store call of `publish.py` is such a job (an AST test pins it) and none is
+held across networking. The thread sends nothing until the shared `Session` holds a generation (the poll thread's
+`host/hold`). `on_diverged(H)` is R5's degrade hook (D-P2-12): R3 alarms `chain.diverged` and holds publication, but no
+store API exists for it to degrade the host itself (gap, below). The store passed in must offer `genesis`,
+`outbox_first`, `outbox_entries`, `outbox_delete`, `mint_catchup`, `relay_segment`, `relay_position`,
+`relay_ancestor` (`PublishStore`).
+
+**Judgement calls (fail closed, 15 Oct 2026).**
+- P1 The module is `relay/publish.py` as 11A.1 names it (the implementation brief said `publisher.py`).
+- P2 *Journal.* `publish.json` is `{v, n, hash, kind, source_hash, cap, size, manifest_digest}` and the manifest itself
+  (`publish-manifest.json`, every page digest) is the design's `pages:[{i, digest, count, put}]`: it is computed first
+  (one pass over the heads, one page in memory, every run checked to join and fold to the signed target) and recorded
+  durably (the manifest, then `publish.json` as the commit point) before the first PUT of the set. Which pages are
+  staged is never assumed: the identical manifest is PUT first and the relay's `missing` list is sent, each page
+  rebuilt and compared with its recorded digest (a mismatch drops the journal: `relay_staging_rebuild`). A `put` flag
+  per page would cost a rewrite of a file of up to about 1 MB per page; an identical PUT is a free no-op anyway.
+- P3 *History layout.* `StateDir` is one flat directory, so `published/restore-<n>.json` is
+  `published-restore-<n>.json` and `published/last.json` is `published-last.json`; `published.jsonl` rolls into
+  `published-<k>.jsonl` every 1 024 lines, kept forever (a 1 MiB file cap and a whole-file rewrite per line). A
+  restore record is `{body, source, acc_from}`: the body alone lacks the heads, so a republication rebuilds its pages
+  from the store (the current log, or `heads.sqlite` for an abandoned branch). The record is written before the line;
+  a repeat line (a crash before the outbox delete) is not appended twice.
+- P4 *Verified acknowledgement.* An entry is deleted only after a 200 whose `result` is `accepted` or `ignored` with
+  exactly its `{n, hash}`, AND a fresh verified `GET checkpoint`: after `accepted` the relay must hold that very
+  checkpoint; `ignored` is accepted only for a final PUT sent without a set (an entry at or below H) and needs H at
+  or above it; a staged extension answered `ignored` is `relay_misbehaving`. Then the history, then
+  `outbox_delete`.
+- P5 *Queued mismatch is not divergence (§11).* Before the restore explanation, an H equal to a queued outbox entry or
+  to a queued restore's source is not classified further: the outbox rules decide (an owner's restore after a host
+  rollback publishes from exactly that H). The 11A.5 table lacks this row.
+- P6 *Explained by an accepted restore* needs all three conditions of the table; ancestry is `Store.relay_ancestor`
+  (per log, equal entries or a verified path through `heads.sqlite`). The history is never trimmed, so "H is in
+  `published.jsonl`" holds for anything this host published.
+- P7 *A restore behind its source.* When H is an ancestor of the restore's source C, C is republished first, as it is
+  (no catch-up below an anchor: a set above C is `relay.too_large`); any other H holds `restore_source_mismatch`
+  without sending anything (no charged refusal). A restore with `publication_complete: false` holds
+  `relay_restore_incomplete`; a line above 524 288 bytes or a set above C holds `relay.too_large`; neither is sent.
+- P8 *Catch-up triggers.* `mint_catchup(source=H, cap=⌊0.9 C⌋)` runs when the lowest plain entry is not an extension of
+  H or its set exceeds C, and when the outbox is empty but the newest local checkpoint is not H (the first link, a
+  relay rollback); `[]` is idle. `checkpoint.prefix_invalid` (the logs moved while `measure` ran) re-plans at most 3
+  times in a row; the store's anchor refusal (H12b J1) holds `relay.too_large`.
+- P9 *Refusals.* `chain_diverged` at the final PUT re-reads and classifies H; a second in a row is
+  `relay_misbehaving` with backoff, never `on_diverged` unless the classification proves a fork. `staging_incomplete`
+  drops the journal and restages (3 in a row: misbehaving). `staging_conflict` drops the journal, alarms
+  `relay_staging_conflict` and waits one hour (the set's expiry), then restages identically. `checkpoint_time`
+  backs off and alarms `clock_skew` at the third in a row; the bytes are never re-signed. `restore_source_mismatch`
+  re-plans a plain publication and holds a restore; `restore_missing_revocation`, `restore_invalid`,
+  `restore_not_owner`, `restore_reused`, `genesis_mismatch` and `no_genesis` hold with an alarm. Any other 4xx alarms
+  `relay_publish_refused` and backs off. A 3xx alarms `relay_redirect` and holds.
+- P10 *Quota and transient budgets.* The quota counter is the publisher's, across steps (the `Retrier`'s is per call
+  and would restart every step): up to 5 waits of at least `Retry-After` with backoff, then `relay_quota` and one hour
+  between attempts; a `quota` naming `nodes`, `workspaces` or `evidence` alarms at once and waits an hour. Transient
+  answers back off (full jitter, 1 s to 5 min, `Retry-After` a floor) without a count limit and without an alarm.
+  The counters reset when a step settles.
+- P11 *Too large.* An unexpected `too_large` (413 at a page or the manifest, 400 at the final PUT) lowers C in memory
+  to `min(C, ½ refused set)` at most 4 times per rolling hour (then `relay_too_large`, held) and re-plans; for a
+  restore it holds `relay.too_large`.
+- P12 *Held means hourly.* A held condition (H7, a fork, an oversized restore, a mismatch) is re-evaluated every hour
+  (`HELD_RECHECK_S`); each alarm code is raised once until a step settles.
+- P13 *relay-info* is read once per publisher start: 404 is reader level 0 and no announced maximum; a malformed answer
+  (a non-integer level, a non-positive maximum) is `relay_misbehaving`. C = min(`link.json`, relay-info, the relay's
+  64 MiB staging quota, any lowering).
+- P14 *Reader level.* A restore whose line's `auth` is `convenience` is held `relay_reader_old` while the relay's level
+  is below 1 (§9.8). The evidence inside the line is not inspected (narrower than §9.8's "whose evidence carries a
+  convenience event"; the line's own `auth` is the parser case the relay level names).
+- P15 *Response caps.* The manifest answer and the final answer are read up to 1 MiB, not 11A.7's 16 KiB: the
+  manifest answer lists every missing index and a restore's final answer may carry `unpublished_refs`; over a 16 KiB
+  cap both would be a transient failure forever.
+
+**Design inconsistencies found.**
+- `docs/architecture/orch-v2-host.md` 11A.7 table (staging and final answers 16 KiB) vs orch-relay
+  `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.
+- 11A.3 `publish.json` and `published/` (this file, the 11A.3 table) vs `relay/state.py` `_NAME` (flat names) and
+  `MAX_FILE` (1 MiB; a restore record is up to about 4.7 MiB): P2, P3.
+- 11A.5 "The relay does not announce it" (Maximum publication size) and orch-relay `docs/protocol-v2.md` §19.8 ("The
+  relay does not advertise its maximum yet") vs `relay_info.py` at `438b719` (it does; 11A.12 already says so).
+- 11A.5 startup classification table vs §11 "A mismatch with an entry still in the outbox": the queued-restore row
+  is missing (P5).
+- §9.8 "R3 holds every restore whose evidence carries a convenience event" has no counterpart in 11A.5 (P14).
+- No store API lets R3 degrade the host on `chain.diverged` (D-P2-12); `on_diverged` is the hook R5 must wire.
+
+**Tests.** `tests/relay/test_publish.py` (the counter, ordinary publication, catch-up, `relay-info`, the cap and its
+lowering, kills at every durable boundary, the history, the thread, the start fence and the first-link hook, log
+redaction), `test_publish_hostile.py` (lying acknowledgement and staging state, replays, a false `chain_diverged`,
+5xx storms, a slow relay, quota and rate answers, conflicts, clock refusals, a redirect, a fence, an unverifiable H),
+`test_publish_restore.py` (the classification table, restores with abandoned suffixes, oversized restores, a stale
+H before a restore, rollbacks across an accepted restore, a replayed abandoned-branch checkpoint, kills mid-restore),
+`tests/store/test_relay_reads.py`, the AST pins in `test_import_ban.py` (every store call is a worker job; `measure`
+is pure), against `tests/relay/pubsim.py` (an independent copy of the relay's checkpoint routes in their check
+order), and T2 (`tests/relay/t2/test_t2_publish.py`, below).
+
+**For R5.** Wire `on_diverged` to the host's degrade, `on_error` to the worker stop (a fence or session error ends the
+publisher, as R2's), start the publisher beside `BridgeLoop` with the ONE shared `Session`, and give `link_publish` to
+R1's `first_link` through `LinkSteps.publish`. `max_publication_bytes` comes from `link.json`. Alarms to surface in
+`host.status`: `relay_rolled_back`, `chain.diverged`, `relay_host_state_lost`, `relay.too_large`, `relay_too_large`,
+`relay_quota`, `clock_skew`, `relay_misbehaving`, `relay_staging_conflict`, `relay_staging_rebuild`,
+`restore_source_mismatch`, `restore_missing_revocation`, `relay_restore_incomplete`, `relay_restore_invalid`,
+`relay_reader_old`, `relay_redirect`, `relay_outbox_torn`, `relay_outbox_mismatch`, `relay_publish_refused`,
+`relay_publish_local`, `relay_refused_<code>`.
+
 ### 11A.6 Convenience rule
 
 A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-P2-23).
@@ -6656,7 +6769,7 @@ path from `ORCH_RELAY_DIR`.
   (two independent kills); a child of the harness forked without exec would hold the pipes open (the tests never
   fork). Each test has a hard 20 s limit (SIGALRM, raising a `BaseException` so no `except Exception` swallows it) from the relay answering `/healthz`
   to its teardown (relay start-up and stop are outside it; the requeue tests use about 11 s of it). Locally: `ORCH_RELAY_DIR=<a worktree of the SOURCE commit, uv-synced> uv run pytest -p no:xdist -m relay_t2
-  tests/relay/t2` (25 relay tests and 15 harness self-tests, about 2 minutes locally).
+  tests/relay/t2` (33 relay tests and 15 harness self-tests, about 2.5 minutes locally).
 - **Covered (R1):** `/healthz` instance and `GET /v2/relay-info` `max_publication_bytes` equal to the configured cap;
   the owner account from an operator invite (`orch-relay invite create` on the temp data directory) through `POST
   /v2/accounts`, the identical request replayed with the same answer and the used invite with a fresh proof refused
@@ -6675,8 +6788,15 @@ path from `ORCH_RELAY_DIR`.
   order each answered once, the same `seq` again under a new rid `stale_sequence`; a request held by the relay from
   before the worker started fenced (`already_done {status: unknown}`), its re-issue answered; a takeover fencing the
   running loop (`Fenced`, the threads joined).
-- **Not yet covered (each lands with its group):** link with a first publication and catch-up, histories above 4 and
-  16 MiB, a restore (R3); unpublished evidence (R4); the worker and the first real link through `orch host relay link`
+- **Covered (R3, 15 Oct 2026), `test_t2_publish.py`, a real `Store` of the vector workspace A (`wsk_a`, alice, the
+  owner device `primary`, the card's own delegation) through core's `Publisher`:** the first link's publication
+  through `link_publish` within `relay-info`'s maximum (C equals the configured cap); a backlog published by catch-up
+  in several checkpoints under a small `link.json` C, each set accepted by the relay; a ticket restore with its
+  abandoned suffix accepted under the relay's owner policy (a ref-built member list with `operate` for `primary`), and
+  ordinary publication after it; the relay's page, request and line caps as core builds against them.
+- **Not yet covered (each lands with its group):** histories above 4 and 16 MiB through the real relay (a history of
+  56 000 or 226 000 heads takes far longer than the 20 s budget; the split itself runs at a small C above, and the
+  counter is pinned by the layer-1 tests); unpublished evidence (R4); the worker and the first real link through `orch host relay link`
   (R5, with the test owner client `tests/relay/owner.py` of 11A.15.11); pairing, the real member list and WK custody,
   the `dev-pair` step and the reference test phone (R6); the hostile-relay rows of the release gate through a proxy in
   front of the real relay (the R2 identity and exactly-once rows run against the mock and the fakes only, layer 1).

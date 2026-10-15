@@ -177,8 +177,12 @@ def test_a_ticket_restore_with_its_abandoned_suffix_is_accepted_by_the_relay(rel
     members = [{"device_id": DEVICE, "person_id": PERSON, "scopes": ["look", "decide"]},
                {"device_id": PRIMARY, "person_id": PERSON, "scopes": ["look", "decide", "operate"]}]  # fmt: skip
     ml = R.make_member_list(suite, wsk, bytes.fromhex(WS), 1, 1, now_ms(), wk, members)
-    grants = [R.make_wk_grant(suite, wsk, bytes.fromhex(WS), bytes.fromhex(d), crypto.unb64u(CERTS[n]["o"]["dk_kx_pub"]),
-                              1, wk, secrets.token_bytes(32)) for d, n in ((DEVICE, "phone"), (PRIMARY, "primary"))]  # fmt: skip
+    grants = []
+    for d, name in ((DEVICE, "phone"), (PRIMARY, "primary")):
+        kx = crypto.unb64u(CERTS[name]["o"]["dk_kx_pub"])
+        grants.append(
+            R.make_wk_grant(suite, wsk, bytes.fromhex(WS), bytes.fromhex(d), kx, 1, wk, secrets.token_bytes(32))
+        )
     sess.call("PUT", f"/v2/workspaces/{WS}/membership", "PUT /v2/workspaces/{ws}/membership",
               body={"member_list": ml, "grants": sorted(grants, key=lambda g: g["o"]["device_id"])},
               holder=True, request_cap=2 << 20)  # fmt: skip

@@ -1122,3 +1122,7 @@ and the seven ops below); otherwise it is not drawn on a real host. Start agent 
 - **Requests for stream A:** (1) a dev-only seam so `orch host run --foreground` can admit a foreground runner (`orch runner run
   --foreground`) without a service manager, for a subprocess real-host test; (2) `term.attach`'s refusals could carry `retry_after_ms`
   for `rate.limited`/`attach.limit` (the server passes it on when present, else 1000 ms).
+
+The dashboard and devhost use core's `ORCH_HOST_RUN_DIR`, falling back to `<state>/run`.
+A set legacy `ORCH_RUN_DIR` is accepted silently only when its absolute path matches that directory;
+otherwise dashboard startup exits 1 with a migration message.

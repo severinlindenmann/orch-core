@@ -66,7 +66,7 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    The stub creates a 0600 registry only if none exists. An existing registry must already
    contain the exact mapping. It never overwrites or adopts real registry entries. It opens
    `<state>/run/control/host.sock` and `<state>/run/<uuid>/host.sock`. Keep Unix socket paths
-   short (under 100 UTF-8 bytes). `ORCH_RUN_DIR` must be a short **real directory**, with no symlink aliases; for the stub it
+   short (under 100 UTF-8 bytes). `ORCH_HOST_RUN_DIR` must be a short **real directory**, with no symlink aliases; for the stub it
    must remain inside the marked dev state (for example `/private/tmp/orch-m1/state/run`; macOS `/tmp` is a symlink
    to `/private/tmp`, so do not use it). The `orch` CLI needs the workspace signing key (WSK) under
    `$ORCH_STATE_DIR/hosts/<workspace-id>/keys` to append; a workspace not made by `orch init` has none and stays read-only.
@@ -101,7 +101,7 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
 
 The production server uses the same socket client for stub and real hosts. It has no stub
 mode. `ORCH_HOST_SOCKET` overrides the workspace socket location but never the trusted
-workspace-id/host-UID pin; control discovery still uses `ORCH_RUN_DIR/control/host.sock`.
+workspace-id/host-UID pin; control discovery still uses `ORCH_HOST_RUN_DIR/control/host.sock`.
 Do not set a single-workspace override for a multi-workspace host.
 
 ## Trust, auth and routes
@@ -290,3 +290,7 @@ into `<workspace>/addons/dashboard/orch-addon.json`. Identical files are left al
 files require `--force`. Symlinks anywhere in the destination path are refused (on macOS use
 `/private/tmp`, not the `/tmp` alias). This only copies the manifest; the owner still signs the
 grant, including again after a manifest update. It does not start the dashboard or host.
+
+The dashboard and devhost use core's `ORCH_HOST_RUN_DIR`, falling back to `<state>/run`.
+A set legacy `ORCH_RUN_DIR` is accepted silently only when its absolute path matches that directory;
+otherwise dashboard startup exits 1 with a migration message.

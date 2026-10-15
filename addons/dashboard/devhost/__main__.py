@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from orch_dashboard.__main__ import locked, private_directory, stale_socket
+from orch_dashboard.gateway import run_dir
 
 from .host import StubHost
 
@@ -25,7 +26,7 @@ def dev_directories():
         raise RuntimeError("dev stub refuses the default host state directory")
     if not (state / ".orch-dev").is_file() or (state / ".orch-dev").is_symlink():
         raise RuntimeError("dev state requires its own .orch-dev marker")
-    run = Path(os.environ.get("ORCH_RUN_DIR", str(state / "run"))).resolve()
+    run = run_dir(state).resolve()
     if (
         not run.is_relative_to(state)
         or any(run.is_relative_to(default.resolve()) for default in defaults)

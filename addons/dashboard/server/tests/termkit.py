@@ -71,7 +71,7 @@ class TermWorld:
             rstate = tmp_path / "runner-state"
             rstate.mkdir(mode=0o700)
             self.runner = Runner(w, rstate)
-            monkeypatch.setenv("ORCH_RUN_DIR", str(w.lab.run))
+            monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(w.lab.run))
             monkeypatch.delenv("ORCH_HOST_SOCKET", raising=False)
             self.gateway = Gateway(Path(w.lab.state))
             self.auth = Auth()

@@ -15,6 +15,21 @@ export const ARM_MS = 1000
 /** A word op (grant, policy, members) signs once the person has held Sign down this long, instead of typing the word. */
 export const HOLD_MS = 1500
 
+/** The signer's card for a workspace (`/click/status`), and whether it can switch signing on and off (section 0.8.6 item 3a). */
+export interface ClickCard {
+  custody: 'convenience' | 'passphrase' | 'none'
+  enabled: boolean
+  available: boolean
+  problem?: string
+  switchable?: boolean
+}
+
+/** The switch: `on` needs the person's passphrase; `off` takes an optional NEW passphrase that moves the key back. */
+export interface ClickSwitch {
+  on: boolean
+  passphrase?: string
+}
+
 export interface ClickPrepared {
   request_id: string
   expires_at: string

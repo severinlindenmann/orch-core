@@ -1,6 +1,4 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import { signerProblem } from '@/api/refusals'
 import { useState } from 'react'
 import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
 import { hasFeature } from '@/api/features'
@@ -14,7 +12,7 @@ import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
 import { Raw } from '@/components/sign/visible'
 import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
-import { ClickRisk } from '@/components/sign/ClickSignPanel'
+import { SigningCard } from './SigningCard'
 import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
@@ -86,25 +84,8 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         </dl>
       </Section>
 
-      {workspace.click?.custody === 'convenience' && (
-        <Section title="Signing">
-          <div data-testid="workspace-card-signing" className="space-y-2">
-            <ClickRisk />
-            <p className="text-[13px] text-text-muted">
-              {workspace.click.enabled && workspace.click.available
-                ? 'Sign with one click is on for this workspace. "Sign in the terminal instead" stays in every dialog.'
-                : `Sign with one click is not available now.${workspace.click.problem ? ` ${signerProblem(workspace.click.problem)}` : ''} Sign in the terminal.`}
-            </p>
-            {workspace.click.problem === 'readers_old' && (
-              <p data-testid="signing-readers-old" className="text-[13px]">
-                <Link to="/settings/$tab" params={{ tab: 'devices' }} className="text-brand underline underline-offset-2 hover:no-underline">
-                  See which devices need an update
-                </Link>
-              </p>
-            )}
-          </div>
-        </Section>
-      )}
+      {/* A real host only (the mock never offers click-to-sign): the switch, with the risk line first. */}
+      {workspace.click !== undefined && <SigningCard workspace={workspace} owner={role === 'owner'} />}
 
       {runner && (
         <Section title="Dashboard execution">

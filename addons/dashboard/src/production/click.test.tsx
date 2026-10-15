@@ -33,16 +33,17 @@ it('the workspace card shows the risk line when the key is in convenience custod
   expect(await screen.findByTestId('workspace-card-signing', {}, T)).toHaveTextContent(CLICK_RISK)
 })
 
-it('no risk line and no Sign button when the signer has nothing for the workspace', async () => {
+it('no Sign button when the signer has nothing for the workspace; the card offers to switch it on', async () => {
   state.host.workspaces[0].click = { custody: 'none', enabled: false, available: false, problem: 'disabled' }
   state.host.workspaces[0].features = [...READS, ...DO, 'actions']
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   const dialog = await save(user)
   await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(screen.queryByTestId('workspace-card-signing')).toBeNull()
+  expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/)
   expect(within(dialog).queryByRole('button', { name: 'Sign' })).toBeNull()
-  expect(state.host.calls.filter((c) => c.path.includes('/click/'))).toEqual([])
+  // the card reads the signer's status; nothing is prepared, viewed or signed
+  expect(state.host.calls.filter((c) => c.path.includes('/click/') && !c.path.endsWith('/click/status'))).toEqual([])
 })
 
 it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Signed', async () => {

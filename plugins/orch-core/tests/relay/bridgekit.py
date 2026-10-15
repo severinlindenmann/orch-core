@@ -3,9 +3,11 @@ durable fake host (outcome store + log, with crash points) and a recording poste
 
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +130,28 @@ def _key(seed: bytes | None, what: bytes):
     return crypto.private_key_from_scalar(d)
 
 
-class Epochs:
+class SealLockFixture:
+    """The seal lock an :class:`orch.relay.keys.EpochKeySource` owns (R6a: the source owns it, not ``BridgeKeys``),
+    for fixture sources: one ``RLock``, ``seal_snapshot`` takes ``seal_state()`` under it."""
+
+    def _lock(self) -> threading.RLock:
+        lock = self.__dict__.get("_seal_lock")
+        if lock is None:
+            lock = self.__dict__.setdefault("_seal_lock", threading.RLock())
+        return lock
+
+    @contextlib.contextmanager
+    def seal_snapshot(self) -> Iterator[SealState]:
+        with self._lock():
+            yield self.seal_state()  # type: ignore[attr-defined]
+
+    @contextlib.contextmanager
+    def serialised(self) -> Iterator[None]:
+        with self._lock():
+            yield
+
+
+class Epochs(SealLockFixture):
     """R6's key custody, fixture: committed epochs ``1..cur`` (``keys``), burned epochs above ``cur`` (``burned``:
     their keys are in ``keys`` too, so a phone fixture can seal under them), an optional pending epoch and the
     rotation gate."""

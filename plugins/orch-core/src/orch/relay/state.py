@@ -51,11 +51,19 @@ log = logging.getLogger("orch.relay.state")
 MAX_FILE = 1 << 20
 BIG_FILE = 8 << 20  # R3's staging manifest (<= 4 MiB) and restore records (a final body <= 2.6 MiB plus its source)
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_TEMP = re.compile(r"\.[a-z0-9][a-z0-9._-]{0,63}\.[0-9a-f]{16}\.tmp")
 _KEY = re.compile(r"[a-z0-9_.:-]{1,64}")
 # per-kind key rule of the sign ledger, on top of _KEY: a card is keyed by str(card_seq), the canonical decimal (round
 # 10, R9-1). "010", " 10", "+10", "1_0" or a fullwidth digit would be int()-equal to a seq yet missed by the exact
-# lookup, so a different card could be signed at that seq; the reader accepts only what record() writes.
-_LEDGER_KEY = {"card": re.compile(r"0|[1-9][0-9]*")}
+# lookup, so a different card could be signed at that seq; the reader accepts only what record() writes. R6a: a
+# member list by str(list_seq), a wk_commit by str(epoch), a grant by "<device hex>:<epoch>", all canonical.
+_DECIMAL = re.compile(r"0|[1-9][0-9]*")
+_LEDGER_KEY = {
+    "card": _DECIMAL,
+    "member_list": _DECIMAL,
+    "wk_commit": _DECIMAL,
+    "wk_grant": re.compile(r"[0-9a-f]{32}:(0|[1-9][0-9]*)"),
+}
 
 
 def _limit(limit: int) -> int:
@@ -369,6 +377,29 @@ class StateDir:
                 os.close(fd)
                 raise StateError(f"{name}: must be a 0600 regular file of this user with one link")
             return fd
+
+    def names(self) -> list[str]:
+        """The state file names here (R6a: ``membership/keys/`` and ``cards/`` are scanned for EHW recovery and
+        orphans), sorted; a crashed write's temp file (``.<name>.<hex>.tmp``) is never listed."""
+        with self.lock:
+            return sorted(n for n in os.listdir(self._dir()) if _NAME.fullmatch(n))
+
+    def discard_temps(self) -> int:
+        """Unlink every temp file a crashed write left here (``.<name>.<hex>.tmp``; a key file's temp holds the
+        key). Safe for the lock holder only, which every caller is (one live instance per directory)."""
+        n = 0
+        with self.lock:
+            dfd = self._dir()
+            for name in os.listdir(dfd):
+                if _TEMP.fullmatch(name):
+                    try:
+                        os.unlink(name, dir_fd=dfd)
+                        n += 1
+                    except FileNotFoundError:
+                        pass
+            if n:
+                os.fsync(dfd)
+        return n
 
     def file_path(self, name: str) -> Path:
         """The path of ``name`` here, only for a library that opens by path, together with :meth:`open_private`."""

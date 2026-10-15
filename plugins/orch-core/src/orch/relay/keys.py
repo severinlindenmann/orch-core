@@ -11,7 +11,9 @@ R6 is a security dependency of R2, not a fixture (11A.1): R2 is tested against a
   holds the seal lock and takes ONE snapshot of the seal state (:class:`SealState`: the committed epoch, the rotation
   gate, the epoch a ``stale_epoch`` names). The caller seals AND commits the replayable bytes (T2 or the refusal
   record) inside that span; R6 raises the gate or commits a rotation inside :meth:`BridgeKeys.serialised` (the same
-  lock), so a gate is never raised between the check and the commit. :meth:`_Sealer.seal_response` (data) refuses
+  lock), so a gate is never raised between the check and the commit. **R6a:** the seal lock is the source's own
+  (``EpochKeySource.seal_snapshot``/``serialised``, R6's ``MembershipKeys``), not this module's, so R6's store
+  hook (``R6Gate.raise_for``) and every seal take ONE lock (11A.15.2). :meth:`_Sealer.seal_response` (data) refuses
   any epoch but the snapshot's committed one, and any epoch while the gate is up. :meth:`_Sealer.seal_refusal` is the
   only path under an old, burned or gated epoch: it builds the plaintext ITSELF with
   :func:`orch.relay.framing.refusal_meta` (the closed field sets), so no caller can seal arbitrary plaintext there;
@@ -32,7 +34,6 @@ from __future__ import annotations
 
 import contextlib
 import secrets
-import threading
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -81,6 +82,16 @@ class EpochKeySource(Protocol):
         ``stale_epoch``; ``None`` for every other epoch."""
         ...
 
+    def seal_snapshot(self) -> contextlib.AbstractContextManager[SealState]:
+        """R6's seal lock, held for one seal, and ONE :class:`SealState` taken under it (11A.15.2 ``seal_snapshot``;
+        R6a). The lock is R6's, not this module's: R6's gate (``R6Gate.raise_for``, called by the store inside its
+        own lock) takes the same lock, so a snapshot is never older than the gate."""
+        ...
+
+    def serialised(self) -> contextlib.AbstractContextManager[None]:
+        """R6's seal lock alone: R6 raises the gate and commits a rotation inside it."""
+        ...
+
 
 @dataclass(frozen=True)
 class Member:
@@ -111,7 +122,6 @@ class BridgeKeys:
         if type(workspace) is not bytes or len(workspace) != 16:
             raise ValueError("workspace id")
         self._source, self._ws = source, workspace
-        self._lock = threading.RLock()
 
     @property
     def current(self) -> int:
@@ -153,14 +163,17 @@ class BridgeKeys:
     def serialised(self) -> Iterator[None]:
         """R6 raises the rotation gate and commits a rotation inside this span (the seal lock), never between a
         :meth:`sealing` snapshot and the commit of the bytes sealed under it."""
-        with self._lock:
+        with self._source.serialised():
             yield
 
     @contextlib.contextmanager
     def sealing(self, signer: RelaySigner) -> Iterator[_Sealer]:
-        """G1: the seal lock and ONE snapshot of the seal state; seal AND commit the replayable bytes inside it."""
-        with self._lock:
-            yield _Sealer(_TOKEN, self, signer, self._source.seal_state(), self._wk)
+        """G1: the seal lock and ONE snapshot of the seal state; seal AND commit the replayable bytes inside it. Both
+        come from the source (R6a): the one seal lock is R6's, shared with its gate."""
+        with self._source.seal_snapshot() as state:
+            if type(state) is not SealState:
+                raise TypeError("seal_snapshot must yield a SealState")
+            yield _Sealer(_TOKEN, self, signer, state, self._wk)
 
 
 class _Sealer:

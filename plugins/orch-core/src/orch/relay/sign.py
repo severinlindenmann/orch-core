@@ -11,6 +11,13 @@ Method             Checks before signing                                        
 ``card``           exact field set, the link's workspace, WSK public key = own, ``relay_url`` =  ``sig_card_wsk``
                    the stored origin, ``card_seq`` above the last accepted one and not below
                    the last signed one, never two different cards at one ``card_seq``
+``member_list``    (R6a, 11A.15.7) exact field set and shape, the link's workspace, the epoch    ``sig_member_list``
+                   floor (H4: never a burned epoch, never below the highest signed epoch, one
+                   ``wk_commit`` per epoch), never two lists at one ``list_seq`` nor one below
+                   the highest signed
+``wk_grant``       (R6a) exact field set, the link's workspace, an epoch with a recorded          ``sig_wk_grant``
+                   ``wk_commit``, the sealed key's length, the device in the list signed at
+                   ``list_seq``; never other bytes for ``(device, epoch)``
 =================  ==========================================================================  ==================
 
 The key comes in as a :class:`WorkspaceKey`, a structural interface (``public_key``, ``sign(payload)``) that
@@ -29,6 +36,11 @@ randomised signatures, so a re-sign would give other bytes); a different card th
 recorded ``card_seq``, is refused.
 
 Epoch keys come in as an :class:`EpochKeys` view (R2's ``BridgeKeys``); without one, ``response_chunk`` refuses.
+
+**R6a ledger additions (11A.15.7).** ``("member_list", list_seq)`` (H6), ``("wk_commit", epoch)`` (digest = the
+``wk_commit`` itself, no signature: the structural guard of "one WK per epoch") and
+``("wk_grant", "<device>:<epoch>")``, each recorded before the signature leaves. ``burned`` is R6's narrow callback
+(``MembershipKeys.is_burned``), not an import of R6 state; without it (and without a ledger) ``member_list`` refuses.
 """
 
 from __future__ import annotations
@@ -44,7 +56,10 @@ from orch.crypto.labels import L
 from . import wire
 from .state import SignLedger
 
-__all__ = ["CARD_FIELDS", "EpochKeys", "LinkContext", "RelaySigner", "SignerRefused", "WorkspaceKey"]
+__all__ = [
+    "CARD_FIELDS", "GRANT_FIELDS", "MEMBER_LIST_FIELDS", "EpochKeys", "LinkContext", "RelaySigner", "SignerRefused",
+    "WorkspaceKey",
+]  # fmt: skip
 
 CARD_FIELDS = frozenset(
     {
@@ -63,6 +78,24 @@ CARD_FIELDS = frozenset(
         "ck_commit",
     }
 )
+
+
+# proto §7.2 / §7.3 (the same sets as ``orch.identity.memberlist``, pinned equal by a test; not imported from there:
+# ``orch.identity.wscard`` imports ``orch.relay.card``, which imports this module)
+MEMBER_LIST_FIELDS = frozenset(
+    {"v", "suite", "kind", "workspace_id", "epoch", "list_seq", "issued_ms", "wk_commit", "persons", "members"}
+)
+_MEMBER_FIELDS = frozenset({"device_id", "person_id", "scopes"})
+GRANT_FIELDS = frozenset({"v", "suite", "kind", "workspace_id", "device_id", "epoch", "sealed"})
+_SCOPES = ("look", "decide", "operate", "type")
+_SEALED_KEY_LEN = crypto.PUB_LEN + 32 + 16
+_MAX_EPOCH = 2**32 - 1
+_MAX_SAFE = 2**53 - 1
+_MAX_MEMBERS = 1024
+
+
+def _hex32(v: object) -> bool:
+    return type(v) is str and len(v) == 32 and all(c in "0123456789abcdef" for c in v)
 
 
 class SignerRefused(ValueError):
@@ -116,7 +149,7 @@ def _bind(key: WorkspaceKey) -> Callable[[bytes], bytes]:
 class RelaySigner:
     """Purpose-specific WSK signatures for the relay client (11A.2)."""
 
-    __slots__ = ("_epochs", "_last_card_seq", "_ledger", "_lock", "_pub", "_sign_bytes", "link")
+    __slots__ = ("_burned", "_epochs", "_last_card_seq", "_ledger", "_lock", "_pub", "_sign_bytes", "link")
 
     def __init__(
         self,
@@ -126,6 +159,7 @@ class RelaySigner:
         epochs: EpochKeys | None = None,
         ledger: SignLedger | None = None,
         last_card_seq: int = 0,
+        burned: Callable[[int], bool] | None = None,
     ) -> None:
         if type(last_card_seq) is not int or last_card_seq < 0:
             raise SignerRefused("last card_seq")
@@ -134,6 +168,7 @@ class RelaySigner:
         self._sign_bytes = _bind(key)
         self._last_card_seq = last_card_seq
         self._ledger = ledger
+        self._burned = burned
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -209,4 +244,128 @@ class RelaySigner:
                 return held[1]
             sig = crypto.b64u(self._sign(L["sig_card_wsk"] + body))
             self._ledger.record("card", str(seq), digest, sig)  # durable before the signature leaves
+        return sig
+
+    # -- R6a: member lists and WK grants (11A.15.7) ------------------------------------------------------------------
+
+    def _member_list_shape(self, o: Mapping[str, Any]) -> tuple[int, int, str, frozenset[str]]:
+        """``(epoch, list_seq, wk_commit, device ids)`` of a well-formed list ``o`` of this workspace, else refused."""
+        if not isinstance(o, Mapping) or set(o) != MEMBER_LIST_FIELDS:
+            raise SignerRefused("member list field set")
+        if o["v"] != 2 or o["suite"] != crypto.SUITE_ID or o["kind"] != "member_list":
+            raise SignerRefused("member list v, suite or kind")
+        if o["workspace_id"] != self.link.workspace_id:
+            raise SignerRefused("member list workspace")
+        epoch, seq, issued = o["epoch"], o["list_seq"], o["issued_ms"]
+        if type(epoch) is not int or not 1 <= epoch <= _MAX_EPOCH:
+            raise SignerRefused("member list epoch")
+        if type(seq) is not int or not 1 <= seq <= _MAX_SAFE or type(issued) is not int or not 0 <= issued <= _MAX_SAFE:
+            raise SignerRefused("member list list_seq or issued_ms")
+        commit = o["wk_commit"]
+        try:
+            if type(commit) is not str or crypto.b64u(crypto.unb64u(commit, 32)) != commit:
+                raise SignerRefused("member list wk_commit")
+        except crypto.EncodingError:
+            raise SignerRefused("member list wk_commit") from None
+        members, persons = o["members"], o["persons"]
+        if type(members) is not list or type(persons) is not list or len(members) > _MAX_MEMBERS:
+            raise SignerRefused("member list members or persons")
+        ids, member_persons = [], set()
+        for m in members:
+            if not isinstance(m, Mapping) or set(m) != _MEMBER_FIELDS:
+                raise SignerRefused("member entry field set")
+            sc = m["scopes"]
+            if not _hex32(m["device_id"]) or not _hex32(m["person_id"]):
+                raise SignerRefused("member entry ids")
+            if type(sc) is not list or not sc or tuple(sc) != _SCOPES[: len(sc)]:
+                raise SignerRefused("member entry scopes")
+            ids.append(m["device_id"])
+            member_persons.add(m["person_id"])
+        if ids != sorted(set(ids)):
+            raise SignerRefused("member ids not sorted and unique")
+        if any(not _hex32(p) for p in persons) or persons != sorted(set(persons)):
+            raise SignerRefused("persons not sorted and unique")
+        if not set(persons) <= member_persons:
+            raise SignerRefused("a listed person without a member")
+        return epoch, seq, commit, frozenset(ids)
+
+    def member_list(self, o: Mapping[str, Any]) -> str:
+        """The b64u ``sig`` of a member list over ``"orch/v2/sig/member-list|" || cj(o)`` (proto §7.2). The H4 epoch
+        floor first: a burned epoch, or one below the highest epoch with a recorded ``wk_commit``, is refused; an
+        epoch already recorded only with the same ``wk_commit``. Then ``("member_list", list_seq)``: the same list
+        gets the recorded signature back, another list there or any list below the highest signed is refused."""
+        epoch, seq, commit, _ = self._member_list_shape(o)
+        try:
+            body = canon.dumps(dict(o))
+        except canon.JcsError:
+            raise SignerRefused("member list is not canonical JSON") from None
+        if self._ledger is None or self._burned is None:
+            raise SignerRefused("member list signing needs a durable sign ledger and R6's burned-epoch view")
+        digest = crypto.sha256(body).hex()
+        with self._lock:
+            if self._burned(epoch):
+                raise SignerRefused("a burned epoch is never signed")
+            if any(int(k) > epoch for k in self._ledger.keys("wk_commit")):
+                raise SignerRefused("epoch below the highest signed epoch (H4 floor)")
+            held = self._ledger.get("wk_commit", str(epoch))
+            if held is not None and not wire.ct_equal(held[0].encode(), commit.encode()):
+                raise SignerRefused("another wk_commit was signed at this epoch")
+            if any(int(k) > seq for k in self._ledger.keys("member_list")):
+                raise SignerRefused("a member list was signed at a later list_seq")
+            prior = self._ledger.get("member_list", str(seq))
+            if prior is not None:
+                if not wire.ct_equal(prior[0].encode(), digest.encode()):
+                    raise SignerRefused("another member list was signed at this list_seq")
+                return prior[1]
+            if held is None:
+                self._ledger.record("wk_commit", str(epoch), commit, "")  # durable: one WK per epoch, ever
+            sig = crypto.b64u(self._sign(L["sig_member_list"] + body))
+            self._ledger.record("member_list", str(seq), digest, sig)  # durable before the signature leaves
+        return sig
+
+    def wk_grant(self, o: Mapping[str, Any], *, signed_list: Mapping[str, Any]) -> str:
+        """The b64u ``sig`` of a WK grant over ``"orch/v2/sig/wk-grant|" || cj(o)`` (proto §7.3). ``signed_list`` is
+        the list ``o`` this grant travels with: it must be the one recorded at its ``list_seq`` (same digest), at
+        the grant's epoch, and name the device. ``("wk_grant", device, epoch)``: other bytes are refused, the same
+        bytes get the recorded signature back."""
+        if not isinstance(o, Mapping) or set(o) != GRANT_FIELDS:
+            raise SignerRefused("grant field set")
+        if o["v"] != 2 or o["suite"] != crypto.SUITE_ID or o["kind"] != "wk_grant":
+            raise SignerRefused("grant v, suite or kind")
+        if o["workspace_id"] != self.link.workspace_id or not _hex32(o["device_id"]):
+            raise SignerRefused("grant workspace or device")
+        epoch = o["epoch"]
+        if type(epoch) is not int or not 1 <= epoch <= _MAX_EPOCH:
+            raise SignerRefused("grant epoch")
+        try:
+            sealed = crypto.unb64u(o["sealed"])
+        except (crypto.EncodingError, TypeError):
+            raise SignerRefused("grant sealed") from None
+        if len(sealed) != _SEALED_KEY_LEN:
+            raise SignerRefused("grant sealed length")
+        l_epoch, seq, _, ids = self._member_list_shape(signed_list)
+        if l_epoch != epoch or o["device_id"] not in ids:
+            raise SignerRefused("the device is not in the list signed for this epoch")
+        try:
+            body = canon.dumps(dict(o))
+            list_digest = crypto.sha256(canon.dumps(dict(signed_list))).hex()
+        except canon.JcsError:
+            raise SignerRefused("grant is not canonical JSON") from None
+        if self._ledger is None:
+            raise SignerRefused("grant signing needs a durable sign ledger")
+        digest = crypto.sha256(body).hex()
+        key = f"{o['device_id']}:{epoch}"
+        with self._lock:
+            if self._ledger.get("wk_commit", str(epoch)) is None:
+                raise SignerRefused("no wk_commit recorded for this epoch")
+            signed = self._ledger.get("member_list", str(seq))
+            if signed is None or not wire.ct_equal(signed[0].encode(), list_digest.encode()):
+                raise SignerRefused("the list was not signed at its list_seq")
+            prior = self._ledger.get("wk_grant", key)
+            if prior is not None:
+                if not wire.ct_equal(prior[0].encode(), digest.encode()):
+                    raise SignerRefused("another grant was signed for this device and epoch")
+                return prior[1]
+            sig = crypto.b64u(self._sign(L["sig_wk_grant"] + body))
+            self._ledger.record("wk_grant", key, digest, sig)
         return sig

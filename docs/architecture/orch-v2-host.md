@@ -1264,10 +1264,14 @@ Errors: `outcome.unknown_idem` (also for another principal's record, F4).
 `host.status {}` →
 
 ```
-{version:str, tier:"A"|"B", uptime_s?:int, state?:"ok"|"degraded"|"unavailable", worker?:bool}
+{version:str, tier:"A"|"B", uptime_s?:int, state?:"ok"|"degraded"|"unavailable", worker?:bool, relay?:RelayStatus}
 ```
 
-Class N gets only `version` and `tier`.
+Class N gets only `version` and `tier`. `relay` (R5, §11A.4 "As built in R5") is present for classes P and G only when
+the workspace has a relay directory or a relay worker: `{link:"none"|"linking"|"linked"|"unreadable",
+worker:"running"|"starting"|"stopping"|"failed"|"stuck"|"off", alive:bool, reason:str|null, stopped:bool,
+gate:{r6_ready:bool, reason:str|null}, outbox_pending:int|null, alarms:[{code, count, first_ms, last_ms, detail}],
+gen?:int}`; never a secret, a token, a link or relay bytes.
 
 **Human ops** (`human.*`, §0.8.1), **job ops** (§0.8.2), **control ops** (§0.8.3): below.
 
@@ -5125,7 +5129,7 @@ corpus is vendored under `tests/relay/vectors/` (11A.10).
 | `relay/publish.py` | R3: the publisher thread, staging, catch-up planning, final `PUT checkpoint`, publication history |
 | `relay/unpublished.py` | R4: the P3-D31 consumer (on the aux thread) |
 | `relay/state.py` | the files of 11A.3. As built in R1: a stdlib private directory (0700, files 0600, `O_NOFOLLOW` against a directory fd, temp + fsync + rename + directory fsync), the last-signed ledger and the write-once first-link files; `orch.host` is import-banned in `orch.relay`, so R5 may swap it for the host custody helpers behind the same interfaces |
-| `relay/worker.py` | R5: `RelayWorker`, started and stopped by `WorkspaceService` |
+| `relay/worker.py` | R5: `RelayWorker`, started and stopped by `WorkspaceService`. As built (15 Oct 2026): the worker, the `Publisher`/`Unpublished`/`LinkSource` seams and the R6 gate `R6_READY`; the host side is `host/relayhook.py` (11A.4 "As built in R5") |
 | `relay/r6/` | R6 (11A.15): `keys.py` (WK, WXK, CK custody, `EpochKeySource`), `members.py` (membership publication, `R6View`), `pair.py` (`R6Pairing`, the offer state machine), `card.py` (WXK rotation, card keys) |
 
 Groups (each one PR into `develop`, first commit its failing vector or test, merged on green CI):
@@ -5513,6 +5517,142 @@ clock is past the backup's time + 1 500 s (600 s before §11A.14 added the 900 s
   `append_relay(service, log, events, extras, person_id=…, device_id=…)`; R1 links only through
   `service.store.relay_link(link, guard=lambda: relaylink.link_reservation(service))` and marks it linked only
   through `store.relay_mark_linked(expect)`.
+
+**As built in R5** (15 Oct 2026; the integration hook. Dormant: the R6 gate below keeps every worker from starting
+until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
+
+- **Code.** `relay/worker.py` (`RelayWorker`, the seams `Publisher`, `Unpublished`, `LinkSource` with their refusing
+  defaults `NoPublisher`, `NoLinkSource`, the alarms book `Alarms`, the gate `R6_READY`), `host/relayhook.py` (the
+  starter, `Seams`/`SEAMS`, the per-process slots, `reserve_link`, `convenience_block`, `status`, `unlink_job`),
+  and in the host: `WorkspaceService` (the open hook `_relay_open`, `_relay_try_start` shared with `relay_start`,
+  `_relay_audit`/`_relay_halt`, `relay_unlink`, `relay_reason`), `relaylink.start_blocker` (`may_start` is now
+  `start_blocker(...) is None`), `Host.serve` sets `service.relay_starter = relayhook.make_starter(backend)` before the
+  open, `host.status.relay` (§0.8), the control op `host.relay_unlink` with `orch host relay unlink --workspace W`,
+  the host code `relay.not_linked` (§0.6), and the relay part of `orch host status`/`doctor`. Two small R2 additions:
+  `BridgeLoop.aux_steps` (R4's seam: `(name, fn)` steps run on the aux thread, guarded like the built-in ones) and
+  `BridgeLoop.threads()`.
+- **The hook.** `open` registers `relayentry.register(service)` (the `relay_fields` hook) right after
+  `human.recover` and **before** `outcomes.reconcile_all()`, once per open, and never runs `relay.submit.recover`
+  (J9: the bridge does at worker start). It ends, on the worker thread, with `_relay_open`: when `link.json` exists,
+  under `relay_cond`, `_relay_try_start` checks `closing`, a running, stopping or stuck worker, the workspace state,
+  then `relaylink.start_blocker` (`stopped`, `not_linked`, `link_unsafe`, then the R6 gate), then calls
+  `relay_starter(service)`. (J) A starter that raises never fails the open or the control op: no worker, and
+  `relay_reason = "start_failed: <code>"`. `orch host relay start` runs the same `_relay_try_start` after it clears
+  the marker; its answer carries `reason` when nothing started.
+- **The starter** (`relayhook.start_worker`, under `relay_lock`, never waiting for the worker thread): the gate again,
+  a per-process slot, ONE `StateDir` on `realpath(<trusted state dir>)/hosts/<ws>/relay` (J: the trusted root resolved
+  once, the components below appended unresolved, so a symlinked `relay/` is still refused, 11A.3 R6-4), `link.json`
+  read through it, the WSK as `BackendSigner(FileBackend(hosts/<ws>/keys), "wsk")` inside `RelaySigner` (with
+  `FileSignLedger`; `last_card_seq` = `link.card_seq` when `linked`, else 0), R6's `(EpochKeySource, R6View)`, ONE
+  `Session` (`FileHolderStore`, the worker's stop event), the `RidStore`, `Bridge(port=RelayEntry(service, backend),
+  job=worker.job)` and `BridgeLoop`; then `worker.start()` and `service.relay = worker`. Any failure closes what it
+  opened and releases the slot.
+- **The worker.** `start()` checks the gate and spawns `orch-relay-start-<id8>`, which (1) runs the convenience check
+  as a worker job (`convenience_block`: `refuse_reader_op(service, "relay.link", history=True)` under the store lock;
+  a hit is the alarm `convenience_events_present` and the worker stops, nothing sent), (2) while `link.json` is
+  `linking`, runs R1's `first_link` with the host's `LinkSteps` (`card`/`genesis` from `LinkSource`, `publish` =
+  `publisher.publish_first`, `mark_linked` = a worker job `store.relay_mark_linked(expect)`, `expect` the exact record
+  the worker started for), (3) starts the loop (threads `orch-relay-{poll,resp,job0,job1,aux}-<id8>`) and the
+  publisher. `stop()` never blocks: `submit` refuses from then on (`WorkerStopped`), the stop event wakes every wait,
+  the loop shuts its connections down. `join(timeout) -> bool` shares one deadline over the start thread, the loop
+  (joined twice, see the inconsistencies) and the publisher; once every thread ended it logs out (best effort),
+  closes the rid store and the `StateDir` (the lock is free for the next worker) and releases the slot, once. A
+  stuck worker keeps all of them (fail closed). `close()` and `relay_stop()` keep H12a's bounded 120 s wait.
+- **Foreign appends (11A.6).** `_build_journal(audit=True)` (a refresh that loaded events this host did not append)
+  calls `_relay_audit`: with a worker running, `convenience_block` again; a hit (or a check that raises) halts it:
+  taken out under `relay_cond`, alarmed, `stop()` at once on the worker thread (no store job is queued from then on),
+  the bounded join on `orch-relay-halt-<id8>` (the relay threads may be waiting for this very worker thread). (J) Not
+  persisted: the next start checks again and refuses again while the history holds the event.
+- **Lock order** (one line for the whole bridge): `relay_lock` → the workspace store lock → the guard's host-wide
+  `relay-link.lock` → R6's seal lock → the `RidStore` lock. `unlink_job` holds `relay_cond` then the store lock on the
+  worker thread; nothing takes `relay_cond` while holding the store lock (`_relay_audit` runs after the journal's
+  locked check), and nothing holding `relay_cond` waits for the worker thread. The reservation's order is pinned by
+  `test_reserve_link_takes_the_store_lock_first_then_the_host_wide_lock`.
+- **The 8-per-host cap.** At link (H12a, `link_reservation`) and again at start: `relayhook._take_slot` holds one of
+  `MAX_LINKED` slots per state directory and process until every thread of that worker ended; the same workspace
+  twice is `lock.busy`, a ninth `host.limit`.
+- **The reader reservation.** `relayhook.reserve_link(service, origin=, max_publication_bytes=, ca_file=, proxy=)` (a
+  worker job) is 11A.5 step 1: `store.relay_link({v:1, workspace_id, origin, max_publication_bytes, linked_at,
+  card_seq: 1, …}, guard=lambda: relaylink.link_reservation(service))`. (J) `linked_at` is stamped at the reservation
+  (the store's `relay_mark_linked` only flips the state). (J) **Not exposed as a control op or CLI yet:** `link.json`
+  is a permanent reservation (11A.6), and until R6a's card keys and the genesis-pin person path exist the link can
+  never complete; an operator would burn the workspace's convenience signing for nothing. `orch host relay link`
+  lands with R6e's dev path (11A.15.11).
+- **Unlink.** `host.relay_unlink {workspace_id}` (no idem; `orch host relay unlink --workspace W`, human only, host
+  required): stop the worker (refused `lock.busy` while its threads live, nothing renamed), then one worker job holding
+  `relay_cond` and the store lock renames `link.json` to `unlinked-<linked_at>.json` with `os.link` + `unlink`, never
+  over an existing file (`-<n>` suffix); `relay.not_linked` without a link. The marker is left alone; a relink through
+  `reserve_link` is allowed.
+- **`host.status.relay`** (§0.8) and **`orch host status`/`doctor`**: the link, the worker (`failed` for a loop that
+  stopped itself: fenced or a lost session; (J) it stays in `service.relay` until `orch host relay stop` then `start`,
+  never restarted automatically), why none runs, the marker, the gate, the queued outbox entries, the alarms (the
+  worker's book; `alarms.json` once it stopped). `orch host status` lists a linked workspace whose worker cannot start
+  for another reason than the operator's stop as a problem. (J) Both are omitted for a workspace that never had a
+  relay directory, so the §0.8 shape of an unlinked workspace is unchanged.
+- **The alarms book** (`alarms.json`, 11A.3): per code a count, first/last time and the last detail (clipped to 200
+  characters; callers pass classes and routes only), at most 64 codes then one `relay_alarm_codes_exhausted`; written
+  through the `StateDir` when a code first appears and at the end, kept in memory if the write fails.
+- **Fork and exec.** The worker records its pid: in a forked child `submit` and `start` refuse, `stop` does nothing
+  and `join` releases nothing (no logout with the parent's token, no close of the parent's database or lock). The pid
+  is checked before the worker's lock: a lock another parent thread held at the fork stays locked in the child (the
+  mutation pass found the fork test hanging in 2 of 35 runs on exactly that; fixed and tested by forking while a
+  thread holds the lock). Exec: the `StateDir` lock fd is close-on-exec (R1) and Python sockets are not inheritable.
+
+**The R6 gate.** `orch.relay.worker.R6_READY = False`, checked by `relaylink.start_blocker` (so `may_start` is false and
+`host.status.relay` names `R6_GATE_REASON`), by `relayhook.start_worker` and by `RelayWorker.start` before any thread.
+An AST test pins it as the one module-level literal `False` that nothing under `orch/` assigns or names (honest limit:
+same-process code can still set the attribute; tests open it with `monkeypatch`). **Flipping it requires**, in this
+order: (1) R6 merged: the real `EpochKeySource` (`seal_snapshot`, `refusal_key`, the seal lock and `R6Gate.raise_for`
+in the store's critical sections), the real `R6View` (the committed list re-verified at load) and `R6Pairing` for
+`pair` items; (2) `relayhook.SEAMS.r6` set to R6's builder, `SEAMS.link_source` to R6a's card keys and the
+genesis-pin person path, `SEAMS.publisher` to R3 (else the first link stops at `publish` and never reaches `linked`)
+and `SEAMS.unpublished` to R4; (3) R6's integration tests against the real relay pass in the `relay-t2` job,
+including an R5 T2 test: a served workspace linked through the hook with the test owner client
+(`tests/relay/owner.py`, 11A.15.11, 11A.15.14 step 4), a paired device, a column-R read and a write through the
+worker; (4) the Opus security review and orch-52's review of R5 and of the R6 groups; (5) the flip is its own PR that
+changes only the literal and the pinning test.
+
+**The seams** (set on `orch.host.relayhook.SEAMS`; each `None` until its group lands):
+
+| Seam | Signature | Contract |
+|---|---|---|
+| R3 | `publisher(service, worker) -> Publisher`: `start()`, `stop()`, `join(timeout) -> bool`, `publish_first(session, directory)` | thread `orch-relay-pub-<id8>`; the store only through `worker.job`; `publish_first` is `LinkSteps.publish` of the first link (the default refuses, so no link reaches `linked` without R3) |
+| R4 | `unpublished(service, worker) -> Unpublished`: `step()` | appended to `BridgeLoop.aux_steps` before the loop starts; one bounded step per aux turn (10 s per relay call), holding evidence only through `worker.job` |
+| R6 | `r6(service) -> (EpochKeySource, R6View)` | 11A.15.2; R6's own threads (`r6m`, `r6p`) are started by R6 beside these and must follow the worker contract |
+| R6a, person path | `link_source(service) -> LinkSource`: `card()`, `genesis() -> (pin, cert, genesis_hash)`, `owner_pk_pub()` | 11A.5 steps 2 and 3; the default refuses before anything is sent |
+| tests | `conn(origin, link) -> Transport` | the loopback relay of 11A.10 layer 1; default `RelayConn` with `link.json`'s `ca_file`/`proxy` |
+
+**Design inconsistencies found (15 Oct 2026).**
+- 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`
+  (`service.relay_starter`, `may_start`), which R5 follows: there is no `relay.worker.start(service)` function.
+- 11A.4 "owns four daemon threads … each with its own connection": R2 runs five (`poll`, `resp`, `job0`, `job1`,
+  `aux`) on three connections (the session's own, the poll's, the poster's; `bridge.py:1068`, `:1070`), plus R5's
+  short-lived start thread; R3's `pub` makes six threads. The memory and connection bounds of 11A.7 are unaffected
+  (the jobs share the poster).
+- 11A.6 "`RelayWorker.start` runs `has_convenience_events` once": `start` must not wait for the worker thread (H12a's
+  starter rule), so R5 runs it as the start thread's first worker job, before anything is sent, and uses
+  `refuse_reader_op(…, history=True)` (history, the durable mark and the flag), the same rule as the reservation.
+- 11A.7 "Shutdown" step 3 joins each thread with a 5 s bound and logs out; R5's `join` takes the caller's bound (120 s
+  from the service) and logs out only once every thread ended (a stuck thread may still use the token).
+- `bridge.py:1020` `BridgeLoop.join` snapshots `_threads`, while `_poll_main` (`bridge.py:1067`) spawns the responder,
+  job and aux threads after `bridge.start()`; a join during a stopping start can return true before they are
+  registered. R5 joins the loop twice (after the poll thread ended no thread is spawned any more).
+- 11A.3 lists `linked_at` in `link.json`, but `Store.relay_mark_linked` (`store/store.py:2882`) only flips the state;
+  R5 stamps `linked_at` at the reservation.
+- 11A.15.9 lists `relay.not_linked` as a code R6 adds; R5 adds it with `host.relay_unlink`.
+- 11A.10 "Not yet covered": R5's T2 needs the test owner client and R6a's card keys (11A.15.14 step 4); neither exists,
+  and with the gate closed the hook cannot run against the real relay outside a test that opens it, so **T2 is not
+  extended in R5** (judgement call). The loopback layer covers the hook (`tests/relay/test_relay_hook.py`).
+
+**Tests.** `tests/relay/test_worker.py` (the worker with fakes: the gate, start/stop/join, stop during start, double
+start, submit after stop, the first link and the convenience step, the seams, alarms, fork safety),
+`tests/relay/test_relay_hook.py` (a served workspace: the dormant hook and `host.status.relay`, the worker over the
+loopback relay through the real `RelayEntry`, stop and close against an in-flight store job, a fenced worker, the
+marker across restarts with `relay_fields` registered once and `submit.recover` never run in `open`, the lock order,
+the convenience halt, the stuck worker, the slots, unlink and relink, `orch host status`), and R5 AST rules in
+`tests/relay/test_import_ban.py` (only `relayhook` builds the relay objects, once each; only the service and the hook
+set `service.relay`; the starter runs only from `_relay_try_start`, after `start_blocker`, under `relay_cond`). Mutation
+pass on a `git archive` scratch copy: MUTANTS_RESULT.
 
 ### 11A.5 The bridge loop (R2) and the publisher (R3)
 

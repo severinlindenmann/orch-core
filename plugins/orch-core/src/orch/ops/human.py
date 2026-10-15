@@ -520,6 +520,15 @@ class Human:
             except rd.ReadersRefused as exc:
                 raise exc.orch_error() from None
             stamp = iso(self.ctx.now())
+            admitted = {p["device"] for p in pending}
+            try:
+                rd.drop_stale(state_dir, wid, [d for d in rd.added_readers(events) if d not in admitted])
+            except Exception as exc:  # noqa: BLE001 - a stale record that stays would count again: refuse
+                raise OrchError(
+                    "internal",
+                    f"a stale reader record could not be removed ({type(exc).__name__}); nothing was appended",
+                    hint="check the state directory: orch doctor",
+                ) from None
             for p in pending:
                 try:
                     rd.store_record(

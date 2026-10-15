@@ -43,6 +43,7 @@ __all__ = [
     "below_level",
     "check_readers",
     "current_devices",
+    "drop_stale",
     "levels",
     "make_record",
     "prune",
@@ -378,6 +379,19 @@ def store_record(state_dir: Path, workspace_id: str, uid: int, record: dict[str,
             return old
     write_record(state_dir, workspace_id, uid, record)
     return record
+
+
+def drop_stale(state_dir: Path | None, workspace_id: str, devices: Iterable[str]) -> None:
+    """Remove the records of readers an append adds **without** a declaration (a record left from before the device
+    was removed must not count again once it is re-added: its build may have changed). Raises when a record that is
+    there cannot be removed (the caller refuses the append)."""
+    from orch.store.readerrecs import remove_record
+
+    if state_dir is None:
+        return
+    for dev in devices:
+        if isinstance(dev, str) and dev.startswith("d_") and len(dev) == 34:
+            remove_record(state_dir, workspace_id, dev[2:])
 
 
 def prune(state_dir: Path, workspace_id: str, state: Any, uid: int | None = None) -> dict[str, list[str]]:

@@ -1178,6 +1178,14 @@ def _readers_refusal(
     except rd.ReadersRefused as exc:
         return convenience.readers_error(exc)
     stamp = _iso(service.clock())
+    admitted = {r.get("device") for r in readers}
+    try:
+        rd.drop_stale(state_dir, service.workspace_id, [d for d in adds if d not in admitted])
+    except Exception as exc:  # noqa: BLE001 - a stale record that stays would count again: refuse
+        return HostError(
+            "custody.unsafe_mode",
+            f"a stale reader record could not be removed ({type(exc).__name__}); nothing appended",
+        )
     for entry in readers:
         if entry.get("device") not in adds:
             continue

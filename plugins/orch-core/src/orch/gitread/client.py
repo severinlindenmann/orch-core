@@ -423,7 +423,7 @@ class HostGitReader:
     def _pin_one(self, hello: dict[str, Any], real: str) -> RepoPins | str:
         try:
             got = self.pool.call(self.principal, hello, {"op": "pin", "args": {"path": real}})
-            return RepoPins.from_json(got.get("pins"))
+            return _check_layout(RepoPins.from_json(got.get("pins")), real, hello["roots"])
         except Unavailable as e:
             return e.reason
 
@@ -438,7 +438,7 @@ class HostGitReader:
             return {paths[0]: self._pin_one(hello, paths[0])}
         try:
             got = self.pool.call(self.principal, hello, {"op": "pin_many", "args": {"paths": paths}})
-            return dict(zip(paths, _check_pin_many(got, len(paths)), strict=True))
+            return dict(zip(paths, _check_pin_many(got, paths, hello["roots"]), strict=True))
         except Busy as e:
             return dict.fromkeys(paths, e.reason)
         except Unavailable:
@@ -614,16 +614,39 @@ def _check_observe(got: Any, refs: list[str]) -> dict[str, Any]:
     return got
 
 
-def _check_pin_many(got: Any, n: int) -> list[RepoPins | str]:
-    """The child's ``pin_many`` answer, checked as a whole before any of it is used: exactly ``n`` results, each
-    either well-formed pins or an error with a string message. Anything else is :class:`Unavailable`."""
+def _check_layout(pins: RepoPins, real: str, roots: list[str]) -> RepoPins:
+    """The pins a child answered for ``real`` must have the shape :func:`orch.gitread.pinning.pin_repo` gives: the
+    working copy is ``real`` itself, the commondir is ``<declared repo>/.git`` and the gitdir is the commondir (a main
+    repository, then ``real/.git``) or ``<commondir>/worktrees/<id>`` of another declared repo (a linked worktree).
+    A child that forged pins (a path outside the declared repos for the later ``gitdir`` profile to open) is refused
+    here, whichever repo of a batch it answered for (#471: one child answers for many repos)."""
+    gits = {r.rstrip("/") + "/.git" for r in roots}
+    own = real.rstrip("/") + "/.git"
+    wt, gd, cd = pins.worktree.path, pins.gitdir.path, pins.commondir.path
+    main = gd == cd == own
+    linked = (
+        cd in gits
+        and cd != own
+        and gd.startswith(cd + "/worktrees/")
+        and gd.count("/") == cd.count("/") + 2
+        and gd.rpartition("/")[2] not in ("", ".", "..")
+    )
+    if wt != real or not (main or linked):
+        raise Unavailable("the reader answered pins outside the declared repos")
+    return pins
+
+
+def _check_pin_many(got: Any, paths: list[str], roots: list[str]) -> list[RepoPins | str]:
+    """The child's ``pin_many`` answer, checked as a whole before any of it is used: one result per path, each either
+    pins of git's layout for that path (:func:`_check_layout`) or an error with a string message. Anything else is
+    :class:`Unavailable` (the caller then pins each path in its own child)."""
     results = got.get("results") if isinstance(got, dict) and set(got) == {"results"} else None
-    if not isinstance(results, list) or len(results) != n:
+    if not isinstance(results, list) or len(results) != len(paths):
         raise Unavailable("the reader answered nonsense")
     out: list[RepoPins | str] = []
-    for r in results:
+    for path, r in zip(paths, results, strict=True):
         if isinstance(r, dict) and set(r) == {"pins"}:
-            out.append(RepoPins.from_json(r["pins"]))
+            out.append(_check_layout(RepoPins.from_json(r["pins"]), path, roots))
             continue
         err = r.get("error") if isinstance(r, dict) and set(r) == {"error"} else None
         if not isinstance(err, dict) or set(err) != {"code", "message"} or not isinstance(err["message"], str):

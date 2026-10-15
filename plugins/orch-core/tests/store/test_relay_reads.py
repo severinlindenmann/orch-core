@@ -280,19 +280,30 @@ def test_a_fifo_in_abandoned_never_blocks_and_is_skipped(grown):
     assert not t.is_alive() and out["r"] == []
 
 
-def test_a_symlinked_root_is_validation_path(grown):
+def test_a_symlinked_root_is_never_followed(grown, tmp_path):
+    """#516: the store reads below the root fd it opened. A symlink put at the root's path later is never followed
+    (before #516 this read re-opened the root by path and refused it; now nothing reaches the path at all)."""
     import os
 
-    env, _ = grown
+    from tests.store.outside import watch
+
+    env, uid = grown
     s = env.store
     real = env.root
     moved = real.with_name("ws-moved")
+    outside = tmp_path / "elsewhere"
+    (outside / ".state" / "checkpoints" / "abandoned").mkdir(parents=True)
+    (outside / ".state" / "checkpoints" / "abandoned" / "workspace-9.json").write_bytes(b'{"outside": true}')
+    genuine = canon.cj_checked(_forked(env, uid))
+    ab = real / ".state" / "checkpoints" / "abandoned"
+    ab.mkdir(parents=True, exist_ok=True)
+    (ab / "workspace-8.json").write_bytes(genuine)  # in the store's own tree: it must be found (the walk works)
     os.rename(real, moved)
-    os.symlink(moved, real)  # the root swapped for a symlink after the store opened
+    os.symlink(outside, real)  # the root's path now names another directory
     try:
-        with pytest.raises(StoreError) as e:
-            list(s._abandoned_workspace_checkpoints())  # noqa: SLF001
-        assert e.value.code == "validation.path"
+        with watch(outside) as seen:
+            assert list(s._abandoned_workspace_checkpoints()) == [genuine]  # noqa: SLF001
+        assert seen == []
     finally:
         os.unlink(real)
         os.rename(moved, real)

@@ -44,8 +44,8 @@ class Recorder:
 
     def __call__(self, dev: str, why: str) -> None:
         self.calls.append((dev, why))
-        held = self.store._lock._held  # noqa: SLF001 - the call is inside the critical section (lock depth > 0)
-        self.locked.append(held.depth > 0)
+        # the call is inside the critical section: this thread holds the store's FileLock (#564: per-thread stack)
+        self.locked.append(bool(self.store._lock._stack()))  # noqa: SLF001
 
 
 def test_device_removed_append_gates_inside_the_lock(env):
@@ -231,13 +231,16 @@ def test_a_commit_failing_after_or_at_the_commit_point_is_gated_before_the_lock_
     elif where == "write_pending":
         monkeypatch.setattr(store_mod.Store, "_write_pending", _boom)
     else:
-        real = store_mod.append_durable
+        from orch.store.rootfs import RootFS  # #564: every store write goes through the pinned root
 
-        def late(path, line, **kw):
-            real(path, line, **kw)
-            raise OSError("fsync")
+        real = RootFS.append_durable
 
-        monkeypatch.setattr(store_mod, "append_durable", late)
+        def late(self, path, line, **kw):
+            real(self, path, line, **kw)
+            if kw.get("commit"):
+                raise OSError("fsync")
+
+        monkeypatch.setattr(RootFS, "append_durable", late)
     with pytest.raises(OSError):
         env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
     assert rec.calls == [(d2[2:], "f1_standing")] and all(rec.locked)  # no further lock entry needed

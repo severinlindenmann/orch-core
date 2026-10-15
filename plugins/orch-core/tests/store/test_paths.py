@@ -54,8 +54,12 @@ def test_safe_join_refuses_escapes_and_symlinks(tmp_path):
         with pytest.raises(StoreError):
             safe_join(root, bad)
     os.symlink(outside, root / "tickets" / "01J9ZK4Q7M3R8T2V6X0B5N1C9D")
-    with pytest.raises(StoreError):
-        safe_join(root, "tickets/01J9ZK4Q7M3R8T2V6X0B5N1C9D/ticket.json")
+    # safe_join is lexical (#564): the symlink is refused where the file is reached, by the pinned root
+    from orch.store.rootfs import RootFS
+
+    with RootFS.at(root) as fs, pytest.raises(StoreError) as e:
+        fs.read_or_none(safe_join(root, "tickets/01J9ZK4Q7M3R8T2V6X0B5N1C9D/ticket.json"))
+    assert e.value.code == "validation.path"
     assert safe_join(root, "tickets/OTHER/ticket.json") == root / "tickets/OTHER/ticket.json"
 
 

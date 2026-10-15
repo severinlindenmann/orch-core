@@ -305,6 +305,7 @@ class Workspace:
             # set) never take the direct-mode guard: it reads the agent pins outside the roots (H3a note a).
             guard=DirectGuard(sd, wid) if self.files.roots is None else None,
             config=self._found.raw if self._found is not None and self._found.raw else None,
+            ident=self.ident,  # the root fd is checked against what discovery saw; everything below goes through it
         )
 
 

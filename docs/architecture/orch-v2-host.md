@@ -4108,8 +4108,11 @@ UID. P2 adds no keychain.**
     - **As built (#471):** the repos to pin are pinned in **one** reader child per 64 of them (`pin_many`, profile
       `pin`, the same declared roots and audit hook as a single `pin`), answered per repo: one repo's refusal never
       touches the others. A batch that fails as a whole (the child dies, overruns a limit or answers malformed) decides
-      nothing and each of its repos is pinned again in its own child; `quota.host` is not retried repo by repo. One
-      child per repo had made the first request after such a `settings.changed` cost ~70 ms per repo (#468).
+      nothing and each of its repos is pinned again in its own child; `quota.host` is not retried repo by repo. The
+      host checks every answered pin against git's layout under the declared repos (the working copy is the asked
+      path; the commondir is a declared repo's `.git`; the gitdir is that commondir or its `worktrees/<id>`) before it
+      is stored, so a child forging pins fails its batch. One child per repo had made the first request after such a
+      `settings.changed` cost ~70 ms per repo (#468).
     - Every open stays under the pins, with `O_NOFOLLOW` and a regular-file check.
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.

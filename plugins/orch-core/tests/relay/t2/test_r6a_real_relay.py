@@ -44,6 +44,9 @@ class _Epochs:
     def refusal_key(self, e):  # noqa: ANN001, ANN201
         return self.mk.refusal_key(e)
 
+    def is_burned(self, e):  # noqa: ANN001, ANN201
+        return self.mk.is_burned(e)
+
     def seal_state(self):  # noqa: ANN201
         return self.mk.seal_state()
 
@@ -57,6 +60,7 @@ class _Epochs:
 @pytest.fixture
 def mk(tmp_path):
     m = MembershipKeys(tmp_path / "membership", WS, now_ms=now_ms)
+    m.confirm_gate_hooks()  # no store here: the test stands in for R6Gate.install
     yield m
     m.close()
 

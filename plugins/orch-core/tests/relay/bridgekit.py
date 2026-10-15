@@ -176,6 +176,9 @@ class Epochs(SealLockFixture):
     def refusal_key(self, epoch: int) -> bytes | None:
         return self.keys.get(epoch) if epoch in self.burned and epoch > self.cur else None
 
+    def is_burned(self, epoch: int) -> bool:
+        return epoch in self.burned
+
     def seal_state(self) -> SealState:
         ehw = max([self.cur, *self.burned, *([self.pending] if self.pending else [])])
         return SealState(self.cur, self.gated, self.pending if self.pending is not None else ehw + 1)

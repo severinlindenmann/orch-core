@@ -22,10 +22,23 @@ serves no key, the worker must not start (:meth:`MembershipKeys.check_start`, al
 only :meth:`MembershipKeys.recover_h7` (R6b, after a verified ``GET members``) clears it, with both high-water marks
 raised by 1024 above everything known.
 
-**The seal lock** (11A.15.2) is this object's ``RLock``. It guards the in-memory seal state only (committed epoch,
-gate, burned epochs, pending epoch); nothing under it does I/O or takes another lock. Lock order: the store lock, then
-``head`` lock (R6's single writer), then the seal lock, then R2's RidStore lock. :class:`R6Gate` is the store's hook:
-it takes only the seal lock and queues the durable write (:meth:`MembershipKeys.flush_gate`, on R6's thread).
+**Locks, ONE order (round 2, F5):** the store lock, then the writer lock (R6's single ``head.json`` writer: every
+method that writes takes it), then the seal lock (11A.15.2), then R2's RidStore lock. The seal lock guards the
+in-memory seal state; R6 holds it only for memory updates, but R2 holds it across a seal and the commit of the
+replayable bytes (``rids.answer``: SQLite with fsync, and the WSK signature), so a gate raise waits for that I/O
+(availability, not safety). **Never call a writer method inside** :meth:`MembershipKeys.serialised` or a seal span:
+it is refused at once (``RuntimeError``), never a deadlock (a thread-local count of seal-lock holds is checked before
+the writer lock is taken).
+
+**The gate is durable before** :meth:`R6Gate.raise_for` **returns** (round 2, F4): the in-memory gate goes up under
+the seal lock, then the raise is written into ``head.json`` (writer lock, after the seal lock is released). The store
+calls the hook through ``Store.relay_gate`` (installed by :meth:`R6Gate.install`), which the host's journal never
+replaces; until the hook is installed the store is **gated** (fail closed). A crash between the store's commit and
+the durable write is closed at load by the host (``relayr6.r6``: every member of the committed list whose F1 standing
+is not ``ok`` raises the gate before the worker starts).
+
+**A forked child** (``os.fork``) serves nothing: every method checks the pid before it takes any lock (a lock held by
+another parent thread at the fork is never released in the child) and answers fail closed (no key, gated) or raises.
 
 **No raw key leaves except through the R2 interface** (``wk``/``refusal_key``, called only by
 ``orch.relay.keys.BridgeKeys``) and ``CK`` inside this package for the card. Nothing here logs, formats or raises with
@@ -39,6 +52,8 @@ from __future__ import annotations
 import contextlib
 import hmac
 import json
+import logging
+import os
 import re
 import secrets
 import threading
@@ -71,6 +86,7 @@ CLAMP = 2**16  # 11A.15.4: a rotation target is at most committed + 2^16
 H7_MARGIN = 1024  # §11 H7: both high-water marks raised by 1024 above everything known
 MAX_SAFE_INT = 2**53 - 1
 HEAD = "head.json"
+log = logging.getLogger("orch.relay.r6")
 GATE_REASONS = frozenset(
     {"device.removed", "device.revoked", "held_evidence", "relay_revocation", "revoked_refusal", "rotation_due",
      "h7", "rotate"}
@@ -211,13 +227,56 @@ def _parse_key(raw: bytes | None, kind: str, n: int, field: str) -> bytes:
         raise MembershipUnsafe("key_unreadable") from None
 
 
+def _list_of(body: bytes) -> dict[str, Any]:
+    """The member list ``o`` of an exposed body: the body is either ``cj(o)`` or the ``PUT membership`` body
+    ``{member_list: {o, sig}, ...}``; anything else is refused."""
+    try:
+        obj = canon.loads_strict(body)
+    except ValueError:
+        raise CustodyRefused("exposed body is not canonical JSON") from None
+    if type(obj) is dict and type(obj.get("member_list")) is dict:
+        obj = obj["member_list"].get("o")
+    if type(obj) is not dict or obj.get("kind") != "member_list" or type(obj.get("members")) is not list:
+        raise CustodyRefused("exposed body holds no member list")
+    return obj
+
+
+class _SealLock:
+    """The seal lock: an ``RLock`` that knows whether the current thread holds it (the lock-order check of the
+    writer methods, F5)."""
+
+    __slots__ = ("_holds", "_lock")
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._holds: dict[int, int] = {}  # thread id -> hold count; written only by the holding thread
+
+    def __enter__(self) -> None:
+        self._lock.acquire()
+        me = threading.get_ident()
+        self._holds[me] = self._holds.get(me, 0) + 1
+
+    def __exit__(self, *exc: object) -> None:
+        me = threading.get_ident()
+        n = self._holds[me] - 1
+        if n:
+            self._holds[me] = n
+        else:
+            del self._holds[me]
+        self._lock.release()
+
+    def held(self) -> bool:
+        return self._holds.get(threading.get_ident(), 0) > 0
+
+
 class MembershipKeys:
     """R6's key custody and seal state for one workspace (11A.15.3): implements R2's ``EpochKeySource``
     (``current_epoch``, ``wk``, ``refusal_key``, ``seal_state``, ``seal_snapshot``, ``serialised``).
 
     ``root`` is ``<state>/hosts/<ws>/membership`` (resolved; ``hosts/<ws>`` must exist). One live instance per
-    directory (``StateDir``'s ``flock``); a forked child refuses every operation. ``fault(point)`` is the crash seam
-    of the tests (called after every durable step)."""
+    directory (``StateDir``'s ``flock``); a forked child serves nothing (fail closed). ``fault(point)`` is the crash
+    seam of the tests (called after every durable step). ``previously_linked`` (F2): the workspace is linked (or has
+    a first card at the relay), so a missing ``head.json`` is H7 even when the whole directory is gone."""
 
     def __init__(
         self,
@@ -226,14 +285,18 @@ class MembershipKeys:
         *,
         now_ms: Callable[[], int],
         fault: Callable[[str], None] | None = None,
+        previously_linked: bool = False,
     ) -> None:
         crypto.unhex(workspace_id, 16)
+        self._pid = os.getpid()
+        self._previously_linked = previously_linked is True
         self.workspace_id = workspace_id
         self.root = Path(root)
         self._now_ms = now_ms
         self._fault = fault or (lambda point: None)
-        self._seal = threading.RLock()  # the seal lock (11A.15.2): in-memory seal state only, never any I/O
+        self._seal = _SealLock()  # the seal lock (11A.15.2)
         self._writer = threading.RLock()  # R6's one head.json writer (taken before the seal lock, never inside it)
+        self._hooked = False  # R6Gate.install ran: until then the store is gated (F4, fail closed)
         self._dir = StateDir(root)
         try:
             self._keys = StateDir(Path(root) / "keys")
@@ -258,7 +321,7 @@ class MembershipKeys:
         self._unsafe: str | None = None
         self._head: dict[str, Any] = _fresh_head()
         try:
-            with self._writer:
+            with self._write():
                 self._load()
         except BaseException:  # a failed (or crashed) load never keeps the directories locked
             self.close()
@@ -271,6 +334,20 @@ class MembershipKeys:
         self._cards.close()
         self._keys.close()
         self._dir.close()
+
+    def _forked(self) -> bool:
+        return os.getpid() != self._pid
+
+    @contextlib.contextmanager
+    def _write(self) -> Iterator[None]:
+        """The writer lock, in the one order (F5): refused inside a seal-lock hold of this thread, and in a forked
+        child."""
+        if self._forked():
+            raise MembershipUnsafe("forked")
+        if self._seal.held():
+            raise RuntimeError("lock order: a membership writer method inside the seal lock (serialised/a seal span)")
+        with self._writer:
+            yield
 
     # -- load and recovery -------------------------------------------------------------------------------------------
 
@@ -313,7 +390,7 @@ class MembershipKeys:
             return self._unsafe_now("head_unreadable")
         if head is None:
             other = self._keys.names() or self._cards.names() or ledger_seqs or ledger_epochs or ledger_cards
-            if other:
+            if other or self._previously_linked:  # F2: a lost directory of a linked workspace is H7, never fresh
                 return self._unsafe_now("head_lost")
             head = _fresh_head()
             self._dir.write_json(HEAD, head)
@@ -345,17 +422,29 @@ class MembershipKeys:
         burned = {int(k): v for k, v in head["burned"]["epochs"].items()}
         ehw = max(head["ehw"], self._ehw)
         lhw = max(head["lhw"], self._lhw)
+        # F1: the ledger says an epoch above e_c was signed (or a list above the head's LHW) that this head does not
+        # account for: a rolled-back head (a restore) or the crash window between signing and the expose write. Not
+        # provably an orphan, so the store starts GATED (durable, reason h7) until R6b's verified GET members.
+        unaccounted = [e for e in ledger_epochs if e > ec and e not in burned and e != pending] or [
+            q for q in ledger_seqs if q > head["lhw"]
+        ]
         orphans = [e for e in held if e > ec and e not in burned and e != pending]
         for e in orphans:  # the orphan rule: claimed, never exposed: burned, never activated or generated again
             burned[e] = min(ehw + 1, MAX_EPOCH)
-        if orphans or ehw != head["ehw"] or lhw != head["lhw"]:
-            head = {**head, "ehw": ehw, "lhw": lhw,
+        gate = head["gate"]
+        if unaccounted:
+            reason = {"device": "", "reason": "h7"}
+            old = gate or {"up": True, "reasons": [], "since_ms": self._now_ms(), "target": None}
+            reasons = old["reasons"] if reason in old["reasons"] else [*old["reasons"], reason]
+            gate = {**old, "up": True, "reasons": reasons, "target": min(ehw + 1, MAX_EPOCH)}
+        if orphans or unaccounted or ehw != head["ehw"] or lhw != head["lhw"]:
+            head = {**head, "ehw": ehw, "lhw": lhw, "gate": gate,
                     "burned": {"epochs": {str(e): n for e, n in sorted(burned.items())},
                                "list_seqs": head["burned"]["list_seqs"]}}  # fmt: skip
             self._dir.write_json(HEAD, head)  # durable before anything is served
+            self._head = head
             self._fault("after_recovery")
         self._head = head
-        gate = head["gate"]
         with self._seal:
             self._wk, self._ec, self._burned, self._pending = held, ec, burned, pending
             self._ehw, self._lhw = ehw, lhw
@@ -388,7 +477,7 @@ class MembershipKeys:
         readable keeps its ``holders``/``excluded``; R6b then rotates at once."""
         if not _int(relay_lhw, 0, MAX_SAFE_INT) or not _int(relay_ehw, 0, MAX_EPOCH):
             raise CustodyRefused("relay high-water marks")
-        with self._writer:
+        with self._write():
             for d in (self._dir, self._keys, self._cards):
                 d.discard_temps()
             wk_epochs = self._numbers(self._keys, _WK)
@@ -425,6 +514,7 @@ class MembershipKeys:
             )  # fmt: skip
             del ledger_cards
             self._dir.write_json(HEAD, head)
+            self._head = head
             self._fault("after_h7")
             held = {}
             for e in wk_epochs:
@@ -432,7 +522,6 @@ class MembershipKeys:
                     held[e] = self._read_key("wk", e, "wk")
                 except MembershipUnsafe:
                     pass  # an unreadable key is burned and never served
-            self._head = head
             with self._seal:
                 self._wk, self._ec, self._burned, self._pending = held, 0, burned, None
                 self._ehw, self._lhw, self._gate_up, self._unsafe = ehw, lhw, True, None
@@ -441,12 +530,16 @@ class MembershipKeys:
 
     def current_epoch(self) -> int:
         """The committed epoch ``e_c`` (0 before the first committed list or while unsafe). Informational only."""
+        if self._forked():
+            return 0
         with self._seal:
             return self._ec
 
     def wk(self, epoch: int) -> bytes | None:
         """The key of a held epoch ``1 <= e <= e_c`` (active, old, or burned below ``e_c``); ``None`` above ``e_c``
         (burned, exposed or pending), for an epoch never held, and while unsafe."""
+        if self._forked():
+            return None
         with self._seal:
             if type(epoch) is not int or not 1 <= epoch <= self._ec:
                 return None
@@ -455,6 +548,8 @@ class MembershipKeys:
     def refusal_key(self, epoch: int) -> bytes | None:
         """A key for a refusal only (11A.15.2): an old epoch below ``e_c``, ``e_c`` while the gate is up, or a burned
         epoch above ``e_c`` (proto §8.5 G2b). ``None`` otherwise (an exposed or pending epoch, never held)."""
+        if self._forked():
+            return None
         with self._seal:
             if type(epoch) is not int or epoch < 1:
                 return None
@@ -477,50 +572,79 @@ class MembershipKeys:
         return min(t, MAX_EPOCH)
 
     def seal_state(self) -> SealState:
-        """One snapshot: the committed epoch; ``gated`` when the gate is up, before the first commit and while
-        unsafe (no data is sealed then); the epoch a ``stale_epoch`` names."""
+        """One snapshot: the committed epoch; ``gated`` when the gate is up, before the first commit, while unsafe
+        and until the store hook is installed (no data is sealed then); the epoch a ``stale_epoch`` names."""
+        if self._forked():
+            return SealState(0, True, 1)
         with self._seal:
-            return SealState(self._ec, self._gate_up or self._ec < 1 or self._unsafe is not None, self._target())
+            gated = self._gate_up or self._ec < 1 or self._unsafe is not None or not self._hooked
+            return SealState(self._ec, gated, self._target())
 
     @contextlib.contextmanager
     def seal_snapshot(self) -> Iterator[SealState]:
         """The seal lock for the duration of one seal, and ONE :meth:`seal_state` taken under it."""
+        if self._forked():
+            raise MembershipUnsafe("forked")
         with self._seal:
             yield self.seal_state()
 
     @contextlib.contextmanager
     def serialised(self) -> Iterator[None]:
-        """The seal lock alone."""
+        """The seal lock alone. Never call a writer method inside it (refused, F5)."""
+        if self._forked():
+            raise MembershipUnsafe("forked")
         with self._seal:
             yield
 
     def is_burned(self, epoch: int) -> bool:
         """For the signer's epoch floor (``RelaySigner.member_list``): ``epoch`` is burned (an abandoned exposure or
-        an orphan key)."""
+        an orphan key). In a forked child: every epoch counts as burned (fail closed)."""
+        if self._forked():
+            return True
         with self._seal:
             return type(epoch) is int and epoch in self._burned
 
     # -- the gate ---------------------------------------------------------------------------------------------------
 
     def raise_gate(self, device: str, reason: str) -> None:
-        """The in-memory gate, at once and under the seal lock only (called by :class:`R6Gate` inside the store's
-        critical section); the durable write is queued for :meth:`flush_gate`. No I/O, no other lock."""
+        """The gate (called by :class:`R6Gate` inside the store's critical section): first the in-memory gate under
+        the seal lock (a seal span in progress finishes first; the next one is gated), then, with the seal lock
+        released, the durable write (:meth:`flush_gate`, writer lock: store, writer, seal). It is durable when this
+        returns. A write that fails (a disk error) leaves the in-memory gate up and the raise queued for the next
+        flush, and is logged; it never undoes the store's commit. Inside a seal-lock hold the durable part is refused
+        (``RuntimeError``, F5) after the in-memory gate is up."""
         if type(device) is not str or not (_HEX32.fullmatch(device) or device == ""):
             raise ValueError("gate device")
         if reason not in GATE_REASONS:
             raise ValueError("gate reason")
+        if self._forked():
+            raise MembershipUnsafe("forked")
         with self._seal:
             self._gate_up = True
             self._gate_queue.append({"device": device, "reason": reason})
+        try:
+            self.flush_gate()
+        except (StateError, OSError) as exc:
+            log.error(
+                "membership gate raise not yet durable (%s); it stays up in memory and queued", type(exc).__name__
+            )
+
+    def confirm_gate_hooks(self) -> None:
+        """The store's hook is installed (:meth:`R6Gate.install`): data may be sealed once the rest allows it.
+        Until then the store is gated (F4, fail closed)."""
+        with self._seal:
+            self._hooked = True
 
     def gate_up(self) -> bool:
+        if self._forked():
+            return True
         with self._seal:
             return self._gate_up
 
     def flush_gate(self) -> bool:
         """R6's thread, before any publication work: write every queued gate reason into ``head.json`` (atomic).
         ``True`` when something was written. The in-memory gate stays up whatever happens here."""
-        with self._writer:
+        with self._write():
             with self._seal:
                 queued = list(self._gate_queue)
                 target = self._target()
@@ -534,8 +658,8 @@ class MembershipKeys:
                     reasons.append(q)
             new = {**head, "gate": {**gate, "up": True, "reasons": reasons, "target": target}}
             self._dir.write_json(HEAD, new)
-            self._fault("after_gate")
             self._head = new
+            self._fault("after_gate")
             with self._seal:
                 del self._gate_queue[: len(queued)]
             return True
@@ -554,7 +678,7 @@ class MembershipKeys:
         file, and while unsafe. The in-memory floor moves at once; until :meth:`expose` names it, the key is an
         orphan (burned at the next load)."""
         self._require_safe()
-        with self._writer:
+        with self._write():
             if type(epoch) is not int or not 1 <= epoch <= MAX_EPOCH:
                 raise CustodyRefused("epoch range")
             with self._seal:
@@ -585,7 +709,7 @@ class MembershipKeys:
 
     def head(self) -> dict[str, Any]:
         """A deep copy of ``head.json`` (no secrets in it)."""
-        with self._writer:
+        with self._write():
             return json.loads(_doc(self._head))
 
     def expose(self, *, list_seq: int, epoch: int, body: bytes, digest: str, adds: Sequence[str]) -> None:
@@ -598,7 +722,7 @@ class MembershipKeys:
             raise CustodyRefused("exposed body")
         if isinstance(adds, (str, bytes)) or any(type(a) is not str or not _HEX32.fullmatch(a) for a in adds):
             raise CustodyRefused("adds")
-        with self._writer:
+        with self._write():
             with self._seal:
                 ec, ehw, lhw = self._ec, self._ehw, self._lhw
                 held = epoch in self._wk if type(epoch) is int else False
@@ -608,8 +732,17 @@ class MembershipKeys:
             rotation = epoch != ec
             if rotation and (not _int(epoch, ec + 1, MAX_EPOCH) or not held or epoch in burned_now):
                 raise CustodyRefused("rotation epoch: above e_c, claimed, not burned")
+            if rotation and epoch != ehw:
+                raise CustodyRefused("rotation epoch below the high-water mark: only the newest claimed key")
             if not rotation and ec < 1:
                 raise CustodyRefused("the first list is a rotation")
+            o = _list_of(body)
+            if (
+                o.get("epoch") != epoch
+                or o.get("list_seq") != list_seq
+                or o.get("wk_commit") != self.wk_commit_of(epoch)
+            ):
+                raise CustodyRefused("the exposed body is not a list at this list_seq, epoch and key")
             head = self._head
             burned = {int(k): v for k, v in head["burned"]["epochs"].items()}
             seqs = list(head["burned"]["list_seqs"])
@@ -629,8 +762,8 @@ class MembershipKeys:
                 "burned": {"epochs": {str(e): n for e, n in sorted(burned.items())}, "list_seqs": sorted(set(seqs))},
             }  # fmt: skip
             self._dir.write_json(HEAD, new)
-            self._fault("after_expose")
             self._head = new
+            self._fault("after_expose")
             with self._seal:
                 self._lhw, self._ehw = list_seq, max(self._ehw, epoch)
                 self._burned = burned
@@ -643,7 +776,7 @@ class MembershipKeys:
         (nothing written) for anything but the exposed body: a late 2xx for an abandoned body never activates a
         burned epoch."""
         self._require_safe()
-        with self._writer:
+        with self._write():
             ex = self._head["exposed"]
             if ex is None or ex["list_seq"] != list_seq or ex["epoch"] != epoch:
                 return False
@@ -652,10 +785,14 @@ class MembershipKeys:
             if wk is None:
                 raise MembershipUnsafe("key_missing")
             commit = pairing.wk_commit(self.workspace_id, epoch, wk)
-            members = list_obj.get("members") if isinstance(list_obj, Mapping) else None
-            if type(members) is not list or list_obj.get("epoch") != epoch or list_obj.get("wk_commit") != commit:
+            exposed_o = _list_of(crypto.unb64u(ex["body"]))  # F3: the gate decision and the record come from the
+            try:  # exposed body itself, never from the caller's object
+                same = canon.dumps(dict(list_obj)) == canon.dumps(exposed_o)
+            except (canon.JcsError, TypeError, ValueError):
+                same = False
+            if not same or list_hash != ex["digest"] or exposed_o.get("wk_commit") != commit:
                 raise CustodyRefused("the committed list is not the exposed body's")
-            ids = {m.get("device_id") for m in members if isinstance(m, Mapping)}
+            ids = {m.get("device_id") for m in exposed_o["members"] if isinstance(m, Mapping)}
             gate = self._head["gate"]
             lower = (
                 gate is not None and epoch > ec and not queued and not any(r["device"] in ids for r in gate["reasons"])
@@ -663,23 +800,23 @@ class MembershipKeys:
             new = {
                 **self._head,
                 "committed": {"list_seq": list_seq, "epoch": epoch, "list_hash": list_hash, "wk_commit": commit,
-                              "list": json.loads(_doc(list_obj)), "at_ms": at_ms},
+                              "list": exposed_o, "at_ms": at_ms},
                 "exposed": None,
                 "gate": None if lower else gate,
             }  # fmt: skip
             self._dir.write_json(HEAD, new)
-            self._fault("after_commit")
             self._head = new
+            self._fault("after_commit")
             with self._seal:
                 self._ec, self._pending = epoch, None
-                if lower and not self._gate_queue:
+                if lower and not self._gate_queue and self._head["gate"] is None:
                     self._gate_up = False
             return True
 
     def abandon(self) -> None:
         """Abandon the exposed body (H4: a content or divergence refusal): its ``list_seq`` is burned, and its epoch
         if it introduced one (named ``EHW + 1``). One atomic write."""
-        with self._writer:
+        with self._write():
             ex = self._head["exposed"]
             if ex is None:
                 return
@@ -692,8 +829,8 @@ class MembershipKeys:
             new = {**self._head, "exposed": None,
                    "burned": {"epochs": {str(e): n for e, n in sorted(burned.items())}, "list_seqs": seqs}}  # fmt: skip
             self._dir.write_json(HEAD, new)
-            self._fault("after_abandon")
             self._head = new
+            self._fault("after_abandon")
             with self._seal:
                 self._burned, self._pending = burned, None
 
@@ -733,7 +870,7 @@ class MembershipKeys:
         was never claimed, is never reused: the next attempt draws ``v``/``s`` above every file, every ledger card
         and the head (so the first card may carry ``card_seq`` above 1 after a crash)."""
         self._require_safe()
-        with self._writer:
+        with self._write():
             card = self._head["card"]
             stored = card["pending_card_seq"] or card["card_seq"] or None
             files = self._numbers(self._cards, _CARD)
@@ -801,12 +938,12 @@ class MembershipKeys:
                 "ck_seq": max(s, self._head["card"]["ck_seq"])}  # fmt: skip
         new = {**self._head, "card": card}
         self._dir.write_json(HEAD, new)
-        self._fault("after_card_head")
         self._head = new
+        self._fault("after_card_head")
 
     def card_accepted(self, card_seq: int) -> None:
         """The relay accepted ``card_seq`` (R1/R5 after the first ``PUT card``, R6d after a rotation)."""
-        with self._writer:
+        with self._write():
             card = self._head["card"]
             if card["pending_card_seq"] != card_seq:
                 raise CustodyRefused("not the pending card")
@@ -817,7 +954,7 @@ class MembershipKeys:
     def card_key_wrap(self, card_seq: int, dk_kx_pub: bytes, device_id: str) -> bytes:
         """``CK_s`` sealed to one device (purpose ``card``, 11A.15.5; R6b's ``card_key_wraps``), for a card_seq with
         a claimed card; the raw ``CK`` never leaves this object."""
-        with self._writer:
+        with self._write():
             if not _int(card_seq, 1, MAX_EPOCH) or f"card-{card_seq}.json" not in self._cards.names():
                 raise CustodyRefused("no card at this card_seq")
             ck = self._read_key("ck", card_seq, "ck")
@@ -830,6 +967,8 @@ class MembershipKeys:
         """``WK_E`` sealed to one device (purpose ``wk``, 11A.15.4 step 3: the grants are built after the key is
         claimed and before the ``head.json`` write that exposes them); refused for a burned epoch or one never
         held. The raw key never leaves this object (R2's ``wk``/``refusal_key`` aside)."""
+        if self._forked():
+            raise MembershipUnsafe("forked")
         with self._seal:
             wk = self._wk.get(epoch) if type(epoch) is int and epoch not in self._burned else None
         if wk is None:
@@ -842,9 +981,10 @@ class MembershipKeys:
 
 class R6Gate:
     """The store's hook (11A.15.2): ``raise_for(device, reason)`` inside the store's critical section that appends
-    F1 ``device.removed``/``device.revoked`` or holds forwarded evidence, before the store lock is released. It takes
-    the seal lock (store lock, then seal lock), raises the in-memory gate and queues the durable write; it never does
-    I/O, never takes the store lock, and a seal that began before it finished first (it waited for the seal lock)."""
+    F1 ``device.removed``/``device.revoked`` or holds forwarded evidence, before the store lock is released. The
+    in-memory gate goes up under the seal lock (a seal that began first finishes first), then the raise is written
+    durably (writer lock) before it returns. It never takes the store lock. :meth:`install` sets ``Store.relay_gate``
+    (which the host's journal never replaces) and confirms the hook to the key store, which is gated until then."""
 
     __slots__ = ("_keys",)
 
@@ -853,6 +993,14 @@ class R6Gate:
 
     def raise_for(self, device: str, reason: str) -> None:
         self._keys.raise_gate(device, reason)
+
+    def install(self, store: Any) -> None:
+        """``store.relay_gate = raise_for`` (``orch.store.Store`` calls it inside the critical sections of a
+        ``device.removed``/``device.revoked`` append and of a held forwarded revocation), then confirm the hook."""
+        if store is None:
+            raise MembershipUnsafe("no store to hook")
+        store.relay_gate = self.raise_for
+        self._keys.confirm_gate_hooks()
 
     def on_commit(self, log: str, event: Mapping[str, Any]) -> None:
         """A ``Store.on_commit``-shaped hook: ``device.removed``/``device.revoked`` of the workspace log raise the gate

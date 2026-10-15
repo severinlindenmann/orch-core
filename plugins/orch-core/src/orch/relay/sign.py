@@ -351,11 +351,13 @@ class RelaySigner:
             list_digest = crypto.sha256(canon.dumps(dict(signed_list))).hex()
         except canon.JcsError:
             raise SignerRefused("grant is not canonical JSON") from None
-        if self._ledger is None:
-            raise SignerRefused("grant signing needs a durable sign ledger")
+        if self._ledger is None or self._burned is None:
+            raise SignerRefused("grant signing needs a durable sign ledger and R6's burned-epoch view")
         digest = crypto.sha256(body).hex()
         key = f"{o['device_id']}:{epoch}"
         with self._lock:
+            if self._burned(epoch):
+                raise SignerRefused("nothing is granted under a burned epoch (H4)")
             if self._ledger.get("wk_commit", str(epoch)) is None:
                 raise SignerRefused("no wk_commit recorded for this epoch")
             signed = self._ledger.get("member_list", str(seq))

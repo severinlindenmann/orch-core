@@ -30,8 +30,20 @@ class Clock:
         return self.ms
 
 
-def open_keys(tmp: Path, *, fault: Callable[[str], None] | None = None, clock: Clock | None = None) -> MembershipKeys:
-    return MembershipKeys(tmp / "membership", WS, now_ms=clock or Clock(), fault=fault)
+def open_keys(
+    tmp: Path,
+    *,
+    fault: Callable[[str], None] | None = None,
+    clock: Clock | None = None,
+    hooked: bool = True,
+    previously_linked: bool = False,
+) -> MembershipKeys:
+    """``hooked``: stand in for ``R6Gate.install`` (no store here); a test of the fail-closed default passes False."""
+    mk = MembershipKeys(tmp / "membership", WS, now_ms=clock or Clock(), fault=fault,
+                        previously_linked=previously_linked)  # fmt: skip
+    if hooked:
+        mk.confirm_gate_hooks()
+    return mk
 
 
 def list_for(epoch: int, list_seq: int, commit: str, devices: list[str] | None = None) -> dict[str, Any]:

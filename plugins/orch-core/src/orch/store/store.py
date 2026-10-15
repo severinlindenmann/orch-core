@@ -244,6 +244,10 @@ class Store:
         #: subscription journal). ``None``: no hook (direct mode).
         self.before_append: Callable[[], None] | None = None
         self.on_commit: Callable[[str, dict[str, Any]], None] | None = None
+        #: R6a (11A.15.2): ``relay_gate(device_hex, reason)`` raises R6's seal gate inside the critical section of a
+        #: ``device.removed``/``device.revoked`` append to the workspace log and of a ``held`` forwarded revocation,
+        #: before the lock is released. Set by ``R6Gate.install``; the host's journal never replaces it.
+        self.relay_gate: Callable[[str, str], None] | None = None
         #: how often a lock found a log changed on disk that this store did not write (or a crashed append to
         #: finish): the host's cheap foreign-append signal (F11)
         self.outside_changes = 0
@@ -1725,9 +1729,25 @@ class Store:
             self._needs_reload = True  # finish a committed transition before the next call, even without reopening
             raise
         finally:
-            if self.on_commit is not None:  # the event is in the log whatever the bookkeeping above did
-                self.on_commit(log, ev)
+            try:
+                self._relay_gate_for(log, ev)  # R6a: the gate goes up where the cause is written (fail closed)
+            finally:
+                if self.on_commit is not None:  # the event is in the log whatever the bookkeeping above did
+                    self.on_commit(log, ev)
         return Appended(ev, new_state)
+
+    def _relay_gate_for(self, log: str, ev: Mapping[str, Any]) -> None:
+        typ = ev.get("type")
+        if self.relay_gate is None or log != "workspace" or typ not in ("device.removed", "device.revoked"):
+            return
+        dev = ev.get("device")
+        ok = (
+            type(dev) is str
+            and len(dev) == 34
+            and dev.startswith("d_")
+            and all(c in "0123456789abcdef" for c in dev[2:])
+        )
+        self.relay_gate(dev[2:] if ok else "", str(typ))  # an unparseable device: the gate goes up for every device
 
     def _host_sign(self, ev: dict[str, Any], log: str) -> None:
         assert self._host is not None
@@ -3509,6 +3529,9 @@ class Store:
             if not kept:
                 _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
                 return "dropped"
+            if result == "held" and self.relay_gate is not None:  # R6a: under the store lock, before release
+                ok = device.startswith("d_") and len(device) == 34
+                self.relay_gate(device[2:] if ok else "", "held_evidence")
             return result
 
 

@@ -193,6 +193,7 @@ class StateDir:
         try:
             try:
                 os.mkdir(name, 0o700, dir_fd=parent)
+                os.fsync(parent)  # the new entry is durable (R6a round 2, F2: a lost directory entry is state loss)
             except FileExistsError:
                 pass
             except OSError as e:

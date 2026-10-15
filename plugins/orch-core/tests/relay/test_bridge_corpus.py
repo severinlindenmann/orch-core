@@ -47,6 +47,9 @@ class _Epochs(SealLockFixture):
     def refusal_key(self, epoch: int) -> bytes | None:
         return None
 
+    def is_burned(self, epoch: int) -> bool:
+        return False
+
     def seal_state(self) -> SealState:
         return SealState(self.cur, False, self.cur + 1)
 

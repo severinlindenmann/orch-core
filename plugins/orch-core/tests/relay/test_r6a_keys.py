@@ -297,8 +297,8 @@ def test_a_missing_committed_key_or_a_mismatched_commit_refuses_the_start(tmp_pa
 
 
 def test_gate_raised_inside_store_append_before_lock_release(tmp_path, mk):
-    """The store hook raises the in-memory gate inside the store's critical section; the seal state is gated before
-    the store lock is released, and the durable write follows on R6's thread."""
+    """The store hook raises the gate inside the store's critical section: gated, and durable, before the store
+    lock is released (round 2, F4: nothing is left for a later flush)."""
     rotate(mk)
     gate = R6Gate(mk)
     store_lock = threading.Lock()
@@ -306,9 +306,8 @@ def test_gate_raised_inside_store_append_before_lock_release(tmp_path, mk):
     with store_lock:
         gate.on_commit("workspace", {"type": "device.removed", "device": "d_" + DEVICE})
         seen.append(mk.seal_state().gated)
-    assert seen == [True]
-    assert _head(tmp_path)["gate"] is None  # queued, not yet durable
-    assert mk.flush_gate() is True
+        seen.append(_head(tmp_path)["gate"] is not None)
+    assert seen == [True, True]
     g = _head(tmp_path)["gate"]
     assert g["up"] and g["reasons"] == [{"device": DEVICE, "reason": "device.removed"}] and g["target"] == 2
     assert mk.flush_gate() is False
@@ -341,18 +340,30 @@ def test_the_gate_survives_a_restart_and_is_lowered_only_by_a_rotation_without_t
         m.close()
 
 
-def test_a_raise_queued_during_the_commit_keeps_the_gate_up(mk):
-    rotate(mk)
-    mk.raise_gate(DEVICE, "device.removed")
-    mk.flush_gate()
-    others = ["ef" * 16]
-    seq, e = expose_rotation(mk, devices=others)  # leaves out the gated device: would lower the gate ...
-    mk.raise_gate("cd" * 16, "held_evidence")  # ... but a raise is queued (in memory, not yet durable)
-    o = list_for(e, seq, mk.wk_commit_of(e), devices=others)
-    assert mk.commit(list_seq=seq, epoch=e, list_hash=digest(o), list_obj=o, at_ms=0)
-    assert mk.gate_up() and mk.head()["gate"]["up"]
-    mk.flush_gate()
-    assert mk.head()["gate"]["reasons"][-1] == {"device": "cd" * 16, "reason": "held_evidence"}
+def test_a_raise_inside_the_commit_window_keeps_the_gate_up(tmp_path):
+    """M27: a raise lands between the commit's durable write and its in-memory lowering (the after_commit point):
+    the gate stays up in memory and on disk."""
+    hit = []
+
+    def fault(p):
+        if p == "after_commit" and not hit:
+            hit.append(p)
+            m.raise_gate("cd" * 16, "held_evidence")
+
+    m = open_keys(tmp_path, fault=fault)
+    try:
+        rotate(m)
+        m.raise_gate(DEVICE, "device.removed")
+        others = ["ef" * 16]
+        seq, e = expose_rotation(m, devices=others)  # leaves out the gated device: would lower the gate ...
+        o = list_for(e, seq, m.wk_commit_of(e), devices=others)
+        hit.clear()
+        assert m.commit(list_seq=seq, epoch=e, list_hash=digest(o), list_obj=o, at_ms=0)
+        assert hit and m.current_epoch() == e
+        assert m.gate_up() and m.head()["gate"]["up"]  # ... but the raise in the window keeps it up
+        assert m.head()["gate"]["reasons"][-1] == {"device": "cd" * 16, "reason": "held_evidence"}
+    finally:
+        m.close()
 
 
 def test_without_a_queued_raise_the_same_commit_lowers_the_gate(mk):

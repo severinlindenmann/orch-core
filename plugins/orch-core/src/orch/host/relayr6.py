@@ -40,6 +40,21 @@ def _now_ms(service: Any) -> int:
     return int(service.clock() * 1000)
 
 
+def _previously_linked(service: Any) -> bool:
+    """F2: the workspace is linked, or its first card may be at the relay (``link-card.json``): a missing
+    ``membership/`` is then H7, never a fresh start. Unreadable or unsafe link state counts as linked (fail closed)."""
+    from .custody import read_json
+
+    relay = Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id / "relay"
+    try:
+        link = read_json(relay / "link.json", service.host_uid)
+        if isinstance(link, dict) and link.get("state") == "linked":
+            return True
+        return os.path.lexists(relay / "link-card.json")
+    except (HostError, OSError, ValueError):
+        return True
+
+
 def keys_for(service: Any) -> Any:
     """The workspace's :class:`orch.relay.r6.keystore.MembershipKeys`, opened once per process."""
     from orch.relay.r6.keystore import MembershipKeys
@@ -48,7 +63,10 @@ def keys_for(service: Any) -> Any:
     with _LOCK:
         mk = _OPEN.get(str(path))
         if mk is None:
-            mk = MembershipKeys(path, service.workspace_id, now_ms=lambda: _now_ms(service))
+            mk = MembershipKeys(
+                path, service.workspace_id, now_ms=lambda: _now_ms(service),
+                previously_linked=_previously_linked(service),
+            )  # fmt: skip
             _OPEN[str(path)] = mk
         return mk
 
@@ -67,10 +85,36 @@ class _NoView:
         return None
 
 
+def _rebuild_gate(service: Any, mk: Any) -> None:
+    """F4, before the worker starts: a crash between the store's commit of ``device.removed``/``device.revoked`` (or
+    held evidence) and the durable gate write left no gate; every member of the committed list whose F1 standing is
+    not ``ok`` raises it now. (Forwarded ``HostPins`` evidence of a device F1 still holds is R6b's ``desired()``.)"""
+    from .admission import device_standing
+
+    committed = mk.head()["committed"]
+    if committed is None:
+        return
+    for m in committed["list"].get("members", []):
+        dev, person = m.get("device_id"), m.get("person_id")
+        if not isinstance(dev, str) or not isinstance(person, str):
+            mk.raise_gate("", "h7")
+            continue
+        if device_standing(service.store, "p_" + person, "d_" + dev) != "ok":
+            mk.raise_gate(dev, "device.removed")
+
+
 def r6(service: Any) -> tuple[Any, Any]:
-    """R5's ``r6`` seam: the key store as R2's ``EpochKeySource`` (one seal lock), and the view."""
+    """R5's ``r6`` seam: the key store as R2's ``EpochKeySource`` (one seal lock), and the view. Checked (H7),
+    its gate rebuilt from the store, and the store hook installed (``Store.relay_gate``); without a store: refused."""
+    from orch.relay.r6.keystore import MembershipUnsafe, R6Gate
+
     mk = keys_for(service)
     mk.check_start()
+    store = service.store
+    if store is None:
+        raise MembershipUnsafe("no store to hook")
+    R6Gate(mk).install(store)
+    _rebuild_gate(service, mk)
     return mk, _NoView()
 
 

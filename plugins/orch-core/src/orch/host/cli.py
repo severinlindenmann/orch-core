@@ -107,6 +107,14 @@ def _parser() -> argparse.ArgumentParser:
     relay.add_argument("--workspace", required=True, help="workspace id or prefix")
     relay.add_argument("--state", type=Path)
     relay.add_argument("--run", type=Path)
+    rdr = sub.add_parser(
+        "readers",
+        help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "
+        "operator step after a known state restore",
+    )
+    rdr.add_argument("action", choices=("reset",))
+    rdr.add_argument("--workspace", required=True, help="workspace id or prefix")
+    rdr.add_argument("--state", type=Path)
     out = sub.add_parser("outcome")
     out.add_argument("idem")
     out.add_argument("--state", type=Path)
@@ -210,6 +218,8 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return _convenience(args, env, out)
         if args.cmd == "relay":
             return _relay(args, env, out)
+        if args.cmd == "readers":
+            return _readers(args, env, out)
         if args.cmd == "enable":
             doc = enable(_state(args.state, env), env, run=args.run, replace=args.replace, dev=args.dev)
             out.write(json.dumps(doc, sort_keys=True) + "\n")
@@ -608,6 +618,39 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
             "Every other reader (another device, another member's core, a relay link) must declare reader level 1 "
             "first: until then each convenience signature is refused and names it (orch keys reader declare).\n"
         )
+    return 0
+
+
+def _readers(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
+    """``orch host readers reset --workspace W`` (H12d-3, §0.8.6 item 9.10 "A known state restore"): drop every reader
+    record of the workspace. Fail closed: every device then counts as level 0 (convenience signing is refused while
+    another reader is below level 1, phones get ``declaration_unknown`` and re-declare on their own, cores re-declare
+    with ``orch keys reader declare``). A person's decision, never an agent's (``human_only`` under ``ORCH_GRANT``);
+    it works with the host up or down (removing a record only lowers a level)."""
+    from orch.custody.cli import write_error
+    from orch.store.readerrecs import reset_records
+
+    from .custody import read_json
+    from .registry import registry_path
+
+    state = _state(args.state, env)
+    uid = os.getuid()
+    if env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", "an agent never resets reader records")
+    try:
+        reg = read_json(registry_path(state), uid) or {"workspaces": []}
+    except HostError as exc:
+        return write_error(out, False, exc.code, exc.message)
+    match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
+    if len(match) != 1:
+        return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
+    wid = match[0]["workspace_id"]
+    try:
+        dropped = reset_records(state, wid)
+    except OSError as exc:
+        return write_error(out, False, "custody.unsafe_mode", f"the reader records could not be removed ({exc})")
+    data = {"workspace_id": wid, "dropped": ["d_" + d for d in dropped]}
+    out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
     return 0
 
 

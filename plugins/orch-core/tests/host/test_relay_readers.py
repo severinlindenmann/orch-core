@@ -371,3 +371,63 @@ def test_the_host_pair_gate_refuses_a_bad_declaration_with_reader_decl_invalid(t
         convenience.pair_gate(svc, meta_of(phone, bad), offer_id=OFFER, who=pin)
     assert exc.value.code == "reader.decl_invalid" and exc.value.message.startswith("bind:")
     assert (exc.value.exit, exc.value.retryable) == (3, False)
+
+
+# --- orch host readers reset (9.10 "A known state restore") ----------------------------------------------------------
+
+
+def _registered(state: Path, ws: str = WS) -> None:
+    from orch.host.custody import write_private
+    from orch.host.registry import registry_path
+
+    reg = registry_path(state)
+    reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(reg, {"v": 1, "workspaces": [{"workspace_id": ws, "prefix": "DEMO", "root": "/x"}]})
+
+
+def test_readers_reset_drops_every_record_and_every_device_counts_0(tmp_path):
+    import io
+
+    from orch.host.cli import main
+    from orch.host.custody import write_private
+    from orch.ops import readers
+    from orch.store import readerrecs
+    from tests.ops.test_reader_records import WS as RWS
+    from tests.ops.test_reader_records import Person, _admit, _ws
+    from tests.ops.test_reader_records import _state as model_state
+
+    state = _state(tmp_path)
+    _registered(state, RWS)
+    a, b = Person(), Person()
+    mstate = model_state(_ws(a, b))
+    for p in (a, b):
+        _admit(state, p)
+    write_private(readerrecs.readers_dir(state, RWS) / "x.txt", {"keep": True})  # not a record: never touched
+    assert readers.levels(state, RWS, mstate) == {a.device: 1, b.device: 1}
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state)}
+    argv = ["readers", "reset", "--workspace", "DEMO", "--state", str(state)]
+    assert main(argv, env={**env, "ORCH_GRANT": "g"}, out=io.StringIO()) != 0
+    assert len(readerrecs.device_ids(state, RWS)) == 2  # an agent never resets them
+    out = io.StringIO()
+    assert main(argv, env=env, out=out) == 0, out.getvalue()
+    doc = json.loads(out.getvalue().splitlines()[-1])
+    assert doc["ok"] is True and sorted(doc["data"]["dropped"]) == sorted([a.device, b.device])
+    assert readerrecs.device_ids(state, RWS) == []
+    assert (readerrecs.readers_dir(state, RWS) / "x.txt").exists()
+    assert readers.levels(state, RWS, mstate) == {a.device: None, b.device: None}  # fail closed: level 0
+    out = io.StringIO()
+    assert main(argv, env=env, out=out) == 0
+    assert json.loads(out.getvalue().splitlines()[-1])["data"]["dropped"] == []
+    assert main(["readers", "reset", "--workspace", "NOPE", "--state", str(state)], env=env, out=io.StringIO()) != 0
+
+
+def test_readers_reset_refuses_a_linked_readers_directory(tmp_path):
+    from orch.store import readerrecs
+
+    state = _state(tmp_path)
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    readerrecs.readers_dir(state, WS).parent.mkdir(parents=True, mode=0o700)
+    readerrecs.readers_dir(state, WS).symlink_to(real)
+    with pytest.raises(OSError):
+        readerrecs.reset_records(state, WS)

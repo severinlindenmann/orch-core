@@ -37,6 +37,7 @@ __all__ = [
     "relay_level_path",
     "record_path",
     "remove_record",
+    "reset_records",
     "write_record",
     "write_relay_level",
 ]
@@ -180,6 +181,25 @@ def clear_relay_level(state_dir: Path, workspace_id: str) -> None:
         os.unlink(relay_level_path(state_dir, workspace_id))
     except FileNotFoundError:
         pass
+
+
+def reset_records(state_dir: Path, workspace_id: str) -> list[str]:
+    """``orch host readers reset`` (H12d-3, 9.10): remove every record file (``<32 hex>.json``) of the workspace and
+    return the device ids (bare hex) removed. A missing directory is nothing to reset; a directory that is a link is
+    refused (``OSError``); a file that cannot be removed raises (the operator sees it). Fail closed: every device then
+    counts as level 0."""
+    d = readers_dir(state_dir, workspace_id)
+    try:
+        info = os.lstat(d)
+    except FileNotFoundError:
+        return []
+    if not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"{d} is not a directory")
+    out = []
+    for hexid in device_ids(state_dir, workspace_id):
+        if remove_record(state_dir, workspace_id, hexid):
+            out.append(hexid)
+    return out
 
 
 def relay_level(state_dir: Path | None, workspace_id: str, uid: int | None = None) -> int | None:

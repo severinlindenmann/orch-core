@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
+import stat
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,6 +143,22 @@ def load(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
     return _info(_open(state_dir))
 
 
+_LEFTOVER = re.compile(r"\.keys\.tmp[0-9]+\.[0-9a-f]{8}")
+
+
+def _remove_leftovers(root: Path) -> None:
+    """Remove the temporary directories an interrupted :func:`init` left (``.keys.tmp<pid>.<8 hex>``: encrypted keys
+    of a pair that was never put in place). Only that exact name, only a real directory (``lstat``, never through a
+    symbolic link) owned by this user; nothing else is touched."""
+    uid = os.getuid()
+    for entry in os.scandir(root):
+        if not _LEFTOVER.fullmatch(entry.name):
+            continue
+        st = os.lstat(entry.path)
+        if stat.S_ISDIR(st.st_mode) and st.st_uid == uid:
+            shutil.rmtree(entry.path)
+
+
 def init(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
     """Make the primary key pair under passphrase custody (one prompt, asked twice), all or nothing: both keys are
     written into a private temporary directory that is then renamed into place, so a crash or a refusal leaves no
@@ -150,6 +168,7 @@ def init(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
     if final.exists():
         raise KeyExists("a primary key pair exists on this machine (orch keys primary status)")
     _private(state_dir, ("primary",), create=True)
+    _remove_leftovers(root)
     tmp = root / f".keys.tmp{os.getpid()}.{os.urandom(4).hex()}"
     try:
         backend = _passphrase_only(open_backend(tmp))

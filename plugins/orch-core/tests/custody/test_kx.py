@@ -44,7 +44,14 @@ def backend(tmp_path, phrase=PHRASE):
 
 
 def kx(b, key_id="kx", purposes=("cert-request",), recipient=RCPT):
-    return b.create(key_id, role="kx", purposes=purposes, recipient=recipient)
+    """A kx key with a chosen recipient, through the private creator (the public ``create`` refuses kx keys)."""
+    return b._create_key(key_id, secret=None, role="kx", passphrase=None, purposes=purposes, recipient=recipient)
+
+
+def make(b, key_id, role, **kw):
+    """Any role through the private creator (``primary`` and ``kx`` are refused by ``create``)."""
+    a = {"secret": None, "passphrase": None, "purposes": None, "recipient": None, **kw}
+    return b._create_key(key_id, role=role, **a)
 
 
 def relay_auth() -> bytes:
@@ -128,7 +135,7 @@ def test_kx_never_signs_and_signing_keys_never_unseal(tmp_path):
     with pytest.raises(CustodyError):
         b.sign("kx", relay_auth(), action="a")
     for role in ("device", "person", "primary"):
-        b.create(role, role=role)
+        make(b, role, role)
         with pytest.raises(CustodyError):
             b.unseal(role, "cert-request", OBJ, 0, b"", b"\x04" * 81)
 
@@ -136,20 +143,40 @@ def test_kx_never_signs_and_signing_keys_never_unseal(tmp_path):
 def test_kx_creation_rules(tmp_path):
     b = backend(tmp_path)
     with pytest.raises(CustodyError):  # a kx key names its purposes
-        b.create("a", role="kx", recipient=RCPT)
+        make(b, "a", "kx", recipient=RCPT)
     with pytest.raises(CustodyError):  # never ws-envelope, nor any purpose but cert-request in v1.7
-        b.create("b", role="kx", purposes=("ws-envelope",), recipient=RCPT)
+        make(b, "b", "kx", purposes=("ws-envelope",), recipient=RCPT)
     with pytest.raises(CustodyError):
-        b.create("c", role="kx", purposes=("cert-request", "wk"), recipient=RCPT)
+        make(b, "c", "kx", purposes=("cert-request", "wk"), recipient=RCPT)
     with pytest.raises(CustodyError):
-        b.create("d", role="kx", purposes=("cert-request",), recipient=b"short")
+        make(b, "d", "kx", purposes=("cert-request",), recipient=b"short")
     with pytest.raises(CustodyError):  # generated here, never imported
-        b.create("e", role="kx", purposes=("cert-request",), recipient=RCPT, secret=bytes(31) + b"\x01")
+        make(b, "e", "kx", purposes=("cert-request",), recipient=RCPT, secret=bytes(31) + b"\x01")
     with pytest.raises(CustodyError):  # purposes belong to kx keys only
-        b.create("f", role="device", purposes=("cert-request",))
+        make(b, "f", "device", purposes=("cert-request",))
     with pytest.raises(CustodyError):
-        b.create("g", role="primary", secret=bytes(31) + b"\x01")
+        make(b, "g", "primary", secret=bytes(31) + b"\x01")
     assert not any(b.exists(k) for k in "abcdefg")
+
+
+@pytest.mark.parametrize("role", ["primary", "kx"])
+def test_the_public_create_refuses_primary_and_kx_keys(tmp_path, role):
+    """Opus Low on #512: only ``create_primary`` makes them (own prompt, recipient = the pair's device id)."""
+    b = backend(tmp_path)
+    kw = {"purposes": ("cert-request",), "recipient": RCPT} if role == "kx" else {}
+    with pytest.raises(CustodyError, match="create_primary"):
+        b.create("x", role=role, passphrase=PHRASE, **kw)
+    with pytest.raises(CustodyError, match="create_primary"):
+        b.create("x", role=role, **kw)
+    assert not b.exists("x") and b.seen == []
+
+
+def test_create_primary_makes_the_pair(tmp_path):
+    b = backend(tmp_path)
+    sig_pub, kx_pub = b.create_primary("p", "kx", purposes=("cert-request",))
+    assert [r.kind for r in b.seen] == ["create"]
+    assert b.key_info("kx")["recipient"] == crypto.device_id(sig_pub).hex()
+    assert b.key_info("p")["role"] == "primary" and crypto.unb64u(b.key_info("kx")["pub"]) == kx_pub
 
 
 def test_old_key_files_keep_their_exact_shape(tmp_path):
@@ -161,7 +188,7 @@ def test_old_key_files_keep_their_exact_shape(tmp_path):
 
 def test_the_primary_role_signs_relay_logins_only(tmp_path):
     b = backend(tmp_path)
-    pub = b.create("p", role="primary")
+    pub = make(b, "p", "primary")
     assert PRIMARY_SIG_LABELS == (L["sig_relay_auth"],)
     with pytest.raises(CustodyError):
         b.sign("p", L["sig_device_cert"] + b"{}", action="a")
@@ -173,7 +200,7 @@ def test_the_primary_role_signs_relay_logins_only(tmp_path):
 def test_kx_and_primary_keys_are_never_exported_for_a_custody_change(tmp_path):
     b = backend(tmp_path)
     kx(b)
-    b.create("p", role="primary")
+    make(b, "p", "primary")
     for key_id in ("kx", "p"):
         with pytest.raises(CustodyError):
             b.export_for_custody_change(key_id, fields=())
@@ -181,7 +208,7 @@ def test_kx_and_primary_keys_are_never_exported_for_a_custody_change(tmp_path):
 
 def test_a_batch_unlock_needs_a_device_key(tmp_path):
     b = backend(tmp_path)
-    b.create("p", role="primary")
+    make(b, "p", "primary")
     b.create("pk", role="person")
     for key_id in ("p", "pk"):
         with pytest.raises(CustodyError):

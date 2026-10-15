@@ -320,3 +320,53 @@ def test_a_custody_refusal_is_not_a_malformed_request(tmp_path, prov):
     prov.phrase = "the wrong phrase"
     with pytest.raises(WrongPassphrase):
         certreq.open_cert_request(req, primary.backend_cert_request_unseal(tmp_path))
+
+
+# --- review of #512 (Opus I4, I1) ---------------------------------------------------------------------------------
+
+
+def test_init_removes_leftover_temporary_key_dirs_only(tmp_path, prov):
+    """An interrupted init leaves ``.keys.tmp<pid>.<8 hex>`` (encrypted, never valid): the next init removes exactly
+    those, owned by this user and not through a symbolic link; nothing else."""
+    root = tmp_path / "person" / "primary"
+    root.mkdir(parents=True, mode=0o700)
+    (tmp_path / "person").chmod(0o700)
+    left = root / ".keys.tmp4242.0a1b2c3d"
+    left.mkdir()
+    (left / "primary-sig.key.json").write_text("{}")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("x")
+    link = root / ".keys.tmp4243.deadbeef"
+    link.symlink_to(outside)
+    others = [root / ".keys.tmpx", root / ".keys.tmp1.0A1B2C3D", root / "keys.tmp1.0a1b2c3d", root / "notes"]
+    for o in others:
+        o.mkdir()
+    afile = root / ".keys.tmp7.00000000"
+    afile.write_text("not a dir")
+    primary.init(tmp_path)
+    assert not left.exists()
+    assert link.is_symlink() and (outside / "keep").read_text() == "x"
+    assert all(o.is_dir() for o in others) and afile.read_text() == "not a dir"
+    assert primary.keys_dir(tmp_path).is_dir()
+
+
+def test_a_damaged_kx_file_is_not_a_wrong_passphrase(tmp_path, prov):
+    """Opus I1: the signing key opens with the passphrase but the kx key does not: the files are damaged."""
+    info = primary.init(tmp_path)
+    keys = primary.keys_dir(tmp_path)
+    other = PassphraseBackend(tmp_path / "other", _passphrase_provider=lambda r: "Kp4#vR9!wZx2-Lm7qT", _kdf=FAST,
+                              _min_n=2**10)  # fmt: skip
+    other._create_key(
+        "primary-kx", secret=None, role="kx", passphrase=None, purposes=("cert-request",), recipient=info.device_id
+    )
+    (keys / "primary-kx.key.json").unlink()
+    (tmp_path / "other" / "primary-kx.key.json").rename(keys / "primary-kx.key.json")
+    with pytest.raises(CustodyError, match="damaged") as e:
+        with primary.unlocked(tmp_path, action="x"):
+            pytest.fail("unlocked a damaged pair")
+    assert not isinstance(e.value, WrongPassphrase)
+    prov.phrase = "the wrong phrase"
+    with pytest.raises(WrongPassphrase):  # a wrong passphrase is still that
+        with primary.unlocked(tmp_path, action="x"):
+            pass

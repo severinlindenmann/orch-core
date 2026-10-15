@@ -449,7 +449,10 @@ class PassphraseBackend:
         purposes: tuple[str, ...] | None = None,
         recipient: bytes | None = None,
     ) -> bytes:
-        """See :meth:`_create_key`."""
+        """See :meth:`_create_key`. ``primary`` and ``kx`` keys are refused here: only :meth:`create_primary` makes
+        them, with the backend's own prompt and the recipient fixed to the pair's device id (Opus Low on #512)."""
+        if role in ("primary", "kx"):
+            raise CustodyError(f"a {role} key is made only with the primary pair (create_primary)")
         return self._create_key(
             key_id, secret=secret, role=role, passphrase=passphrase, purposes=purposes, recipient=recipient
         )
@@ -742,7 +745,12 @@ class PassphraseBackend:
             if not pw:
                 raise WrongPassphrase("empty passphrase")
             sig_scalar = self._decrypt(sig_loaded, pw)
-            kx_scalar = self._decrypt(kx_loaded, pw)
+            try:
+                kx_scalar = self._decrypt(kx_loaded, pw)
+            except WrongPassphrase:  # the same passphrase opened the signing key: the pair's files are damaged
+                raise CustodyError(
+                    "the primary key files are damaged: the passphrase opens the signing key but not the kx key"
+                ) from None
             live += [self._key_of(sig_doc, sig_scalar), self._key_of(kx_doc, kx_scalar)]
 
             def sign(payload: bytes) -> bytes:

@@ -4164,6 +4164,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `orch.crypto.recovery`; two planned host-local labels in `orch.crypto.labels.PLANNED_LABELS`
     (`kdf_host_drop_recovery`, `sig_drop_handoff`, the latter on no signing role until H13b-4). The vectors it
     reproduces (orch-relay `d84f706`, D39a1, MANIFEST revision 13) were vendored separately in #575. Nothing served; no F1, wire or schema change.
+59. **Design: Simulator dev-only convenience answers (owner option 2, §11A.17; the number may be renumbered when a
+    parallel change lands first):** DECIDED-pending-review, docs only, nothing built. A host started with
+    `orch host run --foreground --dev-sim-convenience` plus a `dev-pair` sandbox proof (manifest, `dev.json`) accepts
+    `auth:"convenience"` on column R for sandbox workspaces only (S1 to S6: pinned root, manifest, genesis owner =
+    sandbox person and prefix `SBX`, a single member, a narrowing workspace marker, a dev relay origin); planned
+    additive fields `host.status.dev` and column-R `whoami.relay.dev`, planned code `host.dev_refused`. 11A.14.3, P5
+    and 11A.14.10 point at it.
 
 ---
 
@@ -7137,16 +7144,19 @@ The host refuses with `validation.text` and never normalises a signed string. Th
 - **Simulator and dev builds (DECIDED (orch-52, 15 Oct 2026), replaces the earlier passphrase-custody rule):** the Simulator signs
   **no** person events. Phone person events are signed only with Secure Enclave custody (`auth`
   `secure-enclave-unlocked`). The end-to-end tests of `question.answered` and `ticket.created` run on a **physical
-  device** (TestFlight). A dev-only convenience exception (option 2) is an **open OWNER decision**. In-process Demo
+  device** (TestFlight). **Owner option 2 (owner decision of 15 Oct 2026): a dev-only convenience exception, designed
+  in §11A.17 (DECIDED-pending-review, not built):** a host started with `--dev-sim-convenience` and a `dev-pair`
+  sandbox proof accepts `auth:"convenience"` on column R for throwaway sandbox workspaces only; every real workspace
+  and every normal host refuse it as below. In-process Demo
   realms (FakeHost, demo keys) may declare `passphrase`, but the Live transport refuses Demo keys and Demo-realm
   events. Production builds compile only Secure Enclave custody (a provisioning rule: `auth` is a declaration, not
   proof, F1 §12 O1). Demo stays a separate realm (orch-mobile P3).
 - **Custody is chosen at compile time (orch-f1).** The phone's Live realm uses the Secure Enclave on a device and the
   no person-event custody in Simulator builds (DECIDED (orch-52, 15 Oct 2026): the Simulator signs no person events), behind that
   compile-time switch. A TestFlight or App Store build always signs `secure-enclave-unlocked`.
-- **`convenience` is refused, also under any dev opt-in** (owner rule Q4 of 11A.11). `_signed_by` refuses it.
+- **`convenience` is refused, also under any dev opt-in other than §11A.17's** (owner rule Q4 of 11A.11). `_signed_by` refuses it.
   `convenience.check` refuses it on every relay-paired workspace. One accepted convenience event writes the
-  permanent `convenience_seen` mark and blocks every later reader. The host behaves the same in dev and production.
+  permanent `convenience_seen` mark and blocks every later reader. The host behaves the same in dev and production, except for a §11A.17 sandbox workspace on a dev host.
 - Neither value needs the reader handshake (§0.8.6 item 9 concerns `convenience` only), and neither sets a mark.
 - **`signer {device, auth}`** is not an event field. It is the H12d view field (§0.8.6 item 9.11). For a phone event it
   reads `{"device":"d_…","auth":"secure-enclave-unlocked"}`.
@@ -7272,7 +7282,7 @@ Checks before the lock (no state read):
 | P2 | the type is `question.answered` or `ticket.created` | `forbidden_scope` |
 | P3 | submitted-subset schema: `cj`-canonical, exact field set, no `seq`/`at`/`prev`/`ws_seq`/`host_sig`, `v` 2, `hash_v` 1, a creation's `based_on` null; F1 §11.3 text | `validation.event` / `validation.text` |
 | P4 | `actor` = `{person, identity.person_id, identity.device_id}`, `sig` present | `op.not_allowed` |
-| P5 | `auth` ∈ {`secure-enclave-unlocked`, `passphrase`} | `op.not_allowed` |
+| P5 | `auth` ∈ {`secure-enclave-unlocked`, `passphrase`}; `convenience` only where §11A.17's `dev_gate` passes (design, not built) | `op.not_allowed` |
 | P7 | `sig` verifies under the identity's `dk_sig_pub` over 14.2's bytes | `sig.invalid` |
 
 One `store.locked()` span (re-entrant), held through the append and the outcome:
@@ -7411,7 +7421,7 @@ admission path, `next_key` atomicity, facts), the orch-f1 review (B1, B2, S3–S
 an Opus tie-break adopted in full. Two structural fixes close most findings: **idem = event id** and **one review = one
 uid**, both with the 900 s freshness window. Three conflicts were settled:
 1. **Simulator `convenience` under a dev opt-in (orch-f1 B2): rejected.** It contradicts `_signed_by`, owner rule Q4
-   and the permanent `convenience_seen` mark. DECIDED (orch-52, 15 Oct 2026): the Simulator signs no person events (14.3); an in-process Demo realm may declare `passphrase`, the Live transport refuses it.
+   and the permanent `convenience_seen` mark. DECIDED (orch-52, 15 Oct 2026): the Simulator signs no person events (14.3); an in-process Demo realm may declare `passphrase`, the Live transport refuses it. The owner's option 2 (15 Oct 2026) narrows this for throwaway `dev-pair` sandboxes on a dev host only: §11A.17.
 2. **A window around `next_key` (orch-f1 S5): rejected.** A race makes the phone's key taken, and a window only allows
    counter jumps. Exact next key, `ticket.key_not_next` with an advisory `next_key`, and a fast auto re-sign that
    counts against the cap of 3.
@@ -8456,7 +8466,8 @@ code (N6, 15 Oct 2026):** `tests/relay/owner.py` and the product inline primary 
      convenience off` and `orch keys custody passphrase` stay available. (d) A test shows every other op is unchanged
      with it set. Tests `dev_pair_sandbox_host_refuses_convenience_on`, `no_convenience_env_any_nonempty_value_refuses`,
      `no_convenience_env_checked_in_core_functions`, `no_convenience_env_way_back_stays_available`,
-     `no_convenience_env_leaves_every_other_op_unchanged`.
+     `no_convenience_env_leaves_every_other_op_unchanged`. It also refuses §11A.17's dev gate; `dev-pair up
+     --sim-convenience` omits it for the host process only (§11A.17.4).
 3. **Relay.**
    - `local`: pick a free loopback port, then start the pinned relay (`uv run orch-relay serve --host 127.0.0.1 --port
      P`) with `ORCH_RELAY_ORIGIN=http://127.0.0.1:P`, `ORCH_RELAY_DATA=<root>/relay-data`,

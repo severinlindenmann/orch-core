@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import { ARM_MS, CLICK_RISK, clickProblem, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, clickProblem, HOLD_MS, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
 import { ApiError } from '@/api/types'
 import { fakeRequest, mount, spies, state } from '@/test/handoffHarness'
@@ -182,14 +182,16 @@ describe('the action dialog with click-to-sign', () => {
     expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeDisabled()
   })
 
-  it('a word op shows the word and sends exactly what was typed', async () => {
+  it('a word op shows the word and, after a full hold of Sign, sends the View’s word', async () => {
     c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'policy.set', confirm: 'word' })
     c.view.mockResolvedValue(viewAnswer({ op: 'policy.set', confirm: { kind: 'word', word: 'DEMO~aaaaaaaa/POLICY' } }))
     const { ws, dialog } = await toPanel()
-    const input = within(dialog).getByLabelText(/To confirm, type/)
-    fireEvent.change(input, { target: { value: 'DEMO~aaaaaaaa/POLICY ' } })
-    press(await armed(dialog))
-    await waitFor(() => expect(c.sign).toHaveBeenCalledWith(ws, REQ, DIGEST, 'DEMO~aaaaaaaa/POLICY '))
+    expect(within(dialog).getByTestId('click-hold-hint')).toHaveTextContent('Hold Sign to confirm DEMO~aaaaaaaa/POLICY')
+    const b = within(dialog).getByRole('button', { name: 'Hold to sign' })
+    await waitFor(() => expect(b).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(b)
+    await waitFor(() => expect(c.sign).toHaveBeenCalledWith(ws, REQ, DIGEST, 'DEMO~aaaaaaaa/POLICY'), { timeout: HOLD_MS + 2000 })
+    expect(c.sign).toHaveBeenCalledTimes(1)
   })
 
   it('the prepare failing shows the honest message and no terminal path, and nothing is open', async () => {

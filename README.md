@@ -128,7 +128,7 @@ Details: [harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.m
 
 ## Get started
 
-You need [uv](https://docs.astral.sh/uv/) and Python 3.11 or newer.
+You need [uv](https://docs.astral.sh/uv/) and Python 3.14 or newer (uv installs it for you).
 
 ```bash
 # Claude Code

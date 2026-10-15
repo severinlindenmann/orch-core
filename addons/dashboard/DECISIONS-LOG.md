@@ -1785,3 +1785,9 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Revert:** delete `src/api/drop.ts`, `src/app/pages/drop/`, `src/dev/dropFixture.ts`, the `drop-*` scenarios in
   `src/dev/layoutPreview.tsx`, the `real-host-drop-*` guard entries (`scripts/layout-guard.mjs`, `layout-guard-pages.mjs`, the test in
   `layoutGuardPages.test.ts`), `dropRoute` in `router.tsx` and the Drop entry in `Sidebar.tsx`.
+
+## 2026-10-15 Drop deletion and tombstone dates — relay #71
+
+- **Decision:** Align the gated `drop/1` fixtures with orch-relay revision #71 (864c2d55): retire sends `expect_version` and nullable `expect_head` from the list. A version conflict keeps the dialog open with its code and reload guidance, and refreshes the list. Expired/retired rows show the nullable `tombstone_until_ms` date beside their reason.
+- **Why:** Prevent deleting an item changed since listing, and make the tombstone retention deadline visible using the page’s date format. Layout fixtures exercise both tombstone states.
+- **Revert:** Remove the retire preconditions/conflict fixture and the head/tombstone fields, rendering and tests; restore the earlier fixture contract.

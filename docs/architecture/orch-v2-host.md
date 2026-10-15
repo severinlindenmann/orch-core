@@ -8811,12 +8811,12 @@ R2's `relay/keys.py`).
   relay: the R6 first card accepted and served back verified; an R6-signed list and grant accepted, the reference
   phone opens R6's `WK_e`, R2 answers it), the import-ban additions. Mutation pass: 38 mutants on a `git archive` copy,
   35 killed in round 1, the 3 survivors (a late 2xx for a superseded body, a key in `repr`, an unverified card claimed)
-  closed by new tests, 38 of 38.
+  closed by new tests, 38 of 38. Round 2: below.
 
 **Judgement calls (15 Oct 2026, orch-29; fail closed).**
 - J-R6a-1 **One seal lock, owned by the source.** 11A.15.2 says R6 owns the seal lock; R2 as built
   (`relay/keys.py`, before R6a) held its own `RLock` in `BridgeKeys`. `BridgeKeys.sealing`/`serialised` now take the
-  source's `seal_snapshot()`/`serialised()` (`relay/keys.py:163`, `:170`), so `R6Gate` (store hook) and every seal take
+  source's `seal_snapshot()`/`serialised()` (`relay/keys.py:176`, `:184`), so `R6Gate` (store hook) and every seal take
   one lock. The R2 fixtures got a `SealLockFixture`.
 - J-R6a-2 **`seal_state()` kept, `SealSnapshot` folded into R2's `SealState`.** `epoch` = `current`; `sealable` = not
   `gated`, where `gated` is also true before the first commit and while unsafe; `announce` = `stale_target` = the
@@ -8843,10 +8843,54 @@ R2's `relay/keys.py`).
 - J-R6a-9 **Orphans below `e_c`** cannot be told from old keys (no epoch history is kept); they are served as old
   keys. Harmless: an orphan was never exposed, so no device holds it.
 - J-R6a-10 **The ledger's `wk_commit` entry** is `digest = wk_commit`, `sig = ""` (a commitment, not a signature).
-- J-R6a-11 **The gate is lowered only by `commit`** of a rotation whose list leaves out every gated device, after the
-  durable write, and only if no raise is still queued in memory (a raise during the commit keeps it up).
+- J-R6a-11 **The gate is lowered only by `commit`** of a rotation whose **exposed body** (never the caller's object,
+  round 2 F3) leaves out every gated device, after the durable write, and only if no raise is queued in memory or
+  written into `head.json` meanwhile (a raise during the commit keeps it up).
 - J-R6a-12 **One store per membership directory per host process** (`relayr6._OPEN`): both seams and every worker
   restart share it; R5 has no close hook, so it is released only by `relayr6.close` (unlink, tests).
+
+**Round 2 (Opus security review of 80cb4e03: PASS WITH REQUIRED CHANGES; fixed 15 Oct 2026, orch-29).**
+- J-R6a-13 (F1, HIGH) **A rolled-back `head.json` starts gated.** A ledger `wk_commit` epoch above `e_c` that the head
+  neither exposes nor burns, or a ledger member list above the head's `lhw`, is not provably an orphan (a restore of
+  `head.json` alone, or the crash window between signing and the expose write): the store starts with the gate up,
+  durably (reason `h7`, device `""` = all), and R6b's verified `GET members` resolves it (H7 rotation). The epoch is
+  burned as before and never re-activated. **Honest limit:** a whole-directory restore (head, keys and ledger
+  together) is not detectable locally; `membership/` has no instance/inode binding like R1's `FileHolderStore`
+  (R1's preflight reporting a copied or restored relay directory is the H7 trigger R6b must wire).
+- J-R6a-14 (F2) **A lost `membership/` of a linked workspace is H7.** `MembershipKeys(previously_linked=True)` (passed
+  by `relayr6` when `relay/link.json` is `linked`, `relay/link-card.json` exists, or the link state is unreadable)
+  never creates a fresh head: `head_lost`, so no second `WK_1`. `StateDir` now fsyncs the parent after creating a
+  directory.
+- J-R6a-15 (F3) **`commit` is bound to the exposed body:** `list_obj` must equal the list in `exposed.body` and
+  `list_hash` the exposed digest; the committed record and the gate decision come from the body. `expose` checks the
+  body is the list (`cj(o)` or the `PUT membership` body) at that `list_seq`, epoch and held key.
+- J-R6a-16 (F4) **The gate is durable before `raise_for` returns** (memory first under the seal lock, then the
+  `head.json` write under the writer lock; a failed write keeps it up in memory and queued, logged, never undoing the
+  store's commit). **The store hook is built:** `Store.relay_gate(device, reason)` is called inside the critical
+  section of a `device.removed`/`device.revoked` append to the workspace log and of a `held` forwarded revocation
+  (`store/store.py`, `_relay_gate_for`); the journal never replaces it. `R6Gate.install(store)` sets it and confirms
+  the hook; **until then the store is gated** (fail closed). `relayr6.r6` installs it and, before the worker starts,
+  rebuilds the gate: every committed-list member whose F1 `device_standing` is not `ok` raises it (the crash window
+  between the store's commit and the durable write). Forwarded `HostPins` evidence of a device F1 still holds is
+  R6b's `desired()`. Cost: the store lock waits for one `head.json` write per removal (availability, not safety).
+- J-R6a-17 (F5) **One lock order: store, writer, seal, RidStore.** A writer method (`commit`, `expose`, `flush_gate`,
+  the durable part of `raise_gate`, ...) inside a seal-lock hold of the same thread is refused with `RuntimeError`,
+  never a deadlock; R6 updates its in-memory seal state under `serialised()` only after its own durable write. The
+  seal lock is held by R2 across a seal and `rids.answer` (SQLite with fsync) and the WSK signature, so a gate raise
+  waits for that I/O. A forked child serves nothing: every method checks the pid before any lock (no key, gated,
+  writers refused).
+- J-R6a-18 (F6, F7) `wk_grant` is refused under a burned epoch; `expose` of a rotation needs `epoch == EHW` (the
+  newest claimed key); **burned epochs below `e_c` carry only `stale_epoch`** (`EpochKeySource.is_burned`,
+  `BridgeKeys.burned`; proto §7.2 H4; settles the review's contract-versus-protocol gap fail closed, for orch-52 to
+  confirm); the `.wk(`/`.refusal_key(` ban covers `orch/host` too (limit: value aliases); `check_workspace_files`
+  walks `membership/` to depth 3 (directories 0700, files 0600), so R6c's `grants/<e>/`, `devices/`, `pairing/`,
+  `primary.json` and `alarms.json` are checked by the same rule. Honest limits kept: symmetric keys
+  (`secrets.token_bytes`) are not covered by `KEYGEN_ALLOWED`; keys live in Python `bytes` for the process lifetime
+  (no zeroisation claim); `recover_h7` cannot recover from `ledger_unreadable` (owner repair).
+- Mutation, round 2: the review's 60 mutants left 6 required survivors (M16, M18, M27, M36, M51, M57) and M58: each has
+  a test now. 30 new mutants of the round-2 code on a `git archive` copy: 27 killed at first, one survivor closed by
+  a test, 2 equivalent (the durable gate write at load always coincides with a raised high-water mark; the gate
+  decision from the caller's list after the caller's list is required to equal the body).
 
 **Design inconsistencies found.**
 - 11A.15.2 (the `seal_snapshot` table and "What R2 must provide" item 1: "`seal_state()` of the first draft is
@@ -8854,10 +8898,11 @@ R2's `relay/keys.py`).
   `docs/architecture/orch-v2-host.md:6020`): resolved by J-R6a-1/2.
 - 11A.15.3 (`head.json` written with `host/custody.write_private`) vs the `orch.host` import ban in `orch/relay`:
   `StateDir` (the same rules, without the ACL check, 11A.3) is used; `check_workspace_files` covers `membership/`.
-- 11A.15.2 "R6 raises the gate where the cause is written" needs a store hook R6a cannot install: `Store.on_commit` is
-  one callable owned by the host's subscription journal (`store/store.py:243`) and `note_forwarded_revocation` has
-  none. **R5/R6b must chain** `R6Gate.on_commit` after the journal's hook and call `raise_for` inside
-  `note_forwarded_revocation`'s critical section for a `held` result.
+- 11A.15.2 "R6 raises the gate where the cause is written" needed a store hook: `Store.on_commit` is one callable
+  owned by the host's subscription journal (`store/store.py:243`) and `note_forwarded_revocation` had none. Round 2
+  adds `Store.relay_gate` (J-R6a-16) instead of chaining `on_commit`.
+- 11A.15.2 ("R2 ... commits a rotation inside `serialised()`", and the old `keys.py` docstring) vs the writer lock:
+  committing inside the seal lock inverts the order and deadlocked against `flush_gate`; corrected (J-R6a-17).
 
 **What R6b, R6c and R5 must know.**
 - R5: `SEAMS.r6 = relayr6.r6` and `SEAMS.link_source = relayr6.link_source`; `r6()` raises `MembershipUnsafe` on an
@@ -8866,10 +8911,13 @@ R2's `relay/keys.py`).
 - R6b: drive the transitions above from the membership thread in the 11A.15.4 order; `flush_gate()` before any
   publication work; build grants with `sealed_wk` and wraps with `card_key_wrap` (no raw key); sign through
   `member_list`/`wk_grant` of the R6 signer (`relayr6.link_source`'s, or one built the same way); call `recover_h7`
-  after a verified `GET members`; replace `_NoView` with the verified committed list; wire the store hooks (above).
+  after a verified `GET members` (also to clear the F1 `h7` gate); replace `_NoView` with the verified committed
+  list; never call a writer method inside `serialised()`; add `HostPins` evidence to the start-up gate rebuild.
   `head.json`'s `holders`, `excluded`, `h8` and `unmatched_rotation_ms` are R6b's (carried verbatim by R6a).
-- R6c: `grants/`, `devices/`, `primary.json`, `pairing/` and `alarms.json` (11A.15.3) do not exist yet; nothing in
-  R6a seals a `WK` before R6b exposes a list.
+- R6c: `grants/`, `devices/`, `primary.json`, `pairing/` and `alarms.json` (11A.15.3) do not exist yet (the custody
+  check already covers them, at most three deep); nothing in R6a seals a `WK` before R6b exposes a list.
+- R5: `r6()` now needs `service.store` (it installs `Store.relay_gate`; without a store it raises
+  `MembershipUnsafe`); a store object replaced at a reopen needs `r6()` again before data is served.
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

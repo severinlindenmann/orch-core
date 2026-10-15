@@ -397,3 +397,30 @@ def test_only_a_never_seen_event_gets_the_window(env, phone):
     with pytest.raises(HostError) as exc:
         admission.known_or_fresh(env.store, uid, ev, env.clock[0] + 901)
     assert exc.value.code == "event.expired"
+
+
+# --- review #474: the log is a ticket uid; never the workspace log in check_target --------------------------------
+
+
+@pytest.mark.parametrize("bad", ["DEMO-0001", "1", "#1", "01j9zp0000000000000000000t", "", None])
+def test_the_helpers_refuse_a_log_that_is_not_a_uid(env, phone, bad):
+    uid = env.new_ticket()
+    h = ask(env, uid, options=OPTS)
+    ev = phone.event(env, uid, "question.answered", question="Q1", hash=h, option="csv")
+    for call in (
+        lambda: admission.lookup(env.store, bad, ev["id"]),
+        lambda: admission.dedup(env.store, bad, ev),
+        lambda: admission.known_or_fresh(env.store, bad, ev, env.clock[0]),
+        lambda: admission.check_target(env.store, bad, ev),
+    ):
+        with pytest.raises(HostError) as exc:
+            call()
+        assert exc.value.code == "validation.event"
+
+
+def test_check_target_refuses_the_workspace_log(env, phone):
+    ev = phone.event(env, "workspace", "settings.changed", set={"grant_hours": 4})
+    with pytest.raises(HostError) as exc:
+        admission.check_target(env.store, "workspace", ev)
+    assert exc.value.code == "validation.event"
+    assert admission.lookup(env.store, "workspace", ev["id"]) is None  # lookup and dedup may read the workspace log

@@ -448,7 +448,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
 | `event.expired` | 3 | no | stays | `relay.submit`: the event id's ULID time is outside [host now − 900 s, host now + 300 s] at job time (§11A.14 step W, after L3: amendment A; H12e `admission.known_or_fresh`). Definite, nothing landed (class C-review) | — |
 | `event.abandoned` | 3 | no | stays | `relay.submit`: a restore abandoned the event with this id (in the replayed log's ids, not in its lines; §11A.14 L3; H12e `admission.dedup`). Class C-review | — |
-| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); `detail.next_key` is advisory, never a reservation. Class C-auto | — |
+| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); the relay answer carries the advisory `next_key` (R2; the socket `Error` has no `detail`, `HostError.detail` is in-process), never a reservation. Class C-auto | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -6032,6 +6032,11 @@ R2 (orch-29, `orch/relay/submit.py`) owns the order, the outcome plan, `append_r
     `ticket.exists`; `invalid.input` for another owner; `ticket.key_not_next` against `next_key(store)`, which is
     `Store.peek_key()`, `_next_key()` after the directory scan).
   - `COLUMN_R_AUTH` = {`secure-enclave-unlocked`, `passphrase`} (P5).
+  - `lookup`, `dedup` and `known_or_fresh` take a ticket uid or `"workspace"`; `check_target` takes a ticket uid
+    only. Anything else (a key, a number) is `validation.event` (review #474).
+- **Order note (review #474, I-1).** L3 runs before L4, so a caller who already holds an event id of a ticket it may
+  no longer see learns `committed`, `event.duplicate_id` or `event.abandoned` instead of `not_found`. This confirms
+  only a uid the caller already knew (the id has 80 random bits); the order is decided (amendment A).
 - **`ticket.key_not_next`** carries `HostError.detail = {"next_key": …}`. `detail` is an in-process attribute, not
   part of the socket `Error` (§0.3 has no `detail`): R2 decides how its relay answer carries it.
 - **Codes.** `event.expired`, `event.abandoned`, `ticket.key_not_next` are in the §0.6 table and `HOST_CODES`

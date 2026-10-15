@@ -83,6 +83,15 @@ def check_window(event_id: str, now: float) -> None:
         )
 
 
+def _check_log(log: Any, *, workspace: bool) -> None:
+    """``log`` is a ticket uid (a ULID), or ``"workspace"`` where ``workspace`` allows it; never a key or a number
+    (``Store.ticket`` resolves those): ``validation.event``, so no ``StoreError`` leaks out of a helper."""
+    if log == "workspace" and workspace:
+        return
+    if not isinstance(log, str) or len(log) != 26 or log[0] not in "01234567" or not set(log) <= _ULID_CHARS:
+        raise HostError("validation.event", "the log is not a ticket uid")
+
+
 def signed_digest(workspace_id: str, log: str, event: dict[str, Any]) -> str:
     """``"sha256:" + hex(sha256(person_signing_bytes(workspace_id, log, event)))``: the digest of the signed content
     (14.4). ``sig`` and the host stamp (``seq``, ``at``, ``prev``, ``ws_seq``, ``host_sig``) are not part of it, so a
@@ -103,6 +112,7 @@ def lookup(store: Any, log: str, event_id: str) -> Logged | Literal["abandoned"]
     """The raw L3 read, under the lock: the logged event with this id in ``log`` (:class:`Logged`), ``"abandoned"``
     for an id a restore abandoned (taken in the replayed log, F1 §5.10, but not in its lines), or ``None``. A log
     that does not exist yet (a creation's fresh uid) has no ids."""
+    _check_log(log, workspace=True)
     with store.locked():
         if log != "workspace" and store.ticket(log, heal=False) is None:
             return None
@@ -121,6 +131,7 @@ def dedup(store: Any, log: str, event: dict[str, Any]) -> int | None:
     the logged event when it has the same :func:`signed_digest` **and** the same ``actor`` (R2 answers
     ``committed``, ``duplicate:true``, with that ``seq``, and stops). Raises ``event.duplicate_id`` for the id logged
     with other content or another actor, and ``event.abandoned`` for an id a restore abandoned."""
+    _check_log(log, workspace=True)
     with store.locked():
         found = lookup(store, log, event["id"])
         if found is None:
@@ -139,6 +150,7 @@ def known_or_fresh(store: Any, log: str, event: dict[str, Any], now: float) -> i
     landed event (``committed``, ``duplicate:true``); raises :func:`dedup`'s codes for a known id; only a never-seen
     event gets :func:`check_window` (``event.expired``) and then ``None``. R2 answers the outcome store by
     ``(ws, "r:<device>", idem = id)`` before it calls this."""
+    _check_log(log, workspace=True)
     with store.locked():
         seq = dedup(store, log, event)
         if seq is not None:
@@ -156,6 +168,8 @@ def next_key(store: Any) -> str:
 def check_target(store: Any, log: str, event: dict[str, Any]) -> None:
     """L4 and L5 (14.6), under the lock, for a submitted ``question.answered`` or ``ticket.created`` of ``log``.
 
+    * ``log`` must be a ticket uid: a key, a number or ``"workspace"`` is ``validation.event`` (neither relay type
+      belongs on the workspace log).
     * Any type but ``ticket.created``: the ticket exists and the actor's person may see it, else ``not_found`` (one
       message for missing and invisible).
     * ``ticket.created``: the uid is unused (``ticket.exists``); ``owner`` is the actor's person (``invalid.input``);
@@ -164,12 +178,11 @@ def check_target(store: Any, log: str, event: dict[str, Any]) -> None:
       ``ticket.key_not_next``, never ``ticket.exists``."""
     from orch.ops.runtime import visible_to
 
+    _check_log(log, workspace=False)  # neither relay type belongs on the workspace log: refused here (fail closed)
     with store.locked():
         actor = event.get("actor") or {}
-        view = store.ticket(log, heal=False) if log != "workspace" else None
+        view = store.ticket(log, heal=False)
         if event.get("type") != "ticket.created":
-            if log == "workspace":
-                return
             if view is None or not visible_to(actor.get("id"), view):
                 raise HostError("not_found", "no such ticket")
             return

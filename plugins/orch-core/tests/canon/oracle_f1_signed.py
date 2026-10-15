@@ -2592,9 +2592,9 @@ def phone_events_vector() -> dict[str, Any]:
     # 1. accepted answers and a creation, then the refusals
     s1 = "phone_answers_and_creates"
     w = setup(s1, "a phone (look, decide) answers questions and creates a ticket; refusals break one rule each")
-    q1_text = "Welcher Tarif-Export gilt? Größe ≤ 5 MB — Zürich été"
-    q1_opts = [{"key": "csv", "label": "Monatliche CSV-Datei (½ Tag)", "cost": "½ Tag, CHF 400"},
-               {"key": "api", "label": "Tarif-API ✓"}]  # fmt: skip
+    q1_text = "Welcher Tarif-Export gilt? Gr\u00f6\u00dfe \u2264 5 MB \u2014 Z\u00fcrich \u00e9t\u00e9"
+    q1_opts = [{"key": "csv", "label": "Monatliche CSV-Datei (\u00bd Tag)", "cost": "\u00bd Tag, CHF 400"},
+               {"key": "api", "label": "Tarif-API \u2713"}]  # fmt: skip
     q1 = ask(w, "Q1", q1_text, q1_opts, note="a non-ASCII question; the first option has a cost", why="Seeds")
     e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q1", "hash": q1["hash"], "option": "csv"},
              auth="secure-enclave-unlocked", eid=pid_(w), note="the phone answers with the costed option")  # fmt: skip

@@ -117,7 +117,10 @@ def may_create(column: str, role: str | None, relay: Any, ws: Any, now: float) -
     if column != "R" or relay is None:
         return False
     dev = ws.devices.get(getattr(relay, "device_id", None))
-    return dev is not None and _device_refusal(dev, now, False) is None
+    person = getattr(relay, "person_id", None)
+    if dev is None or (person is not None and dev.person != person):  # the bridge already pins the pair
+        return False
+    return _device_refusal(dev, now, False) is None
 
 
 def _next_key(ctx: ReadCtx, ws: Any) -> str | None:

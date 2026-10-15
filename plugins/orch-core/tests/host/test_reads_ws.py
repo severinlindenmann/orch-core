@@ -122,6 +122,7 @@ def test_next_key_for_column_r_needs_a_non_viewer_and_a_decide_device():
     assert may_create("R", "viewer", relay, ws, 0) is False
     assert may_create("R", "member", relay, SimpleNamespace(**{**ws.__dict__, "devices": {"d_1": look}}), 0) is False
     assert may_create("R", "member", SimpleNamespace(device_id="d_2"), ws, 0) is False
+    assert may_create("R", "member", SimpleNamespace(device_id="d_1", person_id="p_2"), ws, 0) is False
     assert may_create("P", "owner", None, ws, 0) is True and may_create("P", "viewer", None, ws, 0) is False
     assert may_create("P", None, None, ws, 0) is False
     assert may_create("G", "owner", None, ws, 0) is False and may_create("N", None, None, ws, 0) is False

@@ -26,8 +26,8 @@ from orch import canon
 from . import view as views
 from .protocol import (
     CONTRACT,
-    DEPOSIT_REASONS,
     DEPOSIT_MAX_HOURS,
+    DEPOSIT_REASONS,
     HASH,
     IDEM,
     OP_NAME,

@@ -296,11 +296,22 @@ def test_nothing_inside_a_seal_span_takes_the_store_lock_or_calls_job(w, monkeyp
     env = _whoami(w)
     w.send(env)
     w.send(env)  # replay
+    # every _answer_refusal path too (review V15): settle, a refusal after a run, a read's internal, the read expiry
+    adm = w.bridge.receive(w.item(_whoami(w)))
+    w.bridge._settle(w.rids.get(w.phone.device, adm.header.rid.hex()))  # noqa: SLF001
+    w.call(w.new_ticket(title="refuse me"))
+    real_read = w.host.read
+    w.host.read = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    w.send(_whoami(w))  # internal
+    w.host.read = real_read
+    w.bridge.receive(w.item(_whoami(w)))  # admitted, never run
     w.post.default = "retry"
     w.send(_whoami(w))
     w.epochs.rotate()
     w.bridge.rotate()
     w.bridge.flush()
+    w.clock.ms += B.READ_ADMITTED_MS
+    w.bridge.sweep()  # expire_reads: already_done for the stale read
     assert bad == []
 
 

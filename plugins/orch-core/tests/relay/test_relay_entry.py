@@ -289,3 +289,25 @@ def test_a_removed_members_device_is_not_member(served):  # noqa: F811
     p = served.lab.add_member()
     served.lab.remove_member(p)
     assert _on_worker(served, lambda: entry.standing(p.device, p.ref)) == "not_member"
+
+
+def test_a_revocation_known_only_to_hostpins_is_revoked(served, monkeypatch):  # noqa: F811
+    """Review V20: a revocation the F1 state no longer shows (abandoned by a restore) but HostPins still holds is
+    ``revoked`` on the relay entry, never ``ok``."""
+    from orch.host import relayentry
+
+    entry = _entry(served)
+    p = served.lab.add_member()
+    assert _on_worker(served, lambda: entry.standing(p.device, p.ref)) == "ok"
+
+    class Pins:
+        def __init__(self, *a):
+            pass
+
+        def revocations(self):
+            return [{"device": p.device, "revocation": {"o": {"person_id": p.ref[2:]}}}]
+
+    monkeypatch.setattr(relayentry, "HostPins", Pins)
+    assert _on_worker(served, lambda: entry.standing(p.device, p.ref)) == "revoked"
+    owner = served.lab.ws.owner
+    assert _on_worker(served, lambda: entry.standing(owner.device, owner.ref)) == "ok"  # exactly this pair

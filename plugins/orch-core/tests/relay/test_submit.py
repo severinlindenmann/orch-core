@@ -226,3 +226,15 @@ def test_relay_fields_fails_with_the_landed_seqs_on_an_error():
 )
 def test_relay_fields_keeps_what_it_cannot_say(record):
     assert submit.make_relay_fields(lambda *a: pytest.fail("never appended"))(record) == "keep"
+
+
+def _answer(**over):
+    log = ulid()
+    fields = {"question": "q1", "hash": "sha256:" + "0" * 64, "option": "y", **over}
+    return {"log": log, "events": [P.event(log, "question.answered", **fields)]}
+
+
+@pytest.mark.parametrize("over", [{"bogus": 1}, {"option": 5}, {"hash": "md5:0"}])
+def test_a_malformed_answer_is_validation_event_at_p3(over):
+    """Review V21: P3 runs for ``question.answered`` too (not only for ``ticket.created``)."""
+    assert code(lambda: check(_answer(**over), op="answer")) == "validation.event"

@@ -1,7 +1,7 @@
-"""The H12e adapter seam (``orch.host.relayadmit``): core's helpers (#474, merged) under one module, plus one stand-in,
-``device_standing`` (H12e-2, #482). Every behaviour test runs against the seam AND against ``orch.host.admission``
-(``judge_events`` from ``orch.host.human``); once #482 merges, its ``device_standing`` is checked against the same
-contract (review I3a: the real helpers are collected and run, not skipped)."""
+"""The H12e adapter seam (``orch.host.relayadmit``): core's helpers (#474 and H12e-2 #482, both merged) under one
+module, no stand-in left. Every behaviour test runs against the seam AND against ``orch.host.admission``
+(``judge_events`` from ``orch.host.human``), so the contract R2 relies on is checked on the real helpers (review I3a:
+collected and run, not skipped)."""
 
 from __future__ import annotations
 
@@ -37,9 +37,7 @@ def _impls():
 
     from orch.host import admission, human
 
-    real = {n: getattr(admission, n, None) for n in NAMES - {"judge_events", "device_standing"}}
-    # TODO(#482): admission.device_standing once merged; until then the seam's stand-in is the only one
-    real["device_standing"] = getattr(admission, "device_standing", relayadmit.device_standing)
+    real = {n: getattr(admission, n) for n in NAMES - {"judge_events"}}
     return [relayadmit, types.SimpleNamespace(**real, judge_events=human.judge_events)]
 
 
@@ -51,15 +49,13 @@ def test_the_seam_has_h12es_names_and_signatures():
 
 
 def test_the_seam_is_the_real_helpers():
-    """D2-5: the round-2 stand-ins are gone: every name but ``device_standing`` IS core's helper (so
-    ``event.abandoned`` and the visibility filter of ``check_target`` come from core)."""
+    """D2-5: no stand-in remains: every name IS core's helper (so ``event.abandoned``, the visibility filter of
+    ``check_target`` and #482's ``device_standing`` come from core)."""
     from orch.host import admission, human
 
-    for name in NAMES - {"judge_events", "device_standing"}:
+    for name in NAMES - {"judge_events"}:
         assert getattr(relayadmit, name) is getattr(admission, name), name
     assert relayadmit.judge_events is human.judge_events
-    if hasattr(admission, "device_standing"):  # pragma: no cover - after #482 merges
-        assert list(inspect.signature(admission.device_standing).parameters) == SIGS["device_standing"]
 
 
 @pytest.mark.parametrize("impl", _impls())

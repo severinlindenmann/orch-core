@@ -44,8 +44,9 @@ Order (§8.6, with 11A.4/11A.5):
     byte budgets -> ``busy`` (seq not used; writes are never refused for bytes, D2-3); then T1 and the run.
 
 Robustness (D2-1, D2-7): one poll item, one job or one aux step that raises is logged (bounded) and acknowledged;
-it never stops the loop. A refusal code outside the closed table is sealed as ``internal``; a signer refusal is
-silence for that chunk.
+it never stops the loop, except the session's own ``Fenced``/``SessionError`` (a takeover, a lost lease), which stop
+the worker from any thread (N3-1). A refusal code outside the closed table is sealed as ``internal``; a signer
+refusal is silence for that chunk. An admitted read is bounded in age (:data:`READ_ADMITTED_MS`, N3-2).
 """
 
 from __future__ import annotations
@@ -105,6 +106,10 @@ AUX_HOLD_DEADLINE_S = 10.0
 JOBS = 2
 HANDOFF_S = 0.25  # the responder's and job threads' queue wait: they see stop() within this
 REPLAY_EVERY_MS, REPLAY_MAX, REPLAY_TRACKED = 10_000, 8, 4096
+#: an admitted read older than this can no longer store an answer the relay takes (its 900 s deadline, plus a margin):
+#: it no longer counts against the byte budgets, and :meth:`Bridge.expire_reads` closes it (review N3-2)
+READ_ADMITTED_MS = RID_RETENTION_MS + 60_000
+ALARM_CLASSES = 64  # distinct (step, exception class) pairs that each raised one alarm; beyond: logged only
 #: R2-6: a write whose run failed with something that is not a refusal is retried (recover_one) after these delays;
 #: after the last one it is answered ``already_done {status: unknown}`` (B: outcome.get settles it). 370 s in all,
 #: inside the pending bound (framing.PENDING_NO_RECORD_MS), so ``pending`` never outlives it.
@@ -179,9 +184,10 @@ class Bridge:
         self.job, self.post, self.now_ms, self.alarm = job, post, now_ms, alarm
         self._budget: collections.deque[int] = collections.deque()
         self._start_ms: int | None = rids.start_ms()
-        #: (device, rid) -> (count, last ms) of replays re-opened for posting: at most one per 10 s and 8 per rid,
-        #: the relay's own re-store bounds (P3-D27), so a replayed request cannot make the host re-POST without end
-        self._reopened: collections.OrderedDict[tuple[str, str], tuple[int, int]] = collections.OrderedDict()
+        #: (device, rid) -> last ms a replay re-opened it for posting: at most one per 10 s (P3-D27's spacing; a
+        #: bounded LRU, so eviction only ever loosens the spacing); the 8 per rid are counted in the rid row itself
+        #: (``reopens``, N3-3), so no eviction and no restart lets a replay re-POST or append past them
+        self._reopened: collections.OrderedDict[tuple[str, str], int] = collections.OrderedDict()
         #: (device, rid) -> (attempts made, due ms) of writes whose run failed without a refusal (R2-6)
         self._stuck: dict[tuple[str, str], tuple[int, int]] = {}
         self._stuck_lock = threading.Lock()
@@ -212,7 +218,10 @@ class Bridge:
         """Answer an admitted rid after recovery: a read ``already_done {status: unknown}``; a write from its
         outcome."""
         h = self._header_of(rec)
-        if rec.kind == "read" or rec.idem is None:
+        if rec.kind == "read":
+            self._close_read(rec)
+            return
+        if rec.idem is None:
             self._answer_refusal(rec, h, "already_done", **_UNKNOWN)
             return
         built = self._identity_of(rec.device, rec.epoch, None)
@@ -224,6 +233,28 @@ class Bridge:
         except Exception:  # noqa: BLE001 - a refusal or anything else: the device settles it through outcome.get
             got = {"state": "unknown"}
         self._answer_outcome(rec, h, got)
+
+    def _close_read(self, rec: Rid) -> None:
+        """An admitted read that will not run (again): ``already_done {status: unknown}`` (the device re-issues it);
+        when nothing can be sealed for it any more (its epoch key is gone), a tombstone, so it holds no byte reserve
+        and no admitted row for ever (review N3-2). A resend then gets silence; its relay deadline is long past."""
+        if not self._answer_refusal(rec, self._header_of(rec), "already_done", **_UNKNOWN):
+            if self.rids.abandon(rec.device, rec.rid):
+                log.info("relay read closed without an answer device=%s rid=%s", rec.device, rec.rid)
+
+    def expire_reads(self) -> None:
+        """The aux thread's bound on admitted reads (N3-2): one admitted past :data:`READ_ADMITTED_MS` (its run
+        failed silently, or it waits on a key that is gone) is closed by :meth:`_close_read`."""
+        for rec in self.rids.stale_reads(self.now_ms() - READ_ADMITTED_MS):
+            try:
+                self._close_read(rec)
+            except Exception:  # noqa: BLE001 - one rid never stops the rest (D2-1)
+                log.error("relay read expiry failed device=%s rid=%s", rec.device, rec.rid)
+
+    def sweep(self) -> None:
+        """The aux thread's retention step: stale admitted reads first, then the rid store's retention."""
+        self.expire_reads()
+        self.rids.sweep(self.now_ms())
 
     def _answer_outcome(self, rec: Rid, h: wire.Header, got: dict[str, Any]) -> None:
         state = got.get("state")
@@ -469,11 +500,11 @@ class Bridge:
         """The stored-answer byte budgets of a read (R2-4, D2-3): stored chunk bytes plus one whole answer per
         admitted read, per device and host-wide; past its fair share a device sees only the shared part of the host
         budget, so the reserve stays open to the devices within theirs."""
-        reserve = framing.RELAY_DEVICE_RESPONSE_BYTES
-        mine = self.rids.chunk_bytes(device) + self.rids.admitted_reads(device) * reserve + reserve
+        reserve, since = framing.RELAY_DEVICE_RESPONSE_BYTES, self.now_ms() - READ_ADMITTED_MS
+        mine = self.rids.chunk_bytes(device) + self.rids.admitted_reads(device, since_ms=since) * reserve + reserve
         if mine > DEVICE_CHUNK_BYTES:
             return False
-        host = self.rids.chunk_bytes() + self.rids.admitted_reads() * reserve + reserve
+        host = self.rids.chunk_bytes() + self.rids.admitted_reads(since_ms=since) * reserve + reserve
         return host <= (CHUNK_BYTES if mine <= FAIR_CHUNK_BYTES else SHARED_CHUNK_BYTES)
 
     # -- refusals and replays -------------------------------------------------------------------------------------
@@ -514,13 +545,14 @@ class Bridge:
             return  # admitted: running, or waiting for recovery: no answer now (no interim already_done)
         key, now = (rec.device, rec.rid), self.now_ms()
         with self._maps_lock:
-            count, last = self._reopened.get(key, (0, -REPLAY_EVERY_MS))
-            if count >= REPLAY_MAX or now - last < REPLAY_EVERY_MS:
-                return  # bounded (P3-D27's bounds): the relay would refuse a ninth re-store anyway
-            self._reopened[key] = (count + 1, now)
+            if now - self._reopened.get(key, -REPLAY_EVERY_MS) < REPLAY_EVERY_MS:
+                return  # one per 10 s (P3-D27)
+            self._reopened[key] = now
             self._reopened.move_to_end(key)
             while len(self._reopened) > REPLAY_TRACKED:
                 self._reopened.popitem(last=False)
+        if not self.rids.note_reopen(rec.device, rec.rid, REPLAY_MAX):
+            return  # 8 per rid, durable (N3-3): the relay would refuse a ninth re-store anyway
         if rec.chunks and all(c.data is None for c in rec.chunks):
             if rec.device.startswith("u:"):
                 return  # a swept step-4 refusal: silence (D2-1)
@@ -596,7 +628,8 @@ class Bridge:
                 return
             self._answer_refusal(rec, adm.header, "internal")
             return
-        self._answer_result(rec, adm.header, result)
+        if not self._answer_result(rec, adm.header, result) and req.spec.kind == "read":
+            self._close_read(rec)  # nothing could be sealed under its epoch (N3-2): never admitted for ever
 
     def _before(self, req: framing.Request) -> bool:
         """``outcome.unknown_idem`` is bound-aware (ruling C): before the event id's ULID time + the pending bound."""
@@ -626,15 +659,15 @@ class Bridge:
             return _pending()
         raise unknown
 
-    def _answer_result(self, rec: Rid, h: wire.Header, result: Any) -> None:
+    def _answer_result(self, rec: Rid, h: wire.Header, result: Any) -> bool:
         """T2 of a success answer, under the seal gate (G1): data only under the snapshot's committed epoch with the
         gate down; otherwise ``already_done {status: unknown}`` (a write: outcome.get settles it; a read: re-issue).
-        An answer that could never be delivered is ``frame.too_large`` (nothing else stored)."""
+        An answer that could never be delivered is ``frame.too_large`` (nothing else stored). ``True`` when an answer
+        was stored (T2)."""
         try:
             pts = framing.answer_plaintexts(result, room=CHUNK_ROOM)
         except Refusal as r:
-            self._answer_refusal(rec, h, **_refusal_fields(r))
-            return
+            return self._answer_refusal(rec, h, **_refusal_fields(r))
         with self.keys.sealing(self.signer) as s:
             try:
                 if not s.data_ok(h.epoch):
@@ -647,10 +680,11 @@ class Bridge:
                         for i, pt in enumerate(pts)
                     ]
             except (SealRefused, KeyMissing, SignerRefused):
-                return  # the key is gone (or the signer refused): nothing can be sealed for this rid
+                return False  # the key is gone (or the signer refused): nothing can be sealed for this rid
             stored = self.rids.answer(rec.device, rec.rid, chunks)  # T2, inside the seal span, before any POST
         if stored:
             self._post_rid(rec.device, rec.rid)
+        return stored
 
     def _seal_refusal(self, s: Any, h: wire.Header, idx: int, code: str, **fields: Any) -> bytes | None:
         """``s.seal_refusal`` for this request at ``idx``. ``None`` when nothing may be sealed (the gate, the key, the
@@ -668,14 +702,16 @@ class Bridge:
         except (SealRefused, KeyMissing, ValueError):
             return None
 
-    def _answer_refusal(self, rec: Rid, h: wire.Header, code: str, **fields: Any) -> None:
+    def _answer_refusal(self, rec: Rid, h: wire.Header, code: str, **fields: Any) -> bool:
+        """T2 of a one-chunk refusal answer; ``True`` when it was stored."""
         with self.keys.sealing(self.signer) as s:
             chunk = self._seal_refusal(s, h, 0, code, **fields)
             if chunk is None:
-                return
+                return False
             stored = self.rids.answer(rec.device, rec.rid, [(0, chunk)])
         if stored:
             self._post_rid(rec.device, rec.rid)
+        return stored
 
     # -- R2-6: a write whose run failed without a refusal -----------------------------------------------------------
 
@@ -894,6 +930,7 @@ class BridgeLoop:
         self._highest = 0
         self._started = False
         self._failures = 0
+        self._alarmed: set[tuple[str, str]] = set()
         self.error: BaseException | None = None
 
     # -- lifecycle ----------------------------------------------------------------------------------------------
@@ -1021,6 +1058,8 @@ class BridgeLoop:
             if item.route == "bridge":
                 try:
                     adm = self.bridge.receive(item)
+                except (Fenced, SessionError):
+                    raise  # the session's own end (a takeover, a lost lease): the worker stops, the item stays (N3-1)
                 except Exception as e:  # noqa: BLE001 - one item never stops the loop; it is acknowledged (D2-1)
                     self._item_failed("receive", e)
             # every outcome above is durable (dropped, refused, replayed or admitted at T1): acknowledge in order
@@ -1042,6 +1081,8 @@ class BridgeLoop:
                 return
             try:
                 self.bridge.run(adm)
+            except (Fenced, SessionError):
+                raise  # the worker stops (N3-1); the rid stays admitted and is recovered by the next holder
             except Exception as e:  # noqa: BLE001 - the rid stays admitted: recovered at the next start (D2-7)
                 self._item_failed("run", e)
 
@@ -1055,7 +1096,7 @@ class BridgeLoop:
                 self._last_poll = self._mono()
             if self._mono() - last_sweep >= 60.0:
                 last_sweep = self._mono()
-                self._aux_step("sweep", lambda: self.bridge.rids.sweep(self.bridge.now_ms()))
+                self._aux_step("sweep", self.bridge.sweep)
             self._aux_step("retry", self.bridge.retry_stuck)
             self._aux_step("flush", self.bridge.flush)
 
@@ -1070,13 +1111,19 @@ class BridgeLoop:
             self._item_failed(what, e)
 
     def _item_failed(self, what: str, e: BaseException) -> None:
-        """A bounded log line (the first 10, then every 1000th) and one alarm per class of failure."""
+        """A bounded log line (the first 10, then every 1000th) and one alarm per class of failure: the step and
+        the exception class, at most :data:`ALARM_CLASSES` of them (N3-1: a harmless flush error never hides a
+        poisoned-item crash loop)."""
+        cls = (what, type(e).__name__)
         with self._qlock:
             self._failures += 1
             n = self._failures
+            first = cls not in self._alarmed and len(self._alarmed) < ALARM_CLASSES
+            if first:
+                self._alarmed.add(cls)
         if n <= 10 or n % 1000 == 0:
             log.error("relay %s failed (%d so far): %s", what, n, type(e).__name__)
-        if n == 1:
+        if first:
             self.bridge.alarm("relay_item_failed", f"{what}: {type(e).__name__}")
 
     def _poster(self, conn: Transport) -> Poster:

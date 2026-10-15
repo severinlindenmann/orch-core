@@ -2,7 +2,7 @@
 
 Tables::
 
-    rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem, kind)
+    rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem, kind, reopens)
                                                    state: admitted|answered|tombstone
     submission(device, rid, op, log, events)       the device-signed events of an admitted write (11A.3 exception)
     chunk(device, rid, idx, epoch, bytes, state)   state: stored|attempted|posted|expired|exhausted|conflict|dropped
@@ -12,6 +12,9 @@ Tables::
 
 ``kind``: ``read``/``write`` (admitted to run), ``refusal`` (refused after step 5, answered at entry), ``unverified``
 (a step-4 refusal: device, signature; recorded so a resend replays the same bytes, never consumes a seq).
+
+``reopens`` counts the replays that re-opened an answered rid for posting (P3-D27's 8 re-stores per rid): kept in the
+row, so the bound holds across restarts and never depends on an in-memory tracker (review N3-3).
 
 ``device`` is the verified device id, except for ``unverified`` records: those are keyed ``u:<header device>`` (R2-11),
 so a request a verified device sends never matches a refusal recorded for a forged header naming it.
@@ -27,7 +30,8 @@ to the file system (:data:`VACUUM_PAGES` at a time, :data:`VACUUM_STEP` per lock
 device) are kept in memory, read from the file at open and updated by every transaction that changes them, so the
 bridge's per-request caps never scan the table; the per-device row counts use the ``(device, first_ms)`` index (at
 most a day of one device's rows). :meth:`sweep` works in batches of :data:`SWEEP_BATCH` rows, one short transaction
-each, so no relay thread waits behind it for long.
+each, so no relay thread waits behind it for long; every batch resumes from a cursor (the last row it took, in index
+order), so a sweep reads each row at most once (no rescans: linear, review perf of delta 3).
 
 Every transition is ONE SQLite transaction (``synchronous=FULL``, WAL): T1 :meth:`admit` (window + rid + submission),
 T2 :meth:`answer` (chunks ``stored`` + state ``answered`` + submission deleted), the refusals (:meth:`record_refusal`:
@@ -77,11 +81,12 @@ SWEEP_BATCH = 2048  # rows per sweep transaction (the RidStore lock is released 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS rid(device TEXT NOT NULL, rid TEXT NOT NULL, first_ms INTEGER NOT NULL,
   req_digest TEXT NOT NULL, epoch INTEGER NOT NULL, seq INTEGER NOT NULL, state TEXT NOT NULL, principal TEXT,
-  idem TEXT, kind TEXT NOT NULL, PRIMARY KEY(device, rid));
+  idem TEXT, kind TEXT NOT NULL, reopens INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(device, rid));
 CREATE INDEX IF NOT EXISTS rid_idem ON rid(device, idem);
 CREATE INDEX IF NOT EXISTS rid_dev_first ON rid(device, first_ms);
 CREATE INDEX IF NOT EXISTS rid_first ON rid(first_ms);
 CREATE INDEX IF NOT EXISTS rid_admitted ON rid(device, kind) WHERE state='admitted';
+CREATE INDEX IF NOT EXISTS rid_state_first ON rid(state, first_ms);
 CREATE TABLE IF NOT EXISTS submission(device TEXT NOT NULL, rid TEXT NOT NULL, op TEXT NOT NULL, log TEXT NOT NULL,
   events TEXT NOT NULL, PRIMARY KEY(device, rid));
 CREATE TABLE IF NOT EXISTS chunk(device TEXT NOT NULL, rid TEXT NOT NULL, idx INTEGER NOT NULL, epoch INTEGER NOT NULL,
@@ -125,6 +130,7 @@ class Rid:
     principal: str | None
     idem: str | None
     kind: str
+    reopens: int = 0
     chunks: tuple[Chunk, ...] = ()
 
 
@@ -157,6 +163,7 @@ class RidStore:
                 held, now = os.fstat(fd), os.stat(state.file_path(name), follow_symlinks=False)
                 if (held.st_dev, held.st_ino) != (now.st_dev, now.st_ino):
                     raise StateError(f"relay_state_unsafe: {name} changed under the checked open")
+            self._migrate()
             self._db.executescript(_SCHEMA)
             self._load_counts()
         except BaseException:
@@ -176,6 +183,12 @@ class RidStore:
         if self._conn is None:
             raise StateError("rids.sqlite is closed")
         return self._conn
+
+    def _migrate(self) -> None:
+        """A file from before ``reopens`` (round 3) gets the column; a new file gets it from the schema."""
+        cols = {r[1] for r in self._db.execute("PRAGMA table_info(rid)")}
+        if cols and "reopens" not in cols:
+            self._db.execute("ALTER TABLE rid ADD COLUMN reopens INTEGER NOT NULL DEFAULT 0")
 
     def _load_counts(self) -> None:
         with self._lock:
@@ -198,6 +211,11 @@ class RidStore:
             else:
                 self._bytes.pop(device, None)
             self._bytes_total += n
+
+    def _drop_live(self, first_ms: int) -> None:
+        i = bisect.bisect_left(self._live, first_ms)
+        if i < len(self._live) and self._live[i] == first_ms:
+            del self._live[i]
 
     def _add_live(self, first_ms: int) -> None:
         if not self._live or first_ms >= self._live[-1]:
@@ -253,7 +271,8 @@ class RidStore:
         def body(db: sqlite3.Connection) -> None:
             self._put_window(db, device, window)
             db.execute(
-                "INSERT INTO rid VALUES(?,?,?,?,?,?,'admitted',?,?,?)",
+                "INSERT INTO rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem, kind) "
+                "VALUES(?,?,?,?,?,?,'admitted',?,?,?)",
                 (device, rid, first_ms, req_digest, epoch, seq, principal, idem, kind),
             )
             if submission is not None:
@@ -288,7 +307,8 @@ class RidStore:
         def body(db: sqlite3.Connection) -> None:
             self._put_window(db, device, window)
             db.execute(
-                "INSERT INTO rid VALUES(?,?,?,?,?,?,'answered',NULL,NULL,?)",
+                "INSERT INTO rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem, kind) "
+                "VALUES(?,?,?,?,?,?,'answered',NULL,NULL,?)",
                 (device, rid, first_ms, req_digest, epoch, seq, kind),
             )
             db.execute("INSERT INTO chunk VALUES(?,?,0,?,?,'stored')", (device, rid, epoch, chunk))
@@ -359,6 +379,43 @@ class RidStore:
             if done:
                 self._add_bytes(device, len(data))
             return done
+
+    def note_reopen(self, device: str, rid: str, limit: int) -> bool:
+        """Count one more replay that re-opens ``rid`` for posting; ``False`` (nothing changed) once ``limit`` replays
+        were counted, or when the rid is not answered. Durable (review N3-3): no eviction, no restart resets it."""
+
+        def body(db: sqlite3.Connection) -> bool:
+            return (
+                db.execute(
+                    "UPDATE rid SET reopens=reopens+1 WHERE device=? AND rid=? AND state='answered' AND reopens<?",
+                    (device, rid, limit),
+                ).rowcount
+                == 1
+            )
+
+        return bool(self._tx("reopen_count", body))
+
+    def abandon(self, device: str, rid: str) -> bool:
+        """An admitted READ nothing can answer any more (its epoch key is gone): a tombstone now, so it no longer
+        holds a byte reserve or an admitted row (review N3-2). ``False`` when it is no longer an admitted read."""
+
+        def body(db: sqlite3.Connection) -> int | None:
+            row = db.execute(
+                "SELECT first_ms FROM rid WHERE device=? AND rid=? AND state='admitted' AND kind='read'", (device, rid)
+            ).fetchone()
+            if row is None:
+                return None
+            db.execute(
+                "UPDATE rid SET state='tombstone', principal=NULL, idem=NULL WHERE device=? AND rid=?", (device, rid)
+            )
+            return int(row[0])
+
+        with self._lock:
+            first = self._tx("abandon", body)
+            if first is None:
+                return False
+            self._drop_live(first)
+            return True
 
     def mark(self, device: str, rid: str, idx: int, state: str) -> None:
         """A chunk's state: ``attempted`` (committed before the first byte of its first POST), ``posted`` (202),
@@ -462,16 +519,32 @@ class RidStore:
         with self._lock:
             return self._bytes_total if device is None else self._bytes.get(device, 0)
 
-    def admitted_reads(self, device: str | None = None) -> int:
-        """Admitted reads (each may still store up to one whole answer), for one device or host-wide."""
+    def admitted_reads(self, device: str | None = None, *, since_ms: int | None = None) -> int:
+        """Admitted reads (each may still store up to one whole answer), for one device or host-wide; with
+        ``since_ms`` only those first seen at or after it (an older one can no longer store an answer the relay
+        takes, review N3-2)."""
+        since = -(1 << 62) if since_ms is None else since_ms
         with self._lock:
             if device is None:
-                q = self._db.execute("SELECT COUNT(*) FROM rid WHERE state='admitted' AND kind='read'")
+                q = self._db.execute(
+                    "SELECT COUNT(*) FROM rid WHERE state='admitted' AND kind='read' AND first_ms>=?", (since,)
+                )
             else:
                 q = self._db.execute(
-                    "SELECT COUNT(*) FROM rid WHERE device=? AND state='admitted' AND kind='read'", (device,)
+                    "SELECT COUNT(*) FROM rid WHERE device=? AND state='admitted' AND kind='read' AND first_ms>=?",
+                    (device, since),
                 )
             return int(q.fetchone()[0])
+
+    def stale_reads(self, before_ms: int, limit: int = 256) -> list[Rid]:
+        """Admitted reads first seen before ``before_ms``, oldest first (at most ``limit``)."""
+        with self._lock:
+            keys = self._db.execute(
+                "SELECT device, rid FROM rid WHERE state='admitted' AND kind='read' AND first_ms<? "
+                "ORDER BY first_ms, device, rid LIMIT ?",
+                (before_ms, limit),
+            ).fetchall()
+        return [r for r in (self.get(d, i) for d, i in keys) if r is not None]
 
     def pragmas(self) -> dict[str, Any]:
         """The durability settings (a test pins them: WAL, ``synchronous=FULL``, ``auto_vacuum=INCREMENTAL``)."""
@@ -517,61 +590,83 @@ class RidStore:
         24 h after ``first_ms`` and goes 7 days later. An ``admitted`` rid is never touched; the window never goes.
         In batches of :data:`SWEEP_BATCH` rows, one transaction each (the lock is free between them, D2-6)."""
         chunk_cut, rid_cut = now_ms - CHUNK_KEEP_MS, now_ms - RID_KEEP_MS
+        # each step resumes after the last row it took (index order), so no batch reads a row an earlier one read
+        cur: list[Any] = ["", 0]
 
         def drop_bytes(db: sqlite3.Connection) -> list[Any]:
             rows = db.execute(
-                "SELECT c.rowid, c.device, LENGTH(c.bytes) FROM chunk c JOIN rid r ON r.device=c.device AND "
-                "r.rid=c.rid WHERE c.bytes IS NOT NULL AND r.first_ms<=? LIMIT ?",
-                (chunk_cut, SWEEP_BATCH),
+                "SELECT c.rowid, c.device, LENGTH(c.bytes) FROM chunk c INDEXED BY chunk_live JOIN rid r ON "
+                "r.device=c.device AND r.rid=c.rid WHERE c.bytes IS NOT NULL AND (c.device, c.rowid) > (?, ?) "
+                "AND r.first_ms<=? ORDER BY c.device, c.rowid LIMIT ?",
+                (cur[0], cur[1], chunk_cut, SWEEP_BATCH),
             ).fetchall()
             db.executemany("UPDATE chunk SET bytes=NULL WHERE rowid=?", [(r[0],) for r in rows])
             return rows
 
-        def drop_chunks(db: sqlite3.Connection) -> list[Any]:
-            rows = db.execute(
-                "SELECT c.rowid, c.device, COALESCE(LENGTH(c.bytes), 0) FROM chunk c JOIN rid r ON "
-                "r.device=c.device AND r.rid=c.rid WHERE r.state='answered' AND r.first_ms<=? LIMIT ?",
-                (rid_cut, SWEEP_BATCH),
+        def tombstone(db: sqlite3.Connection) -> list[Any]:
+            """The chunks of a batch of answered rids past 24 h go, and those rids become tombstones, together."""
+            keys = db.execute(
+                "SELECT rowid, device, rid, first_ms FROM rid INDEXED BY rid_state_first WHERE state='answered' AND "
+                "first_ms<=? AND (first_ms, rowid) > (?, ?) ORDER BY first_ms, rowid LIMIT ?",
+                (rid_cut, cur[0], cur[1], SWEEP_BATCH),
             ).fetchall()
-            db.executemany("DELETE FROM chunk WHERE rowid=?", [(r[0],) for r in rows])
-            return rows
-
-        def tombstone(db: sqlite3.Connection) -> int:
-            return db.execute(
-                "UPDATE rid SET state='tombstone', principal=NULL, idem=NULL WHERE rowid IN (SELECT rowid FROM rid "
-                "WHERE state='answered' AND first_ms<=? LIMIT ?)",
-                (rid_cut, SWEEP_BATCH),
-            ).rowcount
+            gone: list[Any] = []
+            for rowid, device, rid, _ in keys:
+                n = db.execute(
+                    "SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM chunk WHERE device=? AND rid=?", (device, rid)
+                ).fetchone()[0]
+                db.execute("DELETE FROM chunk WHERE device=? AND rid=?", (device, rid))
+                gone.append((rowid, device, int(n)))
+            db.executemany(
+                "UPDATE rid SET state='tombstone', principal=NULL, idem=NULL WHERE rowid=?", [(k[0],) for k in keys]
+            )
+            if keys:
+                cur[0], cur[1] = keys[-1][3], keys[-1][0]
+            return gone
 
         def forget(db: sqlite3.Connection) -> int:
             return db.execute(
-                "DELETE FROM rid WHERE rowid IN (SELECT rowid FROM rid WHERE state='tombstone' AND first_ms<=? "
-                "LIMIT ?)",
+                "DELETE FROM rid WHERE rowid IN (SELECT rowid FROM rid INDEXED BY rid_state_first WHERE "
+                "state='tombstone' AND first_ms<=? ORDER BY first_ms LIMIT ?)",
                 (now_ms - RID_KEEP_MS - TOMBSTONE_KEEP_MS, SWEEP_BATCH),
             ).rowcount
 
-        def over_cap(db: sqlite3.Connection) -> int:
-            over = db.execute("SELECT COUNT(*) FROM rid WHERE state='tombstone'").fetchone()[0] - MAX_TOMBSTONES
-            if over <= 0:
-                return 0
-            # the oldest first: the seq window and the ±300 s check still refuse an old request
-            return db.execute(
-                "DELETE FROM rid WHERE rowid IN (SELECT rowid FROM rid WHERE state='tombstone' ORDER BY first_ms "
-                "LIMIT ?)",
-                (min(over, SWEEP_BATCH),),
-            ).rowcount
+        def over_cap(n: int) -> Callable[[sqlite3.Connection], int]:
+            def body(db: sqlite3.Connection) -> int:
+                # the oldest first: the seq window and the ±300 s check still refuse an old request
+                return db.execute(
+                    "DELETE FROM rid WHERE rowid IN (SELECT rowid FROM rid INDEXED BY rid_state_first WHERE "
+                    "state='tombstone' ORDER BY first_ms LIMIT ?)",
+                    (n,),
+                ).rowcount
 
-        for chunks in (drop_bytes, drop_chunks):
-            while True:
-                with self._lock:  # the counts change with the committed transaction, never before it
-                    rows = self._tx("sweep", chunks)
-                    for _, device, n in rows:
-                        self._add_bytes(device, -int(n))
-                if len(rows) < SWEEP_BATCH:
-                    break
-        for step in (tombstone, forget, over_cap):
-            while self._tx("sweep", step) >= SWEEP_BATCH:
-                pass
+            return body
+
+        while True:
+            with self._lock:  # the counts change with the committed transaction, never before it
+                rows = self._tx("sweep", drop_bytes)
+                for _, device, n in rows:
+                    self._add_bytes(device, -int(n))
+            if len(rows) < SWEEP_BATCH:
+                break
+            cur[0], cur[1] = rows[-1][1], rows[-1][0]
+        cur[0], cur[1] = -(1 << 62), 0
+        while True:
+            with self._lock:
+                gone = self._tx("sweep", tombstone)
+                for _, device, n in gone:
+                    self._add_bytes(device, -n)
+            if len(gone) < SWEEP_BATCH:
+                break
+        while self._tx("sweep", forget) >= SWEEP_BATCH:
+            pass
+        with self._lock:
+            over = self._db.execute("SELECT COUNT(*) FROM rid WHERE state='tombstone'").fetchone()[0] - MAX_TOMBSTONES
+        while over > 0:
+            done = self._tx("sweep", over_cap(min(over, SWEEP_BATCH)))
+            if done <= 0:
+                break
+            over -= done
         with self._lock:  # the tombstoned rows leave the in-memory live list (survivors: the admitted ones)
             cut = bisect.bisect_right(self._live, rid_cut)
             if cut:

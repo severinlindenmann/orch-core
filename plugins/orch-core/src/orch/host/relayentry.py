@@ -13,7 +13,7 @@ outcome), the log dedup (O2: an event id already in the log is a committed dupli
 signed digest and actor equal the submitted event's, otherwise ``event.duplicate_id``; never by signature bytes),
 and ONLY THEN, for a never-seen event, the ULID window against the HOST clock (``event.expired``); then the target
 and key, ``judge_events``, ``outcomes.plan`` (fsynced), the append and a log check. Every core helper of those steps
-is reached through ONE seam, :mod:`orch.host.relayadmit` (H12e's helpers, #474; one stand-in for #482's
+is reached through ONE seam, :mod:`orch.host.relayadmit` (H12e's helpers, #474, and #482's
 ``device_standing``). A model exception that is not a refusal (an unjudgeable event) is ``validation.event``, a definite
 refusal, never a stuck write (review I3).
 

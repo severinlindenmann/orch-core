@@ -8943,6 +8943,17 @@ structurally: the invariant is named and enforced in one place.
   write and only if the head is still the one written and no raise is queued. The prune refuses while the store is
   unsafe or in a forked child. A removal that a restore undoes makes the device `ok` again under F1, so the prune
   then lowers its reason, as R2's standing serves it again (a lost phone must be REVOKED, 11A.4).
+  **Round 7 (Opus delta 5, orch-52):** the prune takes a snapshot FACTORY, `standing_now()`, called inside its writer
+  lock after it took the head it starts from, so a reload between an earlier snapshot and the prune can no longer
+  slip in a fresh reason judged against a stale state; **the caller MUST hold the live store's lock** (store, then
+  R6's writer; the factory asserts `Store.lock_held()`); in `_rebuild_gate` the store is used only as `locked()`,
+  `state` and `lock_held()` (a structural test). `Store.device_ok` is removed (unused in production; a reloading call
+  is exactly what the prune must not make). `_state_v` and `_relay_pregated` appear in no other module (AST test), and
+  a failed commit clears `_relay_pregated`. **After the merge of #564** the order in `Store._commit` is: every
+  refusal (admit, schema, signature, size, the freshness checks through the pinned root) → the relay gate
+  (`_gate_lost_standing(old, new)`, durable) → `_write_pending` → `fs.append_durable(..., commit=True)` (the commit
+  point) → `_finish` → the `_state` setter (no second raise) → `_after_commit` (the in-memory index update, derived
+  data: it never assigns the state nor reads standing) → `on_commit`. RootFS and the lock opener add no state path.
 - J-R6a-25 (round 5, an automated review's "validator differential" flag) **One standing function for every relay
   gate decision:** `orch.store.store.device_standing_ok(state, device, person=None)`. The store chokepoint (setter),
   `Store.device_ok` (relayr6's start-up raise and prune) and R2's `host.admission.device_standing` ("ok") all call

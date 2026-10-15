@@ -667,25 +667,29 @@ class MembershipKeys:
         with self._seal:
             return self._gate_up
 
-    def prune_stale_reasons(self, standing_ok: Callable[[str], bool]) -> int:
-        """Round 5/6 (F-1): drop every durable ``f1_standing`` gate reason whose device (32 hex) ``standing_ok`` says is
-        ``ok``, and lower the gate when no reason is left. A gate LOWERING, so atomic and monotone:
+    def prune_stale_reasons(self, standing_now: Callable[[], Callable[[str], bool]]) -> int:
+        """Round 5 to 7 (F-1): drop every durable ``f1_standing`` gate reason whose device (32 hex) is ``ok``, and lower
+        the gate when no reason is left. A gate LOWERING, so atomic and monotone. **The caller MUST hold the live
+        store's lock** across the call (store lock, then this writer lock; ``relayr6._rebuild_gate`` asserts it):
 
-        * ``standing_ok`` must be a pure function of ONE store state snapshot taken under the live store's lock after
-          its reload (``relayr6._rebuild_gate``: ``device_standing_ok(store.state, ...)``), never a call that can
-          re-enter the store and reload (round 6: a nested reload raised a new reason that the prune then overwrote);
-        * compare-and-swap: the head the prune started from is kept; if ``head.json`` changed meanwhile (a raise was
-          written, also from inside ``standing_ok``) or a raise is queued, nothing is written (``0``);
+        * ``standing_now()`` is called INSIDE the writer lock, after the head the prune starts from is taken (round 7:
+          a reload between an earlier snapshot and the prune could raise a fresh reason that the prune then judged
+          against the stale snapshot); it returns a pure function of ONE store state snapshot read at that moment
+          (``device_standing_ok(store.state, ...)``), never a call that can re-enter the store and reload;
+        * compare-and-swap: if ``head.json`` changed or a raise is queued between that start and the write, nothing is
+          written (``0``);
         * the durable write comes first; the in-memory gate goes down only after it, and only if the head is still the
           one just written and no raise is queued.
 
-        Never another reason kind (``device.removed`` etc., ``h7``, ``""``). Refused while unsafe or forked."""
+        Only ``f1_standing`` reasons (never ``held_evidence``, ``device.removed`` etc., ``h7`` or ``""``). Refused while
+        unsafe or forked."""
         self._require_safe()
         with self._write():
             start = self._head
             gate = start["gate"]
             if gate is None:
                 return 0
+            standing_ok = standing_now()
             keep, dropped = [], 0
             for r in gate["reasons"]:
                 if r["reason"] == "f1_standing" and r["device"] and standing_ok(r["device"]) is True:

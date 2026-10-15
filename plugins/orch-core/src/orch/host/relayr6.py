@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -97,9 +98,10 @@ def _rebuild_gate(service: Any, mk: Any) -> None:
     from orch.store.store import device_standing_ok
 
     store = service.store
-    # ONE store-lock span (its entry reloads what changed on disk), ONE state snapshot under it: every raise and the
-    # prune judge that same snapshot through THE standing function; nothing in the span re-enters the store, so no
-    # nested reload can change the answer between the judgement and the write (round 6)
+    # ONE store-lock span (its entry reloads what changed on disk). The raises judge a snapshot read at its start;
+    # the prune reads its own snapshot inside its writer lock (round 7). Nothing in the span calls the store except
+    # ``locked()``, ``state`` and ``lock_held()`` (a structural test pins it), so no nested reload can change an answer
+    # between a judgement and its write.
     with store.locked():
         state = store.state
         listed: dict[str, set[str]] = {}
@@ -111,17 +113,25 @@ def _rebuild_gate(service: Any, mk: Any) -> None:
             if not device_standing_ok(state, "d_" + dev, "p_" + person):
                 mk.raise_gate(dev, "f1_standing")
 
-        def standing_ok(dev: str) -> bool:
-            """The same question as the raise: a listed device is ok only as the device of EVERY person it is listed
+        def standing_now() -> Callable[[str], bool]:
+            """The prune's snapshot, read when the prune holds its writer lock (the store lock still held: asserted).
+            The same question as the raise: a listed device is ok only as the device of EVERY person it is listed
             for; an unlisted one by F1 alone."""
-            persons = listed.get(dev)
-            if not persons:
-                return device_standing_ok(state, "d_" + dev)
-            return all(device_standing_ok(state, "d_" + dev, "p_" + p) for p in persons)
+            if not store.lock_held():
+                raise RuntimeError("the stale-reason prune needs the store lock")
+            now = store.state
+
+            def ok(dev: str) -> bool:
+                persons = listed.get(dev)
+                if not persons:
+                    return device_standing_ok(now, "d_" + dev)
+                return all(device_standing_ok(now, "d_" + dev, "p_" + p) for p in persons)
+
+            return ok
 
         # round 5 (F-1): a durable f1_standing reason for a device that is ok in the live store (an append that
         # failed before its commit point after the gate was written) is dropped
-        mk.prune_stale_reasons(standing_ok)
+        mk.prune_stale_reasons(standing_now)
 
 
 def r6(service: Any) -> tuple[Any, Any]:

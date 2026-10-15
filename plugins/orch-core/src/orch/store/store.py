@@ -475,12 +475,10 @@ class Store:
     def _standing_ok(state: State, device: str) -> bool:
         return device_standing_ok(state, device)
 
-    def device_ok(self, device: str, person: str | None = None) -> bool:
-        """:func:`device_standing_ok` on the current state (``d_<hex>``, ``p_<hex>``). Call it inside :meth:`locked`
-        when the answer drives a decision (R6's start-up rebuild and stale gate-reason prune)."""
-        with self._locked():
-            assert self._state is not None
-            return device_standing_ok(self._state, device, person)
+    def lock_held(self) -> bool:
+        """This thread holds the store lock now (inside :meth:`locked`). R6's stale gate-reason prune requires it: it
+        judges a state snapshot that must not change before its compare-and-swap write (store, then R6's writer)."""
+        return self._lock.held_by_me()
 
     def _gate_lost_standing(self, old: State, new: State) -> None:
         for device in list(old.workspace.devices):
@@ -1847,6 +1845,7 @@ class Store:
             self._finish(manifest, ev, log, line)
         except BaseException:
             self._needs_reload = True  # whatever got half done, the next lock recovers from disk
+            self._relay_pregated = None  # the reload diffs (and gates) again; never skip a later state for this one
             raise
         self._state = new_state
         try:
@@ -3646,7 +3645,7 @@ def device_standing_ok(state: State, device: str, person: str | None = None) -> 
     """THE F1 standing ``ok`` (R6a round 5, one implementation): ``device`` (``d_<hex>``) is known, belongs to
     ``person`` (``p_<hex>``) when one is given, and is neither removed (also by ``member.removed``) nor revoked (also
     by a restore's revocations). Certificate expiry is not part of it. Used by the store's relay-gate chokepoint
-    (the ``_state`` setter), ``Store.device_ok`` (R6's rebuild and prune) and ``host.admission.device_standing``
+    (the ``_state`` setter), R6's rebuild and prune (``relayr6._rebuild_gate``) and ``host.admission.device_standing``
     (R2's per-request standing), so no two of them can disagree."""
     view = state.workspace.devices.get(device)
     return view is not None and (person is None or view.person == person) and not view.removed and not view.revoked

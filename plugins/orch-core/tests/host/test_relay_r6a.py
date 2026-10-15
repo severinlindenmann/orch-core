@@ -211,6 +211,9 @@ class _FakeLiveStore:
 
         self.state = types.SimpleNamespace(workspace=types.SimpleNamespace(devices=Devices()))
 
+    def lock_held(self):
+        return self.depth > 0
+
     def locked(self):
         import contextlib
 

@@ -171,6 +171,8 @@ def convenience_block(service: WorkspaceService) -> str | None:
     """§11A.6 at worker start and after a foreign append: ``convenience_events_present`` when the merged history (or
     the durable mark, or the flag) would refuse ``relay.link``; ``None`` otherwise. Under the store lock (worker
     thread)."""
+    from orch.store.readerrecs import read_relay_level
+
     from .convenience import refuse_reader_op
 
     store = service.store
@@ -178,7 +180,10 @@ def convenience_block(service: WorkspaceService) -> str | None:
         return "workspace_unavailable"
     try:
         with store.locked():
-            refuse_reader_op(service, "relay.link", history=True)
+            # the relay's last verified reader level (H12d-3 9.8, stored at link and every R1 login): a relay of
+            # level 1 passes with convenience history (§11A.17.4, the dev sandbox's worker restart); None counts as 0
+            level = read_relay_level(service.state_dir, service.workspace_id, service.host_uid)
+            refuse_reader_op(service, "relay.link", history=True, relay_level=level)
     except HostError as exc:
         if exc.code == "sign.convenience_readers":
             return "convenience_events_present"

@@ -1,0 +1,111 @@
+"""The closed harness registry and the launch argv (D-P2-28, §12.4.1; H11c). Pure functions, no I/O.
+
+**The client chooses values, never a command.** A launch is computed here from a harness id of the closed registry
+(``claude-code``, ``codex``, ``shell``: the F1 ``actor.id`` values), a mode, a model and the ticket key the host looked
+up. The prompt is **one argv element** ("data to the OS, instructions to the harness"); nothing a client sends is ever
+parsed by a shell: in the login-shell form the shell runs only the fixed script ``exec "$0" "$@"`` and receives the
+program and its arguments as positional parameters. A new harness is a reviewed code change, never configuration.
+
+* ``claude-code``: program ``claude``, ``claude [--model M] <prompt>``; the prompt is the codex text (the
+  ``/orch:<mode>`` skills do not exist yet).
+* ``codex``: program ``codex``, ``codex [--model M] <prompt>``, prompt
+  ``Run orch status, then <mode text> ticket KEY. Follow AGENTS.orch.md.``
+* ``shell``: ``$SHELL -l``, no prompt.
+
+Mode ``context``: ``Run orch show KEY --section current_state, then wait for my instructions.`` Without a mode (a
+person-run harness, ``term.open``) the harness starts interactive, with no prompt argument.
+"""
+
+from __future__ import annotations
+
+import re
+import shlex
+from typing import Any
+
+from orch.runner.config import RunnerConfig
+
+from .errors import HostError
+
+__all__ = [
+    "HARNESSES",
+    "LOGIN_EXEC",
+    "MODES",
+    "MODEL",
+    "PROGRAMS",
+    "TERM_HARNESSES",
+    "check_model",
+    "display",
+    "launch_argv",
+    "prompt",
+]
+
+HARNESSES = ("claude-code", "codex")
+TERM_HARNESSES = (*HARNESSES, "shell")
+PROGRAMS = {"claude-code": "claude", "codex": "codex"}
+MODES = ("refine", "work", "fix", "continue", "context")
+#: what the agent is asked to do in each mode (``Run orch status, then <text> ticket KEY.``)
+MODE_TEXT = {"refine": "refine", "work": "work on", "fix": "fix the requested changes on", "continue": "continue"}
+MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]/-]{0,63}")
+#: the only script the login shell ever runs: the program and its arguments arrive as "$0" "$@"
+LOGIN_EXEC = 'exec "$0" "$@"'
+#: the line the preview shows for a login-shell launch (D-P2-28)
+LOGIN_NOTICE = (
+    "the program is found and started through your login shell; your shell profile runs first and can change what runs"
+)
+KEY = re.compile(r"(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}")
+
+
+def check_model(field: str, value: Any) -> str | None:
+    """``None`` when absent or valid, else the ``launch.invalid`` message naming the field."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not MODEL.fullmatch(value):
+        return f"{field} is not a model name (letters, digits and ._:[]/-, at most 64, never starting with -)"
+    return None
+
+
+def prompt(mode: str | None, key: str | None) -> str | None:
+    """The prompt argument, one element; ``None`` without a mode."""
+    if mode is None:
+        return None
+    if key is None or not KEY.fullmatch(key):
+        raise HostError("launch.invalid", "a mode needs a ticket")
+    if mode == "context":
+        return f"Run orch show {key} --section current_state, then wait for my instructions."
+    if mode not in MODE_TEXT:
+        raise HostError("launch.invalid", "mode is not one of refine, work, fix, continue, context")
+    return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. Follow AGENTS.orch.md."
+
+
+def launch_argv(
+    harness: str, mode: str | None, model: str | None, key: str | None, config: RunnerConfig
+) -> tuple[list[str], bool, str | None]:
+    """``(argv, login_shell, program)``. ``shell`` is ``["$SHELL", "-l"]`` (the runner substitutes its own ``SHELL``);
+    a harness is ``[$SHELL, "-l", "-c", LOGIN_EXEC, program, …]``, or with ``login_shell: false`` the absolute program
+    from ``runner.json`` (none: ``harness.not_found``). ``program`` is that absolute path, else ``None``."""
+    if harness == "shell":
+        if mode is not None or model is not None:
+            raise HostError("launch.invalid", "a shell takes no mode and no model")
+        return ["$SHELL", "-l"], False, None
+    if harness not in HARNESSES:
+        raise HostError("launch.invalid", "harness is not one of claude-code, codex, shell")
+    bad = check_model("model", model)
+    if bad:
+        raise HostError("launch.invalid", bad)
+    rest: list[str] = []
+    if model is not None:
+        rest += ["--model", model]
+    text = prompt(mode, key)
+    if text is not None:
+        rest.append(text)
+    if config.login_shell:
+        return ["$SHELL", "-l", "-c", LOGIN_EXEC, PROGRAMS[harness], *rest], True, None
+    program = config.programs.get(harness)
+    if not program:
+        raise HostError("harness.not_found", f"runner.json names no program for {harness} (login_shell is off)")
+    return [program, *rest], False, program
+
+
+def display(argv: list[str]) -> str:
+    """The POSIX-quoted rendering of ``argv``, for display only (``$SHELL`` stays as written)."""
+    return " ".join(a if a == "$SHELL" else shlex.quote(a) for a in argv)

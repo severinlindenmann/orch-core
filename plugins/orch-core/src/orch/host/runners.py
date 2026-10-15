@@ -87,6 +87,7 @@ RUNNER_CODES = frozenset(
     {
         "launch.cwd_changed", "harness.not_found", "harness.shell_unsupported", "run.spawn_failed", "invalid.input",
         "not_found", "term.busy", "term.not_attachable",
+        "launch.no_grant", "launch.invalid",  # H11c: the runner's grant store, runner.json
         # H11d: worktree git (orch.runner.wtgit)
         "worktree.branch_in_use", "worktree.exists", "worktree.dirty", "worktree.git_failed",
         "observe.unavailable",  # the orch.gitsafe gate: the repo's own config could make git run a program

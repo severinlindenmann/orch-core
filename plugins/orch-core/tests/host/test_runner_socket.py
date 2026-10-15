@@ -22,6 +22,7 @@ from orch.host.client import Pin, handshake_pinned
 from orch.host.errors import HostError
 from orch.host.runners import main_pid, new_run_id
 from orch.runner import enablement, procs
+from orch.runner.config import RunnerConfig
 from orch.runner.link import HostLink, build_env
 from orch.runner.supervise import SpawnError, Supervisor
 from orch.runner.term import TermListener
@@ -47,14 +48,25 @@ def wait_for(cond, timeout: float = 10.0):
 class Runner:
     """A runner in this process: supervisor + terminal socket + host link."""
 
-    def __init__(self, w, state: Path, gen: str = GEN1) -> None:
+    def __init__(self, w, state: Path, gen: str = GEN1, config: RunnerConfig | None = None) -> None:
         self.sup = Supervisor(state, cgroups=None, scan_interval=0.2, exit_grace=0.5)
         self.sup.open()
         self.term = TermListener(
             Path(w.lab.run) / "term" / str(UID) / "term.sock", UID, gen=gen, info=self.sup.attach_info, sup=self.sup
         )
         self.term.open()
-        self.link = HostLink(self.sup, w.h.host.runner_path, host_uid=UID, gen=gen, term=self.term, backoff=(0.05, 0.2))
+        # the H11a/H11b mechanics tests spawn /bin/sh directly: this runner's runner.json names it as a program
+        # (H11c: the runner starts only registry launches and programs runner.json names)
+        self.link = HostLink(
+            self.sup,
+            w.h.host.runner_path,
+            host_uid=UID,
+            gen=gen,
+            term=self.term,
+            backoff=(0.05, 0.2),
+            config=config if config is not None else RunnerConfig(programs={"codex": "/bin/sh"}),
+        )
+        self.grants = self.link.grants
         self.link.start()
         assert self.link.ready.wait(10), "the runner never got its hello answered"
 
@@ -715,7 +727,7 @@ def test_f3_a_spawn_result_is_validated(w, tmp_path):
         _recv_all(sock, dec)
         run = new_run_id()
         fut = asyncio.run_coroutine_threadsafe(
-            hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/true"])), w.h.loop
+            hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "true"])), w.h.loop
         )
         evt = _recv_all(sock, dec)[0]
         cid = evt["items"][0]["cmd"]

@@ -15,10 +15,19 @@ too.
 (:meth:`orch.runner.term.TermListener.host_lost`); only the next hello's answer re-opens them. Spawns stay
 idempotent by run id across reconnects (:meth:`orch.runner.supervise.Supervisor.spawn`).
 
-Environment of a spawn (defence in depth; the host computes it, H11c adds ``pass_env``): the variables named in
-``env_names`` must be on the runner's allow-list and are copied from the runner's own environment; ``env_fixed`` may
-only hold host-chosen values (``ORCH_TICKET``, ``ORCH_WORKTREE``, ``ORCH_WORKTREES``, ``ORCH_HARNESS``); ``TERM``
-and ``COLORTERM`` are fixed. Nothing else passes; the host never sends a secret in a spawn.
+Every ``spawn`` is checked again here (defence in depth, :func:`spawn_spec`; the host computes it):
+
+* **argv** is a registry form only: ``["$SHELL", "-l"]`` (a shell), ``["$SHELL", "-l", "-c", 'exec "$0" "$@"',
+  "claude"|"codex", …]`` (a harness through the login shell, only while ``runner.json`` leaves ``login_shell`` on), or
+  an absolute program that ``runner.json`` names in ``programs``. ``$SHELL`` is the runner's own ``SHELL``, which
+  must be an executable POSIX shell (else ``harness.shell_unsupported``).
+* **Environment**: the variables named in ``env_names`` must be on the runner's allow-list or in ``runner.json``'s
+  ``pass_env`` and are copied from the runner's own environment; ``env_fixed`` may only hold host-chosen values
+  (``ORCH_TICKET``, ``ORCH_WORKTREE``, ``ORCH_WORKTREES``, ``ORCH_HARNESS``, ``CLAUDE_CODE_SUBAGENT_MODEL``); ``TERM``
+  and ``COLORTERM`` are fixed. Nothing else passes; the host never sends a secret in a spawn.
+* **The grant** (H11c, D-P2-27): an agent (``kind:"agent"``) names its person's runner grant by id and its session;
+  the secret comes only from this runner's in-memory :class:`~orch.runner.grants.GrantStore` (``grant.put``) and is
+  put in that agent's environment as ``ORCH_GRANT``, next to ``ORCH_SESSION``. A shell never gets either.
 """
 
 from __future__ import annotations
@@ -27,10 +36,11 @@ import concurrent.futures
 import contextlib
 import logging
 import os
+import re
 import secrets
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +48,13 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
+from .config import ConfigError, RunnerConfig
+from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
 from .table import now_iso
 from .term import TermListener, TicketError
 
-__all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_gen"]
+__all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_gen", "spawn_spec"]
 
 LOG = logging.getLogger(__name__)
 
@@ -53,17 +65,27 @@ ENV_FROM_RUNNER = frozenset(
         "ORCH_STATE_DIR", "XDG_CONFIG_HOME", "ORCH_HOST_RUN_DIR",
     }
 )  # fmt: skip
-ENV_FIXED_NAMES = frozenset({"ORCH_TICKET", "ORCH_WORKTREE", "ORCH_WORKTREES", "ORCH_HARNESS"})
+ENV_FIXED_NAMES = frozenset(
+    {"ORCH_TICKET", "ORCH_WORKTREE", "ORCH_WORKTREES", "ORCH_HARNESS", "CLAUDE_CODE_SUBAGENT_MODEL"}
+)
+#: the only script a login shell runs (:data:`orch.host.launch.LOGIN_EXEC`) and the registry's programs
+LOGIN_EXEC = 'exec "$0" "$@"'
+REGISTRY_PROGRAMS = frozenset({"claude", "codex"})
+_SESSION = re.compile(r"s_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_PERSON = re.compile(r"p_[0-9a-f]{32}")
 FIXED = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 VERSION = "orch-runner/1"
 
 
-def build_env(args: Mapping[str, Any], own: Mapping[str, str]) -> dict[str, str]:
+def build_env(
+    args: Mapping[str, Any], own: Mapping[str, str], pass_env: frozenset[str] | tuple[str, ...] = ()
+) -> dict[str, str]:
     names = args.get("env_names") or []
     fixed = args.get("env_fixed") or {}
     if not isinstance(names, list) or not isinstance(fixed, dict):
         raise SpawnError("invalid.input", "spawn: invalid environment")
-    bad = [n for n in names if n not in ENV_FROM_RUNNER] + [k for k in fixed if k not in ENV_FIXED_NAMES]
+    passing = ENV_FROM_RUNNER | frozenset(pass_env)
+    bad = [n for n in names if n not in passing] + [k for k in fixed if k not in ENV_FIXED_NAMES]
     if bad:
         raise SpawnError("invalid.input", f"spawn: environment name not allowed: {str(bad[0])[:40]}")
     env = {n: own[n] for n in names if n in own}
@@ -90,6 +112,53 @@ def resolve_shell(argv: list[Any], own: Mapping[str, str]) -> list[Any]:
     return [shell, *argv[1:]]
 
 
+def registry_argv(argv: Any, own: Mapping[str, str], config: RunnerConfig) -> list[str]:
+    """The argv of a registry launch with ``$SHELL`` resolved; anything else is ``invalid.input`` (D-P2-28: the client
+    chooses values, never a command, and the runner checks that again)."""
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+        raise SpawnError("invalid.input", "spawn: invalid argv")
+    if argv[0] == "$SHELL":
+        if argv[1:] == ["-l"]:
+            return resolve_shell(argv, own)
+        if len(argv) >= 5 and argv[1:4] == ["-l", "-c", LOGIN_EXEC] and argv[4] in REGISTRY_PROGRAMS:
+            if not config.login_shell:
+                raise SpawnError("invalid.input", "spawn: runner.json turns the login shell off")
+            return resolve_shell(argv, own)
+        raise SpawnError("invalid.input", "spawn: argv is not a registry launch")
+    if argv[0].startswith("/") and argv[0] in config.programs.values():
+        return list(argv)
+    raise SpawnError("invalid.input", "spawn: argv[0] is neither $SHELL nor a program runner.json names")
+
+
+def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerConfig, grants: GrantStore) -> SpawnSpec:
+    """A ``spawn`` command as the :class:`SpawnSpec` the supervisor starts: the registry argv, the environment
+    (allow-list, ``pass_env``, host-chosen fixed values) and, for an agent, ``ORCH_GRANT`` from the grant store and
+    ``ORCH_SESSION``. Raises :class:`SpawnError`."""
+    kind = args.get("kind")
+    argv = registry_argv(args.get("argv"), own, config)
+    env = build_env(args, own, config.pass_env)
+    grant, session = args.get("grant"), args.get("session")
+    if kind == "agent":
+        person, wid = args.get("person"), str(args.get("workspace_id"))
+        if not (isinstance(session, str) and _SESSION.fullmatch(session)):
+            raise SpawnError("invalid.input", "spawn: an agent needs a session id")
+        if not (isinstance(person, str) and _PERSON.fullmatch(person)):
+            raise SpawnError("invalid.input", "spawn: an agent needs its person")
+        if grant is None:
+            raise SpawnError("launch.no_grant", "spawn: an agent needs its person's runner grant")
+        try:
+            env["ORCH_GRANT"] = grants.secret_for(wid, person, grant)
+        except GrantError as exc:
+            raise SpawnError(exc.code, exc.message) from None
+        env["ORCH_SESSION"] = session
+    elif grant is not None or session is not None:
+        raise SpawnError("invalid.input", "spawn: a shell acts as the person: no grant, no session")
+    return SpawnSpec(
+        str(args.get("run")), str(args.get("workspace_id")), str(kind), argv, env, dict(args.get("cwd") or {}),
+        int(args.get("cols") or 120), int(args.get("rows") or 40),
+    )  # fmt: skip
+
+
 def new_gen() -> str:
     """The runner generation (§12.3.2 ``Gen``): 32 hex digits drawn at every runner start."""
     return secrets.token_hex(16)
@@ -108,6 +177,8 @@ class HostLink:
         term: TermListener | None = None,
         env: Mapping[str, str] | None = None,
         backoff: tuple[float, float] = (0.5, 10.0),
+        config: RunnerConfig | Callable[[], RunnerConfig] | None = None,
+        grants: GrantStore | None = None,
     ) -> None:
         self.sup = sup
         self.socket_path = Path(socket_path)
@@ -116,6 +187,10 @@ class HostLink:
         self.term = term
         self.env = dict(os.environ if env is None else env)
         self.backoff = backoff
+        #: ``runner.json`` (read again at every spawn when a loader is given: an edit applies to the next launch)
+        self._config = config if config is not None else RunnerConfig()
+        #: the runner grants, in memory only (D-P2-27)
+        self.grants = grants if grants is not None else GrantStore()
         self.sock: Any = None
         self.epoch: str | None = None
         self.ready = threading.Event()
@@ -148,6 +223,15 @@ class HostLink:
         if self._thread is not None:
             self._thread.join(timeout=5)
         self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def config(self) -> RunnerConfig:
+        """``runner.json`` now; an invalid file refuses the launch (``launch.invalid``), never defaults."""
+        if isinstance(self._config, RunnerConfig):
+            return self._config
+        try:
+            return self._config()
+        except ConfigError as exc:
+            raise SpawnError("launch.invalid", str(exc)[:300]) from None
 
     def disconnect(self) -> None:
         sock, self.sock = self.sock, None
@@ -193,7 +277,7 @@ class HostLink:
             runs = self._runs()
         reported_running = {r["run"] for r in runs if r["state"] == "running"}
         hello_args = {"version": VERSION, "gen": self.gen, "pid": os.getpid(), "term_socket": term_socket,
-                      "runs": runs, "grants": []}  # grants: H11c  # fmt: skip
+                      "runs": runs, "grants": self.grants.report()}  # fmt: skip
         rid = self._send_req("runner.hello", hello_args)
         while not self._stop.is_set():
             data = recv(sock)
@@ -345,12 +429,7 @@ class HostLink:
 
     def _run(self, cmd: str, args: dict[str, Any], tag: int) -> dict[str, Any]:
         if cmd == "spawn":
-            spec = SpawnSpec(
-                str(args.get("run")), str(args.get("workspace_id")), str(args.get("kind")),
-                resolve_shell(list(args.get("argv") or []), self.env), build_env(args, self.env),
-                dict(args.get("cwd") or {}),
-                int(args.get("cols") or 120), int(args.get("rows") or 40),
-            )  # fmt: skip
+            spec = spawn_spec(args, self.env, self.config(), self.grants)
             with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot
                 if not self._current(tag):
                     raise _Stale()
@@ -373,6 +452,13 @@ class HostLink:
                 if not self._current(tag):
                     raise _Stale()
                 return run_git(args, self.env, log=LOG.info)
+        if cmd == "grant.put":  # H11c: the secret arrives here once; it is answered without it
+            try:
+                return self.grants.put(args)
+            except GrantError as exc:
+                raise SpawnError(exc.code, exc.message) from None
+        if cmd == "grant.drop":
+            return {"dropped": self.grants.drop(args.get("grant"))}
         if cmd == "attach.end":
             if self.term is not None:
                 self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))

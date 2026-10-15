@@ -235,8 +235,15 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     except OSError as exc:
         log.warning("the terminal socket is not served: %s", exc)
         term = None  # type: ignore[assignment]
+    from .config import read_config
+    from .grants import GrantStore, RedactFilter
+
+    grants = GrantStore()  # in memory only (D-P2-27): a restart loses every grant
+    for handler in logging.getLogger().handlers:  # defence in depth: no held secret ever reaches runner.out
+        handler.addFilter(RedactFilter(grants))
     # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
-    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term)
+    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
+                    config=lambda: read_config(state, uid), grants=grants)  # fmt: skip
     link.start()
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

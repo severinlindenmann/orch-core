@@ -9260,6 +9260,9 @@ the reason `deadline`.
     (`author_person` from the journal, set by the certificate check, never from listing metadata). It needs no hand-off,
     like the person's own `drop.send`. That applies to `drop.claim` on the socket and to the phone's `drop_claim` (the
     requesting device's person must equal `author_person`).
+    A gestureless own-claim also requires the verified author device to be a **current** member device of the claiming
+    person at claim time (re-checked under the store lock), and it is listed in "Shared from your phone" for 7 days
+    (details in 11A.16.12, Q-H9).
   - **Anyone else's inbox content.** It needs a **terminal hand-off** bound to object, head and audience (11A.16.6).
     The person sees the object only through D4's approval view: its id, head token, size, sender identity, and its
     name as untrusted text, never its contents. The phone's `drop_claim` for such an object answers

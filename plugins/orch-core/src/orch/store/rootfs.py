@@ -18,7 +18,9 @@ at most :data:`CACHED` (three) top-level directory fds (``tickets``, ``events``,
 one of them). A cached fd is re-checked by :meth:`revalidate` (the store calls it each time it takes its lock): when
 the name below the root is no longer that directory (swapped for a symlink, replaced, renamed away) the fd is dropped
 and the next access walks again (and refuses a symlink). Every other fd is opened for one call and closed before it
-returns, so a call holds at most ``depth + 1`` more fds and nothing grows with the number of tickets.
+returns, so a call holds at most ``depth + 1`` more fds and nothing grows with the number of tickets. The fd cache is
+**not thread-safe**: each store (and so its RootFS) is used from one thread at a time (the host runs a workspace on its
+single-thread executor; direct mode is one process, one command).
 
 POSIX only (``dir_fd`` and ``O_NOFOLLOW``), like the rest of the store's hardening.
 """

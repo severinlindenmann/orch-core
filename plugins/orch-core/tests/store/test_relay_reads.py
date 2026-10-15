@@ -293,14 +293,16 @@ def test_a_symlinked_root_is_never_followed(grown, tmp_path):
     moved = real.with_name("ws-moved")
     outside = tmp_path / "elsewhere"
     (outside / ".state" / "checkpoints" / "abandoned").mkdir(parents=True)
-    (outside / ".state" / "checkpoints" / "abandoned" / "workspace-9.json").write_bytes(
-        canon.cj_checked(_forked(env, uid))
-    )
+    (outside / ".state" / "checkpoints" / "abandoned" / "workspace-9.json").write_bytes(b'{"outside": true}')
+    genuine = canon.cj_checked(_forked(env, uid))
+    ab = real / ".state" / "checkpoints" / "abandoned"
+    ab.mkdir(parents=True, exist_ok=True)
+    (ab / "workspace-8.json").write_bytes(genuine)  # in the store's own tree: it must be found (the walk works)
     os.rename(real, moved)
     os.symlink(outside, real)  # the root's path now names another directory
     try:
         with watch(outside) as seen:
-            assert list(s._abandoned_workspace_checkpoints()) == []  # noqa: SLF001
+            assert list(s._abandoned_workspace_checkpoints()) == [genuine]  # noqa: SLF001
         assert seen == []
     finally:
         os.unlink(real)

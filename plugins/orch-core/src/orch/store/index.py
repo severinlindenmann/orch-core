@@ -70,6 +70,11 @@ MAX_INDEX_BYTES = 256 << 20
 _LEGACY = ("-journal", "-wal", "-shm")  # what a file-backed SQLite of an older orch may have left next to it
 
 
+class StaleIndex(Exception):
+    """The file changed since this object loaded or saved it (another :class:`~orch.store.Store` saved it): this
+    in-memory copy is closed and must not be saved over the other's rows. The store re-checks (reloads or rebuilds)."""
+
+
 class Index:
     """The derived index (#564): an **in-memory** SQLite database. It is loaded from ``.state/index.sqlite`` with
     :meth:`RootFS.read_or_none` + ``deserialize`` and saved with ``serialize`` + :meth:`RootFS.write_atomic` (temp
@@ -113,6 +118,11 @@ class Index:
         else:
             fsio.write_atomic(self.path, data, durable=False)
         self._sig = self._file_sig()
+
+    def stale(self) -> bool:
+        """Is the file not the one this object loaded or last saved (one ``lstat``, below the pinned root)? A closed
+        index counts as stale: it is reloaded and checked before it is trusted again."""
+        return self._db is None or self._file_sig() != self._sig
 
     # -- connection
     def _connect(self) -> sqlite3.Connection:
@@ -195,7 +205,11 @@ class Index:
         sizes: Mapping[str, int],
     ) -> None:
         """After an append: refresh the rows of the tickets in ``changed`` (views that are not the old state's), the
-        log heads of ``touched_logs`` and, when the workspace log moved, the members."""
+        log heads of ``touched_logs`` and, when the workspace log moved, the members. Refuses (:class:`StaleIndex`,
+        closed) when another store saved the file since this one loaded it: its rows are never overwritten."""
+        if self.stale():
+            self.close()
+            raise StaleIndex()
         db = self._connect()
         db.execute("BEGIN")
         try:

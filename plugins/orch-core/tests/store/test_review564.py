@@ -242,3 +242,20 @@ def test_close_releases_the_cached_directory_fds(env):
 
 
 _ = workers
+
+
+# -- Opus delta D1: two Store instances on one workspace keep each other's index rows
+
+
+def test_two_store_instances_never_lose_each_others_index_rows(env):
+    a = env.bootstrap()
+    env.new_ticket("one")
+    b = env.other()
+    env.new_ticket("two")  # through a
+    assert len(b.index.query("SELECT uid FROM tickets")) == 2
+    b.create_ticket(actor=env.agent, ticket_type="feature", title="three", owner=env.owner.ref)
+    assert len(a.index.query("SELECT uid FROM tickets")) == 3
+    env.new_ticket("four")  # a appends after b saved: b's row must survive a's save
+    assert sorted(t for (t,) in b.index.query("SELECT title FROM tickets")) == ["four", "one", "three", "two"]
+    assert sorted(t for (t,) in a.index.query("SELECT title FROM tickets")) == ["four", "one", "three", "two"]
+    b.close()

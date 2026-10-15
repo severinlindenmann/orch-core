@@ -62,7 +62,7 @@ from . import render
 from .checkpoints import WORKSPACE_EVERY, Checkpoints, Divergence, find_divergence
 from .errors import StoreError
 from .fsio import NotRegularFile, fsync_dir, loads, open_regular, read_or_none, write_atomic
-from .index import Index
+from .index import Index, StaleIndex
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
 from .outbox import Outbox, OutboxEntry, RelayPosition, Segment, make_entry, parse_entry
@@ -991,7 +991,10 @@ class Store:
         not, every ticket is loaded and it is rebuilt."""
         with self._locked():
             ws = self._state.workspace if self._state else None
+            if self._index_ok and self._index.stale():
+                self._index_ok = False  # another store saved it (or it was closed): reload and check it again
             if ws is not None and ws.genesis is not None and not self._index_ok:
+                self._scan_dirs()  # tickets another store created since (the index file may already list them)
                 if self._index.is_current(self._sizes_now(), self.workspace_id, ws.genesis):
                     self._index_ok = True
                 else:
@@ -2071,6 +2074,8 @@ class Store:
         if new.workspace.genesis is not None and self._index_ok:
             try:
                 self._index.update(new, self._logs, [log], changed, self._sizes_now() | {log: self._logs[log].offset})
+            except StaleIndex:  # another store saved it since: re-checked (reloaded or rebuilt) at the next use
+                self._index_ok = False
             except Exception:  # noqa: BLE001 - derived data: never fail an append for it
                 self._index.drop()
                 self._index_ok = False

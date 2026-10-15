@@ -290,6 +290,16 @@ it('Grants: ended grants are shown on request, with who revoked them only when t
   expect(within(unknown).queryByRole('button', { name: /Revoke/ })).not.toBeInTheDocument()
 })
 
+it('Grants: the runner grant is marked from grant.list label (H11c-2); another label is plain text', async () => {
+  state.host.workspaces[0].grants = [grant(GRANT_A, OWNER, { label: 'runner' }), grant(GRANT_B, TOM, { label: 'tests' })]
+  show('/w/DEMO/settings/grants')
+  const runner = (await screen.findByText(GRANT_A, {}, T)).closest('tr')!
+  expect(within(runner).getByTestId('runner-grant-tag')).toHaveTextContent('runner grant')
+  const other = screen.getByText(GRANT_B).closest('tr')!
+  expect(within(other).queryByTestId('runner-grant-tag')).not.toBeInTheDocument()
+  expect(other).toHaveTextContent('label tests')
+})
+
 it('host strings with bidi characters are shown escaped, not applied', async () => {
   state.host.workspaces[0].grants = [grant(GRANT_A, OWNER, { scope: 'al\u202el' })]
   show('/w/DEMO/settings/grants')

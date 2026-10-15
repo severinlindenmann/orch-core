@@ -6572,6 +6572,21 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   exception there alarms `relay_renewal_failed` and is handed to `publish_first`.
 - F6 Tests pin `_finish_held`'s `H.n > pub.n` order and the plain other-branch refusal.
 
+**orch-52 round 6 (15 Oct 2026).**
+- *Which deletions R3 confirms.* There are two kinds of outbox deletion. R3's own deletes an entry after the relay
+  took it. It goes through `_publish` (`_final`, then `_confirm`'s fresh verified read) or, for an entry the relay
+  already holds with no acknowledgement to read, through `_finish_held`, whose fresh verified read is the
+  confirmation. Then comes the history line, then `outbox_delete`. The store's own, by design (H12b), deletes plain
+  entries that a later entry supersedes before they are ever published: coalescing on append (the plain entry just
+  below a new one) and the catch-up replacement (`mint_catchup`'s journal replaces the queued plain entries with
+  Q1 … Qk). Neither removes anything the relay was meant to hold: the superseding entries carry every head of the
+  superseded ones.
+- The `relay_ancestor` cache is keyed on `Store.revision()` (H12d-3: every read head and every ticket-log file's
+  stat signature), not a sum of seqs. An append by another Store instance, a same-length branch and a cut tail all
+  recompute the answer.
+- Accepted limit, #562: a branch above `RELAY_CACHE_BYTES` (about 262 000 heads) is walked whole for each page,
+  bounded by `RELAY_BRANCH_MAX`. Bounded paging for huge abandoned branches is tracked in #562.
+
 **Design inconsistencies found.**
 - `docs/architecture/orch-v2-host.md` 11A.7 table (staging and final answers 16 KiB) vs orch-relay
   `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.

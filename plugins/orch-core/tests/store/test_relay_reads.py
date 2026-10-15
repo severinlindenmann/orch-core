@@ -458,3 +458,11 @@ def test_the_ancestry_key_changes_for_a_same_length_branch(env, tmp_path):
     assert s.revision() != before
     s.relay_ancestor(older, newer)
     assert len(calls) == 2  # recomputed, never the cached answer of the other branch
+
+
+def test_a_cached_negative_ancestry_answer_stays_negative(grown):
+    env, uid = grown
+    s = env.store
+    older = s.outbox_entries()[0].checkpoint
+    newer = workspace_cp(env)
+    assert not s.relay_ancestor(newer, older) and not s.relay_ancestor(newer, older)  # the second from the cache

@@ -540,3 +540,46 @@ def test_stop_ends_a_write_blocked_on_a_slow_runner_and_refuses_later_ones_delta
     finally:
         ours.close()
         runner.close()
+
+
+def test_a_termclient_with_its_own_send_deadline_is_not_wrapped_and_stop_still_ends_a_blocked_write():
+    """orch-core #475: TermClient.send has its own deadline and uses setblocking/send, which SteadyWrites lacks."""
+    import socket as _socket
+
+    from orch_dashboard.terminals import Pump, SteadyWrites
+
+    ours, runner = _socket.socketpair()
+    try:
+
+        class Client:
+            send_timeout = 5.0
+
+            def __init__(self):
+                self.sock = ours
+
+            def send(self, data):  # the shape of core's new send: non-blocking writes on the raw socket
+                self.sock.setblocking(True)
+                self.sock.sendall(data)
+
+        client = Client()
+        pump = Pump(client, None, None)
+        assert client.sock is ours and not isinstance(client.sock, SteadyWrites)
+        outcome = {}
+
+        def write():
+            started = time.monotonic()
+            try:
+                client.send(b"x" * (4 << 20))
+            except OSError as exc:
+                outcome["error"] = type(exc).__name__
+            outcome["took"] = time.monotonic() - started
+
+        writer = threading.Thread(target=write)
+        writer.start()
+        time.sleep(0.3)
+        pump.stop()
+        writer.join(2)
+        assert not writer.is_alive() and "error" in outcome and outcome["took"] < 2
+    finally:
+        ours.close()
+        runner.close()

@@ -173,7 +173,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
 function RunTabs({ runs, current, onSelect, doubt }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean> }) {
   if (runs.length === 0) return <span className="min-w-0 flex-1 truncate text-xs text-text-faint">No terminal open</span>
   return (
-    <div role="tablist" aria-label="Terminals" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-scroll-x>
+    <div role="tablist" aria-label="Terminals" className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-scroll-x>
       {runs.map((r, i) => (
         <button key={r.run} type="button" role="tab" aria-selected={r.run === current} onClick={() => onSelect(r.run)}
           className={cn('flex h-6 max-w-[180px] shrink-0 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand', r.run === current ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3')}>

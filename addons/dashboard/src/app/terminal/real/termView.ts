@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal, type ITerminalInitOnlyOptions, type ITerminalOptions } from '@xterm/xterm'
 import { POINTER_EVENTS, ReplyFilter, type Ready } from './termProtocol'
+import '@xterm/xterm/css/xterm.css' // the real view must not rely on the mock TerminalView having loaded it
 
 /** xterm's default OSC 8 behaviour would confirm() and window.open(): links do nothing here (no links in phase 2). */
 export const NO_LINKS = { activate: () => {}, hover: () => {}, leave: () => {} }

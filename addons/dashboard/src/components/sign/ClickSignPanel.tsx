@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Raw } from './visible'
+import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
 
 function RiskLine({ text }: { text: string }) {
@@ -132,12 +133,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           />
         </div>
       )}
-      {problem && (
-        <div role="alert" data-testid="click-problem" className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
-          <p className="font-medium text-text">{problem.title}</p>
-          <p className="text-text-muted"><Raw>{problem.body}</Raw></p>
-        </div>
-      )}
+      {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={view.workspace.id} />}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>

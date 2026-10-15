@@ -67,6 +67,32 @@ export interface RosterDevice {
   auth: string | null
   scopes: string[]
   valid: boolean
+  /** v1.9 `read_ext/3`: the device's own name, untrusted text (null: none, or withheld when `label_hidden`). */
+  label?: string | null
+  /** The host's label had invisible or control characters: the server withholds it. */
+  label_hidden?: boolean
+  paired_at?: string | null
+  relay?: boolean | null
+  cert_expires_at?: string | null
+  /** H12d-2: the level the device's reader record counts as now; null: no verified record (the gate counts it as 0). */
+  reader?: number | null
+}
+
+/** `reader.list` (H12d-2, cap `reader/1`) as the server forwards it: no digests, no declarations. */
+export interface HostReader {
+  device: string
+  person: string
+  /** What the device declared (0 without a record that verifies). */
+  reader: number
+  /** The level the host counts now. */
+  level: number
+}
+export interface HostReaders {
+  /** False: the host does not serve `reader/1` (a host before H12d-2). */
+  available: boolean
+  readers: HostReader[]
+  /** Every reader must be at this level: 1 while click-to-sign is on or the history has click-signed entries. */
+  required_reader: number | null
 }
 /** `member.list`. The host serves no `last_seen`: there is no such field. */
 export interface RosterMember {

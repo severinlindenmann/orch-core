@@ -9,6 +9,7 @@ export const REAL_HOST_PAGES = [
   'real-host-terminal-exited', 'real-host-terminal-stop',
   'real-host-pair-unavailable', 'real-host-pair-blocked-convenience', 'real-host-pair-offer', 'real-host-pair-pending',
   'real-host-pair-cert', 'real-host-pair-failed', 'real-host-pair-devices', 'real-host-pair-link', 'real-host-pair-remove-command',
+  'real-host-readers-devices', 'real-host-convenience-refusals',
   'real-host-drop-unavailable', 'real-host-drop-list', 'real-host-drop-long-names', 'real-host-drop-upload-progress',
   'real-host-drop-errors', 'real-host-drop-versions', 'real-host-drop-delete',
 ]

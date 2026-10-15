@@ -12,6 +12,8 @@ import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
 import { alreadySigned, clickEligible, clickReady } from '@/api/click'
+import { refusalOf, refusalSentence, signerProblem } from '@/api/refusals'
+import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
 import { ClickRisk, ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
@@ -162,7 +164,10 @@ export function HandoffDialog(p: HandoffDialogProps) {
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
-  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
+  // H12d-2: a click-to-sign refusal (or a reader declaration that did not verify) is said in plain words; the host's own
+  // message follows as text.
+  const refusal = refusalOf(run.error)
+  const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : run.error?.message ?? null, !!run.request && !run.request.material.ticket, run.error?.code)
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>
@@ -208,7 +213,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {phase === 'idle' && !clickOpen && canClick && <ClickRisk />}
         {phase === 'idle' && !clickOpen && clickOnly && !canClick && (
           <p role="alert" data-testid="click-unavailable" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
-            The signing helper cannot sign right now{here?.click?.problem ? ` (${here.click.problem})` : ''}. Fix that, or turn convenience off from the terminal with <code>orch host convenience off --workspace {here?.prefix ?? 'W'}</code>. Nothing was prepared.
+            The signing helper cannot sign right now.{here?.click?.problem ? <> <span data-testid="click-unavailable-why">{signerProblem(here.click.problem)}</span></> : null} Fix that, or turn convenience off from the terminal with <code>orch host convenience off --workspace {here?.prefix ?? 'W'}</code>. Nothing was prepared.
           </p>
         )}
 
@@ -241,12 +246,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
           </div>
         )}
 
-        {click.phase === 'failed' && click.problem && (
-          <div role="alert" data-testid="click-problem" data-click-next={click.problem.next} className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
-            <p className="font-medium text-text">{click.problem.title}</p>
-            <p title={click.problem.signedAt ?? undefined} className="text-text-muted"><Raw>{click.problem.body}</Raw></p>
-          </div>
-        )}
+        {click.phase === 'failed' && click.problem && <ClickProblemBox problem={click.problem} ws={p.ws} />}
 
         {click.phase === 'done' && (
           <div role="status" data-click-end="done" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
@@ -288,6 +288,12 @@ export function HandoffDialog(p: HandoffDialogProps) {
           <div role={end.tone === 'warn' ? 'alert' : 'status'} data-handoff-end={phase} className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
             <p className="font-medium text-text">{end.title}</p>
             <p title={run.error?.signed_at ?? undefined} className="text-text-muted"><Raw>{end.body}</Raw></p>
+            {refusal && p.ws && <RefusalDevices ws={p.ws} ids={refusal.devices} />}
+            {refusal && run.error?.message && run.error.message !== run.error.code && (
+              <p data-testid="refusal-host-message" className="text-text-faint">
+                The host says: <Raw>{run.error.message}</Raw>
+              </p>
+            )}
             {run.error?.fix && <p><Raw>{typeof run.error.fix === 'string' ? run.error.fix : JSON.stringify(run.error.fix)}</Raw></p>}
             {run.error?.hint && phase === 'error' && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
           </div>

@@ -9,7 +9,7 @@
 // global. Everything else here is secret-free and may be cached.
 import { queryOptions } from '@tanstack/react-query'
 import { hasFeature } from './features'
-import { ApiError } from './types'
+import { ApiError, type ErrorDetail } from './types'
 
 export type PairState =
   | 'open'
@@ -36,6 +36,8 @@ export interface PairBlocked {
    * Absent: the page shows the turn-off line only. Convenience HISTORY alone is not a block: it comes as a `warning`.
    */
   cause?: 'flag' | 'custody'
+  /** H12d-2: the closed `reason` and `devices` (section 12: a preview's `blocked.detail` has `Error.detail`'s keys). */
+  detail?: ErrorDetail
 }
 
 /** `pair.preview {}`: a pure read, the same checks `pair.offer` runs first. */
@@ -79,7 +81,7 @@ export interface PairOfferStatus {
   needs_remove?: string | null
 }
 
-/** A device as `member.list` serves it; the paired-phone fields come with a `read_ext` bump (orch-52), absent before. */
+/** A device as `member.list` serves it; the paired-phone fields come with `read_ext/3` (v1.9, orch-52 #505), absent before. */
 export interface MemberDevice {
   id: string
   auth: string | null
@@ -87,13 +89,16 @@ export interface MemberDevice {
   valid: boolean
   /** The host's label (protocol rule: no normalisation, ≤80 code points, LF kept, default-ignorables removed). Untrusted. */
   label?: string | null
-  paired_ms?: number | null
+  /** When the device was paired through the relay (R6's record), RFC 3339; null without a record. */
+  paired_at?: string | null
   relay?: boolean
-  cert_expires?: string | null
+  /** The device certificate's expiry, RFC 3339; null when it never expires. */
+  cert_expires_at?: string | null
+  /** H12d-2: the counted reader level; null without a verified record (the gate counts it as 0). */
   reader?: number | null
 }
 
-/** One member of `member.list` with its devices. */
+/** One member of `member.list` with its devices (the result also carries `required_reader`, read from `reader.list`). */
 export interface PairMember {
   person: string
   name: string
@@ -107,9 +112,9 @@ export interface PairDevice extends MemberDevice {
   name: string
 }
 
-/** The paired devices: those `member.list` serves with the pairing fields (`relay` present). Read only. */
+/** The paired devices: those `member.list` says were paired through the relay (`relay: true`). Read only. */
 export const pairedDevices = (members: PairMember[]): PairDevice[] =>
-  members.flatMap((m) => m.devices.filter((d) => d.relay !== undefined).map((d) => ({ ...d, person: m.person, name: m.name })))
+  members.flatMap((m) => m.devices.filter((d) => d.relay === true).map((d) => ({ ...d, person: m.person, name: m.name })))
 
 /** A word that is safe to put into a command the person pastes into a shell: plain ASCII letters, digits and `._-`, no
  * metacharacters, no invisible or bidi characters (review N1). Host-served values that fail it are never put in a command. */

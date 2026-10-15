@@ -257,7 +257,7 @@ class Store:
         #: the relay outbox (§11 P3-D21), active while ``<state>/hosts/<ws>/relay/link.json`` exists
         self._outbox = Outbox(self._pins.dir / "outbox") if self._pins is not None else None
         self._relay_branch: tuple[tuple[Any, ...], bytes, bytes] | None = None  # R3 paging (raw digests)
-        self._relay_ancestry: dict[tuple[str, str, int], bool] = {}  # R3 classify: (older, newer, history size)
+        self._relay_ancestry: dict[tuple[Any, ...], bool] = {}  # R3 classify: (older, newer, Store.revision())
         self._lock = FileLock(self.state_dir / "lock", timeout=lock_timeout)
         self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id)
         self._index = Index(self.state_dir / "index.sqlite")
@@ -2975,7 +2975,11 @@ class Store:
         through it costs one walk.
 
         Not side-effect-free: taking the lock runs the store's recovery (pending appends, a catch-up journal) and may
-        load and replay ticket logs, which can write projections; call it as a worker job like every store method."""
+        load and replay ticket logs, which can write projections; call it as a worker job like every store method.
+
+        Accepted limit (orch-52 round 6, issue #562): a branch above ``RELAY_CACHE_BYTES`` (about 262 000 heads) is not
+        cached, so each of its pages walks and folds it whole (bounded by ``RELAY_BRANCH_MAX``); bounded paging for
+        huge abandoned branches is #562."""
         try:
             a_seq, a_acc = after["seq"], after["acc"]
             u_seq, u_head, u_acc = upto["seq"], upto["head"], upto["acc"]
@@ -3154,9 +3158,11 @@ class Store:
             if self._pins is None:
                 return False
             a, b = self._relay_checkpoint(older), self._relay_checkpoint(newer)
-            # review delta 2, F3: classify() asks this at every step; the answer can change only when the recorded
-            # history grows (an append or a load), which the key includes. At most 256 answers are kept.
-            key = (canon.checkpoint_hash(a), canon.checkpoint_hash(b), sum(info.seq for info in self._logs.values()))
+            # review delta 2, F3: classify() asks this at every step; the answer can change only when the history
+            # changes, so the key holds Store.revision() (H12d-3: every read head and every ticket-log file's stat
+            # signature): an append by another Store instance, a reloaded branch of the same length or a cut tail all
+            # change it (orch-52 round 6; a sum of seqs did not). At most 256 answers are kept.
+            key = (canon.checkpoint_hash(a), canon.checkpoint_hash(b), self.revision())
             known = self._relay_ancestry.get(key)
             if known is not None:
                 return known

@@ -403,3 +403,58 @@ def test_the_branch_bound_is_inclusive_and_pinned(env, tmp_path, monkeypatch):
     monkeypatch.setattr(store_mod, "RELAY_BRANCH_MAX", 5)
     with pytest.raises(StoreError):
         s.relay_segment(uid, kept, lost)
+
+
+def test_a_cached_ancestry_answer_never_survives_another_instances_append(grown, monkeypatch):
+    """orch-52 round 6: the cache key is Store.revision(), so an append through ANOTHER Store instance (which this
+    store's own seq bookkeeping had not seen yet) recomputes the answer."""
+    env, uid = grown
+    s = env.store
+    older = s.outbox_entries()[0].checkpoint
+    newer = workspace_cp(env)
+    calls = []
+    real = s._ancestor  # noqa: SLF001
+    monkeypatch.setattr(s, "_ancestor", lambda a, b: calls.append(1) or real(a, b))
+    assert s.relay_ancestor(older, newer) and s.relay_ancestor(older, newer)
+    assert len(calls) == 1  # cached
+    other = env.other()
+    try:
+        other.append(env.person_event(env.owner, uid, "comment.added", text="from another instance"), log=uid)
+    except Exception:  # noqa: BLE001 - whichever event type the model takes: any append grows the log
+        env.store = other
+        env.log(uid, "from another instance")
+        env.store = s
+    finally:
+        other.close()
+    assert s.relay_ancestor(older, newer)
+    assert len(calls) == 2  # recomputed: the history changed under another instance
+
+
+def test_the_ancestry_key_changes_for_a_same_length_branch(env, tmp_path):
+    """A branch replaced by another of the SAME length (a rollback, then as many other events): the old key, a sum of
+    seqs, stays equal; Store.revision() does not."""
+    env.bootstrap()
+    link(env)
+    uid = env.new_ticket()
+    env.store.close()
+    backup = tmp_path / "backup"
+    shutil.copytree(env.root, backup)
+    s = env.open()
+    env.log(uid, "one")
+    env.log(uid, "two")
+    older, newer = s.outbox_entries()[0].checkpoint, workspace_cp(env)
+    before, seqs = s.revision(), sum(info.seq for info in s._logs.values())  # noqa: SLF001
+    calls = []
+    real = s._ancestor  # noqa: SLF001
+    s._ancestor = lambda a, b: calls.append(1) or real(a, b)  # noqa: SLF001
+    s.relay_ancestor(older, newer)
+    assert len(calls) == 1
+    rollback(env, backup)  # the same Store instance sees the files replaced under it
+    s.refresh()
+    facts = s.restore_facts(uid)
+    s.append(env.person_event(env.owner, uid, "restore", **facts, reason="rollback"), log=uid)
+    env.log(uid, "other")
+    assert sum(info.seq for info in s._logs.values()) == seqs  # noqa: SLF001 - the old key could not tell
+    assert s.revision() != before
+    s.relay_ancestor(older, newer)
+    assert len(calls) == 2  # recomputed, never the cached answer of the other branch

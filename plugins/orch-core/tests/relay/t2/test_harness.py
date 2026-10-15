@@ -5,9 +5,11 @@ missing or wrong relay checkout skips locally but fails in CI."""
 from __future__ import annotations
 
 import json
+import os
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,13 +19,40 @@ import pytest
 
 from . import harness
 from .harness import RelayProcess, relay_env
+from .orphan import ROOT as ORPHAN_ROOT
 from .orphan import orphan_test
 
 
-def _sleeper(tmp_path: Path, port: int | None = None) -> tuple[subprocess.Popen[bytes], int]:
+def _sleeper(tmp_path: Path, port: int | None = None, *, stubborn: bool = False) -> tuple[subprocess.Popen[bytes], int]:
     port = port or harness.free_port()
-    p = harness.spawn(harness.fake_cmd(port), cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, log=tmp_path / "fake.log")
+    cmd = harness.fake_cmd(port, stubborn=stubborn)
+    p = harness.spawn(cmd, cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, log=tmp_path / "fake.log")
     return p, port
+
+
+def _without_supervisor(tmp_path: Path) -> RelayProcess:
+    """A registered group whose supervisor is SIGKILLed (no pipe backstop) and whose stand-in ignores SIGTERM and
+    SIGINT: only the harness's own SIGKILL of the right group can end it."""
+    proc, port = _sleeper(tmp_path, stubborn=True)
+    rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
+    _wait_stand_in(rp.pgid)
+    os.kill(proc.pid, signal.SIGKILL)
+    proc.wait(10)
+    assert harness.group_alive(rp.pgid) and rp.owns_group()  # the stand-in still holds the group
+    return rp
+
+
+def _wait_stand_in(pgid: int) -> None:
+    end = time.monotonic() + 10
+    while not any(harness.FAKE_MARK in cmd for _, _, cmd in harness.group_members(pgid)):
+        assert time.monotonic() < end, "the stand-in never started"
+        time.sleep(0.05)
+
+
+def _cleanup(rp: RelayProcess) -> None:
+    if harness.group_alive(rp.pgid) and rp.owns_group():
+        os.killpg(rp.pgid, signal.SIGKILL)
+    harness._STARTED[:] = [x for x in harness._STARTED if x is not rp]
 
 
 def test_the_child_environment_is_an_allow_list(monkeypatch, tmp_path):
@@ -83,20 +112,107 @@ def test_teardown_reaps_our_process_group_and_reports_leaks(tmp_path):
 
 
 def test_a_leak_is_reaped_and_reported(tmp_path):
-    proc, port = _sleeper(tmp_path)
+    rp = _without_supervisor(tmp_path)
+    try:
+        rp.stopped = True  # as if teardown never stopped it
+        leaks = rp.finish()
+        assert f"process group {rp.pgid} alive" in leaks  # reported (the fixture fails on it) ...
+        assert not harness.group_alive(rp.pgid) and rp.leaked() == []  # ... and reaped by OUR SIGKILL
+        assert rp not in harness._STARTED
+    finally:
+        _cleanup(rp)
+
+
+def test_stop_falls_back_to_sigkill(monkeypatch, tmp_path):
+    monkeypatch.setattr(harness, "STOP_GRACE_S", 1.5)
+    proc, port = _sleeper(tmp_path, stubborn=True)
     rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
-    rp.stopped = True  # as if teardown never stopped it
-    assert rp.owns_group()
-    leaks = rp.finish()
-    assert f"process group {rp.pgid} alive" in leaks  # reported (the fixture fails on it) ...
-    assert not harness.group_alive(rp.pgid) and rp.leaked() == []  # ... and reaped
-    assert rp not in harness._STARTED
+    try:
+        t0 = time.monotonic()
+        rp.stop()  # SIGTERM and SIGINT are ignored by the stand-in and the supervisor
+        assert not harness.group_alive(rp.pgid) and time.monotonic() - t0 < 8
+    finally:
+        _cleanup(rp)
+
+
+def test_session_end_reaps_and_fails(monkeypatch, tmp_path):
+    from . import conftest as t2conf
+
+    monkeypatch.setattr(harness, "STOP_GRACE_S", 1.0)
+    rp = _without_supervisor(tmp_path)
+
+    class Session:
+        exitstatus = 0
+
+    session = Session()
+    try:
+        t2conf.pytest_sessionfinish(session, 0)  # type: ignore[arg-type]
+        assert not harness.group_alive(rp.pgid)
+        assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
+    finally:
+        _cleanup(rp)
+
+
+ATEXIT_CHILD = """
+import os, signal, sys, time
+from pathlib import Path
+from tests.relay.t2 import harness
+signal.alarm(60)
+where = Path(sys.argv[1])
+harness.STOP_GRACE_S = 1.0
+port = harness.free_port()
+p = harness.spawn(harness.fake_cmd(port, stubborn=True), cwd=where, env={"PATH": "/usr/bin:/bin"}, log=where / "l")
+rp = harness.RelayProcess(where, where, port, "ours", None, p, where / "log")
+while not any(harness.FAKE_MARK in c for _, _, c in harness.group_members(rp.pgid)):
+    time.sleep(0.05)  # the stand-in is up before the supervisor goes
+os.kill(p.pid, signal.SIGKILL)  # no supervisor backstop: only the atexit reaping can end the group
+p.wait(10)
+print(rp.pgid, port, flush=True)
+sys.exit(0)
+"""
+
+
+def test_exit_reaps_every_registered_group(tmp_path):
+    since = time.time()
+    child = subprocess.run(
+        [sys.executable, "-c", ATEXIT_CHILD, str(tmp_path)], cwd=ORPHAN_ROOT, capture_output=True, text=True,
+        timeout=60, start_new_session=True, check=False,
+    )  # fmt: skip
+    assert child.returncode == 0, child.stderr[-2000:]
+    pgid, port = (int(x) for x in child.stdout.split())
+    end = time.monotonic() + 5
+    while harness.group_alive(pgid) and time.monotonic() < end:
+        time.sleep(0.05)
+    alive = harness.group_alive(pgid)
+    if alive and harness.group_is_ours(pgid, port, since):
+        os.killpg(pgid, signal.SIGKILL)
+    assert not alive, "a registered group outlived the process that started it"
+
+
+def test_the_port_tag_is_matched_as_whole_tokens():
+    assert harness.names_port("x orch-relay serve --port 5000", 5000)
+    assert not harness.names_port("x orch-relay serve --port 50001", 5000)
+    assert not harness.names_port("x orch-relay serve --port=5000", 5000)
+    assert not harness.names_port("x --port 15000", 5000)
+
+
+def test_the_supervisor_refuses_to_run_unless_it_leads_its_group(tmp_path):
+    """Run from a non-leader context (inside a shell that leads its own, isolated group): the supervisor exits 2
+    and signals nothing; the shell and its background job live on."""
+    script = (
+        f"sleep 20 & bg=$!; {sys.executable} {harness.SUPERVISOR} sleep 5 </dev/null; rc=$?; "
+        "kill -0 $bg && echo BG_ALIVE; kill $bg; echo RC=$rc; echo SHELL_SURVIVED"
+    )
+    r = subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True, timeout=30,
+                       start_new_session=True, check=False)  # fmt: skip
+    assert "SHELL_SURVIVED" in r.stdout and "BG_ALIVE" in r.stdout and "RC=2" in r.stdout, (r.returncode, r.stdout)
 
 
 class _SameGroup:
     """A handle on a group someone else leads (no pipe of ours, never waited on): what a reused pgid looks like."""
 
     stdin = None
+    returncode = 0  # reaped: every signal goes through the ownership check
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
@@ -108,7 +224,7 @@ class _SameGroup:
         raise subprocess.TimeoutExpired("x", timeout)
 
 
-def test_a_group_that_is_not_verifiably_ours_is_never_signalled(tmp_path):
+def test_a_group_that_is_not_verifiably_ours_is_never_signalled(monkeypatch, tmp_path):
     proc, port = _sleeper(tmp_path)
     rp = RelayProcess(tmp_path, tmp_path, port, "ours", None, proc, tmp_path / "log")
     other_port = port + 1 if port < 65535 else port - 1
@@ -122,6 +238,10 @@ def test_a_group_that_is_not_verifiably_ours_is_never_signalled(tmp_path):
         assert not other.owns_group()
         other.kill_leaked()
         assert harness.group_alive(rp.pgid)
+        monkeypatch.setattr(harness, "STOP_GRACE_S", 0.5)
+        other.stopped = False
+        other.stop()  # its "supervisor" is reaped (returncode set): stop() too signals only a group that is ours
+        assert harness.group_alive(rp.pgid)
     finally:
         harness._STARTED[:] = [x for x in harness._STARTED if x is not other]
         rp.finish()
@@ -132,7 +252,7 @@ def test_reap_all_ends_every_group_this_process_started(tmp_path):
     procs = [_sleeper(tmp_path) for _ in range(2)]
     rps = [RelayProcess(tmp_path, tmp_path, port, "ours", None, p, tmp_path / "log") for p, port in procs]
     leaks = harness.reap_all()
-    assert leaks == []  # stopped cleanly: nothing leaked
+    assert sorted(leaks) == sorted(f"process group {rp.pgid} (port {rp.port}) still running" for rp in rps)
     assert not any(harness.group_alive(rp.pgid) for rp in rps) and harness._STARTED == []
 
 
@@ -183,6 +303,7 @@ def test_a_relay_checkout_at_another_commit_fails(monkeypatch, tmp_path):
 def test_the_per_test_budget_is_a_hard_limit_and_keeps_an_outer_alarm(monkeypatch):
     from . import conftest as t2conf
 
+    assert issubclass(t2conf.T2Timeout, BaseException) and not issubclass(t2conf.T2Timeout, Exception)
     monkeypatch.setattr(t2conf, "TEST_BUDGET_S", 0.2)
     outer = signal.signal(signal.SIGALRM, signal.SIG_IGN)
     signal.setitimer(signal.ITIMER_REAL, 50)  # an outer alarm (perl -e 'alarm N') already armed

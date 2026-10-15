@@ -21,7 +21,8 @@ signal.alarm(90)
 mode, where = sys.argv[1], Path(sys.argv[2])
 if mode == "fake":
     port = harness.free_port()
-    p = harness.spawn(harness.fake_cmd(port), cwd=where, env={"PATH": "/usr/bin:/bin"}, log=where / "fake.log")
+    cmd = harness.fake_cmd(port, stubborn=True)  # only the supervisor's final SIGKILL ends it
+    p = harness.spawn(cmd, cwd=where, env={"PATH": "/usr/bin:/bin"}, log=where / "fake.log")
     print(p.pid, port, flush=True)
 else:
     rp = harness.start_relay(Path(sys.argv[3]), where, None)
@@ -36,6 +37,7 @@ def orphan_test(args: list[str], tmp_path: Path) -> None:
     """Start the harness in a child python, let an alarm kill that child (as a SIGKILL/OOM/alarm of pytest would) and
     prove the group it started ends by itself (the supervisor), the port closing too. Only our own PIDs are touched:
     the child (its own session) and, if the proof fails, the group it printed, after checking it is that group."""
+    since = time.time()
     child = subprocess.Popen(
         [sys.executable, "-c", CHILD, *args], cwd=ROOT, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL,
         start_new_session=True,
@@ -44,6 +46,7 @@ def orphan_test(args: list[str], tmp_path: Path) -> None:
         assert child.stdout is not None
         line = child.stdout.readline().decode()
         pgid, port = (int(x) for x in line.split())
+        assert harness.group_is_ours(pgid, port, since)
         assert harness.group_alive(pgid)
         child.wait(30)
         assert child.returncode == -signal.SIGALRM  # it died without any cleanup of its own
@@ -52,8 +55,7 @@ def orphan_test(args: list[str], tmp_path: Path) -> None:
             time.sleep(0.1)
         alive = harness.group_alive(pgid)
         if alive:  # clean up only what is verifiably ours, then fail
-            members = harness.group_members(pgid)
-            if members and all(f"--port {port}" in cmd for _, _, cmd in members):
+            if harness.group_is_ours(pgid, port, since):
                 os.killpg(pgid, signal.SIGKILL)
         assert not alive, f"group {pgid} outlived its parent"
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

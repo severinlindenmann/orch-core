@@ -6,6 +6,12 @@ an OOM kill), the pipe reads EOF and the supervisor ends its whole group: ``SIGT
 exit) one second later, ``SIGKILL`` three seconds after that, itself included. ``SIGTERM``/``SIGINT`` sent to the
 group by the harness's normal teardown are ignored here (a handler, so the child still gets the default action after
 ``exec``), so the supervisor outlives the relay and exits with the child's status.
+
+It refuses to run (exit 2, nothing started, nothing signalled) unless it leads its own process group: started any
+other way, its EOF path would end its caller's group. Limits: if the supervisor itself is SIGKILLed and then the
+harness's process dies too, nothing watches the pipe and the relay keeps running (two independent kills; while the
+harness lives, its teardown still ends the group). A child of the harness forked WITHOUT exec (``multiprocessing``
+"fork") inherits the pipe's write end and keeps every supervisor waiting until it exits too; the T2 tests never fork.
 """
 
 from __future__ import annotations
@@ -41,8 +47,8 @@ def _watch(pg: int, ending: threading.Event) -> None:
 
 
 def main(argv: list[str]) -> int:
-    if not argv:
-        return 2
+    if not argv or os.getpgrp() != os.getpid():
+        return 2  # only ever the leader of its OWN group: it would otherwise end its caller's group on EOF
     signal.signal(signal.SIGTERM, _ignore)
     signal.signal(signal.SIGINT, _ignore)
     child = subprocess.Popen(argv, stdin=subprocess.DEVNULL)

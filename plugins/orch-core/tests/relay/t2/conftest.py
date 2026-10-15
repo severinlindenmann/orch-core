@@ -13,7 +13,7 @@ from . import harness
 from .harness import LIMITS, TEST_BUDGET_S, RelayProcess, ref_module, relay_dir, start_relay
 
 
-class T2Timeout(Exception):
+class T2Timeout(BaseException):  # noqa: N818 - a BaseException: a broad `except Exception` cannot swallow it
     """A T2 test ran over :data:`TEST_BUDGET_S` (raised in the main thread by SIGALRM)."""
 
 

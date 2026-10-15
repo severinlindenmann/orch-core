@@ -6067,10 +6067,14 @@ path from `ORCH_RELAY_DIR`.
   reads EOF and the supervisor ends the group (`SIGTERM`, `SIGINT`, `SIGKILL`; tested with a child python killed by a
   5 s alarm). Teardown signals only that group (`SIGTERM`, `SIGINT` = uvicorn's forced exit, `SIGKILL` after 10 s); a
   group or port left behind is reaped (`SIGKILL`, only after checking that every member was born after the spawn and
-  names our port and the relay or the supervisor) AND fails the test; every group still registered is reaped at
-  `pytest_sessionfinish` and `atexit`. Each test has a hard 20 s limit (SIGALRM) from the relay answering `/healthz`
+  names `--port <port>` as whole tokens and the relay or the supervisor; once the supervisor is reaped every teardown
+  signal goes through the same check) AND fails the test; every group still registered is reaped at
+  `pytest_sessionfinish` (which then fails the session) and `atexit`. The supervisor refuses to run unless it leads its
+  own group. Known limits: if the supervisor is SIGKILLed and the harness process dies too, the relay keeps running
+  (two independent kills); a child of the harness forked without exec would hold the pipes open (the tests never
+  fork). Each test has a hard 20 s limit (SIGALRM, raising a `BaseException` so no `except Exception` swallows it) from the relay answering `/healthz`
   to its teardown (relay start-up and stop are outside it; the requeue tests use about 11 s of it). Locally: `ORCH_RELAY_DIR=<a worktree of the SOURCE commit, uv-synced> uv run pytest -p no:xdist -m relay_t2
-  tests/relay/t2` (25 relay tests and 9 harness self-tests, under 2 minutes locally).
+  tests/relay/t2` (25 relay tests and 15 harness self-tests, about 2 minutes locally).
 - **Covered (R1):** `/healthz` instance and `GET /v2/relay-info` `max_publication_bytes` equal to the configured cap;
   the owner account from an operator invite (`orch-relay invite create` on the temp data directory) through `POST
   /v2/accounts`, the identical request replayed with the same answer and the used invite with a fresh proof refused

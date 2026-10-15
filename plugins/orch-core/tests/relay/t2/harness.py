@@ -174,9 +174,33 @@ def spawn(cmd: list[str], *, cwd: Path, env: dict[str, str], log: Path) -> subpr
         )  # fmt: skip
 
 
-def fake_cmd(port: int, *, seconds: int = 60) -> list[str]:
-    """The self-tests' stand-in for the relay: a sleeper that names :data:`FAKE_MARK` and the port."""
-    return [sys.executable, "-c", f"import time; time.sleep({seconds})", FAKE_MARK, "--port", str(port)]
+def fake_cmd(port: int, *, seconds: int = 60, stubborn: bool = False) -> list[str]:
+    """The self-tests' stand-in for the relay: a sleeper that names :data:`FAKE_MARK` and the port; ``stubborn``
+    ignores SIGTERM and SIGINT, so only a SIGKILL ends it (the escalation paths)."""
+    ign = (
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); signal.signal(signal.SIGINT, signal.SIG_IGN); "
+        if stubborn
+        else ""
+    )
+    return [sys.executable, "-c", f"import signal, time; {ign}time.sleep({seconds})", FAKE_MARK, "--port", str(port)]
+
+
+def names_port(cmd: str, port: int) -> bool:
+    """``cmd`` carries ``--port <port>`` as two whole tokens (``--port 5000`` never matches ``--port 50001``)."""
+    toks = cmd.split()
+    return any(a == "--port" and b == str(port) for a, b in zip(toks, toks[1:], strict=False))
+
+
+def group_is_ours(pgid: int, port: int, since: float) -> bool:
+    """Group ``pgid`` is one this harness started for ``port``: it has members, and every member was born no earlier
+    than 2 s before ``since`` (whole-second clock), names ``--port <port>`` as tokens, and is the relay, the
+    supervisor or the self-tests' stand-in. Anything else (a reused pgid) is never signalled."""
+    members = group_members(pgid)
+    return bool(members) and all(
+        started >= int(since) - 2 and names_port(cmd, port)
+        and ("orch-relay" in cmd or str(SUPERVISOR) in cmd or FAKE_MARK in cmd)
+        for _, started, cmd in members
+    )  # fmt: skip
 
 
 @dataclass
@@ -247,18 +271,18 @@ class RelayProcess:
             return
         self.stopped = True
         pgid = self.pgid
-        _killpg(pgid, signal.SIGTERM)
+        self._signal(signal.SIGTERM)
         end = time.monotonic() + STOP_GRACE_S
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(FORCE_AFTER_S)
         if group_alive(pgid):  # uvicorn waits for open connections; SIGINT while shutting down is its forced exit
-            _killpg(pgid, signal.SIGINT)
+            self._signal(signal.SIGINT)
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(max(0.1, end - time.monotonic()))
         while group_alive(pgid) and time.monotonic() < end:
             time.sleep(0.05)
         if group_alive(pgid):
-            _killpg(pgid, signal.SIGKILL)
+            self._signal(signal.SIGKILL)
         self._close_pipe()
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(10)
@@ -285,16 +309,15 @@ class RelayProcess:
         return out
 
     def owns_group(self) -> bool:
-        """The group ``pgid`` is still the one this harness started: it has members, and every member was born after
-        our spawn (whole-second clock, 2 s slack) and is our relay or supervisor for OUR port. Anything else (a
-        reused pgid) is never signalled."""
-        members = group_members(self.pgid)
-        tag = f"--port {self.port}"
-        return bool(members) and all(
-            started >= int(self.started) - 2 and tag in cmd
-            and ("orch-relay" in cmd or str(SUPERVISOR) in cmd or FAKE_MARK in cmd)
-            for _, started, cmd in members
-        )  # fmt: skip
+        """The group ``pgid`` is still the one this harness started (:func:`group_is_ours`)."""
+        return group_is_ours(self.pgid, self.port, self.started)
+
+    def _signal(self, sig: int) -> None:
+        """Signal our group. Before the supervisor is reaped its pid (a live process or a zombie) keeps the pgid
+        reserved, so the group is ours; once reaped (``returncode`` set) only a group that still verifies as ours is
+        signalled (a recycled pgid never is)."""
+        if self.proc.returncode is None or self.owns_group():
+            _killpg(self.pgid, sig)
 
     def kill_leaked(self) -> list[str]:
         """Reap a leak: ``SIGKILL`` the group if it is verifiably ours, then close the pipe (the supervisor's own
@@ -330,6 +353,8 @@ def reap_all() -> list[str]:
     leaks: list[str] = []
     while _STARTED:
         rp = _STARTED.pop()
+        if group_alive(rp.pgid):  # still running at the end: a leak in itself, whatever stop() then manages
+            leaks.append(f"process group {rp.pgid} (port {rp.port}) still running")
         rp.stop()
         leaks += rp.kill_leaked()
     return leaks

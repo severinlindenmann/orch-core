@@ -185,9 +185,10 @@ def clear_relay_level(state_dir: Path, workspace_id: str) -> None:
 
 def reset_records(state_dir: Path, workspace_id: str) -> list[str]:
     """``orch host readers reset`` (H12d-3, 9.10): remove every record file (``<32 hex>.json``) of the workspace and
-    return the device ids (bare hex) removed. A missing directory is nothing to reset; a directory that is a link is
-    refused (``OSError``); a file that cannot be removed raises (the operator sees it). Fail closed: every device then
-    counts as level 0."""
+    return the device ids (bare hex) removed. A missing directory is nothing to reset; anything else that keeps the
+    directory from being listed (a link, a file, no permission) raises ``OSError``, and so does a record that cannot
+    be removed (#555 review F4: the operator sees it, never a silent success). Fail closed: every device then counts
+    as level 0."""
     d = readers_dir(state_dir, workspace_id)
     try:
         info = os.lstat(d)
@@ -195,8 +196,9 @@ def reset_records(state_dir: Path, workspace_id: str) -> list[str]:
         return []
     if not stat.S_ISDIR(info.st_mode):
         raise OSError(f"{d} is not a directory")
+    names = os.listdir(d)  # raises: never the swallowing device_ids()
     out = []
-    for hexid in device_ids(state_dir, workspace_id):
+    for hexid in sorted(n[:-5] for n in names if n.endswith(".json") and _HEX32.fullmatch(n[:-5])):
         if remove_record(state_dir, workspace_id, hexid):
             out.append(hexid)
     return out

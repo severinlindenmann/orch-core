@@ -52,10 +52,13 @@ def _relay(state: Path, ws: str = WS) -> Path:
     return d
 
 
-def _link(state: Path, ws: str = WS) -> None:
+ORIGIN = "https://relay-a.example"
+
+
+def _link(state: Path, ws: str = WS, origin: str = ORIGIN) -> None:
     from orch.host.custody import write_private
 
-    write_private(_relay(state, ws) / "link.json", {"v": 1, "state": "linked"})
+    write_private(_relay(state, ws) / "link.json", {"v": 1, "state": "linked", "origin": origin})
 
 
 # --- the stored level ----------------------------------------------------------------------------------------------
@@ -263,14 +266,14 @@ def test_the_login_hook_stores_the_level_of_a_linked_relay_and_alarms_when_it_dr
 
     state = _state(tmp_path)
     alarms = Alarms()
-    assert relaylink.observe_relay_level(state, WS, UID, 1, alarms) is False
+    assert relaylink.observe_relay_level(state, WS, UID, 1, alarms, origin=ORIGIN) is False
     assert read_relay_level(state, WS) is None  # no link: nothing stored (an unlinked relay keeps its level)
     _link(state)
-    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms) is False  # no convenience: no alarm
+    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms, origin=ORIGIN) is False  # no convenience: no alarm
     assert read_relay_level(state, WS) == 0 and alarms == []
     ensure_convenience_mark(state, WS, UID)
-    assert relaylink.observe_relay_level(state, WS, UID, 1, alarms) is False
-    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms) is True
+    assert relaylink.observe_relay_level(state, WS, UID, 1, alarms, origin=ORIGIN) is False
+    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms, origin=ORIGIN) is True
     assert [a[0] for a in alarms] == ["relay_reader_old"]
     assert read_relay_level(state, WS) == 0
 
@@ -282,7 +285,7 @@ def test_the_login_hook_alarms_while_the_flag_is_on(tmp_path):
     _link(state)
     convenience.set_enabled(state, WS, True, UID)
     alarms = Alarms()
-    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms) is True
+    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms, origin=ORIGIN) is True
     assert [a[0] for a in alarms] == ["relay_reader_old"]
 
 
@@ -431,3 +434,67 @@ def test_readers_reset_refuses_a_linked_readers_directory(tmp_path):
     readerrecs.readers_dir(state, WS).symlink_to(real)
     with pytest.raises(OSError):
         readerrecs.reset_records(state, WS)
+
+
+def test_a_stale_login_of_relay_a_never_writes_over_relay_b_after_a_relink(tmp_path):
+    """#555 review F2 (DECIDED): the hook is bound to its link's origin and writes only while link.json is still that
+    link, under the relay-link lock."""
+    from orch.host import relaylink
+    from orch.store.readerrecs import read_relay_level, write_relay_level
+
+    state = _state(tmp_path)
+    _link(state, origin=ORIGIN)
+    alarms = Alarms()
+    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms, origin=ORIGIN) is False
+    # unlink A, link B at level 1 (the reservation stores B's level)
+    (_relay(state) / "link.json").rename(_relay(state) / "unlinked-1.json")
+    _link(state, origin="https://relay-b.example")
+    write_relay_level(state, WS, UID, 1, 2)
+    # A's session logs in late: nothing is written over B's level
+    assert relaylink.observe_relay_level(state, WS, UID, 0, alarms, origin=ORIGIN) is False
+    assert read_relay_level(state, WS) == 1
+    assert relaylink.observe_relay_level(state, WS, UID, 1, alarms, origin="https://relay-b.example") is False
+    assert read_relay_level(state, WS) == 1
+
+
+def test_the_hook_waits_for_the_relay_link_lock(tmp_path, monkeypatch):
+    from orch.host import convenience, relaylink
+    from orch.store.readerrecs import read_relay_level
+
+    state = _state(tmp_path)
+    _link(state)
+    monkeypatch.setattr(convenience, "LOCK_WAIT", 0.1)
+    alarms = Alarms()
+    with convenience._flock(state, "relay-link.lock", UID):  # a link reservation in progress (another process)
+        import multiprocessing
+
+        ctx = multiprocessing.get_context("fork")
+        q = ctx.Queue()
+        p = ctx.Process(target=lambda: q.put(relaylink.observe_relay_level(state, WS, UID, 0, alarms, origin=ORIGIN)))
+        p.start()
+        p.join(10)
+        assert q.get(timeout=5) is False
+    assert read_relay_level(state, WS) is None  # the lock was busy: nothing written
+
+
+def test_reset_refuses_an_unreadable_readers_directory(tmp_path):
+    """#555 review F4: a listing error is the operator's to see, never a silent success."""
+    import io
+
+    from orch.host.cli import main
+    from orch.store import readerrecs
+
+    state = _state(tmp_path)
+    _registered(state)
+    d = readerrecs.readers_dir(state, WS)
+    d.mkdir(parents=True, mode=0o700)
+    os.chmod(d, 0)
+    try:
+        with pytest.raises(OSError):
+            readerrecs.reset_records(state, WS)
+        out = io.StringIO()
+        code = main(["readers", "reset", "--workspace", "DEMO", "--state", str(state)],
+                    env={"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state)}, out=out)  # fmt: skip
+        assert code != 0 and "custody.unsafe_mode" in out.getvalue()
+    finally:
+        os.chmod(d, 0o700)

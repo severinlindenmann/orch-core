@@ -13,9 +13,10 @@ link reservation's critical section and the persistent stop of ``orch host relay
   §0.8.6 item 9.4: a level-1 relay is linked with convenience history and while the flag is on) and a link above the
   cap, and stores the level with the link (``relay/reader.json``); the store then refuses an existing link
   (``relay.link_exists``) and writes inside both locks.
-* **The level at every R1 login** (H12d-3, 9.8): :func:`observe_relay_level` is the session's ``relay_info`` hook. It
-  stores the level of a linked relay and alarms ``relay_reader_old`` when it is below ``required_reader``; R3 then
-  holds every restore whose evidence carries a convenience event (:func:`orch.ops.readers.restore_held`).
+* **The level at every R1 login** (H12d-3, 9.8): :func:`observe_relay_level` is the session's ``relay_info`` hook,
+  bound to the session's link origin. Under ``relay-link.lock`` it stores the level of that link only and alarms
+  ``relay_reader_old`` when it is below ``required_reader``; R3 then holds every restore whose evidence carries a
+  convenience event (:func:`orch.ops.readers.restore_held`).
 * **The stop.** ``hosts/<ws>/relay/stopped.json`` (0600) keeps the relay worker stopped across host restarts, the
   operator procedure after a state restore (§11A.4 "Scope of exactly-once"). :func:`may_start` is the check the relay
   worker's start (R5) must pass: linked, and not stopped. A marker that cannot be read safely counts as stopped.
@@ -129,26 +130,39 @@ def link_reservation(service: Any, *, relay_level: int | None = None, clock: Any
 
 
 def observe_relay_level(
-    state_dir: Path, workspace_id: str, host_uid: int, level: int, alarm: Any, *, clock: Any = time.time
+    state_dir: Path,
+    workspace_id: str,
+    host_uid: int,
+    level: int,
+    alarm: Any,
+    *,
+    origin: str,
+    clock: Any = time.time,
 ) -> bool:
-    """The R1 login hook (9.8): store ``level`` for a linked relay (``link.json`` present; otherwise nothing is
-    stored: an unlinked relay keeps its last level) and alarm ``relay_reader_old`` when it is below
-    ``required_reader`` (the flag or the durable mark; no history scan, and no store lock: it runs on a relay thread
-    under the session's login lock). Returns whether the level is below the required one. A level that cannot be
-    stored is logged by the caller's alarm too and the stored one stays."""
+    """The R1 login hook (9.8), bound to its link (#555 review F2, DECIDED): R5 builds it per session with that
+    session's link origin, ``relay_info=lambda lv: observe_relay_level(state, ws, uid, lv, alarm, origin=origin)``.
+    Under the host-wide ``relay-link.lock`` (the link reservation's lock), it stores ``level`` only while
+    ``link.json`` is still that link (a private JSON object naming ``origin``); a stale login of a former relay after
+    a relink writes nothing, and an unlinked relay keeps its last level. It alarms ``relay_reader_old`` when the level
+    is below ``required_reader`` (the flag or the durable mark; no history scan and no store lock: it runs on a relay
+    thread under the session's login lock). Returns whether a stored level is below the required one. A busy lock or
+    a level that cannot be stored keeps the stored one."""
     from orch.ops.readers import convenience_seen
     from orch.store.readerrecs import write_relay_level
 
-    from .convenience import enabled
+    from .convenience import _flock, enabled
 
-    if not os.path.lexists(link_path(state_dir, workspace_id)):
-        return False
-    required = 1 if enabled(state_dir, workspace_id, host_uid) or convenience_seen(state_dir, workspace_id) else 0
     try:
-        write_relay_level(state_dir, workspace_id, host_uid, level, int(clock() * 1000))
+        with _flock(state_dir, "relay-link.lock", host_uid):
+            link = read_json(link_path(state_dir, workspace_id), host_uid)
+            if not isinstance(link, dict) or link.get("origin") != origin:
+                return False
+            on = enabled(state_dir, workspace_id, host_uid) or convenience_seen(state_dir, workspace_id)
+            required = 1 if on else 0
+            write_relay_level(state_dir, workspace_id, host_uid, level, int(clock() * 1000))
     except Exception as exc:  # noqa: BLE001 - the stored level stays; say so
-        alarm("relay_reader_old", f"the relay's reader level {level} could not be stored ({type(exc).__name__})")
-        return level < required
+        alarm("relay_reader_old", f"the relay's reader level {level} was not stored ({type(exc).__name__})")
+        return False
     if level < required:
         alarm("relay_reader_old", f"the relay declares reader level {level}, this workspace requires {required}")
         return True

@@ -5675,8 +5675,11 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
   job=worker.job)` and `BridgeLoop`; then `service.relay = worker` and only then `worker.start()` (round 2, review R1).
   Any failure clears `service.relay`, closes what it opened and releases the slot.
 - **The worker.** `start()` checks the gate and spawns `orch-relay-start-<id8>`, which (1) runs the convenience check
-  as a worker job (`convenience_block`: `refuse_reader_op(service, "relay.link", history=True)` under the store lock;
-  a hit is the alarm `convenience_events_present` and the worker stops, nothing sent), (2) while `link.json` is
+  as a worker job (`convenience_block`: `refuse_reader_op(service, "relay.link", history=True, relay_level=<the stored
+  relay reader level>)` under the store lock, so convenience history refuses only while the relay's last verified
+  level (H12d-3 9.8, `read_relay_level`; none counts as 0) is below `required_reader` (D1, §11A.17.4; R6's
+  `relayr6._convenience_block` reads it the same way); a hit is the alarm `convenience_events_present` and the worker
+  stops, nothing sent), (2) while `link.json` is
   `linking`, runs R1's `first_link` with the host's `LinkSteps` (`card`/`genesis` from `LinkSource`, `publish` =
   `publisher.publish_first`, `mark_linked` = a worker job `store.relay_mark_linked(expect)`, `expect` the exact record
   the worker started for), (3) starts the loop (threads `orch-relay-{poll,resp,job0,job1,aux}-<id8>`) and the
@@ -5686,7 +5689,8 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
   closes the rid store and the `StateDir` (the lock is free for the next worker) and releases the slot, once. A
   stuck worker keeps all of them (fail closed). `close()` and `relay_stop()` keep H12a's bounded 120 s wait.
 - **Foreign appends (11A.6).** `_build_journal(audit=True)` (a refresh that loaded events this host did not append)
-  calls `_relay_audit`: with a worker running, `convenience_block` again; a hit (or a check that raises) halts it:
+  calls `_relay_audit`: with a worker running, `convenience_block` again (with the stored relay level, as at start); a
+  hit (or a check that raises) halts it:
   taken out under `relay_cond`, alarmed, `stop()` at once on the worker thread (no store job is queued from then on),
   the bounded join on `orch-relay-halt-<id8>` (the relay threads may be waiting for this very worker thread). (J) Not
   persisted: the next start checks again and refuses again while the history holds the event.
@@ -6761,7 +6765,11 @@ A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-
 - **Foreign appends.** A start-up scan alone misses history added later. `RelayWorker.start` runs
   `has_convenience_events` once, and again after every store refresh that loaded events this host did not append (the
   `_build_journal(audit=True)` path), before R2 serves or R3 publishes anything further. A hit stops the worker and
-  alarms `convenience_events_present`.
+  alarms `convenience_events_present`. **As built (H12d-3, D1):** the check is `relay.link`'s rule with the relay's
+  stored reader level, so a relay of level 1 keeps serving a workspace with convenience history (the dev sandbox,
+  §11A.17.4). DECIDED (orch-07, 16 Oct 2026): a later **drop** of the relay's level (an R1 login that reads a lower
+  `relay-info`) does **not** halt the worker; the alarm `relay_reader_old` (`observe_relay_level`, 9.8) stays the rule,
+  and the next worker start or foreign-append audit applies the stored level.
 - **No owner exception in v1.7.** The D-P2-34 private-remote mark has no relay analogue: a relay's devices are other
   readers by definition, and a "private relay" label cannot establish what every retained reader understands
   (11A.11 Q4).
@@ -10585,6 +10593,22 @@ that is core's), the R2 vector `answer_convenience_refused`.
    and `--foreground` in any argument (`extra_args`, which nothing passes today).
 8. **S1** compares the workspace root's parent with the sandbox root by `st_dev`/`st_ino` (a registry root is
    `realpath`ed, a state directory may be reached through a symbolic link above `<root>`).
+
+**Follow-ups of the Opus review (orch-07, APPROVE of `89b59586`), folded in:**
+- The choke point is structural: `Registry` has no public `add`; `Registry._add` and `_save` add nothing without the
+  single-use `AdmitToken` bound to its entry, which only `admit` can make (a module-private key). The AST table stays
+  as an extra check.
+- The host and runner CLIs take no abbreviated option (`allow_abbrev=False` in every subcommand: `--dev-sim` and
+  `--fore` are errors); the unit writers refuse a dev flag by the exact token, `--flag=…` and any prefix of it.
+- `orch host run` marks the process (`devsandbox.mark_dev_process`) right after `prove()`: in a dev host process the
+  click signer's switches refuse (`dev_host`) whatever their state directory or `HOME`. Not redundant: the in-host
+  click paths already refuse through `service.dev`, but the mark also covers a core function called in the host
+  process against another state directory. Only the CLI sets it, never `Host`, so tests that run hosts in-process
+  stay unmarked.
+- `relayr6._convenience_block` passes the stored relay level like `relayhook.convenience_block`; a level drop does not
+  halt the worker (the alarm `relay_reader_old` is the rule, §11A.6 "Foreign appends").
+- `convenience.flag_or_gate` also decides `refuse_reader_op`'s "convenience on" refusal and `observe_relay_level`'s
+  required level (`gated=` from the relay hook).
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

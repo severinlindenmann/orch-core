@@ -310,3 +310,39 @@ def test_a_person_run_harness_has_no_grant_no_session_no_claim_precheck(ready):
     assert [pre["program"], *argv] == pre["argv"]
     inter = ok(c.call("term.preview", {"harness": "codex"}))["data"]
     assert inter["blocked"] is None and inter["argv"] == [str(w.out.parent / "bin" / "codex")]
+
+
+# -- review round 1 (#466) ---------------------------------------------------------------------------------------------
+
+
+def test_concurrent_same_idem_starts_record_one_session_and_charge_one_start(ready):
+    """Codex P2 #1 / Opus L2: two requests with one idem: one record, the session the process has, one rate charge."""
+    w = ready
+    c, d = w.conn(), w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    hub = w.h.host.runners
+    charged = []
+    real = hub.take_start
+    hub.take_start = lambda person: charged.append(person) or real(person)
+    idem = new_idem()
+    args = {"ticket": key, "harness": "codex", "mode": "work", "spec": pre["spec"]}
+    c.ws.send("a1", "agent.start", args, opts={"idem": idem})
+    d.ws.send("a2", "agent.start", args, opts={"idem": idem})
+    one, two = ok(c.answer("a1"))["data"]["run"], ok(d.answer("a2"))["data"]["run"]
+    assert one["run"] == two["run"] and one["session"] == two["session"]
+    _, env = read_out(w, "codex")
+    listed = ok(c.call("run.list", {}))["data"]["runs"]
+    assert [r["run"] for r in listed] == [one["run"]] and listed[0]["session"] == env["ORCH_SESSION"]
+    assert len(charged) == 1 and len(w.runner.sup.runs()) == 1
+
+
+def test_a_same_idem_retry_with_another_spec_is_idem_conflict(ready):
+    """Opus L3."""
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    idem = new_idem()
+    ok(start(c, idem, ticket=key, harness="codex", mode="work", spec=pre["spec"]))
+    assert err(start(c, idem, ticket=key, harness="codex", mode="refine", spec="1" * 64)) == "idem.conflict"

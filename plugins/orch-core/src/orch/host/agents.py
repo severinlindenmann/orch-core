@@ -391,9 +391,7 @@ def serve(call: Call) -> dict[str, Any]:
     run = "r_" + str(idem)[2:]
     person = str(call.viewer)
     if hub is not None and run in hub.store.records:  # a retry: the recorded run, nothing recomputed or started
-        rec = hub.store.records[run]
-        if rec.get("workspace_id") != service.workspace_id or rec.get("person") != person or rec.get("kind") != "agent":
-            raise HostError("idem.conflict", "this idem names another request")
+        _same(hub.store.records[run], service.workspace_id, person, args["spec"])
         return ok_result({"replay": run})
     found = plan(call, args, hub, agent=True)
     if found["blocked"] is not None:
@@ -427,6 +425,17 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
     return ok_result({"run": await _start(call, hub, data)})
 
 
+def _same(rec: dict[str, Any], wid: str, person: str, spec: str) -> None:
+    """An idem names exactly one agent start: the same workspace, person, kind and spec (Opus L3)."""
+    if (
+        rec.get("workspace_id") != wid
+        or rec.get("person") != person
+        or rec.get("kind") != "agent"
+        or rec.get("spec") != spec
+    ):
+        raise HostError("idem.conflict", "this idem names another request")
+
+
 async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, Any]:
     import asyncio
 
@@ -434,13 +443,22 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
 
     service = call.service
     wid, person, run = service.workspace_id, data["person"], data["run"]
-    existing = hub.store.records.get(run)
-    if existing is not None:
-        if existing.get("workspace_id") != wid or existing.get("person") != person or existing.get("kind") != "agent":
-            raise HostError("idem.conflict", "this idem names another request")
-        return runners.view(existing)
     if await asyncio.wrap_future(service.submit(agent_missing, service, hub)) is not None:  # again, at use
         raise HostError("runner.disabled", "dashboard execution is not available here")
+    # from here to the reservation there is no await: the identity check, the limits, the rate charge and the
+    # reservation are one step, so two requests with one idem never both start (Codex P2 #1, Opus L2)
+    existing = hub.store.records.get(run)
+    if existing is not None:
+        _same(existing, wid, person, data["spec"])
+        return runners.view(existing)
+    starting = hub.starting.get(run)
+    if starting is not None:  # the same idem is being started right now: its answer is this one's too
+        spec, future = starting
+        if spec != data["spec"]:
+            raise HostError("idem.conflict", "this idem names another request")
+        await asyncio.shield(future)
+        _same(hub.store.records[run], wid, person, data["spec"])
+        return runners.view(hub.store.records[run])
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     launch = data["launch"]
@@ -455,6 +473,20 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
         raise HostError("run.limit", "at most 64 runs per runner", retry_after_ms=5000)
     if not hub.take_start(person):
         raise HostError("rate.limited", "at most 10 starts per minute", retry_after_ms=6000)
+    future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    hub.starting[run] = (data["spec"], future)
+    try:
+        return await _launch(call, hub, data)
+    finally:
+        hub.starting.pop(run, None)
+        future.set_result(None)
+
+
+async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, Any]:
+    from . import runners
+
+    wid, person, run = call.service.workspace_id, data["person"], data["run"]
+    launch = data["launch"]
     session = "s_" + runners.new_ulid()
     fields = {"run": run, "kind": "agent", "person": person, "ticket": launch["ticket"], "harness": data["harness"],
               "mode": data["mode"], "model": data["model"], "subagent_model": data["subagent_model"],

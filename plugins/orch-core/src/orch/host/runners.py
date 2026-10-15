@@ -410,6 +410,8 @@ class RunnerHub:
         self._starts: dict[str, list[float]] = {}
         #: ``term.attach`` mints per person: person -> [level, at]
         self._mints: dict[str, list[float]] = {}
+        #: agent starts in progress by run id (H11c): (spec, done); a same-idem request waits for the first
+        self.starting: dict[str, tuple[str, asyncio.Future[None]]] = {}
         #: ``grant.deposit`` per person (H11c): person -> [level, at]
         self._deposits: dict[str, list[float]] = {}
         self._save_lock = asyncio.Lock()
@@ -783,6 +785,8 @@ class RunnerHub:
             "gen": self.generation,
             "dispatched": True,
         }
+        if audit.get("spec"):  # an agent start: its idem names exactly this spec (a retry with another is a conflict)
+            rec["spec"] = audit["spec"]
         saved = await self._save(rec)
         if audit:
             self._audit("run.intent", run=run, workspace_id=workspace_id, person=fields.get("person"), **audit)

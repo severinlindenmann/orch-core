@@ -7478,8 +7478,9 @@ printed on the person's terminal only.
 **Inline primary steps (owner client, never in the host daemon).** After step 7b, the CLI:
 1. logs in to the relay as the primary (`kind:"device"`, `dk_sig` through the person path; one unlock for the whole
    command, H12c item 9);
-2. reads `GET /v2/persons/{p}/cert-requests` (the relay returns **open** requests only; there is no long-poll
-   parameter, so it polls at most every 2 s with a total deadline), picks the request whose `request_id` R6 reported
+2. reads `GET /v2/persons/{p}/cert-requests` (the relay returns **open** requests only; the optional long-poll
+   parameter `wait` is at most 25 s, as the relay HTTP fixtures send it (corrected in H12c-f's review); without it, it
+   polls at most every 2 s with a total deadline), picks the request whose `request_id` R6 reported
    for this offer, and runs §8.4 step 2 in order (H12c `check_cert_request`): the card (R1's card checks), the WSK
    signature, the addressee, the time window, `request_id` not already terminal in the primary journal (below), at
    most one outstanding request, the exact fields and binding, not a `drop:` scope;
@@ -7807,33 +7808,41 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   a challenge is never signed twice), `logout`, `create_account(invite, pk_pub, device_cert)` (the certificate is
   checked under `pk_pub` and must be this device's before anything is sent; the answer's `person_id` must be
   `person_id(pk_pub)`), `register_device(cert, pk_pub)` (no session; the answer must name the device),
-  `get_device(id, pk_pub)` (verified under the pinned key), `cert_requests(person, wait=)` (≤ 64 `{o, sig}`, no
-  duplicate id, 1 MiB cap), `post_challenge`, `post_rejection`; `primary_certificate(pk, signer, dk_kx_pub, label,
+  `get_device(id, pk_pub)` (verified under the pinned key), `cert_requests(person, wait=)` (`wait` ≤ 25 s, deadline
+  `wait` + 15 s; ≤ 64 `{o, sig}`, no duplicate id, 1 MiB cap), `post_challenge`, `post_rejection`; `primary_certificate(pk, signer, dk_kx_pub, label,
   created_ms)` (`scopes_max ["look"]`, `expires_ms null`, label cleaned and sealed under the PK label key).
   **Closed error mapping:** `OwnerTransportError` (R1's kinds), `OwnerRefused` (`code` only from the route's
   documented set, the fixtures'; else `None`; `retry_after` capped at 1 h; `transient`), `OwnerMisbehaving` (a 2xx
   outside the exact field set or contradicting the request), `OwnerRequestError` (nothing sent). No token, invite,
   challenge or signature in a log, exception or `repr`.
 - **The journal** (11A.15.9, N7): `<state>/person/primary/requests/<request_id>.json` through `StateDir` (0700/0600,
-  `O_NOFOLLOW`, atomic writes); the directory's exclusive `flock` is held per transaction (**JUDGEMENT CALL:** the
-  directory's own lock, not a `.lock` file); states `verified`, `challenged`, `decided` (`sign`/`reject`),
-  `uploaded`, `expired`, `cancelled`, `superseded`, `refused`; stored bytes never change; the same id with other
+  `O_NOFOLLOW`, atomic writes, deletes relative to the locked directory fd); the directory's exclusive `flock` is
+  held per transaction (**JUDGEMENT CALL:** the directory's own lock, not a `.lock` file); states `verified`,
+  `challenged`, `decided` (`sign`/`reject`), `uploaded`, `upload_failed` (a permanent upload refusal: `expired`,
+  `not_found`, `cert_conflict`; or a decision closed by the owner), `expired`, `cancelled`, `superseded`, `refused`; stored bytes never change; the same id with other
   bytes is `primary_request_conflict`; tombstones after expiry + 7 days. **Bounded, never a lockout** (orch-52's
   review of the first push): an unreadable record is treated as burned and replaced by a tombstone, never fatal;
   records ≤ 32 KiB; tombstones deleted after expiry + 14 days (`check_cert_request` refuses such an id as
-  `expired` anyway); above 4096 records only expired terminal ones are evicted, and a journal full of unexpired
-  requests refuses new ids only (`journal.full`); the lock is released on every exit.
+  `expired` anyway); only live or unexpired records count against the 4096 cap (a new id deletes the oldest expired
+  terminal record on demand; a journal full of live or unexpired requests refuses new ids only, `journal.full`); a
+  live record past its expiry is written `expired` before any tombstone (never a live tombstone); the lock is
+  released on every exit.
 - **`PrimaryQueue(client, journal, *, pk_pub, cards, unseal, max_scopes=("look","decide"))`** (shared with
-  `tests/relay/owner.py`, N6): `poll()` resumes live journal records first, then checks, opens and records each
-  listed request in one transaction (step 2.4+ refusals burn the id; earlier ones burn nothing; requests over 8 KiB
-  are never checked). `challenge`, `sign` (needs a stored challenge) and `reject` sign at most once with the person
-  key (`ANSWER_LABELS` = challenge, rejection, certificate; the pinned owner key checked first; nothing after
+  `tests/relay/owner.py`, N6): `poll(request_id, wait=)` works only the request R6 reported (DECIDED in #557's
+  review; every other listed request is `other_open`, neither opened nor journaled): it resumes it from the journal
+  if live, else checks, opens and records it in one transaction (step 2.4+ refusals burn the id; earlier ones burn
+  nothing; entries over 8 KiB or not protocol JSON are never checked). `Pending` is a display snapshot only:
+  `challenge(id, pk)`, `sign(id, pk)` (needs a stored challenge whose device and keys the re-opened inner must name)
+  and `reject(id, pk)` take the id and re-check and re-open the stored request under the lock (review of #557, Opus
+  Medium); they sign at most once with the person key (`ANSWER_LABELS` = challenge, rejection, certificate; the pinned owner key checked first; nothing after
   `expires_ms` by the local clock), journal before the POST/PUT, and resend the stored bytes on resume;
-  `finish_uploads`, `close`. **JUDGEMENT CALL (N1):** a request above `max_scopes` (default: the v1.7 phone
+  `finish_uploads` (each decision on its own; `{id: uploaded | upload_failed | retry}`), `close` (a live request, or
+  a decision that will not upload). **JUDGEMENT CALL (N1):** a request above `max_scopes` (default: the v1.7 phone
   ceiling) can be rejected but never challenged or signed.
 - **Not yet (orch-29):** CLI wiring (`orch keys primary init --relay --invite`, `orch host relay pair --primary
   inline`), `relay.pair_cert`, `SOURCE_CALLERS` for the `RecoveryCodeSource` call sites, `tests/relay/owner.py` and
-  the T2 kit switching to this client. Tests: `tests/relay_owner/` (every fixture case of the nine routes, hostile
+  the T2 kit switching to this client. A test bans any import of `orch.relay_owner` from `orch.relay` and
+  `orch.host`. Tests: `tests/relay_owner/` (every fixture case of the nine routes, hostile
   answers, the journal, the queue against a simulated relay, and the custody `PrimarySession` as signer and opener).
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)

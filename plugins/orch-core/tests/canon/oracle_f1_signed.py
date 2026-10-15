@@ -2474,3 +2474,318 @@ def reader_kat_vector() -> dict[str, Any]:
         },
         "expected": expected,
     }
+
+
+# --- phone_events.json (orch-v2-host §11A.14, H12e) ---------------------------------------------------------
+
+PHONE_KEYS = ["wsk", "pk_sev", "dk_sev1", "dk_sevp1", "pk_mara", "dk_mara1", "pk_lena", "dk_lena1"]
+TICKET3 = "01J9ZK4Q7M3R8T2V6X0B5N1C9F"
+PHONE_EXCLUDED = ("seq", "at", "prev", "ws_seq", "host_sig")
+
+
+def phone_ulid(n: int, epoch_s: int) -> str:
+    """A ULID as the phone makes it (14.1): 48-bit ms time from its clock, 80 bits that are random on a phone and
+    derived from ``n`` here, so the file is reproducible."""
+    import hashlib
+
+    rand = int.from_bytes(hashlib.sha256(b"orch-f1-test-phone-id|" + str(n).encode()).digest()[:10], "big")
+    v = (epoch_s * 1000 << 80) | rand
+    return "".join(ow.B32[(v >> (5 * (25 - i))) & 31] for i in range(26))
+
+
+def question_hash_input(uid: str, qn: str, text: str, options: list[dict[str, str]] | None) -> dict[str, Any]:
+    """14.5, independently: qid and the question hash over the uid, with ``[]`` for a question without options."""
+    import hashlib
+
+    qid = hashlib.sha256(
+        b"orch/v2/question-id|" + ow.cj({"question": qn, "ticket": uid, "workspace_id": W})
+    ).hexdigest()[:32]
+    body = {"options": list(options or []), "question_id": qid, "text": text, "ticket": uid}
+    return {
+        "qid": qid,
+        "hash": "sha256:" + hashlib.sha256(b"orch/v2/question|" + ow.cj(body)).hexdigest(),
+        "hashed": body,
+    }
+
+
+def _high_s(sig: str) -> str:
+    import base64
+
+    raw = base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4))
+    s = int.from_bytes(raw[32:], "big")
+    return b64u(raw[:32] + max(s, ow.N - s).to_bytes(32, "big"))
+
+
+def _low_s(sig: str) -> str:
+    import base64
+
+    raw = base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4))
+    s = int.from_bytes(raw[32:], "big")
+    return b64u(raw[:32] + min(s, ow.N - s).to_bytes(32, "big"))
+
+
+def phone_events_vector() -> dict[str, Any]:
+    import hashlib
+
+    sevp = "sevp1"
+    n = [0]
+
+    def pid_(w: World) -> str:  # a fresh phone id with the ULID time of the next `at`
+        n[0] += 1
+        return phone_ulid(n[0], w.clock + 10)
+
+    def phone(w: World) -> dict[str, Any]:
+        return w.actor("sev", sevp)
+
+    def setup(name: str, pins: str) -> World:
+        w = base_world(name, pins)
+        w.ev("workspace", "device.added", w.actor("sev"), _dev_added("sev", sevp, ["look", "decide"]),
+             note="sev1 adds sev's phone sevp1, certified for look and decide only")  # fmt: skip
+        return w
+
+    def ask(w: World, qn: str, text: str, options: list[dict[str, str]] | None, *, note: str, **extra: Any):
+        q: dict[str, Any] = {"id": qn, "to": "ticket_owner", "text": text, "blocking": True, **extra}
+        if options is not None:
+            q["options"] = options
+        hi = question_hash_input(TICKET, qn, text, options)
+        w.ev(
+            TICKET, "question.asked", w.actor("mara"), {"question": q, "qid": hi["qid"], "hash": hi["hash"]}, note=note
+        )
+        return hi
+
+    accepted: list[dict[str, Any]] = []
+
+    def pin(name: str, scenario: str, w: World, e: dict[str, Any], desc: str, question: dict[str, Any] | None = None):
+        log = w.steps[-1]["log"]
+        submitted = {k: v for k, v in e.items() if k not in PHONE_EXCLUDED}
+        signing = ow.person_bytes(W, log, e)
+        case = {
+            "name": name,
+            "desc": desc,
+            "scenario": scenario,
+            "step": len(w.steps) - 1,
+            "log": log,
+            "submitted": submitted,
+            "submitted_cj": ow.cj(submitted).decode("utf-8"),
+            "person_signing_hex": signing.hex(),
+            "digest": "sha256:" + hashlib.sha256(signing).hexdigest(),
+            "sig": e["sig"],
+            "event": e,
+            "head": head(e),
+        }
+        if question is not None:
+            case["question"] = question
+        accepted.append(case)
+
+    refused: list[dict[str, Any]] = []
+
+    def refuse(name: str, scenario: str, w: World, desc: str, also: str | None = None) -> None:
+        step = w.steps[-1]
+        case = {"name": name, "desc": desc, "scenario": scenario, "step": len(w.steps) - 1, "code": step["expect"],
+                "log": step["log"], "submitted": {k: v for k, v in step["event"].items() if k not in PHONE_EXCLUDED}}  # fmt: skip
+        if also:
+            case["see_also"] = also
+        refused.append(case)
+
+    scenarios = []
+
+    # 1. accepted answers and a creation, then the refusals
+    s1 = "phone_answers_and_creates"
+    w = setup(s1, "a phone (look, decide) answers questions and creates a ticket; refusals break one rule each")
+    q1_text = "Welcher Tarif-Export gilt? Größe ≤ 5 MB — Zürich été"
+    q1_opts = [{"key": "csv", "label": "Monatliche CSV-Datei (½ Tag)", "cost": "½ Tag, CHF 400"},
+               {"key": "api", "label": "Tarif-API ✓"}]  # fmt: skip
+    q1 = ask(w, "Q1", q1_text, q1_opts, note="a non-ASCII question; the first option has a cost", why="Seeds")
+    e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q1", "hash": q1["hash"], "option": "csv"},
+             auth="secure-enclave-unlocked", eid=pid_(w), note="the phone answers with the costed option")  # fmt: skip
+    pin(
+        "answer_non_ascii_option_with_cost",
+        s1,
+        w,
+        e,
+        "secure-enclave-unlocked; non-ASCII text and labels; an option with cost",
+        q1,
+    )
+    q2_text = "Anything else we should know?"
+    q2 = ask(w, "Q2", q2_text, None, note="a question with no options: ticket.get omits options, the hash uses []")
+    e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q2", "hash": q2["hash"], "text": "Keep\tthe old seeds"},
+             auth="secure-enclave-unlocked", eid=pid_(w), note="a text answer with a TAB")  # fmt: skip
+    pin(
+        "answer_text_to_options_absent_with_tab",
+        s1,
+        w,
+        e,
+        "a text answer (with a TAB) to a question with options absent",
+        q2,
+    )
+    q3_opts = [{"key": "yes", "label": "Yes"}, {"key": "no", "label": "No"}]
+    q3 = ask(w, "Q3", "Ship it?", q3_opts, note="a plain question")
+    e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q3", "hash": q3["hash"], "option": "yes"},
+             auth="passphrase", eid=pid_(w), note="a Simulator/dev build: passphrase custody, honestly declared")  # fmt: skip
+    pin("answer_passphrase", s1, w, e, "auth passphrase from the phone device (Simulator/dev custody, 14.3)", q3)
+    q4 = ask(
+        w,
+        "Q4",
+        "Which day?",
+        [{"key": "mon", "label": "Monday"}, {"key": "tue", "label": "Tuesday"}],
+        note="another question",
+    )
+    high = w.ev(TICKET, "question.answered", phone(w), {"question": "Q4", "hash": q4["hash"], "option": "tue"},
+                auth="secure-enclave-unlocked", eid=pid_(w), tamper=lambda x: x.update(sig=_high_s(x["sig"])),
+                note="a high-s signature (s > n/2): accepted, F1 never normalises s")  # fmt: skip
+    pin("answer_high_s", s1, w, high, "the signature's s is in the upper half; it verifies and is accepted", q4)
+    e = w.ev(TICKET2, "ticket.created", phone(w),
+             {"key": "DEMO-0002", "ticket_type": "feature", "title": "Check the tariff seeds", "owner": pid("sev")},
+             auth="secure-enclave-unlocked", eid=pid_(w), note="the phone creates DEMO-0002: based_on null, seq 1")  # fmt: skip
+    pin(
+        "creation",
+        s1,
+        w,
+        e,
+        "ticket.created by the phone: title-only, owner the signer, the exact next key, based_on null",
+    )
+    q5 = ask(
+        w,
+        "Q5",
+        "Which region?",
+        [{"key": "ch", "label": "Switzerland"}, {"key": "de", "label": "Germany"}],
+        note="an open question",
+    )
+    old = question_hash_input(TICKET, "Q5", "Which country?", q5["hashed"]["options"])
+    w.ev(TICKET, "question.answered", phone(w), {"question": "Q5", "hash": old["hash"], "option": "ch"},
+         auth="secure-enclave-unlocked", eid=pid_(w), expect="question.stale", note="the hash of content the phone saw before a re-ask")  # fmt: skip
+    refuse("question_stale", s1, w, "the signed hash is not the question's current hash")
+    w.ev(TICKET, "question.answered", phone(w), {"question": "Q5", "hash": q5["hash"], "option": "ch"},
+         auth="secure-enclave-unlocked", eid=pid_(w), roster_v=w.roster_v - 1, expect="members.stale",
+         note="an older roster version")  # fmt: skip
+    refuse("members_stale", s1, w, "roster_v is not the current member-list version (C-auto: re-sign with members_v)")
+    w.ev(TICKET, "question.answered", phone(w), {"question": "Q5", "hash": q5["hash"], "option": "ch"},
+         auth="secure-enclave-unlocked", eid=pid_(w), based_on="sha256:" + "ab" * 32, expect="event.bad_base",
+         note="based_on is no head of this log")  # fmt: skip
+    refuse("bad_base", s1, w, "based_on is not the head of an earlier event of the log")
+    w.ev(TICKET, "question.answered", phone(w), {"question": "Q5", "hash": q5["hash"], "option": "ch"},
+         auth="secure-enclave-unlocked", eid=pid_(w), signer="dk_sev1", expect="sig.invalid",
+         note="signed by sev1 while actor.device names the phone")  # fmt: skip
+    refuse("sig_invalid", s1, w, "the signature does not verify under the phone's dk_sig_pub")
+    w.ev("workspace", "settings.changed", phone(w), {"set": {"grant_hours": 4}}, auth="secure-enclave-unlocked",
+         eid=pid_(w), expect="device.scope", note="an operate event: the phone's certificate has no operate")  # fmt: skip
+    refuse("device_scope", s1, w, "the phone's certificate (look, decide) lacks operate")
+    dup = copy.deepcopy(high)
+    dup["sig"] = _low_s(high["sig"])
+    w.raw(TICKET, dup, expect="event.duplicate_id", note="the high-s answer again with its low-s signature: same id")
+    refuse(
+        "duplicate_id",
+        s1,
+        w,
+        "the same id twice; the content is identical, only the signature bytes differ (dedup is by content, never by signature)",
+    )
+    w.ev(TICKET3, "ticket.created", phone(w),
+         {"key": "DEMO-0001", "ticket_type": "bug", "title": "Another", "owner": pid("sev")},
+         auth="secure-enclave-unlocked", eid=pid_(w), expect="ticket.exists",
+         note="a taken key at model level (the host answers ticket.key_not_next before the model, 14.6 L5)")  # fmt: skip
+    refuse(
+        "taken_key",
+        s1,
+        w,
+        "the model refuses a taken key with ticket.exists; on relay.submit L5 answers ticket.key_not_next first",
+    )
+    scenarios.append(w.scenario())
+
+    # 2. semantics pins: a why-only re-ask keeps the answer; A -> B -> A, then a delayed A answer is accepted
+    s2 = "phone_answer_semantics"
+    w = setup(s2, "only text and options are bound: a why-only re-ask keeps the answer; A -> B -> A clears it, and a "
+              "delayed answer to A (signed before B, based_on the head it reviewed) is then accepted")  # fmt: skip
+    opts = [{"key": "a", "label": "Alpha"}, {"key": "b", "label": "Beta"}]
+    qa = ask(w, "Q1", "Pick one", opts, note="Q1 asked (content A)", why="first reason")
+    e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q1", "hash": qa["hash"], "option": "a"},
+             auth="secure-enclave-unlocked", eid=pid_(w), note="the phone answers A")  # fmt: skip
+    pin("answer_before_why_reask", s2, w, e, "an answer that survives a why-only re-ask", qa)
+    ask(
+        w,
+        "Q1",
+        "Pick one",
+        opts,
+        note="re-ask with only why changed: same hash, the answer stands",
+        why="second reason",
+    )
+    w.steps[-1]["after"] = {"tickets": {TICKET: {"answers": {"Q1": e["id"]}}}}
+    qa2 = ask(
+        w,
+        "Q2",
+        "Go or wait?",
+        [{"key": "go", "label": "Go"}, {"key": "wait", "label": "Wait"}],
+        note="Q2 asked (content A)",
+    )
+    reviewed = head(w.logs[TICKET][-1])
+    delayed_id = pid_(w)  # the phone signs now (the reviewed head is based_on); the send is delayed
+    qb = ask(w, "Q2", "Go, wait or stop?", [{"key": "go", "label": "Go"}, {"key": "wait", "label": "Wait"},
+             {"key": "stop", "label": "Stop"}], note="Q2 re-asked (content B)")  # fmt: skip
+    assert qb["hash"] != qa2["hash"]
+    ask(
+        w,
+        "Q2",
+        "Go or wait?",
+        [{"key": "go", "label": "Go"}, {"key": "wait", "label": "Wait"}],
+        note="Q2 re-asked (content A again)",
+    )
+    e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q2", "hash": qa2["hash"], "option": "go"},
+             auth="secure-enclave-unlocked", eid=delayed_id, based_on=reviewed,
+             note="the delayed answer to A arrives: based_on the earlier reviewed head; accepted (F1 semantics)")  # fmt: skip
+    w.steps[-1]["after"] = {"tickets": {TICKET: {"answers": {"Q1": accepted[-1]["event"]["id"], "Q2": e["id"]}}}}
+    pin(
+        "delayed_answer_after_a_b_a",
+        s2,
+        w,
+        e,
+        "A -> B -> A, then the answer to A signed before B: accepted; based_on is an earlier head",
+        qa2,
+    )
+    scenarios.append(w.scenario())
+
+    # 3. an abandoned phone answer replayed after a restore (cross-reference questions.json)
+    s3 = "phone_abandoned_answer_replayed"
+    w = setup(s3, "a restore abandons a phone answer (abandoned_decisions); the same signed event appended again is "
+              "event.duplicate_id (on relay.submit L3 answers event.abandoned first)")  # fmt: skip
+    q = ask(w, "Q1", "Pick one", opts, note="Q1 asked")
+    asked = w.logs[TICKET][-1]
+    answered = w.ev(TICKET, "question.answered", phone(w), {"question": "Q1", "hash": q["hash"], "option": "b"},
+                    auth="secure-enclave-unlocked", eid=pid_(w), note="(the phone answer that the rollback gives up)")  # fmt: skip
+    gone = w.logs[TICKET].pop()
+    w.steps.pop()
+    w.ev(TICKET, "restore", w.actor("sev"),
+         {"from_seq": asked["seq"], "head": head(asked), "abandoned": {"seq": answered["seq"], "head": head(gone)},
+          "abandoned_decisions": [answered["id"]], "reason": "rollback"}, note="the owner restores to the question")  # fmt: skip
+    w.raw(TICKET, answered, expect="event.duplicate_id", note="the abandoned phone answer appended again")
+    refuse(
+        "abandoned_replayed",
+        s3,
+        w,
+        "an abandoned phone answer replayed: same id, signature and based_on",
+        also="questions.json:question_replayed_decision_after_restore",
+    )
+    scenarios.append({**w.scenario(), "abandoned_answer": gone})
+
+    return {
+        "pins": "phone person events over relay.submit (orch-v2-host 11A.14): question.answered and ticket.created "
+        "signed by a phone (dk_sevp1, scopes look+decide) under signed-event contract 1; per accepted case the "
+        "submitted form (no seq, at, prev, ws_seq, host_sig), the signing bytes, the signed-content digest, sig, the "
+        "appended event and its head; refusals; semantics pins (why-only re-ask, A -> B -> A)",
+        "note": KEY_NOTE,
+        "keys": {nm: {"scalar_hex": f"{key(nm).d:064x}", "pub_b64u": key(nm).pub_b64u} for nm in PHONE_KEYS}
+        | {"id_of": {"p_sev": pid("sev"), "d_sev1": did("sev1"), "d_sevp1": did(sevp), "p_mara": pid("mara")}},
+        "phone": {
+            "key": "dk_sevp1",
+            "person": pid("sev"),
+            "device": did(sevp),
+            "scopes_max": ["look", "decide"],
+            "added_by": "device.added signed by dk_sev1",
+            "column_r_auth": ["secure-enclave-unlocked", "passphrase"],
+        },  # fmt: skip
+        "workspace_id": W,
+        "digest": '"sha256:" + hex(sha256(person_signing_bytes)), where person_signing_bytes = '
+        '"orch/v2/sig/ticket-event|" || cj({"contract":1, "event":E, "log":uid, "suite":2, "workspace_id":W}) and E '
+        "is the submitted form without sig (11A.14 14.2, 14.4)",
+        "accepted": accepted,
+        "refused": refused,
+        "scenarios": scenarios,
+    }

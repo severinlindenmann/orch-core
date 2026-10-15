@@ -292,3 +292,60 @@ def test_repo_paths_after_input_normalization(v):
             validate_settings(settings)
     else:
         validate_settings(settings)
+
+
+# --- phone_events.json (orch-v2-host §11A.14, H12e) ---------------------------------------------------------------
+
+PH = load("phone_events.json")
+
+
+@pytest.mark.parametrize("v", PH["accepted"], ids=lambda v: v["name"])
+def test_phone_event_signing_bytes_digest_sig_and_head(v):
+    import hashlib
+
+    from orch import crypto
+    from orch.host.admission import signed_digest
+
+    sub, ev = v["submitted"], v["event"]
+    assert not {"seq", "at", "prev", "ws_seq", "host_sig"} & set(sub) and "sig" in sub
+    assert jcs.dumps(sub).decode() == v["submitted_cj"]
+    assert {k: ev[k] for k in sub} == sub  # what lands is what the phone signed, plus the host's stamp
+    signing = canon.person_signing_bytes(PH["workspace_id"], v["log"], sub)
+    assert signing.hex() == v["person_signing_hex"]
+    assert signing.startswith(b"orch/v2/sig/ticket-event|")
+    assert (
+        v["digest"]
+        == "sha256:" + hashlib.sha256(signing).hexdigest()
+        == signed_digest(PH["workspace_id"], v["log"], ev)
+    )
+    pub = crypto.unb64u(PH["keys"]["dk_sevp1"]["pub_b64u"])
+    assert crypto.verify(pub, crypto.unb64u(v["sig"], 64), signing)
+    assert canon.event_head(ev) == v["head"]
+    assert sub["actor"] == {"kind": "person", "id": PH["phone"]["person"], "device": PH["phone"]["device"]}
+    assert sub["auth"] in PH["phone"]["column_r_auth"]
+    if sub["type"] == "ticket.created":
+        assert sub["based_on"] is None and ev["seq"] == 1
+    if "question" in v:
+        q = v["question"]
+        h = q["hashed"]
+        assert canon.question_id(PH["workspace_id"], h["ticket"], sub["question"]) == q["qid"] == h["question_id"]
+        assert canon.question_hash(q["qid"], h["ticket"], h["text"], h["options"] or None) == q["hash"] == sub["hash"]
+
+
+def test_phone_events_cover_the_vector_list_of_11a14():
+    names = {v["name"] for v in PH["accepted"]}
+    assert {"answer_non_ascii_option_with_cost", "answer_text_to_options_absent_with_tab", "creation",
+            "answer_passphrase", "answer_high_s", "delayed_answer_after_a_b_a"} <= names  # fmt: skip
+    codes = {v["code"] for v in PH["refused"]}
+    assert codes == {"question.stale", "members.stale", "event.bad_base", "sig.invalid", "device.scope",
+                     "event.duplicate_id", "ticket.exists"}  # fmt: skip
+    auths = {v["submitted"]["auth"] for v in PH["accepted"]}
+    assert auths == {"secure-enclave-unlocked", "passphrase"}
+    high = next(v for v in PH["accepted"] if v["name"] == "answer_high_s")
+    s = int.from_bytes(__import__("base64").urlsafe_b64decode(high["sig"] + "==")[32:], "big")
+    assert s > 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551 // 2
+    costed = next(v for v in PH["accepted"] if v["name"] == "answer_non_ascii_option_with_cost")
+    assert any("cost" in o for o in costed["question"]["hashed"]["options"])
+    assert any(ord(c) > 127 for c in costed["question"]["hashed"]["text"])
+    bare = next(v for v in PH["accepted"] if v["name"] == "answer_text_to_options_absent_with_tab")
+    assert bare["question"]["hashed"]["options"] == [] and "\t" in bare["submitted"]["text"]

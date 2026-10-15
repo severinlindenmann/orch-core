@@ -555,6 +555,45 @@ async function run(send, close) {
               await go(`/__layout/${scenario}`)
               await check(config, name, await need(shown))
             }
+            // The signing card (#578, #580): fixture card with a long name, prefix and device; the forms are opened by their buttons.
+            const typeInto = (sel, value) =>
+              evaluate(async (s, v) => {
+                const input = document.querySelector(s)
+                if (!input) return false
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, v)
+                input.dispatchEvent(new Event('input', { bubbles: true }))
+                await new Promise((r) => setTimeout(r, 200))
+                return true
+              }, sel, value)
+            const CARD = [['the signing card', '[data-testid="workspace-card-signing"]']]
+            if (!ONLY || ONLY.test('real-host-signing-on')) {
+              await go('/__layout/signing-on')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              await settle()
+              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the Turn on… button is missing'])
+            }
+            if (!ONLY || ONLY.test('real-host-signing-off')) {
+              await go('/__layout/signing-off')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn off$/))
+              await settle()
+              await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the move-back command', '[data-testid="signing-move-back"] code'], ['the copy button', '[data-testid="signing-move-back"] button']]) : ['the Turn off button is missing'])
+            }
+            if (!ONLY || ONLY.test('real-host-signing-terminal-on')) {
+              await go('/__layout/signing-terminal-on')
+              await check(config, 'real-host-signing-terminal-on', await need([...CARD, ['the terminal-on view', '[data-testid="signing-terminal-on"] code'], ['the copy button', '[data-testid="signing-terminal-on"] button']]))
+            }
+            if (!ONLY || ONLY.test('real-host-signing-unsafe')) {
+              await go('/__layout/signing-unsafe')
+              await check(config, 'real-host-signing-unsafe', await need([...CARD, ['the refused-prefix description', '[data-testid="signing-command-unsafe"]']]))
+            }
+            if (!ONLY || ONLY.test('real-host-signing-unknown')) {
+              await go('/__layout/signing-unknown')
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              const typed = opened && (await typeInto('#signing-passphrase', 'placeholder'))
+              const sent = typed && (await clickText('button', /^Turn on$/))
+              await settle()
+              await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the Turn on… form did not open or send'])
+            }
             // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
             if (!ONLY || ONLY.test('real-host-pair-link')) {
               await go('/__layout/pair-offer')

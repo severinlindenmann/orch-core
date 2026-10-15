@@ -7,7 +7,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { ClickCard, ClickSwitch } from '@/api/click'
 import { convenienceOffCommand, convenienceOnCommand, custodyPassphraseCommand } from '@/api/pairing'
@@ -77,11 +77,25 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const errorId = useId()
   const inFlight = useRef(false) // a second submit in the same tick, before `busy` re-renders, sends nothing
 
-  const reset = () => {
+  const reset = useCallback(() => {
     setMode('idle')
     setPass('')
     setError(null)
+  }, [])
+  // The state the form was opened on. When the card's state changes under an open form (a "result unknown" outcome
+  // whose reload found the switch did happen, or someone using the terminal), the form is stale: close it, clear its
+  // message and show the new state. The passphrase goes with it (#580).
+  const cardState = card ? `${card.custody}|${card.enabled}|${card.available}|${card.switchable !== false}` : 'none'
+  const openedOn = useRef<string | null>(null)
+  const open = (m: 'on' | 'off') => {
+    openedOn.current = card ? cardState : null // opened before the first answer: that answer is not a change
+    setMode(m)
   }
+  useEffect(() => {
+    if (mode === 'idle' || !card) return
+    if (openedOn.current === null) openedOn.current = cardState
+    else if (openedOn.current !== cardState) reset()
+  }, [card, cardState, mode, reset])
   // a key already in the key store with signing off: the dashboard has no passphrase to check (Opus H1 on #539)
   const terminalOn = !!card && !on && card.custody === 'convenience'
   const submit = async (body: ClickSwitch) => {
@@ -139,11 +153,11 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
         ) : mode === 'idle' ? (
           <div className="flex justify-end">
             {on ? (
-              <Button type="button" variant="outline" onClick={() => setMode('off')}>
+              <Button type="button" variant="outline" onClick={() => open('off')}>
                 Turn off
               </Button>
             ) : (
-              <Button type="button" onClick={() => setMode('on')}>
+              <Button type="button" onClick={() => open('on')}>
                 Turn on…
               </Button>
             )}
@@ -156,15 +170,15 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
               if (pass) void submit({ on: true, passphrase: pass })
             }}
           >
-            <dl data-testid="signing-conversion" className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+            <dl data-testid="signing-conversion" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
               <dt className="text-text-muted">Workspace</dt>
-              <dd>
+              <dd className="min-w-0 break-words">
                 {workspace.name} ({workspace.prefix})
               </dd>
               <dt className="text-text-muted">Device key</dt>
-              <dd className="break-all font-mono">{card?.device ?? "this computer's key for this workspace"}</dd>
+              <dd className="min-w-0 break-all font-mono">{card?.device ?? "this computer's key for this workspace"}</dd>
               <dt className="text-text-muted">Change</dt>
-              <dd>Moves to convenience custody: from your passphrase into this computer's key store</dd>
+              <dd className="min-w-0">Moves to convenience custody: from your passphrase into this computer's key store</dd>
             </dl>
             <Label htmlFor="signing-passphrase">Your passphrase for this workspace</Label>
             <p className="text-text-muted">Asked once, to prove the key is yours. It is not kept.</p>

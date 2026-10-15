@@ -116,6 +116,7 @@ def test_r1_a_restore_below_h_on_another_branch_still_holds(kit, tmp_path):
     k.store._outbox.write(entry)  # noqa: SLF001
     k.sim.held = forked
     k.sim.checkpoints[canon.checkpoint_hash(o)] = forked
+    k.publisher.classify = lambda H, pos: None  # the planner's own guard, without the classification in front
     state, _ = k.publisher.step()
     assert state == "wait" and k.store.outbox_first().n == entry.n
 
@@ -441,9 +442,67 @@ def test_h7_holds_one_above_the_numbering(kit):
     [{"complete": False, "missing": [0, 0]}, {"complete": True, "missing": [0]}, {"complete": False, "missing": []}],
 )
 def test_manifest_answer_shapes(kit, answer):
+    """Answered once: a malformed answer is refused at once, before any page is sent on its strength."""
     k = kit
-    k.sim.fault = lambda s: json_reply(200, answer) if s.path.endswith("/manifest") else None
+    once = {"n": 0}
+
+    def fault(s):
+        if s.path.endswith("/manifest") and not once["n"]:
+            once["n"] = 1
+            return json_reply(200, answer)
+        return None
+
+    k.sim.fault = fault
     assert k.publisher.step()[0] == "wait" and k.alarms.codes() == ["relay_misbehaving"]
+    assert not [s for s in k.mock.seen if "/pages/" in s.path]
+
+
+def test_r4_the_mismatch_count_restarts_after_a_settled_step(kit):
+    k = kit
+    k.drain()
+    hits = {"n": 0}
+
+    def once_each(s):
+        if _final(s) and hits["n"] < 1:
+            hits["n"] += 1
+            return _err(409, "restore_source_mismatch")
+        return None
+
+    for text in ("a", "b"):
+        hits["n"] = 0
+        k.sim.fault = once_each
+        k.env.log(k.uids[0], text)
+        k.drain(10)
+    assert "relay_misbehaving" not in k.alarms.codes() and k.store.outbox_entries() == []
+
+
+def test_r2_the_renewal_thread_survives_a_transient_failure(kit, monkeypatch):
+    k = kit
+    monkeypatch.setattr(publish, "RENEW_EVERY_S", 0.05)
+    holds = {"n": 0}
+    real_hold = k.sim._hold
+
+    def hold(s, ws):
+        holds["n"] += 1
+        if holds["n"] == 1:
+            return _err(503, "overloaded")
+        return real_hold(s, ws)
+
+    monkeypatch.setattr(k.sim, "_hold", hold)
+    real_call = k.session.call
+    state = {"done": False}
+
+    def slow(method, target, route, **kw):
+        if "/pages/" in target and not state["done"]:
+            state["done"] = True
+            for _ in range(5):
+                k.sim.advance(10)
+                time.sleep(0.2)
+        return real_call(method, target, route, **kw)
+
+    monkeypatch.setattr(k.session, "call", slow)
+    k.publisher.publish_first(k.session, None)
+    assert holds["n"] >= 3 and not k.session.fenced and k.store.outbox_entries() == []
 
 
 def test_final_answer_field_set(kit):

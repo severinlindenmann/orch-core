@@ -6422,7 +6422,7 @@ store reads under the lock (`Store.relay_segment`, `Store.relay_position`, `Stor
 
 **Interface for R5.** `Publisher(store, job=, session=, owner_pk_pub=, wsk_pub=, state=, max_publication_bytes=,
 alarm=, conn=, on_diverged=, on_error=)`; `start()`, `stop()`, `join(timeout) -> bool` (thread
-`orch-relay-pub-<id8>`), `error`, `wake()`; `publish_first(session, directory)` (alias `link_publish`; R5's seam `orch.relay.worker.Publisher` in #532) is `LinkSteps.publish` for R1's `first_link`
+`orch-relay-pub-<id8>`), `error`, `wake()`; `publish_first(session, directory)` (it renews the lease while it runs, review R2) (alias `link_publish`; R5's seam `orch.relay.worker.Publisher` in #532) is `LinkSteps.publish` for R1's `first_link`
 (it raises `PublishHeld` while publication is held, so the link stays `linking`). `job(fn)` must be
 `RelayWorker.submit(fn).result()`; every store call of `publish.py` is such a job (an AST test pins it) and none is
 held across networking. The thread sends nothing until the shared `Session` holds a generation (the poll thread's
@@ -6492,6 +6492,26 @@ store API exists for it to degrade the host itself (gap, below). The store passe
 - P15 *Response caps.* The manifest answer and the final answer are read up to 1 MiB, not 11A.7's 16 KiB: the
   manifest answer lists every missing index and a restore's final answer may carry `unpublished_refs`; over a 16 KiB
   cap both would be a transient failure forever.
+
+**Review round 1 (Opus, 15 Oct 2026; safety held, four liveness defects fixed).**
+- R1 A restore entry the relay already holds is finished, never held: when the fresh verified H is the restore's
+  target, or descends from it (`Store.relay_ancestor`), the history record and line are written and the entry is
+  deleted without any PUT (a lost acknowledgement, or a crash before or after the history line; the relay would refuse
+  a re-sent restore at `n <= held n`). A restore entry at or below H on another branch still holds
+  `restore_source_mismatch`.
+- R2 `publish_first` renews the 40 s lease while it runs: `Session.renew(transport=)` (a running renewal, never a
+  probe; `fenced` stops) every `RENEW_EVERY_S` (15 s) on a renewal thread with its own connection, which also covers
+  one long call; without a connection factory, before each request and inside every wait. R5's aux thread renews
+  once the loop runs.
+- R3 The idle outbox check never stops the publisher on a store fault: `store.busy` polls again, any other store code
+  is alarmed and left to the step's own hold. Only a fence or session error (and R5's `WorkerStopped`) ends it.
+- R4 A plain `restore_source_mismatch` re-plans once; the second in a row is `relay_misbehaving` with backoff.
+- Lower: `History` keeps the restore records and the segment count in memory (read once per process); a crash during
+  a segment rollover no longer duplicates the segment; `too_large` on a set-less final PUT holds `relay.too_large` and
+  leaves C alone, and no lowering goes below `MIN_CAP` (4 KiB; below it `relay_too_large` holds); a final body above
+  `FINAL_CAP` is held before anything is staged; any other permanent 4xx holds (P9 amended: never retried unchanged at
+  once) and a 413 without a code is `too_large`; store codes are alarmed as `relay_store_<code>` (a store
+  `chain.diverged` is not R3's fork alarm).
 
 **Design inconsistencies found.**
 - `docs/architecture/orch-v2-host.md` 11A.7 table (staging and final answers 16 KiB) vs orch-relay
@@ -6769,7 +6789,7 @@ path from `ORCH_RELAY_DIR`.
   (two independent kills); a child of the harness forked without exec would hold the pipes open (the tests never
   fork). Each test has a hard 20 s limit (SIGALRM, raising a `BaseException` so no `except Exception` swallows it) from the relay answering `/healthz`
   to its teardown (relay start-up and stop are outside it; the requeue tests use about 11 s of it). Locally: `ORCH_RELAY_DIR=<a worktree of the SOURCE commit, uv-synced> uv run pytest -p no:xdist -m relay_t2
-  tests/relay/t2` (33 relay tests and 15 harness self-tests, about 2.5 minutes locally).
+  tests/relay/t2` (37 relay tests and 15 harness self-tests, about 2.5 minutes locally).
 - **Covered (R1):** `/healthz` instance and `GET /v2/relay-info` `max_publication_bytes` equal to the configured cap;
   the owner account from an operator invite (`orch-relay invite create` on the temp data directory) through `POST
   /v2/accounts`, the identical request replayed with the same answer and the used invite with a fresh proof refused
@@ -6793,7 +6813,9 @@ path from `ORCH_RELAY_DIR`.
   through `link_publish` within `relay-info`'s maximum (C equals the configured cap); a backlog published by catch-up
   in several checkpoints under a small `link.json` C, each set accepted by the relay; a ticket restore with its
   abandoned suffix accepted under the relay's owner policy (a ref-built member list with `operate` for `primary`), and
-  ordinary publication after it; the relay's page, request and line caps as core builds against them.
+  ordinary publication after it; a restore whose acknowledgement was lost finished from the fresh read (review R1);
+  the first link renewing the lease while it publishes (review R2; the outlived 40 s lease itself runs against the
+  simulator's clock); the relay's page, request and line caps as core builds against them.
 - **Not yet covered (each lands with its group):** histories above 4 and 16 MiB through the real relay (a history of
   56 000 or 226 000 heads takes far longer than the 20 s budget; the split itself runs at a small C above, and the
   counter is pinned by the layer-1 tests); unpublished evidence (R4); the worker and the first real link through `orch host relay link`

@@ -40,6 +40,7 @@ __all__ = [
     "REASONS",
     "check",
     "enabled",
+    "refuse_pair_device",
     "flag_path",
     "pending_handoffs",
     "read",
@@ -152,7 +153,11 @@ _TEXT = {
     "signatures",
     "phone_device": "another device of yours (a phone or another machine) has not declared that it knows them",
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
+    "pair_device": "pairing a device (relay.pair_device) is signed in your terminal with your passphrase, never with "
+    "convenience custody",
 }
+#: the fix of ``pair_device`` (11A.15.6 "Convenience custody is refused for pairing"): back to passphrase custody
+PAIR_DEVICE_FIX = "orch keys custody passphrase --workspace W --in-place"
 
 
 def unavailable(reason: str, devices: list[str]) -> HostError:
@@ -166,6 +171,17 @@ def unavailable(reason: str, devices: list[str]) -> HostError:
         f"{reason}: {_TEXT[reason]}{named}",
         hint=hint,
         detail={"reason": reason, "devices": devices},
+    )
+
+
+def refuse_pair_device() -> HostError:
+    """``sign.convenience_unavailable`` with reason ``pair_device`` (H12c-e, 11A.15.6): ``relay.pair_device`` refuses
+    ``auth:"convenience"`` whatever the flag, the readers or any dev opt-in; the fix names passphrase custody."""
+    return HostError(
+        "sign.convenience_unavailable",
+        f"pair_device: {_TEXT['pair_device']}",
+        hint=f"sign it with orch sign CODE; a key converted to convenience custody goes back with {PAIR_DEVICE_FIX}",
+        detail={"reason": "pair_device", "devices": []},
     )
 
 
@@ -194,12 +210,14 @@ def refuse_reader_op(
     is ``sign.convenience_readers`` (``no_declaration``, ``reader_too_old``). The append checks it again
     (:func:`orch.host.human.append_signed`), authoritatively.
 
+    ``relay.pair_device`` (H12c-e) with its events: the same as ``member.add``, with the phone's pair declaration.
+
     ``relay.link`` and ``relay.pair`` (and ``member.add`` without its events): unchanged until H12d-3 brings their
     declarations (relay-info, the pair meta): refused while the mark is set, the history (``history``) holds a
     convenience event or the flag is on."""
     if op not in READER_OPS:
         return
-    if op == "member.add" and events is not None:
+    if op in ("member.add", "relay.pair_device") and events is not None:
         _check_new_readers(service, events, readers or [], history=history)
         return
     seen = convenience_seen(service.state_dir, service.workspace_id)  # #441: the durable mark, in every check
@@ -225,7 +243,7 @@ def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[di
     """Verify each admitted declaration again against the event that adds its device (no clock: a binding, a submit,
     9.3), and return device -> level. A declaration that no longer verifies is ``reader.decl_invalid``."""
     from orch.identity.reader import DeclInvalid
-    from orch.ops.readers import READER_EVENTS, verify_admission
+    from orch.ops.readers import READER_EVENTS, admission_context, verify_admission
 
     out: dict[str, int] = {}
     for entry in readers:
@@ -242,16 +260,18 @@ def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[di
         if ev is None:
             raise HostError("internal", "a reader declaration names no device the request adds")
         try:
+            ctx = admission_context(entry)  # the entry's source: enrol/log, or pair/view with its who and bind
             got = verify_admission(
                 entry["decl"],
                 workspace_id=service.workspace_id,
                 cert=ev[READER_EVENTS[ev["type"]]],
                 person=ev.get("person") or entry["person"],
-                via="enrol",
-                surfaces=("log",),
+                **ctx,
                 now_ms=None,
             )
-        except DeclInvalid as exc:
+        except (DeclInvalid, KeyError, TypeError, ValueError) as exc:
+            if not isinstance(exc, DeclInvalid):
+                raise HostError("internal", "an admitted reader entry is malformed") from None
             raise HostError("reader.decl_invalid", exc.detail) from None
         if got.digest != entry.get("digest") or got.level != entry.get("level"):
             raise HostError("internal", "the stored reader declaration changed")

@@ -47,7 +47,7 @@ from jsonschema import Draft202012Validator
 
 from orch import canon
 
-from . import convenience, review
+from . import convenience, pairdevice, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -388,8 +388,10 @@ class HumanOps:
         assert person is not None  # column P only
         now = service.clock()
         store.refresh()
-        if name != "member.add":  # member.add: after its handler, with its reader declaration (H12d-2)
+        if name not in ("member.add", pairdevice.OP):  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
+        if name == pairdevice.OP and signer is not None and signer["auth"] == "convenience":
+            raise convenience.refuse_pair_device()  # H12c-e (11A.15.6): whatever the flag or any opt-in
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None:
@@ -413,6 +415,8 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        if name == pairdevice.OP:  # H12c-e: R6's verified facts, never the request's (the args name only the offer)
+            capture.pair = pairdevice.facts_for(service, inner)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)
@@ -572,6 +576,10 @@ class HumanOps:
     def _material(store: Any, log: str, events: list[dict[str, Any]], capture: Any, extras: list) -> dict[str, Any]:
         from orch.store.render import thaw
 
+        if capture.pair is not None:  # H12c-e: the relay.pair_device kind (orch.identity.pairdevice)
+            from orch.identity.pairdevice import material as pair_material
+
+            return pair_material(capture.pair)
         view = store.ticket(log) if log != "workspace" else None
         ticket = {"key": view.key, "uid": view.uid} if view is not None else None
         if view is None and log != "workspace":  # a person's new: the ticket its ticket.created makes
@@ -652,6 +660,8 @@ class HumanOps:
         )
         if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
             convenience.refuse_handoff(call.service)
+        if record["op"] == pairdevice.OP and signer["auth"] == "convenience":  # H12c-e: never bound to convenience
+            raise convenience.refuse_pair_device()
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
             convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":
@@ -858,6 +868,8 @@ class HumanOps:
             if record["state"] == "expired":
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
+            if record["op"] == pairdevice.OP and any(e.get("auth") == "convenience" for e in events):
+                raise convenience.refuse_pair_device()  # H12c-e: also when a bound request was altered
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
@@ -1225,6 +1237,7 @@ def append_signed(
     *,
     signed_by: tuple[str, str] | None,
     readers: list[dict[str, Any]] | None = None,
+    hooks: Any = None,
 ) -> tuple[list[int], HostError | None]:
     """**The single choke point for appending signed person events** (§0.8.1, §11A.4): ``human.finish`` and the relay
     path (through :func:`append_relay`, the relay's only entry) both append through it. The one documented exception
@@ -1251,7 +1264,12 @@ def append_signed(
     ``auth: "convenience"`` (:func:`_readers_refusal`): the current levels, the declarations of ``readers`` (the
     request's admitted readers) and ``required_reader`` recomputed. Their records are written before the append
     (``custody.unsafe_mode`` if that fails, nothing appended). Whichever of a convenience event and a reader event
-    appends first, the other refuses."""
+    appends first, the other refuses.
+
+    ``hooks`` (H12c-e, only ``relay.pair_device`` through :func:`finish`; :class:`orch.host.pairdevice.Hooks`): R6's
+    step 9 in the same critical section. ``before(new events)`` runs first (the allocation intent; a refusal appends
+    nothing), ``after(seqs)`` once every event is in the log, ``failed(error)`` when nothing landed after ``before``
+    accepted."""
     from orch.store import StoreError
 
     if signed_by is not None:
@@ -1271,7 +1289,10 @@ def append_signed(
 
         store.append_check = check
         try:
-            error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
+            if hooks is not None:  # H12c-e: R6's (i) and (ii) first (11A.15.6 step 9), under this lock
+                error = hooks.before([e for e in events if store.logged_event(log, e.get("id")) is None])
+            if error is None:
+                error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
             if error is None and any(e.get("auth") == "convenience" for e in events):
                 error = _mark_seen(service)  # #441: the durable mark, under the store lock, before the first append
             for ev, extra in zip(events, extras, strict=True) if error is None else ():
@@ -1291,6 +1312,11 @@ def append_signed(
                     error = _store_error(exc)
                     break
                 landed.append(int(done.event["seq"]))
+            if hooks is not None:
+                if error is None:
+                    hooks.after(landed)
+                elif not landed:
+                    hooks.failed(error)
         finally:
             store.append_check = old_check
     return landed, error
@@ -1319,8 +1345,15 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     ``seq`` s that landed; it is never ``partial``. Returns the result; raises the stored error for a failed one."""
     store = service.store
     log = record["prepared"]["log"]
+    hooks = pairdevice.hooks(service, record) if record["op"] == pairdevice.OP else None  # H12c-e: R6's step 9
     landed, error = append_signed(
-        service, log, record["submit"]["events"], record["extras"], signed_by=None, readers=record.get("readers") or []
+        service,
+        log,
+        record["submit"]["events"],
+        record["extras"],
+        signed_by=None,
+        readers=record.get("readers") or [],
+        hooks=hooks,
     )
     now = service.clock()
     if error is not None:

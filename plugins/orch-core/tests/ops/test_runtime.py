@@ -235,7 +235,13 @@ class _Sentinel:
         def os_open(path, flags, mode=0o777, *, dir_fd=None):
             if self.before_open is not None:
                 self.before_open(path, dir_fd)
-            assert not self.outside(path, dir_fd), f"opened outside: {path}"
+            target = path
+            if dir_fd is None and flags & os.O_NOFOLLOW:  # the last component is not followed: judge the link itself
+                p = os.fspath(path)
+                target = os.path.join(os.path.realpath(os.path.dirname(p)), os.path.basename(p))
+                if os.path.islink(target):
+                    return self.real_os_open(path, flags, mode)  # fails with ELOOP/ENOTDIR, reads nothing
+            assert not self.outside(target, dir_fd), f"opened outside: {path}"
             return self.real_os_open(path, flags, mode, dir_fd=dir_fd)
 
         def guard(real):
@@ -411,3 +417,23 @@ def test_the_nearest_workspace_wins_v1_under_v2_refuses_and_v2_under_v1_opens(ws
     inner.mkdir()
     (inner / "config.json").write_text((ws.root / "config.json").read_text())
     assert runtime.locate_workspace({}, str(inner), files) == (inner, False)
+
+
+def test_reading_a_found_roots_config_opens_nothing_outside_the_root(ws, monkeypatch):
+    """CI regression of #509 (host-served ``orch status``: ``KeyError: 'workspace'``): ``_config`` opened the root's
+    parent to walk down with ``O_NOFOLLOW``; a host serving the root allows nothing outside it, so the config read
+    failed. Only the root (``O_NOFOLLOW`` on its last component) and what is below it are opened."""
+    root = os.path.realpath(ws.root)
+    real_os_open = os.open
+
+    def only_inside(path, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is None:
+            p = os.path.abspath(os.fspath(path))
+            assert p == root or p.startswith(root + os.sep), f"opened outside the root: {p}"
+        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", only_inside)
+    files = Files.direct()
+    cfg = runtime._config(ws.root, files)
+    assert cfg is not None and isinstance(cfg["workspace"]["id"], str)
+    assert runtime.find_workspace({"ORCH_WORKSPACE": str(ws.root)}, None, files) == ws.root

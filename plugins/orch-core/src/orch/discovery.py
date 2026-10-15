@@ -159,20 +159,13 @@ def locate(start: str | os.PathLike[str], *, explicit: bool, v1: bool = True) ->
 
 
 def read_config(root: str | os.PathLike[str]) -> dict[str, Any] | None:
-    """The v2 ``config.json`` of the workspace at ``root`` (a discovered root: its parent opened as trusted, the root
-    and the file ``O_NOFOLLOW`` below it), or ``None``."""
-    root = Path(root)
-    if root.name in ("", ".", ".."):
-        fd = _open_trusted(root)
-    else:  # the root's own last component is O_NOFOLLOW too: swapped for a symlink after discovery, it is refused
-        parent = _open_trusted(root.parent)
-        if parent is None:
-            return None
-        try:
-            fd = _sub(parent, root.name)
-        finally:
-            os.close(parent)
-    if fd is None:
+    """The v2 ``config.json`` of the workspace at ``root`` (a discovered root), or ``None``. Only ``root`` and what is
+    below it are opened, never its parent (a host serving ``root`` allows nothing outside it): ``root`` by path with
+    ``O_NOFOLLOW`` on its last component (an ``orchestrator`` swapped for a symlink after discovery is refused; the
+    ancestors are the trusted start), then ``config.json`` ``O_NOFOLLOW`` below that fd."""
+    try:
+        fd = os.open(Path(root), _DIR | _NOFOLLOW)
+    except OSError:
         return None
     try:
         return v2_config(_config_at(fd))

@@ -1178,3 +1178,29 @@ Fixture: `src/dev/pairFixture.ts` (`createPairFixture`, `installPairFixture`, `e
 `pair-blocked-convenience`, `pair-offer`, `pair-pending`, `pair-cert`, `pair-failed`, `pair-devices`; guard entries `real-host-pair-*`
 (plus `real-host-pair-link` and `real-host-pair-remove-command`; listed in `scripts/layout-guard-pages.mjs` so `--only pair` finds them).
 Tests: `src/app/pages/settings/pairing.test.tsx`, the Devices case in `src/production/settings.test.tsx`, `src/dev/layoutGuardPages.test.ts`. QR: `uqr` 0.1.3 (pinned).
+
+## Drop (drop/1, proposal pending, fixtures only, 15 Oct)
+
+Workspace → Drop (`src/app/pages/drop/index.tsx`, route `/drop`, sidebar entry after Quick tasks when the server lists `drop`). Gate:
+feature `drop` **and** `dropApi.served()`; the real api (`src/api/drop.ts`) answers `drop.unavailable` for every call; the server lists no
+`drop` feature and has no route. Binding decisions of 15 Oct (files only in P4, host cleans names, no auto-claim, Delete through
+`drop.retire` pending D39a1, states `live`/`pruned`/`expired`/`retired`) and the assumptions: DECISIONS-LOG "Drop: Workspace → Drop".
+
+| Page call (`dropApi`) | Proposed host op | Notes |
+|---|---|---|
+| `info(ws)` | `drop.info {}` (assumed) | `{max_bytes, version_cap, writes}`: the only source of the 25 MiB and 1024 limits |
+| `list(ws, {direction, after, limit})` | `drop.list` | Received / Sent, cursor pages of 32 |
+| `versions(ws, {object_id, after})` | `drop.versions` | documents only; `cap` |
+| `blobPut`, `blobDrop` | `blob.put`, `blob.drop` (§0.10, served today) | 768 KiB chunks; `uploadBlob` gives progress and cancel |
+| `send(ws, {blob, name, mime, object_id?, base_version?}, idem)` | `drop.send` | the host seals and PUTs ("Sealing and sending…") |
+| `read(ws, {object_id, version})` + `content(ws, blob)` | `drop.read` + a future dashboard route | download only (attachment headers in DECISIONS-LOG) |
+| `retire(ws, object_id)` | `drop.retire` | files and documents, confirm first |
+| `subscribe(ws, fn)` | `sub.open {topics:["drop"]}` | items `{t:"drop", object_id, version}`; the page refetches |
+
+Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `emit`; options `documentWrites`, `chunkDelayMs`,
+`stallAfterChunks`, `sendDelayMs`, `sendError`, `readError`, `retireError`, `listError`, `pageSize`). Layout scenarios `drop-unavailable`,
+`drop-list`, `drop-long-names`, `drop-upload-progress`, `drop-errors`, `drop-versions`; guard entries `real-host-drop-*` plus
+`real-host-drop-delete` (listed in `scripts/layout-guard-pages.mjs`, so `--only drop` finds them). Tests: `src/app/pages/drop/drop.test.tsx`, `src/production/drop.test.tsx` (real host: not available, no nav entry, no call),
+`src/dev/layoutGuardPages.test.ts`. No new dependency.
+To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
+

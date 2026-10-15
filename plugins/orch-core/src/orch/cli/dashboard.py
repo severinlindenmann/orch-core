@@ -6,6 +6,11 @@ is read or written here. Lookup order: the ``orch-dashboard`` console script nex
 ``orch_dashboard`` module of this interpreter (``python -P -m orch_dashboard``), then the one on ``PATH`` (absolute
 entries only). Not installed: a clear
 error that names how to install it.
+
+Under an agent's environment (``ORCH_GRANT`` or ``ORCH_SESSION`` set and non-empty) it refuses with ``human_only``
+(exit 3), the shape of ``orch sign``'s refusal, before anything is looked up or started: a dashboard session acts as the
+person (#542). Only ``stop`` passes (it mints nothing and only ends the person's server). The addon refuses again in its
+own entry point, so going around ``orch dashboard`` does not help. A speed bump in tier A, not a boundary: same UID.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
 
-__all__ = ["INSTALL_HINT", "find_entry_point", "main"]
+__all__ = ["AGENT_ENV", "INSTALL_HINT", "agent_refusal", "find_entry_point", "main"]
 
 SCRIPT = "orch-dashboard"
 MODULE = "orch_dashboard"
@@ -27,6 +32,18 @@ INSTALL_HINT = (
     "(pip install orch-dashboard, or uv tool install orch-dashboard, or from a checkout: "
     "pip install -e addons/dashboard/server)"
 )
+AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
+REFUSAL = (
+    "the dashboard is a person's; an agent never opens it (unset ORCH_GRANT and ORCH_SESSION in your own terminal)"
+)
+STOP_ONLY = (["stop"], ["--stop"])
+
+
+def agent_refusal(args: Sequence[str], env: Mapping[str, str]) -> str | None:
+    """The ``human_only`` message when an agent's environment asks for anything but ``stop``, else ``None``."""
+    if any(env.get(name) for name in AGENT_ENV) and list(args) not in STOP_ONLY:
+        return REFUSAL
+    return None
 
 
 _PROBE = "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
@@ -90,6 +107,10 @@ def _launch_env(env: Mapping[str, str]) -> dict[str, str]:
 
 
 def main(args: Sequence[str], *, env: Mapping[str, str], err: TextIO) -> int:
+    refused = agent_refusal(args, env)
+    if refused is not None:
+        err.write(f"orch dashboard: human_only: {refused}\n")
+        return 3
     env = _launch_env(env)
     command = find_entry_point(env, err)
     if command is None:

@@ -472,3 +472,38 @@ def test_the_launch_environment_drops_empty_and_relative_pythonpath_entries():
     env = dashboard._launch_env({"PYTHONPATH": ":rel:/abs/lib", "A": "1"})
     assert env == {"PYTHONPATH": "/abs/lib", "A": "1"}
     assert "PYTHONPATH" not in dashboard._launch_env({"PYTHONPATH": ":."})
+
+
+# --- #542 item 1: refused under an agent's environment ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["ORCH_GRANT", "ORCH_SESSION"])
+@pytest.mark.parametrize("args", [[], ["open"], ["launch"], ["serve"], ["open", "--print-url"], ["stop", "x"]])
+def test_orch_dashboard_refuses_under_an_agents_environment(tmp_path, monkeypatch, name, args):
+    from orch.cli import dashboard
+
+    def found(*_a, **_k):
+        raise AssertionError("nothing may be looked up or started under an agent's environment")
+
+    monkeypatch.setattr(dashboard, "find_entry_point", found)
+    code, err, calls = _main(args, {"PATH": str(tmp_path), name: "x"}, monkeypatch)
+    assert code == 3 and calls == []
+    assert err.startswith("orch dashboard: human_only: ") and err.count("\n") == 1
+
+
+@pytest.mark.parametrize("args", [["stop"], ["--stop"]])
+def test_orch_dashboard_stop_passes_under_an_agents_environment(tmp_path, monkeypatch, args):
+    from orch.cli import dashboard
+
+    monkeypatch.setattr(dashboard, "find_entry_point", lambda env, err=None: ["/demo/orch-dashboard"])
+    env = {"PATH": str(tmp_path), "ORCH_GRANT": "x", "ORCH_SESSION": "s"}
+    code, _, calls = _main(args, env, monkeypatch)
+    assert code == 0 and calls == [(["/demo/orch-dashboard", *args], env)]
+
+
+def test_orch_dashboard_empty_agent_variables_do_not_refuse(tmp_path, monkeypatch):
+    from orch.cli import dashboard
+
+    monkeypatch.setattr(dashboard, "find_entry_point", lambda env, err=None: ["/demo/orch-dashboard"])
+    code, _, calls = _main(["open"], {"PATH": str(tmp_path), "ORCH_GRANT": "", "ORCH_SESSION": ""}, monkeypatch)
+    assert code == 0 and len(calls) == 1

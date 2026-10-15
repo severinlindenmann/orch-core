@@ -139,6 +139,40 @@ def test_a_deposit_refused_by_the_host_is_rejected_with_the_grant_named(world):
     res = click.sign(p["request_id"], v["view_digest"], word=word(served))
     assert res["deposit"] in ("rejected", "unknown") and res["grant"].startswith("gr_")  # Revoke uses it
     assert res["result"]["data"]["grant"] == res["grant"]
+    if res["deposit"] == "rejected":
+        assert res["deposit_reason"] == "runner.unavailable"
+    else:
+        assert "deposit_reason" not in res
+
+
+@pytest.mark.parametrize(
+    ("host_reason", "expected"),
+    [("grant.forgotten", "grant.forgotten"), ("grant.not_runner", "grant.not_runner"), ("grant.verbs", "grant.verbs"),
+     ("grant.expiring", "grant.expiring"), ("rate.limited", "rate.limited"),
+     ("runner.unavailable", "runner.unavailable"), ("runner_restarted", "other"),
+     ("secret text from the host /Users/x", "other"), (None, "other")],
+)  # fmt: skip
+def test_a_rejected_deposit_carries_a_static_reason_from_the_closed_set(world, host_reason, expected):
+    served, click, _, _ = world
+    execution(served)
+
+    def tamper(op, args, res):
+        if op == "grant.deposit":
+            res["data"] = {"deposit": "rejected", **({"reason": host_reason} if host_reason else {})}
+        return res
+
+    click.tamper = tamper
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "rejected" and res["deposit_reason"] == expected
+
+
+def test_a_confirmed_or_unknown_deposit_has_no_reason(world):
+    served, click, _, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "confirmed" and "deposit_reason" not in res
 
 
 def test_check_prepared_refuses_a_grant_issued_without_the_runner_label():
@@ -180,3 +214,42 @@ def test_a_click_deposit_grant_has_no_set_orch_grant_hint(world):
     p, v = flow(click, served)
     res = click.sign(p["request_id"], v["view_digest"], word=word(served))
     assert "ORCH_GRANT" not in repr(res["result"].get("hints")) + repr(res["result"].get("lines"))
+
+
+@pytest.mark.parametrize(
+    ("host_reason", "expected"),
+    [("grant.expiring", "grant.expiring"), ("runner_restarted", "other"), ("host text /Users/x", "other"),
+     (None, "other")],
+)  # fmt: skip
+def test_the_status_fallback_maps_a_reason_to_the_closed_set(world, host_reason, expected):
+    """A lost hand-over answer (or a repeated sign) reads ``grant.deposit_status``; its reason is mapped the same."""
+    served, click, _, _ = world
+    execution(served)
+
+    def tamper(op, args, res):
+        if op == "grant.deposit":
+            raise ConnectionError("lost")
+        if op == "grant.deposit_status":
+            res["data"] = {"deposit": "rejected", **({"reason": host_reason} if host_reason else {})}
+        return res
+
+    click.tamper = tamper
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "rejected" and res["deposit_reason"] == expected
+    again = click.sign(p["request_id"], v["view_digest"], word=word(served))  # a repeated sign: the settled answer
+    assert again["deposit"] == "rejected" and again["deposit_reason"] == expected
+
+
+def test_the_contract_rule_is_two_and_documented():
+    from orch.click.protocol import CONTRACT, DEPOSIT_REASONS
+
+    assert CONTRACT == 2
+    assert DEPOSIT_REASONS == {"grant.forgotten", "grant.not_runner", "grant.verbs", "grant.expiring", "rate.limited",
+                               "runner.unavailable", "other"}  # fmt: skip
+    doc = Path(__file__).resolve().parents[4] / "docs" / "architecture" / "orch-v2-host.md"
+    if not doc.exists():
+        pytest.skip("docs not in this checkout")
+    text = " ".join(doc.read_text().split())
+    assert "accepts 1 and 2 (1: no click grants) and refuses any other value" in text
+    assert "status {} → {core:str, contract:1|2," in text

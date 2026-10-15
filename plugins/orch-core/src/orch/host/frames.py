@@ -344,6 +344,15 @@ _ITEM = {
             {"id": _str(r"[0-9]{1,15}\.r"), "t": _const("gone"), "run": _str(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}")},
             host=True,
         ),
+        # H11c-2: the caller person's runner grant (id, until, scope; never the secret) or null
+        _object(
+            {
+                "id": _str(r"[0-9]{1,15}\.g[0-9]{1,9}"),
+                "t": _const("runner"),
+                "grant": _nullable(_object({"id": _STRING, "until": _STRING, "scope": _STRING}, host=True)),
+            },
+            host=True,
+        ),
     ]
 }
 _SCHEMAS = {

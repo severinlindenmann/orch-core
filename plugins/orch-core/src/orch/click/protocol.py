@@ -8,6 +8,7 @@ from typing import Any
 __all__ = [
     "CLICK_OPS",
     "DEPOSIT_LINE",
+    "DEPOSIT_REASONS",
     "DEPOSIT_MAX_HOURS",
     "DEPOSIT_RISK",
     "OPS",
@@ -20,7 +21,14 @@ __all__ = [
     "op_class",
 ]
 
-CONTRACT = 1
+#: 2 (H11c-2): deposit support (``deposit`` on ``prepare``, ``deposit``/``deposit_reason`` on ``sign``); a contract-1
+#: signer answers ``terminal_only`` for every ``grant``, so a client reads ``status.contract`` to tell the two apart
+CONTRACT = 2
+#: the closed set of ``sign``'s ``deposit_reason`` (static codes, never host text; anything else is ``other``)
+DEPOSIT_REASONS = frozenset(
+    {"grant.forgotten", "grant.not_runner", "grant.verbs", "grant.expiring", "rate.limited", "runner.unavailable",
+     "other"}
+)  # fmt: skip
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 #: v1.6 (D-P2-27, §0.8.6 item 6): the View of a deposit-only grant carries this line (and in ``lines``)
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"

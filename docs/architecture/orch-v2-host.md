@@ -4719,6 +4719,7 @@ corpus is vendored under `tests/relay/vectors/` (11A.10).
 | `relay/unpublished.py` | R4: the P3-D31 consumer (on the aux thread) |
 | `relay/state.py` | the files of 11A.3. As built in R1: a stdlib private directory (0700, files 0600, `O_NOFOLLOW` against a directory fd, temp + fsync + rename + directory fsync), the last-signed ledger and the write-once first-link files; `orch.host` is import-banned in `orch.relay`, so R5 may swap it for the host custody helpers behind the same interfaces |
 | `relay/worker.py` | R5: `RelayWorker`, started and stopped by `WorkspaceService` |
+| `relay/r6/` | R6 (11A.15): `keys.py` (WK, WXK, CK custody, `EpochKeySource`), `members.py` (membership publication, `R6View`), `pair.py` (`R6Pairing`, the offer state machine), `card.py` (WXK rotation, card keys) |
 
 Groups (each one PR into `develop`, first commit its failing vector or test, merged on green CI):
 
@@ -4740,10 +4741,11 @@ reservation for a pairing) through `BridgeKeys` and an `R6View` interface, and n
 
 **R6 is a security dependency of R2, not a fixture.** R6's security contract (what `R6View` returns, how the member list
 and its scopes are verified, burned epochs, pairing-attempt binding, the reader reservation of 11A.6) MUST be designed
-and reviewed before R2 merges (11A.11 Q3). R2 may merge tested against a fixture `R6View`, but `RelayWorker` does not
+and reviewed before R2 merges (11A.11 Q3). The contract is 11A.15 (draft of 15 Oct 2026, review pending). R2 may merge tested against a fixture `R6View`, but `RelayWorker` does not
 start the poll thread for a workspace until R6 is merged and its integration tests against the real relay pass.
 
-Order: R1 → R6 design → (R2 ∥ R3 ∥ R4) → R5 → R6 implementation → first real device.
+Order: R1 → R6 design → (R2 ∥ R3 ∥ R4) → R5 → R6 implementation → first real device. (11A.15.14 proposes R6a, the key
+custody, before R5, because R1's first link needs the card's keys.)
 
 ### 11A.2 Keys and signing
 
@@ -4759,7 +4761,7 @@ through purpose-specific methods.
   | `login(challenge)` | origin and workspace id from `link.json`, kind `workspace`, challenge 32 bytes | `sig_relay_auth` |
   | `response_chunk(header, body)` | ORB2 direction 2, the header's workspace id, an epoch `BridgeKeys` holds, the whole envelope ≤ 256 KiB (the relay's cap counts the raw envelope, `bridge.py` `envelope`) | `sig_bridge` |
   | `card(o)` | exact field set, workspace id, WSK public key = own, `relay_url` = the stored origin, `card_seq` > the last accepted one and ≥ the highest signed one; a different card at a signed `card_seq` is refused, the same one gets the recorded signature back (durable last-signed ledger written before the signature is returned; ECDSA signatures are randomised, so nothing is re-signed). The highest-signed rule is checked first: once a later `card_seq` was signed, an older card is refused even if its signature is in the ledger (round 6, orch-52 #5) | `sig_card_wsk` |
-  | R6: `member_list`, `wk_grant`, `cert_request`, `wk_commit` | specified by R6 | R6 labels |
+  | R6: `member_list`, `wk_grant`, `cert_request`, `pair_answer` (`wk_commit` is a hash, built by H12c) | 11A.15.7 | R6 labels |
 
   The `HOST_LABELS` role check (`custody/base.py`) stays as a backstop. It does not separate directions by itself:
   `sig_bridge` and `sig_relay_auth` are in both `HOST_LABELS` and `DEVICE_KEY_LABELS`; the typed methods do.
@@ -4884,7 +4886,7 @@ same backup cannot be detected (inherent to any local state), nor can a block-le
 - Accepted checkpoints and the `n` high-water mark (`HostPins.accept_checkpoint`, `high_n`) and the outbox
   (`hosts/<ws>/outbox/`, §11) belong to the store; R3 reads and deletes outbox entries and mints catch-up entries only
   through the store's API.
-- Membership and `WK_e` (`hosts/<ws>/membership/`, `keys/`) belong to R6.
+- Membership and `WK_e` (`hosts/<ws>/membership/`, `keys/`) belong to R6 (layout and crash rules: 11A.15.3).
 
 **Never persisted:** session tokens (memory only: 15 min, a login is cheap, and no bearer secret lands on disk);
 challenges; response plaintext; request plaintext **except** the one exception below; derived `K_bridge`/`K_msg`;
@@ -5211,7 +5213,8 @@ stops the worker.
   It then admits (T1), dispatches through `relay_call` with at most 2 jobs in flight per workspace, chunks the answer at
   ≤ 256 KiB (an answer above 4 MiB of plaintext is refused `frame.too_large`), commits T2 and POSTs.
 - `after` advances only to the end of the contiguous prefix of `n`s whose rid record is durable (§11, P3-D10). A
-  `pair` item is handed to R6. Until R6 exists, it is dropped and never acknowledged out of order.
+  `pair` item is handed to R6 (`R6Pairing`, 11A.15.2). Until R6 exists, it is dropped and never acknowledged out of
+  order.
 
 **Epochs (proto §8.5, P3-D22).**
 - A lower epoch whose key `BridgeKeys` still holds, burned keys included: record, then a `stale_epoch` refusal sealed
@@ -5518,7 +5521,7 @@ deadline, not after a per-read timeout per byte.
 
 **Redirects and connections.**
 - No redirect is followed. Any 3xx is a permanent `relay_redirect` alarm.
-- Per workspace: 4 connections (poll, responder, publisher, aux). Relay connections are outbound and do not count
+- Per workspace: 4 connections (poll, responder, publisher, aux); 5 with R6's thread (11A.15.2, 11A.15.15 Q7). Relay connections are outbound and do not count
   against the host's socket cap of 64. Instead, v1.7 caps relay-linked workspaces at **8 per host** (32 relay threads):
   `relay.link` is refused with `host.limit` above it (decided by orch-52, 13 Oct 2026).
 - One long poll per generation (the relay cancels the older one).
@@ -5644,7 +5647,8 @@ with local state (`link.json` `card_seq`, the host's own member list, the logs a
 **Harness.** Two layers.
 1. **Recorded-fixture mock (every PR, T0/T1).** An in-process `http.server` on loopback replays the vendored HTTP
    fixtures (request matched byte-exactly) and adds scripted faults.
-2. **The real relay (required CI job, T2).** `uv run orch-relay serve --host 127.0.0.1 --port 0` from the pinned
+2. **The real relay (required CI job, T2).** `uv run orch-relay serve --host 127.0.0.1 --port <port>` on a free port
+   chosen first (the origin is fixed at start, so `--port 0` cannot work; 11A.15.12 C4), from the pinned
    orch-relay commit of `SOURCE`, with `ORCH_RELAY_ORIGIN=http://127.0.0.1:<port>` and a temp `ORCH_RELAY_DATA`, run
    **twice**: `ORCH_RELAY_MAX_PUBLICATION_BYTES=4194304` (the internal deployment) and the 16 MiB default. It runs
    link, a device request built by the relay's reference client (`ref/`), a publication with catch-up, a restore, and
@@ -5690,7 +5694,7 @@ orch-mobile before R2 merges.
    numbers above every existing `n`, atomic outbox replacement, anchors untouched). F1 §5.10 does not forbid
    intermediate prefixes; `Store.mint_catchup` and `Checkpoints.sign_prefix` must be added.
 3. **R6 before R2 merges?** *Recommended: yes,* at least R6's complete security contract (11A.1), and no real device
-   before R6 is implemented and integration-tested.
+   before R6 is implemented and integration-tested. The contract is 11A.15 (draft of 15 Oct 2026).
 4. **Convenience exception?** *Recommended: no* in v1.7 (11A.6).
 5. **`rid_conflict` placement?** *Recommended:* once any POST of the original was attempted (a timeout included), its
    exact bytes are replayed; silence while the original has no answer; the unattempted cases as in 11A.4. To confirm
@@ -5732,6 +5736,8 @@ orch-mobile before R2 merges.
   is host configuration (`link.json`).
 - **Independent rollback witness:** none in v1.7 (11A.9).
 - **Q14:** the number exists only in the orch-mobile/orch-29 numbering (`docs/gaps.md`), not in the relay docs.
+- **R6:** the conflicts and gaps of pairing, membership and custody (`PK` not stored, `dk_kx` discarded, the rotation
+  gate in R2, the order of R6a and R5) are listed in 11A.15.12.
 
 ### 11A.13 Challenge and tie-break record
 
@@ -6036,6 +6042,630 @@ uid**, both with the 900 s freshness window. Three conflicts were settled:
    counts against the cap of 3.
 3. **"The host must not check the ULID time" (orch-f1): rejected.** Without a schema change, the id's time is the only
    signed freshness datum. The host admits by it; replay and readers never check it.
+
+### 11A.15 R6: pairing, membership, cards, WK custody (security contract)
+
+Status: **draft of 15 Oct 2026 (orch-29), docs only. The Opus review and the Codex challenge are pending, and orch-52
+decides.** This is the R6 security contract that 11A.1 and 11A.11 Q3 require before R2 merges. Ground truth:
+- relay: orch-relay `develop` @ `446d247` (protocol v2 §4, §5.2, §5.3, §6.1, §6.2, §7, §8.3 to §8.6, §19.1 to §19.3
+  and §19.8; P3 design §5, §8 and §9; P3-D3 to D11, D26 to D28, D30, D31 and D38);
+- core: `develop` @ `37f9dbb2`;
+- R2: PR #467 @ `b00103ac` (`relay/keys.py`: `EpochKeySource`, `BridgeKeys`, `R6View`).
+
+Where the relay protocol says nothing, the text says so and proposes a rule (11A.15.13). Where core and relay disagree,
+the conflict is listed in the same subsection. **JUDGEMENT CALL** marks a choice this draft makes, always the
+fail-closed reading. "MUST" is normative for R6 and for the H12c builders.
+
+#### 11A.15.0 Scope and the decided split
+
+The split was decided by orch-52 and orch-f1 on 15 Oct 2026 (coordination log, 03:50). This contract confirms it:
+- **R6 (stream D, `orch/relay/`)** runs the host side of pairing in the host's relay worker:
+  - the offer and the invitation link, emitted **first through a host CLI** (11A.15.9; the dashboard comes later,
+    orch-fa);
+  - the pair-request handling (proto §8.3), the cert request (§8.4 step 1) and the R6 allocation;
+  - membership publication (§11 H1 to H8), WK custody, card keys and the WXK card rotation;
+  - the `R6View` and `EpochKeySource` that R2 reads.
+- **The person's Mac device key is the primary.** It runs the primary steps of §8.4: it checks the request, signs the
+  challenge, the certificate or the rejection, and uploads the certificate. It is an **owner client** on the person
+  path, never code in the host process (D-P2-15: the host holds no device or person key).
+- **H12c (orch-52)** provides the F1, custody and object builders (11A.15.10). R6 schedules on them.
+- **orch-mobile (the phone, orch-f1) pairs only as a non-primary device** of the workspace owner. In P3 every member is
+  the owner (P3-D6, "lists have one person in practice"). A phone of another person cannot pair through a link: proto
+  §8.3 step 3.5 refuses a certificate whose person is not the card owner (`other_person`), and the link pins the
+  owner's `PK`.
+
+**Not in R6:**
+- scoped agent enrolment (§6.4);
+- `drop_rewrap` (§7.5);
+- the `vault`/PVK distribution;
+- push;
+- a second person (P8);
+- the bridge op `member_remove` from a device (not in `RELAY_OPS` in v1.7: a removal is made on the Mac, through F1
+  `device.removed`).
+
+#### 11A.15.1 Parties, keys and who holds them
+
+| Key | Holder in core | Used by R6 for | Status on `develop` |
+|---|---|---|---|
+| `WSK` | the host (`file` tier, `workspace` role) | signing lists, grants, cert requests, pair answers and cards through `RelaySigner` (11A.15.7) | exists |
+| `WK_e` (one per epoch, ever) | R6, `membership/keys/` (11A.15.3) | grants (sealed), `K_bridge(e)` through `EpochKeySource` | **must be added** |
+| `WXK_v`, `CK_s` | R6, `membership/keys/` | the card (`wxk_pub`, `ck_commit`) and the card-key wraps | **must be added**; R1's `LinkSteps.card()` already needs them (11A.15.12, conflict C6) |
+| `S`, `sas_nonce` (per offer) | R6, the offer record | `K_pair`, the SAS | **must be added** |
+| `PK` (person) | **not stored**: `orch init` derives it from the recovery code and drops it (C8, `ops/workspace_init.py`) | the primary signs certificates, cert challenges and rejections with it (§5.2, §8.4) | **conflict C1** (11A.15.12): the primary needs `PK` at every pairing |
+| primary `dk_sig` | the person path (passphrase or Secure Enclave backend) | relay login as a device (D(p) session on the cert queue) | the per-workspace device key exists; a **person-level primary device does not** |
+| primary `dk_kx` (private) | **discarded** at `init` (11A.12) | opening the sealed `cert_request` inner (purpose `cert-request`) | **conflict C2**: a new primary key pair is needed |
+| the Mac's per-workspace `dk_sig` (F1 device) | the person path | signing F1 `device.added` for the phone (F1 §5.3: an existing device of the same person) | exists |
+
+**JUDGEMENT CALL (primary identity).** The primary is a **person-level** device key pair on the Mac, made once per
+person by `orch keys primary init` (H12c, 11A.15.10 item 9). It has:
+- `dk_sig` and `dk_kx` under person-path custody, with the private `dk_kx` **kept**;
+- a `PK`-signed certificate with `scopes_max` `["look","decide","operate","type"]` and `expires_ms: null`;
+- registration on the relay as the account's device (`POST /v2/accounts` the first time, `PUT /v2/devices` after).
+
+It is **not** an F1 member of any workspace and not in any relay member list. It only receives cert requests (D(p),
+addressee) and signs with `PK`. The relay requires only that the addressee is a registered, valid, non-drop device of
+the person (`cert_queue.py`: else `not_for_this_device`). It does not have to be a member. The phone is the first
+owner member device of the first list (§7.2 check 4).
+
+#### 11A.15.2 What R6 gives R2 (`EpochKeySource`, `BridgeKeys`, `R6View`) and how each is verified
+
+R2 receives no raw key and writes no R6 state (11A.1, 11A.2). R6 builds the objects below and hands them to R2 at
+worker start. **Only `relay/keys.BridgeKeys` may hold an `EpochKeySource`:** an AST test over `orch/relay/` refuses any
+call of `.wk(` outside `keys.py` and any import of R6's key store outside `r6/`.
+
+**`EpochKeySource` (R6 implements; R2 PR #467 defines the protocol):**
+
+| Call | Returns | Verified how |
+|---|---|---|
+| `current_epoch() -> int` | the **committed** epoch `e_c`: the epoch of the last list the relay accepted with a 2xx, for which R6 holds `WK_e_c` and whose `wk_commit` equals `H(ws, e_c, WK_e_c)` recomputed at load. `0` before the first committed list (R2 then has no members and serves nothing). Never `EHW`, never an exposed or pending epoch | at load: `head.json` `committed` against the key file and `wk_commit`; any mismatch is H7 host-state loss (§11) and R6 refuses to start the worker (alarm `membership_state_unsafe`) |
+| `wk(e) -> bytes \| None` | the key of an epoch `e ≤ e_c` that R6 holds: active, old or **burned** (proto §8.5 G2b: a burned key counts as held). `None` for `e > e_c`, for an exposed but uncommitted epoch, and for a key past retention | the key file's epoch equals `e`; a held key's `wk_commit` must match every commit R6 recorded for `e` |
+| **new: `seal_state() -> SealState(epoch, sealable, announce)`** | `sealable` is false while the **rotation gate** is up (§11, §7.2 step 4). `announce` is the epoch a `stale_epoch` refusal names: `e_c` with the gate down, the rotation target with it up | the gate is R6's durable flag in `head.json` (11A.15.4); it is raised before any other effect of the decision |
+
+**`BridgeKeys` invariant (enforced in one place).** R6 asks for one change to R2 PR #467 (gap G1, 11A.15.12):
+`BridgeKeys.seal_response` refuses a chunk without the `REFUSAL` flag unless `request.epoch == e_c` and `sealable` is
+true. This is the single choke point for "nothing new is sealed under an old, burned or gated epoch, except refusals"
+(§7.2 H4, §8.5, 11A.5). Callers keep their own checks, but the rule does not depend on them.
+- Byte-exact replays of chunks that are already stored are not new sealing. They never pass through `seal_response`.
+- While the gate is up, R2 applies the rotation rule of 11A.5 with `epoch = announce`:
+  - open answers end with `LAST | REFUSAL stale_epoch`;
+  - a request that ran without an attempted chunk gets `already_done {status:"unknown"}`;
+  - new requests at `e_c` get a `stale_epoch` refusal sealed under `e_c` naming `announce`.
+
+  The phone then demands a list at `≥ announce` (§7.3 D5). If `announce` is later burned, the next commit is above
+  it, so the phone's demand is still met.
+- **JUDGEMENT CALL:** naming the pending target, never `e_c`. A `stale_epoch` naming `e_c` would be dropped by the
+  device (§8.5: the epoch must be higher than the request's).
+
+**`R6View.member_list() -> MemberList | None`.** R2 reads `epoch`, `list_hash` and `members[device] = Member(device_id,
+person_id, scopes, cert, pk_pub)`. Each field is verified as follows, **never against what the relay serves**:
+- **The list** is the host's own committed list. It is the exact `cj(o)` that R6 exposed (H2) and that the relay
+  answered 2xx, re-verified at load: the WSK signature, `workspace_id`, `list_seq == committed.list_seq`, `epoch == e_c`,
+  `wk_commit` against the local key, and `list_hash == "sha256:" + hex(sha256(cj(signed list)))`.
+  - `GET members` is read only to detect divergence (H3, H7). A relay-served list never becomes the `R6View`. A
+    relay can serve an older or another WSK-signed list (11A.9 "Authenticity, not currency"); the host never adopts
+    one.
+- **`scopes`** are the list entry's. At build time, the builder checked that they are a non-empty prefix of
+  `["look","decide","operate","type"]`, no longer than the certificate's `scopes_max` and no wider than the offer's
+  `scopes` (11A.15.6). R2 checks the op against both the list's scopes and the certificate's (11A.4).
+- **`cert`** is the certificate held in `membership/devices/<device_id>.json`, verbatim. It was verified at the
+  allocation:
+  - `check_cert` under `pk_pub`;
+  - `device_id(dk_sig_pub)` equals the entry's id, and `person_id(pk_pub)` equals the entry's `person_id`;
+  - its keys equal the pending pairing's keys;
+  - not a `drop:` scope.
+
+  R2 re-runs `verify_cert` at its own clock per request (expiry, revocations).
+- **`pk_pub`** is the owner's `PK` from the **genesis delegation** in the workspace log (`check_delegation`), never
+  from the relay, the account or the pair answer. In P3 every entry's `person_id` is the owner's. An entry of another
+  person makes `member_list()` raise (fail closed) until P8 defines multi-person membership.
+- **Device and person association.** The list entry pairs a device with a person by the certificate. R2 adds the F1
+  check (`store.state.device_person(device) == person`, not removed, not revoked, no `HostPins` evidence for the exact
+  pair; 11A.4 step 3). R6 includes a device in a list only when that F1 check passes at build time (11A.15.4). R2's
+  check is the per-request recheck, not the only one.
+- **Burned epochs.** They are not in `R6View`. They reach R2 only through `wk(e)` (held) and `seal_state()` (never
+  sealable). An epoch above `e_c` is dropped by R2 (§8.6 step 2). Conflict C5 covers a burned epoch above `e_c`.
+- **The reader reservation for a pairing (11A.6)** is not an R2 concern. R2 hands every `route:"pair"` poll item to
+  `R6Pairing.handle(item)` (below) and never opens epoch 0 itself. Until R6 is wired, R2 keeps dropping pair items and
+  never acknowledges them out of order (11A.5).
+
+**`R6Pairing` (new interface, R6 implements, R2 calls):**
+- `handle(item: PollItem) -> None` takes a pair item and queues it on the R6 thread.
+- `completed(n) -> bool` tells R2's cursor rule whether item `n` is durably handled. A pair item is handled once its
+  offer record transition (or its "dropped" decision) is durable. `after` advances only over such items (§11, P3-D10).
+
+**Threads.** **JUDGEMENT CALL:** R6 runs on a fifth thread per workspace, `orch-relay-r6-<id8>`, with its own
+connection. Membership publication must not wait behind the publisher (§11), and a 2 MiB `PUT membership` or a
+cert-request wait does not fit the aux thread's 10 s budget, which protects lease renewal (11A.5). Consequences:
+- 5 connections per workspace and 40 relay threads at the 8-workspace cap (11A.7);
+- the memory bound gains 2 MiB (one membership body) per workspace: ≤ 38 MiB, so ≤ 304 MiB per host.
+
+#### 11A.15.3 State (extends 11A.3)
+
+R6 owns `<state>/hosts/<ws>/membership/` (0700, host UID, in the D-P2-17 custody list and `check_workspace_files`).
+Its existence already makes `_relay_paired` true (11A.6). Files are written with `host/custody.write_private`. Key
+files are **claimed write-once** (`os.link` of a fsynced temp file, as R1's `PersistedOnce`).
+
+| File | Contents | Secret | Crash rule |
+|---|---|---|---|
+| `head.json` | `{v:1, lhw, ehw, committed:{list_seq, epoch, list_hash, wk_commit, list, at_ms} \| null, exposed:{list_seq, epoch, new_epoch, body (exact cj bytes, b64u), digest, adds:[device_id], first_send_ms, attempts} \| null, burned:{epochs:[…], list_seqs:[…]}, holders:{"<e>":[device_id…]}, gate:{up, reasons:[…], since_ms, target} \| null, h8:{count, alarm}, card:{card_seq, wxk_version, ck_seq, wxk_retired:[{version, retired_ms}]}}` | no | the **one** atomic write of H1/H2: the allocation, the signed list, the grants, the wraps, the holder-set additions and the burns land together. The rest of the rows say what precedes it |
+| `keys/wk-<e>.json` | `{v:1, epoch, wk, created_ms}` | **yes** | claimed **before** the `head.json` write that allocates `e`. **Recovery:** at load, `ehw := max(head.ehw, every wk-* epoch)`. A key file whose epoch `head.json` never exposed or committed is an **orphan** and is treated as burned (never activated, never re-generated). So a crash between the key and the head never yields a second key for one epoch |
+| `keys/wxk-<v>.json`, `keys/ck-<card_seq>.json` | the WXK private key of version `v`; the `CK` of a card | **yes** | claimed before the card that names them is signed. An orphan `ck` or `wxk` file is never reused for another card (a `card_seq` is never rebuilt: `RelaySigner.card` refuses) |
+| `devices/<device_id>.json` | `{v:1, device_id, person_id, cert, label, offer_id, paired_ms, decl_digest}`: the relay-reachable devices (paired through R6) | no | write-once at the allocation (11A.15.6 step 9) |
+| `pairing/<offer_id>.json` | the offer record (11A.15.6): `state`, `S`, `sas_nonce`, `scopes`, `created_ms`, `expires_ms`, the consumed request's `{device_id, dk_sig_pub, dk_kx_pub, attempt, label, cert?, decl?}`, `request_id`, `cert`, `event_id`, `baseline`, `answers:{rid: chunk bytes}`, `answer` (the approved fields) | **yes** (`S`, `sas_nonce`) | rewritten atomically **before** every answer or network write that depends on the transition. `S` and `sas_nonce` are dropped from the record at a terminal state plus 10 min. The record shrinks to a tombstone `{offer_id, state, device_id}` after 7 days (the baseline life) |
+| `alarms.json` | the R6 alarms (`membership_*`, `pairing_*`, `card_*`) shown in `host.status.relay` | no | rewritten atomically |
+
+**Retention of epoch keys.** **JUDGEMENT CALL:** in v1.7 R6 **never deletes** an old or burned `WK_e`. The protocol
+keeps old keys "to read old content" and holds burned ones like old ones (§7.2), but no core text defines the
+retention, and a deleted key turns a phone's `stale_epoch` into silence. The cost is 32 bytes per epoch, bounded by the
+clamp. A deletion policy is open question Q8. `WXK_v` is deleted at `retired_ms + 14 days` (§7.4). `CK_s` is deleted
+once a card with a higher `card_seq` is accepted.
+
+**Never persisted:** derived `K_pair` and `K_bridge`, the cert-request inner plaintext, a device's label before
+cleaning, session tokens.
+
+#### 11A.15.4 Membership publication from R6's side (§11 H1 to H8)
+
+§11 states H1 to H8. Here is how R6 applies them, and what the list contains.
+
+**The desired list (JUDGEMENT CALL: relay-reachable devices only).** `desired(state)` is computed under the store lock,
+in a worker job, from:
+- the devices in `membership/devices/`;
+- minus every device that is not a current valid F1 device of its person (removed, revoked, or `HostPins` holding
+  evidence for the exact pair);
+- minus every device the relay reported revoked (poll `notices.revocations_cursor`, `rotation_due`, R4's unpublished
+  feed, a `revoked` refusal);
+- minus every device whose certificate has expired at the host clock.
+
+The Mac's own F1 devices are **not** listed: they are reached through the socket, their `dk_kx` may not exist, and
+granting them `WK` would only add holders. `persons` is the set of the listed persons (in P3, `[owner]`). A
+**desired list that is empty** is never published. The previous list stays committed, and R6 raises the gate and
+alarms `membership_empty` instead. The relay refuses a list with no owner device (`other_person`, check 4), and an
+empty list would also be refused at the first publication.
+
+**When R6 publishes.** One body is exposed at a time (H2). A **list change** is a difference between `desired` and the
+committed list:
+- **an addition only** (a pairing): same epoch `e_c`. A grant of `WK_e_c` goes to the new device, and the device
+  joins `holders[e_c]`;
+- **any removal** (F1 `device.removed`/`device.revoked`, relay revocation, held evidence, certificate expiry): the
+  gate goes up **durably first** (§11 "Rotation gate"). The list then rotates to the target `min(EHW + 1, committed +
+  2^16)`, with a fresh `WK`, grants for every remaining device, and card-key wraps for the new devices;
+- **the 90-day age, `orch keys rotate`, or no local key for `e_c`**: rotation (§7.2), plus H7 when the key is missing;
+- **a change while a body is exposed** supersedes it (H4). The exposed body is abandoned and its `list_seq` burned,
+  and its epoch too if it introduced one. The next body is planned from the new `desired`.
+
+**Write-ahead (H1/H2), in this order:**
+1. under the R6 lock (one thread): compute `desired`, the allocation `list_seq = LHW + 1`, and, for a rotation,
+   `E = target`;
+2. for a rotation, generate `WK_E` and **claim `keys/wk-<E>.json`** (fsynced);
+3. build and sign: `wk_commit` (H12c), the list `o` (H12c) signed by `RelaySigner.member_list` (11A.15.7), one
+   `wk_grant` per member (sealed to its `dk_kx`), and the card-key wraps for devices new to the current card;
+4. **one atomic `head.json` write**, containing:
+   - `lhw := list_seq`, and for a rotation `ehw := E`;
+   - `exposed` = the exact body bytes;
+   - the holder-set additions;
+   - any burn this body supersedes.
+5. only then the first send (`PUT membership`, W(g), `Orch-Holder`).
+
+**Outcomes (H3/H4, as §11; R6 specifics):**
+- **2xx** (`{list_seq, epoch}` equal to the body's; any other answer is `relay_misbehaving`, treated as transient and
+  alarmed): one atomic `head.json` write sets `committed` to the body, clears `exposed`, lowers the gate if this
+  rotation excluded every gated device, and resets the H8 count. R2 sees the new `e_c` on its next `seal_state()`.
+- **Transient** (a lost response, a connection error, a timeout, 429 `rate_limited`, 5xx, a 401 then re-login,
+  `fenced` then an explicit re-hold): resend the exact bytes. After a re-login or a re-hold, first `GET members`,
+  verified with the WSK. If the list is above `LHW`/`EHW`, or not a body R6 exposed, apply H7.
+- **429 `quota_exceeded`** (4 096 ever-devices, P3-D31): permanent. Abandon the body (it burns, as a content
+  refusal), alarm `membership_quota`, and refuse new pairings for this workspace (`relay.quota`).
+- **Container-only** (`stale_card`, `wrap_conflict`): rebuild only the wraps (for `stale_card`, after R1's
+  verified `GET card`) and resend the **same** signed list and grants. Nothing is burned.
+- **Content or divergence refusal** (the H4 list): burn, then plan again. A same-epoch addition refused `revoked`,
+  `cert_expired`, `cert_invalid`, `other_person` or `scope_exceeded` puts the new device in `holders[e_c]` (H5),
+  because the relay may have stored the body. The next list therefore **rotates** without it
+  (`same_epoch_add_refused_revoked_forces_rotation`), and the pairing ends `failed` (11A.15.6).
+- **H8:** the refusal counts and the 10-minute uncommitted-rotation alarm as §11, in `head.json` `h8`. Backoff never
+  lowers the gate.
+
+**H7 (host-state loss) from R6's side.** R6 treats each of these as host-state loss:
+- `head.json` missing, unreadable or torn while the WSK and `link.json` exist;
+- a key file for `e_c` missing;
+- a verified relay list above `LHW`/`EHW`;
+- a relay list at a `list_seq` R6 exposed but with other content;
+- R1's preflight reporting a restored or copied state directory.
+
+R6 then does exactly §11 H7: a verified `GET members`, then `LHW`/`EHW` raised by 1024 above the larger value, then an
+immediate rotation. **The device registry survives a lost `head.json` only if `devices/` survived.** When `devices/`
+is lost too, R6 cannot rebuild the list: it publishes nothing, alarms `membership_devices_lost`, and the owner re-pairs
+the phones. The relay's list names device ids, not certificates R6 could trust.
+
+**Revocation.** R6 learns a revocation from:
+- the poll notices `revocations_cursor` and `rotation_due` (read through R1's session: `GET persons/{p}/revocations`,
+  verified under the pinned `PK` with `verify_revocation`);
+- R4's held evidence;
+- the F1 log (`device.revoked`, `device.removed`);
+- a 403 `revoked` on a chunk POST (R2 reports it to R6).
+
+Each one, verified, **raises the gate durably** and triggers a rotation. A `rotation_due` notice that R6 cannot match
+to a verified revocation still triggers a rotation, because rotating is always safe, but changes no membership. R6
+**never appends** `device.revoked` or `device.removed`. A revocation that F1 does not yet carry gets the `needs` item of
+11A.9 ("publish this revocation"). There is no un-revoke: the device pairs again with new keys.
+
+#### 11A.15.5 Cards: WXK rotation and card keys
+
+- **The first card** (R1 first link, `LinkSteps.card()`): `WXK_1` and `CK_1` are claimed in `keys/` before the card
+  is signed. The card's sealed part is `{name, description, capabilities, hosted_by: null}`, with `client_hosted:
+  false` from the delegation. This custody is needed **before R5** links anything (conflict C6).
+- **Card-key wraps.** `CK_s` for the current `card_seq` is sealed (purpose `card`) to each device new to that card,
+  inside its membership body (`card_key_wraps`, P3-D7). The relay accepts wraps only for current-list members and the
+  current `card_seq`.
+- **WXK rotation (§7.4: with the 90-day epoch).** Each step is one durable state of `head.json` `card`:
+  1. the membership rotation commits first (it may carry wraps for the **current** card);
+  2. claim `wxk-<v+1>` and `ck-<s+1>`, build the card (`wxk_version + 1`, `card_seq + 1`, a fresh `CK`), sign it with
+     `RelaySigner.card` (its ledger refuses a second card at a `card_seq`), and `PUT card` (W(g));
+  3. `PUT card-keys {card_seq: s+1, wraps}` for every current member, in batches under 64 KiB;
+  4. record `retired_ms` for `WXK_v` (deleted after 14 days) and drop `CK_s`.
+- **Card outcomes.**
+  - `stale_card` on `PUT card`: verified `GET card`. If it holds our `s+1` card, continue. Otherwise alarm
+    `card_diverged` and stop card work. **JUDGEMENT CALL:** the relay must never show a card R6 did not sign, and the
+    ledger keeps us from signing two.
+  - `stale_card` on `card-keys`: reread the card, then rebuild the wraps for the relay's current `card_seq`, but only
+    if it is ours.
+  - `wrap_conflict`: other bytes for a wrap that is already stored. Keep the stored ones (the wraps are sealed, so the
+    old wrap still opens `CK`). This is idempotent from the device's view.
+- **Gap (relay silent):** between step 2 and step 3, devices that fetch the new card cannot open its sealed part
+  (404 `card-key`). The proposal is that the device keeps showing the previous card's names until its wrap arrives.
+  This is an orch-f1 rule, recorded in 11A.15.13.
+
+#### 11A.15.6 Pairing, host side, step by step
+
+**The offer record's state machine.** Each transition is one atomic write of `pairing/<offer>.json`, made **before**
+the answer or network write it enables:
+
+`open → pending → confirmed → cert_pending → allocated → published → approved`, plus the terminal states `rejected`,
+`expired`, `cancelled` and `failed`.
+
+**At most one live offer per workspace (JUDGEMENT CALL):** "live" means any non-terminal state. The relay allows one
+open cert request per workspace (`request_open`), and one pairing at a time keeps the human's comparison unambiguous.
+
+| # | Step | Persisted first | Failure, retry, crash |
+|---|---|---|---|
+| 1 | **Offer creation** (`orch host relay pair`, control op `relay.pair_offer`, human_only, refused under `ORCH_GRANT`). The preconditions are checked in one worker job **under the store lock**: `link.json` is `linked`; the worker is running and holds a gen; no live offer; the early reader check (`refuse_reader_op(service, "relay.pair", history=True)` before H12d-2, then `check_readers` against the offer's `required_reader`); no `membership_quota` alarm; the device count is below the cap. R6 then draws `offer_id` (16 bytes), `S` (32), `sas_nonce` (32) and the scopes (default `["look","decide"]`), and sets `expires_ms = now + 10 min` | `pairing/<offer>.json` state `open` (this is the pairing reservation of 11A.6, written before the link exists) | any refusal writes nothing. A crash after the write leaves an `open` offer that expires on its own. The CLI shows the link **only after** the write returns |
+| 2 | **The link and QR** (11A.15.9): `https://<relay>/pair#v2.<ws>.<offer>.<b64u S>.<b64u wsk_pin>.<b64u pk_pin>` and the native `orch://pair?relay=<pct origin>#v2.<same five fields>`, both from H12c `pair_link`. `pk_pin` is the pinned owner `PK` from the genesis delegation; `wsk_pin` is the own WSK | nothing new | secrets: `S` is shown on the person's terminal only. It is never logged, never sent through the control socket's logs and never in `host.status` |
+| 3 | **A pair request** (a poll item, `route:"pair"`). The R6 thread runs §8.6 steps 1 to 3 (silence for an unknown or terminal offer past retention, or a bad tag under `K_pair`), then §8.3 step 3 in order: meta shape and exact field set (with `reader_decl`, a byte cap of 2 KiB plus margin **before** parsing, H12d-2 note I2); the offer `open` and unused (else `pairing_closed`, except the resend case below); `device_id(dk_sig_pub)` equal to the header's, and the signature; ±300 s; a presented `cert` (owner's person, valid, not revoked, these two keys) | none for a refusal. Each refusal is charged to the offer's own budget of 5 per minute (in memory; past it, silence), carries `wsk_pub`, and is sealed and signed (`RelaySigner.pair_answer`) | the answer bytes are kept per `rid` in the record **before** the POST. An identical resend of that `rid` replays them byte-exact (the relay refuses other bytes with `chunk_conflict`, `bridge.py`). Pair answers are never re-stored after their 60 s copy expires, so the device re-polls with a new `rid` |
+| 4 | **The reader gate (H12d, early).** `verify_decl` (`via:"pair"`, `who` the link's `pk_pin`, or the presented cert's person; `bind` this offer and this `attempt`; `dk_hash` of the meta's keys) and the level against `required_reader`. Absent means 0 | — | a failure answers the short `{"state":"rejected","wsk_pub"}` and moves the offer to `rejected` (the host screen gives the reason, §0.8.6 item 9.15 Q4). This happens **before** the SAS is shown and before the primary is asked (§0.8.6 item 9.4) |
+| 5 | **Consume** the offer | state `pending` with the keys, `attempt`, the cleaned label (11A.15.13), the cert if presented, and the declaration verbatim | the write **precedes** the `pending` answer (`{state, wsk_pub, sas_nonce, dk_sig_pub, dk_kx_pub}`, exact). A second device with a valid tag (it holds `S` too) then finds the offer used: `pairing_closed`. A resend by the same keys and `attempt` gets `pending` again (§8.3 step 3.2) |
+| 6 | **The human compares the SAS** on the Mac (the CLI shows `sas(ws, offer, dk_sig_pub, dk_kx_pub, wsk_pub, sas_nonce)`, the cleaned label and the requested scopes). The default is **Reject**: only an explicit `y` approves | `confirmed`, or `rejected` | a reject answers the short `rejected`. An unanswered prompt expires with the offer (10 min after `pending`, **JUDGEMENT CALL**, proto silent): state `expired`, answer `{"state":"expired","wsk_pub"}`. A crash keeps `pending`, and the CLI re-attaches with `orch host relay pair --resume` |
+| 7a | **A presented certificate** (the phone is already the owner's device): skip to step 8 with that cert. Its `scopes_max` caps the list scopes | — | — |
+| 7b | **The cert request** (§8.4 step 1): H12c `cert_request_o` with `request_id` (16 bytes), `primary_device_id` (the configured primary, 11A.15.1), the clear binding `offer_id`, `attempt`, `device_id`, `dk_hash`, `expires_ms = created + 10 min`, and `inner` sealed to the primary's `dk_kx`, with `scopes_max` = the offer's scopes. Signed by `RelaySigner.cert_request`, then `POST /v2/persons/{owner}/cert-requests` (W(g)) | `cert_pending` with the **exact request bytes**, before the POST | transient: resend the same bytes (the relay answers the same request 200). `request_open`: another open request of this workspace exists, which R6 never creates, so alarm `pairing_request_open` and answer `cert_pending` with `challenge: null` until it expires, then `expired`. `replayed`: a request id clash, so alarm and fail. `expired`: state `expired`. The phone polls `pair_status` meanwhile and gets `cert_pending` (`primary_label`, `pk_pub`, `challenge` or null, `wsk_pub`) |
+| 7c | **The primary's challenge.** The R6 thread polls `GET /v2/cert-requests/{id}` (W, at most every 2 s, until `expires_ms`). It relays the PK-signed challenge **unchanged** in `cert_pending`, after verifying it under the pinned `PK` and against the stored request's binding (the phone verifies again, §8.4 step 5). Unverifiable relay data is dropped and alarmed `relay_misbehaving` | the challenge, in the record | a relay that withholds the challenge only delays: expiry gives `expired` |
+| 7d | **The primary signs or rejects** (owner client, 11A.15.9): it uploads the certificate (`PUT /v2/devices/{device}`) and the relay marks the request `signed`; or it posts a `cert_rejection` | — | `rejected` with a rejection: R6 relays the long form `{state, wsk_pub, pk_pub, rejection}` unchanged after verifying it (§8.3 G3b). `expired`: `expired` |
+| 8 | **Certificate in hand** (from step 7a, or from `GET cert-requests/{id}` `state:"signed"`). R6 verifies it itself, never trusting the relay's state: `check_cert` under the pinned owner `PK`; the keys equal the pending keys; `person_id` is the owner's; `verify_cert` at now (not expired); no revocation known (relay feed and `HostPins`); `scopes_max` equals what was requested, or for 7a covers the list scopes | the cert, in the record | any failure ends the offer `failed` (short `rejected`, alarm `pairing_cert_invalid`) |
+| 9 | **The R6 allocation (the authoritative gate).** The CLI drives the person path: `human.prepare` of the new material kind `relay.pair_device` (H12c, 11A.15.10 item 10) renders `device.added {device, cert}` with the device id, label, scopes, `cert_code`/SAS and the cert digest. The Mac's workspace device signs it (click or terminal signer), then `human.submit`. The submit's append job, **under the store lock**, in one critical section: (i) the record is `confirmed`/`cert_pending` with this cert; (ii) the authoritative reader check (`refuse_reader_op`, later `check_readers` over the event, §0.8.6 item 9.4); (iii) `append_signed(...)` of `device.added`; (iv) the reader record (§9.10, `source:"pair"`); (v) `membership/devices/<id>.json`; (vi) the offer state `allocated` with the event id | the F1 log line is the commit. Then devices and offer are written under the same lock before it is released | **crash recovery** (at open, before the worker starts): an offer at `confirmed`/`cert_pending` whose `device.added` (same cert, same device) is in the log is rolled forward to `allocated`, and `devices/<id>` is written if missing. A `device.added` without a matching offer is a plain F1 device (not relay-reachable). The gate refusal ends the offer `failed`: nothing appended, short `rejected` |
+| 10 | **Publication.** `PUT /v2/devices/{device} {cert}` (idempotent: an identical `cj(o)` is a free 200; `cert_conflict` is alarmed `pairing_cert_conflict` and fails the offer), then the membership body that **adds** the device (11A.15.4; a rotation if the gate is up). **No WK is sealed before steps 8 and 9** (§8.3 step 5) | H1/H2 `head.json` write-ahead | as 11A.15.4. A content refusal of the add ends the offer `failed` and forces the rotation (H5). The device stays an F1 device: R6 raises the `needs` item "pairing of <label> failed after it was added: remove the device" and never appends `device.removed` itself |
+| 11 | **The baseline.** After the add committed: R1's verified `GET checkpoint` gives the held `{n, hash}`. `POST /v2/workspaces/{ws}/baselines {hash, offer_id}` (W(g), 7 days). **JUDGEMENT CALL:** a linked workspace always has a held checkpoint (the first link publishes one), so a missing one while `published.jsonl` has an accepted entry is `relay_rolled_back` (11A.5): R6 does not approve with `baseline: null` and retries | `published` with `{epoch, list_seq}` of the **accepted** list, the current accepted `card_seq`, and the baseline | `404 not_found` or `410 checkpoint_gone`: reread H (it moved) and pin the new one. `quota_exceeded` (16 pins): alarm, retry hourly. A baseline is never downgraded: a re-pin names an H with `n` at or above the recorded one |
+| 12 | **Approved.** Every later `pair_status` gets `{state:"approved", scopes, cert, pk_pub, epoch, list_seq, card_seq, baseline, wsk_pub}` from the record (exact, F7: numbers of objects the relay accepted, never a pending or refused one) | `approved` | the answer is a pure function of the record, so a resend or re-poll is consistent. The pin is released (`DELETE baselines/{hash}?offer_id`) when the device's first verified column-R request arrives, or left to expire (**JUDGEMENT CALL**, proto silent on the host's release point). The record becomes a tombstone after 7 days |
+
+**Cancellation.** `orch host relay pair cancel --offer O` writes `cancelled` (any non-terminal state):
+- an `open` offer then answers every tag-valid request `pairing_closed`;
+- a `pending`, `confirmed` or `cert_pending` one answers the short `rejected`;
+- a cert request that is still open is left to expire on the relay. No relay route withdraws it, and the primary
+  refuses to sign for a cancelled offer, because the CLI checks the offer's state before the PK signature;
+- from `allocated` on, cancellation is refused: the device is in F1. The owner removes it through `device.removed`,
+  which is a list change and a rotation.
+
+`S` is kept until the terminal state plus 10 minutes, so late requests get an answer, not silence. Silence would
+make the phone show "link used by someone else" after 60 s, the wrong message for an expired link.
+
+**What R6 never does in pairing:**
+- it signs nothing with `PK` or a device key (only WSK objects through `RelaySigner`);
+- it seals no `WK` before a verified certificate and the F1 allocation;
+- it uses no number the relay has not accepted in an `approved` answer;
+- it never re-signs a cert request, a list or a pair answer: it resends stored bytes.
+
+#### 11A.15.7 `RelaySigner` methods R6 adds (11A.2 table, "R6 labels")
+
+Each method validates its context, builds the label and bytes itself, and records a ledger entry **before** returning
+a signature (the `sign-ledger.json` pattern of `card`; ECDSA is randomised, so a ledger hit returns the recorded
+signature).
+
+| Method | Checks before signing | Ledger (refuses a second, different object) | Label |
+|---|---|---|---|
+| `member_list(o)` | exact field set; the link's workspace; `1 ≤ epoch < 2^32`, `1 ≤ list_seq < 2^53`; sorted unique ids; every `persons` entry has a member; `wk_commit` well formed | `("member_list", list_seq)` (H6), and `("wk_commit", epoch)`: **two different `wk_commit` at one epoch are refused here**, the structural guard of "one WK per epoch" | `sig_member_list` |
+| `wk_grant(o)` | exact fields; workspace; `epoch` has a `wk_commit` ledger entry; `sealed` length; the device is in the list signed at that `list_seq` | `("wk_grant", device, epoch)`: other bytes are refused (`grant_conflict` can never come from us) | `sig_wk_grant` |
+| `cert_request(o)` | exact fields with the clear binding; workspace; `person_id` = the pinned owner; `expires_ms − created_ms ≤ 600 000` | `("cert_request", request_id)` | `sig_cert_request` |
+| `pair_answer(header, body)` | ORB2 direction 2, **epoch 0**, `stream` = an offer R6 holds in a non-terminal state or within its 10-minute tail; the whole envelope ≤ 64 KiB | none (answers are stored per `rid` instead) | `sig_bridge` |
+
+`response_chunk` keeps refusing epoch 0 (11A.2), so a pair answer can never pass as a bridge chunk, nor the reverse.
+
+#### 11A.15.8 Threat model deltas (extends 11A.9 and P3 design §8)
+
+| Actor or event | Can | Cannot (what stops it) |
+|---|---|---|
+| **Hostile relay** | see offer ids, rids, timing and sizes; drop, delay or replay pair requests and answers; withhold the challenge, the cert or the accepted list; serve an old list or card; claim a request `signed` or `rejected`; answer false membership refusals (they burn numbers; H8 alarms, the clamp bounds it) | read pair traffic (`K_pair` needs `S`, which is only in the link fragment); learn `WK` (sealed to `dk_kx`); forge the challenge, cert or rejection (PK-signed, verified by R6 and the phone); make R6 adopt its list (`R6View` is the host's own committed body); make R6 seal `WK` to a key the human did not compare (SAS plus `cert_code`); get an `approved` with unaccepted numbers |
+| **Hostile relay, through the HTTPS link** | if a person opens `https://<relay>/pair#…` in a browser, the relay's page script can read the fragment and learn `S` (the fragment is not sent in HTTP, but the page sees it) | with `S` alone it can race a pair request with its own keys. The SAS differs, so the human rejects; the honest phone gets `pairing_closed` and shows "link used by someone else". **Mitigation:** the QR carries the native `orch://` link (Q5) |
+| **Hostile invitee** (holds the link legitimately) | send malformed meta, oversized `reader_decl`, a foreign cert, another key's cert, control characters in the label, floods | pass the exact-field and byte-cap checks before parsing; get scopes above the offer's (the scopes come from the offer, not the request); get a cert for keys other than those it proved (the primary signs the challenge's keys; R6 checks the cert keys against the pending keys); reuse a revoked device id (the relay refuses, R6 checks `HostPins`); exceed 5 refusals per minute per offer or the relay's pair budgets |
+| **Link leaked, or QR shoulder-surfed** | consume the offer first (one try) | succeed without the human approving a SAS that matches the attacker's own screen. The human sees the attacker's label and SAS on the Mac, and the honest phone shows "link used by someone else". Default Reject; the offer lives 10 min and is single-use; `pair cancel`. **Residual:** a human who approves without comparing admits the attacker with the offer's scopes, which is why the default scopes exclude `operate` |
+| **Replay of an old offer or request** | resend captured envelopes | open a new pairing: the offer is single-use and expired offers are silent after their tail; a replayed `rid` gets the stored bytes and no new state; the ±300 s window; `attempt` and `dk_hash` bind the declaration, the challenge and the rejection to one attempt (G3b) |
+| **Two devices racing one offer** | both hold `S` (a leak) | both win: consumption is one durable write on the single R6 thread before any `pending` answer, and the second gets `pairing_closed`. The relay's one-open-request-per-workspace rule backs this at the cert queue |
+| **A compromised host** (tier A, same UID) | everything the person's UID can do | the cert challenge still binds keys chosen by the phone. In tier B (phase 3, a host under a distinct UID) R6's design keeps the property: core never takes protocol §8.3 step 5's "the host is the primary, it signs locally" shortcut, so a host cannot grind a 30-bit SAS against substituted keys (§8.4 "Why this closes R1") |
+| **Primary key custody** | `PK` on the Mac (if Q1 is accepted) is exposed to same-UID code exactly like the device keys (§7, tier A) | `PK` never enters the host process or the convenience backend; it is used only by the signer subprocess with a factor (passphrase now, Secure Enclave later); no host op asks for a `PK` signature, and the owner client signs only the challenge's keys after a human confirms `cert_code`. A lost `PK` is the recovery-code path (§5.2) |
+
+#### 11A.15.9 The host CLI surface (link emission first; the dashboard later)
+
+All the commands below are human-only (refused under `ORCH_GRANT`) and go through the control socket. The link is
+printed on the person's terminal only.
+
+| Command | Does | Output |
+|---|---|---|
+| `orch host relay pair --workspace W [--scopes look,decide] [--ttl 10m] [--json] [--no-qr] [--resume]` | creates the offer (11A.15.6 step 1), prints the link and QR, then **stays attached**: it shows the incoming request (label, scopes, SAS) and asks to compare; it runs the primary steps inline (below); it drives the `relay.pair_device` signature; it shows progress to `approved` | the native and HTTPS links, a QR of the native link, `offer_id`, `expires_at`, then one line per state. `--json`: one JSON object per state change on stdout (`{"offer_id","state","link","native_link","expires_ms","sas"?}`), for scripts. `--ttl` is at most 10 min (the protocol's), and lower values are allowed |
+| `orch host relay pair list --workspace W [--json]` | offers and their states, without secrets | table or JSON |
+| `orch host relay pair cancel --workspace W --offer O` | 11A.15.6 "Cancellation" | the new state |
+| `orch keys primary init --relay ORIGIN --invite CODE` (H12c) | asks for the recovery code (TTY), checks `person_id(PK)` against the owner of the registered workspaces, creates the primary key pair, stores `PK` (Q1), creates the relay account (`POST /v2/accounts`) or registers the device (`PUT /v2/devices`) | the primary's device id and label |
+| `orch keys primary status` | the primary's device id, certificate expiry and relay registration | text or JSON |
+
+**Inline primary steps (owner client, never in the host process).** After step 7b, the CLI:
+1. logs in to the relay as the primary (`kind:"device"`, `dk_sig` through the person path);
+2. reads `GET /v2/persons/{p}/cert-requests?wait=25`, picks the request whose `offer_id` is this offer's, and runs
+   §8.4 step 2 in order: the card (verified with R1's card checks), the WSK signature, the addressee, the time window,
+   `request_id` never seen (a durable `primary/seen.json`), at most one open request, the exact fields and binding, not
+   a `drop:` scope;
+3. opens the inner with the primary's `dk_kx` (custody, purpose `cert-request` only), draws `primary_nonce` and signs
+   the challenge with `PK`;
+4. posts the challenge, shows `cert_code` with the phone's label and the requested scopes, and asks for confirmation
+   (default Reject);
+5. signs the certificate (`make_device_cert`, `label_sealed` under the person's label key) or a rejection, and uploads
+   it.
+
+The challenge, cert and rejection are made only for the request R6 created for **this** CLI's offer. Any other open
+request is left alone and shown as a warning: "a request this command did not create is open".
+
+**Exposure rules for the link:**
+- it is never written to a file by the CLI (the dev script writes its own sandbox file, 11A.15.11);
+- it is never passed as an argument to another process (a QR library gets it in memory);
+- it is never shown in `host.status`, the dashboard API or any log;
+- `--json` prints it to stdout, which is the caller's responsibility.
+
+**QR (Q11).** A terminal QR (Unicode half blocks) of the native link, from an optional pure-Python dependency (`orch[qr]`,
+for example `segno`). Without it, the CLI prints the links and "install orch[qr] for a QR".
+
+**New host codes** (added to the §0.6 table with R6's implementation): `relay.pair_open` (a live offer exists),
+`relay.not_linked` (pairing needs `link.json` `linked` and a running worker), `relay.quota` (the relay's ever-device
+quota was reached, P3-D31) and `relay.pair_closed` (cancel of an allocated offer).
+
+#### 11A.15.10 H12c builders R6 needs, in dependency order (for orch-52)
+
+Pure functions are in `orch.identity` (no I/O, no keys held). Person-path pieces are in the owner client and custody,
+never imported by `orch.relay` (the import ban stays). Each builder comes with its vectors from the relay corpus (the
+corpus section is in brackets).
+
+| # | Builder (signature-level contract) | Needs | Vectors |
+|---|---|---|---|
+| 1 | `wk_commit(workspace_id: str, epoch: int, wk: bytes) -> str`: b64u of `H(h_wk_commit ‖ ws ‖ u32(epoch) ‖ WK)`; refuses `epoch ∉ [1, 2^32−1]`, `len(wk) != 32` | — | [`wk_commit`] |
+| 2 | `sas(ws, offer, dk_sig_pub, dk_kx_pub, wsk_pub, sas_nonce) -> str` (6 base32 chars) and `cert_code(challenge_o) -> str` | — | [`bridge.sas`, `cert_code`] |
+| 3 | `pair_link(origin, ws, offer, s, wsk_pub, pk_pub) -> (https: str, native: str)` and the strict `parse_pair_link(text) -> PairLink` (tests, and the dev script's self-check) | origin rules of 11A.2 | [`bridge.links`] |
+| 4 | `check_pair_meta(meta: dict) -> PairMeta` (the exact six or seven fields, `attempt` as 32 lower-case hex, valid keys, label ≤ 64 characters after `clean_label`) and `clean_label(text) -> str` (NFC, control and bidi characters removed, whitespace collapsed, ≤ 64 characters; 11A.15.13) | — | [`bridge.host_cases` `pair_*`] |
+| 5 | pair answers: `answer_pending/cert_pending/approved/rejected_short/rejected_long/expired(...) -> dict`, the exact shapes of §8.3, with `wsk_pub` always present | — | [`pair_answers`, `rejected_forms`, `approved_anchor.answers`] |
+| 6 | `member_list_o(ws, epoch, list_seq, issued_ms, wk_commit, members: list[Member]) -> dict` (sorts, derives `persons`, refuses an empty list or a person without a member) and `check_member_list(signed, wsk_pub, ws) -> dict` | 1 | [`member_lists`, `member_list_snapshots`] |
+| 7 | `seal_wk(dk_kx_pub, device_id, ws, epoch, wk) -> bytes`, `wk_grant_o(ws, device_id, epoch, sealed) -> dict`, `check_wk_grant(signed, wsk_pub, ws) -> dict`; `card_key_wrap(dk_kx_pub, device_id, ws, card_seq, ck) -> bytes` | `crypto.sealing` | [`wk_grants`, `seal`] |
+| 8 | `cert_request_o(*, request_id, ws, person_id, primary_device_id, primary_kx_pub, offer_id, attempt, dk_sig_pub, dk_kx_pub, label, scopes_max, created_ms) -> dict` (seals the inner; `expires = created + 600 000`), and for the primary `check_cert_request(signed, card, me, seen) -> Request` (§8.4 step 2 order) and `open_cert_request(req, unseal) -> Inner` | 7 | [`cert_request.cases`, `open_cases`, `cert_binding`] |
+| 9 | **custody:** a key-agreement capability for the `device` role, `Backend.unseal(name, purpose, object_id, epoch, extra, sealed) -> bytes`, with purposes allowed per role (`cert-request`, `wk`, `card` for a device; never `ws-envelope`), plus `orch keys primary init/status` (the primary key pair with a kept `dk_kx`, its cert, its relay registration) | 7; Q1, Q2 | [`seal_open`] |
+| 10 | **custody:** `PK` storage under the passphrase backend, role `person` (`PERSON_KEY_LABELS` only), created from the recovery code once; `make_cert_challenge(pk_sign, req_o, inner, primary_nonce)`, `make_cert_rejection(pk_sign, req_o)`; reuse `make_device_cert` and `seal_device_label` | 9; **Q1 (owner)** | [`cert_request.challenge`, `signed_cert`, `sign_again`, `attack_challenge`] |
+| 11 | the owner relay client: device login (`kind:"device"`), `POST /v2/accounts`, `PUT /v2/devices/{d}`, the cert-queue routes (D(p)). It is stdlib transport, as in 11A.7, but in the owner client, not in `orch.relay` | 9, 10 | relay HTTP fixtures `accounts`, `devices`, `cert_*` |
+| 12 | the person-path material kind `relay.pair_device`: `human.prepare` renders and `host/signer.check` binds the workspace id, the device id, the cleaned label, the scopes, the certificate digest and `cert_code` (or the SAS for 7a). It produces `device.added {device, cert}` signed by the Mac's F1 device. `check` refuses a cross-kind substitution and any extra field, as 11A.2 "Review binding" | F1 `device.added` (exists in the model) | core F1 vectors `ws_event_sig` (`device.added` cases) |
+| — | already planned for R1 (11A.2), and a prerequisite: `relay.genesis_pin` and `sig_genesis_pin` in `DEVICE_KEY_LABELS` | — | [`genesis_pin`] |
+
+Items 1 to 8 need no decision and can start now. Items 9 to 11 need Q1 and Q2. Item 12 needs the H12d-2 reader
+records for the authoritative gate.
+
+#### 11A.15.11 Deliverable: the scripted dev path (one command)
+
+`plugins/orch-core/scripts/dev-pair` (Python, stdlib only, run with `uv run`) sets up a **throwaway** host, workspace and
+primary, links them to a relay, and emits a pairing link for Simulator end-to-end tests.
+
+```
+uv run scripts/dev-pair up   [--relay local|https://relay.dev.severin.io] [--invite CODE] [--root DIR]
+                             [--scopes look,decide] [--open-simulator] [--expect-code-from FIFO] [--json]
+uv run scripts/dev-pair down --root DIR
+```
+
+**`up`, in order. Each step is idempotent and checked; any failure runs `down` for what it started:**
+1. **Sandbox.** `--root` defaults to `~/orch-dev/sandbox/pair-<yyyymmdd-hhmmss>`, resolved, and is refused under a
+   symlinked ancestor (11A.3; `/tmp` is refused, `/private/tmp` is accepted). The path is kept short enough for the
+   104-byte socket limit. The script writes a marker `<root>/.orch-dev-sandbox` with a random id, and a private
+   environment for every child: `HOME=<root>/home`, `ORCH_STATE_DIR=<root>/state`, `ORCH_HOST_RUN_DIR=<root>/run`,
+   with `ORCH_GRANT` unset.
+2. **Relay.**
+   - `local`: pick a free loopback port (bind `127.0.0.1:0`, read the port, close), then start the orch-relay checkout
+     pinned in `tests/relay/vectors/SOURCE` (`uv run orch-relay serve --host 127.0.0.1 --port P`) with
+     `ORCH_RELAY_ORIGIN=http://127.0.0.1:P`, `ORCH_RELAY_DATA=<root>/relay-data` and
+     `ORCH_RELAY_MAX_PUBLICATION_BYTES=4194304`. The PID goes to `<root>/relay.pid`. The script waits for
+     `GET /v2/relay-info` (200, ≤ 15 s; on a bind race it retries another port, at most 3 times). It then runs
+     `orch-relay invite create --ttl 1h` against the same data directory.
+   - `https://relay.dev.severin.io`: `--invite` is required (from the relay operator; the script never creates
+     invites remotely), the origin must be in the allow-list `{http://127.0.0.1:*, http://localhost:*,
+     https://relay.dev.severin.io}`, and `link.json` gets `max_publication_bytes` 4 MiB.
+   - The login signature binds the exact origin string. So the origin stored in `link.json`, the one the host signs
+     and the one the relay was started with are the **same literal** (`http://127.0.0.1:P`, not `localhost`).
+3. **Identity and workspace.** `orch init` runs in `<root>/ws` through a **pseudo-terminal** (stdlib `pty`). The
+   script feeds a fresh random passphrase (≥ 14 characters, kept in `<root>/secrets/passphrase`, 0600) and confirms
+   the generated recovery code (kept in `<root>/secrets/recovery`, 0600). **No test seam is added to production
+   code:** the dev path drives the real TTY prompts.
+4. **Host.** `orch host run` in the foreground under the sandbox environment (PID to `<root>/host.pid`; no
+   launchd/systemd unit is installed), then `orch host register`.
+5. **Primary.** `orch keys primary init --relay ORIGIN --invite CODE` through the pty (recovery code, passphrase).
+6. **Link.** `orch host relay link --workspace W --relay ORIGIN --max-publication-bytes 4194304` (R5), with the
+   genesis pin signed through the pty.
+7. **Pair.** `orch host relay pair --workspace W --json --scopes …` through the pty. The script prints the
+   `{link, native_link, offer_id, expires_ms, origin, workspace_id, root, down}` object (and with `--json` nothing
+   else on stdout).
+   - `--open-simulator` runs `xcrun simctl openurl booted '<native link>'`: only the booted Simulator, never a device.
+   - The SAS and `cert_code` prompts are answered either by a human at the script's terminal (default) or, with
+     `--expect-code-from FIFO`, by a code the test phone writes. The script answers `y` only when the written code
+     **equals** the one the CLI shows, so a comparison still happens. `--expect-code-from` is refused unless the
+     sandbox marker exists and the origin is in the allow-list.
+8. The script stays in the foreground until the pairing reaches `approved` (exit 0), `rejected`, `expired` or
+   `failed` (exit 1). The host and the relay keep running for the Simulator session.
+
+**`down`:**
+- reads the marker (a missing or different marker means the script refuses to delete anything);
+- stops **only** the PIDs it recorded: `SIGTERM`, then `SIGKILL` after 10 s, and only if the PID still runs the
+  recorded command line;
+- logs out nothing on the remote relay (tokens expire);
+- deletes `<root>`.
+
+It never uses `pkill`, `simctl erase` or `simctl delete`. Data on `relay.dev.severin.io` stays: a throwaway account and
+workspace, which the operator can purge (`orch-relay account show <person>`).
+
+**What it refuses to touch:**
+- any `ORCH_STATE_DIR`, `HOME` or workspace outside `<root>`. It checks that the host it talks to is its own (the
+  control socket under `<root>/run`, the host PID it started);
+- the person's real identity: it never reads an existing recovery code, keychain item or person directory, and it
+  never runs `orch keys primary init` for a person that exists outside `<root>`;
+- owner relay accounts: it creates a fresh account with a throwaway `PK` and never takes a `--pk` or an existing
+  invite owner;
+- any other relay origin, and any production deployment;
+- running under `ORCH_GRANT`, as root, or with the real host running against `<root>` (a lock check).
+
+**CI (the T2 real-relay job, 11A.10).** A step after the existing T2 runs:
+- `dev-pair up --relay local --json --expect-code-from <fifo>` against the pinned relay (Linux runner: the pty works,
+  and the passphrase backend needs no keychain);
+- a **reference test phone** in Python (`tests/relay/phone.py`, built on the relay's `ref/` client shapes). It parses
+  the native link strictly, sends the pair request with a `reader_decl`, checks `pending` and writes the SAS to the
+  FIFO, verifies the challenge and writes `cert_code`, then verifies `approved` and the join anchor (§8.3);
+- the phone then fetches the member list and its grant, checks `wk_commit`, sends one column-R `whoami`, and expects
+  the WSK-signed answer;
+- `dev-pair down`;
+- assertions: no leftover recorded PID, the sandbox removed, no link or secret in any CI log (the redaction test of
+  11A.9 runs over the captured output).
+
+The job runs at the 4 MiB cap only (pairing does not depend on the cap). It is required before R6 merges (11A.1: no
+poll thread before R6's real-relay tests pass).
+
+#### 11A.15.12 Gaps and conflicts found
+
+| # | Where | Conflict or gap | Proposal |
+|---|---|---|---|
+| C1 | core C8 (`PK` derived from the recovery code, never stored) vs protocol §5.2/§8.4 (the primary holds `PK`) | the primary cannot sign a cert, challenge or rejection without the recovery code | Q1: store `PK` under the passphrase backend on the primary (the D50 intent; C8 called its own rule "a P1 deviation pending the owner's confirmation") |
+| C2 | core `init` discards the private `dk_kx` (11A.12) vs §8.4 (the inner is sealed to the primary's `dk_kx`) | the Mac's existing device cannot open a cert request | a new person-level primary key pair (11A.15.1), with custody `unseal` (H12c item 9) |
+| C3 | protocol §8.3 step 5 ("the host *is* the owner's primary device, it signs locally") vs D-P2-15 (the host holds no device key) | core narrows: never the local shortcut, always `cert_pending` | no relay change; the phone flow stays the vectors' `test_round_trip_pairing_through_cert_pending` |
+| C4 | 11A.10 ("`orch-relay serve --port 0` with `ORCH_RELAY_ORIGIN=http://127.0.0.1:<port>`") vs the relay (the origin comes from the environment at start, `directory.py`; uvicorn gives no port back to it) | with port 0 the origin cannot name the port | the script picks the port first (11A.15.11 step 2); 11A.10 is edited to say so |
+| C5 | protocol §8.5 G2b ("a burned epoch's key counts as held") vs §8.6 step 2 ("epoch > current: drop") and R2's `holds(e) ⇔ e ≤ current` | a burned epoch **above** the committed one (a hostile relay served a refused list): answer `stale_epoch` or drop? | drop (§8.6 step 2) until the post-burn rotation commits above it, then `stale_epoch`. The window is the rotation's latency. Ask for one sentence in protocol §8.5 |
+| C6 | 11A.1 order (R5 before the R6 implementation) vs R1's `LinkSteps.card()` (needs `WXK_1`/`CK_1` custody, which 11A.3 assigns to R6) | R5 cannot link without R6 key custody | split **R6a** (key custody, the card's keys) before R5 (11A.15.14) |
+| G1 | R2 PR #467 `EpochKeySource`/`BridgeKeys` | no rotation-gate signal and no seal-time invariant (§7.2 step 4, §8.5, 11A.5) | `seal_state()` and the `seal_response` check of 11A.15.2, in R2 before it merges |
+| G2 | protocol §8.3 ("the fragment never reaches a server") | true for HTTP, but a browser page served by the relay sees the fragment | the QR carries the native link (Q5); the HTTPS form is a fallback |
+| G3 | `RelaySigner.response_chunk` refuses epoch 0 (11A.2) | pair answers need a signer path | `pair_answer` (11A.15.7) |
+| G4 | 11A.3 "Membership and `WK_e` belong to R6" without a layout; §11 H1 says `membership/` "with keys under `keys/`" | the location was ambiguous | `membership/keys/` (11A.15.3) |
+
+#### 11A.15.13 Where the relay protocol is silent (proposed rules)
+
+- **Offer state on the relay:** none. The relay keeps no offer state: it forwards `route:"pair"` items for any offer id
+  (`bridge.py`). Offers, their expiry and their cancellation are host-local. An unknown offer is silence (§8.6 step 2).
+- **How long `pending` waits for the host's human:** 10 minutes from consumption, then `expired` (step 6).
+- **Label cleaning** ("records the cleaned label", §8.3): NFC; C0/C1 controls, bidi controls (U+202A–202E,
+  U+2066–2069) and zero-width characters removed; whitespace collapsed; at most 64 characters; empty becomes
+  "phone". It is shown with a "named by the device" prefix, never as an authenticated name.
+- **When the host releases a baseline:** on the device's first verified column-R request, or at expiry (step 12).
+- **Default scopes for a phone:** `["look","decide"]` (Q4).
+- **Card fetch between `PUT card` and `PUT card-keys`:** the device keeps the previous card's sealed names until its
+  wrap arrives (11A.15.5; an orch-f1 rule).
+- **More than one pairing per workspace:** one live offer (step 1). The relay already allows one open cert request
+  per workspace.
+
+#### 11A.15.14 Tests, vectors, implementation order and effort
+
+**Vectors consumed** (relay corpus, re-synced to `446d247` or later with the `reader_decl` cases first):
+- `wk_commit`, `member_lists` (34), `member_list_snapshots`, `wk_grants`, `seal`/`seal_open`;
+- `cert_request` (`cases`, `open_cases`, `challenge`), `cert_code`, `signed_cert`, `sign_again`, `attack_challenge`,
+  `cert_binding`;
+- `bridge.sas`, `bridge.links`, `bridge.host_cases` (`pair_*`, `pair_status_*`), `pair_answers`, `rejected_forms`,
+  `approved_anchor`, `reader_decl` (28);
+- `card.cases`, `revocations`, `revocation_op`;
+- the HTTP fixtures `membership`, `card_keys`, `cert_requests_post`, `cert_request`, `baselines`, the `pair` routes.
+
+**Host vectors (new, core-owned; §11's 23 membership vectors are R6's too):**
+- `pair_offer_consumed_once_second_device_pairing_closed`
+- `pair_resend_same_rid_replays_exact_answer_bytes`
+- `pair_status_new_rid_answers_current_state`
+- `pair_reader_decl_rejected_before_sas_and_primary`
+- `pair_reader_decl_other_attempt_or_offer_refused`
+- `pair_cert_presented_other_person_refused`
+- `pair_cert_for_other_keys_refused`
+- `pair_cert_scopes_above_offer_refused`
+- `no_wk_sealed_before_cert_and_allocation`
+- `allocation_gate_refuses_old_reader_nothing_appended`
+- `crash_after_device_added_rolls_forward_to_allocated`
+- `approved_numbers_are_relay_accepted_never_pending`
+- `approved_baseline_never_null_when_published`
+- `add_refused_revoked_forces_rotation_and_fails_offer`
+- `cancelled_open_offer_answers_pairing_closed`
+- `cancel_after_allocated_refused`
+- `expired_offer_silent_after_tail`
+- `orphan_wk_key_file_counts_as_burned`
+- `two_wk_commit_same_epoch_refused_by_signer_ledger`
+- `seal_response_refuses_data_under_gated_or_old_epoch`
+- `gate_up_stale_epoch_names_target`
+- `r6view_list_is_own_committed_body_not_relay_served`
+- `pk_pub_from_genesis_delegation_not_relay`
+- `card_rotation_order_card_then_card_keys`
+- `stale_card_foreign_card_alarms`
+
+**Adversarial release gate** (11A.10 table, new row R6):
+- every hostile-relay case of 11A.15.8 through the proxy in front of the real relay;
+- a crash at every durable step of 11A.15.6 and 11A.15.4;
+- two phones racing;
+- a leaked link;
+- the H7 triggers;
+- a relay answering a different `{list_seq, epoch}` on 2xx;
+- the 2 MiB membership body cap with 1 024 members.
+
+**Order and effort** (estimates, one implementer, reviews not included):
+
+| Step | Group | Owner | Effort |
+|---|---|---|---|
+| 1 | H12c items 1 to 8 (pure builders and vectors) | orch-52 | 1.5 to 2 days |
+| 2 | **R6a** key custody (`membership/keys/`, `wk`/`wxk`/`ck`, EHW recovery, orphan rule), `EpochKeySource`, the `RelaySigner` methods and ledger, the first card's keys for R1/R5 | orch-29 | 1 day; **before R5** (C6) |
+| 3 | R2 gap G1 (`seal_state`, `seal_response` invariant) | orch-29, in #467 | 0.5 day |
+| 4 | H12c items 9 to 11 (custody `unseal`, `PK` custody, primary init, owner relay client), after Q1 and Q2 | orch-52 | 2.5 to 3 days |
+| 5 | **R6b** membership publisher (H1 to H8, the desired list, revocation triggers, H7, `R6View`) | orch-29 | 2 to 3 days |
+| 6 | H12c item 12 (`relay.pair_device` person-path kind) with H12d-2 records | orch-52 | 1 day |
+| 7 | **R6c** pairing host side (11A.15.6) and the CLI (11A.15.9), with H12d-3 (the pair-meta gate) | orch-29 | 2.5 to 3 days |
+| 8 | **R6d** WXK card rotation (11A.15.5) | orch-29 | 0.5 to 1 day |
+| 9 | **R6e** the dev script and the T2 pairing step (11A.15.11), with a reference test phone | orch-29 | 1 to 1.5 days |
+
+The order becomes: R1 → R6 design → R6a → (R2 with G1 ∥ R3 ∥ R4) → R5 → R6b → R6c → R6d → R6e → first real
+device. This replaces 11A.1's "R5 → R6 implementation". The critical path to a Simulator pairing is H12c 1–8, R6a,
+R5, H12c 9–12, R6b, R6c, R6e: about 12 to 15 working days of implementation, before reviews.
+
+**Reviews:** Opus for every R6 group and the H12c custody items (auth, crypto, custody), an Opus delta on every
+security fix commit, orch-52 for every group, and a Codex challenge of this design before orch-52 decides.
+
+#### 11A.15.15 Open questions (for orch-52 and orch-d6), with recommended answers
+
+1. **`PK` custody on the primary (conflict C1; an owner decision through orch-d6).** *Recommended:* store `PK` once,
+   encrypted under the passphrase backend (role `person`, `PERSON_KEY_LABELS` only), from the recovery code at
+   `orch keys primary init`; later under the Secure Enclave or TPM. The alternative is the recovery code at every
+   pairing. That trains people to type their most valuable secret often and makes the dev path hold the recovery
+   code. Revisiting C8 was already foreseen.
+2. **The primary is a new person-level key pair, not an F1 member (C2).** *Recommended: yes* (11A.15.1).
+3. **Always `cert_pending`, never the local-sign shortcut (C3).** *Recommended: yes.*
+4. **Default phone scopes.** *Recommended:* `look, decide`. `operate` only with an explicit `--scopes`; `type` is
+   refused in v1.7 (not served).
+5. **QR content.** *Recommended:* the QR carries the native `orch://pair?relay=…#v2…`, and the CLI prints both forms
+   (G2). To confirm with orch-f1 (the app's URL handling, Simulator `openurl`).
+6. **One live offer per workspace.** *Recommended: yes.*
+7. **A fifth relay thread (`-r6-`) and connection per workspace.** *Recommended: yes;* the 8-workspace cap stays (40
+   threads, ≤ 304 MiB bound).
+8. **Retention of old and burned `WK`.** *Recommended:* never delete in v1.7. Decide a policy with Drop (P4), when old
+   content needs them anyway.
+9. **While the gate is up, R2 answers `stale_epoch` naming the target (G1).** *Recommended: yes,* plus the
+   `seal_response` invariant in R2 before #467 merges.
+10. **R6a before R5 (C6).** *Recommended: yes.*
+11. **QR dependency.** *Recommended:* the optional extra `orch[qr]` (a pure-Python encoder such as `segno`, a
+    permissive license compatible with PolyForm Noncommercial distribution of orch), with a link-only fallback. The
+    dashboard renders its own QR later.
+12. **The member list holds relay-paired devices only.** *Recommended: yes* (11A.15.4).
+13. **A pairing that fails after `device.added`.** *Recommended:* a `needs` item for the owner, never an automatic
+    `device.removed` (the host signs no person event).
+14. **C5 (a burned epoch above the committed one).** *Recommended:* drop until the next commit, plus a one-sentence
+    clarification in protocol §8.5 (relay docs, orch-29).
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

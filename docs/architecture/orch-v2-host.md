@@ -7731,7 +7731,8 @@ list. This replaces the first draft's list of refusal examples: it is the one ru
 re-checked by `member_list_o`'s caller before signing.
 
 The Mac's own F1 devices are **not** listed: they are reached through the socket, their `dk_kx` may not exist, and
-granting them `WK` would only add holders. `persons` is the set of the listed persons (in P3, `[owner]`).
+granting them `WK` would only add holders. `persons` lists the listed persons **other than the card owner** (the
+corpus and the reference: an owner-only list carries `persons: []`, so in P3 it is `[]`; corrected 15 Oct 2026).
 
 **Empty lists (corrected, Opus M1).** The first draft said the relay refuses an empty list. That holds only for the
 **first** list (`members.py`: the owner-device check runs only when there is no previous list). So:
@@ -8980,8 +8981,8 @@ structurally: the invariant is named and enforced in one place.
   reason naming a device that keeps F1 standing; `commit` lowers the gate only for a rotation that leaves that device
   out, so without a prune sealing would stay blocked until the device is really removed (or R6b drops a legitimate
   device). `MembershipKeys.prune_stale_reasons(standing_ok)` drops exactly the `f1_standing` reasons whose device is
-  `ok` in the LIVE store, the caller holding that store's lock across the check and the write (`Store.device_ok`;
-  no removal can land in between), never while a raise is queued (not yet durable), and never another reason kind
+  `ok` in the LIVE store, the caller holding that store's lock across the check and the write (round 7: a snapshot
+  factory read inside the prune's writer lock; no removal can land in between), never while a raise is queued (not yet durable), and never another reason kind
   (`device.removed` etc., `h7`, `""`). The lowering is durable before the in-memory gate goes down. Called by
   `relayr6._rebuild_gate` (every `r6()`), and **R6b's planning must call it** (under the store lock) before it
   decides a rotation. A real removal is never pruned (the device is not `ok`).
@@ -9005,11 +9006,13 @@ structurally: the invariant is named and enforced in one place.
   refusal (admit, schema, signature, size, the freshness checks through the pinned root) → the relay gate
   (`_gate_lost_standing(old, new)`, durable) → `_write_pending` → `fs.append_durable(..., commit=True)` (the commit
   point) → `_finish` → the `_state` setter (no second raise) → `_after_commit` (the in-memory index update, derived
-  data: it never assigns the state nor reads standing) → `on_commit`. RootFS and the lock opener add no state path.
+  data; for the genesis event it calls `_load`, which assigns through the same setter like every state change: it
+  never writes `_state_v` directly and never reads standing; corrected after orch-52's delta 6, D-2) → `on_commit`. RootFS and the lock opener add no state path.
 - J-R6a-25 (round 5, an automated review's "validator differential" flag) **One standing function for every relay
   gate decision:** `orch.store.store.device_standing_ok(state, device, person=None)`. The store chokepoint (setter),
-  `Store.device_ok` (relayr6's start-up raise and prune) and R2's `host.admission.device_standing` ("ok") all call
-  it. Found and fixed before push: the first round-5 prune asked the person-agnostic question while the rebuild's
+  relayr6's start-up raise and prune (round 5 through `Store.device_ok`, removed in round 7: the prune now reads
+  `device_standing_ok(store.state, ...)` from its snapshot factory; D-1) and R2's `host.admission.device_standing`
+  ("ok") all call it. Found and fixed before push: the first round-5 prune asked the person-agnostic question while the rebuild's
   raise asked "this device AS the listed person's", so a reason raised for a device listed under the wrong person
   could be pruned in the same span; now both use the same function and the same question (a listed device is ok
   only as the device of every person it is listed for), inside one store-lock span. A differential test feeds ok,
@@ -9084,6 +9087,68 @@ structurally: the invariant is named and enforced in one place.
 - R5: `r6()` now needs `service.store` (it installs `Store.relay_gate`; without a store it raises
   `MembershipUnsafe`); a store object replaced at a reopen needs `r6()` again before data is served.
 
+
+#### 11A.15.19 Follow-up corrections (15 Oct 2026, orch-29; from orch-52's reviews of H12c and #554)
+
+Docs only; each item corrects or completes the contract above against what is built. Where an item and an earlier
+paragraph disagree, the item wins.
+
+1. **Owner-only lists** carry `persons: []` (the corpus and the reference), not `[owner]` (corrected in place in
+   11A.15.4).
+2. **`check_wk_grant(signed, wsk_pub, workspace_id, device_id)`** needs `device_id`: a grant for another device is
+   `not_for_this_device`.
+3. **`check_cert_request`** needs `now_ms`, and the identity of the checker is split into `me_person_id` and
+   `me_device_id`; it takes a `VerifiedCard` (`orch.identity.wscard.verify_card` / `card_o`).
+4. **Item 9's unseal** is `unseal(object_id, sealed)` and raises `InvalidTag`, `ValueError` or `CryptoError`.
+5. **`make_cert_challenge` and `make_cert_rejection`** take `pk_pub` first; their `sign` covers `label || cj(o)`;
+   `PersonKeySource` needs a one-line adapter to it.
+6. **The six answer builders** are `answer_pending`, `answer_cert_pending`, `answer_approved`,
+   `answer_rejected_short`, `answer_rejected_long` and `answer_expired`, in `orch.identity.answers` (not `pairing`).
+7. **The primary's UI** shows the opened inner label through `clean_label`.
+8. **11A.15.10 item 4** keeps `check_pair_meta`'s dict API; the raw cap is the 64 KiB of `wire.parse_plaintext`; there
+   is no separate 2 KiB cap.
+9. **Drop and push** need typed `BridgeKeys` methods `seal_push`, `wrap_dek_wk`, `open_wrap_wk` and a WXK opener
+   (11A.16).
+10. **A restore that abandons a `device.removed` revives the device**: a lost phone must be REVOKED (11A.4; R6's UI and
+    runbook say so).
+11. **The H12c builders as built:** `memberlist.py`: `member_list_o`, `check_member_list` → `MemberList` (`digest` = the
+    D1 `list_hash`), `seal_wk`, `wk_grant_o`, `check_wk_grant` → `Grant`, `card_key_wrap`; `certreq.py`:
+    `cert_request_o` (the label is `clean_label`'s output unchanged), `check_cert_request`, `open_cert_request`
+    (`CertJournal` + unseal), `check_cert_challenge`, `check_cert_rejection`, `make_cert_challenge`,
+    `make_cert_rejection`.
+12. **The primary's journal** burns a request id on `expired` and `request_open` (retry with a new `request_id`);
+    `VerifiedCard.o` and `CertChallenge`/`CertRejection.signed` return copies.
+13. **R6c's contract with `relay.pair_device`** (#528): register an `orch.host.pairdevice.PairDeviceSource` as
+    `WorkspaceService.pair_device` BEFORE recovery runs at open. `facts(offer_id) -> PairDeviceFacts` only at step 9
+    (otherwise a `HostError` with R6 codes; the host re-fetches them under the store lock before `precommit` and
+    refuses unless they rebuild the reviewed material exactly). `precommit(PairAllocation{offer_id, attempt, device,
+    cert_digest, scopes, review_digest, event_id, event_digest, decl_digest})` checks state, cert and deadline,
+    compares `cert_digest`, `attempt` and `device` with R6's record INSIDE the lock that writes the intent, then writes
+    it, and accepts an equal repeat (roll-forward). `committed(alloc, seq)` is idempotent and checks the log line
+    (`pairdevice.event_digest(line) == alloc.event_digest`). `refused(alloc, err)` runs when nothing landed after an
+    accepted `precommit` (including a same-id, different-content line).
+14. **With the click flag on** the hand-off is refused (`sign.click_only`), so the CLI uses the inline terminal
+    passphrase signer; `pair.preview` SAYS so and does not refuse (11A.15.9A).
+15. **`RecoveryCodeSource(labels=..., pk_pub=... | person_id=..., action=...)`** (#519): `labels` is required: add a
+    device `{sig_cert_challenge, sig_cert_rejection, sig_device_cert}`, revoke `{sig_revocation}`; read `pk_pub` only
+    inside the block, or construct with `pk_pub=`. Test sandbox: `tests/relay/personkey_sandbox.py`
+    `SandboxPersonKey(root, labels=...)`.
+16. **H12d-3 hooks (#555):** R6c step 4 calls `orch.host.convenience.pair_gate(service, meta, offer_id=, who=
+    {"pk_pin": ...} | {"person_id": <bare hex>})` BEFORE step 5; on `HostError` it answers the short `rejected` and sets
+    the offer `rejected`; otherwise it stores `gate.decl` and `gate.decl_who` with the offer (the first stored wins;
+    resends do not re-run it) and passes them at step 9 as `PairDeviceFacts(decl=, decl_who=)`; `who` is the cert's
+    person or that person's key pin. R5 link step 1: `info = fetch_relay_info(conn)`, then `store.relay_link(link,
+    guard=lambda: relaylink.link_reservation(service, relay_level=info.reader))`. R5 login: `Session(...,
+    relay_info=lambda lv: relaylink.observe_relay_level(state_dir, ws, host_uid, lv, alarm, origin=<link.json's
+    origin exactly>))`. R3 holds a restore publication when `readers.restore_held(readerrecs.relay_level(state_dir, ws),
+    evidence)` (hook `_restore_pub()`).
+17. **The owner client (#557, `orch.relay_owner`) for R6c/R6e:** `with primary.unlocked(state, action=...) as session:`
+    `client = OwnerClient(origin, session)`; `q = PrimaryQueue(client, PrimaryJournal(journal_dir(state)),
+    pk_pub=owner_pk, cards=..., unseal=primary.cert_request_unseal(session))`; `p = q.poll(rid).get(rid)`; with a
+    `RecoveryCodeSource(labels=ANSWER_LABELS, ...)` as `pk`: `q.challenge(rid, pk)` (show `p.cert_code`, `p.label`,
+    `p.scopes_max`), then `q.sign(rid, pk)` or `q.reject(rid, pk)` and `relay.pair_cert`; `q.finish_uploads()`. The
+    account: `client.create_account(invite, owner_pk, primary_certificate(...))`. Test doubles in
+    `tests/relay_owner/kit.py`. A boundary test bans `orch.relay` and `orch.host` from importing `orch.relay_owner`.
 
 ### 11A.16 H13: push and Drop, host end (the H13 design of record)
 

@@ -575,3 +575,20 @@ tests/test_realhost_terminals.py` (core's host and runner in this process, a rea
 it read-only with **Take control**; taking it there shows **Take back** here; **Stop** ends it ("Some processes may still be running"
 when cleanup was incomplete); an ended run whose output is gone says "Output no longer kept". Layout: `/__layout/terminal-dock` (and
 `-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.
+
+## Try pairing (fixtures)
+
+Nothing reaches a host: the `pair/1` ops (contract v1.9) are agreed but not served yet. On a real host Settings → **Devices** says "Pairing a phone is not available on
+this host yet." To see the page, run `npm run dev` and open the dev-only scenarios:
+
+- `/__layout/pair-unavailable`: the not-available line.
+- `/__layout/pair-blocked-convenience`: `sign.convenience_readers` (flag on) with the host's message and "Turn click-to-sign off first: orch
+  host convenience off --workspace DEMO". Click-to-sign history alone is only a warning, never a block.
+- `/__layout/pair-offer`: the warning about click-to-sign, **Create pairing link** → waiting with a countdown and nothing secret on screen; **Show QR and link**
+  shows the QR (scan it: `orch://pair?relay=…#v2.…` with demo values), **Copy link** (the native link; cleared from the clipboard when the
+  link is dropped) and the https fallback as selectable text (not a link); **Cancel pairing**.
+- `/__layout/pair-pending`: type the phone's code. Reject has the focus; Approve stays off until the code matches (`K7Q2MA`; `k7q-2ma`
+  works too); a different code says "The codes differ: reject this phone." and counts an attempt: after 3 wrong codes the phone is refused.
+- `/__layout/pair-cert`: two terminal steps with copyable commands (primary approval with the cert code; `orch sign <CODE>`). `/__layout/pair-failed`: the reason and "remove the device".
+- `/__layout/pair-devices`: the list from `member.list` (the Mac itself is not listed; a two-line label; an empty one shows "phone");
+  **Remove this device** opens the CLI command as text (removal is CLI only this round).

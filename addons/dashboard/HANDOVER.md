@@ -1126,3 +1126,26 @@ and the seven ops below); otherwise it is not drawn on a real host. Start agent 
 The dashboard and devhost use core's `ORCH_HOST_RUN_DIR`, falling back to `<state>/run`.
 A set legacy `ORCH_RUN_DIR` is accepted silently only when its absolute path matches that directory;
 otherwise dashboard startup exits 1 with a migration message.
+
+## Pair a phone (pair/1, contract v1.9, fixtures only, 15 Oct)
+
+Settings → Devices (`src/app/pages/settings/host/Devices.tsx`). Gate: feature `pair` **and** `pairingApi.served()`; the real api
+(`src/api/pairing.ts`) answers `pair.unavailable` until a host serves them, and the server lists no `pair` feature and has no route.
+Host ops (names confirmed by orch-52: cap `pair/1`, class P, human_only; none served, none called):
+
+| Page call (`pairingApi`) | Proposed host op | Notes |
+|---|---|---|
+| `preview(ws)` | `pair.preview {}` | `{blocked, warnings, scopes_default, ttl_max_ms, live_offer}`; convenience blocks only for flag/custody (assumed `blocked.cause`); history is a warning |
+| `offer(ws)` | `pair.offer {scopes?, ttl_ms?}` | `{offer_id, expires_ms, native_link, link}`: the link; never cached, stored or logged (server: no body logging, `no-store`) |
+| `list(ws)` | `pair.list {}` | rows `{offer_id, state, created_ms, expires_ms, scopes, label?, sas?, cert_code?, reason?}`; assumed `cert_ready`, `needs_remove` |
+| `answer(ws, id, approve)` | `pair.answer` | only after the typed SAS matches; Reject default; 3 typed mismatches refuse (assumed `mismatches` arg) |
+| `cancel(ws, id)` | `pair.cancel` | |
+| `members(ws)` | `member.list {}` under a `read_ext` bump | `devices[]` gain `label, paired_ms, relay, cert_expires, reader`; listed when `relay` is present |
+| `subscribe(ws, fn)` | `sub.open {topics:["pair"]}` | items `{t:"pair", offer_id, state}`, no secrets; the page refetches `list` |
+| hand-off `pair_device {offer}` | `human.prepare {op:"relay.pair_device"}` | F1 `device.added`; terminal only (not click-eligible) |
+| (none) | device removal | CLI only this round: the page shows `orch device remove <device-id> --workspace <PREFIX>` (assumed) |
+
+Fixture: `src/dev/pairFixture.ts` (`createPairFixture`, `installPairFixture`, `emit` drives states). Layout scenarios `pair-unavailable`,
+`pair-blocked-convenience`, `pair-offer`, `pair-pending`, `pair-cert`, `pair-failed`, `pair-devices`; guard entries `real-host-pair-*`
+(plus `real-host-pair-link` and `real-host-pair-remove-command`; listed in `scripts/layout-guard-pages.mjs` so `--only pair` finds them).
+Tests: `src/app/pages/settings/pairing.test.tsx`, the Devices case in `src/production/settings.test.tsx`, `src/dev/layoutGuardPages.test.ts`. QR: `uqr` 0.1.3 (pinned).

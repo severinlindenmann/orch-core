@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from .auth import Redactor
     from .workspace import Call, WorkspaceService
 
-__all__ = ["HUMAN_OPS", "HumanOps", "recover"]
+__all__ = ["HUMAN_OPS", "HumanOps", "judge_events", "recover"]
 
 HUMAN_OPS: dict[str, int] = {
     "human.prepare": 1,
@@ -879,25 +879,47 @@ class HumanOps:
 
     @staticmethod
     def _judge(store: Any, record: dict[str, Any], events: list[dict[str, Any]], git: Any) -> None:
-        """All events together with ``model.preview`` (signatures verified; the prepare-time judging in
-        :func:`orch.ops.prepare.judge` set signatures aside), plus the D58 recheck of every signed source list."""
-        from orch.model import Refusal, preview
-        from orch.store import StoreError
+        """:func:`judge_events` over the prepared log, with the request's bound working copies (H11d)."""
+        judge_events(store, record["prepared"]["log"], events, git=git, copies=record.get("copies"))
 
-        log = record["prepared"]["log"]
-        state = store.state
-        stamp = store.peek_stamp(log)
-        seq, prev, at = stamp["seq"], stamp["prev"], stamp["at"]
-        for ev in events:
-            if "source_sha" in ev and log != "workspace":  # D58 first: git is read under the same lock
-                recheck_sources(git, store, store.ticket(log), ev["source_sha"], record.get("copies"))
-            probe = {**ev, "seq": seq, "prev": prev, "at": at}
-            if "ws_seq" in stamp:
-                probe["ws_seq"] = stamp["ws_seq"]
-            r = preview(state, probe, log=log)
-            if isinstance(r, Refusal):
-                raise _store_error(StoreError.from_refusal(r))
-            state, seq, prev = r, seq + 1, canon.event_head(probe)
+
+def judge_events(
+    store: Any,
+    log: str,
+    events: list[dict[str, Any]],
+    *,
+    git: Any = None,
+    copies: list[dict[str, Any]] | None = None,
+) -> None:
+    """**The model's judgement of submitted, device-signed events**, shared by ``human.submit`` and ``relay.submit``
+    (§11A.14 step L6, H12e). The caller holds ``store.locked()`` (after ``store.refresh()``); nothing is appended.
+
+    All events together with ``model.preview`` on the stamp the store would give them now (``peek_stamp``): roster,
+    ``based_on``, the question hash, authority, scopes and the person signature are checked at that position (the
+    prepare-time judging in :func:`orch.ops.prepare.judge` set signatures aside). Every ``source_sha`` list is also
+    rechecked against git under the same lock (D58, :func:`recheck_sources`): that needs ``git`` (the caller's
+    principal's reader) and fails closed without it (``internal``); the relay's two types carry none.
+
+    Raises :class:`HostError` with the model's code (``question.stale``, ``members.stale``, ``event.bad_base``,
+    ``sig.invalid``, ``device.scope``, ``ticket.exists``, ...) at the first refused event; returns ``None``."""
+    from orch.model import Refusal, preview
+    from orch.store import StoreError
+
+    state = store.state
+    stamp = store.peek_stamp(log)
+    seq, prev, at = stamp["seq"], stamp["prev"], stamp["at"]
+    for ev in events:
+        if "source_sha" in ev and log != "workspace":  # D58 first: git is read under the same lock
+            if git is None:
+                raise HostError("internal", "a signed source list needs the git reader; nothing was judged")
+            recheck_sources(git, store, store.ticket(log), ev["source_sha"], copies)
+        probe = {**ev, "seq": seq, "prev": prev, "at": at}
+        if "ws_seq" in stamp:
+            probe["ws_seq"] = stamp["ws_seq"]
+        r = preview(state, probe, log=log)
+        if isinstance(r, Refusal):
+            raise _store_error(StoreError.from_refusal(r))
+        state, seq, prev = r, seq + 1, canon.event_head(probe)
 
 
 #: a bound request's later ``human.get`` reuses a binding check younger than this instead of walking the tree again

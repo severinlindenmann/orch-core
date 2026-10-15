@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from orch import canon
 from orch.host import reads_ticket
 from orch.host.reads import iso
 from orch.identity import new_ulid
@@ -144,7 +145,7 @@ def test_every_field_equals_the_model_view(w):
     r = get(f.c, f.key)
     assert set(r) == {
         "doc", "log", "log_more", "questions", "criteria", "gates", "sub_cursor", "status", "settled", "tasks",
-        "verdict", "artifacts", "claim", "source", "pushes", "sections",
+        "verdict", "artifacts", "claim", "source", "pushes", "sections", "members_v",
     }  # fmt: skip
     assert r["status"] == view.status == "done" and r["settled"] is True and "closed" not in r
 
@@ -172,7 +173,7 @@ def test_every_field_equals_the_model_view(w):
     assert q["to"] == [w.lab.owner] and q["answered_by"] == w.lab.owner and q["answered_seq"] == answered["seq"]
     assert q["answer"] == {
         "by": w.lab.owner, "at": answered["at"], "seq": answered["seq"], "option": "a", "text": None,
-        "auth": answered["auth"],
+        "auth": answered["auth"], "id": answered["id"],
     }  # fmt: skip
     assert (q["qid"], q["hash"]) == (asked["qid"], asked["hash"]) == (view.questions[0].qid, view.questions[0].hash)
 
@@ -777,3 +778,63 @@ def test_no_person_reads_a_workspace_ticket_and_never_a_restricted_one(w):
     assert err(n.req("ticket.get", {"ref": hidden_uid})) == "not_found"
     assert err(n.req("ticket.get", {"ref": key, "log_limit": 501})) == "invalid.input"
     assert err(n.req("ticket.get", {"ref": key, "extra": 1})) == "invalid.input"
+
+
+# --- H12e (§11A.14): doc.head, questions[].answer.id and members_v from one snapshot -------------------------------
+
+
+def test_doc_head_is_the_last_event_of_the_log_and_members_v_the_roster_version(w):
+    f = full(w)
+    events = events_of(w, f.uid)
+    r = get(f.c, f.key, log_limit=1)  # the head never depends on the log page
+    assert r["doc"]["head"] == {"seq": events[-1]["seq"], "head": canon.event_head(events[-1])}
+    assert r["members_v"] == w.service.store.state.workspace.roster_v
+    (q,) = r["questions"]
+    answered = next(e for e in events if e["type"] == "question.answered")
+    assert q["answer"]["id"] == answered["id"]  # the counting event's id: a phone resolves its own answer by it
+    agent_ev(w, f.uid, "log.added", text="one more")
+    w.person_event("role.changed", person=w.quinn.ref, role="maintainer")
+    r2 = get(f.c, f.key)
+    last = events_of(w, f.uid)[-1]
+    assert r2["doc"]["head"] == {"seq": last["seq"], "head": canon.event_head(last)} != r["doc"]["head"]
+    assert r2["members_v"] == r["members_v"] + 1
+
+
+def test_doc_head_and_members_v_are_read_under_one_store_lock(w, monkeypatch):
+    """One snapshot: the handler holds the store lock from the cursor to the last field, so another writer cannot land
+    between ``doc.head``, the questions and ``members_v``."""
+    f = full(w)
+    store = w.service.store
+    depth = {"n": 0, "max_outside": 0}
+    real = type(store).locked
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def counting(self):
+        depth["n"] += 1
+        try:
+            with real(self):
+                yield
+        finally:
+            depth["n"] -= 1
+
+    monkeypatch.setattr(type(store), "locked", counting)
+    seen = []
+    real_doc = reads_ticket._doc
+
+    def doc(x):
+        seen.append(depth["n"])
+        return real_doc(x)
+
+    monkeypatch.setattr(reads_ticket, "_doc", doc)
+    get(f.c, f.key)
+    assert seen and all(n >= 1 for n in seen)
+
+
+def test_an_open_question_has_no_answer_id_and_a_stale_answer_none(w):
+    h = Human(w)
+    uid, key = w.ticket("q")
+    h.agent("ask", {"ref": key, "text": "which?", "options": ["a", "b"]})
+    (q,) = get(h.c, key)["questions"]
+    assert q["state"] == "open" and "answer" not in q

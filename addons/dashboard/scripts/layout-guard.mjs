@@ -23,6 +23,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { waitForTarget, waitForDevTools } from './layout-startup.mjs'
+import { selectsRealHost } from './layout-guard-pages.mjs'
 
 const argv = process.argv.slice(2)
 const opt = (name, fallback) => {
@@ -484,7 +485,7 @@ async function run(send, close) {
 
           // The real-host-only pages (quick tasks, the Records tab, the runner card), drawn from fixtures by the dev-only
           // `__layout/<scenario>` route (src/dev/layoutPreview.tsx): the mock app never shows them.
-          if (!ONLY || ONLY.test('real-host-') || ONLY.source.includes('real-host')) {
+          if (selectsRealHost(ONLY)) {
             const clickText = (sel, rx) =>
               evaluate(async (sel, rx) => {
                 const el = [...document.querySelectorAll(sel)].find((b) => new RegExp(rx).test((b.getAttribute('aria-label') || b.textContent).trim()))
@@ -525,10 +526,33 @@ async function run(send, close) {
               ['real-host-terminal-take', 'terminal-take', [['the Take control banner', '[data-lease="busy"]']]],
               ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
               ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
+              // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
+              ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
+              ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],
+              ['real-host-pair-offer', 'pair-offer', [['the warnings', '[data-testid="pair-warnings"]'], ['the device list', '[data-testid="device-row"]']]],
+              ['real-host-pair-pending', 'pair-pending', [['the code entry', '#pair-sas'], ['the label', '[data-testid="pair-label"]']]],
+              ['real-host-pair-cert', 'pair-cert', [['the cert code', '[data-testid="pair-cert-code"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
+              ['real-host-pair-failed', 'pair-failed', [['the remove-the-device line', '[data-testid="pair-needs-remove"]']]],
+              ['real-host-pair-devices', 'pair-devices', [['the device list', '[data-testid="device-row"]']]],
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)
               await check(config, name, await need(shown))
+            }
+            // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
+            if (!ONLY || ONLY.test('real-host-pair-link')) {
+              await go('/__layout/pair-offer')
+              const created = (await present('[data-testid="pair-before"]')) && (await clickText('button', /^Create pairing link$/))
+              const shown = created && (await present('[data-testid="pair-waiting"]')) && (await clickText('button', /^Show QR and link$/))
+              await settle()
+              await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR and link is missing'])
+            }
+            // Removal is CLI only: the "Remove this device" disclosure open with its command.
+            if (!ONLY || ONLY.test('real-host-pair-remove-command')) {
+              await go('/__layout/pair-devices')
+              const opened = (await present('[data-testid="device-row"]')) && (await clickText('summary', /^Remove this device$/))
+              await settle()
+              await check(config, 'real-host-pair-remove-command', opened ? await need([['the remove command', '[data-testid="device-remove-command"]']]) : ['the Remove this device disclosure is missing'])
             }
             // The Limits box open on the quick page, and the "Make a normal ticket" hand-off open.
             if (!ONLY || ONLY.test('real-host-quick-limits')) {

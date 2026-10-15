@@ -2,7 +2,8 @@
 
 ``orch host run --foreground`` is the dev and test entry (run directory ``<state>/run``); the service manager runs
 ``orch-host run`` from a release (run directory ``/Users/Shared/orch/run/<uid>`` or ``/run/orch/<uid>``). A CLI call
-never starts a host as a side effect (D-P2-2).
+never starts a host as a side effect (D-P2-2). ``orch host run --foreground --dev-runner`` (dev and tests only) also
+admits a runner of the same UID that ``orch runner run --foreground`` announced (:mod:`orch.runner.devmode`).
 """
 
 from __future__ import annotations
@@ -27,6 +28,12 @@ def _parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="serve every registered workspace (the service manager runs this)")
     run.add_argument("--foreground", action="store_true", help="dev mode: run directory <state>/run")
+    run.add_argument(
+        "--dev-runner",
+        action="store_true",
+        help="dev and tests only, with --foreground: also admit a runner of your UID started with orch runner run "
+        "--foreground (no service manager needed); never with a service run directory",
+    )
     run.add_argument("--state", type=Path)
     run.add_argument("--run", type=Path)
     inst = sub.add_parser("install", help="install this code as an immutable release")
@@ -131,6 +138,23 @@ def _control_path(given: Path | None, state: Path, env: Mapping[str, str] | None
     return run_dir_for(state, given, env) / "control" / "host.sock"
 
 
+def _check_dev_runner(foreground: bool, run_dir: Path, env: Mapping[str, str]) -> None:
+    """``--dev-runner`` (orch.runner.devmode) only for a host a person started in the foreground on a dev run
+    directory: never without ``--foreground`` (the units never pass it), never under the service manager's labels,
+    never for a service run directory (``/Users/Shared/orch/run``, ``/run/orch``)."""
+    from orch.runner import devmode
+    from orch.runner.service import LAUNCHD_LABEL as RUNNER_LABEL
+
+    from .units import LAUNCHD_LABEL
+
+    if not foreground:
+        raise HostError("invalid.input", "--dev-runner needs --foreground (dev and tests only)")
+    if env.get("XPC_SERVICE_NAME") in (LAUNCHD_LABEL, RUNNER_LABEL):
+        raise HostError("invalid.input", "--dev-runner is never for a service-managed host")
+    if devmode.is_service_run_dir(run_dir):
+        raise HostError("invalid.input", f"--dev-runner is for a dev run directory only, never {run_dir}")
+
+
 def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None) -> int:
     env = os.environ if env is None else env
     out = sys.stdout if out is None else out
@@ -143,8 +167,16 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
 
             state = _state(args.state, env)
             run_dir = run_dir_for(state, args.run, env)  # tier A (phase 1); the units always pass --run
+            if args.dev_runner:
+                _check_dev_runner(args.foreground, run_dir, env)
             preload()
-            asyncio.run(Host(state, run_dir).run())
+            host = Host(state, run_dir, dev_runner=args.dev_runner)
+            if args.dev_runner:
+                sys.stderr.write(
+                    f"orch host: DEV RUNNER MODE: a foreground runner of UID {os.getuid()} announced in {run_dir} is "
+                    "admitted without a service manager (dev and tests only)\n"
+                )
+            asyncio.run(host.run())
             return 0
         if args.cmd == "install":
             from .release import install_release

@@ -84,8 +84,19 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "worktree.unpinned": (3, False),
     "worktree.git_failed": (1, False),
     "unsupported.platform": (3, False),
+    # H11c, start agent and the runner grant (§12.4)
+    "launch.claimed": (3, False),
+    "launch.no_grant": (3, False),
+    "grant.forgotten": (3, False),
+    "grant.not_runner": (3, False),
+    "grant.verbs": (3, False),
+    "grant.expiring": (3, False),
     # H12a, the relay bridge (§11A.7): relay.link above the relay-linked workspace cap
     "host.limit": (3, False),
+    # H12e, phone person events over relay.submit (§11A.14): admission refusals core owns, all definite (class C)
+    "event.expired": (3, False),
+    "event.abandoned": (3, False),
+    "ticket.key_not_next": (3, False),
 }
 
 
@@ -110,8 +121,12 @@ class HostError(Exception):
         retry_after_ms: int | None = None,
         hint: str | None = None,
         fix: list[str] | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         self.code = code
+        #: structured facts for an in-process caller (``ticket.key_not_next``: ``{"next_key": ...}``, §11A.14). Not
+        #: part of the socket ``Error`` (§0.3 has no ``detail``): R2 decides how its relay answer carries it
+        self.detail = dict(detail) if detail else None
         self.message = (message or code)[:400]
         self.exit, self.retryable = disposition(code)
         self.retry_after_ms = retry_after_ms

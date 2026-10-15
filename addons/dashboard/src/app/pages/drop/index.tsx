@@ -7,8 +7,8 @@
 // new tab; a download is an `application/octet-stream` blob behind an anchor with `download`.
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { DROP_UNAVAILABLE, dropApi, dropError, dropQueries, dropBlob, dropServed, fmtBytes, newIdem, saveBytes, sizeRefusal, uploadBlob, UploadCancelled, type DropDirection, type DropErrorDetail, type DropInfo, type DropItem, type DropState, type DropVersion } from '@/api/drop'
-import type { Workspace } from '@/api/types'
+import { DROP_UNAVAILABLE, HANDOFF_TEXT, dropApi, dropError, dropQueries, dropBlob, dropServed, fmtBytes, newIdem, retireMode, saveBytes, sizeRefusal, unclaimedText, uploadBlob, UploadCancelled, type DropDirection, type DropErrorDetail, type DropInfo, type DropItem, type DropState, type DropVersion } from '@/api/drop'
+import { ApiError, type Workspace } from '@/api/types'
 import { Inline, Raw, visible } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -72,11 +72,15 @@ export function DropErrorLine({ detail, children }: { detail: DropErrorDetail; c
 function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
   const qc = useQueryClient()
   const info = useQuery(dropQueries.info(ws))
-  const [direction, setDirection] = useState<DropDirection>('received')
+  // The tabs: Received and Sent are directions; "Shared from your phone" is a `view` filter over the received rows (H1).
+  const [tab, setTab] = useState<'received' | 'sent' | 'shared'>('received')
+  const direction: DropDirection = tab === 'sent' ? 'sent' : 'received'
+  const view = tab === 'shared' ? 'shared_from_phone' : undefined
+  const [refreshed, setRefreshed] = useState(false)
   // Cursor pages: `after` of the shown page, and the ones before it for "Newer".
   const [cursors, setCursors] = useState<(string | null)[]>([null])
   const after = cursors[cursors.length - 1]
-  const list = useQuery(dropQueries.list(ws, direction, after))
+  const list = useQuery(dropQueries.list(ws, direction, after, view))
   const [retiring, setRetiring] = useState<DropItem | null>(null)
   const [openDoc, setOpenDoc] = useState<string | null>(preview?.openDoc ?? null)
 
@@ -84,11 +88,22 @@ function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
   // Live: a `drop` sub item says something changed; the page refetches, it never polls.
   useEffect(() => dropApi.subscribe(ws, () => refresh()), [ws, refresh])
 
-  const pick = (d: DropDirection) => {
-    setDirection(d)
+  const pick = (t: typeof tab) => {
+    setTab(t)
     setCursors([null])
     setOpenDoc(null)
+    setRefreshed(false)
   }
+  // H3: the cursor is opaque and can go stale. Reload from page 1, quietly, with one short notice; rows may disappear.
+  // Only when a cursor was sent: a cursor_reset on page 1 is a host fault and shows as the normal error (with Retry).
+  const reset = list.isError && after !== null && list.error instanceof ApiError && list.error.code === 'drop.cursor_reset'
+  useEffect(() => {
+    if (!reset) return
+    setCursors([null])
+    setOpenDoc(null)
+    setRefreshed(true)
+    void qc.invalidateQueries({ queryKey: ['drop', ws, 'list'] })
+  }, [reset, qc, ws])
 
   if (info.isError) return <DropErrorLine detail={dropError(info.error)}><Button variant="outline" size="sm" onClick={() => void info.refetch()}>Retry</Button></DropErrorLine>
   if (!info.data)
@@ -109,22 +124,36 @@ function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
       <Upload ws={ws} info={limits} onSent={refresh} initial={preview?.upload} />
 
       <div role="tablist" aria-label="Drop" className="flex gap-1 border-b border-border">
-        {(['received', 'sent'] as const).map((d) => (
+        {(['received', 'sent', 'shared'] as const).map((d) => (
           <button
             key={d}
             role="tab"
             type="button"
             data-testid={`drop-tab-${d}`}
-            aria-selected={direction === d}
+            aria-selected={tab === d}
             onClick={() => pick(d)}
-            className={cn('-mb-px border-b-2 px-3 py-1.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-brand', direction === d ? 'border-brand text-text' : 'border-transparent text-text-muted hover:text-text')}
+            className={cn('-mb-px border-b-2 px-3 py-1.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-brand', tab === d ? 'border-brand text-text' : 'border-transparent text-text-muted hover:text-text')}
           >
-            {d === 'received' ? 'Received' : 'Sent'}
+            {d === 'received' ? 'Received' : d === 'sent' ? 'Sent' : 'Shared from your phone'}
           </button>
         ))}
       </div>
+      {refreshed && !reset && (
+        <p role="status" data-testid="drop-refreshed" className="text-[12px] text-text-muted">
+          The list was refreshed.
+        </p>
+      )}
+      {typeof list.data?.pending_others === 'number' && list.data.pending_others > 0 && (
+        <p data-testid="drop-pending-others" className="rounded-md border border-border px-3 py-2 text-[13px] text-text-muted">
+          {list.data.pending_others === 1 ? '1 item from others awaits' : `${list.data.pending_others} items from others await`} review at the Mac&apos;s terminal.
+        </p>
+      )}
 
-      {list.isError ? (
+      {reset ? (
+        <p role="status" className="text-[13px] text-text-muted">
+          Reading the list…
+        </p>
+      ) : list.isError ? (
         <DropErrorLine detail={dropError(list.error, limits)}>
           <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
             Retry
@@ -136,16 +165,17 @@ function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
         </p>
       ) : items.length === 0 ? (
         <p data-testid="drop-empty" className="text-[13px] text-text-muted">
-          {direction === 'received' ? 'Nothing has been dropped to this workspace.' : 'Nothing has been sent from this workspace.'}
+          {tab === 'shared' ? 'Nothing has been shared from your phone.' : direction === 'received' ? 'Nothing has been dropped to this workspace.' : 'Nothing has been sent from this workspace.'}
         </p>
       ) : (
-        <ul aria-label={direction === 'received' ? 'Received' : 'Sent'} className="divide-y divide-border rounded-lg border border-border bg-surface">
+        <ul aria-label={tab === 'shared' ? 'Shared from your phone' : direction === 'received' ? 'Received' : 'Sent'} className="divide-y divide-border rounded-lg border border-border bg-surface">
           {items.map((item) => (
             <Row
               key={item.object_id}
               ws={ws}
               item={item}
               info={limits}
+              sharedView={tab === 'shared'}
               open={openDoc === item.object_id}
               onToggle={() => setOpenDoc((o) => (o === item.object_id ? null : item.object_id))}
               onRetire={() => setRetiring(item)}
@@ -156,10 +186,10 @@ function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
       )}
       {(cursors.length > 1 || list.data?.next) && (
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" data-testid="drop-prev" disabled={cursors.length < 2} onClick={() => setCursors((c) => c.slice(0, -1))}>
+          <Button variant="outline" size="sm" data-testid="drop-prev" disabled={cursors.length < 2} onClick={() => (setRefreshed(false), setCursors((c) => c.slice(0, -1)))}>
             Newer
           </Button>
-          <Button variant="outline" size="sm" data-testid="drop-next" disabled={!list.data?.next} onClick={() => list.data?.next && setCursors((c) => [...c, list.data!.next])}>
+          <Button variant="outline" size="sm" data-testid="drop-next" disabled={!list.data?.next} onClick={() => list.data?.next && (setRefreshed(false), setCursors((c) => [...c, list.data!.next]))}>
             Older
           </Button>
         </div>
@@ -207,7 +237,7 @@ const STATE_WORD: Record<DropState, string> = { live: 'Live', pruned: 'Content p
 const STATE_TONE: Record<DropState, 'success' | 'warning' | 'neutral' | 'danger'> = { live: 'success', pruned: 'warning', expired: 'neutral', retired: 'neutral' }
 
 /** Why the download is off, or null when it works. */
-export function downloadBlocked(item: Pick<DropItem, 'state' | 'claimed'>): string | null {
+export function downloadBlocked(item: Pick<DropItem, 'state' | 'claimed' | 'unclaimed_reason'>): string | null {
   switch (item.state) {
     case 'pruned':
       return 'The content of this version was pruned: only the newest 8 versions and those under 30 days old keep it.'
@@ -216,13 +246,39 @@ export function downloadBlocked(item: Pick<DropItem, 'state' | 'claimed'>): stri
     case 'retired':
       return 'This was deleted for everyone. The entry stays listed for 30 days.'
   }
-  if (!item.claimed) return 'Not claimed yet: until this workspace’s host claims it, only the host and the sender can open it.'
+  if (!item.claimed) return unclaimedText(item.unclaimed_reason)
   return null
 }
 
 // ——— A row ———
 
-function Row({ ws, item, info, open, onToggle, onRetire, onChanged }: { ws: string; item: DropItem; info: DropInfo; open: boolean; onToggle: () => void; onRetire: () => void; onChanged: () => void }) {
+/** H1: where a phone share came from. The label is untrusted text: no link, no HTML, cut short by CSS. */
+function SharedFrom({ item }: { item: DropItem }) {
+  // Hosts are untrusted: a missing or non-string label is "your phone", a non-object shared_from is no share at all.
+  const s = item.shared_from as { label?: unknown }
+  const label = typeof s.label === 'string' && s.label !== '' ? s.label : null
+  return (
+    <p data-testid="drop-shared" className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[12px] text-text-muted">
+      <span>Shared from</span>
+      {label === null ? (
+        <span data-testid="drop-shared-label" className="text-text">your phone</span>
+      ) : (
+        <span data-testid="drop-shared-label" title={visible(label)} className="inline-block max-w-[16rem] min-w-0 truncate align-bottom text-text">
+          <Inline className="!whitespace-nowrap">{label}</Inline>
+        </span>
+      )}
+      {typeof item.claimed_ms === 'number' && <span data-testid="drop-claimed">· claimed {when(item.claimed_ms)}</span>}
+      {typeof item.shared_until_ms === 'number' && <span data-testid="drop-shared-until">· shared until {when(item.shared_until_ms)}</span>}
+      {item.gestureless && (
+        <span data-testid="drop-gestureless" className="text-warning">
+          · added from your phone without a confirmation
+        </span>
+      )}
+    </p>
+  )
+}
+
+function Row({ ws, item, info, sharedView, open, onToggle, onRetire, onChanged }: { ws: string; item: DropItem; info: DropInfo; sharedView: boolean; open: boolean; onToggle: () => void; onRetire: () => void; onChanged: () => void }) {
   const blocked = downloadBlocked(item)
   const tomb = item.state === 'expired' || item.state === 'retired'
   const [error, setError] = useState<DropErrorDetail | null>(null)
@@ -245,10 +301,10 @@ function Row({ ws, item, info, open, onToggle, onRetire, onChanged }: { ws: stri
           <DropName name={item.name} hidden={item.name_hidden} />
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5">
-          <Button size="sm" variant="outline" data-testid="drop-download" disabled={blocked !== null || busy} aria-describedby={blocked ? `why-${item.object_id}` : undefined} onClick={() => void download()}>
+          {!(sharedView && tomb) && <Button size="sm" variant="outline" data-testid="drop-download" disabled={blocked !== null || busy} aria-describedby={blocked ? `why-${item.object_id}` : undefined} onClick={() => void download()}>
             {busy ? 'Downloading…' : 'Download'}
-          </Button>
-          {!tomb && item.can_retire !== false && (
+          </Button>}
+          {!tomb && retireMode(item) === 'self' && (
             <Button size="sm" variant="outline" data-testid="drop-delete" onClick={onRetire}>
               Delete
             </Button>
@@ -300,7 +356,18 @@ function Row({ ws, item, info, open, onToggle, onRetire, onChanged }: { ws: stri
           </dd>
         </div>
       </dl>
-      {blocked && (
+      {item.shared_from && typeof item.shared_from === 'object' && <SharedFrom item={item} />}
+      {!tomb && retireMode(item) === 'handoff' && (
+        <p data-testid="drop-handoff" className="text-[12px] text-text-muted">
+          {HANDOFF_TEXT}
+        </p>
+      )}
+      {sharedView && tomb && (
+        <p data-testid="drop-gone" className="text-[12px] text-text-muted">
+          File no longer available ({item.state === 'expired' ? 'expired' : 'deleted'}). It stays in this list so a share you did not expect stays visible.
+        </p>
+      )}
+      {blocked && !(sharedView && tomb) && (
         <p id={`why-${item.object_id}`} data-testid="drop-download-reason" className="text-[12px] text-text-muted">
           {blocked}
           {tomb && item.tombstone_until_ms !== null && (
@@ -424,6 +491,7 @@ function VersionRow({ ws, object_id, v, info }: { ws: string; object_id: string;
 function RetireDialog({ ws, item, onClose, onDone }: { ws: string; item: DropItem; onClose: () => void; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<DropErrorDetail | null>(null)
+  const [handoff, setHandoff] = useState(false)
   const what = item.kind === 'document' ? 'document' : 'file'
   const run = async () => {
     setBusy(true)
@@ -437,7 +505,8 @@ function RetireDialog({ ws, item, onClose, onDone }: { ws: string; item: DropIte
       if (detail.code === 'drop.version_conflict') {
         setError({ ...detail, text: 'This item changed in the meantime. Reload the list and try again.' })
         onDone()
-      } else setError(detail)
+      } else if (detail.code === 'drop.handoff_required') setHandoff(true)
+      else setError(detail)
     } finally {
       setBusy(false)
     }
@@ -455,13 +524,18 @@ function RetireDialog({ ws, item, onClose, onDone }: { ws: string; item: DropIte
           <DropName name={item.name} hidden={item.name_hidden} /> · {fmtBytes(item.size)}
         </p>
         {error && <DropErrorLine detail={error} />}
+        {handoff && (
+          <p role="alert" data-testid="drop-handoff" className="text-[13px] text-text-muted">
+            {HANDOFF_TEXT}
+          </p>
+        )}
         <DialogFooter>
           <Button variant="outline" autoFocus onClick={onClose} disabled={busy}>
-            Keep it
+            {handoff ? 'Close' : 'Keep it'}
           </Button>
-          <Button variant="destructive" data-testid="drop-confirm-delete" onClick={() => void run()} disabled={busy}>
+          {!handoff && <Button variant="destructive" data-testid="drop-confirm-delete" onClick={() => void run()} disabled={busy}>
             {busy ? 'Deleting…' : `Delete for everyone`}
-          </Button>
+          </Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

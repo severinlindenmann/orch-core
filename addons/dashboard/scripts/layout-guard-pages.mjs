@@ -11,7 +11,7 @@ export const REAL_HOST_PAGES = [
   'real-host-pair-cert', 'real-host-pair-failed', 'real-host-pair-devices', 'real-host-pair-link', 'real-host-pair-remove-command',
   'real-host-readers-devices', 'real-host-convenience-refusals',
   'real-host-drop-unavailable', 'real-host-drop-list', 'real-host-drop-long-names', 'real-host-drop-upload-progress',
-  'real-host-drop-errors', 'real-host-drop-versions', 'real-host-drop-delete',
+  'real-host-drop-errors', 'real-host-drop-versions', 'real-host-drop-phone', 'real-host-drop-delete',
 ]
 
 /** Does `--only` (a RegExp or null) select at least one real-host page? */

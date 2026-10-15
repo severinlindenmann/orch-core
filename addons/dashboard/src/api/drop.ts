@@ -18,6 +18,8 @@ import { visible } from '@/components/sign/visible'
 export type DropState = 'live' | 'pruned' | 'expired' | 'retired'
 export type DropKind = 'file' | 'document'
 export type DropDirection = 'received' | 'sent'
+/** `drop.list` view (H1): the phone-shared items are a filter over the same rows. */
+export type DropListView = 'shared_from_phone'
 
 export interface DropAuthor {
   /** Person id (host-resolved). */
@@ -52,12 +54,38 @@ export interface DropItem {
    * ASSUMPTION (pending the D39a1 amendment on who may retire a file): `false` when `drop.retire` would refuse this viewer,
    * and the page offers no Delete. Absent: Delete is offered and the host decides (a refusal is `drop.not_eligible`).
    */
-  can_retire?: boolean
+  can_retire?: boolean | DropCanRetire | null
+  /**
+   * Drop A2 (host decisions H1–H6, all optional: missing means the old behaviour). Set when a phone shared this item
+   * to the workspace after the person claimed it. `label` is host-cleaned but still UNTRUSTED: display-only text.
+   */
+  shared_from?: DropSharedFrom | null
+  /** The claim happened without a confirmation on the phone ("added from your phone without a confirmation"). */
+  gestureless?: boolean
+  claimed_ms?: number | null
+  /** Host-provided (claimed_ms + 7 days); the page only shows it and never computes it. */
+  shared_until_ms?: number | null
+  /** Why a phone upload is unclaimed. A closed set today; unknown values are shown with a generic text. */
+  unclaimed_reason?: DropUnclaimedReason | string | null
 }
+
+export interface DropSharedFrom {
+  /** Device id (host-resolved). */
+  device: string
+  label: string
+}
+
+/** H2: why an item is not claimed. */
+export type DropUnclaimedReason = 'awaiting_claim' | 'author_revoked' | 'needs_handoff'
+
+/** H4: who deletes: `self` directly, `handoff` through the terminal, `null` nobody (this viewer). */
+export type DropCanRetire = 'self' | 'handoff'
 
 export interface DropListPage {
   items: DropItem[]
   next: string | null
+  /** H6: how many unclaimed uploads of OTHER people await review at the Mac's terminal. A count only. */
+  pending_others?: number
 }
 
 export interface DropVersion {
@@ -118,7 +146,7 @@ export interface DropApi {
   /** Does this build talk to a host for Drop at all? The real one: not until the ops are agreed. */
   served: (ws: string) => boolean
   info: (ws: string) => Promise<DropInfo>
-  list: (ws: string, args: { direction: DropDirection; after?: string | null; limit?: number }) => Promise<DropListPage>
+  list: (ws: string, args: { direction: DropDirection; view?: DropListView; after?: string | null; limit?: number }) => Promise<DropListPage>
   versions: (ws: string, args: { object_id: string; after?: string | null; limit?: number }) => Promise<DropVersionsPage>
   /** The host's existing `blob.put` (§0.10): 768 KiB chunks, allocation by `upload_key`. */
   blobPut: (ws: string, args: BlobPutArgs) => Promise<{ blob: string; size: number; received: number }>
@@ -146,7 +174,8 @@ const unavailable = (): Promise<never> =>
 export const realDropApi: DropApi = {
   served: () => false,
   info: unavailable,
-  list: unavailable,
+  // `args.view` ('shared_from_phone') is forwarded as `view` in the `drop.list` args once the server routes exist.
+  list: (_ws, _args) => unavailable(),
   versions: unavailable,
   blobPut: unavailable,
   blobDrop: unavailable,
@@ -167,8 +196,13 @@ export const DROP_PAGE = 32
 
 export const dropQueries = {
   info: (ws: string) => queryOptions({ queryKey: ['drop', ws, 'info'], queryFn: () => dropApi.info(ws), staleTime: 60_000 }),
-  list: (ws: string, direction: DropDirection, after: string | null) =>
-    queryOptions({ queryKey: ['drop', ws, 'list', direction, after], queryFn: () => dropApi.list(ws, { direction, after, limit: DROP_PAGE }) }),
+  list: (ws: string, direction: DropDirection, after: string | null, view?: DropListView) =>
+    queryOptions({
+      queryKey: ['drop', ws, 'list', direction, view ?? null, after],
+      queryFn: () => dropApi.list(ws, { direction, ...(view ? { view } : {}), after, limit: DROP_PAGE }),
+      // H3: a stale cursor is answered once with `drop.cursor_reset`; the page reloads page 1 itself, no blind retry.
+      retry: (n, e) => !(e instanceof ApiError && e.code === 'drop.cursor_reset') && n < 3,
+    }),
   versions: (ws: string, object_id: string, after: string | null) =>
     queryOptions({ queryKey: ['drop', ws, 'versions', object_id, after], queryFn: () => dropApi.versions(ws, { object_id, after, limit: DROP_PAGE }) }),
 }
@@ -205,6 +239,29 @@ const QUOTAS: Record<string, { what: string; count?: string }> = {
   drop_device_versions: { what: "this device's versions in the workspace", count: 'versions' },
   drop_device_documents: { what: "this device's documents in the workspace", count: 'documents' },
   drop_doc_versions: { what: "this document's versions", count: 'versions' },
+}
+
+/** H4: the existing hand-off path (a person confirms at the Mac's terminal). */
+export const HANDOFF_TEXT = "Confirm at the Mac's terminal: deleting this item needs your person key there."
+
+/** H2: plain words for `unclaimed_reason`; an unknown value (or none) gets the generic text. */
+export function unclaimedText(reason: string | null | undefined): string {
+  switch (reason) {
+    case 'author_revoked':
+      return 'Not claimed: the phone was removed before this was claimed, so the file can’t be claimed.'
+    case 'needs_handoff':
+      return 'Not claimed yet: claiming it needs a confirmation at the Mac’s terminal.'
+    default: // awaiting_claim, and any value the page doesn't know
+      return 'Not claimed yet: until this workspace’s host claims it, only the host and the sender can open it.'
+  }
+}
+
+/** H4 normalised: the old boolean `false` is "nobody", `true` and a missing value are "self" (the host decides). */
+export function retireMode(item: Pick<DropItem, 'can_retire'>): 'self' | 'handoff' | null {
+  const c = item.can_retire
+  if (c === undefined || c === true || c === 'self') return 'self'
+  if (c === 'handoff') return 'handoff'
+  return null
 }
 
 export interface DropErrorDetail {
@@ -272,6 +329,12 @@ export function dropError(error: unknown, ctx: { max_bytes?: number; version_cap
     case 'drop.not_served':
       return { code, text: DROP_UNAVAILABLE }
     case 'drop.not_eligible':
+      return { code, text: "You can't do this to this item (only some members may delete it, or it can't be deleted)." }
+    case 'drop.cursor_reset':
+      return { code, text: 'The list was refreshed.' }
+    case 'drop.handoff_required':
+      return { code, text: HANDOFF_TEXT }
+    case 'role.denied':
       return { code, text: "You can't do this to this item (only some members may delete it, or it can't be deleted)." }
     case 'drop.not_visible':
       return { code, text: "You can't see this item (it is not shared with you, or it was removed)." }

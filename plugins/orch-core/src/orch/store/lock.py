@@ -109,6 +109,10 @@ class FileLock:
             return False
         return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
 
+    def held_by_me(self) -> bool:
+        """This thread holds the lock through this object (R6a: the store's ``lock_held``)."""
+        return bool(self._stack())
+
     def _stack(self) -> list[_Held]:
         st = getattr(self._tl, "stack", None)
         if st is None:

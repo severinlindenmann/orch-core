@@ -24,7 +24,7 @@ from orch.relay.rids import RidStore
 from orch.relay.state import StateDir
 
 from . import corpus
-from .bridgekit import FakeHost, Poster, open_chunk
+from .bridgekit import FakeHost, Poster, SealLockFixture, open_chunk
 from .helpers import Key
 
 CASES = [c for c in corpus.S2["bridge"]["host_cases"] if "steps" not in c and not c["name"].startswith("pair")]
@@ -34,7 +34,7 @@ CASES = [c for c in corpus.S2["bridge"]["host_cases"] if "steps" not in c and no
 STEPPED = [c for c in corpus.S2["bridge"]["host_cases"] if "steps" in c and not c["name"].startswith("pair")]
 
 
-class _Epochs:
+class _Epochs(SealLockFixture):
     def __init__(self, st: dict) -> None:
         self.cur, self.keys = st["epoch"], {int(k): bytes.fromhex(v) for k, v in st["wk"].items()}
 
@@ -46,6 +46,9 @@ class _Epochs:
 
     def refusal_key(self, epoch: int) -> bytes | None:
         return None
+
+    def is_burned(self, epoch: int) -> bool:
+        return False
 
     def seal_state(self) -> SealState:
         return SealState(self.cur, False, self.cur + 1)

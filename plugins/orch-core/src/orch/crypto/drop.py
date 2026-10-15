@@ -2,9 +2,10 @@
 metadata, ``dek_commit``, the §10.3 wraps, the §10.4 descriptor, the §10.5 claim object, the same-DEK rewrap and the
 ODU2 upload frame.
 
-Pure functions; nothing here signs or reads a key from disk. The DEK is the caller's (32 random bytes per object
-version); descriptors and claims are signed by the caller over :func:`drop_object_signed_bytes` and
-:func:`drop_claim_signed_bytes` (``RelaySigner.drop_object`` / ``drop_claim``, H13-1).
+Pure functions; nothing here signs or reads a key from disk. :func:`seal_version` draws each version's DEK and seals
+its content and metadata once (review F2); descriptors and claims are signed by the caller over
+:func:`drop_object_signed_bytes` and :func:`drop_claim_signed_bytes` (``RelaySigner.drop_object`` / ``drop_claim``,
+H13-1).
 
 Two levels of frame:
 
@@ -25,13 +26,13 @@ from __future__ import annotations
 import secrets
 from collections.abc import Iterable
 
-from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from orch import canon
 
 from . import sealing, suite
-from ._closed import close_module
+from ._closed import close_module, closed
+from ._secret import Secret
 from .encoding import EncodingError, b64u, unb64u, unhex
 from .labels import LABELS, L
 
@@ -46,10 +47,10 @@ __all__ = [
     "MAX_META",
     "DropError",
     "DropTagError",
+    "SealedVersion",
     "build_host_frame",
     "check_drop_object",
     "check_wrap_record",
-    "content_key",
     "decrypt_blob",
     "decrypt_chunk",
     "dek_commit",
@@ -58,18 +59,15 @@ __all__ = [
     "drop_object",
     "drop_object_signed_bytes",
     "encode_frame",
-    "encrypt_blob",
     "open_meta",
     "open_wrap",
-    "open_wrap_sealed",
-    "open_wrap_wk",
     "parent_hash",
     "parse_blob_header",
     "parse_frame",
     "reframe",
     "reframe_host",
     "rewrap_same_dek",
-    "seal_meta",
+    "seal_version",
     "verify_drop_object",
     "wrap_sealed",
     "wrap_wk",
@@ -139,7 +137,7 @@ def _u32b(i: int) -> bytes:
 # --- content (§10.2) ------------------------------------------------------------------------------------------------
 
 
-def content_key(dek: bytes, object_id: bytes, version: int) -> bytes:
+def _content_key(dek: bytes, object_id: bytes, version: int) -> bytes:
     info = f"{LABELS['kdf_drop_content']}|{_b(object_id, 16, 'object_id').hex()}|{_u32(version, 'version', 1)}"
     return suite.hkdf(_b(dek, 32, "DEK"), b"", info.encode("ascii"))
 
@@ -175,14 +173,11 @@ def _chunk_aad(header: bytes, i: int, is_last: bool) -> bytes:
     return header + _u32b(i) + bytes([1 if is_last else 0])
 
 
-def _encrypt_blob_with_prefix(
-    dek: bytes, object_id: bytes, version: int, pt: bytes, prefix: bytes, chunk: int = DEFAULT_CHUNK
-) -> bytes:
-    """Test seam (a fixed nonce prefix). Never call outside tests."""
-    if type(pt) is not bytes:
-        raise DropError("content is bytes")
+def _encrypt_blob(dek: bytes, object_id: bytes, version: int, pt: bytes, prefix: bytes, chunk: int) -> bytes:
+    if type(pt) is not bytes or len(pt) > MAX_BLOB:
+        raise DropError("content is bytes, at most the blob cap")
     hdr = _blob_header(object_id, version, chunk, prefix)
-    k = content_key(dek, object_id, version)
+    k = _content_key(dek, object_id, version)
     n = max(1, -(-len(pt) // chunk))
     out = [hdr]
     for i in range(n):
@@ -191,20 +186,18 @@ def _encrypt_blob_with_prefix(
     return b"".join(out)
 
 
-def encrypt_blob(dek: bytes, object_id: bytes, version: int, pt: bytes, chunk: int = DEFAULT_CHUNK) -> bytes:
-    """The ORD2 ciphertext of ``pt`` (empty content is one empty last chunk), with a fresh nonce prefix."""
-    return _encrypt_blob_with_prefix(dek, object_id, version, pt, secrets.token_bytes(8), chunk)
-
-
-def decrypt_chunk(k_content: bytes, header: bytes, i: int, ct: bytes, is_last: bool) -> bytes:
-    """One chunk (streaming downloads, 11A.16.5): ``i`` and ``is_last`` are the reader's own count, never the data's."""
-    if type(ct) is not bytes or len(ct) < TAG or type(i) is not int or not 0 <= i < 2**32:
+def decrypt_chunk(dek: bytes, object_id: bytes, version: int, header: bytes, i: int, ct: bytes, is_last: bool) -> bytes:
+    """One chunk (streaming downloads, 11A.16.5): the header must name this object and version; ``i`` and ``is_last``
+    are the reader's own count, never the data's."""
+    parse_blob_header(header, object_id, version)
+    if type(ct) is not bytes or len(ct) < TAG or type(i) is not int or not 0 <= i < 2**32 or type(is_last) is not bool:
         raise DropError("chunk")
-    return suite.aes_gcm_open(k_content, header[32:40] + _u32b(i), ct, _chunk_aad(header, i, is_last))
+    k = _content_key(dek, object_id, version)
+    return suite.aes_gcm_open(k, header[32:40] + _u32b(i), ct, _chunk_aad(header, i, is_last))
 
 
 def decrypt_blob(dek: bytes, object_id: bytes, version: int, blob: bytes) -> bytes:
-    """The plaintext; a truncated, reordered, re-headed or substituted blob raises ``DropError`` or ``InvalidTag``."""
+    """The plaintext; a truncated, reordered, re-headed or substituted blob raises ``DropError`` (``DropTagError``)."""
     if type(blob) is not bytes or len(blob) < HEADER_LEN + TAG:
         raise DropError("truncated blob")
     hdr = blob[:HEADER_LEN]
@@ -213,8 +206,15 @@ def decrypt_blob(dek: bytes, object_id: bytes, version: int, blob: bytes) -> byt
     n = -(-len(body) // step)
     if len(body) - (n - 1) * step < TAG:
         raise DropError("truncated blob")
-    k = content_key(dek, object_id, version)
-    return b"".join(decrypt_chunk(k, hdr, i, body[i * step : (i + 1) * step], i == n - 1) for i in range(n))
+    k = _content_key(dek, object_id, version)
+    out = []
+    for i in range(n):
+        out.append(
+            suite.aes_gcm_open(
+                k, hdr[32:40] + _u32b(i), body[i * step : (i + 1) * step], _chunk_aad(hdr, i, i == n - 1)
+            )
+        )
+    return b"".join(out)
 
 
 # --- metadata, commitments, parent hash -----------------------------------------------------------------------------
@@ -226,14 +226,49 @@ def _meta_key_aad(dek: bytes, object_id: bytes, version: int) -> tuple[bytes, by
     return k, L["aad_drop_meta"] + bytes([suite.SUITE_ID]) + obj + _u32b(ver)
 
 
-def seal_meta(dek: bytes, object_id: bytes, version: int, meta: dict) -> bytes:
-    """``AES-256-GCM(HKDF(DEK, "", "orch/v2/drop-meta|obj|ver"), zero nonce, cj(meta), aad)`` (the DEK is per
-    version, so the zero nonce is used once)."""
+def _seal_meta(dek: bytes, object_id: bytes, version: int, meta: dict) -> bytes:
+    """``AES-256-GCM(HKDF(DEK, "", "orch/v2/drop-meta|obj|ver"), zero nonce, cj(meta), aad)``. Called only by
+    :func:`_seal_version_with_prefix`, once per freshly drawn DEK (review F2): the zero nonce is then used once."""
     k, aad = _meta_key_aad(dek, object_id, version)
     out = suite.aes_gcm_seal(k, suite.ZERO_NONCE, canon.dumps(meta), aad)
     if len(out) > MAX_META:
         raise DropError("meta above 64 KiB")
     return out
+
+
+class SealedVersion(Secret):
+    """One object version's sealed content: the fresh ``dek``, the ORD2 ``blob`` and the sealed ``meta``. Made only by
+    :func:`seal_version`; it never prints, pickles or copies (it holds the DEK)."""
+
+    __slots__ = ("object_id", "version", "dek", "blob", "meta")
+    object_id: bytes
+    version: int
+    dek: bytes
+    blob: bytes
+    meta: bytes
+
+    def __init__(self, object_id: bytes, version: int, dek: bytes, blob: bytes, meta: bytes) -> None:
+        self._set(object_id=object_id, version=version, dek=dek, blob=blob, meta=meta)
+
+
+def _seal_version_with_prefix(
+    dek: bytes, prefix: bytes, object_id: bytes, version: int, content: bytes, meta: dict, chunk: int
+) -> SealedVersion:
+    """The one place content and metadata are sealed. Test seam (a fixed DEK and prefix): never call outside tests or
+    outside this module."""
+    blob = _encrypt_blob(dek, object_id, version, content, prefix, chunk)
+    return SealedVersion(object_id, version, dek, blob, _seal_meta(dek, object_id, version, meta))
+
+
+def seal_version(
+    object_id: bytes, version: int, content: bytes, meta: dict, chunk: int = DEFAULT_CHUNK
+) -> SealedVersion:
+    """Draw a fresh DEK and nonce prefix, then seal ``content`` (ORD2) and ``meta`` once under them (review F2: the
+    meta's zero nonce is safe only under a DEK used for one seal, so no public function seals under a given DEK). A
+    re-framing reuses the stored descriptor and blob and never seals again."""
+    return _seal_version_with_prefix(
+        secrets.token_bytes(32), secrets.token_bytes(8), object_id, version, content, meta, chunk
+    )
 
 
 def open_meta(dek: bytes, object_id: bytes, version: int, sealed: bytes) -> dict:
@@ -311,45 +346,16 @@ def _record(object_id: bytes, version: int, kind: str, target: bytes, key_versio
     }
 
 
-def _wrap_wk_with_salt(
-    wk: bytes, ws: bytes, epoch: int, object_id: bytes, version: int, dek: bytes, salt: bytes
-) -> dict:
-    """Test seam (a fixed salt). Never call outside tests."""
+def wrap_wk(wk: bytes, ws: bytes, epoch: int, object_id: bytes, version: int, dek: bytes) -> dict:
+    """A ``wk`` wrap record under ``WK_epoch`` of ``ws`` (SALTED-AEAD; the salt is drawn by ``suite.salted_seal``)."""
     obj, ver = _b(object_id, 16, "object_id"), _u32(version, "version", 1)
     aad = _wrap_aad(obj, ver, "wk", _b(ws, 16, "workspace id"), _u32(epoch, "epoch"))
-    w = suite._salted_seal(_k_wrap_wk(wk, ws, epoch), L["kdf_wrap_msg"], aad, _b(dek, 32, "DEK"), salt)
+    w = suite.salted_seal(_k_wrap_wk(wk, ws, epoch), L["kdf_wrap_msg"], aad, _b(dek, 32, "DEK"))
     return _record(obj, ver, "wk", ws, epoch, w)
-
-
-def wrap_wk(wk: bytes, ws: bytes, epoch: int, object_id: bytes, version: int, dek: bytes) -> dict:
-    """A ``wk`` wrap record under ``WK_epoch`` of ``ws`` (SALTED-AEAD, a fresh salt drawn here)."""
-    return _wrap_wk_with_salt(wk, ws, epoch, object_id, version, dek, secrets.token_bytes(16))
 
 
 def _sealed_extra(kind: str, version: int) -> bytes:
     return bytes([1 if kind == "wxk" else 2]) + _u32b(version)
-
-
-def _wrap_sealed_with_ephemeral(
-    eph: EllipticCurvePrivateKey,
-    kind: str,
-    kx_pub: bytes,
-    target: bytes,
-    key_version: int,
-    object_id: bytes,
-    version: int,
-    dek: bytes,
-) -> dict:
-    """Test seam (a fixed ephemeral key). Never call outside tests."""
-    if kind not in ("wxk", "device"):
-        raise DropError("a sealed wrap is wxk or device")
-    obj, ver, kv = _b(object_id, 16, "object_id"), _u32(version, "version", 1), _u32(key_version, "key_version")
-    if kind == "device" and kv != 0:
-        raise DropError("a device wrap has key_version 0")
-    w = sealing._seal_with_ephemeral(
-        eph, kx_pub, _b(target, 16, "target id"), "drop-dek", obj, kv, _b(dek, 32, "DEK"), _sealed_extra(kind, ver)
-    )
-    return _record(obj, ver, kind, target, kv, w)
 
 
 def wrap_sealed(
@@ -357,15 +363,21 @@ def wrap_sealed(
 ) -> dict:
     """A ``wxk`` (to ``WXK_v`` of workspace ``target``, ``key_version`` = ``wxk_version``) or ``device`` (to the
     device's ``dk_kx``, ``key_version`` 0) wrap record, sealed with a fresh ephemeral key (§5.3, purpose
-    ``drop-dek``)."""
-    return _wrap_sealed_with_ephemeral(
-        suite.generate_private_key(), kind, kx_pub, target, key_version, object_id, version, dek
+    ``drop-dek``; the key is drawn by ``sealing.seal``)."""
+    if kind not in ("wxk", "device"):
+        raise DropError("a sealed wrap is wxk or device")
+    obj, ver, kv = _b(object_id, 16, "object_id"), _u32(version, "version", 1), _u32(key_version, "key_version")
+    if kind == "device" and kv != 0:
+        raise DropError("a device wrap has key_version 0")
+    w = sealing.seal(
+        kx_pub, _b(target, 16, "target id"), "drop-dek", obj, kv, _b(dek, 32, "DEK"), _sealed_extra(kind, ver)
     )
+    return _record(obj, ver, kind, target, kv, w)
 
 
-def open_wrap_wk(rec: dict, wk: bytes, ws: bytes) -> bytes:
-    """The DEK of a ``wk`` record for workspace ``ws``, opened with ``WK`` of the record's ``key_version`` (the
-    caller picks the epoch's key; that it is held and not burned is ``BridgeKeys``')."""
+@closed(DropError, DropError, DropTagError)
+def _open_wrap_wk(rec: dict, wk: bytes, ws: bytes) -> bytes:
+    """The DEK of a ``wk`` record for workspace ``ws``. Private: callers use :func:`open_wrap` (review F3)."""
     rec = check_wrap_record(rec)
     if rec["target_kind"] != "wk" or rec["target_id"] != _b(ws, 16, "workspace id").hex():
         raise DropError("not a wk wrap of this workspace")
@@ -373,13 +385,16 @@ def open_wrap_wk(rec: dict, wk: bytes, ws: bytes) -> bytes:
     aad = _wrap_aad(obj, ver, "wk", ws, kv)
     dek = suite.salted_open(_k_wrap_wk(wk, ws, kv), L["kdf_wrap_msg"], aad, unb64u(rec["wrap"]))
     if len(dek) != 32:
-        raise InvalidTag()
+        raise DropTagError("not a DEK")
     return dek
 
 
-def open_wrap_sealed(rec: dict, kx_priv: EllipticCurvePrivateKey) -> bytes:
-    """The DEK of a ``wxk`` or ``device`` record, opened with the recipient's exchange key."""
+@closed(DropError, DropError, DropTagError)
+def _open_wrap_sealed(rec: dict, kx_priv: EllipticCurvePrivateKey) -> bytes:
+    """The DEK of a ``wxk`` or ``device`` record. Private: callers use :func:`open_wrap` (review F3)."""
     rec = check_wrap_record(rec)
+    if not isinstance(kx_priv, EllipticCurvePrivateKey):
+        raise DropError("the recipient key is a private exchange key")
     kind = rec["target_kind"]
     if kind not in ("wxk", "device"):
         raise DropError("not a sealed wrap")
@@ -387,26 +402,39 @@ def open_wrap_sealed(rec: dict, kx_priv: EllipticCurvePrivateKey) -> bytes:
     target = bytes.fromhex(rec["target_id"])
     dek = sealing.open_sealed(kx_priv, target, "drop-dek", obj, kv, unb64u(rec["wrap"]), _sealed_extra(kind, ver))
     if len(dek) != 32:
-        raise InvalidTag()
+        raise DropTagError("not a DEK")
     return dek
 
 
-def open_wrap(rec: dict, o: dict, *, wk: bytes | None = None, kx_priv: EllipticCurvePrivateKey | None = None) -> bytes:
-    """The DEK of ``rec`` for descriptor object ``o`` (§10.4 "Readers MUST" step 3): the record names ``o``'s object
-    and version, and the DEK matches ``o``'s ``dek_commit``. ``wk`` opens a ``wk`` record of ``o``'s space,
-    ``kx_priv`` a ``wxk`` or ``device`` record."""
+def open_wrap(
+    rec: dict, o: dict, me: bytes, *, wk: bytes | None = None, kx_priv: EllipticCurvePrivateKey | None = None
+) -> bytes:
+    """The DEK of ``rec`` for descriptor object ``o`` (§10.4 "Readers MUST" step 3), the only public wrap opener:
+
+    * the record names ``o``'s object and version;
+    * it is addressed to the caller: ``target_id == me`` (``me`` is the caller's device id for a ``device`` wrap, the
+      space id for ``wk`` and ``wxk``), and a ``wk`` or ``wxk`` wrap names ``o``'s own space (review F3);
+    * the DEK matches ``o``'s ``dek_commit`` (constant-time compare).
+
+    ``wk`` opens a ``wk`` record (``WK`` of the record's ``key_version``; that it is held and not burned is
+    ``BridgeKeys``'), ``kx_priv`` a ``wxk`` or ``device`` record."""
     rec = check_wrap_record(rec)
     o = check_drop_object(o)
+    me_hex = _b(me, 16, "me").hex()
     if rec["object_id"] != o["object_id"] or rec["version"] != o["version"]:
         raise DropError("the wrap names another object or version")
+    if rec["target_id"] != me_hex:
+        raise DropError("the wrap is not addressed to the caller")
+    if rec["target_kind"] in ("wk", "wxk") and me_hex != o["space_id"]:
+        raise DropError("a wk or wxk wrap of another space")
     if rec["target_kind"] == "wk":
         if wk is None:
             raise DropError("a wk wrap needs WK")
-        dek = open_wrap_wk(rec, wk, bytes.fromhex(o["space_id"]))
+        dek = _open_wrap_wk(rec, wk, me)
     elif rec["target_kind"] in ("wxk", "device"):
         if kx_priv is None:
             raise DropError("a sealed wrap needs the recipient key")
-        dek = open_wrap_sealed(rec, kx_priv)
+        dek = _open_wrap_sealed(rec, kx_priv)
     else:
         raise DropError("sk wraps are not opened here (shared spaces are P6)")
     if not _ct_eq(b64u(dek_commit(bytes.fromhex(o["object_id"]), o["version"], dek)), o["dek_commit"]):
@@ -420,8 +448,9 @@ def _ct_eq(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode()) if type(b) is str else False
 
 
-def _rewrap_same_dek_with_salt(o: dict, dek: bytes, wk: bytes, epoch: int, salt: bytes) -> dict:
-    """Test seam (a fixed salt). Never call outside tests."""
+def rewrap_same_dek(o: dict, dek: bytes, wk: bytes, epoch: int) -> dict:
+    """A new ``wk`` wrap of the **same** DEK at ``epoch`` (``stale_epoch``, ``drop_rewrap``, a claim): the DEK must be
+    the one ``o`` commits to, and ``o`` is a ``[space_id]`` or inbox object, never a device-only one."""
     o = check_drop_object(o)
     r = o["recipients"]
     if not (r == "inbox" or r == [o["space_id"]]):
@@ -429,13 +458,7 @@ def _rewrap_same_dek_with_salt(o: dict, dek: bytes, wk: bytes, epoch: int, salt:
     obj = bytes.fromhex(o["object_id"])
     if not _ct_eq(b64u(dek_commit(obj, o["version"], _b(dek, 32, "DEK"))), o["dek_commit"]):
         raise DropError("not this version's DEK (the same-DEK rule)")
-    return _wrap_wk_with_salt(wk, bytes.fromhex(o["space_id"]), epoch, obj, o["version"], dek, salt)
-
-
-def rewrap_same_dek(o: dict, dek: bytes, wk: bytes, epoch: int) -> dict:
-    """A new ``wk`` wrap of the **same** DEK at ``epoch`` (``stale_epoch``, ``drop_rewrap``, a claim): the DEK must be
-    the one ``o`` commits to, and ``o`` is a ``[space_id]`` or inbox object, never a device-only one."""
-    return _rewrap_same_dek_with_salt(o, dek, wk, epoch, secrets.token_bytes(16))
+    return wrap_wk(wk, bytes.fromhex(o["space_id"]), epoch, obj, o["version"], dek)
 
 
 # --- the descriptor (§10.4) and the claim (§10.5) -------------------------------------------------------------------
@@ -509,33 +532,27 @@ def check_drop_object(o: object) -> dict:
 
 
 def drop_object(
+    sealed: SealedVersion,
     *,
-    object_id: bytes,
     space_id: bytes,
     object_kind: str,
-    version: int,
     parent_hash: bytes | None,
     author_kind: str,
     author_id: bytes,
-    blob: bytes,
-    dek: bytes,
-    meta: bytes,
     recipients: str | Iterable[bytes | str],
     origin: str,
     created_ms: int,
     expires_ms: int | None,
 ) -> dict:
-    """The §10.4 descriptor object for an ORD2 ``blob`` and sealed ``meta`` under ``dek`` (``content_hash``,
-    ``content_len`` and ``dek_commit`` computed here), checked by :func:`check_drop_object`."""
-    obj = _b(object_id, 16, "object_id")
-    if type(blob) is not bytes or type(meta) is not bytes:
-        raise DropError("blob and meta are bytes")
-    parse_blob_header(blob[:HEADER_LEN], obj, version)
+    """The §10.4 descriptor object for a :class:`SealedVersion` (``content_hash``, ``content_len``, ``meta`` and
+    ``dek_commit`` taken from it), checked by :func:`check_drop_object`."""
+    if type(sealed) is not SealedVersion:
+        raise DropError("a descriptor is built from seal_version's result")
+    obj, version = sealed.object_id, sealed.version
     if recipients != "inbox":
         if isinstance(recipients, str):
             raise DropError("recipients")
-        ids = [r.hex() if type(r) is bytes else r for r in recipients]
-        recipients = ids
+        recipients = [r.hex() if type(r) is bytes else r for r in recipients]
     o = {
         "v": 2,
         "suite": suite.SUITE_ID,
@@ -545,14 +562,14 @@ def drop_object(
         "space_kind": "workspace",
         "object_kind": object_kind,
         "version": version,
-        "parent": version - 1 if type(version) is int else version,
+        "parent": version - 1,
         "parent_hash": None if parent_hash is None else b64u(_b(parent_hash, 32, "parent_hash")),
         "author_kind": author_kind,
         "author_id": _b(author_id, 16, "author_id").hex(),
-        "content_hash": b64u(suite.sha256(blob)),
-        "content_len": len(blob),
-        "dek_commit": b64u(dek_commit(obj, version, dek)),
-        "meta": b64u(meta),
+        "content_hash": b64u(suite.sha256(sealed.blob)),
+        "content_len": len(sealed.blob),
+        "dek_commit": b64u(dek_commit(obj, version, sealed.dek)),
+        "meta": b64u(sealed.meta),
         "recipients": recipients,
         "origin": origin,
         "created_ms": created_ms,

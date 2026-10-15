@@ -24,7 +24,6 @@ from ``RelaySigner.push`` over :func:`push_signed_bytes` and passes it in, with 
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -154,25 +153,25 @@ def push_signed_bytes(ws: bytes, epoch: int, payload: dict) -> bytes:
     return L["sig_push"] + bytes([suite.SUITE_ID]) + _ws(ws) + _epoch(epoch).to_bytes(4, "big") + canon.dumps(payload)
 
 
-def _seal_push_with_salt(
+def _seal_push(
     k: bytes,
     ws: bytes,
     epoch: int,
     payload: dict,
     sig: bytes,
-    salt: bytes,
     *,
     kinds: tuple[str, ...] = HOST_PUSH_KINDS,
-    padded: bool = False,
+    padded: bool = True,
 ) -> bytes:
-    """Test seam (a fixed salt; the vectors' kinds and unpadded labels). Never call outside tests."""
+    """The sealer; :func:`seal_push` is it with the host's kinds and padding. The salt is drawn by
+    :func:`orch.crypto.suite.salted_seal` (tests fix it there, never through a seam here)."""
     _check_payload(payload, kinds, padded=padded)
     if type(sig) is not bytes or len(sig) != suite.SIG_LEN:
         raise PushError("input", "signature is 64 bytes")
     if type(k) is not bytes or len(k) != 32:
         raise PushError("input", "K_push is 32 bytes")
     pt = canon.dumps({"p": payload, "sig": b64u(sig)})
-    c = suite._salted_seal(k, L["kdf_push_msg"], push_aad(ws, epoch), pt, salt)
+    c = suite.salted_seal(k, L["kdf_push_msg"], push_aad(ws, epoch), pt)
     out = canon.dumps({"v": 2, "ws": ws.hex(), "epoch": epoch, "c": b64u(c)})
     if len(out) > MAX_PUSH:
         raise PushError("input", "cj(outer) is above 3,072 bytes")
@@ -181,8 +180,8 @@ def _seal_push_with_salt(
 
 def seal_push(k_push_e: bytes, ws: bytes, epoch: int, payload: dict, sig: bytes) -> bytes:
     """``cj(outer)`` for a host payload (:func:`push_payload`) and its ``WSK`` signature, under ``K_push`` of
-    ``epoch``, with a fresh 16-byte salt drawn here. The bytes the host persists and sends (``outer`` of §19.10)."""
-    return _seal_push_with_salt(k_push_e, ws, epoch, payload, sig, secrets.token_bytes(16), padded=True)
+    ``epoch``, with a fresh 16-byte salt. The bytes the host persists and sends (``outer`` of §19.10)."""
+    return _seal_push(k_push_e, ws, epoch, payload, sig)
 
 
 def open_push(raw: bytes, keys: Mapping[str, PushKeys], now_ms: int) -> dict:
@@ -200,8 +199,12 @@ def open_push(raw: bytes, keys: Mapping[str, PushKeys], now_ms: int) -> dict:
         c = unb64u(m["c"])
     except (canon.JcsError, EncodingError):
         raise PushError("shape") from None
+    if not isinstance(keys, Mapping):
+        raise PushError("no_key")
     entry = keys.get(m["ws"])
     epoch = m["epoch"]
+    if type(entry) is not PushKeys or not isinstance(entry.wk, Mapping):
+        entry = None
     if entry is None or type(epoch) is not int or epoch not in entry.wk or not 0 <= epoch < 2**32:
         raise PushError("no_key")
     try:
@@ -214,7 +217,7 @@ def open_push(raw: bytes, keys: Mapping[str, PushKeys], now_ms: int) -> dict:
     try:
         sig = unb64u(inner["sig"], suite.SIG_LEN)
     except EncodingError:
-        raise PushError("tag") from None
+        raise PushError("signature") from None  # review F6: a malformed signature is a signature failure
     p = inner["p"]
     try:
         signed = L["sig_push"] + bytes([suite.SUITE_ID]) + ws + epoch.to_bytes(4, "big") + canon.dumps(p)

@@ -8,13 +8,18 @@ frame carries no workspace wrap, and nothing but a §10.3 wrap record (never the
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import inspect
+import json
+import pickle
+import types
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from orch import canon, crypto
-from orch.crypto import drop, recovery
+from orch.crypto import drop, recovery, suite
 from orch.crypto.encoding import b64u, unb64u
 
 from .vectors import ALL, S2, priv, pub
@@ -41,6 +46,22 @@ def seed_priv(seed: bytes) -> ec.EllipticCurvePrivateKey:
 WK1 = bytes.fromhex(S2["push"]["cases"][0]["keys"][IDS["workspace_a"]]["wk"]["1"])
 
 
+def fix_salt(monkeypatch, salt: bytes) -> None:
+    """Fix SALTED-AEAD's salt for one test (the randomness source inside ``orch.crypto.suite``; review F4: no
+    cross-module seam)."""
+    monkeypatch.setattr(suite, "secrets", types.SimpleNamespace(token_bytes=lambda n: salt[:n]))
+
+
+def fix_ephemeral(monkeypatch, key) -> None:
+    monkeypatch.setattr(suite, "generate_private_key", lambda: key)
+
+
+def vector_version():
+    return drop._seal_version_with_prefix(
+        DEK, bytes.fromhex(D["nonce_prefix"]), OBJ, 1, bytes.fromhex(D["content"]), D["meta"], D["chunk_size"]
+    )
+
+
 # --- constants, blob, metadata, commitments -------------------------------------------------------------------------
 
 
@@ -51,21 +72,51 @@ def test_constants_match_the_vectors():
     assert drop.FRAME_MAGIC == b"ODU2" and drop.MAX_HEAD == 512 * 1024
 
 
-def test_content_key_blob_and_empty_blob_byte_exact():
+def test_content_key_blob_meta_and_empty_blob_byte_exact():
     prefix = bytes.fromhex(D["nonce_prefix"])
     content = bytes.fromhex(D["content"])
-    assert drop.content_key(DEK, OBJ, 1).hex() == D["k_content"]
-    blob = drop._encrypt_blob_with_prefix(DEK, OBJ, 1, content, prefix, D["chunk_size"])
-    assert blob.hex() == D["blob"]
-    assert drop._encrypt_blob_with_prefix(DEK, OBJ, 1, b"", prefix, D["chunk_size"]).hex() == D["empty_blob"]
-    assert drop.decrypt_blob(DEK, OBJ, 1, blob) == content
+    assert drop._content_key(DEK, OBJ, 1).hex() == D["k_content"]
+    sv = vector_version()
+    assert sv.blob.hex() == D["blob"] and sv.meta.hex() == D["meta_sealed"] and sv.dek == DEK
+    empty = drop._seal_version_with_prefix(DEK, prefix, OBJ, 1, b"", D["meta"], D["chunk_size"])
+    assert empty.blob.hex() == D["empty_blob"]
+    assert drop.decrypt_blob(DEK, OBJ, 1, sv.blob) == content
     assert drop.decrypt_blob(DEK, OBJ, 1, bytes.fromhex(D["empty_blob"])) == b""
 
 
-def test_encrypt_blob_draws_a_fresh_prefix():
-    a, b = drop.encrypt_blob(DEK, OBJ, 1, b"x", chunk=512), drop.encrypt_blob(DEK, OBJ, 1, b"x", chunk=512)
-    assert a[32:40] != b[32:40]
-    assert drop.decrypt_blob(DEK, OBJ, 1, a) == b"x"
+def test_seal_version_draws_a_fresh_dek_and_prefix():
+    a = drop.seal_version(OBJ, 1, b"x", {"name": "a"}, chunk=512)
+    b = drop.seal_version(OBJ, 1, b"x", {"name": "a"}, chunk=512)
+    assert a.dek != b.dek and a.blob[32:40] != b.blob[32:40] and a.meta != b.meta
+    assert drop.decrypt_blob(a.dek, OBJ, 1, a.blob) == b"x"
+    assert drop.open_meta(a.dek, OBJ, 1, a.meta) == {"name": "a"}
+
+
+def test_meta_is_sealed_only_with_a_fresh_dek():
+    """Review F2: the zero-nonce meta seal is reachable only through ``seal_version``, which draws the DEK itself; no
+    public function seals content or metadata under a DEK the caller supplies."""
+    assert not hasattr(drop, "seal_meta") and not hasattr(drop, "encrypt_blob") and not hasattr(drop, "content_key")
+    assert "dek" not in inspect.signature(drop.seal_version).parameters
+    takes_dek = {
+        n
+        for n in drop.__all__
+        if isinstance(getattr(drop, n), types.FunctionType) and "dek" in inspect.signature(getattr(drop, n)).parameters
+    }
+    # openers, the commitment and the wrap builders (which seal the DEK itself, never content or metadata)
+    assert takes_dek == {
+        "decrypt_blob", "decrypt_chunk", "open_meta", "dek_commit", "wrap_wk", "wrap_sealed", "rewrap_same_dek",
+    }  # fmt: skip
+
+
+def test_a_sealed_version_never_prints_pickles_or_copies():
+    sv = drop.seal_version(OBJ, 1, b"x", {"name": "a"}, chunk=512)
+    for text in (repr(sv), str(sv), f"{sv}", json.dumps(sv, default=str)):
+        assert "redacted" in text and sv.dek.hex() not in text
+    for fn in (pickle.dumps, copy.copy, copy.deepcopy):
+        with pytest.raises(TypeError):
+            fn(sv)
+    with pytest.raises(AttributeError):
+        sv.dek = bytes(32)
 
 
 def test_blob_truncation_and_substitution_refused():
@@ -98,20 +149,19 @@ def test_chunk_level_decryption_matches():
     blob = bytes.fromhex(D["blob"])
     chunk, prefix = drop.parse_blob_header(blob[: drop.HEADER_LEN], OBJ, 1)
     assert (chunk, prefix.hex()) == (D["chunk_size"], D["nonce_prefix"])
-    k = drop.content_key(DEK, OBJ, 1)
+    hdr = blob[: drop.HEADER_LEN]
     step = chunk + 16
     body = blob[drop.HEADER_LEN :]
     parts = [body[i : i + step] for i in range(0, len(body), step)]
-    out = b"".join(
-        drop.decrypt_chunk(k, blob[: drop.HEADER_LEN], i, ct, i == len(parts) - 1) for i, ct in enumerate(parts)
-    )
+    out = b"".join(drop.decrypt_chunk(DEK, OBJ, 1, hdr, i, ct, i == len(parts) - 1) for i, ct in enumerate(parts))
     assert out == bytes.fromhex(D["content"])
     with pytest.raises(drop.DropTagError):
-        drop.decrypt_chunk(k, blob[: drop.HEADER_LEN], 0, parts[0], True)  # is_last flipped
+        drop.decrypt_chunk(DEK, OBJ, 1, hdr, 0, parts[0], True)  # is_last flipped
+    with pytest.raises(drop.DropError):
+        drop.decrypt_chunk(DEK, OBJ, 2, hdr, 0, parts[0], False)  # a header of another version
 
 
 def test_meta_and_dek_commit_byte_exact():
-    assert drop.seal_meta(DEK, OBJ, 1, D["meta"]).hex() == D["meta_sealed"]
     assert drop.open_meta(DEK, OBJ, 1, bytes.fromhex(D["meta_sealed"])) == D["meta"]
     assert b64u(drop.dek_commit(OBJ, 1, DEK)) == D["dek_commit"]
     for bad in ((DEK, OBJ, 2), (DEK, bytes(16), 1), (bytes(32), OBJ, 1)):
@@ -124,14 +174,18 @@ def test_meta_and_dek_commit_byte_exact():
 # --- wraps ----------------------------------------------------------------------------------------------------------
 
 
-def test_wk_wrap_byte_exact():
+SPACE_O = {**D["descriptor"]["o"], "recipients": [IDS["workspace_a"]]}
+
+
+def test_wk_wrap_byte_exact(monkeypatch):
     w = D["wraps"]["wk"]
     salt = unb64u(w["wrap"])[:16]
     assert salt == fake("wrap salt")[:16]
-    assert drop._wrap_wk_with_salt(WK1, WS, 1, OBJ, 1, DEK, salt) == w
-    assert drop.open_wrap_wk(w, WK1, WS) == DEK
     fresh = drop.wrap_wk(WK1, WS, 1, OBJ, 1, DEK)
-    assert fresh["wrap"] != w["wrap"] and drop.open_wrap_wk(fresh, WK1, WS) == DEK
+    assert fresh["wrap"] != w["wrap"] and drop.open_wrap(fresh, SPACE_O, WS, wk=WK1) == DEK
+    fix_salt(monkeypatch, salt)
+    assert drop.wrap_wk(WK1, WS, 1, OBJ, 1, DEK) == w
+    assert drop.open_wrap(w, SPACE_O, WS, wk=WK1) == DEK
 
 
 @pytest.mark.parametrize(
@@ -142,16 +196,14 @@ def test_wk_wrap_byte_exact():
         ("device", "eph wrap d", "phone.kx"),
     ],
 )
-def test_sealed_wraps_byte_exact(name, seed, kx):
+def test_sealed_wraps_byte_exact(monkeypatch, name, seed, kx):
     w = D["wraps"][name]
     target = bytes.fromhex(w["target_id"])
-    got = drop._wrap_sealed_with_ephemeral(
-        seed_priv(fake(seed)), w["target_kind"], pub(kx), target, w["key_version"], OBJ, 1, DEK
-    )
-    assert got == w
-    assert drop.open_wrap_sealed(w, priv(kx)) == DEK
     fresh = drop.wrap_sealed(w["target_kind"], pub(kx), target, w["key_version"], OBJ, 1, DEK)
-    assert fresh["wrap"] != w["wrap"] and drop.open_wrap_sealed(fresh, priv(kx)) == DEK
+    assert fresh["wrap"] != w["wrap"] and drop._open_wrap_sealed(fresh, priv(kx)) == DEK
+    fix_ephemeral(monkeypatch, seed_priv(fake(seed)))
+    assert drop.wrap_sealed(w["target_kind"], pub(kx), target, w["key_version"], OBJ, 1, DEK) == w
+    assert drop._open_wrap_sealed(w, priv(kx)) == DEK
 
 
 @pytest.mark.parametrize("case", D["wrap_negative"], ids=lambda c: c["name"])
@@ -160,11 +212,11 @@ def test_wrap_negative(case):
     assert case["opens"] is False
     with pytest.raises(drop.DropError):
         if rec["target_kind"] == "wk":
-            drop.open_wrap_wk(rec, WK1, WS)
+            drop._open_wrap_wk(rec, WK1, WS)
         else:
             for kx in ("wxk_a_1.kx", "wxk_b_1.kx", "phone.kx"):
                 try:
-                    drop.open_wrap_sealed(rec, priv(kx))
+                    drop._open_wrap_sealed(rec, priv(kx))
                 except drop.DropError:
                     continue
                 raise AssertionError("opened")
@@ -173,16 +225,32 @@ def test_wrap_negative(case):
 
 def test_open_wrap_checks_the_descriptor_and_dek_commit():
     o = D["descriptor"]["o"]
-    assert drop.open_wrap(D["wraps"]["wxk_a"], o, kx_priv=priv("wxk_a_1.kx")) == DEK
-    assert drop.open_wrap(D["wraps"]["device"], o, kx_priv=priv("phone.kx")) == DEK
-    assert drop.open_wrap(D["wraps"]["wk"], {**o, "recipients": [WS.hex()]}, wk=WK1) == DEK
+    assert drop.open_wrap(D["wraps"]["wxk_a"], o, WS, kx_priv=priv("wxk_a_1.kx")) == DEK
+    assert drop.open_wrap(D["wraps"]["device"], o, PHONE, kx_priv=priv("phone.kx")) == DEK
+    assert drop.open_wrap(D["wraps"]["wk"], SPACE_O, WS, wk=WK1) == DEK
     with pytest.raises(drop.DropError):  # a wrap of another version
-        drop.open_wrap({**D["wraps"]["device"], "version": 2}, o, kx_priv=priv("phone.kx"))
+        drop.open_wrap({**D["wraps"]["device"], "version": 2}, o, PHONE, kx_priv=priv("phone.kx"))
     with pytest.raises(drop.DropError):  # a DEK that is not the committed one
-        drop.open_wrap(D["wraps"]["device"], {**o, "dek_commit": b64u(bytes(32))}, kx_priv=priv("phone.kx"))
+        drop.open_wrap(D["wraps"]["device"], {**o, "dek_commit": b64u(bytes(32))}, PHONE, kx_priv=priv("phone.kx"))
     other_dek = drop.wrap_sealed("device", pub("phone.kx"), PHONE, 0, OBJ, 1, bytes(32))
     with pytest.raises(drop.DropError):  # a wrap of another DEK (the key-commitment check, §10.4)
-        drop.open_wrap(other_dek, o, kx_priv=priv("phone.kx"))
+        drop.open_wrap(other_dek, o, PHONE, kx_priv=priv("phone.kx"))
+
+
+def test_open_wrap_checks_the_target_against_the_caller():
+    """Review F3: the wrap must be addressed to the caller (``me``: its device id, or the space id for ``wk`` and
+    ``wxk``), and a ``wxk`` or ``wk`` wrap must name the descriptor's own space."""
+    o = D["descriptor"]["o"]
+    with pytest.raises(drop.DropError):  # a device wrap for another device
+        drop.open_wrap(D["wraps"]["device"], o, LAPTOP, kx_priv=priv("phone.kx"))
+    with pytest.raises(drop.DropError):  # the space's wxk wrap asked for as a device
+        drop.open_wrap(D["wraps"]["wxk_a"], o, PHONE, kx_priv=priv("wxk_a_1.kx"))
+    with pytest.raises(drop.DropError):  # a wxk wrap to another workspace than the descriptor's space
+        drop.open_wrap(D["wraps"]["wxk_b"], o, WS_B, kx_priv=priv("wxk_b_1.kx"))
+    with pytest.raises(drop.DropError):  # a wk wrap asked for by another workspace
+        drop.open_wrap(D["wraps"]["wk"], SPACE_O, WS_B, wk=WK1)
+    for name in ("open_wrap_sealed", "open_wrap_wk"):
+        assert not hasattr(drop, name) and name not in drop.__all__
 
 
 @pytest.mark.parametrize(
@@ -226,16 +294,12 @@ def test_descriptor_cases(case):
 def test_descriptor_builder_reproduces_the_vector_object():
     o = D["descriptor"]["o"]
     built = drop.drop_object(
-        object_id=OBJ,
+        vector_version(),
         space_id=WS,
         object_kind="file",
-        version=1,
         parent_hash=None,
         author_kind="device",
         author_id=PHONE,
-        blob=bytes.fromhex(D["blob"]),
-        dek=DEK,
-        meta=bytes.fromhex(D["meta_sealed"]),
         recipients="inbox",
         origin="human",
         created_ms=o["created_ms"],
@@ -374,12 +438,14 @@ def test_same_dek_rewrap_vector():
     assert h_old["descriptor"] == h_new["descriptor"] and b_old == b_new
     o = h_old["descriptor"]["o"]
     wk1, wk2 = fake("drop test WK epoch 1"), fake("drop test WK epoch 2")
-    dek = drop.open_wrap(h_old["wraps"][0], o, wk=wk1)
-    salt = fake(f"salt {o['object_id']} 2")[:16]
-    w2 = drop._rewrap_same_dek_with_salt(o, dek, wk2, 2, salt)
-    assert drop.reframe(old, [w2]) == new
+    space = bytes.fromhex(o["space_id"])
+    dek = drop.open_wrap(h_old["wraps"][0], o, space, wk=wk1)
     fresh = drop.rewrap_same_dek(o, dek, wk2, 2)
-    assert drop.open_wrap(fresh, o, wk=wk2) == dek
+    assert drop.open_wrap(fresh, o, space, wk=wk2) == dek
+    with pytest.MonkeyPatch.context() as mp:
+        fix_salt(mp, fake(f"salt {o['object_id']} 2")[:16])
+        w2 = drop.rewrap_same_dek(o, dek, wk2, 2)
+    assert drop.reframe(old, [w2]) == new
     with pytest.raises(drop.DropError):  # never another DEK
         drop.rewrap_same_dek(o, bytes(32), wk2, 2)
     with pytest.raises(drop.DropError):  # never a device-only object
@@ -400,19 +466,16 @@ def test_reframe_keeps_descriptor_and_blob_and_refuses_foreign_wraps():
 
 
 def _host_object(recipients, *, dek=DEK, obj=OBJ):
-    blob = drop._encrypt_blob_with_prefix(dek, obj, 1, b"host file", bytes(8), 512)
-    meta = drop.seal_meta(dek, obj, 1, {"name": "a.txt", "mime": "text/plain", "size": 9, "transcript": None})
+    meta = {"name": "a.txt", "mime": "text/plain", "size": 9, "transcript": None}
+    sv = drop._seal_version_with_prefix(dek, bytes(8), obj, 1, b"host file", meta, 512)
+    blob = sv.blob
     o = drop.drop_object(
-        object_id=obj,
+        sv,
         space_id=WS,
         object_kind="file",
-        version=1,
         parent_hash=None,
         author_kind="workspace",
         author_id=WS,
-        blob=blob,
-        dek=dek,
-        meta=meta,
         recipients=recipients,
         origin="agent",
         created_ms=1790000000000,
@@ -472,7 +535,7 @@ def test_host_frame_rules():
 def test_the_recovery_envelope_never_enters_a_frame():
     devs = sorted([IDS["device_phone"], IDS["device_laptop"]])
     signed, blob = _host_object(devs)
-    env = recovery.seal_recovery(WK1, WS, 1, OBJ, DEK)
+    env = recovery.seal_recovery(WK1, WS, 1, OBJ, 1, DEK)
     dev = drop.wrap_sealed("device", pub("phone.kx"), PHONE, 0, OBJ, 1, DEK)
     for wraps in ([dev, env], [env], [dev, canon.loads_strict(env.to_host_bytes())]):
         with pytest.raises(drop.DropError):

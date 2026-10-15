@@ -2,9 +2,19 @@
 
 The invariant: a public function of those modules raises **only** its module's closed error type (or returns a complete
 result). Hostile input never surfaces as a raw ``KeyError``, ``TypeError``, ``ValueError``, ``IndexError``,
-``OverflowError``, ``RecursionError``, ``JcsError``, ``EncodingError``, ``CryptoError`` or ``InvalidTag`` that a caller
-might catch broadly and read as "absent". :func:`close_module` wraps every function named in a module's ``__all__``
-once, at import, so a new public function is covered without anyone remembering to (a test checks every name).
+``OverflowError``, ``JcsError``, ``EncodingError``, ``CryptoError`` or ``InvalidTag`` that a caller might catch
+broadly and read as "absent".
+
+**Bugs and resource problems propagate unchanged** (review F5): ``NameError``, ``AttributeError``, ``AssertionError``,
+``MemoryError`` and ``RecursionError`` are never input errors, so they are never turned into the module's error. The
+original exception stays chained as ``__cause__`` for debug logs; the message names only its class, never its text.
+
+**Callers must never read ``DropError``, ``PushError`` or ``RecoveryError`` as "absent" or "not found".** They mean
+"refused": malformed or hostile input, a failed check, or (the tag subclasses) failed authentication. A caller that
+maps one to an absent object, a default value or a skipped check is a bug.
+
+:func:`close_module` wraps every function named in a module's ``__all__`` once, at import, so a new public function is
+covered without anyone remembering to (a test checks every name).
 
 The error types derive from ``Exception``, not ``ValueError``, so an ``except ValueError`` elsewhere never swallows
 one. An authentication failure (``InvalidTag``) becomes the module's tag subclass, so callers may still tell "this is
@@ -20,6 +30,8 @@ from typing import Any
 from cryptography.exceptions import InvalidTag
 
 __all__ = ["close_module", "closed"]
+
+_PROPAGATE = (NameError, AttributeError, AssertionError, MemoryError, RecursionError)
 
 
 def closed(
@@ -38,10 +50,12 @@ def closed(
                 return fn(*args, **kwargs)
             except err:
                 raise
-            except InvalidTag:
-                raise make_tag("authentication failed") from None
+            except _PROPAGATE:
+                raise
+            except InvalidTag as e:
+                raise make_tag("authentication failed") from e
             except Exception as e:  # noqa: BLE001 - the closed boundary: every other failure is the module's error
-                raise make_err(f"malformed input ({type(e).__name__})") from None
+                raise make_err(f"malformed input ({type(e).__name__})") from e
 
         wrapper.__orch_closed__ = True  # type: ignore[attr-defined]
         return wrapper

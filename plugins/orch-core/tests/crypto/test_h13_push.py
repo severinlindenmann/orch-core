@@ -8,6 +8,7 @@ byte-exact (the vector's salt, the vector's signature), and every case is replay
 from __future__ import annotations
 
 import json
+import types
 
 import pytest
 
@@ -56,9 +57,10 @@ def test_k_push_aad_and_signed_bytes_vectors():
 def _reseal(raw: str, wk: bytes = WK1, epoch: int = 1) -> bytes:
     inner = _inner(raw.encode(), wk, epoch)
     salt = unb64u(json.loads(raw)["c"])[:16]
-    return push._seal_push_with_salt(
-        push.k_push(wk, WS, epoch), WS, epoch, inner["p"], unb64u(inner["sig"]), salt, kinds=push.PUSH_KINDS
-    )
+    with pytest.MonkeyPatch.context() as mp:  # the salt drawn inside orch.crypto.suite, fixed for this call only
+        mp.setattr(crypto.suite, "secrets", types.SimpleNamespace(token_bytes=lambda n: salt[:n]))
+        k = push.k_push(wk, WS, epoch)
+        return push._seal_push(k, WS, epoch, inner["p"], unb64u(inner["sig"]), kinds=push.PUSH_KINDS, padded=False)
 
 
 def test_the_raw_vector_is_reproduced_byte_exact():
@@ -234,10 +236,20 @@ def test_opener_refuses_a_wrong_label_domain():
     assert e.value.why == "signature"
     good_sig = crypto.sign(priv("wsk_a.sig"), push.push_signed_bytes(WS, 1, p))
     pt = canon.dumps({"p": p, "sig": b64u(good_sig)})
-    c = crypto.suite._salted_seal(
-        push.k_push(WK1, WS, 1), crypto.L["kdf_bridge_msg"], push.push_aad(WS, 1), pt, bytes(16)
-    )
+    c = crypto.salted_seal(push.k_push(WK1, WS, 1), crypto.L["kdf_bridge_msg"], push.push_aad(WS, 1), pt)
     raw2 = canon.dumps({"v": 2, "ws": WS.hex(), "epoch": 1, "c": b64u(c)})
     with pytest.raises(push.PushError) as e:
         push.open_push(raw2, _keys_a(), NOW)
     assert e.value.why == "tag"
+
+
+def test_a_badly_encoded_signature_is_a_signature_failure():
+    """Review F6: an inner ``sig`` that is not 64 bytes of canonical b64u is reported as ``signature``."""
+    p = push.push_payload("question", "q-1", "Ship it?", NOW)
+    for bad in ("", "AAAA", b64u(bytes(63)), b64u(bytes(64)) + "=", 5):
+        pt = canon.dumps({"p": p, "sig": bad})
+        c = crypto.salted_seal(push.k_push(WK1, WS, 1), crypto.L["kdf_push_msg"], push.push_aad(WS, 1), pt)
+        raw = canon.dumps({"v": 2, "ws": WS.hex(), "epoch": 1, "c": b64u(c)})
+        with pytest.raises(push.PushError) as e:
+            push.open_push(raw, _keys_a(), NOW)
+        assert e.value.why == "signature", bad

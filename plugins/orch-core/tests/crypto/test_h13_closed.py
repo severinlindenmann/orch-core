@@ -22,6 +22,7 @@ DESC = D["descriptor"]["o"]
 W = D["wraps"]["device"]
 VALID_FRAME = bytes.fromhex(next(s for s in D["upload_frame"]["cases"] if s["name"] == "valid_frame")["body_hex"])
 WS = bytes.fromhex(S2["ids"]["workspace_a"])
+PHONE = bytes.fromhex(S2["ids"]["device_phone"])
 
 JUNK = [
     None, True, 0, -1, 2**64, 1.5, "", "x", "ZZ", b"", b"\x00" * 3, [], [1, "a"], [[1]], [{}], {}, {"x": 1},
@@ -88,8 +89,7 @@ def test_wrap_every_field_with_every_junk_value(field):
             continue
         rec = {**W, field: v}
         _closed(drop.DropError, drop.check_wrap_record, rec)
-        _only(drop.DropError, drop.open_wrap_sealed, rec, priv("phone.kx"))
-        _only(drop.DropError, drop.open_wrap, rec, DESC, kx_priv=priv("phone.kx"))
+        _only(drop.DropError, drop.open_wrap, rec, DESC, PHONE, kx_priv=priv("phone.kx"))
     _only(drop.DropError, drop.check_wrap_record, {k: v for k, v in W.items() if k != field})
 
 
@@ -99,20 +99,23 @@ def test_openers_with_junk_arguments():
         _only(drop.DropError, drop.decrypt_blob, bytes.fromhex(D["dek"]), bytes.fromhex(D["object_id"]), 1, v)
         _only(drop.DropError, drop.decrypt_blob, v, bytes.fromhex(D["object_id"]), 1, bytes.fromhex(D["blob"]))
         _only(drop.DropError, drop.open_meta, bytes.fromhex(D["dek"]), bytes.fromhex(D["object_id"]), v, b"x" * 40)
-        _only(drop.DropError, drop.open_wrap_wk, v, bytes(32), WS)
-        _only(drop.DropError, drop.open_wrap, W, v, kx_priv=priv("phone.kx"))
+        _only(drop.DropError, drop.open_wrap, v, DESC, WS, wk=bytes(32))
+        _only(drop.DropError, drop.open_wrap, W, v, PHONE, kx_priv=priv("phone.kx"))
+        _only(drop.DropError, drop.open_wrap, W, DESC, v, kx_priv=priv("phone.kx"))
+        _only(drop.DropError, drop.open_wrap, W, DESC, PHONE, kx_priv=v)
         _only(drop.DropError, drop.verify_drop_object, v, pub("phone.sig"))
         _only(drop.DropError, drop.verify_drop_object, D["descriptor"], v)
         _only(drop.DropError, drop.drop_claim_signed_bytes, v)
         _only(drop.DropError, drop.parse_blob_header, v, bytes(16), 1)
-        _only(drop.DropError, drop.decrypt_chunk, bytes(32), bytes(40), 0, v, True)
+        _only(drop.DropError, drop.decrypt_chunk, bytes(32), bytes(16), 1, bytes(40), 0, v, True)
         _only(drop.DropError, drop.reframe, VALID_FRAME, v)
         _only(push.PushError, push.open_push, v if isinstance(v, bytes) else canon.dumps({"x": 1}), {}, 0)
+        _only(push.PushError, push.open_push, canon.dumps({"v": 2, "ws": WS.hex(), "epoch": 1, "c": "AAAA"}), v, 0)
         _closed(push.PushError, push.pad_label, v)
-        _only(recovery.RecoveryError, recovery.open_recovery, v, bytes(32), WS, bytes(16))
+        _only(recovery.RecoveryError, recovery.open_recovery, v, bytes(32), WS, bytes(16), 1)
         if not isinstance(v, bytes):
             _only(recovery.RecoveryError, recovery.RecoveryEnvelope.from_host_bytes, v)
-    _only(drop.DropError, drop.open_wrap_sealed, W, "not a key")  # a wrong key type is closed too
+    _only(drop.DropError, drop.open_wrap, W, DESC, PHONE, kx_priv="not a key")  # a wrong key type is closed too
 
 
 def test_frame_truncations_and_bit_flips_never_return_partial_data():
@@ -141,8 +144,11 @@ def test_deep_and_oversized_heads():
 def test_builders_with_junk_inputs():
     dek, obj = bytes.fromhex(D["dek"]), bytes.fromhex(D["object_id"])
     for v in JUNK:
-        _only(drop.DropError, drop.seal_meta, dek, obj, 1, {"x": 1.5, "v": v} if v is not None else [object()])
-        _only(drop.DropError, drop.encrypt_blob, v, obj, 1, b"x")
+        _only(drop.DropError, drop.seal_version, obj, 1, b"x", {"x": 1.5, "v": v})
+        _only(drop.DropError, drop.seal_version, v, 1, b"x", {})
+        _only(drop.DropError, drop.drop_object, v, space_id=WS, object_kind="file", parent_hash=None,
+              author_kind="workspace", author_id=WS, recipients=[WS.hex()], origin="human", created_ms=0,
+              expires_ms=1)  # fmt: skip
         _only(drop.DropError, drop.wrap_wk, v, WS, 1, obj, 1, dek)
         _only(drop.DropError, drop.wrap_sealed, "device", v, bytes(16), 0, obj, 1, dek)
         _only(drop.DropError, drop.rewrap_same_dek, DESC, v, bytes(32), 1)
@@ -150,5 +156,33 @@ def test_builders_with_junk_inputs():
         if not isinstance(v, str) or not v:
             _only(push.PushError, push.push_payload, "question", "q-1", v, 0)
         _only(push.PushError, push.k_push, v, WS, 1)
-        _only(recovery.RecoveryError, recovery.seal_recovery, v, WS, 1, obj, dek)
-    _only(drop.DropError, drop.drop_object, object_id=obj)  # missing keyword arguments: closed as well
+        _only(recovery.RecoveryError, recovery.seal_recovery, v, WS, 1, obj, 1, dek)
+    _only(drop.DropError, drop.drop_object, space_id=obj)  # missing arguments: closed as well
+
+
+class Boom(Exception):
+    pass
+
+
+@pytest.mark.parametrize("exc", [NameError, AttributeError, AssertionError, MemoryError, RecursionError])
+def test_bugs_and_resource_errors_propagate(exc):
+    """Review F5: a bug or a resource problem is not malformed input; it is never turned into the module's error."""
+    from orch.crypto._closed import closed
+
+    def f():
+        raise exc("x")
+
+    with pytest.raises(exc):
+        closed(drop.DropError, drop.DropError, drop.DropTagError)(f)()
+
+
+def test_the_cause_is_chained_but_not_in_the_message():
+    from orch.crypto._closed import closed
+
+    def f():
+        raise KeyError("secret-detail")
+
+    with pytest.raises(drop.DropError) as e:
+        closed(drop.DropError, drop.DropError, drop.DropTagError)(f)()
+    assert "secret-detail" not in str(e.value)
+    assert isinstance(e.value.__cause__, KeyError)

@@ -520,3 +520,35 @@ def test_run_sub_starts_from_the_current_grant_without_a_replay(ready):
     ok(deposit(c, issue(w)))
     sub = ok(c.call("run.sub", {}))["data"]["sub"]
     c.quiet(sub)  # the state at registration is read from whoami or the first change, not replayed
+
+
+def test_a_g_column_subscriber_gets_runner_items_for_its_own_person_only(ready):
+    w = ready
+    c = w.conn()
+    sub = ok(c.call("run.sub", {}, grant=w.lab.ws.grant))["data"]["sub"]  # an agent grant of the owner
+    hub = w.h.host.runners
+    gid = "gr_" + new_ulid()
+
+    async def theirs():  # quinn's grant: confirmed, then dropped
+        table = hub.grants.table(w.wid)
+        hub.grants._confirm(table, w.quinn.ref, gid, ts(w.lab.ws.clock[0] + 9999), "workable", new_ulid())
+        hub.grants._forget_current(table, w.quinn.ref, "test")
+
+    w.h.run(theirs())
+    c.quiet(sub)
+    p = w.conn()
+    value = issue(w)
+    ok(deposit(p, value))
+    (item,) = _runner_items(c, sub)
+    assert item["t"] == "runner" and item["grant"]["id"] == gid_of(value)
+    assert value.partition(".")[2] not in str(item)
+
+
+def test_a_g_subscriber_whose_grant_is_revoked_gets_no_runner_item(ready):
+    w = ready
+    c, p = w.conn(), w.conn()
+    sub = ok(c.call("run.sub", {}, grant=w.lab.ws.grant))["data"]["sub"]
+    w.person_event("grant.revoked", grant=w.lab.ws.grant_id)
+    ok(deposit(p, issue(w)))
+    frame = c.evt(sub)
+    assert frame["items"] == [] and frame.get("end")  # revalidated before delivery: ended, not served

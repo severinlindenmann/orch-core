@@ -68,6 +68,8 @@ and ``hostclient`` in direct mode)                      identity's ``remote.orig
 ``staged_blob``)                                        :func:`command` (gate again), through ``caps.exec`` (#546)
 ``runner/wtgit.read_git``, ``tree_dirty``,              :func:`command`: ``commit``, ``status``, ``staged_raw``,
 ``worktree_cli`` revisions                              ``index_flags``
+dashboard dev host ``devhost/reads.diff`` (through      :func:`command`: ``commit``, ``ref``, ``merge_base``,
+``store/observe.git``)                                  ``parent``, ``diff_numstat``, ``diff_names``, ``diff_patch``
 ``records/git.Git.run``, ``records/tool`` fast-import   :func:`config_env` with ``person_config``'s lists, the
                                                         records ``HARDEN`` (incl. :data:`PINNED`), ``check_local``
                                                         on top of :func:`exec_risk` (#541)

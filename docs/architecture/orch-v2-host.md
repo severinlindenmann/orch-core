@@ -4122,8 +4122,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     renumbered when a parallel change lands first):** `orch.gitsafe` holds the one mechanism of the invariant "no git
     invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list":
     `isolated_env`, `config_env`, `person_entries`, and `command`, a **closed set of operations** (`gitsafe.OPS`:
-    `head`, `symbolic_head`, `toplevel`, `ref`, `commit`, `status`, `index_flags`, `staged_raw`, `staged_blob`) with
-    validated operands and no free argv. `ops/caps.Git.run` (free argv) is removed. Every operation runs the gitsafe
+    `head`, `symbolic_head`, `toplevel`, `ref`, `commit`, `parent`, `merge_base`, `status`, `index_flags`,
+    `staged_raw`, `staged_blob`, `diff_numstat`, `diff_names`, `diff_patch`) with validated operands (a revision is
+    `HEAD`, a full commit id or `refs/heads/<name>`, followed by `--`) and no free argv. `ops/caps.Git.run` (free argv) is removed. Every operation runs the gitsafe
     gate first: a repository whose own config sets a key outside the allow-list, such as a filter its
     `.gitattributes` selects, gives `None` in `store/observe` (D58's "git cannot be asked", never clean) and
     `git.unavailable` naming the key in `orch check --staged`. `status` never opens a submodule
@@ -9399,6 +9400,7 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     | `store/observe.git` (`head`, `symbolic_head`, `toplevel`, `porcelain`, `dirty`, `ref`, `commit`; `ops/caps.Git` and `hostclient` in direct mode) | `gitsafe.command`: operations of `gitsafe.OPS` only, the gate before every one, `submodules` and `--ignore-submodules=all` for `status`; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (and git's default global ignore file). The identity's `remote.origin.url` (F1 5.7) comes from `gitsafe.local_config`, the gate's own listing. `ops/caps.Git.run` (free argv) is removed (#546) |
     | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546) |
     | `runner/wtgit.read_git`, `tree_dirty`, `worktree_cli` revisions | `gitsafe.command`: `commit`, `status`, `staged_raw`, `index_flags` |
+    | dashboard dev host `devhost/reads.diff` (through `store/observe.git`) | `gitsafe.command`: `commit`, `ref`, `merge_base`, `parent`, `diff_numstat`, `diff_names`, `diff_patch` |
     | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
     | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
     | `records/git.open_repo` probe | reads configuration only |

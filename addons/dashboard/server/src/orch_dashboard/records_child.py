@@ -1,7 +1,9 @@
 """One bounded, isolated records tool per workspace. No shell, signer descriptors or inherited grants."""
 
+import errno
 import json
 import os
+import select
 import selectors
 import signal
 import subprocess
@@ -112,6 +114,37 @@ def catalog(code):
 def child_error(code):
     exit_code, retryable = catalog(code)
     return HostError({"code": code, "message": code, "retryable": retryable}, exit_code)
+
+
+def exited(pid, timeout):
+    """True once the child `pid` has exited, within `timeout` seconds, **without reaping it**: until it is reaped its
+    PID keeps the process group id reserved. `waitid(WNOWAIT)` where it exists; macOS has no `waitid`, so there
+    kqueue's `NOTE_EXIT`, which reports the exit and leaves the zombie in place."""
+    deadline = time.monotonic() + timeout
+    if hasattr(os, "waitid"):
+        while os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        return True
+    kq = select.kqueue()
+    try:
+        event = select.kevent(
+            pid,
+            filter=select.KQ_FILTER_PROC,
+            flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+            fflags=select.KQ_NOTE_EXIT,
+        )
+        try:
+            events = kq.control([event], 1, max(0, deadline - time.monotonic()))
+        except ProcessLookupError:
+            return True  # it exited before the registration (ESRCH)
+        for ev in events:
+            if ev.flags & select.KQ_EV_ERROR and ev.data != errno.ESRCH:
+                raise OSError(ev.data, os.strerror(ev.data))
+        return bool(events)
+    finally:
+        kq.close()
 
 
 def parse(output, returncode, *, status=False):
@@ -227,10 +260,8 @@ class RecordsChild:
                         if key.fileobj is proc.stdout:
                             output.extend(data)
                 # Observe exit without reaping: the leader must reserve its process group until cleanup.
-                while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
-                    if time.monotonic() >= deadline:
-                        raise child_error("records.budget")
-                    time.sleep(min(0.01, max(0, deadline - time.monotonic())))
+                if not exited(proc.pid, max(0, deadline - time.monotonic())):
+                    raise child_error("records.budget")
         finally:
             # Do not poll/reap before killing on any outcome: keep the child's PID reserved until the group is killed.
             if proc.returncode is None:

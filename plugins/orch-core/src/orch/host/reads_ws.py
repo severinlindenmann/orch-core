@@ -100,7 +100,14 @@ def workspace_show(ctx: ReadCtx) -> dict[str, Any]:
         "members_v": ws.roster_v,
         "state": "degraded" if ctx.service.state == "degraded" else "ok",
         "next_key": _next_key(ctx, ws),
+        "required_reader": _required(ctx),  # H12d-2 (§0.8.6 item 9.11)
     }
+
+
+def _required(ctx: ReadCtx) -> int:
+    from .readerops import read_required
+
+    return read_required(ctx.service)
 
 
 def may_create(column: str, role: str | None, relay: Any, ws: Any, now: float) -> bool:
@@ -147,8 +154,11 @@ def _device_auth(events: list[dict[str, Any]]) -> dict[str, str]:
 
 @handler("member.list")
 def member_list(ctx: ReadCtx) -> dict[str, Any]:
+    from .readerops import device_levels
+
     ws = ctx.workspace
     auth = _device_auth(_ws_events(ctx))
+    levels = device_levels(ctx.service)  # H12d-2: each current device's reader level (0 without a record)
     now_ms = ctx.now * 1000
     members = []
     for person, member in ws.members.items():
@@ -157,11 +167,32 @@ def member_list(ctx: ReadCtx) -> dict[str, Any]:
             if dev.person != person:
                 continue
             valid = not dev.removed and not dev.revoked and (dev.expires_ms is None or dev.expires_ms > now_ms)
-            devices.append({"id": dev.id, "auth": auth.get(dev.id), "scopes": list(dev.scopes), "valid": valid})
+            devices.append(
+                {
+                    "id": dev.id,
+                    "auth": auth.get(dev.id),
+                    "scopes": list(dev.scopes),
+                    "valid": valid,
+                    "reader": levels.get(dev.id, 0),
+                }
+            )
         devices.sort(key=lambda d: d["id"])
         members.append({"person": person, "name": member.name, "role": member.role, "devices": devices})
     members.sort(key=lambda m: m["person"])
-    return {"members": members}
+    return {"members": members, "required_reader": _required(ctx)}
+
+
+# --- reader.list (H12d-2) --------------------------------------------------------------------------------------------
+
+
+@handler("reader.list")
+def reader_list(ctx: ReadCtx) -> dict[str, Any]:
+    """§0.8.6 item 9.11: columns P and R only (G and N: ``op.not_allowed``)."""
+    from .readerops import listing
+
+    if ctx.viewer.column not in ("P", "R"):
+        raise HostError("op.not_allowed", "reader.list is for a person at the terminal, the dashboard or a phone")
+    return listing(ctx.service)
 
 
 # --- session.list ----------------------------------------------------------------------------------------------------

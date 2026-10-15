@@ -170,6 +170,7 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
     host = {
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",
+        "reader.list",  # H12d-2 (§0.8.6 item 9.11): P and R
     }  # fmt: skip
     assert columns.RELAY_OPS == frozenset(reads | host | {"whoami", "outcome.get", "relay.submit"})
     assert columns.DEVICE_SIGNED_OPS == frozenset({"relay.submit"})

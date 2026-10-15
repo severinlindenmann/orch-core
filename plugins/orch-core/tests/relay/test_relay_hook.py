@@ -58,12 +58,14 @@ class FakeWorker:
         self.stuck = stuck
         self.alarms: list[tuple[str, str]] = []
         self.release = threading.Event()
+        self.stop_threads: list[str] = []
 
     def alarm(self, code: str, detail: str) -> None:
         self.alarms.append((code, detail))
 
     def stop(self) -> None:
         self.stops += 1
+        self.stop_threads.append(threading.current_thread().name)
 
     def join(self, timeout: float) -> bool:
         if self.stuck:
@@ -108,6 +110,20 @@ def test_with_the_gate_open_a_missing_r6_seam_fails_the_start_and_leaves_nothing
     assert svc.relay_reason == "start_failed: SeamMissing"
     StateDir(relayhook.relay_state_path(svc)).close()  # not left locked
     assert relayhook.running_slots(svc.state_dir) == set()
+
+
+def test_a_start_that_fails_after_opening_the_state_directory_releases_everything(served, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    _reserve(served)
+
+    def r6(service):
+        raise RuntimeError("R6 load failed")  # after the slot and the StateDir were taken
+
+    svc.relay_starter = relayhook.make_starter(object(), relayhook.Seams(r6=r6))
+    assert svc.relay_start() == "none" and svc.relay_reason == "start_failed: RuntimeError"
+    assert relayhook.running_slots(svc.state_dir) == set()  # the slot is released
+    StateDir(relayhook.relay_state_path(svc)).close()  # and the directory lock
 
 
 # -- the hook at open across restarts ---------------------------------------------------------------------------------
@@ -315,6 +331,8 @@ def test_a_foreign_convenience_event_halts_a_running_worker(served, monkeypatch)
     _on_worker(served, lambda: svc._build_journal(audit=True))  # noqa: SLF001 - the foreign-append rebuild
     assert svc.relay is None and svc.relay_reason == "convenience_events_present"
     assert w.stops >= 1 and w.alarms and w.alarms[0][0] == "convenience_events_present"
+    # stopped at once on the worker thread itself (no store job is queued from then on), joined on the halt thread
+    assert w.stop_threads[0].startswith(f"orch-ws-{served.wid[:8]}")
     assert _wait(lambda: svc.relay_stopping_count() == 0)
 
 

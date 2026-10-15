@@ -89,8 +89,15 @@ def test_writer_resize_reaches_readers_and_reader_resize_is_dropped(tw):
         reader.send_text(json.dumps({"t": "resize", "cols": 60, "rows": 10}))  # ignored
         writer.send_text(json.dumps({"t": "resize", "cols": 100, "rows": 30}))
         assert until_text(reader, "resize") == {"t": "resize", "cols": 100, "rows": 30}
-        listed = {r["run"]: r for r in tw.get("/runs").json()["runs"]}
-        assert (listed[run]["cols"], listed[run]["rows"]) == (100, 30)
+        # The host's run record follows the runner's report, coalesced to 250 ms (§12.3.2): wait for it, bounded.
+        deadline, size = time.monotonic() + 5, None
+        while time.monotonic() < deadline:
+            listed = {r["run"]: r for r in tw.get("/runs").json()["runs"]}
+            size = (listed[run]["cols"], listed[run]["rows"])
+            if size == (100, 30):
+                break
+            time.sleep(0.05)
+        assert size == (100, 30)
 
 
 def test_logout_closes_the_socket_with_4401_and_no_end(tw):

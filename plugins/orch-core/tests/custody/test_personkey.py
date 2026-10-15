@@ -445,6 +445,42 @@ def test_a_failed_derivation_of_a_valid_code_leaves_no_code_in_the_exception(no_
     assert _leaks(e.value, code, None) == []
 
 
+@pytest.mark.parametrize("failure", [KeyboardInterrupt(), SystemExit(4), RuntimeError("parser bug")])
+def test_an_interrupt_in_the_parser_leaves_no_typed_text(fast, no_grant, tty, monkeypatch, failure):
+    """Opus N1: a ``BaseException`` raised by the code check itself (before scrypt) is replaced like a failed
+    derivation: cleared frames, a fresh exception of the same type (an ``Exception`` becomes ``PersonKeyError``)."""
+    code = rec.generate_recovery_code()
+
+    def check(text):
+        local_copy = text  # noqa: F841 - a parser frame that holds the typed text
+        raise failure
+
+    monkeypatch.setattr(rec, "check_recovery_code", check)
+    tty(code)
+    want = personkey.PersonKeyError if isinstance(failure, Exception) else type(failure)
+    with pytest.raises(want) as e:
+        personkey.RecoveryCodeSource(labels=ALL, person_id=bytes(16), action="x").__enter__()
+    assert e.value is not failure
+    assert e.value.__cause__ is None and e.value.__context__ is None
+    assert _leaks(e.value, code, None) == []
+    if isinstance(failure, SystemExit):
+        assert e.value.code == 4
+
+
+@pytest.mark.parametrize("exit_code,kept", [(3, 3), (None, None), ("text of the code", None)])
+def test_a_fresh_system_exit_keeps_an_int_exit_code_only(no_grant, tty, monkeypatch, exit_code, kept):
+    """Opus N2: the replaced ``SystemExit`` keeps an ``int``/``None`` exit code; a ``str`` one is dropped."""
+
+    def derive(text):
+        raise SystemExit(exit_code)
+
+    monkeypatch.setattr(personkey, "_derive_scalar", derive)
+    tty(rec.generate_recovery_code())
+    with pytest.raises(SystemExit) as e:
+        personkey.RecoveryCodeSource(labels=ALL, person_id=bytes(16), action="x").__enter__()
+    assert e.value.code == kept and e.value.__context__ is None
+
+
 def test_a_mismatch_leaves_no_code_or_scalar_in_the_exception(fast, no_grant, tty):
     code = rec.generate_recovery_code()
     tty(code)

@@ -24,7 +24,7 @@ class LaunchCode(BaseModel):
 
 # The browser app's own addresses (permanent URLs, G2): served index.html so a reload or pasted link opens the page.
 SPA_PATH = re.compile(
-    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick)|/settings(?:/(?:general|members|gates|grants|records))?"
+    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity|quick)|/settings(?:/(?:general|members|gates|grants|records|devices))?"
     r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
     r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
 )

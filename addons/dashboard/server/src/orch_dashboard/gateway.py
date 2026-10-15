@@ -155,6 +155,8 @@ class Gateway:
             "members": [("member.list", "query/1")],
             "settings_read": [("workspace.settings", "settings/1")],
             "grant_list": [("grant.list", "query/1")],
+            # H12d-2: the readers' levels (Settings → Devices) and `required_reader`.
+            "readers": [("reader.list", "reader/1")],
             # Terminals (M7a, section 12.6): the person's own shells.
             "terminals": [
                 ("run.sub", "run/1"),

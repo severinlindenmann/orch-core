@@ -180,9 +180,21 @@ def test_the_members_read_has_devices_and_no_last_seen(worlds, team):
         set(m) == {"person", "name", "role", "devices", "name_hidden"} for m in got
     )  # no last_seen, nothing invented
     device = got[1]["devices"][0]
-    assert (
-        set(device) == {"id", "auth", "scopes", "valid"} and device["valid"] is True and "operate" in device["scopes"]
-    )
+    assert set(device) == {
+        "id",
+        "auth",
+        "scopes",
+        "valid",
+        # v1.9 read_ext/3 and H12d-2: the device fields the host sends (none invented)
+        "label",
+        "label_hidden",
+        "paired_at",
+        "relay",
+        "cert_expires_at",
+        "reader",
+    }
+    assert device["valid"] is True and "operate" in device["scopes"]
+    assert device["reader"] is None and device["label"] is None and device["relay"] is False
 
 
 def test_an_owner_sees_every_grant_and_anyone_else_their_own(worlds, team):

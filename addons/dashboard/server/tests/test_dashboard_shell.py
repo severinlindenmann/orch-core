@@ -36,6 +36,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/settings",
         "/api/w/{ws}/members",
+        "/api/w/{ws}/readers",
         "/api/w/{ws}/grants",
         "/api/w/{ws}/quick",
         "/api/w/{ws}/records",
@@ -77,6 +78,7 @@ def test_shell_p1_reads(client, token, stub):
         "members",
         "settings_read",
         "grant_list",
+        "readers",
         "read_ext",
         "read_ext2",
         *(
@@ -154,8 +156,8 @@ def test_caps_hide_unavailable(gateway, stub):
     link = gateway.link(stub.ws)
     link.welcome["caps"].remove("query/1")
     # these do not depend on query/1
-    assert gateway.features(stub.ws) == ["activity", "settings_read", "read_ext", "read_ext2"]
-    gone = ("read_ext/1", "read_ext/2", "activity/1", "settings/1")
+    assert gateway.features(stub.ws) == ["activity", "settings_read", "readers", "read_ext", "read_ext2"]
+    gone = ("read_ext/1", "read_ext/2", "activity/1", "settings/1", "reader/1")
     link.welcome["caps"][:] = [c for c in link.welcome["caps"] if c not in gone]
     assert gateway.features(stub.ws) == []
     link.welcome["ops"]["whoami"] = 2

@@ -513,3 +513,28 @@ def test_the_pair_material_json_shape_for_the_dashboard_is_stable(served, human,
     prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
     assert sorted(prepared["material"]) == sorted([*pd.MATERIAL_FIELDS, "review"])
     json.dumps(prepared)  # plain JSON end to end
+
+
+def test_the_terminal_hand_off_binds_signs_and_submits_a_pair_request(served, human):
+    facts, phone = make_facts(served, level=1)
+    src = _install(served, facts)
+    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER}, handoff=True)
+    assert prepared["request"]["code"] and prepared["events"][0]["auth"] is None
+    bound = ok(human.get(prepared["request"]["id"], signer=human.signer))["data"]  # the declaration is rechecked
+    assert bound["events"][0]["auth"] == "passphrase" and bound["material"] == prepared["material"]
+    ok(_submit(human, bound))
+    assert [c[0] for c in src.calls] == ["precommit", "committed"]
+    assert served.service.store.state.workspace.devices[phone.device].person == human.person.ref
+
+
+def test_a_roll_forward_of_a_landed_pair_event_calls_committed_again_without_a_new_precommit(served, human):
+    from orch.host import human as host_human
+
+    facts, phone = make_facts(served)
+    src = _install(served, facts)
+    prepared = human.prepare("relay.pair_device", {"offer_id": OFFER})
+    ok(_submit(human, prepared))
+    record = served.service.requests.read(prepared["request"]["id"])
+    record = {**record, "outcome": None, "state": "bound"}  # as if the host died after the append
+    host_human.finish(served.service, served.service.requests, record)
+    assert [c[0] for c in src.calls] == ["precommit", "committed", "committed"]  # committed() is idempotent for R6

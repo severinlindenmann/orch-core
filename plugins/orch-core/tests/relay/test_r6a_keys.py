@@ -439,4 +439,14 @@ def test_nothing_secret_reaches_logs_repr_or_exceptions(tmp_path, caplog):
         m.close()
     blob = "\n".join(texts + [r.getMessage() for r in caplog.records])
     for k in secrets_:
-        assert crypto.b64u(k) not in blob and k.hex() not in blob
+        assert crypto.b64u(k) not in blob and k.hex() not in blob and repr(k) not in blob
+    assert texts[0] == f"MembershipKeys(workspace={WS}, epoch={e})"
+
+
+def test_a_late_2xx_for_a_superseded_body_never_activates_it(mk):
+    rotate(mk)
+    seq_a, e_a = expose_rotation(mk)
+    o_a = list_for(e_a, seq_a, mk.wk_commit_of(e_a))
+    expose_rotation(mk)  # supersedes A: its list_seq and epoch are burned
+    assert mk.commit(list_seq=seq_a, epoch=e_a, list_hash=digest(o_a), list_obj=o_a, at_ms=0) is False
+    assert mk.current_epoch() == 1 and mk.is_burned(e_a) and mk.wk(e_a) is None

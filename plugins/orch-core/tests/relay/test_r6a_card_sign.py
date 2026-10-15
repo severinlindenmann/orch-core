@@ -276,3 +276,18 @@ def test_wraps_and_sealed_keys_open_only_for_their_device(mk):
         mk.sealed_wk(e, kx_pub, DEVICE)  # nothing new is sealed under a burned epoch
     with pytest.raises(CustodyRefused):
         mk.sealed_wk(99, kx_pub, DEVICE)
+
+
+def test_a_card_that_does_not_verify_is_never_claimed(tmp_path, mk):
+    """The card is verified under the owner key before its file is claimed: a wrong signature never lands."""
+    bad = sign.RelaySigner(Key(), sign.LinkContext(WS, ORIGIN), ledger=MemLedger())
+
+    def forged(o):
+        return crypto.b64u(crypto.sign(corpus.priv("person_alice.sig"), b"not the card"))
+
+    src = source(mk, sig=bad)
+    src._signer = type("S", (), {"card": staticmethod(forged), "public_key": bad.public_key, "link": bad.link})()  # noqa: SLF001
+    with pytest.raises(CustodyRefused, match="does not verify"):
+        src.card()
+    assert os.listdir(tmp_path / "membership" / "cards") == []
+    assert mk.head()["card"]["pending_card_seq"] is None

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import pytest
 
-from orch import crypto
 from orch.identity import Refused, pairing
 
 from ..relay import corpus

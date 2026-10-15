@@ -306,3 +306,20 @@ def test_a_direct_convenience_append_is_refused_while_another_member_is_below_le
            "--json")  # fmt: skip
     assert r.err_code == "sign.convenience_unavailable" and p.device in r.doc["error"]["message"], r.doc
     assert "other_member" in r.doc["error"]["message"]
+
+
+def test_a_member_added_without_a_declaration_drops_a_stale_record_of_its_device(hws, me, tmp_path):
+    """A record left from before a device was removed must not count again once it is re-added."""
+    from orch.ops import readers
+    from orch.store.readerrecs import read_record
+    from tests.identity.reader_helpers import decl
+
+    p, pk, cert = invite(hws, tmp_path)
+    d = decl(p, WS, via="declare", created_ms=hws.clock[0] * 1000)
+    got = readers.verify_admission(
+        d, workspace_id=WS, cert=p.cert(), person=p.ref, via="declare", surfaces=("log",), now_ms=None
+    )
+    readers.store_record(hws.host_state, WS, os.getuid(), readers.make_record(got, d, p.ref, "declare", "t"))
+    assert read_record(hws.host_state, WS, p.device[2:]) is not None
+    assert me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert).code == 0
+    assert read_record(hws.host_state, WS, p.device[2:]) is None

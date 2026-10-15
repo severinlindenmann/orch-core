@@ -172,3 +172,13 @@ def test_other_member_and_phone_device_count_only_readers_below_level_1(click, s
     refused(lambda: click.prepare("log", {"ref": key, "text": "y"}), "sign.convenience_unavailable", "phone_device")
     declare(served, q, 0)  # a newer, lower declaration lowers the level
     refused(lambda: click.prepare("log", {"ref": key, "text": "z"}), "sign.convenience_unavailable", "other_member")
+
+
+def test_a_member_added_without_a_declaration_drops_a_stale_record_at_the_host(served, human):
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    q, args, files = _member(served, None)
+    declare(served, q, 1)  # a record of the same keys from before (a removed and re-added device)
+    assert readerrecs.read_record(served.lab.state, served.wid, q.device[2:]) is not None
+    _, res = _submit_member(human, args, files)
+    ok(res)
+    assert readerrecs.read_record(served.lab.state, served.wid, q.device[2:]) is None

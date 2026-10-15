@@ -76,6 +76,12 @@ class State:
         person = ws.members.get(dev.person) or ws.former[dev.person]
         return {"device_cert": copy.deepcopy(dev.cert), "pk_pub": person.pk_pub}
 
+    def person_key(self, person: str) -> str | None:
+        """The person key (``pk_pub``, b64u) of a current member, else ``None`` (H12d-3: a pairing declaration signed
+        for a ``pk_pin`` counts only under the key that pin names)."""
+        member = self._core.ws.members.get(person)
+        return None if member is None else member.pk_pub
+
     def visible_to(self, person: str) -> Mapping[str, TicketView]:
         """The tickets ``person`` may see (§9): what a reader, the CLI or the relay may show them."""
         core = self._core

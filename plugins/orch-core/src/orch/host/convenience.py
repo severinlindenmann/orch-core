@@ -350,8 +350,26 @@ def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[di
             raise HostError("reader.decl_invalid", exc.detail) from None
         if got.digest != entry.get("digest") or got.level != entry.get("level"):
             raise HostError("internal", "the stored reader declaration changed")
+        if "pk_pin" in ctx.get("who", {}):  # H12d-3 (9.3): a pk_pin declaration counts only under the cert's person
+            _check_pin(service, ev.get("person") or entry["person"], ctx["who"]["pk_pin"])
         out[entry["device"]] = got.level
     return out
+
+
+def _check_pin(service: Any, person: Any, pin: str) -> None:
+    """A pairing declaration signed for the link's ``pk_pin`` (path 7b, before the phone knew the person key) is
+    admitted only when the certificate's person is the member whose person key that pin names (9.3: "the host checks
+    in the R6 allocation that the certificate it got is under the key that pin names"); else ``reader.decl_invalid``
+    reason ``who``."""
+    from orch import crypto
+
+    try:
+        pk_pub = service.store.state.person_key(person) if isinstance(person, str) else None
+        have = None if pk_pub is None else crypto.b64u(crypto.pk_pin(crypto.unb64u(pk_pub, crypto.PUB_LEN)))
+    except (crypto.CryptoError, ValueError, TypeError, AttributeError):
+        have = None
+    if have is None or have != pin:  # public values: a plain comparison
+        raise HostError("reader.decl_invalid", "who: the pairing's pk_pin does not name the certificate's person key")
 
 
 def readers_error(exc: Any) -> HostError:

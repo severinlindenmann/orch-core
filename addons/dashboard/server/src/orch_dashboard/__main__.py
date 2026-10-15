@@ -18,7 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import uvicorn
@@ -27,6 +27,9 @@ from .app import create_app
 from .auth import Auth
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
+
+#: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
+GRACE = 3
 
 
 @contextmanager
@@ -144,6 +147,8 @@ def _serve(directory, lock_fd=None):
         ws="websockets",
         ws_max_size=65536,
         ws_per_message_deflate=False,
+        # A browser tab's live stream never ends by itself: after `stop`, cut open connections after GRACE seconds.
+        timeout_graceful_shutdown=GRACE,
     )
     server = uvicorn.Server(config)
     ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -153,6 +158,7 @@ def _serve(directory, lock_fd=None):
     finally:
         os.umask(old)
     os.chmod(ctl_path, 0o600)
+    ctl_ino = ctl_path.lstat().st_ino
     ctl.listen(8)
     ctl.settimeout(0.5)
     if lock_fd is not None:
@@ -176,8 +182,20 @@ def _serve(directory, lock_fd=None):
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
+                        # Free the control socket now, not after the shutdown: until then a launcher would connect
+                        # to a server that no longer answers (and time out) instead of starting a new one.
+                        retire()
+                        break
                 except Exception:
                     pass  # never log the launch payload
+
+    def retire():
+        """Close the control socket and remove its path if it is still ours (a new server may have bound it)."""
+        ctl.close()
+        with suppress(OSError):
+            st = ctl_path.lstat()
+            if stat.S_ISSOCK(st.st_mode) and st.st_ino == ctl_ino:
+                ctl_path.unlink()
 
     thread = threading.Thread(target=ipc, daemon=True)
     thread.start()
@@ -185,10 +203,9 @@ def _serve(directory, lock_fd=None):
         server.run(sockets=[listener])
     finally:
         server.should_exit = True
-        ctl.close()
+        retire()
         thread.join(timeout=3)
         listener.close()
-        ctl_path.unlink(missing_ok=True)
 
 
 def safe_path(value):

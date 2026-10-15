@@ -62,6 +62,7 @@ __all__ = [
     "RELAY_DEVICE_RESPONSE_BYTES",
     "RETRY_CONTEXT",
     "OPS",
+    "WRITE_OP_VERSIONS",
     "FRESH_FUTURE_MS",
     "FRESH_PAST_MS",
     "PENDING_NO_RECORD_MS",
@@ -143,6 +144,10 @@ OPS: Mapping[str, OpSpec] = {
     "new_ticket": OpSpec("relay.submit", "write", "decide", "ticket.created"),
     "answer": OpSpec("relay.submit", "write", "decide", "question.answered"),
 }
+
+#: the person-event write kinds the host serves on column R, with their versions (the ``whoami.relay.ops`` field);
+#: derived from :data:`OPS`, so a new write kind appears there with no second list
+WRITE_OP_VERSIONS: Mapping[str, int] = {k: 1 for k, v in sorted(OPS.items()) if v.kind == "write"}
 
 #: the relay op that is exempt from the ``rd`` check (H12d-3): the way a device gets an ``rd``
 READER_DECLARE = "reader.declare"

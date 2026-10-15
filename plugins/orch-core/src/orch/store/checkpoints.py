@@ -16,7 +16,6 @@ missing ticket log). The store then refuses new events on that log until a ``res
 from __future__ import annotations
 
 import copy
-import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
@@ -27,9 +26,10 @@ from orch import canon, crypto, schema
 from orch.model.types import ts
 
 from .errors import StoreError
-from .fsio import loads, read_or_none, write_atomic
+from .fsio import loads
 from .logs import WORKSPACE, LogInfo
 from .paths import ULID, check_uid
+from .rootfs import RootFS
 
 __all__ = [
     "Checkpoints",
@@ -464,9 +464,22 @@ def verify_object(wsk_pub: bytes, cp: Mapping[str, Any]) -> bool:
 
 
 class Checkpoints:
-    def __init__(self, directory: Path, workspace_id: str) -> None:
+    def __init__(self, directory: Path, workspace_id: str, fs: RootFS | None = None) -> None:
         self.dir = directory
         self.workspace_id = workspace_id
+        #: the store's pinned root (#516): every read, listing and rename below ``directory`` walks it ``O_NOFOLLOW``.
+        #: ``None`` (a checkpoint directory on its own, the vector tests): pinned at ``directory`` on first use.
+        self._fs = fs
+
+    @property
+    def fs(self) -> RootFS:
+        if self._fs is None:
+            self._fs = RootFS.at(self.dir, create=True)
+        return self._fs
+
+    def _names(self, directory: Path, prefix: str, suffix: str) -> list[str]:
+        """The regular files ``prefix*suffix`` in ``directory`` (below the pinned root; a symlink is none of them)."""
+        return sorted(n for n in self.fs.regular_files(directory) if n.startswith(prefix) and n.endswith(suffix))
 
     def _ticket_path(self, uid: str) -> Path:
         return self.dir / f"ticket-{check_uid(uid)}.json"
@@ -477,7 +490,7 @@ class Checkpoints:
 
     # -- reading
     def _load(self, path: Path) -> dict[str, Any] | None:
-        raw = read_or_none(path)
+        raw = self.fs.read_or_none(path)
         if raw is None:
             return None
         try:
@@ -492,15 +505,18 @@ class Checkpoints:
         return self._load(self._workspace_path)
 
     def ticket_uids(self) -> list[str]:
-        if not self.dir.is_dir():
-            return []
-        names = (p.name[len("ticket-") : -len(".json")] for p in self.dir.glob("ticket-*.json") if not p.is_symlink())
+        names = (n[len("ticket-") : -len(".json")] for n in self._names(self.dir, "ticket-", ".json"))
         return sorted(n for n in names if ULID.fullmatch(n))
+
+    def abandoned_workspace(self) -> list[Path]:
+        """The abandoned workspace checkpoints (``abandoned/workspace-*.json``), read below the pinned root."""
+        ab = self.dir / "abandoned"
+        return [ab / n for n in self._names(ab, "workspace-", ".json")]
 
     def highest_n(self) -> int:
         """The highest workspace checkpoint number seen, abandoned ones included."""
         best = 0
-        for p in [self._workspace_path, *sorted((self.dir / "abandoned").glob("workspace-*.json"))]:
+        for p in [self._workspace_path, *self.abandoned_workspace()]:
             cp = self._load(p)
             if cp and "o" in cp:
                 best = max(best, cp["o"]["n"])
@@ -706,7 +722,7 @@ class Checkpoints:
         return sign_object(sign, o)
 
     def _write(self, path: Path, cp: dict[str, Any]) -> None:
-        write_atomic(path, canon.cj_checked(cp) + b"\n", mode=0o644)
+        self.fs.write_atomic(path, canon.cj_checked(cp) + b"\n", mode=0o644)
 
     def abandon_above(self, log: str, from_seq: int) -> None:
         """Move the checkpoint of ``log`` aside when it is above ``from_seq`` (a ``restore`` gives it up)."""
@@ -714,20 +730,20 @@ class Checkpoints:
         if log == WORKSPACE:
             cp = self.workspace()
             if cp and "o" in cp and cp["o"]["workspace_log"]["seq"] > from_seq:
-                ab.mkdir(parents=True, exist_ok=True)
-                os.replace(self._workspace_path, _unique(ab, f"workspace-{cp['o']['n']}", ".json"))
+                self.fs.mkdir(ab)
+                self.fs.replace(self._workspace_path, _unique(self.fs, ab, f"workspace-{cp['o']['n']}", ".json"))
             return
         cp = self.ticket(log)
         if cp and "o" in cp and cp["o"]["seq"] > from_seq:
-            ab.mkdir(parents=True, exist_ok=True)
-            os.replace(self._ticket_path(log), _unique(ab, f"ticket-{log}-{cp['o']['seq']}", ".json"))
+            self.fs.mkdir(ab)
+            self.fs.replace(self._ticket_path(log), _unique(self.fs, ab, f"ticket-{log}-{cp['o']['seq']}", ".json"))
 
 
-def _unique(directory: Path, stem: str, suffix: str) -> Path:
+def _unique(fs: RootFS, directory: Path, stem: str, suffix: str) -> Path:
     """``stem+suffix``, else ``stem.1+suffix``, ``stem.2+suffix``...: the first free name (nothing is overwritten)."""
     p = directory / (stem + suffix)
     n = 0
-    while os.path.lexists(p):
+    while fs.lexists(p):
         n += 1
         p = directory / f"{stem}.{n}{suffix}"
     return p

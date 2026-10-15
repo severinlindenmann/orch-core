@@ -9,9 +9,14 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .errors import StoreError
+
+if TYPE_CHECKING:
+    from .rootfs import RootFS
 
 __all__ = ["ARTIFACT", "ULID", "check_artifact", "check_state_dirs", "check_uid", "safe_join", "target_ok"]
 
@@ -62,12 +67,16 @@ _DIRS = ("events", "tickets", ".state", ".state/pending", ".state/body", ".state
          ".state/sessions", ".state/abandoned", ".state/rejected")  # fmt: skip
 
 
-def check_state_dirs(root: Path) -> None:
+def check_state_dirs(fs: RootFS) -> None:
     """The directories the store writes under must be real directories of the workspace: a symlink (``.state`` pointing
-    elsewhere, say) would send writes outside it (``validation.path``)."""
+    elsewhere, say) would send writes outside it (``validation.path``). Checked below the pinned root (#516); every
+    later access walks ``O_NOFOLLOW`` again, so this is the early, named refusal, not the boundary."""
     for rel in _DIRS:
-        p = root / rel
-        if os.path.islink(p):
+        try:
+            st = fs.lstat(rel)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        if stat.S_ISLNK(st.st_mode):
             raise StoreError("validation.path", f"{rel} is a symlink")
-        if os.path.lexists(p) and not p.is_dir():
+        if not stat.S_ISDIR(st.st_mode):
             raise StoreError("validation.path", f"{rel} is not a directory")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from .errors import StoreError
@@ -74,9 +75,17 @@ class FileLock:
     """``with FileLock(path):`` holds the exclusive lock; nesting in one thread is fine, other threads and other
     processes wait (or raise :class:`LockTimeout` after ``timeout`` seconds)."""
 
-    def __init__(self, path: str | os.PathLike[str], *, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        timeout: float | None = None,
+        opener: Callable[[], int] | None = None,
+    ) -> None:
         self.path = Path(path)
         self.timeout = timeout
+        #: opens the lock file (the store's: below its pinned root, #516); ``None``: by path
+        self._opener = opener
         key = os.path.abspath(self.path)
         with _registry_guard:
             self._held = _registry.setdefault(key, _Held(key))
@@ -87,8 +96,11 @@ class FileLock:
             raise LockTimeout("the workspace lock is held by another thread")
         try:
             if h.depth == 0:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+                if self._opener is not None:
+                    fd = self._opener()
+                else:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
                 try:
                     _flock(fd, self.timeout)
                 except BaseException:

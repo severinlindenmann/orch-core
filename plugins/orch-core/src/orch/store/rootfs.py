@@ -13,10 +13,12 @@ A path is named either relative to the root (``"tickets/<uid>/events.jsonl"``) o
 builds from :attr:`RootFS.path` (``root / "tickets" / ...``): the latter is turned into components **lexically** (the
 same components as the root, then the rest), never resolved. ``..``, ``.``, empty components and NUL refuse.
 
-**Fds.** One root fd per :class:`RootFS` (one per store), held until :meth:`close` (or a ``weakref.finalize``). Every
-other fd is opened for one call and closed before it returns, so a call holds at most ``depth + 1`` fds and nothing
-grows with the number of tickets. Directory fds below the root are deliberately **not** cached: a cached fd of a
-directory that is then renamed out of the root would keep writing there.
+**Fds.** One root fd per :class:`RootFS` (one per store), held until :meth:`close` (or a ``weakref.finalize``), plus
+at most :data:`CACHED` (three) top-level directory fds (``tickets``, ``events``, ``.state``: every hot path starts with
+one of them). A cached fd is re-checked by :meth:`revalidate` (the store calls it each time it takes its lock): when
+the name below the root is no longer that directory (swapped for a symlink, replaced, renamed away) the fd is dropped
+and the next access walks again (and refuses a symlink). Every other fd is opened for one call and closed before it
+returns, so a call holds at most ``depth + 1`` more fds and nothing grows with the number of tickets.
 
 POSIX only (``dir_fd`` and ``O_NOFOLLOW``), like the rest of the store's hardening.
 """
@@ -30,10 +32,14 @@ import secrets
 import stat
 import sys
 import weakref
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
+from . import fsio
 from .errors import StoreError
+
+#: the top-level directories whose fds a RootFS keeps (bounded: one fd each)
+CACHED = frozenset({"tickets", "events", ".state"})
 
 __all__ = ["MAX_DEPTH", "MAX_READ", "MAX_RM_DEPTH", "RootFS", "rm_at"]
 
@@ -50,18 +56,6 @@ _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _CLOEXEC
 _NOCTTY = getattr(os, "O_NOCTTY", 0)
 
 Rel = str | os.PathLike[str]
-
-
-def _full_fsync(fd: int) -> None:
-    if sys.platform == "darwin":
-        import fcntl
-
-        try:
-            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
-            return
-        except OSError:  # a file system without F_FULLFSYNC falls back to fsync
-            pass
-    os.fsync(fd)
 
 
 def rm_at(dir_fd: int, name: str, depth: int = 0) -> None:
@@ -86,7 +80,10 @@ def rm_at(dir_fd: int, name: str, depth: int = 0) -> None:
     os.rmdir(name, dir_fd=dir_fd)
 
 
-def _close(fd: list[int]) -> None:
+def _close(fd: list[int], cache: dict[str, int]) -> None:
+    while cache:
+        with contextlib.suppress(OSError):
+            os.close(cache.popitem()[1])
     if fd and fd[0] >= 0:
         with contextlib.suppress(OSError):
             os.close(fd[0])
@@ -99,8 +96,11 @@ class RootFS:
     def __init__(self, path: Path, fd: int) -> None:
         self.path = path
         self._parts = path.parts
+        self._str = os.fspath(path)
+        self._prefix = self._str.rstrip("/") + "/"
         self._fd = [fd]
-        self._finalizer = weakref.finalize(self, _close, self._fd)
+        self._cache: dict[str, int] = {}
+        self._finalizer = weakref.finalize(self, _close, self._fd, self._cache)
         st = os.fstat(fd)
         self.ident: tuple[int, int] = (st.st_dev, st.st_ino)
 
@@ -156,6 +156,11 @@ class RootFS:
             raise StoreError("validation.path", f"{s!r} escapes the workspace")
         if isinstance(p, str) and not s.startswith("/"):
             parts = tuple(s.split("/")) if s else ()
+        elif s.startswith(self._prefix):  # the store's own paths (root / ...): a plain string split, it is hot
+            rest = s[len(self._prefix) :]
+            parts = tuple(rest.split("/")) if rest else ()
+        elif s == self._str:
+            parts = ()
         else:
             whole = Path(s).parts
             n = len(self._parts)
@@ -187,8 +192,23 @@ class RootFS:
         ``create``: make missing directories on the way."""
         cur = self.fd
         opened: list[int] = []
+        start = 0
+        if parts and parts[0] in CACHED:
+            cached = self._cache.get(parts[0])
+            if cached is None:
+                if create:
+                    with contextlib.suppress(FileExistsError):
+                        os.mkdir(parts[0], mode, dir_fd=cur)
+                try:
+                    cached = os.open(parts[0], _DIR | _NOFOLLOW, dir_fd=cur)
+                except OSError as e:
+                    raise self._refuse(parts, 0, cur, e) from None
+                self._cache[parts[0]] = cached
+            cur, start = cached, 1
         try:
             for i, comp in enumerate(parts):
+                if i < start:
+                    continue
                 if create:
                     with contextlib.suppress(FileExistsError):
                         os.mkdir(comp, mode, dir_fd=cur)
@@ -202,6 +222,29 @@ class RootFS:
         finally:
             for fd in opened:
                 os.close(fd)
+
+    def _forget(self, p: Rel) -> None:
+        """``p`` is about to be removed or renamed: if it is a cached top-level directory, drop its fd first."""
+        parts = self.rel(p)
+        if len(parts) == 1 and parts[0] in self._cache:
+            with contextlib.suppress(OSError):
+                os.close(self._cache.pop(parts[0]))
+
+    def revalidate(self) -> None:
+        """Drop every cached top-level directory fd whose name below the root is no longer that directory (an
+        ``lstat`` relative to the root fd: a symlink, another directory, or nothing there). Cheap: one ``lstat`` and
+        one ``fstat`` per cached fd."""
+        for name, fd in list(self._cache.items()):
+            try:
+                st = os.stat(name, dir_fd=self.fd, follow_symlinks=False)
+                cur = os.fstat(fd)
+                same = stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == (cur.st_dev, cur.st_ino)
+            except OSError:
+                same = False
+            if not same:
+                del self._cache[name]
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
     @contextlib.contextmanager
     def _parent(self, p: Rel, *, create: bool = False) -> Iterator[tuple[int, str]]:
@@ -269,6 +312,34 @@ class RootFS:
         with self._dir(parts[:-1]) as dfd:
             return os.stat(parts[-1], dir_fd=dfd, follow_symlinks=False)
 
+    def leaf_stats(self, p: Rel, names: Iterable[str], leaf: str) -> dict[str, os.stat_result]:
+        """``lstat`` of ``<p>/<name>/<leaf>`` for each ``name``, **metadata only** (the store's per-ticket log
+        signatures, its hot path): ``p`` is opened once (``O_NOFOLLOW`` walk) and each ``name`` must be a real
+        directory by ``lstat`` below it; then ``name/leaf`` is ``lstat``-ed relative to that one fd, without opening
+        the ticket directory (an open per ticket per lock costs more than the whole append). A missing entry, or a
+        ``name`` that is a symlink, is left out. The one place a component below the root is resolved by the kernel
+        rather than walked: only in a race (the directory swapped between the two ``lstat``) and only for a
+        signature, never for bytes; every read and write still walks ``O_NOFOLLOW`` (#516)."""
+        out: dict[str, os.stat_result] = {}
+        try:
+            cm = self.dir(p)
+            pfd = cm.__enter__()
+        except (FileNotFoundError, NotADirectoryError):
+            return out
+        try:
+            for name in names:
+                if not name or "/" in name or name in (".", ".."):
+                    continue
+                try:
+                    if not stat.S_ISDIR(os.stat(name, dir_fd=pfd, follow_symlinks=False).st_mode):
+                        continue
+                    out[name] = os.stat(f"{name}/{leaf}", dir_fd=pfd, follow_symlinks=False)
+                except OSError:
+                    continue
+        finally:
+            cm.__exit__(None, None, None)
+        return out
+
     def _mode(self, p: Rel) -> int | None:
         try:
             return self.lstat(p).st_mode
@@ -311,6 +382,54 @@ class RootFS:
             if e.errno in (errno.ELOOP, errno.EMLINK):
                 return []
             raise
+
+    def real_dir(self, p: Rel) -> Path:
+        """The directory ``p`` (below the pinned root, made if missing) by its **real path now**, for the one consumer
+        that can only take a path (SQLite, the derived index). The path is the kernel's name of the pinned directory
+        (``F_GETPATH`` on macOS, ``/proc/self/fd`` on Linux), then checked by walking it from ``/`` with
+        ``O_NOFOLLOW`` on every component (:func:`orch.gitread.fs.open_walk`) to the same ``st_dev``/``st_ino``: at
+        that moment the path has no symlink and names this directory. What is left is the window between this check
+        and the consumer's own open (documented in #516: the index is derived data, never read for a decision)."""
+        from orch.gitread.errors import Unavailable
+        from orch.gitread.fs import open_walk
+
+        self.mkdir(p)
+        with self.dir(p) as fd:
+            st = os.fstat(fd)
+            try:
+                if sys.platform == "darwin":
+                    import fcntl
+
+                    raw = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", 50), b"\0" * 1024)
+                    real = raw.split(b"\0", 1)[0].decode()
+                else:
+                    real = os.readlink(f"/proc/self/fd/{fd}")
+                d, wst = open_walk(real)
+                d.close()
+            except (OSError, UnicodeDecodeError, Unavailable) as e:
+                why = f"{os.fspath(p)!r}: its real path cannot be checked ({e})"
+                raise StoreError("validation.path", why) from None
+        if (wst.st_dev, wst.st_ino) != (st.st_dev, st.st_ino):
+            raise StoreError("validation.path", f"{os.fspath(p)!r} moved while its real path was checked")
+        return Path(real)
+
+    def regular_files(self, p: Rel) -> list[str]:
+        """The names of the regular files in the directory ``p`` (one fd for the listing and every ``lstat``: a
+        symlink, a directory or anything else is left out); ``[]`` when ``p`` is missing or a symlink."""
+        try:
+            cm = self.dir(p)
+            fd = cm.__enter__()
+        except (FileNotFoundError, NotADirectoryError, StoreError):
+            return []
+        try:
+            out = []
+            for n in os.listdir(fd):
+                with contextlib.suppress(OSError):
+                    if stat.S_ISREG(os.stat(n, dir_fd=fd, follow_symlinks=False).st_mode):
+                        out.append(n)
+            return out
+        finally:
+            cm.__exit__(None, None, None)
 
     # -- writing
     def mkdir(self, p: Rel, *, mode: int = 0o777) -> None:
@@ -358,7 +477,7 @@ class RootFS:
                     n = os.write(fd, view)
                     view = view[n:]
                 if commit:
-                    _full_fsync(fd)
+                    fsio._full_fsync(fd)  # the one F_FULLFSYNC helper (looked up here: tests replace it)
                 else:
                     os.fsync(fd)
             finally:
@@ -369,10 +488,13 @@ class RootFS:
     def replace(self, src: Rel, dst: Rel) -> None:
         """``os.replace`` of ``src`` onto ``dst``, both below the root, by their parent fds (``dst``'s parents are
         made). A symlink at ``dst`` is replaced, never followed."""
+        self._forget(src)
+        self._forget(dst)
         with self._parent(src) as (sfd, sname), self._parent(dst, create=True) as (dfd, dname):
             os.replace(sname, dname, src_dir_fd=sfd, dst_dir_fd=dfd)
 
     def unlink(self, p: Rel, *, missing_ok: bool = False) -> None:
+        self._forget(p)
         try:
             with self._parent(p) as (dfd, name):
                 os.unlink(name, dir_fd=dfd)
@@ -381,12 +503,14 @@ class RootFS:
                 raise
 
     def rmdir(self, p: Rel) -> None:
+        self._forget(p)
         with self._parent(p) as (dfd, name):
             os.rmdir(name, dir_fd=dfd)
 
     def rmtree(self, p: Rel, *, ignore_errors: bool = False) -> None:
         """Remove a tree below the root, walked ``O_NOFOLLOW`` (a symlink is unlinked, never followed)."""
         try:
+            self._forget(p)
             with self._parent(p) as (dfd, name):
                 rm_at(dfd, name)
         except (OSError, StoreError):

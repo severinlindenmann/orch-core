@@ -133,7 +133,11 @@ def test_paths_outside_or_escaping_are_refused(ws, tmp_path):
 
 
 def test_fds_stay_bounded(ws):
+    from orch.store.rootfs import CACHED
+
     fs, root, _ = ws
+    for name in CACHED:
+        fs.mkdir(name)  # every cacheable top-level fd is open from here on: at most len(CACHED) of them
     before = _fds()
     for i in range(200):
         fs.write_atomic(f"tickets/T/f{i % 5}.txt", b"x")
@@ -144,7 +148,7 @@ def test_fds_stay_bounded(ws):
             fs.read_or_none("../x")
     assert _fds() == before
     fs.close()
-    assert _fds() == before - 1
+    assert _fds() == before - 1 - len(CACHED)
 
 
 # -- the automated scan's two classes: path traversal and resource bounds
@@ -239,6 +243,7 @@ def test_no_fd_leaks_on_failure_paths(ws, tmp_path):
     os.symlink(outside, root / "tickets" / "T" / "sub")
     (root / "tickets" / "T" / "file").write_bytes(b"x")
     os.mkfifo(root / "tickets" / "T" / "fifo")
+    fs.listdir("tickets")  # the cached top-level fd is open before counting
     before = _fds()
     for _ in range(50):
         for call in (
@@ -254,3 +259,24 @@ def test_no_fd_leaks_on_failure_paths(ws, tmp_path):
                 call()
         assert fs.read_or_none("tickets/T/fifo") is None  # a FIFO never blocks a read
     assert _fds() == before
+
+
+def test_a_cached_top_level_fd_is_dropped_when_its_name_changes(ws, tmp_path):
+    fs, root, outside = ws
+    assert fs.read_or_none("tickets/T/a.txt") == b"inside"  # caches the fd of tickets/
+    _swap(root, "tickets", outside, tmp_path)
+    # until the next revalidate the cached fd still names the store's own (moved) directory, never the link's target
+    fs.write_atomic("tickets/T/b.txt", b"mine")
+    assert (tmp_path / "moved-tickets" / "T" / "b.txt").read_bytes() == b"mine"
+    fs.revalidate()
+    with pytest.raises(StoreError):
+        fs.write_atomic("tickets/T/c.txt", b"pwned")
+    assert sorted(os.listdir(outside / "T")) == ["a.txt"]
+
+
+def test_removing_a_cached_directory_forgets_its_fd(ws):
+    fs, root, _ = ws
+    fs.listdir("tickets")
+    fs.rmtree("tickets")
+    fs.mkdir("tickets/X")
+    assert (root / "tickets" / "X").is_dir()

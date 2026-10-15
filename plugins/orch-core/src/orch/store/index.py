@@ -13,9 +13,12 @@ import json
 import sqlite3
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .logs import LogInfo
+
+if TYPE_CHECKING:
+    from .rootfs import RootFS
 
 __all__ = ["Index"]
 
@@ -59,16 +62,23 @@ def _row(view: Any, seq: int) -> tuple[Any, ...]:
 
 
 class Index:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, fs: RootFS | None = None) -> None:
         self.path = path
+        #: the store's pinned root (#516): the file is checked and removed below it, and SQLite is handed the verified
+        #: real path of its directory (:meth:`RootFS.real_dir`), never the path through the workspace
+        self._fs = fs
         self._db: sqlite3.Connection | None = None
         self._rows: dict[str, Any] = {}
 
     # -- connection
     def _connect(self) -> sqlite3.Connection:
         if self._db is None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            db = sqlite3.connect(self.path, isolation_level=None, timeout=30)
+            if self._fs is not None:
+                where = self._fs.real_dir(self.path.parent) / self.path.name
+            else:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                where = self.path
+            db = sqlite3.connect(where, isolation_level=None, timeout=30)
             db.execute("PRAGMA synchronous=OFF")  # derived data: a crash just means a rebuild
             self._db = db
         return self._db
@@ -84,13 +94,16 @@ class Index:
         self.close()
         for suffix in ("", "-journal", "-wal", "-shm"):
             with contextlib.suppress(FileNotFoundError):
-                Path(str(self.path) + suffix).unlink()
+                if self._fs is not None:
+                    self._fs.unlink(self.path.with_name(self.path.name + suffix))
+                else:
+                    Path(str(self.path) + suffix).unlink()
 
     # -- freshness
     def is_current(self, sizes: Mapping[str, int], workspace_id: str, genesis: str | None) -> bool:
         """The index describes these logs: same version, workspace and genesis, and every log has the size the index
         recorded (a log that grew, shrank or appeared without the index being told is stale)."""
-        if not self.path.exists():
+        if not (self._fs.is_file(self.path) if self._fs is not None else self.path.exists()):
             return False
         try:
             db = self._connect()

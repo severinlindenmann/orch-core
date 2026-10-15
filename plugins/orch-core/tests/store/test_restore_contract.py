@@ -577,10 +577,10 @@ def test_lazy_open_finishes_transition_interrupted_before_archive(env, monkeypat
     candidate = env.person_event(env.owner, uid, "restore", **store.restore_facts(uid), reason="rollback")
     replace = sm.os.replace
 
-    def crash(source, target):
-        if target.parent.name == "transitions":
+    def crash(source, target, **kw):
+        if not kw and target.parent.name == "transitions":  # the host pin's archive (by path, outside the root)
             raise RuntimeError("before archive")
-        return replace(source, target)
+        return replace(source, target, **kw)
 
     with monkeypatch.context() as patch:
         patch.setattr(sm.os, "replace", crash)

@@ -91,7 +91,7 @@ def test_a_crash_before_the_commit_leaves_neither_event_nor_entry(linked, monkey
     env = linked
     uid = env.new_ticket()
     before_entries, before_events = entry_files(env), len(env.read_events(uid))
-    monkeypatch.setattr(store_mod, "append_durable", _boom)
+    monkeypatch.setattr(env.store.fs, "append_durable", _boom)
     with pytest.raises(_Crash):
         env.log(uid, "dying")
     monkeypatch.undo()
@@ -352,7 +352,7 @@ def test_kill_points_of_a_linked_append(linked, sign_order, monkeypatch, where):
     if where == "write_pending":
         monkeypatch.setattr(s, "_write_pending", _boom)
     elif where == "append_durable":
-        monkeypatch.setattr(store_mod, "append_durable", _boom)
+        monkeypatch.setattr(s.fs, "append_durable", _boom)
     elif where == "finish":
         monkeypatch.setattr(s, "_finish", _boom)
     elif where == "accept":

@@ -16,7 +16,9 @@ from typing import Any
 
 from orch import canon, schema
 
+from .errors import StoreError
 from .fsio import open_nofollow
+from .rootfs import RootFS
 
 __all__ = ["LogInfo", "parse_line", "read_new_lines"]
 
@@ -57,6 +59,11 @@ class LogInfo:
         return "workspace" if self.name == WORKSPACE else "ticket"
 
 
+def _open_ro(path: Path, fs: RootFS | None) -> int:
+    """A log opened for reading: below the pinned root (``fs``, #516) when the store has one, else by path."""
+    return fs.open(path, os.O_RDONLY) if fs is not None else open_nofollow(path, os.O_RDONLY)
+
+
 LINE_ERRORS = (canon.HashError, schema.SchemaError, ValueError, KeyError, TypeError, RecursionError)
 
 
@@ -73,17 +80,17 @@ def parse_line(line: bytes, seq: int, kind: str, *, validate: bool = True) -> tu
     return e, canon.event_head(e)
 
 
-def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, Any]]:
+def read_new_lines(info: LogInfo, *, validate: bool = True, fs: RootFS | None = None) -> list[dict[str, Any]]:
     """Parse the lines of ``info.path`` after ``info.offset``; extend ``info`` with them; return the events.
 
     Stops at the first line that is not a good event, setting ``info.error`` (a torn final line without LF included).
     """
     out: list[dict[str, Any]] = []
     try:
-        if os.path.islink(info.path):
+        if fs.is_link(info.path) if fs is not None else os.path.islink(info.path):
             info.error, info.error_seq = "the log is a symlink", info.seq + 1
             return []
-        fd = open_nofollow(info.path, os.O_RDONLY)
+        fd = _open_ro(info.path, fs)
     except FileNotFoundError:
         return []
     with os.fdopen(fd, "rb") as f:
@@ -124,14 +131,16 @@ def file_size(path: Path) -> int:
         return 0
 
 
-def stat_sig(path: Path) -> tuple[int, int, int, int] | None:
+def stat_sig(path: Path, fs: RootFS | None = None) -> tuple[int, int, int, int] | None:
     """``(size, inode, mtime_ns, ctime_ns)`` of a log, or None if it is missing; a symlink has its own signature
     (never a file's). The times make a log that was replaced by another file of the same size and inode number (or
     edited in place without a size change) differ from the one that was verified."""
     try:
-        st = os.lstat(path)
+        st = fs.lstat(path) if fs is not None else os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
         return None
+    except StoreError:  # a symlinked directory on the way (the pinned root refuses it): never a log's signature
+        return (-1, -1, -1, -1)
     if stat.S_ISLNK(st.st_mode):
         return (-1, -1, -1, -1)
     return (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
@@ -144,12 +153,12 @@ def info_sig(info: LogInfo | None) -> tuple[int, int, int, int] | None:
     return (info.seen_size, info.ino, *info.seen_times)
 
 
-def last_line(path: Path) -> bytes | None:
+def last_line(path: Path, fs: RootFS | None = None) -> bytes | None:
     """The last complete line of a log (with its LF), read from the end; None if there is none. Unverified: used only
     as a hint (see ``Store._hints``)."""
     try:
-        fd = open_nofollow(path, os.O_RDONLY)
-    except OSError:
+        fd = _open_ro(path, fs)
+    except (OSError, StoreError):
         return None
     with os.fdopen(fd, "rb") as f:
         size = f.seek(0, os.SEEK_END)
@@ -170,10 +179,10 @@ def last_line(path: Path) -> bytes | None:
         return buf if buf.endswith(b"\n") else None
 
 
-def first_line(path: Path) -> bytes | None:
+def first_line(path: Path, fs: RootFS | None = None) -> bytes | None:
     try:
-        fd = open_nofollow(path, os.O_RDONLY)
-    except OSError:
+        fd = _open_ro(path, fs)
+    except (OSError, StoreError):
         return None
     with os.fdopen(fd, "rb") as f:
         line = f.readline(MAX_LINE + 1)

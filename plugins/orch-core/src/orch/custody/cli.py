@@ -4,11 +4,13 @@
     orch keys custody convenience --workspace W        # one passphrase prompt; needs the workspace's flag on
     orch keys custody passphrase --workspace W --in-place
     orch keys forget --workspace W                     # removes local convenience custody (not revocation)
+    orch keys primary init                             # the person-level primary key pair (passphrase custody only)
+    orch keys primary status                           # its public facts: device id, public keys, purposes
 
-``ORCH_GRANT`` refuses every subcommand but ``status``, and the changing subcommands also need the person's terminal
-(``/dev/tty``): they prevent accidental use through supported agent workflows, they do not authenticate a person
-against a same-UID process. Errors use the CLI's catalog envelope (``{ok:false, error:{code, message, hint?, fix?,
-retryable}}``), with the host's exit codes for host codes.
+``ORCH_GRANT`` refuses every subcommand but the two ``status`` ones, and the changing subcommands also need the
+person's terminal (``/dev/tty``): they prevent accidental use through supported agent workflows, they do not
+authenticate a person against a same-UID process. Errors use the CLI's catalog envelope (``{ok:false,
+error:{code, message, hint?, fix?, retryable}}``), with the host's exit codes for host codes.
 """
 
 from __future__ import annotations
@@ -50,6 +52,10 @@ def _parser() -> argparse.ArgumentParser:
     fg.add_argument("--workspace", required=True)
     fg.add_argument("--state", type=Path)
     fg.add_argument("--json", action="store_true")
+    pr = sub.add_parser("primary")
+    pr.add_argument("action", choices=("init", "status"))
+    pr.add_argument("--state", type=Path)
+    pr.add_argument("--json", action="store_true")
     return p
 
 
@@ -100,6 +106,8 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
     from orch.ops.runtime import state_dir
 
     state = args.state.resolve() if args.state is not None else state_dir(env)
+    if args.cmd == "primary":
+        return _primary(args, state, env, err)
     if args.cmd == "forget":
         _need_terminal(env)
         entry = _one(state, args.workspace)
@@ -133,6 +141,25 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
     err.write(DOWNGRADE_WARNING + "\n")
     sel = select.downgrade_in_place(state, wid)
     return {"workspace_id": wid, "custody": sel["custody"], "device": sel["device"], "gen": sel.gen}
+
+
+PRIMARY_NEXT = (
+    "the primary's certificate and its relay registration are not made yet "
+    "(orch-v2-host 11A.15.10 items 10 and 11); `orch keys primary status` shows them once they exist"
+)
+
+
+def _primary(args: argparse.Namespace, state: Path, env: Mapping[str, str], err: TextIO) -> Any:
+    """``orch keys primary`` (orch-v2-host 11A.15.9): ``init`` makes the person-level primary key pair in passphrase
+    custody (never convenience); ``status`` shows public facts only and never prompts."""
+    from orch.custody import primary
+
+    if args.action == "status":
+        return primary.status(state)
+    _need_terminal(env)
+    primary.init(state)
+    err.write(PRIMARY_NEXT + "\n")
+    return primary.status(state)
 
 
 def main(

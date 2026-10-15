@@ -686,3 +686,21 @@ def test_the_sweep_never_removes_a_finished_workspaces_keys(where, term, passphr
     (d / "genesis").write_text("sha256:x\n")
     run_init(where)
     assert d.exists()
+
+
+def test_init_below_a_sticky_shared_directory_is_not_blocked_by_a_planted_workspace(term, passphrases, tmp_path):
+    """orch-52: a v2 and a v1 workspace planted in a shared sticky directory are not candidates, so ``orch init`` in
+    the person's own folder below it creates the workspace."""
+    import shutil
+
+    shared = tmp_path / "shared"
+    (shared / "orchestrator" / "tickets").mkdir(parents=True)
+    os.chmod(shared, 0o1777)
+    (shared / "config.json").write_text(json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "ws_planted"}}))
+    (shared / "orchestrator" / "config.json").write_text(json.dumps({"schema": 1, "id": {"prefix": "X"}}))
+    shutil.copytree(Path(__file__).parents[1] / "importer" / "fixtures" / "v1", shared / "old")
+    root = shared / "proj" / "work"
+    root.mkdir(parents=True)
+    where = {"root": root, "state": tmp_path / "state", "home": tmp_path / "home"}
+    run_init(where)
+    assert config(where)["workspace"]["id"] != "ws_planted"

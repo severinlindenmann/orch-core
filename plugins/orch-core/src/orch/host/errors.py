@@ -9,7 +9,16 @@ from __future__ import annotations
 import re
 from typing import Any
 
-__all__ = ["DETAIL_KEYS", "HOST_CODES", "HostError", "closed_detail", "disposition"]
+__all__ = [
+    "DETAIL_KEYS",
+    "DEVICE_ID",
+    "DEVICES",
+    "DEVICES_MAX",
+    "HOST_CODES",
+    "HostError",
+    "closed_detail",
+    "disposition",
+]
 
 #: §0.6 codes the host adds, as (exit, retryable). ``lock.busy`` is exit 9 on the socket (§0.6), unlike P1's exit 4.
 HOST_CODES: dict[str, tuple[int, bool]] = {
@@ -116,7 +125,8 @@ def disposition(code: str) -> tuple[int, bool]:
 #: keys, and each value is a member of a closed set or a key-format string: never free text, never a secret.
 #: ``None`` marks a format-checked string (a ticket key), a tuple a closed value set.
 _KEY = re.compile(r"[A-Z][A-Z0-9]{1,9}-[0-9]{4,}")
-_DEVICE = re.compile(r"d_[0-9a-f]{32}")
+#: a device id in ``detail`` (also re-checked by the click signer, #517: one source of truth)
+DEVICE_ID = re.compile(r"d_[0-9a-f]{32}")
 #: a ``detail`` value that is a list of device ids (at most :data:`DEVICES_MAX`, each ``d_`` + 32 hex)
 DEVICES = "devices"
 DEVICES_MAX = 64
@@ -147,7 +157,7 @@ def closed_detail(code: str, detail: dict[str, Any] | None) -> dict[str, Any] | 
     for key, values in allowed.items():
         value = detail.get(key)
         if values == DEVICES:
-            if isinstance(value, list) and all(isinstance(v, str) and _DEVICE.fullmatch(v) for v in value):
+            if isinstance(value, list) and all(isinstance(v, str) and DEVICE_ID.fullmatch(v) for v in value):
                 out[key] = list(value[:DEVICES_MAX])
             continue
         if not isinstance(value, str):

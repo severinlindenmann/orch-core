@@ -101,12 +101,12 @@ def locate(
     from orch.host.errors import HostError
     from orch.host.pins import AgentPins
     from orch.host.registry import registry_path
-    from orch.ops.runtime import _config, state_dir
+    from orch.ops.runtime import state_dir
 
     root = workspace.root
     if root is None:
         return None
-    cfg = _config(root, workspace.files)
+    cfg = workspace.config  # as discovery read it, never again by path
     wid = ((cfg or {}).get("workspace") or {}).get("id")
     if not isinstance(wid, str) or not WS_ID.fullmatch(wid):
         return None

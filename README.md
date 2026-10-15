@@ -1,171 +1,148 @@
-> **develop = orch v2 in progress; v1 lives on `main`.** This README describes v1. In v2 orch is an agent-agnostic
-> CLI with a Claude Code plugin as one way to install it; see [harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md).
-
-# orch-core
+# orch
 
 **Let coding agents do the work. Keep every decision yours.**
 
-orch-core is a Claude Code plugin that runs agent work through local Markdown tickets with a human gate at every step. Agents file tickets, draft requirements and plans, work task lists and hand finished work over for testing, all through one CLI, `orch`. Approving requirements and plans, answering questions and the final verdict stay with you, and the plugin enforces that.
+orch is a way of working with coding agents: every piece of work is a ticket, every ticket follows a fixed path, and a person signs each step that matters. Agents file tickets, write the requirements and the plan, do the work and attach the evidence. You approve the requirements and the plan and give the final verdict. orch checks the signatures, so an agent can't approve its own work.
 
-No server, no account, no SaaS. Tickets are Markdown files in `orchestrator/tickets/` in your own repository, versioned with your code.
+It works with Claude Code, Codex and any other agent that can run a shell command. Tickets are plain files in your workspace. Mission Control (desktop) and orch mobile (iPhone) show you what's waiting for you.
+
+<p align="center">
+  <img src="docs/images/v2/desktop-today.jpg" alt="Mission Control, Today: connections to fix, a blocking question with a recommended answer, three approvals and a verdict that wait for you, and which agents are working" width="900">
+</p>
+
+> **Status: v2 in development.** This branch (`develop`) is the v2 rebuild: core, host, dashboard and relay are merged, and the iPhone app is in TestFlight. v1 is the stable release on [`main`](https://github.com/severinlindenmann/orch-core/tree/main). The full design is in [docs/architecture/orch-v2.md](docs/architecture/orch-v2.md).
+> Website: **[severinlindenmann.github.io/orch-core](https://severinlindenmann.github.io/orch-core/)**
 
 ## Why
 
-Agents are fast. They are also confident, and they will happily approve their own plan, mark their own work done or quietly widen the scope. orch-core gives them a real workflow with hard edges:
+Agents are fast, confident and happy to approve their own plan. After a week on another project, I came back and couldn't tell where things stood, because the agents had done the work, not me. orch came out of four problems I kept running into:
 
-- **Human gates that hold.** Approvals, answers and verdicts are bound to a hash of the exact text you saw and signed into a per-user ledger outside the repository. An agent proceeds only on decisions that ledger holds.
-- **A guard hook.** A Claude Code `PreToolUse` hook stops agents from editing ticket status by hand, running human-only commands or doing git actions the workspace does not allow.
-- **Agents that wait instead of guessing.** `orch ask` parks a question with options, costs and a recommended default; `orch wait` blocks until you answer.
-- **Proof, not claims.** Every ticket carries acceptance criteria, a task list ticked with evidence and linked artifacts (screenshots, reports, PRs) before it can reach testing.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/problems-dark.png">
+  <img src="docs/images/v2/problems-light.png" alt="Four problems and what orch does about them. A: I lost control: open tasks, questions and the last status in one place. B: Not what we agreed: signed requirements and plan. C: Done isn't done: a checklist with evidence. D: Same discussion again: ticket history and context.">
+</picture>
 
-## Features
+## How it works
 
-- **`orch` CLI**: `new`, `list`, `show`, `search`, `next`, `related`, `graph`, `claim`, `task`, `ask`, `wait`, `log`, `link`, `artifact`, `quick`, `move`, `check`, `doctor`, plus the human-only `approve`, `request-changes`, `answer` and `verdict`.
-- **Skills** for Claude Code: `orch-tickets`, `orch-refine-ticket` (requirements engineering), `orch-work-on-ticket` (claim, plan, implement, verify) and `orch-setup` (guided onboarding).
-- **Hooks**: the guard, and a `SessionStart` hook that prints the active rules, your claimed tickets and what is waiting on you.
-- **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key in every commit.
-- **Quick tasks**: one-line jobs too small for a ticket (`orch quick`), closed with one line of proof; a size limit turns one that grows into a ticket ([docs](plugins/orch-core/docs/quick-tasks.md)).
-- **Epics and sprints**: approve an epic once for all its children, optionally delegate small follow-ups, plan in sprints.
-- **Ticket widgets**: agents put charts, check tables, diffs, before/after sliders and other small visual blocks into tickets, drawn safely and pinned into the verdict you sign ([format](plugins/orch-core/docs/widgets.md)).
-- **Mission Control**: a local web dashboard for everything that needs you.
-- **Schedules**: run a workspace skill on a clock or when an orch event happens, or put a recurring ticket on Today; you arm each one, signed and pinned to its skill, and whatever a run finds waits for you ([docs](plugins/orch-core/docs/schedules.md)).
-- **Addons**: GitHub reviews and issues, Databricks, a wiki and agent terminals ship in the box; write your own against a small, documented API.
-- **GitHub Copilot** support for the skills and the CLI.
+Everything flows into the core. A request comes in, in the requester's own words. The agent gets the keys and the knowledge it needs, follows your skills and rules, and writes every step into the ticket. People answer questions and sign the gates. The results go back to your tracker, docs, code host and data platform, and every finished ticket adds to what the next one can draw on.
 
-## Install
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/flow-dark.png">
+  <img src="docs/images/v2/flow-light.png" alt="Request, keys and knowledge flow into orch core from the left, skills and rules from above. Inside the core: understand, you sign, plan, you sign, build, prove, you sign. People sign every gate. Results are written back to the tracker, docs, code host and data platform, and feed the knowledge base.">
+</picture>
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/) (the plugin runs the CLI with `uv run`, Python 3.11 or newer) and Claude Code with plugin support.
+Each ticket follows the same path, with a gate before every next step:
 
-```bash
-claude plugin marketplace add severinlindenmann/orch-core
-claude plugin install orch-core@orch-core
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/gates-dark.png">
+  <img src="docs/images/v2/gates-light.png" alt="Ticket, then gate 1 requirements and acceptance criteria (you sign), plan, gate 2 plan approved (you sign), build and prove, gate 3 verdict (you sign).">
+</picture>
 
-The plugin is installed for one *scope*: `--scope user` (every project of yours), `--scope project` (this repository, shared through `.claude/settings.json`) or `--scope local`. Pass it explicitly (`claude plugin install orch-core@orch-core --scope user`); a plugin installed in the scope of another project does not load here, and `claude plugin list` shows where it is enabled.
-
-Then, in the repository you want to work in, run `/orch-core:setup` or just say *"set up orch here"*. The setup skill asks one question at a time (ticket prefix, external tracker, git host, what agents may do on their own) and runs `orch init` only after you say yes.
-
-Human decisions run in your own terminal, not through an agent, so install the CLI there once:
-
-```bash
-uv tool install "<plugin folder>[dashboard]"
-```
-
-`orch doctor` prints this command with the real plugin folder filled in.
-
-For GitHub Copilot, the setup without the plugin and switching an existing workspace over, see the [plugin README](plugins/orch-core/README.md#install).
-
-## Quick start
-
-The loop, with the agent's half and yours:
-
-```bash
-# Agent: capture a request as a backlog ticket with requirements and acceptance criteria
-orch new --title "Add dark mode" --requirements-file req.md --acceptance-file ac.md
-
-# You: approve the requirements (and, for larger tickets, the plan)
-orch approve L-0001   # requirements, and the plan too when both wait: one confirmation
-
-# Agent: pick up the next open ticket and plan it as a task list
-orch next
-orch claim L-0001
-orch task add L-0001 --file tasks.yaml
-
-# Agent: work it down, one task at a time, with evidence
-orch task start L-0001 T1
-orch task done L-0001 T1 -m "toggle renders in both themes, screenshot attached"
-orch artifact add L-0001 screenshot.png --task T1
-
-# Agent: stuck on a decision? Ask, then wait for the answer
-orch ask L-0001 --file questions.yaml
-orch wait L-0001
-
-# Agent: hand over for testing
-orch move L-0001 testing
-
-# You: accept it or send it back
-orch verdict L-0001 done
-```
-
-Statuses run `backlog → open → in-progress → waiting → testing → done`. Agents stop at `testing`; a person closes the ticket.
+- **Gates that hold.** Approvals, answers and verdicts are bound to the exact text you saw and signed with your key. Agents get no signing commands, and orch refuses a gate without a person's signature. On the phone every signature needs Face ID; on the Mac, Touch ID per signature and agents under their own OS user are in progress ([enforcement tiers](docs/architecture/orch-v2-harnesses.md#3-enforcement-tiers)).
+- **Agents that ask instead of guessing.** `orch ask` parks a question with options and a recommended answer, and `orch wait` blocks until you reply, at your desk or on your phone.
+- **Evidence, not claims.** Acceptance criteria, a task list ticked off with proof, and artifacts (screenshots, test reports, PRs) per criterion, before a ticket reaches your verdict.
+- **Memory that survives a holiday.** Every change is an appended, signed event. The current-state note on each ticket tells you where it stands and what's next.
 
 ## Mission Control
 
-`orch serve`, run in your own terminal, opens a local dashboard. Everything is served locally, fonts included, and every write goes through the same rules as the CLI.
+The desktop dashboard is where you work through what's waiting for you: questions first, then approvals and verdicts. Each prompt shows exactly what you are about to sign.
 
-- **Today**: what waits for you, blocking first. Each card shows the full text it binds and one primary action: answer, approve requirements and plan side by side, or give a verdict against a checklist of acceptance criteria with their evidence.
-- **Board**: your decisions on top, the agents' flow below (Ready, Working, Waiting, Testing), a backlog drawer, swimlanes by epic, sprint, label, agent or repo, and a sortable list view.
-- **Ticket pages**: the ticket as a story, from what was asked through what was agreed, the work, the proof per criterion and the verdict, with artifacts and the event timeline.
-- **Graph**: which tickets changed which code (from commit subjects), dependency lanes per epic, and the links around one ticket. Files that two open tickets both change are marked as collisions; clicking a node shows what an agent reads with `orch related`.
-- **Activity and Reports**: which agents are working or stale, and lead time, waiting time and sent-back rate over time.
-- **Workspace & addons**: setup checks with copyable fixes, addon trust and settings, and keyboard shortcuts (`j`/`k`, `1`–`9`, `⌘K`).
-
-Light, dark and auto themes; it works on a phone too.
-
-## Ticket widgets
-
-Agents prove their work with small visual blocks inside the ticket instead of walls of text. Each block is a fenced `orch` JSON object, drawn by core in a sandboxed frame, with its template and files pinned into the verdict you sign. A few of the built-ins, with their example data:
-
-![A decision matrix: three options scored against weighted criteria, the agent's pick on top](docs/images/widget-decision-matrix.png)
-
-![A CI timeline comparing a serial run with a parallel one, one job failed](docs/images/widget-ci-timeline.png)
-
-![An eval grid: test cases passing and failing across two prompt versions](docs/images/widget-eval-grid.png)
-
-![An agent waterfall: the tool calls of one agent run, one failed](docs/images/widget-agent-waterfall.png)
-
-The format, every built-in type and the security model are in [docs/widgets.md](plugins/orch-core/docs/widgets.md).
-
-## Addons
-
-Addons add pages and panels to Mission Control. Several ship with the plugin, all off until you enable them per workspace:
-
-| Addon | What it shows |
+| | |
 |---|---|
-| `github-reviews` | Open pull requests linked to tickets, their checks, rerun failed runs, mark ready |
-| `github-issues` | Issues next to their tickets, import an issue as a ticket, close and reopen in sync |
-| `databricks` | Workspaces, failed job runs, pipelines and compute, read-only through the `databricks` CLI |
-| `wiki` | Related wiki pages on each ticket and "may need an update" hints, from a GitHub wiki or a local Markdown folder |
-| `terminals` | Run, watch and type into agent sessions from Mission Control (needs tmux) |
-| `schedules` | Workspace skills on a clock or an orch event, and recurring tickets; findings on Today (needs tmux) |
-| `quick-tasks` | Quick tasks: one-line jobs too small for a ticket, a list in Mission Control, `orch quick` for agents, a size limit |
-| `model-routing` | Start each agent session on a model chosen by its Start agent mode, a subagent model, one tier up after a task failed its verify twice |
+| ![A ticket in progress: requirements and plan approved, verify pending, the current-state handoff note and a question widget that compares DATE with TIMESTAMP](docs/images/v2/desktop-ticket.jpg) | ![Approve plan: the prompt shows the task list exactly as signed](docs/images/v2/desktop-approve.jpg) |
+| **Ticket page.** Gates at a glance, the handoff note, questions, evidence and history. | **Approve.** The exact text you sign. Only core can show this prompt, not an addon. |
+| ![The board: tickets grouped by epic across backlog, open, in progress, waiting and testing, with GitHub issues alongside](docs/images/v2/desktop-board.jpg) | ![Give verdict: acceptance criteria evidenced, the exact commit the verdict signs, pass or send back](docs/images/v2/desktop-verdict.jpg) |
+| **Board.** Epics as swimlanes, and addons add their own lanes. | **Verdict.** Signs one commit. A new commit voids it. |
 
-Custom addons are installed with `orch addon install <folder | git URL>` and run only after you trust that exact version; any change disables them until you review it again. Agents can never install, trust or enable an addon. To write one, read [ADDONS.md](plugins/orch-core/ADDONS.md) and start from [addon-template/](plugins/orch-core/addon-template/). Widget and copy rules are in [DESIGN.md](plugins/orch-core/DESIGN.md).
+<sub>Screenshots use the simulated "Acme energy data" demo workspace.</sub>
 
-## orch-session
+## orch mobile
 
-A second, optional plugin shows the tickets the current Claude Code session holds right inside Claude Code: a status line, a band above the prompt, an `/orch` pane and toasts on hand-overs. It needs a Claude Code build with function-hook plugins.
+Answer questions and sign gates from your iPhone. One QR scan joins a workspace, logging out wipes it from the phone, and every signature needs Face ID. The device key never leaves the Secure Enclave.
+
+<table>
+  <tr>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-home-dark.jpg"><img src="docs/images/v2/mobile-home-light.jpg" alt="Home: your workspaces, what needs you, and Drop" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-tickets-dark.jpg"><img src="docs/images/v2/mobile-tickets-light.jpg" alt="A workspace's tickets with their status" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-question-dark.jpg"><img src="docs/images/v2/mobile-question-light.jpg" alt="A question from an agent with its answer options" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-sign-dark.jpg"><img src="docs/images/v2/mobile-sign-light.jpg" alt="The sign sheet: what you are signing, then Sign and send" width="200"></picture></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Workspaces</sub></td>
+    <td align="center"><sub>Tickets</sub></td>
+    <td align="center"><sub>A question</sub></td>
+    <td align="center"><sub>Sign and send</sub></td>
+  </tr>
+</table>
+
+## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/architecture-dark.png">
+  <img src="docs/images/v2/architecture-light.png" alt="On your machine: agents call the orch CLI, which talks over a socket to the host (orch serve), the only process that holds keys; the host writes the workspace files. Mission Control and other addons plug into the host. Through orch-relay, which stores ciphertext only, the host reaches orch mobile and other workspaces. orch-publish serves shares and apps over HTTPS, signed by the workspace.">
+</picture>
+
+| Piece | What it does | Where |
+|---|---|---|
+| **`orch` CLI** | Agent-first commands with terse output: `new`, `claim`, `task`, `ask`, `artifact`, `submit`. Any agent with a shell can use it. | [`plugins/orch-core`](plugins/orch-core) |
+| **Workspace** | Plain files: `config.json`, `keys.jsonl` and, per ticket, `ticket.json`, `body.md`, `events.jsonl` and `artifacts/`. Every change is an appended, signed event. | your repo or folder |
+| **Host** (`orch serve`, `orch host`) | The only process that loads keys (OS keychain or Secure Enclave). It enforces gates, roles and policies, and agents reach it through a narrow local socket. | [`plugins/orch-core`](plugins/orch-core) |
+| **Mission Control** | The desktop dashboard. It's an addon itself. | [`addons/dashboard`](addons/dashboard) |
+| **Addons** | GitHub reviews and issues, Databricks, wiki, terminals, schedules, quick tasks, or your own. Each one runs only after you trust that exact version. | [`addons/`](addons) |
+| **orch-relay** | Directory, relay, Drop (files) and push. It stores and forwards ciphertext only, and runs as a public instance or self-hosted inside a company. | [orch-relay](https://github.com/severinlindenmann/orch-relay) |
+| **orch mobile** | Native iPhone app: questions, approvals and verdicts with Face ID, push notifications and Drop. | [orch-mobile](https://github.com/severinlindenmann/orch-mobile) |
+| **orch-publish** | Shares and small apps over HTTPS, in the workspace's own namespace and signed by the workspace. | [orch-publish](https://github.com/severinlindenmann/orch-publish) |
+
+Workspaces can hand tickets to each other: yours, a colleague's or one on a client's VM. An incoming ticket lands in the inbox as untrusted data until you accept it.
+
+## Works with your agent
+
+orch doesn't depend on one harness. Every command is defined once, and gates and signatures are enforced by the CLI and the host, not by a hook in the agent.
+
+| | Claude Code | Codex CLI and others |
+|---|---|---|
+| Install | plugin marketplace | `uv tool install`, then `orch init` writes `AGENTS.orch.md` |
+| Instructions | `AGENTS.orch.md` and skills | `AGENTS.orch.md`, plus skills where the harness supports `SKILL.md` |
+| Gates and signatures | enforced by orch | enforced by orch |
+| Early refusal of hand edits | guard hook (an optional second layer) | detected by `orch check` and `orch doctor`, or prevented by running agents under their own OS user |
+
+Details: [harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md).
+
+## Try the v2 preview
+
+v2 is a developer preview. Expect changes, and use [v1 on `main`](https://github.com/severinlindenmann/orch-core/tree/main#install) for day-to-day work. You need [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ```bash
-claude plugin install orch-session@orch-core
+git clone -b develop https://github.com/severinlindenmann/orch-core.git
+uv tool install ./orch-core/plugins/orch-core
+
+cd your-project
+orch init              # creates the workspace and writes AGENTS.orch.md
+orch host enable       # starts the host as a per-user service
+orch help work         # what an agent reads first
 ```
 
-See [plugins/orch-session/README.md](plugins/orch-session/README.md).
+The dashboard mockup with simulated data runs on its own: `cd addons/dashboard && npm ci && npm run dev` (Node 24).
 
 ## Documentation
 
-- [P2 host process design](docs/architecture/orch-v2-host.md): socket API, signing, custody and worker isolation
-- [Plugin README](plugins/orch-core/README.md): the full reference, including who counts as the human, epics, task lists, Start agent and what goes into git
-- [ADDONS.md](plugins/orch-core/ADDONS.md): writing addons
-- [DESIGN.md](plugins/orch-core/DESIGN.md): Mission Control's design system
-- [Ticket schema](plugins/orch-core/docs/ticket-schema.md), [task list format](plugins/orch-core/docs/tasks-format.md) and [ticket widgets](plugins/orch-core/docs/widgets.md)
+- [orch v2 design](docs/architecture/orch-v2.md): decisions, threat model, keys, relay, mobile, phases
+- [The minimal core](docs/architecture/orch-v2-core.md) and the [ticket format](docs/architecture/orch-v2-ticket-format.md)
+- [Host process](docs/architecture/orch-v2-host.md): socket API, signing, custody and worker isolation
+- [Harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md)
+- [Dashboard addon](addons/dashboard/README.md)
 
 ## Development
 
 From `plugins/orch-core`:
 
 ```bash
-uv sync --extra dev --extra dashboard
-uv run pytest -q
+uv sync
+uv run pytest -q -m "not slow"
 ```
 
-CI runs the tests on Ubuntu and Windows with Python 3.11 and 3.13.
-
-## Contributing and security
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the checks locally. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), never as a public issue.
+The diagrams are drawn from [`docs/images/v2/src/diagrams.html`](docs/images/v2/src/diagrams.html), and `node render.cjs` re-renders the PNGs. See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks CI runs. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
 
 ## License
 
-Licensed under the PolyForm Noncommercial License 1.0.0. Commercial use requires a separate license from the author. See [LICENSE](LICENSE).
+orch is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for noncommercial use. Commercial use needs a separate license from the author.

@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>orch diagrams</title>
+<!-- Source for docs/images/v2/{problems,flow,gates,architecture}-{dark,light}.png.
+     Render: node render.mjs  (opens ?d=<name>&t=<theme>, screenshots #stage with a transparent background) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root, [data-t="dark"] {
+  --bg: #0e1014; --surface: #15181d; --surface-2: #1c2027; --surface-3: #242a32;
+  --border: #2a3038; --border-strong: #3a424d;
+  --text: #e8eaed; --muted: #9aa3ad; --faint: #8b949e;
+  --brand: #2fc6a3; --brand-soft: rgba(47,198,163,.14); --brand-line: rgba(47,198,163,.55); --on-brand: #06231c;
+  --addon: #f07a2e; --addon-soft: rgba(240,122,46,.14);
+  --core-bg: #1c2027; --core-text: #e8eaed; --core-muted: #9aa3ad; --core-border: var(--brand-line);
+  --chip: #242a32; --chip-text: #c9cfd6;
+  --line: #3a424d;
+}
+[data-t="light"] {
+  --bg: #F3F5F7; --surface: #ffffff; --surface-2: #eef1f4; --surface-3: #e3e8ed;
+  --border: #d5dbe1; --border-strong: #b9c2cb;
+  --text: #14181D; --muted: #56606b; --faint: #6b7580;
+  --brand: #096A54; --brand-soft: rgba(9,106,84,.09); --brand-line: rgba(9,106,84,.55); --on-brand: #ffffff;
+  --addon: #b5541a; --addon-soft: rgba(181,84,26,.10);
+  --core-bg: #14181D; --core-text: #f1f3f5; --core-muted: #a7b0ba; --core-border: #14181D;
+  --chip: #2a3038; --chip-text: #dfe3e8;
+  --line: #b9c2cb;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { background: transparent; }
+body { font-family: 'Geist', ui-sans-serif, system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+.mono { font-family: 'Geist Mono', ui-monospace, monospace; }
+#stage { position: relative; padding: 0; }
+.scene { display: none; position: relative; }
+.scene.on { display: block; }
+svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.ico { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.eyebrow { font-size: 15px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--brand); }
+h1 { font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; margin-top: 10px; }
+.card { position: absolute; background: var(--surface); border: 1.5px solid var(--border); border-radius: 16px; }
+.lbl { font-size: 21px; font-weight: 600; }
+.sub { font-size: 16px; color: var(--muted); line-height: 1.4; margin-top: 4px; }
+.tag { display: inline-block; font-size: 14px; padding: 5px 11px; border-radius: 999px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); margin: 8px 6px 0 0; font-weight: 500; }
+.row { display: flex; gap: 12px; align-items: flex-start; }
+.sig { color: var(--brand); }
+
+/* problems */
+#problems { width: 1600px; height: 760px; }
+#problems .head { position: absolute; left: 40px; top: 30px; }
+.pcard { width: 748px; height: 250px; padding: 34px 36px; }
+.pcard .row { gap: 22px; }
+.pcard .big { width: 64px; height: 64px; border-radius: 16px; background: var(--brand-soft); color: var(--brand); display: grid; place-items: center; }
+.pcard .big .ico { width: 34px; height: 34px; }
+.pcard .t { font-size: 30px; font-weight: 700; letter-spacing: -.01em; }
+.pcard .t b { color: var(--brand); margin-right: 10px; }
+.pcard .s { font-size: 20px; color: var(--muted); margin-top: 8px; line-height: 1.4; }
+.pcard .ans { position: absolute; left: 36px; right: 36px; bottom: 32px; background: var(--surface-2); border-radius: 12px; padding: 16px 20px; font-size: 21px; font-weight: 600; display: flex; gap: 14px; align-items: center; }
+.pcard .ans .ico { color: var(--brand); width: 24px; height: 24px; stroke-width: 2.4; }
+.pcard .ans span.k { color: var(--muted); font-weight: 500; font-size: 16px; margin-left: auto; }
+
+/* flow */
+#flow { width: 1600px; height: 980px; }
+.in { width: 340px; padding: 18px 20px; }
+.core { position: absolute; background: var(--core-bg); border: 2px solid var(--core-border); border-radius: 22px; color: var(--core-text); padding: 30px 32px; }
+.core .name { font-size: 40px; font-weight: 700; letter-spacing: -.02em; }
+.core .name em { font-style: normal; color: var(--brand); font-size: 24px; margin-left: 8px; font-weight: 600; }
+[data-t="light"] .core .name em { color: #4fd6b4; }
+.core .tl { color: var(--core-muted); font-size: 18px; margin-top: 6px; }
+.steps { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 22px; align-items: center; }
+.st { font-size: 17px; font-weight: 600; padding: 8px 14px; border-radius: 999px; background: var(--chip); color: var(--chip-text); }
+.st.gate { background: #2fc6a3; color: #06231c; display: inline-flex; gap: 6px; align-items: center; }
+.st.gate .ico { width: 17px; height: 17px; stroke-width: 2.4; }
+.arrow { color: var(--core-muted); font-size: 16px; }
+.agents { margin-top: 26px; font-size: 17px; color: var(--core-muted); display: flex; gap: 10px; align-items: center; }
+.agents b { color: var(--core-text); font-weight: 600; }
+.people { position: absolute; border: 2px solid var(--brand); background: var(--brand-soft); border-radius: 16px; padding: 16px 22px; display: flex; gap: 14px; align-items: center; font-size: 18px; }
+.people .ico { color: var(--brand); width: 28px; height: 28px; }
+.out { width: 330px; padding: 16px 20px; border-color: var(--brand-line); }
+.loop { position: absolute; font-size: 22px; font-weight: 600; color: var(--brand); text-align: center; width: 100%; }
+
+/* gates */
+#gates { width: 1600px; height: 530px; }
+.g { position: absolute; width: 230px; height: 218px; padding: 20px; border-radius: 16px; background: var(--surface); border: 1.5px solid var(--border); }
+.g.gate { border: 2px solid var(--brand); background: var(--brand-soft); }
+.g .n { font-size: 14px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.g.gate .n { color: var(--brand); }
+.g .t { font-size: 22px; font-weight: 700; margin-top: 10px; line-height: 1.2; }
+.g .s { font-size: 15.5px; color: var(--muted); margin-top: 8px; line-height: 1.4; }
+.g .who { position: absolute; left: 20px; bottom: 18px; display: flex; gap: 8px; align-items: center; font-size: 15px; font-weight: 600; color: var(--muted); }
+.g.gate .who { color: var(--brand); }
+.g .who .ico { width: 18px; height: 18px; }
+.foot { position: absolute; left: 40px; right: 40px; font-size: 19px; color: var(--muted); line-height: 1.5; }
+.foot b { color: var(--text); }
+
+/* architecture */
+#architecture { width: 1600px; height: 1140px; }
+.zone { position: absolute; border: 1.5px dashed var(--border-strong); border-radius: 22px; }
+.zone .zl { position: absolute; top: 16px; left: 24px; padding: 0; font-size: 15px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.box { position: absolute; background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+.box .row .ico { color: var(--muted); margin-top: 2px; }
+.box.key { border: 2px solid var(--brand); }
+.box.key .row .ico { color: var(--brand); }
+.box.addon { border-color: var(--addon); }
+.box.addon .row .ico { color: var(--addon); }
+.box .lbl { font-size: 19px; }
+.box .sub { font-size: 15px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); margin-top: 8px; }
+.badge.a { background: var(--addon-soft); color: var(--addon); }
+.badge .ico { width: 14px; height: 14px; stroke-width: 2.2; }
+.wl { position: absolute; font-size: 14.5px; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--border); padding: 3px 10px; border-radius: 999px; }
+.legend { position: absolute; display: flex; gap: 28px; font-size: 15px; color: var(--muted); align-items: center; }
+.legend i { display: inline-block; width: 22px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 8px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+    <symbol id="i-msg" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></symbol>
+    <symbol id="i-laptop" viewBox="0 0 24 24"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/></symbol>
+    <symbol id="i-blocks" viewBox="0 0 24 24"><rect width="7" height="7" x="14" y="3" rx="1"/><path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
+    <symbol id="i-layout" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></symbol>
+  </defs>
+</svg>
+
+<div id="stage">
+
+<!-- ============ 1. Four problems ============ -->
+<section class="scene" id="problems">
+  <div class="head"><div class="eyebrow">Why orch</div><h1>Four problems I kept running into</h1></div>
+  <div class="card pcard" style="left:40px; top:170px">
+    <div class="row"><div class="big"><svg class="ico"><use href="#i-clock"/></svg></div>
+      <div><div class="t"><b>A</b>I lost control.</div><div class="s">Too much at once. What did I do last week?</div></div></div>
+    <div class="ans"><svg class="ico"><use href="#i-check"/></svg>Open tasks, questions, last status<span class="k">Today &amp; handoff note</span></div>
+  </div>
+  <div class="card pcard" style="left:812px; top:170px">
+    <div class="row"><div class="big"><svg class="ico"><use href="#i-target"/></svg></div>
+      <div><div class="t"><b>B</b>Not what we agreed.</div><div class="s">We plan together, the agent builds something else.</div></div></div>
+    <div class="ans"><svg class="ico"><use href="#i-check"/></svg>Signed requirements and plan<span class="k">Gates 1 &amp; 2</span></div>
+  </div>
+  <div class="card pcard" style="left:40px; top:450px">
+    <div class="row"><div class="big"><svg class="ico"><use href="#i-x"/></svg></div>
+      <div><div class="t"><b>C</b>“Done” isn’t done.</div><div class="s">“Finished and perfect”, and half of it is missing.</div></div></div>
+    <div class="ans"><svg class="ico"><use href="#i-check"/></svg>Checklist with evidence<span class="k">Gate 3: your verdict</span></div>
+  </div>
+  <div class="card pcard" style="left:812px; top:450px">
+    <div class="row"><div class="big"><svg class="ico"><use href="#i-repeat"/></svg></div>
+      <div><div class="t"><b>D</b>Same discussion again.</div><div class="s">Already decided, asked again.</div></div></div>
+    <div class="ans"><svg class="ico"><use href="#i-check"/></svg>Ticket history and context<span class="k">Signed event log</span></div>
+  </div>
+</section>
+
+<!-- ============ 2. Everything flows into the core ============ -->
+<section class="scene" id="flow">
+  <svg class="wires"></svg>
+  <div style="position:absolute; left:40px; top:30px"><div class="eyebrow">The big picture</div><h1>Everything flows into the core</h1></div>
+
+  <div class="card in" id="f-req" style="left:40px; top:330px"><div class="row"><svg class="ico"><use href="#i-msg"/></svg><div><div class="lbl">Request</div><div class="sub">in the requester’s own words, from a tracker, chat or email</div></div></div></div>
+  <div class="card in" id="f-keys" style="left:40px; top:480px"><div class="row"><svg class="ico"><use href="#i-key"/></svg><div><div class="lbl">Keys</div><div class="sub">access per client, least privilege</div></div></div></div>
+  <div class="card in" id="f-know" style="left:40px; top:610px"><div class="row"><svg class="ico"><use href="#i-book"/></svg><div><div class="lbl">Knowledge</div><div class="sub">wiki, code, earlier tickets</div></div></div></div>
+
+  <div class="card" id="f-skills" style="left:470px; top:160px; width:320px; padding:18px 20px"><div class="row"><svg class="ico"><use href="#i-file"/></svg><div class="lbl">Skills</div></div><div><span class="tag">mine</span><span class="tag">the team’s</span><span class="tag">the company’s</span></div></div>
+  <div class="card" id="f-rules" style="left:830px; top:160px; width:320px; padding:18px 20px"><div class="row"><svg class="ico"><use href="#i-lock"/></svg><div class="lbl">Rules</div></div><div><span class="tag">conventions</span><span class="tag">locks</span><span class="tag">the fence</span></div></div>
+
+  <div class="core" id="f-core" style="left:460px; top:350px; width:700px; height:330px">
+    <div class="name">orch<em>core</em></div>
+    <div class="tl">Every step is written into the ticket.</div>
+    <div class="steps">
+      <span class="st">Understand</span>
+      <span class="st gate"><svg class="ico"><use href="#i-check"/></svg>You sign</span>
+      <span class="arrow">→</span>
+      <span class="st">Plan</span>
+      <span class="st gate"><svg class="ico"><use href="#i-check"/></svg>You sign</span>
+      <span class="arrow">→</span>
+      <span class="st">Build</span>
+      <span class="st">Prove</span>
+      <span class="st gate"><svg class="ico"><use href="#i-check"/></svg>You sign</span>
+    </div>
+    <div class="agents"><svg class="ico" style="width:20px;height:20px"><use href="#i-bot"/></svg>The agent: <b>Claude Code</b> · <b>Codex</b> · <b>any CLI agent</b></div>
+  </div>
+  <div class="people" id="f-people" style="left:460px; top:705px; width:700px"><svg class="ico"><use href="#i-user"/></svg><div><b>People</b> answer questions and sign every gate, at the desk or on the phone.</div></div>
+
+  <div style="position:absolute; left:1230px; top:290px" class="eyebrow">Written back</div>
+  <div class="card out" id="f-o1" style="left:1230px; top:325px"><div class="lbl">Tracker</div><div class="sub">status and summary</div></div>
+  <div class="card out" id="f-o2" style="left:1230px; top:430px"><div class="lbl">Docs</div><div class="sub">documentation updated</div></div>
+  <div class="card out" id="f-o3" style="left:1230px; top:535px"><div class="lbl">Code host</div><div class="sub">change ready for review</div></div>
+  <div class="card out" id="f-o4" style="left:1230px; top:640px"><div class="lbl">Data platform</div><div class="sub">new table, checked</div></div>
+
+  <div class="loop" style="top:905px">Every finished ticket feeds the knowledge base</div>
+</section>
+
+<!-- ============ 3. Gates ============ -->
+<section class="scene" id="gates">
+  <svg class="wires"></svg>
+  <div style="position:absolute; left:40px; top:30px"><div class="eyebrow">How the agent works</div><h1>A checklist, and a gate before every next step</h1></div>
+  <div class="g" id="g1" style="left:40px; top:170px"><div class="n">Ticket</div><div class="t">The ask, in the human’s words</div><div class="s">never rewritten by the agent</div><div class="who"><svg class="ico"><use href="#i-bot"/></svg>agent files it</div></div>
+  <div class="g gate" id="g2" style="left:300px; top:170px"><div class="n">Gate 1</div><div class="t">Requirements &amp; acceptance criteria</div><div class="who"><svg class="ico"><use href="#i-shield"/></svg>you sign</div></div>
+  <div class="g" id="g3" style="left:560px; top:170px"><div class="n">Plan</div><div class="t">Task list written into the ticket</div><div class="s">each task names what it proves</div><div class="who"><svg class="ico"><use href="#i-bot"/></svg>agent</div></div>
+  <div class="g gate" id="g4" style="left:820px; top:170px"><div class="n">Gate 2</div><div class="t">Plan approved</div><div class="s">before a line of code</div><div class="who"><svg class="ico"><use href="#i-shield"/></svg>you sign</div></div>
+  <div class="g" id="g5" style="left:1080px; top:170px"><div class="n">Build &amp; prove</div><div class="t">Branch, code, tests, evidence</div><div class="s">per acceptance criterion</div><div class="who"><svg class="ico"><use href="#i-bot"/></svg>agent</div></div>
+  <div class="g gate" id="g6" style="left:1340px; top:170px"><div class="n">Gate 3</div><div class="t">Verdict</div><div class="s">pass, or send back</div><div class="who"><svg class="ico"><use href="#i-shield"/></svg>you sign</div></div>
+  <div class="foot" style="top:430px">Agents work between the gates and stop at each one. <b>Only a person can open a gate:</b> the signature is checked by orch, with your key, not left to the agent’s goodwill. Questions park the work with a recommended answer until you reply.</div>
+</section>
+
+<!-- ============ 4. Architecture ============ -->
+<section class="scene" id="architecture">
+  <svg class="wires"></svg>
+  <div style="position:absolute; left:40px; top:30px"><div class="eyebrow">orch v2</div><h1>How the pieces fit together</h1></div>
+
+  <div class="zone" style="left:40px; top:170px; width:820px; height:880px"><span class="zl">Your machine · one workspace per project or client</span></div>
+
+  <div class="box" id="a-agents" style="left:80px; top:225px; width:340px"><div class="row"><svg class="ico"><use href="#i-bot"/></svg><div><div class="lbl">Agents</div><div class="sub">Claude Code, Codex or any agent with a shell. Instructions in <span class="mono">AGENTS.orch.md</span> + skills</div></div></div></div>
+  <div class="box" id="a-cli" style="left:80px; top:395px; width:340px"><div class="row"><svg class="ico"><use href="#i-term"/></svg><div><div class="lbl"><span class="mono">orch</span> CLI</div><div class="sub">agent-first commands: new, claim, task, ask, artifact, move</div></div></div></div>
+  <div class="box key" id="a-host" style="left:80px; top:560px; width:340px"><div class="row"><svg class="ico"><use href="#i-shield"/></svg><div><div class="lbl">Host <span class="mono" style="font-size:16px">orch serve</span></div><div class="sub">the only process that holds keys (keychain / Secure Enclave). Enforces gates, roles, policies</div><span class="badge"><svg class="ico"><use href="#i-key"/></svg>holds keys · signs</span></div></div></div>
+  <div class="box" id="a-ws" style="left:80px; top:830px; width:340px"><div class="row"><svg class="ico"><use href="#i-folder"/></svg><div><div class="lbl">Workspace</div><div class="sub mono" style="font-size:14px">ticket.json · body.md · events.jsonl · artifacts/</div><div class="sub">plain files, every change a signed event</div></div></div></div>
+
+  <div class="box addon" id="a-mc" style="left:480px; top:370px; width:340px"><div class="row"><svg class="ico"><use href="#i-layout"/></svg><div><div class="lbl">Mission Control</div><div class="sub">Today, Board, tickets; approve and give verdicts, seeing exactly what you sign</div><span class="badge a">addon</span></div></div></div>
+  <div class="box addon" id="a-addons" style="left:480px; top:560px; width:340px"><div class="row"><svg class="ico"><use href="#i-blocks"/></svg><div><div class="lbl">Addons</div><div class="sub">GitHub reviews &amp; issues, Databricks, wiki, terminals, schedules, quick tasks, your own</div><span class="badge a">trusted per version</span></div></div></div>
+  <div class="box" id="a-you" style="left:480px; top:225px; width:340px; border-color:var(--brand)"><div class="row"><svg class="ico" style="color:var(--brand)"><use href="#i-user"/></svg><div><div class="lbl">You</div><div class="sub">sign gates, answer questions, give verdicts, in Mission Control, the terminal or on the phone</div></div></div></div>
+
+  <div class="box" id="a-relay" style="left:930px; top:700px; width:300px; padding:20px"><div class="row"><svg class="ico"><use href="#i-server"/></svg><div><div class="lbl">orch-relay</div><div class="sub">directory · relay · drop · push</div><span class="badge"><svg class="ico"><use href="#i-lock"/></svg>stores ciphertext only</span><div class="sub" style="margin-top:8px">public, or self-hosted inside the company</div></div></div></div>
+
+  <div class="box key" id="a-mobile" style="left:1290px; top:225px; width:280px"><div class="row"><svg class="ico"><use href="#i-phone"/></svg><div><div class="lbl">orch mobile</div><div class="sub">iPhone app: answer questions, sign gates with Face ID, push, Drop files. One QR scan to join</div><span class="badge"><svg class="ico"><use href="#i-key"/></svg>key in Secure Enclave</span></div></div></div>
+  <div class="box" id="a-peer" style="left:1290px; top:560px; width:280px"><div class="row"><svg class="ico"><use href="#i-laptop"/></svg><div><div class="lbl">Other workspaces</div><div class="sub">yours, a colleague’s or a client VM. Hand tickets over and get the result back</div></div></div></div>
+  <div class="box" id="a-pub" style="left:1290px; top:920px; width:280px"><div class="row"><svg class="ico"><use href="#i-globe"/></svg><div><div class="lbl">orch-publish</div><div class="sub">shares and small apps over HTTPS, signed by the workspace</div></div></div></div>
+
+  <div class="legend" style="left:40px; top:1090px">
+    <span><i style="border:2px solid var(--brand); background:var(--brand-soft)"></i>holds a key, can sign</span>
+    <span><i style="border:2px solid var(--addon)"></i>addon</span>
+    <span><svg width="40" height="10" style="vertical-align:middle;margin-right:8px"><line x1="0" y1="5" x2="40" y2="5" stroke="var(--brand)" stroke-width="2.5" stroke-dasharray="7 5"/></svg>end-to-end encrypted</span>
+  </div>
+</section>
+
+</div>
+
+<script>
+const q = new URLSearchParams(location.search);
+const d = q.get('d') || 'problems', t = q.get('t') || 'dark';
+document.documentElement.dataset.t = t;
+document.getElementById(d).classList.add('on');
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function anchor(el, side, scene) {
+  const r = el.getBoundingClientRect(), s = scene.getBoundingClientRect();
+  const x = r.left - s.left, y = r.top - s.top;
+  return { right: [x + r.width, y + r.height / 2], left: [x, y + r.height / 2],
+           top: [x + r.width / 2, y], bottom: [x + r.width / 2, y + r.height] }[side];
+}
+function wire(scene, a, as, b, bs, o = {}) {
+  const svg = scene.querySelector('svg.wires');
+  const [x1, y1] = anchor(document.getElementById(a), as, scene);
+  const [x2, y2] = anchor(document.getElementById(b), bs, scene);
+  const k = o.k ?? 0.5;
+  let dpath;
+  if ((as === 'right' || as === 'left') && (bs === 'right' || bs === 'left')) {
+    const dx = (x2 - x1) * k; dpath = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+  } else if (o.straight) { dpath = `M${x1},${y1} L${x2},${y2}`; }
+  else { const dy = (y2 - y1) * k; dpath = `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}`; }
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', o.d || dpath); p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', o.color || css('--line')); p.setAttribute('stroke-width', o.w || 2.5);
+  if (o.dash) p.setAttribute('stroke-dasharray', o.dash);
+  p.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(p);
+  if (o.arrow) {
+    const ang = Math.atan2(y2 - (o.ay ?? y2), x2 - (o.ax ?? x1));
+    const a2 = o.arrowAngle ?? ang, L = 11;
+    const h = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    h.setAttribute('d', `M${x2 - L * Math.cos(a2 - .45)},${y2 - L * Math.sin(a2 - .45)} L${x2},${y2} L${x2 - L * Math.cos(a2 + .45)},${y2 - L * Math.sin(a2 + .45)}`);
+    h.setAttribute('fill', 'none'); h.setAttribute('stroke', o.color || css('--line')); h.setAttribute('stroke-width', o.w || 2.5);
+    h.setAttribute('stroke-linecap', 'round'); h.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(h);
+  }
+  return [x1, y1, x2, y2];
+}
+function label(scene, text, x, y) {
+  const el = document.createElement('div'); el.className = 'wl'; el.textContent = text;
+  el.style.left = x + 'px'; el.style.top = y + 'px';
+  scene.appendChild(el);
+}
+
+document.fonts.ready.then(() => {
+  const sc = document.getElementById(d);
+  if (d === 'flow') {
+    for (const id of ['f-req', 'f-keys', 'f-know']) wire(sc, id, 'right', 'f-core', 'left', { arrow: true, arrowAngle: 0 });
+    wire(sc, 'f-skills', 'bottom', 'f-core', 'top', { straight: true, arrow: true, arrowAngle: Math.PI / 2 });
+    wire(sc, 'f-rules', 'bottom', 'f-core', 'top', { straight: true, arrow: true, arrowAngle: Math.PI / 2 });
+    for (const id of ['f-o1', 'f-o2', 'f-o3', 'f-o4']) wire(sc, 'f-core', 'right', id, 'left', { color: css('--brand'), arrow: true, arrowAngle: 0 });
+    // feedback loop: from the outputs back to Knowledge
+    const [x1, y1] = anchor(document.getElementById('f-o4'), 'bottom', sc);
+    const [x2, y2] = anchor(document.getElementById('f-know'), 'bottom', sc);
+    wire(sc, 'f-o4', 'bottom', 'f-know', 'bottom', { color: css('--brand'), dash: '8 7', arrow: true, arrowAngle: -Math.PI / 2,
+      d: `M${x1},${y1} C${x1},${y1 + 170} ${x1 - 140},880 ${(x1 + x2) / 2},880 S${x2},${y2 + 170} ${x2},${y2 + 4}` });
+  }
+  if (d === 'gates') {
+    const ids = ['g1', 'g2', 'g3', 'g4', 'g5', 'g6'];
+    for (let i = 0; i < ids.length - 1; i++) wire(sc, ids[i], 'right', ids[i + 1], 'left', { color: css('--brand'), arrow: true, arrowAngle: 0 });
+  }
+  if (d === 'architecture') {
+    const A = (id, side) => anchor(document.getElementById(id), side, sc);
+    const down = { straight: true, arrow: true, arrowAngle: Math.PI / 2 };
+    wire(sc, 'a-agents', 'bottom', 'a-cli', 'top', down);
+    wire(sc, 'a-cli', 'bottom', 'a-host', 'top', down);
+    wire(sc, 'a-host', 'bottom', 'a-ws', 'top', down);
+    wire(sc, 'a-you', 'bottom', 'a-mc', 'top', { ...down, color: css('--brand') });
+    wire(sc, 'a-host', 'right', 'a-mc', 'left');
+    wire(sc, 'a-host', 'right', 'a-addons', 'left');
+    const E = { color: css('--brand'), dash: '9 7', w: 2.8 };
+    { const [, hy] = A('a-host', 'bottom'); const [hx] = A('a-host', 'right'); const [rx, ry] = A('a-relay', 'left');
+      wire(sc, 'a-host', 'right', 'a-relay', 'left', { ...E, d: `M${hx},${hy - 22} C${hx + 60},${hy - 22} ${hx + 60},${ry} ${hx + 140},${ry} L${rx},${ry}` });
+      label(sc, 'sealed envelopes', 660, ry + 14); }
+    wire(sc, 'a-relay', 'right', 'a-mobile', 'left', E);
+    wire(sc, 'a-relay', 'right', 'a-peer', 'left', E);
+    { const [x1, y1] = A('a-ws', 'right'); const [x2, y2] = A('a-pub', 'left');
+      wire(sc, 'a-ws', 'right', 'a-pub', 'left', { d: `M${x1},${y1} C${x1 + 400},${y1} ${x2 - 400},${y2} ${x2},${y2}` });
+      label(sc, 'HTTPS, signed', 1000, (y1 + y2) / 2 + 2); }
+    { const [x, y] = A('a-cli', 'bottom'); label(sc, 'socket', x + 14, y + 20); }
+  }
+  document.body.dataset.ready = '1';
+});
+</script>
+</body>
+</html>

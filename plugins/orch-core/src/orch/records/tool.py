@@ -782,7 +782,12 @@ def init_repo(root: Path, *, branch: str = "main", env: Mapping[str, str] | None
             ["git", "-c", "core.hooksPath=/dev/null", "init", "-q", "-b", branch, str(root)],
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            env=_base_env(os.environ if env is None else env, "file"),
+            # the system and global config off (#541): no init.templateDir (hooks, a config file) of the person's
+            env={
+                **_base_env(os.environ if env is None else env, "file"),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+            },
             timeout=LOCAL_TIMEOUT,
             check=True,
         )

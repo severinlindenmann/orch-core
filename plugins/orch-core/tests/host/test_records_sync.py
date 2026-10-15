@@ -845,6 +845,21 @@ def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit
     assert not marker.exists(), marker.read_text()
 
 
+def test_541_init_reads_no_template_or_other_config_of_the_person(r):
+    """``orch records init`` runs ``git init`` with the system and global config off: a person's ``init.templateDir``
+    (hooks, a ``config`` file) is never copied into the records repo."""
+    tpl = r.tmp / "f541-template"
+    (tpl / "hooks").mkdir(parents=True)
+    (tpl / "f541-from-template").write_text("x\n")
+    (tpl / "config").write_text("[core]\n\tfsmonitor = /nonexistent/f541\n")
+    with open(r.home / ".gitconfig", "a") as fh:
+        fh.write(f"[init]\n\ttemplateDir = {tpl}\n")
+    r.init()
+    assert not (r.root / ".git" / "f541-from-template").exists()
+    assert "f541" not in (r.root / ".git" / "config").read_text()
+    r.commit()
+
+
 def test_finding2_a_url_with_a_password_is_refused_and_never_echoed(r):
     r.init()
     r.commit()

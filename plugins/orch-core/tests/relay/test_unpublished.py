@@ -378,3 +378,10 @@ def test_the_consumer_reaches_no_store_or_key_directly():
     assert not any(m.startswith(("orch.store", "orch.custody", "orch.identity", "orch.crypto")) for m in mods), mods
     calls = {n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
     assert "note_forwarded_revocation" not in calls
+
+
+@pytest.mark.parametrize("bad", ["", "a&b", "a=b", "a b", "x" * 513, None, 5])
+def test_a_position_never_reaches_a_query_string_unchecked(bad):
+    with pytest.raises(ValueError):
+        up._position(bad)  # noqa: SLF001
+    assert up._position(pos(3)) == pos(3)  # noqa: SLF001

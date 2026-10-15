@@ -102,15 +102,33 @@ def test_devices_alone_and_duplicates():
 
 @pytest.mark.parametrize(
     "code,detail",
+    [("term.not_attachable", {"state": s}) for s in ("starting", "running", "exited", "lost")]
+    + [("run.limit", {"which": w}) for w in ("agent_ws", "agent_person", "shell_person", "runner")]
+    + [("launch.no_grant", {"reason": r}) for r in ("none", "expiring", "scope", "revoked")]
+    + [("runner.disabled", {"missing": m}) for m in ("addon", "machine", "terminals")]
+    + [("ticket.key_not_next", {"next_key": "DEMO-0042"})],
+)
+def test_each_earlier_code_keeps_its_closed_detail(code, detail):
+    got = body(HostError({"code": code, "message": "m", "retryable": False, "detail": {**detail, "path": "/x"}}, 3))
+    assert got["error"]["detail"] == detail
+
+
+@pytest.mark.parametrize(
+    "code,detail",
     [
-        ("term.not_attachable", {"state": "running"}),
-        ("launch.no_grant", {"reason": "none"}),
-        ("ticket.key_not_next", {"next_key": "DEMO-0042"}),
+        ("term.not_attachable", {"state": "gone"}),
+        ("run.limit", {"which": "everyone"}),
+        ("launch.no_grant", {"reason": "disabled"}),  # a reason of another code
+        ("runner.disabled", {"missing": "machine" + BIDI}),
+        ("runner.disabled", {"reason": "machine"}),  # a key of another code
+        ("ticket.key_not_next", {"next_key": "demo-42"}),
+        ("ticket.key_not_next", {"next_key": 42}),
         ("reader.decl_invalid", {"reason": "signature"}),
         ("human.request_state", {"reason": "disabled", "devices": [DEV_A]}),
+        ("not_found", {"state": "running"}),
     ],
 )
-def test_no_other_code_carries_detail_to_the_page(code, detail):
+def test_unknown_codes_keys_and_values_carry_no_detail(code, detail):
     got = body(HostError({"code": code, "message": "m", "retryable": False, "detail": detail}, 3))
     assert "detail" not in got["error"] and got["error"]["code"] == code
 

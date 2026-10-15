@@ -1830,3 +1830,8 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
   - **Open (not here):** I3, the click signer drops `detail`, so the sign panel never names devices: a core follow-up
     (`ClickError` has no detail). I4, the top-level keys of a host error pass as a deny-list (pre-existing): an allow-list is
     a later slice.
+- **Full-suite fixes (15 Oct):** `closed_detail` is now core's whole per-code table (`DETAIL_KEYS`), not only the two
+  convenience codes: `term.not_attachable` `state`, `run.limit` `which`, `launch.no_grant` `reason`, `runner.disabled` `missing`
+  (the M6 records page relied on it: regression fixed), `ticket.key_not_next` `next_key` (ticket-key format), each from its
+  closed set; any other code, key or value is dropped. The real-host golden `adapted.json` was regenerated from the recorded
+  `raw.json` with the recorder's own writer (`adapt`, indent 1, sorted keys): the diff is only the six new roster device fields.

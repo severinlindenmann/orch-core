@@ -192,7 +192,7 @@ def reader_list(ctx: ReadCtx) -> dict[str, Any]:
 
     if ctx.viewer.column not in ("P", "R"):
         raise HostError("op.not_allowed", "reader.list is for a person at the terminal, the dashboard or a phone")
-    return listing(ctx.service)
+    return listing(ctx.service, phone=ctx.viewer.column == "R")  # a phone: no decl, no dk_hash (#513 review)
 
 
 # --- session.list ----------------------------------------------------------------------------------------------------

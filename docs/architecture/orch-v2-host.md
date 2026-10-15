@@ -4144,6 +4144,11 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     with a generation (orch-29, pending A2/D39a2); event-hash intent keys and immutable deadlines; no push for an
     unclaimed inbox object; head tokens for retire; grant checks; a terminal hand-off for claims and retires of
     other people's content, signed by the terminal signer (`drop.handoff_required`, the new label `sig_drop_handoff`); storage reservations and caps.
+56. **Docs follow-ups to H13 (DECIDED (orch-52, 15 Oct 2026)):** the Simulator signs no person events and Live refuses Demo keys
+    (§11A.14.3); the retry table in `r2_framing.json` is authoritative and `timeout` becomes `relay.timeout`
+    (§11A.14.4); lost write answers are settled with `outcome.get`, then resent with the same bytes under a new rid
+    inside the 840 s margin (§11A.14); the phone UI for O2 and the gestureless own-claim rule Q-H9 with the other
+    relay A2 facts (§11A.16). Docs only; nothing served.
 
 ---
 
@@ -7113,13 +7118,16 @@ The host refuses with `validation.text` and never normalises a signed string. Th
 - **The iPhone:** its `dk_sig` is a Secure Enclave key, `WhenPasscodeSetThisDeviceOnly`, no `.userPresence` (D49;
   orch-mobile P4, A6). F1 §5.3 names exactly this custody, `secure-enclave-unlocked`. `secure-enclave` would claim a
   presence check per signature (D41). The human act is the sign sheet (orch-mobile U7).
-- **Simulator and dev builds:** a software P-256 `dk_sig` encrypted under a passphrase, decrypted for one signature at
-  the sign sheet, never cached. This is F1 §5.3's `passphrase` custody, honestly declared. XCUITest types the
-  passphrase. Such builds never claim `secure-enclave-unlocked`. Production builds compile only Secure Enclave custody
-  (a provisioning rule: `auth` is a declaration, not proof, F1 §12 O1). Demo stays a separate realm (orch-mobile P3).
+- **Simulator and dev builds (DECIDED (orch-52, 15 Oct 2026), replaces the earlier passphrase-custody rule):** the Simulator signs
+  **no** person events. Phone person events are signed only with Secure Enclave custody (`auth`
+  `secure-enclave-unlocked`). The end-to-end tests of `question.answered` and `ticket.created` run on a **physical
+  device** (TestFlight). A dev-only convenience exception (option 2) is an **open OWNER decision**. In-process Demo
+  realms (FakeHost, demo keys) may declare `passphrase`, but the Live transport refuses Demo keys and Demo-realm
+  events. Production builds compile only Secure Enclave custody (a provisioning rule: `auth` is a declaration, not
+  proof, F1 §12 O1). Demo stays a separate realm (orch-mobile P3).
 - **Custody is chosen at compile time (orch-f1).** The phone's Live realm uses the Secure Enclave on a device and the
-  passphrase custody only in Simulator builds, behind that compile-time switch. A TestFlight or App Store build always
-  signs `secure-enclave-unlocked`.
+  no person-event custody in Simulator builds (DECIDED (orch-52, 15 Oct 2026): the Simulator signs no person events), behind that
+  compile-time switch. A TestFlight or App Store build always signs `secure-enclave-unlocked`.
 - **`convenience` is refused, also under any dev opt-in** (owner rule Q4 of 11A.11). `_signed_by` refuses it.
   `convenience.check` refuses it on every relay-paired workspace. One accepted convenience event writes the
   permanent `convenience_seen` mark and blocks every later reader. The host behaves the same in dev and production.
@@ -7161,11 +7169,18 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   keep the relay worker stopped until the host clock is past backup time + 1 500 s** (+ 900 s window + 600 s). R2
   needs no new store. A store-level index of every admitted person id (F1 §5.10 follow-up) is an issue for the CLI
   path, not an R2 dependency.
+- **Lost write answers (DECIDED (orch-52, 15 Oct 2026)).** A write whose outcome is unknown is settled with `outcome.get` first. If
+  it did not land, the client resends the **same signed bytes** under a **new rid** automatically, while the event id's
+  ULID time is inside the host window (900 s back; clients use an 840 s margin). Outside that window the event is
+  C-review: the person reviews and signs a **new** event. Clients never auto re-sign after a crash or relaunch. Live
+  writes are enabled only when the host advertises `relay.submit` in the column-R ops and the R6 gate is open.
 - **One review = one uid.** A creation keeps its reviewed `uid` across every attempt. If an attempt that looked unlanded
   did land, the next one gets `ticket.exists` and the phone shows the existing ticket. A misclassification can never
   create a second ticket.
 - **The four classes.** Only C and D are **definite**. An unknown code is D. The table is closed: a shared data file
   that both the R2 tests and the phone read, with a test asserting that every code R2 can emit is in it.
+  DECIDED (orch-52, 15 Oct 2026): the retry table in `tests/relay/r2_vectors/r2_framing.json` (`tables.retry`) is authoritative, and clients
+  generate their tables from it.
 - **The table is authoritative (amendment C, decided 15 Oct 2026 by orch-52).** `retryable` on a relay answer is
   derived from it: A and B → `true`; C-auto, C-review and D → `false`. Placements it fixes:
   - `busy` with nothing run and no seq consumed → A;
@@ -7176,7 +7191,7 @@ The host refuses with `validation.text` and never normalises a signed string. Th
 
   | Class | Meaning | Codes | The phone |
   |---|---|---|---|
-  | **A** not run | resend the same idem and the same signed bytes (a new rid and seq where the protocol needs them) | relay: unsigned 409 `stale_epoch` hint, sealed `stale_epoch`, `stale_timestamp`, `stale_sequence` (new rid), §8.6 step-4 silence or no answer; host: `timeout`, `cancelled`, `store.busy`, `lock.busy`, `rate.limited`, `quota.host`, `host.restarting`, `conn.overloaded`, `outcome.unknown` | resend |
+  | **A** not run | resend the same idem and the same signed bytes (a new rid and seq where the protocol needs them) | relay: unsigned 409 `stale_epoch` hint, sealed `stale_epoch`, `stale_timestamp`, `stale_sequence` (new rid), §8.6 step-4 silence or no answer; host: `relay.timeout`, `cancelled`, `store.busy`, `lock.busy`, `rate.limited`, `quota.host`, `host.restarting`, `conn.overloaded`, `outcome.unknown` | resend |
   | **B** unknown | same idem only; resolve with `outcome.get`, then by a log read | `already_done{status:"unknown"}`, `rid_conflict`, `outcome.get` = `pending` (admitted, not run), `outcome.unknown_idem` before ULID time + 900 s + 300 s; `idem.expired` (resolve by the log only: answer → `questions[].answer.id` = own id; creation → `ticket.get(uid)` exists) | resolve; never re-sign |
   | **C** definite, zero landed | a stored `refused` (never `failed`; but see the H12e-2 note below: core records a refusal as `failed` with an empty landed list, and that counts as `refused`); a new signature is allowed | **C-auto** (14.4 re-sign may skip the review): `members.stale`, `ticket.key_not_next`. **C-review** (new review first): `event.bad_base`, `question.stale`, `event.expired`, `event.abandoned`, and `outcome.unknown_idem` after the bound when the log read shows the event absent | re-sign (C-auto) or re-review |
   | **D** terminal or landed | never re-sign for this review | landed: `committed` (incl. `duplicate:true`), any `failed` with landed events; question: `question.answered`, `question.unknown`, `answer.not_allowed`, `answer.bad_option`; authority and visibility: `role.denied`, `member.unknown`, `device.scope`, `device.invalid`, `device.unknown`, `ticket.frozen`, `freeze.active`, `ticket.not_visible`, `not_found`; collisions: `ticket.exists` (uid), `ticket.bad_reference`, `event.duplicate_id`; request: `forbidden_scope`, `op.not_allowed`, `sig.invalid`, `validation.event`, `validation.text`, `invalid.input`, `idem.conflict`, `idem.required`; the 11A.4 identity codes | show; stop |
@@ -7380,7 +7395,7 @@ admission path, `next_key` atomicity, facts), the orch-f1 review (B1, B2, S3–S
 an Opus tie-break adopted in full. Two structural fixes close most findings: **idem = event id** and **one review = one
 uid**, both with the 900 s freshness window. Three conflicts were settled:
 1. **Simulator `convenience` under a dev opt-in (orch-f1 B2): rejected.** It contradicts `_signed_by`, owner rule Q4
-   and the permanent `convenience_seen` mark. The Simulator uses honest `passphrase` custody, accepted on column R.
+   and the permanent `convenience_seen` mark. DECIDED (orch-52, 15 Oct 2026): the Simulator signs no person events (14.3); an in-process Demo realm may declare `passphrase`, the Live transport refuses it.
 2. **A window around `next_key` (orch-f1 S5): rejected.** A race makes the phone's key taken, and a window only allows
    counter jumps. Exact next key, `ticket.key_not_next` with an advisory `next_key`, and a fast auto re-sign that
    counts against the cap of 3.
@@ -9605,9 +9620,26 @@ also change custody and the signer, so they need an Opus review of the new label
 - **Q10:** no owner bypass; the intersection rule applies.
 
 - **O1:** the hand-off is signed under `sig_drop_handoff` by the person's terminal signer (11A.16.6).
+- **O2 (orch-f1), accepted (DECIDED (orch-52, 15 Oct 2026)), resolved:** the phone UI for `drop.handoff_required` and the decide-class budget.
+  - **(a) Hand-off.** `drop.handoff_required` answers a phone's `drop_claim` with that distinct closed code, never a
+    bare 403. The phone shows a "Needs your Mac" chip and the status line "Only someone at the Mac can share this item
+    with the workspace. Nothing was changed.", offers no retry, and clears both when a later list shows `claimed_by` or
+    the item is gone.
+  - **(b) Budget.** The decide-class budget refusal (429, quota `drop_decide_creations` or `drop_decide_bytes`)
+    carries `Retry-After` to 00:00 UTC (relay A2). One banner text serves both quotas: "Daily sending limit reached on
+    this phone. Your items are kept and will send after {local time of 00:00 UTC}." Queued sends are kept, never
+    resealed, and resumed in order after the deadline. Own uploads show "Sent, waiting for your Mac to file it", then
+    "Filed by your Mac". The phone suppresses `drop.new` for its own sends.
+- **Q-H9 (DECIDED (orch-52, 15 Oct 2026), from relay A2's Opus review): the gestureless own-claim rule.** A gestureless claim of one's
+  **own** upload requires the verified author device to be a **current** member device of the claiming person (`decide`
+  present, not revoked) at claim time, re-checked **under the store lock in the same step as the claim**. Every
+  gestureless own-claim is listed for 7 days in a "Shared from your phone" list in the dashboard and in `orch status`
+  (item, device, time). Retiring one's own upload stays a single unsigned action. Residual: a stolen unlocked phone can
+  push content within the decide-class budget until the device is revoked; revoking before the claim blocks it. Other
+  relay A2 facts: the decide budget is charged at admission, with no refund for aborted streams; a decide-only device
+  has one upload slot; a device's `received` excludes foreign unclaimed inbox objects.
 
-**Open:**
-- **O2 (orch-f1):** mapping `drop.handoff_required` and the decide-class upload budget on the phone.
+**Open:** none from orch-f1 (O2 resolved above).
 
 #### 11A.16.13 Judgement calls (index)
 

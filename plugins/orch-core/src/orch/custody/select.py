@@ -196,7 +196,8 @@ def stage_convenience(
     which only the click signer passes) opens the key, the scalar goes into the key store, and the selection records
     ``transition: {to: convenience, step: written}``. While that step is recorded nothing signs with this key
     (:func:`device_backend` refuses), and the passphrase file is untouched, so :func:`undo_staged` can still put
-    everything back. An already staged selection is returned as it is (resume)."""
+    everything back. An already staged selection is returned as it is (resume), but only without ``passphrase``: the
+    dashboard never resumes."""
     from orch.identity import device_ref
 
     store = store if store is not None else _store(state_dir)
@@ -206,6 +207,10 @@ def stage_convenience(
     if sel is not None and sel["transition"] is not None:
         if sel["transition"]["to"] != "convenience":
             raise CustodyError("another custody change is unfinished; finish it first (orch keys custody status)")
+        if passphrase is not None:
+            # Opus F1 on #578: resuming checks no passphrase, so a dashboard text would finish a conversion it never
+            # proved (one the terminal staged meanwhile). Only the terminal resumes.
+            raise CustodyError("a custody change of this workspace is unfinished; finish it in the terminal first")
         return sel
     legacy = _legacy_backend(state_dir, workspace_id, passphrase)
     if legacy is None:
@@ -281,11 +286,10 @@ def undo_staged(
         _write_selection(state_dir, workspace_id, dict(before))
 
 
-def downgrade_in_place(
-    state_dir: Path, workspace_id: str, *, passphrase: str | None = None, store: Any = None
-) -> Selection:
-    """Move the same key back under a new passphrase. The key was readable without a factor: anyone who copied it can
-    still sign, with any ``auth`` label. Resumable at step ``written``."""
+def downgrade_in_place(state_dir: Path, workspace_id: str, *, store: Any = None) -> Selection:
+    """Move the same key back under a new passphrase, asked on the terminal by the key backend (no caller chooses it).
+    The key was readable without a factor: anyone who copied it can still sign, with any ``auth`` label. Resumable at
+    step ``written``."""
     from orch.ops import human
 
     from .convenience import ConvenienceBackend
@@ -314,7 +318,7 @@ def downgrade_in_place(
         else:
             scalar = bytearray(store.get(workspace_id, sel["device"]))
             try:
-                created = legacy.create(KEY_ID, secret=bytes(scalar), role="device", passphrase=passphrase)
+                created = legacy.create(KEY_ID, secret=bytes(scalar), role="device")
             finally:
                 for i in range(len(scalar)):
                     scalar[i] = 0

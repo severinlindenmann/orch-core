@@ -408,3 +408,74 @@ def test_l4_tier_b_is_refused_before_anything_moves(switch):
     refused(lambda: on(signer, provider.passphrase), TERMINAL)
     refused(lambda: off(signer), TERMINAL)
     assert select.status(state, WS) == before and legacy_file(state).exists() and not store.exists(WS, before["device"])
+
+
+# -- the Opus review of #578 (F1-F4) ------------------------------------------------------------------------------
+
+
+def test_f1_a_conversion_staged_meanwhile_is_not_resumed_with_a_dashboard_passphrase(switch, monkeypatch):
+    """F1: the terminal stages a conversion between custody_on's status check and its stage step. Resuming it needs no
+    passphrase, so any string used to finish it and turn the flag on. Only the terminal resumes."""
+    signer, state, provider, store, _, _ = switch
+    staged = []
+    real = convenience.pending_handoffs
+
+    def the_terminal_stages_meanwhile(*a, **k):
+        if not staged:
+            staged.append(select.stage_convenience(state, WS, store=store))  # orch keys custody convenience, cut short
+        return real(*a, **k)
+
+    monkeypatch.setattr(convenience, "pending_handoffs", the_terminal_stages_meanwhile)
+    refused(lambda: on(signer, "not the passphrase"), "custody.unavailable")
+    assert not flag(state)
+    assert select.read_selection(state, WS) == staged[0]  # left for the terminal to finish
+    assert store.exists(WS, staged[0]["device"]) and legacy_file(state).exists()  # nothing deleted
+    assert not (state / "person" / "click-custody.json").exists()  # not a wrong passphrase: no try counted
+
+
+def test_f1_stage_refuses_to_resume_with_a_passphrase(switch):
+    _, state, provider, store, _, _ = switch
+    sel = select.stage_convenience(state, WS, store=store)
+    with pytest.raises(select.CustodyError):
+        select.stage_convenience(state, WS, store=store, passphrase=provider.passphrase)
+    assert select.read_selection(state, WS) == sel
+    assert select.stage_convenience(state, WS, store=store) == sel  # the terminal still resumes
+
+
+def test_f2_misses_from_a_clock_set_back_do_not_extend_the_lockout(switch):
+    """F2: misses recorded ahead of the clock (it was set back) count as now ONCE: they are written back clamped, so
+    the lockout ends one window later instead of whenever the clock catches up."""
+    import json
+
+    signer, state, provider, _, clock, _ = switch
+    refused(lambda: on(signer, "wrong"), "custody.wrong_passphrase")  # creates the record
+    path = state / "person" / "click-custody.json"
+    path.write_text(json.dumps({"v": 1, "misses": [clock.t + 100_000.0] * CUSTODY_TRIES}))
+    err = refused(lambda: on(signer, provider.passphrase), "rate.limited")
+    assert err.retry_after_ms <= CUSTODY_WINDOW * 1000
+    assert all(t <= clock.t for t in json.loads(path.read_text())["misses"])
+    clock.t += CUSTODY_WINDOW + 1
+    assert on(signer, provider.passphrase)["enabled"] is True
+
+
+def test_f3_a_flag_write_failure_after_the_conversion_reports_the_host_error(switch, monkeypatch):
+    """F3: once finish_convenience succeeded there is nothing to undo (convenience custody, flag off is safe); the
+    real host error is reported, not a failed undo's custody.unavailable."""
+    from orch.host.errors import HostError
+
+    signer, state, provider, store, _, _ = switch
+
+    def unsafe(*a, **k):
+        raise HostError("custody.unsafe_mode", "the flag directory is not private")
+
+    monkeypatch.setattr(convenience, "set_enabled", unsafe)
+    refused(lambda: on(signer, provider.passphrase), "custody.unsafe_mode")
+    st = select.status(state, WS)
+    assert st["custody"] == "convenience" and st.get("problem") is None and store.exists(WS, st["device"])
+    assert not flag(state)
+
+
+def test_f4_the_move_back_takes_no_passphrase_argument():
+    import inspect
+
+    assert "passphrase" not in inspect.signature(select.downgrade_in_place).parameters

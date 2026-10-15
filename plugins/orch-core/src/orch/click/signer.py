@@ -785,8 +785,16 @@ class ClickSigner:
                 return misses
         finally:
             os.close(fd)
-        # a time ahead of the clock (it was set back) counts as now: the wait never exceeds one window
-        return sorted(min(t, now) for t in misses if t > now - CUSTODY_WINDOW)[-CUSTODY_TRIES:]
+        # a time ahead of the clock (it was set back) counts as now, and is written back as now once (Opus F2 on #578):
+        # otherwise it would count as "now" again at every read and the wait would last until the clock catches up
+        if any(t > now for t in misses):
+            misses = [min(t, now) for t in misses]
+            fd = self._misses_dir()
+            try:
+                self._write_misses(fd, misses)
+            finally:
+                os.close(fd)
+        return sorted(t for t in misses if t > now - CUSTODY_WINDOW)[-CUSTODY_TRIES:]
 
     @staticmethod
     def _write_misses(fd: int, misses: list[float]) -> None:
@@ -890,6 +898,7 @@ class ClickSigner:
             except WrongPassphrase:
                 self._miss()
                 raise ClickError("custody.wrong_passphrase", "the passphrase was refused; nothing changed") from None
+            finished = False
             try:
                 with convenience.workspace_lock(self.state, wid, uid):
                     try:
@@ -898,9 +907,14 @@ class ClickSigner:
                         select.undo_staged(self.state, wid, staged, before)
                         raise
                     select.finish_convenience(self.state, wid, staged)
+                    finished = True
                     convenience.set_enabled(self.state, wid, True, uid)  # last: no error after the flag changed
-            except HostError:  # lock.busy before anything was finished: put the key back where it was
-                select.undo_staged(self.state, wid, staged, before)
+            except HostError:
+                # lock.busy before anything was finished: put the key back where it was. After the conversion
+                # finished (Opus F3 on #578) there is nothing to undo: convenience custody with the flag off is safe,
+                # and the host error itself is what the person needs to see.
+                if not finished:
+                    select.undo_staged(self.state, wid, staged, before)
                 raise
         except HostError as exc:  # lock.busy, custody.unsafe_mode
             raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None

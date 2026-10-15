@@ -3868,7 +3868,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
 
 **v1.8 → v1.9 (additive, #479; item numbers may be renumbered when a parallel change lands first).**
 
-44. **`Error.detail`** (§0.3): an optional object on the socket `Error`, closed per code. `HostError.error()` sends it
+45. **`Error.detail`** (§0.3): an optional object on the socket `Error`, closed per code. `HostError.error()` sends it
     and `frames._ERROR` allows it. Only `term.not_attachable` (`state`), `run.limit` (`which`), `launch.no_grant`
     (`reason`), `runner.disabled` (`missing`: `addon`, `machine` or `terminals`) and `ticket.key_not_next` (`next_key`) may carry it; any other code, key
     or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
@@ -3883,6 +3883,19 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `signer:{device, auth}`. New code `reader.decl_invalid`; `sign.convenience_readers` and
     `sign.convenience_unavailable` gain `Error.detail` `{reason, devices}` (seven codes may carry `detail` now).
     Additive for P clients while `required_reader` is 0.
+
+46. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10):**
+    `orch.identity.answers` (the six exact §8.3 pair answers; a relayed challenge or rejection enters only as the
+    verified `CertChallenge`/`CertRejection`); `orch.identity.memberlist` (`member_list_o`, `check_member_list`,
+    `seal_wk`, `wk_grant_o`, `check_wk_grant`, `card_key_wrap`); `orch.identity.wscard` (`card_o` for the rotation, and
+    `verify_card -> VerifiedCard`, the only card type a consumer takes); `orch.identity.certreq` (`cert_request_o`,
+    `check_cert_request`/`open_cert_request` with a `CertJournal` kept under one caller lock and recorded before the
+    challenge goes out, `RequestRefused` naming a refused id, `CertInner.display_label`, the host's
+    `check_cert_challenge`/`check_cert_rejection`, and `make_cert_challenge`/`make_cert_rejection` over a sign callable,
+    checked before signing). Every builder runs all matching relay corpus cases. Signature differences from §11A.15.10
+    (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons` without the owner;
+    `check_wk_grant` takes the device id; `check_cert_request` takes a `VerifiedCard`, `now_ms` and `me` as person and
+    device ids; the `make_*` builders take `pk_pub`. No hash, contract or schema change.
 
 ---
 

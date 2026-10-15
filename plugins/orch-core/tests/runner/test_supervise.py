@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import sys
 import time
 
 import pytest
 
 from orch.runner import procs
-from orch.runner.supervise import SpawnError, Supervisor
+from orch.runner.supervise import SpawnError, Supervisor, peek_exit, watch_exit
 from orch.runner.table import RunTable
 from tests.runner.helpers import kill_own, py, read_pid, run_id, spec, wait_for
 
@@ -355,7 +356,7 @@ def _daemon(tmp_path):
     text = wait_for(lambda: info.exists() and info.read_text())
     mid, dpid = (int(x) for x in text.split())
     dinfo = wait_for(lambda: procs.info(dpid))
-    wait_for(lambda: procs.info(mid) is None or procs.info(mid).zombie, timeout=5)
+    wait_for(lambda: (info := procs.info(mid)) is None or info.zombie, timeout=5)  # one read: it may vanish between two
     return mid, dinfo.birth - 1, dpid, dinfo.birth
 
 
@@ -618,3 +619,30 @@ def test_env_deny_list_is_anchored(tmp_path):
     for name in ("ENV", "IFS", "PS4", "LD_X", "PYTHONX"):
         with pytest.raises(SpawnError):
             spec(tmp_path, ["/bin/sh"], env={name: "x"}, kind="agent").check()
+
+
+@pytest.mark.parametrize(
+    "code,want", [("raise SystemExit(3)", 3), ("import os, signal; os.kill(os.getpid(), 15)", -15)]
+)
+def test_peek_exit_sees_the_status_without_reaping(code, want):
+    """waitid(WNOWAIT) on Linux, the kqueue watch on macOS (no os.waitid there): the leader stays a zombie, so its PID
+    and group id are not reused, and the status is seen again on the next peek."""
+    proc = subprocess.Popen([sys.executable, "-c", code])
+    watch_exit(proc)
+    try:
+        assert wait_for(lambda: peek_exit(proc) is not None, 10)
+        assert peek_exit(proc) == want and proc.returncode is None
+        assert procs.info(proc.pid) is not None  # not reaped
+    finally:
+        assert proc.wait(timeout=10) == want
+    assert peek_exit(proc) == want
+
+
+def test_peek_exit_of_a_live_process_is_none():
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    watch_exit(proc)
+    try:
+        assert peek_exit(proc) is None
+    finally:
+        proc.kill()
+        proc.wait()

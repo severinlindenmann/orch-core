@@ -1065,6 +1065,32 @@ def test_close_also_joins_a_retained_stuck_worker(tmp_path):
     assert stuck.joined and stuck.joined[0] == 0.05
 
 
+def test_a_stuck_worker_stays_tracked_while_and_after_close_joins_it(tmp_path):
+    """Codex #455 delta 2: during close()'s join, and after a join that times out, relay_stop still answers "stuck"."""
+    import threading
+
+    svc = _service(tmp_path)
+    release = threading.Event()
+    release.set()
+    stuck = SlowWorker(release, alive_after=True)
+    svc.relay = stuck
+    svc.relay_join_seconds = 0.05
+    assert svc.relay_stop() == "stuck"
+    seen: list[str] = []
+    real_join = stuck.join
+
+    def join(timeout):
+        if timeout == svc.relay_join_seconds and not seen:  # close's join, not relay_stop's liveness probe
+            seen.append(svc.relay_stop())  # a stop racing close's join
+        return real_join(timeout)
+
+    stuck.join = join
+    svc.close()
+    assert seen == ["stuck"]
+    assert svc._relay_stuck is stuck  # the join timed out: still tracked
+    assert svc.relay_stop() == "stuck"
+
+
 def test_a_start_racing_close_never_starts_a_worker(tmp_path):
     """Opus D1 (PoC test_poc3 inverted): close() sets closing under the lock before it takes the worker."""
     import threading

@@ -553,7 +553,7 @@ class WorkspaceService:
         # job that closes the store is queued; jobs it queued before stopping run first (the worker FIFO)
         with self.relay_cond:
             self.closing = True  # before the worker is taken: a racing relay_start never starts a new one
-            stuck, self._relay_stuck = self._relay_stuck, None  # an earlier stop's stuck worker (joined below)
+            stuck = self._relay_stuck  # an earlier stop's stuck worker: stays tracked while it is joined below
             worker = self._take_relay()
             if worker is None:
                 self._stops_done()
@@ -564,8 +564,13 @@ class WorkspaceService:
             finally:
                 self._end_stop(worker, ended)
         join = getattr(stuck, "join", None)
-        if join is not None and not join(self.relay_join_seconds):  # a stuck worker's threads too, bounded
-            LOG.error("relay_thread_stuck: workspace %s: closing with a relay thread alive", self.workspace_id)
+        if join is not None:
+            if join(self.relay_join_seconds):  # a stuck worker's threads too, bounded
+                with self.relay_cond:
+                    if self._relay_stuck is stuck:
+                        self._relay_stuck = None
+            else:  # kept: a concurrent relay_stop keeps answering "stuck" (Codex #455 delta 2)
+                LOG.error("relay_thread_stuck: workspace %s: closing with a relay thread alive", self.workspace_id)
 
         def shut() -> None:
             rec = getattr(self, "session_records", None)

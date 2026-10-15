@@ -130,6 +130,16 @@ def main() -> None:
             )
             run("request_with_rd", {"op": "whoami", "args": {}, "rd": "sha256:" + "ab" * 32},
                 "rd (H12d) is accepted and carried into the identity; never a qualification in v1.7")  # fmt: skip
+            run("reader_declare", {"op": "reader.declare", "args": {"reader_decl": {"o": {}, "sig": ""}}},
+                "H12d-3: the device's own reader declaration: no idem, exempt from the rd check; the answer is the "
+                "record now current {device, reader, level, digest} (the fake host does not verify it)")  # fmt: skip
+            rd_any = "sha256:" + "ef" * 32
+            run("rd_declaration_unknown", {"op": "ticket.get", "args": {"ref": "rd-unknown"}, "rd": rd_any},
+                "H12d-3: rd is not the device's current declaration while required_reader is 1: "
+                "sign.convenience_readers reason declaration_unknown (re-declare, then resend)")  # fmt: skip
+            run("rd_reader_too_old", {"op": "ticket.get", "args": {"ref": "rd-old"}, "rd": rd_any},
+                "H12d-3: the current declaration is below required_reader: sign.convenience_readers reason "
+                "reader_too_old with required and declared")  # fmt: skip
             run("answer_over_the_relay_budget", {"op": "ticket.text", "args": {"size": framing.MAX_ANSWER}},
                 "an answer whose chunk envelopes would exceed the relay's 2 MiB per-device budget: frame.too_large "
                 "(the 4 MiB-class answer of round 1 is refused up front, never stored)")  # fmt: skip
@@ -191,6 +201,8 @@ def main() -> None:
                     "always": ["retryable"],
                     "seqs": "only for a write whose events LANDED (failed/partial)",
                     "next_key": ["ticket.key_not_next"],
+                    "reason": {k: sorted(v) for k, v in sorted(framing.REASONS.items())},
+                    "required_declared": "only for sign.convenience_readers reason reader_too_old (H12d-3)",
                 },
             },  # fmt: skip
             "proto_codes": sorted(bridge.PROTO_CODES),

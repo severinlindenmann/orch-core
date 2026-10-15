@@ -32,6 +32,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from orch.relay import submit as relay_submit
+from orch.relay.framing import REASONS as READER_REASONS
 from orch.relay.framing import Identity, Refusal
 from orch.store import StoreError
 from orch.store.pins import HostPins, pair
@@ -54,12 +55,18 @@ __all__ = ["RelayEntry", "rebuild_relay_submit", "register", "same_event"]
 
 def _refusal(exc: HostError | StoreError) -> Refusal:
     """The sealed form of a host or store error: its code and, for ``ticket.key_not_next``, the advisory
-    ``next_key`` (H12e: ``HostError.detail``). ``retryable`` is not carried: the bridge derives it (ruling C)."""
+    ``next_key`` (H12e: ``HostError.detail``); for the reader codes (H12d-3) the ``reason`` and, for
+    ``reader_too_old``, ``required`` and ``declared``. ``retryable`` is not carried: the bridge derives it (ruling
+    C)."""
     fields: dict[str, Any] = {}
     detail = getattr(exc, "detail", None)
     nk = detail.get("next_key") if isinstance(detail, dict) else None
     if exc.code == "ticket.key_not_next" and isinstance(nk, str):
         fields["next_key"] = nk
+    if exc.code in READER_REASONS and isinstance(detail, dict):  # H12d-3: the closed reason (bridge re-checks it)
+        for k in ("reason", "required", "declared"):
+            if k in detail:
+                fields[k] = detail[k]
     return Refusal(exc.code, **fields)
 
 

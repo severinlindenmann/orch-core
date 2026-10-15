@@ -683,9 +683,6 @@ class MembershipKeys:
         self._require_safe()
         with self._write():
             start = self._head
-            with self._seal:
-                if self._gate_queue:
-                    return 0
             gate = start["gate"]
             if gate is None:
                 return 0
@@ -697,14 +694,11 @@ class MembershipKeys:
                     keep.append(r)
             if not dropped:
                 return 0
-            with self._seal:
-                if self._head is not start or self._gate_queue:  # changed while judging: never write a stale copy
-                    return 0
             new_gate = {**gate, "reasons": keep} if keep else None
             new = {**start, "gate": new_gate}
             self._fault("before_prune_write")
             with self._seal:
-                if self._head is not start or self._gate_queue:  # a raise landed at the last moment
+                if self._head is not start or self._gate_queue:  # changed or queued meanwhile: never a stale copy
                     return 0
             self._dir.write_json(HEAD, new)
             self._head = new

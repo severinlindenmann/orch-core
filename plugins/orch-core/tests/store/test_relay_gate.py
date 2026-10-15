@@ -680,3 +680,16 @@ def test_the_prune_is_refused_while_unsafe(tmp_path):
             mk.prune_stale_reasons(lambda d: True)
     finally:
         mk.close()
+
+
+def test_a_failed_prune_write_leaves_the_gate_up(env, tmp_path, monkeypatch):
+    """The in-memory gate goes down only after the durable write succeeded."""
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        mk.raise_gate("ab" * 16, "f1_standing")
+        monkeypatch.setattr(mk._dir, "write_json", _boom)  # noqa: SLF001
+        with pytest.raises(OSError):
+            mk.prune_stale_reasons(lambda d: True)
+        assert mk.gate_up() and mk.seal_state().gated
+    finally:
+        mk.close()

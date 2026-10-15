@@ -8939,7 +8939,7 @@ structurally: the invariant is named and enforced in one place.
   takes ONE state snapshot inside ONE store-lock span (whose entry reloads), and every raise and the prune judge that
   snapshot through `device_standing_ok` (no call in the span re-enters the store); the prune is compare-and-swap:
   it keeps the head it started from and writes nothing if `head.json` changed or a raise was queued meanwhile
-  (checked after judging and again right before the write); the in-memory gate goes down only after the durable
+  (checked once more right before the write, after judging); the in-memory gate goes down only after the durable
   write and only if the head is still the one written and no raise is queued. The prune refuses while the store is
   unsafe or in a forked child. A removal that a restore undoes makes the device `ok` again under F1, so the prune
   then lowers its reason, as R2's standing serves it again (a lost phone must be REVOKED, 11A.4).

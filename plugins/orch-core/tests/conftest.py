@@ -125,14 +125,14 @@ def pytest_collection_modifyitems(config, items):
     spec = os.environ.get("ORCH_TEST_SHARD")
     if not spec:
         return
-    from tests._shard import assign, parse
+    from tests._shard import assign, load_weights, module_weights, parse
 
     index, count = parse(spec)
     weights: dict[str, int] = {}
     for item in items:
         module = item.nodeid.split("::")[0]
         weights[module] = weights.get(module, 0) + 1
-    slices = assign(weights, count)
+    slices = assign(module_weights(weights, load_weights()), count)
     kept = [i for i in items if slices[i.nodeid.split("::")[0]] == index]
     config.hook.pytest_deselected(items=[i for i in items if i not in kept])
     items[:] = kept

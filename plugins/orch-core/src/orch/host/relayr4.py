@@ -15,19 +15,20 @@ import os
 from pathlib import Path
 from typing import Any
 
-__all__ = ["FIX", "FIX_RESTORE", "FIX_REVOKE", "held_attention", "held_pairs_at", "unpublished"]
+__all__ = ["FIX", "FIX_REVOKE", "FIX_STRONGER", "held_attention", "held_pairs_at", "unpublished"]
 
 #: what the owner does about held evidence (F1 §5.3: only the person path publishes a revocation; the host never
-#: appends device.revoked or a restore by itself). A pair the workspace already revokes is never held (the relay keeps
-#: serving the item until a restore carries the pair; that is not the owner's to do), and a duplicate device.revoked is
-#: never asked for (relay obligation 5).
+#: appends device.revoked or a restore by itself). The text follows the STORE's own state, never a relay field: the
+#: workspace holds no revocation of the pair (FIX_REVOKE), or a weaker one (FIX_STRONGER: compromised over lost or
+#: retired; a second event of equal strength is never asked for, relay obligation 5).
 FIX_REVOKE = (
-    "publish the revocation: an owner signs a device.revoked event for that device on an owner device (F1 §5.3); "
+    "an owner signs a device.revoked event for that device, with the reason named, on an owner device (F1 §5.3); "
     "the host never does it by itself (issue #572 tracks a needs item for it)"
 )
-FIX_RESTORE = (
-    "the relay holds a stronger pair than the chain: only a restore that carries the pair retires it, an owner "
-    "restores on an owner device (F1 §5.3); a device.revoked would not (the host never does either by itself)"
+FIX_STRONGER = (
+    "the workspace holds a weaker revocation of that device: an owner signs a device.revoked event with the stronger "
+    "reason named (it replaces the weaker one, F1 §5.3); the relay may keep listing the item until the next restore, "
+    "which is harmless"
 )
 FIX = FIX_REVOKE
 
@@ -43,10 +44,7 @@ def unpublished(service: Any, worker: Any) -> Any:
             store = service.store
             if store is None:
                 raise RuntimeError("the workspace store is unavailable")  # no result: no ack, read again later
-            result = store.note_forwarded_revocation(item)
-            if result == "held" and store.pair_revoked("d_" + item["device_id"], "p_" + item["person_id"]):
-                return "published"  # the evidence is verified and the state already revokes the pair (same job)
-            return result
+            return store.note_forwarded_revocation(item)  # held / weaker / settled / pending / dropped: its one answer
 
         return store_job(note)
 
@@ -84,6 +82,6 @@ def held_attention(prefix: str, pairs: list[dict[str, Any]]) -> dict[str, str] |
         f"(latest: device d_{last['device_id']} of person p_{last['person_id']}, reason {last['reason']}); "
         "the device is already refused on the relay path"
     )
-    chain = [p for p in pairs if p.get("chain_reason")]
-    fixes = ([FIX_REVOKE] if len(chain) < n else []) + ([FIX_RESTORE] if chain else [])
-    return {"what": what, "fix": "; and ".join(fixes) if len(fixes) > 1 else fixes[0]}
+    weaker = [p for p in pairs if p.get("weaker")]
+    fixes = ([FIX_REVOKE] if len(weaker) < n else []) + ([FIX_STRONGER] if weaker else [])
+    return {"what": what, "fix": "; and ".join(fixes)}

@@ -60,6 +60,12 @@ class State:
             for person, entry in by_person.items()
         }
 
+    def revoked_reason(self, device: str, person: str) -> str | None:
+        """The reason of the workspace's effective revocation of exactly ``(d_device, p_person)`` (a verified F1
+        ``device.revoked`` or a restore's tombstone), or ``None``."""
+        entry = self._core.ws.revocations.get(device, {}).get(person)
+        return None if entry is None else str(entry["revocation"]["o"]["reason"])
+
     def device_person(self, device: str) -> str | None:
         """The ``p_`` person a live (known, not tombstone-only) device is associated with, or None."""
         dev = self._core.ws.devices.get(device)

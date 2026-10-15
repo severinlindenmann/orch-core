@@ -46,6 +46,7 @@ from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
 from orch.identity import CryptoVerifier, new_ulid
+from orch.identity.certs import revoke_strength
 from orch.model import (
     WORKSPACE,
     Code,
@@ -3597,7 +3598,7 @@ class Store:
 
     # ------------------------------------------------------------------ forwarded revocation evidence (H12b)
 
-    def note_forwarded_revocation(self, item: object) -> Literal["held", "pending", "dropped"]:
+    def note_forwarded_revocation(self, item: object) -> Literal["held", "weaker", "settled", "pending", "dropped"]:
         """Hold one verified item of the relay's unpublished evidence (§11A.9, P3-D31; R4 calls it as a worker job).
 
         Every fact comes from the signed objects: ``pk_pub`` parses and names the person; the certificate verifies
@@ -3609,7 +3610,11 @@ class Store:
         item); ``pending`` when it does not but the person is a current or past member; ``dropped`` for anything
         else, for anything that does not verify and when ``HostPins.note_revocation`` (forwarded, capped) does not
         retain it. ``held`` and ``pending`` mean the record is durable. Idempotent per ``(device_id, person_id)``.
-        The host never appends ``device.revoked`` or a restore for it."""
+        A held pair is then SETTLED under the same lock: ``settled`` when the workspace's own state holds a verified
+        revocation of exactly this pair at least as strong as the item's verified reason (``revoke_strength``),
+        ``weaker`` when it holds a weaker one (the owner signs a stronger ``device.revoked``), ``held`` when it holds
+        none; only ``settled`` takes the item out of the owner's view (R4, 11A.9). The host never appends
+        ``device.revoked`` or a restore for it."""
         facts = _verify_forwarded(item)
         if facts is None:
             return "dropped"
@@ -3620,7 +3625,7 @@ class Store:
                 return "dropped"
             state = self._state
             if state.device_person(device) == person:
-                result: Literal["held", "pending", "dropped"] = "held"
+                result: Literal["held", "pending", "dropped"] = "held"  # refined below for a held pair
             elif state.is_member(person):
                 result = "pending"
             else:
@@ -3636,15 +3641,17 @@ class Store:
             if not kept:
                 _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
                 return "dropped"
-            if result == "held":  # R6a: the relay gate invariant for HostPins evidence, under the store lock
-                self._raise_relay_gate(device, "held_evidence")
-            return result
-
-    def pair_revoked(self, device: str, person: str) -> bool:
-        """Whether the workspace's own state revokes ``(d_device, p_person)`` (a verified F1 ``device.revoked`` or a
-        restore's revocation, tombstones included): R4 does not show the owner evidence the chain already carries."""
-        with self._locked():
-            return self._state is not None and (device, person) in self._state.revocation_evidence()
+            if result != "held":
+                return result
+            self._raise_relay_gate(device, "held_evidence")  # R6a: the relay gate invariant, under the store lock
+            # SETTLING (the one place, under this one lock): the evidence leaves the owner's view only when the
+            # workspace's own state holds a verified revocation of exactly this pair at least as strong as the
+            # VERIFIED reason of the item (``revoke_strength``: compromised > lost = retired). A weaker one does not
+            # cover it (the owner signs a stronger device.revoked); no revocation at all is plainly held.
+            have = state.revoked_reason(device, person)
+            if have is None:
+                return "held"
+            return "settled" if revoke_strength(have) >= revoke_strength(reason) else "weaker"
 
 
 def device_standing_ok(state: State, device: str, person: str | None = None) -> bool:

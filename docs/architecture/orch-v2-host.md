@@ -5402,7 +5402,7 @@ same backup cannot be detected (inherent to any local state), nor can a block-le
 | `rids.sqlite` | `rid(device, rid, first_ms, req_digest, epoch, seq, state, principal, idem)`, `submission(device, rid, log, events)`, `chunk(device, rid, idx, epoch, bytes, state)`, `window(device, high, bitmap)`, `cursor(after)`, `meta(start_ms)` | chunk bytes are ciphertext; `submission.events` are device-signed events (below) | the state machine of 11A.4 |
 | `publish.json` | `{entry, source_hash, target_hash, pages:[{i, digest, count, put}], manifest_put, cap}` | no | staging resumes from it: pages are immutable and an identical PUT is a free 200 |
 | `published.jsonl`, `published/` | append-only: one line `{n, hash, kind, at_ms}` per accepted publication; `published/restore-<n>.json` (the full final body of every accepted restore, kept forever) and `published/last.json` (the last accepted plain checkpoint) | no | appended after a 200 and before the outbox entry is deleted; used to rebuild after a relay rollback (11A.5) |
-| `unpublished.json` | `{v, cursor, scan, gen, last_full_ms, notice, held, scan_held, ack, resume, scan_pages, scan_items}` | no | the cursor is acked only after every item up to it is settled by the store; `ack` is the pending ack, cleared only once the relay accepted it (11A.9) |
+| `unpublished.json` | `{v, cursor, scan, gen, last_full_ms, notice, held, scan_held, ack, resume, scan_pages, ack_refusals}` | no | the cursor is acked only after every item up to it is settled by the store; `ack` is the pending ack, cleared only once the relay accepted it (11A.9) |
 | `alarms.json` | the H8 counters and open alarms (`host.status`) | no | rewritten atomically |
 
 **Read through the host store, never copied.**
@@ -6910,19 +6910,47 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   page is read again. Then `relay/unpublished.json` `{v, cursor, scan, gen, last_full_ms, notice, held,
   scan_held}` is written atomically, and only then `POST unpublished/ack {cursor}` (exactly that field). 429 waits
   `Retry-After` (else 60 s); other refusals and transport errors back off 30 s, one alarm per class; the session's
-  `Fenced`/`SessionError` reach the aux guard (the worker stops). **Review round 2 (16 Oct 2026, Opus review of 2a187875):**
-  (F3) a full read is bounded: at most `SCAN_PAGES_MAX` (130) pages and `SCAN_ITEMS_MAX` (4,160) items (4,096
-  ever-devices per workspace plus one page); beyond that one alarm `unpublished_scan_unbounded`, a one-hour cool-down,
-  then a fresh scan from the start, so the daily read always restarts; a page's repeated items cost one job each.
+  `Fenced`/`SessionError` reach the aux guard (the worker stops). **Review round 2 and 3 (16 Oct 2026, Opus reviews of 2a187875 and 6f25f772):**
+  **THE INVARIANT (round 3, the second finding of one class: a security notice hidden): every unpublished-revocation
+  item the relay serves either reaches the store with its full reason and is settled by a verified revocation of the
+  exact pair at >= strength (compromised > lost = retired; a second revoke only upgrades), or it stays visibly held
+  (row + alarm + status not-ok): there is no third outcome.** It is enforced in ONE place on each side: the store
+  (`note_forwarded_revocation`, under its one lock) answers `settled` only when `State.revoked_reason(device,
+  person)` of the exact pair is at least as strong, by `orch.identity.certs.revoke_strength`, as the VERIFIED reason
+  of the item (`weaker` when the state holds a weaker one, `held` when it holds none); and the consumer's single
+  function `_settle` is the only code that takes a row out of the held lists, on `settled` and nothing else. Every
+  other answer about held evidence (`held`, `weaker`, an exception, doubt) is a visible row and an alarm: `_held`
+  never rejects and never returns early, the relay's outer fields (`device_id`, `person_id`, `reason`, `digest`,
+  `chain_reason`) are reduced to closed forms (a hex id, a reason of the enum or `unknown`, a digest shape) and
+  `chain_reason` is not read at all. Pinned by structural tests (AST: only `_settle` removes a row, `_held` has no
+  `return`, no other module defines a reason-strength table) and by the 3x3 test that the model's upgrade rule agrees
+  with `revoke_strength`. `revoke_strength` replaces the private copies in `store/pins.py` and `store/checkpoints.py`.
+  The fix text follows the STORE's state, not the relay's: no revocation of the pair => "an owner signs a
+  `device.revoked` event for that device, with the reason named (F1 §5.3)"; a weaker one (a `compromised` relay item
+  over a chain `lost`/`retired`) => "sign a `device.revoked` with the stronger reason named (it replaces the weaker
+  one); the relay may keep listing the item until the next restore, which is harmless" (its view is derived and an
+  ack never hides an item). Never an instruction to re-append an equal-strength revocation (relay obligation 5);
+  equal strength is settled. A held pair leaves the list when the next read of the item meets the owner's
+  `device.revoked` in the chain.
+  (D4) a full read is never bounded in REACH: it continues from its stored position, page by page, until `more` is
+  false (an honest relay may need about 1,366 pages of 66 KiB items for 4,096 ever-devices). It is bounded in RATE:
+  one page per aux turn, the F6 budget per turn, and beyond `SCAN_LONG_PAGES` (1,500) one page per 30 s with one
+  alarm `unpublished_scan_long`. Tradeoff chosen: availability of evidence over a short full read; a relay that never
+  ends a scan can keep the consumer reading slowly (in the threat model: it can withhold anyway), but it can no
+  longer push later revocations out of reach. (D5) 5 consecutive non-transient refusals (not 429, not
+  `cursor_ahead`, not transport errors) of one pending ack drop it with one alarm `unpublished_ack_dropped` and
+  reading goes on from the stored position (an ack only moves the notice). One `worker.job` wait is still unbounded
+  (a local store job queued behind the workspace's own ops; `RelayWorker.job` has no timeout parameter); the F6
+  budget bounds the number of waits per turn, not one wait.
   (F4) `cursor_ahead`, a store fault and an unknown result back off 30 s; the relay's answers do not set the pace.
   (F5) the daily read is due by the wall clock, when the stored time lies in the future, and by this process's
-  monotonic clock (a clock set back cannot suppress it). (F6) the aux thread waits on the worker's jobs for at most
-  20 s per turn (after at least one item); the rest of the page carries to the next turn, no ack, with `resume`
-  `{pos, n, sig}` in `unpublished.json` (valid only for the same position and the same page content; a changed page is
-  held again from its start). (F7) a page with the wrong field set is `RelayMisbehaving`, a `SessionError`: it **stops
-  the worker**; a page this consumer finds malformed (over 64 items, a bad cursor, wrong types) is a
-  `RelayRefused(200, "malformed")` and backs off 30 s. A lost ack is not resent until the next turn after its back-off
-  (a pending ack, above); it is harmless either way, an ack only moves `notices.unpublished`.
+  monotonic clock (a clock set back cannot suppress it); a page's repeated items cost one job. (F6) the aux thread
+  waits on the worker's jobs for at most 20 s per turn (after at least one item); the rest of the page carries to the
+  next turn, no ack, with `resume` `{pos, n, sig}` in `unpublished.json` (valid only for the same position and the
+  same page content; a changed page is held again from its start). (F7) a page with the wrong field set is
+  `RelayMisbehaving`, a `SessionError`: it **stops the worker**; a page this consumer finds malformed (over 64 items,
+  a bad cursor, wrong types) is a `RelayRefused(200, "malformed")` and backs off 30 s. A lost ack is retried on the
+  next turn after its back-off (a pending ack, above); harmless either way, an ack only moves `notices.unpublished`.
   **Review fixes (15 Oct 2026, Codex review orch-07):**
   (P2-1) a changed holder `gen` resets `scan`, `scan_held` and `ack` at once, independent of how far an inherited
   scan got: a crash mid-scan never lets the next generation continue the old scan or inherit its held pairs.
@@ -6936,19 +6964,10 @@ relay's largest set is never held in memory: it is built and sent in pieces.
 - **Held evidence, interim for #572 (DECIDED 15 Oct 2026, orch-d6 with orch-52):** the host has no host-originated
   `needs` items yet, so a `held` result raises the relay alarm `unpublished_held` naming the pair, and the pair joins
   `held` in `unpublished.json` (one row per pair, at most 256; a completed full read replaces the list with the pairs
-  it held). A pair the workspace's own state already revokes (a verified F1 `device.revoked` or a restore's
-  revocation: the store's `pair_revoked`, asked in the same worker job) is **not held**: the item is still read and
-  acked as answered, it just raises nothing and leaves the held list at once. The relay keeps serving the item (its
-  unpublished view is derived: an ack drives only the notice, never hides an item; only an accepted restore that
-  carries the pair retires it, and a chain-pair upgrade is never retired by a `device.revoked`), so the pair stays
-  on the relay but not on the owner's list. `host.status.relay` shows the held pairs as `held_evidence` and
-  `attention: [{what, fix}]`; `orch host status` lists a problem with the same text. The fix depends on the item's
-  `chain_reason` (the relay's outer field, display only): missing revocation => "an owner signs a `device.revoked`
-  event for that device on an owner device (F1 §5.3)"; a chain-pair upgrade or weaker pair => "only a restore that
-  carries the pair retires it". The host never asks for a duplicate `device.revoked` (relay obligation 5) and never
-  does either by itself. A held pair therefore leaves the list when the owner's `device.revoked` is in the chain
-  (the next read of the item), or, for an upgrade, when a restore carries it and the relay stops serving it (the next
-  completed full read: at most a day). **SEAM (#572): promote `unpublished_held` to a host-originated `needs` item ("publish
+  it held; a row carries `weaker` when the store holds a weaker revocation of the pair). A pair leaves the list only
+  through `settled` (the invariant above). `host.status.relay` shows the held pairs as `held_evidence` and
+  `attention: [{what, fix}]`; `orch host status` lists a problem with the same text and the fix chosen from the
+  store's state (above). **SEAM (#572): promote `unpublished_held` to a host-originated `needs` item ("publish
   this revocation") when those exist** (`orch/host/relayr4.py`, `orch/relay/unpublished.py`).
 - JUDGEMENT CALLS (R4): the held list is display data only, never evidence (the evidence is the store's
   `HostPins`); the store's per-pair dedup makes a re-read after a lost ack idempotent; positions are opaque, so the

@@ -471,7 +471,7 @@ def test_concurrent_evidence_and_appends(ws, state):
     c.step()
     env.revoke_device(d3)  # an append lands between the pages
     c.step()
-    assert results[0] == "held" and results[1] in ("held", "pending")
+    assert results[0] == "held" and results[1] in ("held", "pending", "settled")
     assert certs.device_ref(sig3) == d3
 
 
@@ -533,34 +533,6 @@ def test_f1_a_pair_the_workspace_already_revokes_is_not_held(ws, state):
     assert st["held"] == [] and len(alarms) == n_alarms and relay.acked[-1] == pos(1)  # still read and acked
 
 
-def test_f1_the_consumer_drops_a_published_pair_from_the_held_list(state):
-    relay = Relay(state, {None: ([_it()], pos(1), True), pos(1): ([_it()], pos(2), False)})
-    results = iter(["held", "published"])
-    c, _, alarms = make(state, relay, lambda i: next(results))
-    c.step()
-    assert len(c.load()["scan_held"]) == 1
-    c.step()
-    assert c.load()["held"] == [] and [a[0] for a in alarms] == ["unpublished_held"]
-
-
-def test_f1_the_fix_text_follows_chain_reason_and_never_asks_for_a_duplicate_revocation(state):
-    from orch.host import relayr4
-
-    plain = {**HELD_ROW, "chain_reason": None}
-    chain = {**HELD_ROW, "chain_reason": "upgrade", "device_id": "ef" * 16}
-    a = relayr4.held_attention("X", [plain])
-    b = relayr4.held_attention("X", [chain])
-    c = relayr4.held_attention("X", [plain, chain])
-    assert "device.revoked event" in a["fix"] and "restore" not in a["fix"]
-    assert "only a restore" in b["fix"] and "device.revoked event" not in b["fix"]
-    assert "device.revoked event" in c["fix"] and "only a restore" in c["fix"]
-    relay = Relay(state, {None: ([{**_it(), "chain_reason": "upgrade"}], pos(1), False)})
-    cons, _, alarms = make(state, relay, lambda i: "held")
-    cons.step()
-    assert cons.load()["held"][0]["chain_reason"] == "upgrade" and "restore" in alarms[-1][1]
-    assert up.held_pairs(json.loads(state.read(up.FILE)))[0]["chain_reason"] == "upgrade"
-
-
 HELD_ROW = {"device_id": "ab" * 16, "person_id": "cd" * 16, "reason": "compromised", "digest": "sha256:" + "1" * 64,
             "at_ms": 1}  # fmt: skip
 
@@ -586,10 +558,12 @@ def test_f2_the_notice_is_answered_only_when_an_incremental_read_completes(state
     assert c.load()["notice"] == pos(10) and c.load()["cursor"] == pos(3)
 
 
-def test_f2_the_position_is_checked_before_it_reaches_a_query_string(state):  # M24
-    c, _, _ = make(state, Relay(state), lambda i: "pending")
+def test_f2_the_position_is_checked_before_it_reaches_a_query_string(state):  # M24 / O24
+    relay = Relay(state)
+    c, _, _ = make(state, relay, lambda i: "pending")
     with pytest.raises(ValueError):
         c._get("x&y")  # noqa: SLF001
+    assert relay.calls == []  # refused by the consumer's own check, before any request
 
 
 def test_f2_the_page_cap_and_the_deadline_are_passed_to_every_call(state):  # M09
@@ -637,33 +611,6 @@ class _Endless(Relay):
             n = len(self.calls)
             return {"items": [_it(dev=f"{n:032x}")], "cursor": pos(n), "more": True}
         return super().call(method, path, route, **kw)
-
-
-def gets(relay):
-    return sum(1 for c in relay.calls if c[0] == "GET")
-
-
-def test_f3_a_full_read_that_never_ends_is_cut_off_with_one_alarm_and_restarts_after_a_cooldown(state):
-    relay = _Endless(state)
-    holds = []
-    c, clock, alarms = make(state, relay, lambda i: holds.append(1) or "held")
-    for _ in range(up.SCAN_PAGES_MAX + 5):
-        c.step()
-    assert len(holds) <= up.SCAN_ITEMS_MAX and sum(a[0] == "unpublished_scan_unbounded" for a in alarms) == 1
-    assert c.load()["scan"] == ""  # restarted from the start, not abandoned
-    n = gets(relay)
-    for _ in range(50):
-        c.step()
-    assert gets(relay) == n  # the cool-down
-    clock.mono += up.SCAN_COOLDOWN_S / 2
-    for _ in range(5):
-        c.step()
-    assert gets(relay) == n  # still inside it
-    clock.mono += up.SCAN_COOLDOWN_S / 2 - 1
-    clock.mono += up.SCAN_COOLDOWN_S + 1
-    c.step()
-    assert gets(relay) == n + 1
-    assert [c for c in relay.calls if c[0] == "GET"][-1][1].endswith("unpublished?limit=64")
 
 
 def test_f3_a_page_that_repeats_an_item_costs_one_job(state):
@@ -754,27 +701,6 @@ def test_f6_a_changed_page_is_held_again_from_its_start(state):
     assert held[0] == f"{10:032x}"  # the first item of the new page is not skipped
 
 
-class _Wide(Relay):
-    """A hostile relay: pages of 64 distinct items, ``more`` forever."""
-
-    def call(self, method, path, route, **kw):
-        if method == "GET":
-            self.calls.append((method, path, None, None))
-            n = sum(1 for c in self.calls if c[0] == "GET")
-            return {"items": [_it(dev=f"{n * 64 + i:032x}") for i in range(64)], "cursor": pos(n), "more": True}
-        return super().call(method, path, route, **kw)
-
-
-def test_f3_the_item_bound_cuts_off_wide_pages_before_the_page_bound(state):
-    relay = _Wide(state)
-    holds = []
-    c, _, alarms = make(state, relay, lambda i: holds.append(1) or "pending")
-    for _ in range(up.SCAN_PAGES_MAX):
-        c.step()
-    assert len(holds) <= up.SCAN_ITEMS_MAX and sum(a[0] == "unpublished_scan_unbounded" for a in alarms) == 1
-    assert gets(relay) <= up.SCAN_ITEMS_MAX // 64 + 1
-
-
 def test_f6_a_zero_budget_still_holds_one_item_per_turn(state, monkeypatch):
     monkeypatch.setattr(up, "HOLD_BUDGET_S", 0.0)
     items = [_it(dev=f"{i:032x}") for i in range(4)]
@@ -784,3 +710,298 @@ def test_f6_a_zero_budget_still_holds_one_item_per_turn(state, monkeypatch):
     for _ in range(6):
         c.step()
     assert relay.acked == [pos(1)] and len(held) == 4
+
+
+def gets(relay):
+    return sum(1 for c in relay.calls if c[0] == "GET")
+
+
+# -- round 3: the invariant (settle), strength, sanitising, continuation -------------------------------------------
+
+
+def _row(dev, weaker=False):
+    return {**HELD_ROW, "device_id": dev, "weaker": weaker}
+
+
+def _res(*results):
+    it = iter(results)
+    return lambda i: next(it)
+
+
+def test_d1_only_a_settled_answer_takes_a_pair_out_of_view(state):
+    a, b = "aa" * 16, "bb" * 16
+    relay = Relay(state, {None: ([_it(dev=a), _it(dev=b)], pos(1), False)})
+    c, clock, alarms = make(state, relay, _res("held", "weaker"))
+    c.step()
+    st = c.load()
+    assert [h["device_id"] for h in st["held"]] == [a, b] and [h["weaker"] for h in st["held"]] == [False, True]
+    n = len(alarms)
+    # a later read: A settles, B does not: only A leaves (N08), and nothing but "settled" removes anything (N05)
+    for results in (("pending", "dropped"), ("settled", "weaker")):
+        clock.ms += up.FULL_EVERY_MS
+        clock.mono += up.BACKOFF_S + 1
+        c._hold = _res(*results)  # noqa: SLF001
+        c.step()
+    held = c.load()["held"]
+    assert [h["device_id"] for h in held] == [b] and alarms[n:] == [alarms[-1]]
+
+
+def test_d1_pending_and_dropped_never_remove_a_held_row(state):
+    a = "aa" * 16
+    relay = Relay(state, {None: ([_it(dev=a)], pos(1), False)})
+    c, clock, _ = make(state, relay, _res("held"))
+    c.step()
+    for result in ("pending", "dropped"):
+        c._hold = _res(result)  # noqa: SLF001
+        st = c.load()
+        st["notice"] = None
+        c._save(st)  # noqa: SLF001
+        relay.pages[None] = ([_it(dev=a)], pos(1), False)
+        # an incremental read of the same pair: no scan, so no list rebuild: the row must still be there
+        note = {"unpublished": pos(7 + len(result))}
+        c._notices = lambda note=note: note  # noqa: SLF001
+        c.step()
+        assert [h["device_id"] for h in c.load()["held"]] == [a]
+
+
+def test_d1_an_unknown_answer_is_an_error_and_never_settles(state):
+    relay = Relay(state, {None: ([_it()], pos(1), False)})
+    c, _, _ = make(state, relay, lambda i: "published")
+    with pytest.raises(ValueError):
+        c.step()
+    assert relay.acked == []
+
+
+@pytest.mark.parametrize(
+    "chain,item_reason,want",
+    [(None, "compromised", "held"), (None, "lost", "held"), ("lost", "compromised", "weaker"),
+     ("retired", "compromised", "weaker"), ("lost", "lost", "settled"), ("lost", "retired", "settled"),
+     ("retired", "lost", "settled"), ("compromised", "compromised", "settled"), ("compromised", "lost", "settled"),
+     ("compromised", "retired", "settled")],
+)  # fmt: skip
+def test_d1_the_store_settles_only_at_least_as_strong_a_revocation_of_the_exact_pair(ws, chain, item_reason, want):
+    env, device, sig_pub = ws
+    if chain is not None:
+        env.revoke_device(device, reason=chain)
+    assert env.store.note_forwarded_revocation(item(env.owner, sig_pub, reason=item_reason)) == want
+
+
+def test_d1_a_revocation_of_another_device_of_the_person_does_not_settle(ws):  # N01
+    env, device, sig_pub = ws
+    d2, _sig2 = env.add_device()
+    env.revoke_device(d2, reason="compromised")
+    assert env.store.note_forwarded_revocation(item(env.owner, sig_pub)) == "held"
+
+
+def test_d1_without_host_state_nothing_is_settled(ws):  # N02
+    env, device, sig_pub = ws
+    env.revoke_device(device, reason="compromised")
+    env.store._state = None  # noqa: SLF001
+    assert env.store.note_forwarded_revocation(item(env.owner, sig_pub)) == "dropped"  # never "settled"
+
+
+def test_d1_through_the_real_seam_a_weaker_chain_pair_stays_visible(ws, state):
+    from orch.host import relayr4
+
+    env, device, sig_pub = ws
+    env.revoke_device(device, reason="lost")
+    relay = Relay(state, {None: ([item(env.owner, sig_pub, reason="compromised")], pos(1), False)})
+    c, alarms = _seam(env, state, relay)
+    c.step()
+    (row,) = c.load()["held"]
+    assert row["weaker"] is True and row["reason"] == "compromised" and alarms[-1][0] == "unpublished_held"
+    assert "stronger reason compromised" in alarms[-1][1]
+    note = relayr4.held_attention("X", up.held_pairs(json.loads(state.read(up.FILE))))
+    assert "stronger" in note["fix"] and "device.revoked" in note["fix"] and "harmless" in note["fix"]
+    env.revoke_device(device, reason="compromised")  # the owner upgrades: it lands, the next read settles it
+    clock_ms = c.load()
+    clock_ms["last_full_ms"] = 0
+    c._save(clock_ms)  # noqa: SLF001
+    c.step()
+    assert c.load()["held"] == []
+
+
+def test_d3_the_fix_text_follows_the_store_never_the_relay(state):
+    from orch.host import relayr4
+
+    plain, weak = {**HELD_ROW, "weaker": False}, {**HELD_ROW, "device_id": "ef" * 16, "weaker": True}
+    a, b, both = (relayr4.held_attention("X", p) for p in ([plain], [weak], [plain, weak]))
+    assert a["fix"] == relayr4.FIX_REVOKE and b["fix"] == relayr4.FIX_STRONGER
+    assert relayr4.FIX_REVOKE in both["fix"] and relayr4.FIX_STRONGER in both["fix"]
+    for text in (a["fix"], b["fix"]):
+        assert "re-append" not in text and "again" not in text and "carry" not in text
+    # a hostile outer chain_reason does nothing at all
+    relay = Relay(state, {None: ([{**_it(), "chain_reason": "upgrade"}], pos(1), False)})
+    cons, _, alarms = make(state, relay, lambda i: "held")
+    cons.step()
+    assert "weaker" in cons.load()["held"][0] and cons.load()["held"][0]["weaker"] is False
+    assert "chain_reason" not in cons.load()["held"][0] and "restore" not in alarms[-1][1]
+
+
+HOSTILE = ["\n", "\x1b[2J", 5, None, "x" * 500, "\u00e9", "a&b", "", ["x"], {"k": 1}, b"\x00"]
+
+
+@pytest.mark.parametrize("bad", HOSTILE)
+@pytest.mark.parametrize("field", ["device_id", "person_id", "reason", "digest", "chain_reason"])
+def test_d2_hostile_fields_never_hide_a_held_notice(state, field, bad):  # N26
+    it = _it()
+    if field == "digest":
+        it["provenance"] = {"cursor": 1, "digest": bad}
+    else:
+        it[field] = bad
+    relay = Relay(state, {None: ([it], pos(1), False)})
+    c, _, alarms = make(state, relay, lambda i: "held")
+    c.step()
+    st = json.loads(state.read(up.FILE))
+    (row,) = up.held_pairs(st)  # a row exists and survives the status reader's validation
+    assert alarms[-1][0] == "unpublished_held" and relay.acked == [pos(1)]
+    assert row["reason"] in ("compromised", "lost", "retired", "unknown")
+    assert alarms[-1][1].isprintable()
+    if field == "reason":
+        assert row["reason"] == "unknown"
+
+
+def test_d4_a_long_scan_continues_from_its_position_and_alarms_once(state, monkeypatch):
+    monkeypatch.setattr(up, "SCAN_LONG_PAGES", 3)
+    total = 12
+    pages = {None: ([_it(dev=f"{1:032x}")], pos(1), True)}
+    for k in range(1, total):
+        pages[pos(k)] = ([_it(dev=f"{k + 1:032x}")], pos(k + 1), k < total - 1)
+    relay = Relay(state, pages)
+    seen = []
+    c, clock, alarms = make(state, relay, lambda i: seen.append(i["device_id"]) or "pending")
+    for _ in range(3):
+        c.step()
+    assert not any(a[0] == "unpublished_scan_long" for a in alarms)  # exactly at the bound: not yet (N13)
+    c.step()
+    assert sum(a[0] == "unpublished_scan_long" for a in alarms) == 1
+    n = gets(relay)
+    c.step()
+    assert gets(relay) == n  # slowed: one page per back-off
+    for _ in range(40):
+        clock.mono += up.BACKOFF_S + 1
+        c.step()
+    assert seen == [f"{k:032x}" for k in range(1, total + 1)]  # every page reached, in order, each once
+    assert sum(a[0] == "unpublished_scan_long" for a in alarms) == 1
+    assert c.load()["scan"] is None and c.load()["scan_pages"] == 0  # a completed read resets the counter (N29)
+
+
+def test_d4_a_scan_is_never_restarted_by_its_length(state):
+    pages = {None: ([], pos(1), True)}
+    for k in range(1, 200):
+        pages[pos(k)] = ([], pos(k + 1), k < 199)
+    relay = Relay(state, pages)
+    c, clock, _ = make(state, relay, lambda i: "pending")
+    for _ in range(230):
+        clock.mono += up.BACKOFF_S + 1
+        c.step()
+    gets_from_start = [c_ for c_ in relay.calls if c_[0] == "GET" and c_[1].endswith("unpublished?limit=64")]
+    assert len(gets_from_start) == 1 and c.load()["scan"] is None and c.load()["cursor"] == pos(200)
+
+
+def test_d5_a_permanently_refused_ack_is_dropped_after_five_refusals_with_one_alarm(state):
+    relay = Relay(state, {None: ([], pos(1), True), pos(1): ([], pos(2), False)})
+    c, clock, alarms = make(state, relay, lambda i: "pending")
+    for _ in range(up.ACK_REFUSALS_MAX):
+        relay.fail[ACK] = RelayRefused(400, "bad_request")
+        c.step()
+        clock.mono += up.BACKOFF_S + 1
+    assert c.load()["ack"] is None and sum(a[0] == "unpublished_ack_dropped" for a in alarms) == 1
+    c.step()  # the scan goes on from its stored position
+    assert relay.calls[-2][1].endswith(f"cursor={pos(1)}&limit=64") or relay.acked == [pos(2)]
+
+
+def test_d5_rate_limits_and_transport_errors_never_drop_an_ack(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    c, clock, _ = make(state, relay, lambda i: "pending")
+    for k in range(up.ACK_REFUSALS_MAX + 3):
+        relay.fail[ACK] = RelayRefused(429, "rate_limited", retry_after=1) if k < 6 else TransportError("d", "t")
+        c.step()
+        clock.mono += up.BACKOFF_S + 1
+    assert c.load()["ack"] == pos(1)
+
+
+def test_d5_four_refusals_then_success_keep_the_ack_and_reset_the_count(state):
+    relay = Relay(state, {None: ([], pos(1), False)})
+    c, clock, _ = make(state, relay, lambda i: "pending")
+    for _ in range(up.ACK_REFUSALS_MAX - 1):
+        relay.fail[ACK] = RelayRefused(400, "bad_request")
+        c.step()
+        clock.mono += up.BACKOFF_S + 1
+    assert c.load()["ack"] == pos(1)
+    c.step()
+    assert relay.acked == [pos(1)] and c.load()["ack"] is None and c.load()["ack_refusals"] == 0
+
+
+# -- structure ----------------------------------------------------------------------------------------------------
+
+
+def _fn_sources():
+    import ast
+    import inspect
+
+    src = inspect.getsource(up)
+    tree = ast.parse(src)
+    return tree, {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+
+def test_structure_the_held_view_changes_in_one_place():
+    import ast
+
+    tree, fns = _fn_sources()
+    # a held row is never skipped: _held has no return statement at all (it always creates the row and alarms)
+    assert not [n for n in ast.walk(fns["_held"]) if isinstance(n, ast.Return)]
+    # the only code that filters a row out of a held list is _settle (and _held replaces its own pair's row)
+    removers = set()
+    for name, fn in fns.items():
+        for n in ast.walk(fn):
+            if isinstance(n, ast.ListComp) and "!=" in ast.unparse(n):
+                removers.add(name)
+    assert removers == {"_settle", "_held"}
+    assert "_unheld" not in fns and "pair_revoked" not in ast.unparse(tree)
+    # "settled" appears only in _settle
+    users = {name for name, fn in fns.items() if "'settled'" in ast.unparse(fn)}
+    assert users == {"_settle"}
+
+
+def test_structure_one_reason_strength_table():
+    import ast
+
+    root = Path(up.__file__).resolve().parents[1]
+    found = []
+    for path in root.rglob("*.py"):
+        for n in ast.walk(ast.parse(path.read_text())):
+            if isinstance(n, ast.Dict):
+                keys = {k.value for k in n.keys if isinstance(k, ast.Constant)}
+                if {"compromised", "lost", "retired"} <= keys and all(
+                    isinstance(v, ast.Constant) and type(v.value) is int for v in n.values
+                ):
+                    found.append(path.relative_to(root).as_posix())
+    assert found == ["identity/certs.py"]
+
+
+def test_the_models_upgrade_rule_agrees_with_revoke_strength(ws):
+    env, _d, _s = ws
+    for prev in certs.REVOKE_REASONS:
+        for new in certs.REVOKE_REASONS:
+            device, _sig = env.add_device()
+            env.revoke_device(device, reason=prev)
+            try:
+                env.revoke_device(device, reason=new)
+            except Exception:  # noqa: BLE001 - a refused append
+                pass
+            dev_person = env.store._state.revoked_reason(device, "p_" + crypto.person_id(env.owner.pk_pub).hex())  # noqa: SLF001
+            want = new if certs.revoke_strength(new) > certs.revoke_strength(prev) else prev
+            assert dev_person == want, (prev, new)
+    with pytest.raises(KeyError):
+        certs.revoke_strength("unknown")
+
+
+def test_d1_a_pair_held_earlier_in_the_same_scan_is_settled_out_of_the_scan_list_too(state):
+    a = "aa" * 16
+    relay = Relay(state, {None: ([_it(dev=a)], pos(1), True), pos(1): ([_it(dev=a)], pos(2), False)})
+    c, _, _ = make(state, relay, _res("held", "settled"))
+    c.step()
+    assert [h["device_id"] for h in c.load()["scan_held"]] == [a]
+    c.step()  # the pair settles while the scan is still collecting: it must not come back at the end of the scan
+    assert c.load()["held"] == [] and c.load()["scan_held"] == []

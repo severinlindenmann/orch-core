@@ -100,6 +100,9 @@ class FakeLink:
         self.welcome = {"peer": {"person": "p"}}
         self.uids = {}
 
+    def supports(self, op, cap="ops/1"):
+        return False  # no run/1 here (M7a's run.sub is covered in test_terminals_host.py)
+
     def call(self, op, args=None):
         self.calls.append(op)
         if self.fail_with:

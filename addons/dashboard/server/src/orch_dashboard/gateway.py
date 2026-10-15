@@ -86,6 +86,18 @@ class Gateway:
                 raise fail("peer.denied", exit=3)
             return existing
 
+    def new_link(self, ws):
+        """A host connection of its own (one per terminal attachment, section 12.6.6), pinned like `link`."""
+        pin = self._pins().get(ws)
+        if not pin:
+            raise fail("not_found", exit=2)
+        path = os.environ.get("ORCH_HOST_SOCKET") or self.run / ws / "host.sock"
+        link = HostLink.connect(path, pin["host_uid"], ws)
+        if link.welcome["peer"]["person"] != pin["peers"][str(os.getuid())]["person"]:
+            link.close()
+            raise fail("peer.denied", exit=3)
+        return link
+
     def enabled(self, ws):
         link = self.link(ws)
         addons = link.call("addon.list")["addons"]
@@ -127,6 +139,17 @@ class Gateway:
             "members": [("member.list", "query/1")],
             "settings_read": [("workspace.settings", "settings/1")],
             "grant_list": [("grant.list", "query/1")],
+            # Terminals (M7a, section 12.6): the person's own shells. `agent.preview`/`agent.start` (H11c) are not
+            # served by this server yet: no "agent_start" feature is ever listed and the page keeps "not available".
+            "terminals": [
+                ("run.sub", "run/1"),
+                ("run.list", "run/1"),
+                ("run.stop", "run/1"),
+                ("term.preview", "term/1"),
+                ("term.open", "term/1"),
+                ("term.attach", "term/1"),
+                ("attach.cancel", "term/1"),
+            ],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):

@@ -550,7 +550,7 @@ listed in `devhost/reserved.py`, excluded from the wheel, gated by ORCH_DEV and 
 The polling stub invalidates subscriptions on change; real journal replay and browser live
 updates remain M1. Op/version capability checks hide unavailable features.
 
-CI now runs dashboard Node checks and Python 3.11/3.14 checks in `.github/workflows/dashboard.yml`.
+CI now runs dashboard Node checks and Python 3.14 checks in `.github/workflows/dashboard.yml`.
 No core files or core CI were changed. Real-port/browser/layout and real-host S1/S2 verification
 remain acceptance work in the dev-kit; none of #304–#306 is closed by these stub tests.
 ## Owner answers applied — 11 Oct morning (U8)

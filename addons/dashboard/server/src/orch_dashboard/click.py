@@ -73,6 +73,18 @@ ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
 
+Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+
+
+class CustodyBody(BaseModel):
+    """The click-to-sign switch (section 0.8.6 item 3a). `on` needs the person's passphrase (the factor a takeover of
+    this dashboard lacks); `off` takes an optional NEW passphrase to move the key back. Never logged or echoed."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    on: bool
+    passphrase: Passphrase | None = None
+
+
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
 ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
 
@@ -202,12 +214,34 @@ def register(app: FastAPI, gateway: Gateway):
     @app.get("/api/w/{ws}/click/status")
     def status(ws: str = Depends(workspace)):
         gateway.enabled(ws)
-        return adapters.click_card(signer.status().get(ws)) or {
+        card = adapters.click_card(signer.status().get(ws)) or {
             "custody": "none",
             "enabled": False,
             "available": False,
             "problem": "no_signer",
         }
+        return {**card, "switchable": signer.switchable()}
+
+    def owner(ws: str) -> bool:
+        me = app.state.person_of(ws)
+        return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
+
+    @app.post("/api/w/{ws}/click/custody")
+    def custody(body: CustodyBody, ws: str = Depends(workspace)):
+        """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
+        (this process never opens a key) and answers the workspace's card."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
+        if body.on and body.passphrase is None:
+            raise fail("invalid.input", "Type your passphrase to switch signing on.", exit=5)
+        if not signer.switchable():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
+        args = {"workspace_id": ws}
+        if body.passphrase is not None:
+            args["passphrase"] = body.passphrase
+        row = signer.call("custody_on" if body.on else "custody_off", args)
+        return {**(adapters.click_card(row) or {}), "switchable": True}
 
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):

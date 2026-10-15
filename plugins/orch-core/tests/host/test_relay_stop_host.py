@@ -44,7 +44,7 @@ class Worker:
         self.stopped += 1
 
 
-def test_relay_stop_stops_the_live_worker_and_persists_the_stop(lab):
+def test_relay_stop_stops_the_live_worker_and_persists_the_stop(lab, monkeypatch):
     with lab.host() as h, h.client() as c:
         wid = ok(lab.register(c))["data"]["workspace_id"]
         service = h.host.services[wid]
@@ -64,6 +64,12 @@ def test_relay_stop_stops_the_live_worker_and_persists_the_stop(lab):
         assert starts == []  # not linked: nothing to start
         relaylink.link_path(lab.state, wid).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         write_private(relaylink.link_path(lab.state, wid), {"v": 1, "state": "linked"})
+        res = ok(c.call("host.relay_start", {"workspace_id": wid}))
+        assert starts == [] and res["data"]["worker"] == "none"  # R5: the R6 gate keeps the worker dormant
+        assert res["data"]["reason"].startswith("r6_not_ready")
+        from orch.relay import worker as relay_worker
+
+        monkeypatch.setattr(relay_worker, "R6_READY", True)
         ok(c.call("host.relay_start", {"workspace_id": wid}))
         assert starts == [wid]
 

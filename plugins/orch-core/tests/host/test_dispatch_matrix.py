@@ -85,7 +85,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
         "grant.list", "workspace.settings", "ticket.text", "reader.list",
     }  # fmt: skip
-    assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set"}
+    assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set", "relay.pair_device"}  # H12c-e
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
@@ -168,7 +168,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("human", "write")
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
-        elif op == "reader.declare":  # H12d-2: P only (column R with rd is H12d-3)
+        elif op == "reader.declare":  # H12d-2: P only on a socket (column R: H12d-3)
             assert kind == ("person_write", "write")
         elif op in RECORDS_OPS:
             write = op in {"records.remote_private", "records.note"}

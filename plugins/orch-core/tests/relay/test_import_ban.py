@@ -549,3 +549,200 @@ def test_r2_the_bridge_signs_only_through_the_signer_method():
     """Response chunks are signed only by ``RelaySigner.response_chunk`` (called from ``BridgeKeys.seal_response``)."""
     users = {p.name for p in MODULES if _calls_to(p, "response_chunk")}
     assert users == {"keys.py"}, users
+
+
+# -- R5: who builds and starts the relay worker (structure, by AST) ---------------------------------------------------
+#
+# Honest limits (same class as the R6-6 gaps above): these rules see direct names and attribute calls only. An alias
+# (``S = StateDir; S(p)``), ``getattr`` in ``orch.host`` (not banned there) or a runtime monkeypatch is not caught;
+# the runtime backstops are StateDir's exclusive flock (a second StateDir on one directory is refused "in use") and
+# the per-process slot of ``relayhook._take_slot`` (one worker per workspace).
+
+HOST = PKG.parent / "host"
+R5_BUILT = {"StateDir", "Session", "BridgeLoop", "Bridge", "RidStore", "RelayWorker"}
+
+
+def _calls(path: Path) -> list[tuple[str, int]]:
+    out = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Call):
+            f = node.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+            if name is not None:
+                out.append((name, node.lineno))
+    return out
+
+
+def _relay_built_calls(path: Path) -> list[tuple[str, int]]:
+    """Calls of the R5-built classes as bound from ``orch.relay`` in this file: ``from orch.relay.x import StateDir``
+    then ``StateDir(...)``, or ``from orch.relay import worker as w`` then ``w.RelayWorker(...)``."""
+    tree = ast.parse(path.read_text())
+    names: set[str] = set()
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("orch.relay"):
+            for a in node.names:
+                (names if a.name in R5_BUILT else modules).add(a.asname or a.name)
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            f = node.func
+            if isinstance(f, ast.Name) and f.id in names:
+                out.append((f.id, node.lineno))
+            elif isinstance(f, ast.Attribute) and f.attr in R5_BUILT and isinstance(f.value, ast.Name):
+                if f.value.id in modules:
+                    out.append((f.attr, node.lineno))
+    return out
+
+
+def test_r5_the_relay_objects_are_built_once_and_only_by_the_hook():
+    """One StateDir and one Session per state directory (11A.5 R7-4): in ``orch.host`` only ``relayhook.py`` builds
+    the relay objects (as imported from ``orch.relay``), each at exactly one call site; nothing in ``orch.relay``
+    builds a loop, a rid store or a worker (the host does)."""
+    sites: dict[str, list[str]] = {name: [] for name in R5_BUILT}
+    for path in sorted(HOST.rglob("*.py")):
+        for name, line in _relay_built_calls(path):
+            sites[name].append(f"{path.name}:{line}")
+    for name, where in sites.items():
+        assert len(where) == 1 and where[0].startswith("relayhook.py:"), (name, where)
+    for path in MODULES:
+        built = {n for n, _ in _calls(path)} & {"BridgeLoop", "RidStore", "RelayWorker", "Bridge"}
+        assert not built, (path.name, built)
+
+
+def test_r5_only_the_service_and_the_hook_set_the_worker_and_only_the_service_calls_the_starter():
+    setters: list[str] = []
+    starter_set: list[str] = []
+    starter_calls: list[str] = []
+    for path in sorted(HOST.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            targets = node.targets if isinstance(node, ast.Assign) else []
+            for t in targets:
+                if isinstance(t, ast.Attribute) and t.attr == "relay":
+                    setters.append(path.name)
+                if isinstance(t, ast.Attribute) and t.attr == "relay_starter":
+                    starter_set.append(path.name)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "relay_starter"
+            ):
+                starter_calls.append(path.name)
+    assert set(setters) <= {"workspace.py", "relayhook.py"}, setters
+    assert set(starter_set) <= {"workspace.py", "service.py"}, starter_set
+    assert starter_calls == ["workspace.py"], starter_calls
+
+
+def test_r5_the_starter_runs_only_after_the_start_blocker_under_the_relay_lock():
+    """``_relay_try_start`` (called with ``relay_cond`` held: by the open's hook inside ``with self.relay_cond`` and
+    by ``relay_start``) calls ``start_blocker`` before ``relay_starter``; ``start_worker`` checks the gate itself
+    before it opens anything."""
+    tree = ast.parse((HOST / "workspace.py").read_text())
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_relay_try_start")
+    calls = [(name, line) for name, line in _calls_in(fn)]
+    blocker = min(line for name, line in calls if name == "start_blocker")
+    starter = min(line for name, line in calls if name == "relay_starter")
+    assert blocker < starter
+    callers = [
+        n.name for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name != "_relay_try_start"
+        and any(name == "_relay_try_start" for name, _ in _calls_in(n))
+    ]  # fmt: skip
+    assert sorted(callers) == ["_relay_open", "relay_start"]
+    for name in callers:
+        f = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+        withs = [w for w in ast.walk(f) if isinstance(w, ast.With)]
+        assert any(
+            any(isinstance(i.context_expr, ast.Attribute) and i.context_expr.attr == "relay_cond" for i in w.items)
+            and any(name == "_relay_try_start" for name, _ in _calls_in(w))
+            for w in withs
+        ), name
+    hook = ast.parse((HOST / "relayhook.py").read_text())
+    sw = next(n for n in ast.walk(hook) if isinstance(n, ast.FunctionDef) and n.name == "start_worker")
+    first_if = next(n for n in sw.body if isinstance(n, ast.If))
+    assert ast.unparse(first_if.test) == "not relay_worker.r6_ready()"
+
+
+def _gate_violations(text: str, *, in_worker: bool) -> list[str]:
+    """Every way a module reaches the R6 gate other than ``r6_ready()`` (round 5 L2): a name, an attribute, an alias
+    import (``from orch.relay.worker import R6_READY as _g``), any string ``"R6_READY"`` (``getattr``, ``globals()``
+    keys, ``setattr``) and, in ``worker.py``, anything outside the module-level literal and the body of
+    ``r6_ready``. Honest limit: a string built at runtime (``"R6_" + "READY"``) is not seen; the runtime gate tests
+    with a truthy non-True value pin the behaviour of every entry instead."""
+    tree = ast.parse(text)
+    allowed: set[int] = set()
+    if in_worker:
+        for n in tree.body:
+            if (isinstance(n, ast.FunctionDef) and n.name == "r6_ready") or (
+                isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id in ("R6_READY", "__all__") for t in n.targets)
+            ):  # the literal, the helper's body and the export list
+                allowed |= {id(x) for x in ast.walk(n)}
+    bad = []
+    for x in ast.walk(tree):
+        if id(x) in allowed:
+            continue
+        hit = (
+            (isinstance(x, ast.Name) and x.id == "R6_READY")
+            or (isinstance(x, ast.Attribute) and x.attr == "R6_READY")
+            or (isinstance(x, ast.alias) and (x.name == "R6_READY" or x.asname == "R6_READY"))
+            or (isinstance(x, ast.Constant) and isinstance(x.value, str) and "R6_READY" == x.value)
+        )
+        if hit:
+            bad.append(f"{type(x).__name__}:{getattr(x, 'lineno', '?')}")
+    return bad
+
+
+@pytest.mark.parametrize(
+    "snippet,in_worker",
+    [
+        ("from orch.relay.worker import R6_READY as _g\nif not _g: pass", False),
+        ("from orch.relay.worker import R6_READY\n", False),
+        ("import orch.relay.worker as w\nx = w.R6_READY", False),
+        ("from orch.relay import worker\nx = getattr(worker, 'R6_READY')", False),
+        ("def start():\n    if not R6_READY: pass", True),
+        ("x = globals()['R6_READY']", True),
+    ],
+)
+def test_r5_the_gate_rule_catches(snippet, in_worker):
+    assert _gate_violations(snippet, in_worker=in_worker) != []
+
+
+def test_r5_the_gate_rule_allows_the_literal_and_the_helper():
+    ok_worker = "R6_READY = False\n\ndef r6_ready() -> bool:\n    return R6_READY is True\n"
+    assert _gate_violations(ok_worker, in_worker=True) == []
+    assert _gate_violations("from orch.relay import worker\nx = worker.r6_ready()", in_worker=False) == []
+
+
+def test_r5_one_gate_check_and_no_test_transport_in_production():
+    """Review Low 2 and round 5 L2: every gate check goes through ``worker.r6_ready()`` (``R6_READY is True``);
+    nothing reaches ``R6_READY`` otherwise (:func:`_gate_violations`). Review Low 1: no production call passes the
+    test-only ``transport=`` to ``make_starter``/``start_worker``."""
+    src = PKG.parent
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        text = path.read_text()
+        in_worker = path.name == "worker.py" and path.parent.name == "relay"
+        offenders += [f"{path.name} {v}" for v in _gate_violations(text, in_worker=in_worker)]
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Call):
+                f = node.func
+                name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+                if name in ("make_starter", "start_worker") and any(
+                    k.arg == "transport" and not (isinstance(k.value, ast.Name) and k.value.id == "transport")
+                    for k in node.keywords
+                ):  # forwarding the parameter (make_starter -> start_worker) is fine; any value is not
+                    offenders.append(f"{path.name}:{node.lineno} passes transport=")
+    assert offenders == []
+
+
+def _calls_in(node: ast.AST) -> list[tuple[str, int]]:
+    out = []
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            f = n.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+            if name is not None:
+                out.append((name, n.lineno))
+    return out

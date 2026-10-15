@@ -61,11 +61,12 @@ def maint(tmp_path):
 # --- the ops are not registry ops ------------------------------------------------------------------------------------
 
 
-def test_the_three_ops_are_host_person_ops_not_registry_ops():
+def test_the_host_person_ops_are_not_registry_ops():
     import orch.ops as ops
     from orch.model.emits import EMITS_V1
 
-    assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == {"move", "policy.set", "settings.set"}
+    want = {"move", "policy.set", "settings.set", "relay.pair_device"}  # H12c-e: relay.pair_device
+    assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == want
     for name in person_ops.OPS:
         assert name not in {op.name for op in ops.all()} and name not in EMITS_V1  # the frozen table is untouched
         assert review.person_op_types(name) == review.HOST_PERSON_OPS[name]

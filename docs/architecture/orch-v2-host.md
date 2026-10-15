@@ -7080,7 +7080,7 @@ the placement in the log, consent to the latest view, or the surrounding authori
 | `id` | a fresh ULID (`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`): 48-bit ms time from the phone clock, 80 random bits from the OS CSPRNG; admitted only within the window of 14.4 | the phone |
 | `type` | `question.answered` or `ticket.created` | the action |
 | `actor` | `{"kind":"person","id":"p_<32 hex>","device":"d_<32 hex>"}`, exactly the phone's certificate | the certificate |
-| `auth` | `"secure-enclave-unlocked"`, or `"passphrase"` for Simulator/dev builds (14.3) | the custody |
+| `auth` | `"secure-enclave-unlocked"`; `"convenience"` only from a Simulator build against a §11A.17 dev host and sandbox workspace (14.3) | the custody |
 | `roster_v` | the member-list version | host-sourced, person-signed: `ticket.get` → `members_v` |
 | `based_on` | answer: the reviewed log head; creation: `null` (always `seq` 1) | host-sourced, person-signed: `ticket.get` → `doc.head.head` |
 | `sig` | b64u of the raw 64-byte P-256 signature `r ‖ s` (CryptoKit `rawRepresentation`; high-s is accepted) | 14.2 |

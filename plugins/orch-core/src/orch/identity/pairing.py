@@ -29,6 +29,7 @@ __all__ = [
     "MAX_LABEL",
     "MAX_LINK",
     "PAIR_META_FIELDS",
+    "READER_DECL_MAX",
     "PairFields",
     "PairLink",
     "PairMeta",
@@ -202,6 +203,15 @@ class PairFields:
     wsk_pin: bytes
     pk_pin: bytes
 
+    def __post_init__(self) -> None:
+        """The invariants hold at construction, so :func:`render_pair_link` never renders a link that
+        :func:`parse_pair_link` refuses."""
+        _id(self.workspace_id, "workspace_id")
+        _id(self.offer_id, "offer_id")
+        _raw(self.secret, 32, "secret")
+        _raw(self.wsk_pin, 32, "wsk_pin")
+        _raw(self.pk_pin, 32, "pk_pin")
+
     def fragment(self) -> str:
         return ".".join(
             (
@@ -221,6 +231,13 @@ class PairLink:
     native: bool
     fields: PairFields
 
+    def __post_init__(self) -> None:
+        _origin(self.origin)
+        if type(self.native) is not bool:
+            raise _bad("native")
+        if type(self.fields) is not PairFields:
+            raise _bad("fields")
+
 
 def _origin(origin: object) -> str:
     try:
@@ -234,8 +251,10 @@ def _pct(text: str) -> str:
 
 
 def render_pair_link(link: PairLink) -> str:
-    """The one canonical spelling of ``link`` in its form."""
-    origin = _origin(link.origin)
+    """The one canonical spelling of ``link`` in its form (a :class:`PairLink` is valid by construction)."""
+    if type(link) is not PairLink:
+        raise _bad("link")
+    origin = link.origin
     frag = link.fields.fragment()
     return f"{_NATIVE_HEAD}{_pct(origin)}#{frag}" if link.native else f"{origin}{_HTTPS_PATH}#{frag}"
 
@@ -354,13 +373,33 @@ def clean_label(text: str) -> str:
     category Cc (except LF), Cf, Zl, Zp, Co and Cn removed, every Default_Ignorable_Code_Point removed, **no
     normalisation**, then truncated to :data:`MAX_LABEL` code points. Lone surrogates are refused (strict JSON never
     yields them). ``Cn`` follows this Python's Unicode database. A display shows the result as named by the device,
-    never as an authenticated name."""
+    never as an authenticated name.
+
+    No NFC here (decided 15 Oct 2026: exactly §2.5, as the relay reference and the vectors have it). NFC is applied
+    only when core writes an F1 copy of the label (the ticket format's own text rule), never to the recorded or
+    displayed pairing label."""
     if type(text) is not str or any(0xD800 <= ord(c) <= 0xDFFF for c in text):
         raise _bad("label")
     return "".join(c for c in text if not _removed(c))[:MAX_LABEL]
 
 
 PAIR_META_FIELDS = frozenset({"op", "dk_sig_pub", "dk_kx_pub", "label", "cert", "attempt"})
+READER_DECL_MAX = 2048  # bytes of cj(reader_decl) (§8.3 meta v2; the relay reference's READER_DECL_MAX)
+
+
+def _reader_decl_shape(decl: object) -> dict:
+    """The bridge's part of ``reader_decl`` (§8.3 step 3.1): a signed object ``{"o": {...}, "sig": any}`` whose ``cj``
+    is at most :data:`READER_DECL_MAX` bytes. The type of ``sig``, the form of ``o``, the signature, the binding and
+    the KAT are the host's H12d gate (``verify_decl``, H12d-3), never a ``malformed`` refusal here."""
+    if type(decl) is not dict or set(decl) != {"o", "sig"} or type(decl["o"]) is not dict:
+        raise _bad("reader_decl")
+    try:
+        size = len(canon.dumps(decl))
+    except (canon.JcsError, ValueError, TypeError):
+        raise _bad("reader_decl") from None
+    if size > READER_DECL_MAX:
+        raise _bad("reader_decl size")
+    return decl
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,15 +413,19 @@ class PairMeta:
     label: str
     attempt: str
     cert: object
+    reader_decl: dict | None = None
 
 
 def check_pair_meta(meta: dict) -> PairMeta:
     """§8.3 step 3.1 (``malformed``): exactly the six fields ``op`` (= ``"pair"``), ``dk_sig_pub``, ``dk_kx_pub``,
-    ``label``, ``cert``, ``attempt``; both keys canonical b64u of valid suite-2 points; ``attempt`` 32 lower-case hex;
-    ``label`` a string, returned cleaned. ``cert`` is ``null`` or any value: its checks are step 3.5's
-    (``other_person``, ``cert_invalid``, ``cert_expired``, ``revoked``), as in the relay reference."""
-    if type(meta) is not dict or set(meta) != PAIR_META_FIELDS or meta["op"] != "pair":
+    ``label``, ``cert``, ``attempt``, or those six and ``reader_decl`` (meta v2, H12d); both keys canonical b64u of
+    valid suite-2 points; ``attempt`` 32 lower-case hex; ``label`` a string, returned cleaned. ``cert`` is ``null`` or
+    any value: its checks are step 3.5's (``other_person``, ``cert_invalid``, ``cert_expired``, ``revoked``), as in the
+    relay reference. ``reader_decl`` is shape-checked only and returned verbatim and **unverified** (``None`` when
+    absent, which means level 0); the host's H12d gate verifies it at step 5."""
+    if type(meta) is not dict or set(meta) - {"reader_decl"} != PAIR_META_FIELDS or meta["op"] != "pair":
         raise _bad("pair meta field set")
+    decl = _reader_decl_shape(meta["reader_decl"]) if "reader_decl" in meta else None
     sig_pub = _b64_pub(meta["dk_sig_pub"], "dk_sig_pub")
     kx_pub = _b64_pub(meta["dk_kx_pub"], "dk_kx_pub")
     attempt = crypto.hex_id(_id(meta["attempt"], "attempt"))
@@ -393,4 +436,5 @@ def check_pair_meta(meta: dict) -> PairMeta:
         label=clean_label(meta["label"]),
         attempt=attempt,
         cert=meta["cert"],
+        reader_decl=decl,
     )

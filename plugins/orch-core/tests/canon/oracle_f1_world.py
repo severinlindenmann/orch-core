@@ -261,11 +261,13 @@ class World:
            ctx_contract: int = 1, ctx_suite: int = 2, host_key: str | None = None, host_ctx_log: str | None = None,
            host_ctx_workspace: str | None = None, tamper: Callable[[dict[str, Any]], None] | None = None,
            tamper_after_host: Callable[[dict[str, Any]], None] | None = None, after: dict[str, Any] | None = None,
-           schema_refused: bool = False) -> dict[str, Any]:  # fmt: skip
+           schema_refused: bool = False, auth: str = "passphrase", based_on: Any = ...) -> dict[str, Any]:  # fmt: skip
         """Build, sign and (when ``expect == "ok"``) append one event. ``signer`` is the device key that signs a
         person event (default: the actor's own); ``ctx_*`` change what the *person* signs over; ``tamper`` changes the
         event after the person signed and before the host signs; ``host_*`` and ``tamper_after_host`` do the same for
-        ``host_sig``. A refused step keeps its place in ``steps`` but not in the chain."""
+        ``host_sig``. A refused step keeps its place in ``steps`` but not in the chain. ``auth`` is a person event's
+        custody (default ``passphrase``, so every older vector file stays byte-identical); ``based_on`` overrides the
+        current head (a phone signs the head it reviewed, which may be an earlier one, F1 §5.1)."""
         events = self.logs.setdefault(log, [])
         prev = head(events[-1]) if events else None
         e: dict[str, Any] = {
@@ -275,7 +277,7 @@ class World:
             "at": at or self.tick(),
             "type": typ,
             "actor": copy.deepcopy(actor),
-            "based_on": prev,
+            "based_on": prev if based_on is ... else based_on,
             "prev": prev,
             "hash_v": 1,
         }
@@ -283,7 +285,7 @@ class World:
             e["ws_seq"] = self.ws_len() if ws_seq is None else ws_seq
         person = actor["kind"] == "person"
         if person:
-            e["auth"] = "passphrase"
+            e["auth"] = auth
             e["roster_v"] = (0 if typ == "workspace.created" else self.roster_v) if roster_v is None else roster_v
         if typ == "restore":
             e.update({"source": None, "revocations": []})

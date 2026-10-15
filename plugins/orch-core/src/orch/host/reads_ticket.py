@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from orch import canon
 from orch.model import source as model_source
 from orch.model import tasks as model_tasks
 from orch.model import visibility as model_visibility
@@ -148,7 +149,15 @@ def _doc(x: _Ticket) -> dict[str, Any]:
         "questions": [{**q, "answered": answered.get(q["id"], False)} for q in fields["questions"]],
         "current_state": texts.get("current_state", ""),
         "sections": {s: texts.get(s, "") for s in HEADINGS if s in allowed},
+        "head": _head(x),
     }
+
+
+def _head(x: _Ticket) -> dict[str, Any]:
+    """``doc.head`` (v1.7, §11A.14): ``{seq, head}`` of the log's last event, from the same read as the rest of the
+    snapshot. A phone signs ``head`` as its answer's ``based_on`` (the reviewed head, F1 §5.1)."""
+    last = x.events[-1]
+    return {"seq": last["seq"], "head": canon.event_head(last)}
 
 
 # --- log ------------------------------------------------------------------------------------------------------------
@@ -218,6 +227,7 @@ def _questions(x: _Ticket) -> list[dict[str, Any]]:
             }
             if isinstance(answer_event.get("auth"), str):
                 answer["auth"] = answer_event["auth"]
+            answer["id"] = answer_event["id"]  # v1.7 (§11A.14): the counting event's id
             item["answer"] = answer
         item["qid"] = core.qid
         item["hash"] = core.hash
@@ -535,6 +545,13 @@ def _closed(x: _Ticket) -> dict[str, Any] | None:
 
 @handler("ticket.get")
 def ticket_get(ctx: ReadCtx) -> dict[str, Any]:
+    # v1.7 (§11A.14): one snapshot under one store lock (re-entrant), so `doc.head`, `questions[].answer.id` and
+    # `members_v` are of the same state as everything else a phone reviews before it signs
+    with ctx.store.locked():
+        return _ticket_get(ctx)
+
+
+def _ticket_get(ctx: ReadCtx) -> dict[str, Any]:
     cursor = ctx.sub_cursor()  # the journal head right before the state is read (H6a)
     view = ctx.ticket(ctx.args["ref"])
     x = _Ticket(ctx, view)
@@ -552,6 +569,7 @@ def ticket_get(ctx: ReadCtx) -> dict[str, Any]:
         "sub_cursor": cursor,
         "status": view.status,
         "settled": view.status in ("done", "closed"),
+        "members_v": x.ws.roster_v,  # v1.7 (§11A.14): the roster version a person event signs as roster_v
     }
     closed = _closed(x)
     if closed is not None:

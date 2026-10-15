@@ -99,7 +99,37 @@ def workspace_show(ctx: ReadCtx) -> dict[str, Any]:
         "wsk_fingerprint": _fingerprint(wsk),
         "members_v": ws.roster_v,
         "state": "degraded" if ctx.service.state == "degraded" else "ok",
+        "next_key": _next_key(ctx, ws),
     }
+
+
+def may_create(column: str, role: str | None, relay: Any, ws: Any, now: float) -> bool:
+    """May this principal create a ticket (v1.7, §11A.14 14.6)? A person who is a member and not a viewer: column P;
+    column R also needs the requesting device valid with ``decide`` on the replayed roster (R2's L2 checks the
+    member-list scopes again). Column G and no-person get ``null`` (H12e judgement call: ``next_key`` is the person
+    paths' advisory field; an agent's ``new`` allocates its key itself)."""
+    from .human import _device_refusal
+
+    if role is None or role == "viewer":
+        return False
+    if column == "P":
+        return True
+    if column != "R" or relay is None:
+        return False
+    dev = ws.devices.get(getattr(relay, "device_id", None))
+    person = getattr(relay, "person_id", None)
+    if dev is None or (person is not None and dev.person != person):  # the bridge already pins the pair
+        return False
+    return _device_refusal(dev, now, False) is None
+
+
+def _next_key(ctx: ReadCtx, ws: Any) -> str | None:
+    """``workspace.show.next_key``: the store's exact next key (``_next_key()`` after the directory scan, under the
+    lock), advisory and never a reservation; ``null`` for a principal that may not create (:func:`may_create`)."""
+    call = ctx.call
+    if not may_create(call.column.name, ctx.viewer.role, call.relay, ws, ctx.now):
+        return None
+    return ctx.store.peek_key()
 
 
 # --- member.list -----------------------------------------------------------------------------------------------------

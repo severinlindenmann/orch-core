@@ -68,7 +68,9 @@ def test_workspace_show_gives_the_identity_of_the_workspace(w):
     c = w.client()
     data = ok(c.req("workspace.show"))
     ws = w.service.store.state.workspace
-    assert set(data) == {"id", "prefix", "name", "genesis", "epoch", "wsk_fingerprint", "members_v", "state"}
+    assert set(data) == {
+        "id", "prefix", "name", "genesis", "epoch", "wsk_fingerprint", "members_v", "state", "next_key",
+    }  # fmt: skip
     assert data["id"] == w.wid == ws.workspace_id and data["prefix"] == ws.prefix == "DEMO"
     assert data["name"] == "Acme"  # config.json `workspace.name`
     assert data["genesis"] == ws.genesis and data["genesis"].startswith("sha256:")
@@ -83,10 +85,47 @@ def test_workspace_show_follows_the_roster_version_and_is_open_to_g_and_n(w):
     before = ok(c.req("workspace.show"))["members_v"]
     w.person_event("role.changed", person=w.quinn.ref, role="maintainer")
     assert ok(c.req("workspace.show"))["members_v"] == before + 1
-    assert ok(c.req("workspace.show", grant=w.grant, session=SESSION)) == ok(c.req("workspace.show"))
+    as_p = ok(c.req("workspace.show"))
+    as_g = ok(c.req("workspace.show", grant=w.grant, session=SESSION))
+    assert as_g == {**as_p, "next_key": None}  # next_key is the persons' (H12e, judgement call: G is null)
     as_agent_class(w)
     assert ok(c.req("workspace.show"))["id"] == w.wid  # no-person may read it (§0.5)
+    assert ok(c.req("workspace.show"))["next_key"] is None
     assert ok(c.req("workspace.show", grant=wrong_secret(w.grant)))["prefix"] == "DEMO"
+
+
+def test_workspace_show_next_key_is_the_stores_exact_next_key_for_a_person_who_may_create(w):
+    c = w.client()
+    store = w.service.store
+    assert ok(c.req("workspace.show"))["next_key"] == w.h.run(w.service.call(store.peek_key)) == "DEMO-0001"
+    w.ticket("one")
+    assert ok(c.req("workspace.show"))["next_key"] == "DEMO-0002"
+
+
+def test_workspace_show_next_key_is_null_for_a_viewer_and_set_for_a_member(wq):
+    c = wq.client()
+    assert ok(c.req("workspace.show"))["next_key"] == "DEMO-0001"  # quinn, a member, may create
+    wq.person_event("role.changed", person=wq.quinn.ref, role="viewer")
+    assert ok(c.req("workspace.show"))["next_key"] is None  # a viewer may not create (§11A.14 14.6)
+
+
+def test_next_key_for_column_r_needs_a_non_viewer_and_a_decide_device():
+    from types import SimpleNamespace
+
+    from orch.host.reads_ws import may_create
+
+    dev = SimpleNamespace(person="p_1", removed=False, revoked=False, expires_ms=None, scopes=("look", "decide"))
+    look = SimpleNamespace(**{**dev.__dict__, "scopes": ("look",)})
+    relay = SimpleNamespace(device_id="d_1")
+    ws = SimpleNamespace(devices={"d_1": dev}, members={"p_1": SimpleNamespace(role="member")})
+    assert may_create("R", "member", relay, ws, 0) is True
+    assert may_create("R", "viewer", relay, ws, 0) is False
+    assert may_create("R", "member", relay, SimpleNamespace(**{**ws.__dict__, "devices": {"d_1": look}}), 0) is False
+    assert may_create("R", "member", SimpleNamespace(device_id="d_2"), ws, 0) is False
+    assert may_create("R", "member", SimpleNamespace(device_id="d_1", person_id="p_2"), ws, 0) is False
+    assert may_create("P", "owner", None, ws, 0) is True and may_create("P", "viewer", None, ws, 0) is False
+    assert may_create("P", None, None, ws, 0) is False
+    assert may_create("G", "owner", None, ws, 0) is False and may_create("N", None, None, ws, 0) is False
 
 
 # --- member.list -----------------------------------------------------------------------------------------------------

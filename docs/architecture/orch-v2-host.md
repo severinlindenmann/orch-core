@@ -4174,7 +4174,10 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (CHANGES, F1 to F9) is applied as DECIDED (orch-07): `SBX` is a reserved prefix of a fresh throwaway person, every
     normal host refuses an `SBX` genesis on every admit, link and push path, one registry choke point `admit`, a dev
     host refuses the click signer (reason `dev_host`) and pins `HOME`, `--dev-runner`-style service detection,
-    gate token plus fresh `dev_gate`, the alarm counts only verified devices; owner notes in 11A.17.10. 11A.14.3, P5
+    gate token plus fresh `dev_gate`, the alarm counts only verified devices; owner notes in 11A.17.10. The Opus delta
+    approved; its items D1 to D4 are folded in (SBX only with a recovery code this init generates, `custody convenience`
+    refused with `HOME` under a sandbox root, a normal host skips and alarms `SBX` workspaces in its registry at start,
+    the manifest id format). 11A.14.3, P5
     and 11A.14.10 point at it.
 
 ---

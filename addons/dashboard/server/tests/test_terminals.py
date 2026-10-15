@@ -453,3 +453,50 @@ def test_every_input_frame_survives_a_slow_runner_with_the_real_termclient_revie
     runner.close()
     assert frames_in == [1, 2, 3] and bytes(got) == b"A" * 65536 + b"B" * 65536 + b"C" * 65536
     assert [d for d in pump.delivered if d[0] == "closed"] == []
+
+
+def test_the_pump_stops_between_queued_items_review_d_l3():
+    class Client:
+        sock, unacked, lost, ended = None, {}, [], None
+
+        def __init__(self):
+            self.sent = []
+
+        def send_input(self, data):
+            self.sent.append(data)
+            pump.stop()  # stopped while items are still queued
+
+        def pump(self):
+            pass
+
+        def recv(self, timeout):
+            raise TimeoutError
+
+        def close(self):
+            pass
+
+    client = Client()
+    pump = RecordingPump(client)
+    for i in range(3):
+        pump.put(("in", bytes([i])))
+    pump.run()
+    assert client.sent == [b"\x00"]
+
+
+def test_cleanup_joins_the_pump_thread_with_a_bound_review_d_l3():
+    joined = []
+
+    class Thread:
+        def join(self, timeout=None):
+            joined.append(timeout)
+
+    class P:
+        thread = Thread()
+
+        def stop(self):
+            pass
+
+    sock = TermSocket(None, None, None, None, None)
+    sock.pump = P()
+    asyncio.run(sock._cleanup())
+    assert joined and joined[0] is not None and 0 < joined[0] <= terminals.WRITE_TIMEOUT + 1

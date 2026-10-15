@@ -412,7 +412,7 @@ class Pump:
         client = self.client
         try:
             while not self.stopped.is_set():
-                while True:
+                while not self.stopped.is_set():  # stopped between queued items too (delta D-L3)
                     try:
                         kind, *rest = self.inbox.get_nowait()
                     except queue.Empty:
@@ -539,16 +539,17 @@ class TermSocket:
         self.abort.set()
         if self.pump is not None:
             self.pump.stop()
+        # The release must outlive a cancelled handler (the server may cancel it once the socket is closed): it runs as
+        # its own task, started before the close handshake so `attach.cancel` never waits for a slow browser (delta
+        # D-L3). A bind still running (its thread cannot be cancelled) is waited for first.
+        cleanup = asyncio.create_task(self._cleanup())
+        _CLEANUPS.add(cleanup)
+        cleanup.add_done_callback(_CLEANUPS.discard)
         if self.websocket.application_state == WebSocketState.CONNECTED:
             with suppress(Exception):
                 if not final.silent:
                     await self.websocket.send_text(_json(final.end()))
                 await self.websocket.close(final.close)
-        # The release must outlive a cancelled handler (the server may cancel it once the socket is closed): it runs as
-        # its own task. A bind still running (its thread cannot be cancelled) is waited for first.
-        cleanup = asyncio.create_task(self._cleanup())
-        _CLEANUPS.add(cleanup)
-        cleanup.add_done_callback(_CLEANUPS.discard)
         with suppress(asyncio.CancelledError):
             await asyncio.shield(cleanup)
 
@@ -560,6 +561,11 @@ class TermSocket:
         att, link = self.att, self.link
         if att is not None or link is not None:
             await asyncio.to_thread(self._release, att, link)
+        # The pump closes the runner socket in its `finally`: wait for it, bounded by one write (delta D-L3).
+        thread = getattr(self.pump, "thread", None)
+        if thread is not None:
+            with suppress(RuntimeError):  # never started
+                await asyncio.to_thread(thread.join, WRITE_TIMEOUT + 1)
 
     @staticmethod
     def _release(att, link):
@@ -627,6 +633,9 @@ class TermSocket:
             self.att = answer.get("att") if isinstance(answer, dict) else None
             # Doomed meanwhile (logout, an early message, the socket closed): the host ticket is never presented.
             if self.abort.is_set() or not self.auth.valid(intent.token, touch=False):
+                # Released here, in the thread (delta D-I1): even a loop torn down meanwhile cannot skip the cancel.
+                att, link, self.att, self.link = self.att, self.link, None, None
+                self._release(att, link)
                 raise Closed("cancelled", silent=True)
             client = TermClient(self.gateway.run, answer)
             try:

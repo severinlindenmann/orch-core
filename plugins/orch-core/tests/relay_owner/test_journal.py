@@ -193,24 +193,74 @@ def test_tombstones_are_deleted_after_twice_the_retention(jdir):
     assert not (jdir / f"{RID}.json").exists()
 
 
-def test_the_entry_cap_evicts_expired_records_and_never_live_ones(jdir, monkeypatch):
+def test_the_cap_counts_only_live_or_unexpired_records(jdir, monkeypatch):
+    """Review of #557 (Opus Low, Codex P1): expired terminal records never keep the journal full; a new id evicts the
+    oldest of them on demand. Live or unexpired records fill it (journal.full) and are never evicted."""
     from orch.relay_owner import journal as jmod
 
     monkeypatch.setattr(jmod, "MAX_ENTRIES", 3)
     with PrimaryJournal(jdir).transaction() as v:
-        v.put(verified(rid="01" * 16, exp=10))  # live, expired: never evicted
-        v.put(Entry("02" * 16, WS, 10, "refused"))
-        v.put(Entry("03" * 16, WS, 20, "refused"))
-        with pytest.raises(JournalError) as e:  # full of records: a new id waits, nothing else breaks
-            v.put(Entry("04" * 16, WS, 30, "refused"))
+        v.prune(5)
+        v.put(verified(rid="01" * 16, exp=100))  # live
+        v.put(Entry("02" * 16, WS, 50, "refused"))  # unexpired at 5
+        v.put(Entry("03" * 16, WS, 60, "refused"))
+        with pytest.raises(JournalError) as e:
+            v.put(Entry("04" * 16, WS, 70, "refused"))
         assert e.value.code == "journal.full"
-        assert v.prune(15) == 0  # nothing over the cap yet
-    for i, rid in enumerate(("04" * 16, "05" * 16)):  # over the cap by local writes (simulated)
-        (jdir / f"{rid}.json").write_bytes(Entry(rid, WS, 30 + i, "refused").to_json())
-        os.chmod(jdir / f"{rid}.json", 0o600)
     with PrimaryJournal(jdir).transaction() as v:
-        assert v.prune(25) == 2
-        assert {e.request_id for e in v.entries()} == {"01" * 16, "04" * 16, "05" * 16}
+        v.prune(55)  # 02 is now expired and terminal: room on demand, the day it expires, not 14 days later
+        v.put(Entry("04" * 16, WS, 70, "refused"))
+        assert {e.request_id for e in v.entries()} == {"01" * 16, "03" * 16, "04" * 16}
+        assert not (jdir / f"{'02' * 16}.json").exists()
+        with pytest.raises(JournalError):  # 01 is live (unexpired), 03 and 04 unexpired: full again
+            v.put(Entry("05" * 16, WS, 80, "refused"))
+
+
+def test_a_live_record_is_never_tombstoned_live(jdir):
+    """Review of #557 (N1): a live record past its expiry goes to expired first; past retention its tombstone says
+    expired, never verified or challenged."""
+    with PrimaryJournal(jdir).transaction() as v:
+        v.put(verified(exp=1000))
+        v.put(verified(rid=RID2, ws=WS2, exp=1000))
+        v.put(Entry(RID2, WS2, 1000, "challenged", request_cj=REQ, challenge_cj=CH))
+        v.prune(1000)
+        assert v.get(RID).state == "expired" and not v.get(RID).tombstone and v.get(RID).request is not None
+        v.prune(1001 + RETENTION_MS)
+        for rid in (RID, RID2):
+            t = v.get(rid)
+            assert t.tombstone and t.state == "expired" and not t.live
+        assert v.cert_journal().open == ()
+    with pytest.raises(JournalError):
+        Entry(RID, WS, 1, "verified", tombstone=True)
+
+
+def test_upload_failed_is_a_terminal_decision(jdir):
+    with PrimaryJournal(jdir).transaction() as v:
+        v.put(verified())
+        v.put(Entry(RID, WS, 1000, "decided", request_cj=REQ, decision="reject", decided_cj=DEC))
+        v.put(Entry(RID, WS, 1000, "upload_failed", request_cj=REQ, decision="reject", decided_cj=DEC))
+        assert RID in v.cert_journal().closed
+        with pytest.raises(JournalError):
+            v.put(Entry(RID, WS, 1000, "uploaded", request_cj=REQ, decision="reject", decided_cj=DEC))
+    with pytest.raises(JournalError):
+        Entry(RID, WS, 1, "upload_failed", request_cj=REQ)
+
+
+def test_delete_goes_through_the_locked_directory_fd(jdir, tmp_path):
+    """Review of #557 (N2): a tombstone is deleted relative to the locked directory, not by path: a directory
+    swapped in at the same path keeps its file."""
+    j = PrimaryJournal(jdir)
+    with j.transaction() as v:
+        v.put(Entry(RID, WS, 1000, "refused"))
+        v.prune(1001 + RETENTION_MS)
+        moved = tmp_path.resolve() / "moved"
+        os.rename(jdir, moved)
+        os.mkdir(jdir, 0o700)
+        decoy = jdir / f"{RID}.json"
+        decoy.write_bytes(b"decoy")
+        v.prune(1001 + TOMBSTONE_MS)
+        assert v.get(RID) is None
+    assert decoy.read_bytes() == b"decoy" and not (moved / f"{RID}.json").exists()
 
 
 def test_an_oversized_record_is_refused_before_it_is_written(jdir):

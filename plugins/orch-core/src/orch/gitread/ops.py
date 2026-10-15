@@ -27,7 +27,7 @@ from .errors import NotFound, Unavailable
 from .fs import RepoPins, open_pin
 from .patchtext import Change, diff_trees, quote_path, render
 from .pinning import pin_repo
-from .repo import Repo
+from .repo import Repo, check_dot_git
 
 __all__ = ["PROFILES", "allowed_paths", "run"]
 
@@ -400,6 +400,7 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
                 raise Unavailable("bad request: tree_check takes no arguments")
             worktree = open_pin(pins.worktree)  # device and inode checked: still the pinned working copy
             try:
+                check_dot_git(pins, worktree)  # #486: its .git still names the pinned gitdir
                 return treecheck.check(repo, worktree)
             finally:
                 worktree.close()

@@ -314,7 +314,7 @@ class RunnerGrants:
     def _busy(self) -> bool:
         if any(t.current for t in self.tables.values()):
             return True
-        return any(r.get("kind") == "agent" and r.get("grant_state") == "ok" for r in self.hub.store.records.values())
+        return any(_watched(r) for r in self.hub.store.records.values())
 
     async def _watch(self) -> None:
         with contextlib.suppress(asyncio.CancelledError):
@@ -328,24 +328,33 @@ class RunnerGrants:
                     LOG.warning("runner grant watcher: %s", type(exc).__name__)
 
     async def _pass(self) -> None:
+        from orch.runner import enablement
+
         for wid, table in list(self.tables.items()):
             service = self.hub.host.services.get(wid)
             auth = getattr(service, "auth", None)
             if service is not None and auth is not None and not auth.fresh(service.entry.root):
                 await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
+            # dashboard execution switched off: the runner gives up the workspace's grants too (fail closed)
+            off = not enablement.state_of(self.hub.host.state_dir, wid, self.hub.host.host_uid)["enabled"]
             for person, cur in list(table.current.items()):
-                if service is None or self.valid(service, person, cur["grant"]) is not None:
+                if off or service is None or self.valid(service, person, cur["grant"]) is not None:
                     table.current.pop(person, None)
                     with contextlib.suppress(HostError):
                         table.save()
                     self._audit("grant.drop", workspace_id=wid, grant=cur["grant"], person=person, reason="ended")
                     await self._drop(cur["grant"])
         for rec in list(self.hub.store.records.values()):
-            if rec.get("kind") != "agent" or rec.get("grant_state") != "ok" or not rec.get("grant"):
+            if not _watched(rec) or not rec.get("grant"):
                 continue
             service = self.hub.host.services.get(rec.get("workspace_id"))
             if service is None or self.valid(service, rec["person"], rec["grant"]) is not None:
                 await self.hub._save({**rec, "grant_state": "ended"})
+
+
+def _watched(rec: dict[str, Any]) -> bool:
+    """A live agent run whose grant still counts as ``ok``."""
+    return rec.get("kind") == "agent" and rec.get("grant_state") == "ok" and rec.get("state") in ("starting", "running")
 
 
 # -- the ops: the worker half -----------------------------------------------------------------------------------------

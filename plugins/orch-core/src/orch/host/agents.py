@@ -392,7 +392,7 @@ def serve(call: Call) -> dict[str, Any]:
     person = str(call.viewer)
     if hub is not None and run in hub.store.records:  # a retry: the recorded run, nothing recomputed or started
         rec = hub.store.records[run]
-        if rec.get("workspace_id") != service.workspace_id or rec.get("person") != person:
+        if rec.get("workspace_id") != service.workspace_id or rec.get("person") != person or rec.get("kind") != "agent":
             raise HostError("idem.conflict", "this idem names another request")
         return ok_result({"replay": run})
     found = plan(call, args, hub, agent=True)
@@ -436,7 +436,7 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
     wid, person, run = service.workspace_id, data["person"], data["run"]
     existing = hub.store.records.get(run)
     if existing is not None:
-        if existing.get("workspace_id") != wid or existing.get("person") != person:
+        if existing.get("workspace_id") != wid or existing.get("person") != person or existing.get("kind") != "agent":
             raise HostError("idem.conflict", "this idem names another request")
         return runners.view(existing)
     if await asyncio.wrap_future(service.submit(agent_missing, service, hub)) is not None:  # again, at use

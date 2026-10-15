@@ -231,3 +231,12 @@ def test_the_secret_reaches_no_frame_log_or_file(ready, caplog, tmp_path):
         if path.is_file() and not path.is_symlink():
             with open(path, "rb") as fh:
                 assert SECRET_TAIL.encode() not in fh.read(), path
+
+
+def test_switching_dashboard_execution_off_drops_the_grant_at_the_runner(ready):
+    w = ready
+    c = w.conn()
+    ok(deposit(c, issue(w)))
+    enable(w, False)
+    wait_for(lambda: w.runner.grants.report() == [])
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None

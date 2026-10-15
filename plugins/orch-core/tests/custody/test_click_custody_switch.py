@@ -18,11 +18,12 @@ from tests.ops.humans import KDF, Provider
 
 WS = "0123456789abcdef0123456789abcdef"
 STRONG = "violet harbour 7 kettles juggle quietly!"
+TERMINAL = "custody.terminal_needed"
 
 
 class Mono:
     def __init__(self) -> None:
-        self.t = 1000.0
+        self.t = 1_760_000_000.0  # the switch's rate limit runs on wall time (it outlives the process)
 
     def __call__(self) -> float:
         return self.t
@@ -59,6 +60,7 @@ def switch(tmp_path, monkeypatch):
         workspaces=lambda: [entry],
         enabled=lambda e: convenience.enabled(state, WS, uid),
         mono=mono,
+        wall=mono,
         log=log,
     )
     yield signer, state, provider, store, mono, log
@@ -134,23 +136,6 @@ def test_off_without_a_passphrase_keeps_the_key_in_the_store(switch):
     assert not flag(state) and store.exists(WS, device)
 
 
-def test_off_with_a_new_passphrase_moves_the_key_back(switch):
-    signer, state, provider, store, _, _ = switch
-    device = on(signer, provider.passphrase)["device"]
-    row = signer.handle("custody_off", {"workspace_id": WS, "passphrase": STRONG})
-    assert row["enabled"] is False and row["custody"] == "passphrase"
-    assert not store.exists(WS, device) and (human.keys_dir(state, WS) / human.KEY_FILE).exists()
-
-
-def test_off_refuses_a_weak_new_passphrase_before_changing_anything(switch):
-    signer, state, provider, store, _, _ = switch
-    device = on(signer, provider.passphrase)["device"]
-    refused(
-        lambda: signer.handle("custody_off", {"workspace_id": WS, "passphrase": "password1"}), "custody.weak_passphrase"
-    )
-    assert flag(state) and store.exists(WS, device)
-
-
 @pytest.mark.parametrize(
     "args",
     [
@@ -176,11 +161,11 @@ def test_the_passphrase_never_reaches_the_log_or_an_answer(switch):
     signer, _, provider, _, _, log = switch
     refused(lambda: on(signer, "wrong secret words"), "custody.wrong_passphrase")
     row = on(signer, provider.passphrase)
-    signer.handle("custody_off", {"workspace_id": WS, "passphrase": STRONG})
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "passphrase": STRONG}), TERMINAL)
     text = repr(log.lines) + repr(row)
     for secret in ("wrong secret words", provider.passphrase, STRONG):
         assert secret not in text
-    assert [what for what, _ in log.lines if what.startswith("custody")] == ["custody_on", "custody_off"]
+    assert [what for what, _ in log.lines if what.startswith("custody")] == ["custody_on"]
 
 
 def test_the_written_log_has_the_switch_and_no_passphrase(switch):
@@ -190,3 +175,307 @@ def test_the_written_log_has_the_switch_and_no_passphrase(switch):
     text = (log.root / "click.jsonl").read_text()
     assert '"what": "custody_on"' in text and '"what": "custody_off"' in text
     assert provider.passphrase not in text
+
+
+# -- fix-forward of the Opus review of #539 (H1, H2, M1, M2, L1-L3) ------------------------------------------------
+
+
+def off(signer, **extra):
+    return signer.handle("custody_off", {"workspace_id": WS, **extra})
+
+
+def legacy_file(state):
+    return human.keys_dir(state, WS) / human.KEY_FILE
+
+
+def test_h1_on_after_off_refuses_any_passphrase(switch):
+    """Probe of H1: on -> off -> on with a wrong passphrase used to switch on with no proof at all."""
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+    err = refused(lambda: on(signer, "not the passphrase"), TERMINAL)
+    assert "orch host convenience on" in err.message
+    assert not flag(state)
+    refused(lambda: on(signer, provider.passphrase), TERMINAL)  # nothing to prove the right one against either
+    assert not flag(state) and select.status(state, WS)["custody"] == "convenience"
+
+
+def test_h1_a_key_converted_elsewhere_with_the_flag_off_is_refused(switch):
+    signer, state, provider, store, _, _ = switch
+    select.convert_to_convenience(state, WS, store=store)  # the terminal path (its prompt is the test provider)
+    assert not flag(state)
+    refused(lambda: on(signer, "anything at all"), TERMINAL)
+    assert not flag(state)
+
+
+def test_h1_the_refusal_costs_no_try(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+    for _ in range(CUSTODY_TRIES + 1):
+        refused(lambda: on(signer, "x"), TERMINAL)
+    assert not (state / "person" / "click-custody.json").exists()
+
+
+def test_h1_already_on_is_idempotent(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    assert on(signer, "any text: nothing changes")["enabled"] is True
+    assert flag(state)
+
+
+def test_h1_an_unfinished_change_is_refused(switch):
+    signer, state, provider, store, _, _ = switch
+    sel = select.convert_to_convenience(state, WS, store=store)
+    select._write_selection(state, WS, {**sel, "transition": {"to": "passphrase", "step": "written"}})
+    refused(lambda: on(signer, provider.passphrase), "custody.unavailable")
+    assert not flag(state)
+
+
+@pytest.mark.parametrize("flag_on", [True, False])
+def test_h2_off_never_takes_a_new_passphrase(switch, flag_on):
+    """Probe of H2: off(P) re-keyed the device key under a dashboard-chosen P, then on(P) "proved" it."""
+    signer, state, provider, store, _, _ = switch
+    device = on(signer, provider.passphrase)["device"]
+    if not flag_on:
+        off(signer)
+    err = refused(lambda: off(signer, passphrase=STRONG), TERMINAL)
+    assert "orch keys custody passphrase" in err.message and "--in-place" in err.message
+    assert flag(state) is flag_on  # nothing changed: not even the flag (L2)
+    assert select.status(state, WS)["custody"] == "convenience" and store.exists(WS, device)
+    assert not legacy_file(state).exists()
+    if not flag_on:  # and the dashboard cannot then "prove" a passphrase it chose
+        refused(lambda: on(signer, STRONG), TERMINAL)
+        assert not flag(state)
+
+
+def test_h2_a_weak_or_odd_passphrase_on_off_is_refused_the_same_way(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    for pw in ("password1", "", 7):
+        refused(lambda pw=pw: off(signer, passphrase=pw), TERMINAL)
+    assert flag(state)
+
+
+def test_m1_wrong_passphrases_survive_a_signer_restart(switch, tmp_path):
+    signer, state, provider, _, clock, _ = switch
+    for _ in range(CUSTODY_TRIES):
+        refused(lambda: on(signer, "wrong"), "custody.wrong_passphrase")
+    signer.close()
+    again = ClickSigner(
+        state,
+        uid=os.getuid(),
+        connect=lambda e: pytest.fail("no host"),
+        workspaces=signer._workspaces,
+        enabled=signer._enabled,
+        mono=clock,
+        wall=clock,
+    )
+    try:
+        err = refused(lambda: on(again, provider.passphrase), "rate.limited")
+        assert "terminal" in err.message and 0 < err.retry_after_ms <= CUSTODY_WINDOW * 1000
+        path = state / "person" / "click-custody.json"
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert provider.passphrase not in path.read_text() and "wrong" not in path.read_text()
+        clock.t += CUSTODY_WINDOW + 1
+        assert on(again, provider.passphrase)["enabled"] is True
+    finally:
+        again.close()
+
+
+def test_m1_the_record_is_bounded(switch):
+    import json
+
+    signer, state, provider, _, clock, _ = switch
+    for _ in range(3):
+        for _ in range(CUSTODY_TRIES):
+            refused(lambda: on(signer, "wrong"), "custody.wrong_passphrase")
+        refused(lambda: on(signer, "wrong"), "rate.limited")
+        clock.t += CUSTODY_WINDOW + 1
+    doc = json.loads((state / "person" / "click-custody.json").read_text())
+    assert len(doc["misses"]) <= CUSTODY_TRIES
+
+
+def test_m1_an_unreadable_record_fails_closed_for_one_window(switch):
+    signer, state, provider, _, clock, _ = switch
+    refused(lambda: on(signer, "wrong"), "custody.wrong_passphrase")
+    path = state / "person" / "click-custody.json"
+    path.write_text("not json")
+    refused(lambda: on(signer, provider.passphrase), "rate.limited")
+    clock.t += CUSTODY_WINDOW + 1
+    assert on(signer, provider.passphrase)["enabled"] is True
+
+
+def test_m1_the_terminal_path_is_not_limited(switch):
+    signer, state, provider, store, _, _ = switch
+    for _ in range(CUSTODY_TRIES):
+        refused(lambda: on(signer, "wrong"), "custody.wrong_passphrase")
+    convenience.set_enabled(state, WS, True, os.getuid())  # orch host convenience on
+    assert select.convert_to_convenience(state, WS, store=store)["custody"] == "convenience"
+
+
+def test_m2_the_answering_backend_only_exports(tmp_path, switch):
+    _, state, provider, *_ = switch
+    backend = PassphraseBackend.answering(human.keys_dir(state, WS), provider.passphrase)
+    for name in ("sign", "unlocked", "unseal", "primary_unlocked", "create", "create_primary", "_provider"):
+        assert not hasattr(backend, name), name
+    assert backend.public_key("dk") and callable(backend.export_for_custody_change) and callable(backend.delete)
+
+
+def test_l1_a_leftover_passphrase_file_is_not_reported_as_moved_back(switch, monkeypatch):
+    """L1: a stale key file of the same device (a best-effort delete that failed, a restored backup) kept its OLD
+    passphrase while the move back reported success. The terminal path now refuses and says why."""
+    signer, state, provider, store, _, _ = switch
+    stale = legacy_file(state).read_bytes()
+    device = on(signer, provider.passphrase)["device"]
+    legacy_file(state).write_bytes(stale)
+    os.chmod(legacy_file(state), 0o600)
+    with pytest.raises(select.CustodyError) as info:
+        select.downgrade_in_place(state, WS, store=store)
+    assert "already" in str(info.value)
+    assert select.status(state, WS)["custody"] == "convenience" and store.exists(WS, device)
+
+
+def test_l3_the_slow_part_runs_outside_the_flag_lock(switch, monkeypatch):
+    """L3: scrypt and the key store write must not hold the flag lock (hand-offs would get lock.busy)."""
+    signer, state, provider, store, _, _ = switch
+    monkeypatch.setattr(convenience, "LOCK_WAIT", 0.2)
+    seen = []
+    put = store.put
+
+    def put_and_take_the_lock(*a, **k):
+        with convenience.workspace_lock(state, WS, os.getuid()):  # lock.busy if the switch held it here
+            seen.append("free")
+        return put(*a, **k)
+
+    monkeypatch.setattr(store, "put", put_and_take_the_lock)
+    assert on(signer, provider.passphrase)["enabled"] is True and seen == ["free"]
+
+
+def test_l3_a_handoff_prepared_during_the_slow_part_undoes_the_move(switch, monkeypatch):
+    signer, state, provider, store, _, _ = switch
+    before = select.status(state, WS)
+    put = store.put
+
+    def put_then_a_handoff_arrives(*a, **k):
+        put(*a, **k)
+        monkeypatch.setattr(
+            convenience, "pending_handoffs", lambda *a, **k: [{"id": "hr_1", "op": "approve", "code": "x"}]
+        )
+
+    monkeypatch.setattr(store, "put", put_then_a_handoff_arrives)
+    refused(lambda: on(signer, provider.passphrase), "sign.click_only")
+    assert not flag(state)
+    assert select.status(state, WS) == before and legacy_file(state).exists()
+    assert not store.exists(WS, before["device"])
+
+
+def test_l3_a_custody_change_during_the_slow_part_is_not_overwritten(switch, monkeypatch):
+    signer, state, provider, store, _, _ = switch
+    calls = []
+
+    def someone_else_changes_custody(*a, **k):  # the second call is the re-check under the lock, after staging
+        calls.append(1)
+        if len(calls) == 2:
+            sel = select.read_selection(state, WS)
+            select._write_selection(state, WS, {**sel, "gen": sel.gen + 5})
+        return []
+
+    monkeypatch.setattr(convenience, "pending_handoffs", someone_else_changes_custody)
+    refused(lambda: on(signer, provider.passphrase), "custody.unavailable")
+    assert len(calls) == 2 and not flag(state)
+    assert select.read_selection(state, WS)["gen"] == 6  # the other change is kept, not overwritten
+
+
+def test_l2_a_busy_lock_undoes_the_staged_move(switch, monkeypatch):
+    signer, state, provider, store, _, _ = switch
+    monkeypatch.setattr(convenience, "LOCK_WAIT", 0.1)
+    before = select.status(state, WS)
+    with convenience.workspace_lock(state, WS, os.getuid()):
+        err = refused(lambda: on(signer, provider.passphrase), "lock.busy")
+    assert err.retryable and not flag(state)
+    assert select.status(state, WS) == before and legacy_file(state).exists()
+    assert not store.exists(WS, before["device"])
+    assert on(signer, provider.passphrase)["enabled"] is True  # and a retry works
+
+
+def test_l4_tier_b_is_refused_before_anything_moves(switch):
+    """L4: in tier B the signer (the person UID) cannot write the host-UID flag, so the switch is not offered there."""
+    signer, state, provider, store, _, _ = switch
+    entry = {"workspace_id": WS, "prefix": "INT", "host_uid": os.getuid() + 1}
+    signer._workspaces = lambda: [entry]
+    before = select.status(state, WS)
+    refused(lambda: on(signer, provider.passphrase), TERMINAL)
+    refused(lambda: off(signer), TERMINAL)
+    assert select.status(state, WS) == before and legacy_file(state).exists() and not store.exists(WS, before["device"])
+
+
+# -- the Opus review of #578 (F1-F4) ------------------------------------------------------------------------------
+
+
+def test_f1_a_conversion_staged_meanwhile_is_not_resumed_with_a_dashboard_passphrase(switch, monkeypatch):
+    """F1: the terminal stages a conversion between custody_on's status check and its stage step. Resuming it needs no
+    passphrase, so any string used to finish it and turn the flag on. Only the terminal resumes."""
+    signer, state, provider, store, _, _ = switch
+    staged = []
+    real = convenience.pending_handoffs
+
+    def the_terminal_stages_meanwhile(*a, **k):
+        if not staged:
+            staged.append(select.stage_convenience(state, WS, store=store))  # orch keys custody convenience, cut short
+        return real(*a, **k)
+
+    monkeypatch.setattr(convenience, "pending_handoffs", the_terminal_stages_meanwhile)
+    refused(lambda: on(signer, "not the passphrase"), "custody.unavailable")
+    assert not flag(state)
+    assert select.read_selection(state, WS) == staged[0]  # left for the terminal to finish
+    assert store.exists(WS, staged[0]["device"]) and legacy_file(state).exists()  # nothing deleted
+    assert not (state / "person" / "click-custody.json").exists()  # not a wrong passphrase: no try counted
+
+
+def test_f1_stage_refuses_to_resume_with_a_passphrase(switch):
+    _, state, provider, store, _, _ = switch
+    sel = select.stage_convenience(state, WS, store=store)
+    with pytest.raises(select.CustodyError):
+        select.stage_convenience(state, WS, store=store, passphrase=provider.passphrase)
+    assert select.read_selection(state, WS) == sel
+    assert select.stage_convenience(state, WS, store=store) == sel  # the terminal still resumes
+
+
+def test_f2_misses_from_a_clock_set_back_do_not_extend_the_lockout(switch):
+    """F2: misses recorded ahead of the clock (it was set back) count as now ONCE: they are written back clamped, so
+    the lockout ends one window later instead of whenever the clock catches up."""
+    import json
+
+    signer, state, provider, _, clock, _ = switch
+    refused(lambda: on(signer, "wrong"), "custody.wrong_passphrase")  # creates the record
+    path = state / "person" / "click-custody.json"
+    path.write_text(json.dumps({"v": 1, "misses": [clock.t + 100_000.0] * CUSTODY_TRIES}))
+    err = refused(lambda: on(signer, provider.passphrase), "rate.limited")
+    assert err.retry_after_ms <= CUSTODY_WINDOW * 1000
+    assert all(t <= clock.t for t in json.loads(path.read_text())["misses"])
+    clock.t += CUSTODY_WINDOW + 1
+    assert on(signer, provider.passphrase)["enabled"] is True
+
+
+def test_f3_a_flag_write_failure_after_the_conversion_reports_the_host_error(switch, monkeypatch):
+    """F3: once finish_convenience succeeded there is nothing to undo (convenience custody, flag off is safe); the
+    real host error is reported, not a failed undo's custody.unavailable."""
+    from orch.host.errors import HostError
+
+    signer, state, provider, store, _, _ = switch
+
+    def unsafe(*a, **k):
+        raise HostError("custody.unsafe_mode", "the flag directory is not private")
+
+    monkeypatch.setattr(convenience, "set_enabled", unsafe)
+    refused(lambda: on(signer, provider.passphrase), "custody.unsafe_mode")
+    st = select.status(state, WS)
+    assert st["custody"] == "convenience" and st.get("problem") is None and store.exists(WS, st["device"])
+    assert not flag(state)
+
+
+def test_f4_the_move_back_takes_no_passphrase_argument():
+    import inspect
+
+    assert "passphrase" not in inspect.signature(select.downgrade_in_place).parameters

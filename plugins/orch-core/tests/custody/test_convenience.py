@@ -196,7 +196,7 @@ def test_downgrade_in_place_reencrypts_the_same_key_and_bumps_the_generation(leg
     state, provider, pub = legacy
     store = FakeStore()
     sel = select.convert_to_convenience(state, WS, store=store)
-    back = select.downgrade_in_place(state, WS, store=store, passphrase=provider.passphrase)
+    back = select.downgrade_in_place(state, WS, store=store)  # the backend asks (the test provider)
     assert back["custody"] == "passphrase" and back.gen == sel.gen + 1 and back["device"] == sel["device"]
     assert not store.exists(WS, sel["device"])
     b = human.open_backend(human.keys_dir(state, WS))

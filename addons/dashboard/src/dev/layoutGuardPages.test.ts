@@ -21,3 +21,11 @@ it('every pair layout scenario has a real-host-pair-* guard page, listed and che
   }
   for (const n of REAL_HOST_PAGES) expect(guard, `${n} is named in the guard`).toContain(`'${n}'`)
 })
+
+it('every drop layout scenario has a real-host-drop-* guard page, listed and checked', () => {
+  expect(selectsRealHost(/drop/)).toBe(true)
+  for (const s of LAYOUT_SCENARIOS.filter((x) => x.startsWith('drop-'))) {
+    expect(REAL_HOST_PAGES).toContain(`real-host-${s}`)
+    expect(guard).toContain(`['real-host-${s}', '${s}',`)
+  }
+})

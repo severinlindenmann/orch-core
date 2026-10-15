@@ -42,7 +42,9 @@ class Auth:
                 "port": port,
                 "probe_key": self.probe_key,
                 "code": code,
-                "expires_at": now + CODE_TTL,  # the launcher writes no file, and keeps none, past this
+                # the launcher writes no file, and keeps none, past this; whole seconds (a frame carries no floats),
+                # rounded down so the launcher stops early, never late
+                "expires_at": int(now + CODE_TTL),
             }
             if self.directory is not None:
                 self.files[code] = Path(self.redirect_path(code))

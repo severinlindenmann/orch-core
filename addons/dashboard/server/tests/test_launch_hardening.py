@@ -9,6 +9,7 @@ import pytest
 
 import orch_dashboard.__main__ as launcher
 from orch_dashboard.auth import CODE_TTL, Auth
+from orch_dashboard.hostlink import encode
 
 PORT = 43210
 
@@ -277,6 +278,14 @@ def test_an_expired_launch_removes_its_file_on_the_next_mint(tmp_path, monkeypat
 def test_the_launch_reply_carries_the_expiry(tmp_path, monkeypatch):
     auth = _auth(tmp_path, monkeypatch, lambda: 1000.0)
     assert auth.launch(PORT)["expires_at"] == 1000.0 + CODE_TTL
+
+
+def test_the_launch_reply_fits_a_frame(tmp_path, monkeypatch):
+    # a frame carries no floats: a real clock's fraction made every `launch` fail (frame.invalid), so `open` timed out
+    auth = _auth(tmp_path, monkeypatch, lambda: 1000.75)
+    reply = auth.launch(PORT)
+    assert reply["expires_at"] == 1000 + CODE_TTL and isinstance(reply["expires_at"], int)
+    encode(reply)
 
 
 def test_a_launcher_paused_past_expiry_writes_no_file(tmp_path, monkeypatch):

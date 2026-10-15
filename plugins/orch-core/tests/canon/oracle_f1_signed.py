@@ -2376,7 +2376,7 @@ def restore_contract_vectors() -> dict[str, Any]:
 
 # --- reader_kat_1.json (orch-v2-host §0.8.6 item 9.2, H12d) ---------------------------------------------------------
 
-READER_VIEWS_1 = ("activity.list.items", "ticket.get.log", "ticket.get.gates.decisions")
+READER_VIEWS_1 = ("ticket.get.questions.answer",)  # owner decision with orch-f1, #463 round 1
 KAT_AUTHS = ("convenience", "passphrase", "bogus")  # corpus order: accepted, accepted, refused with auth null
 
 
@@ -2420,20 +2420,15 @@ def reader_kat_vector() -> dict[str, Any]:
     context = {"workspace_id": W, "genesis": w.genesis, "log": "workspace", "now": ow.stamp(w.clock + 60)}
 
     sev, dev = pid("sev"), did("sev1")
-    actor = {"kind": "person", "id": sev, "device": dev}
     at = ow.stamp(ow.T0 + 600)
-    views = {
-        "activity.list.items": {
-            "id": "3.e", "jpos": 3, "log": "workspace", "key": None, "uid": None, "title": None, "seq": 3, "ws_seq": 3,
-            "type": "settings.changed", "at": at, "actor": actor, "summary": "settings changed: grant_hours",
-            "data": {},
-        },
-        "ticket.get.log": {
-            "seq": 2, "type": "gate.approved", "at": at, "actor": actor, "summary": "approved requirements", "data": {},
-        },
-        "ticket.get.gates.decisions": {
-            "id": ow.ulid(900), "kind": "approved", "person": sev, "at": at, "seq": 2, "gen": 1, "counting": True,
-            "voided": False,
+    mara = pid("mara")
+    views = {  # a ticket.get Question (orch-v2-host §0.6), answered; the signer is on its answer
+        "ticket.get.questions.answer": {
+            "id": "Q1", "state": "answered", "to": [sev], "blocking": True, "answered_by": sev, "answered_seq": 3,
+            "text": "Ship the reader handshake first?", "options": [{"key": "a", "label": "yes"}, {"key": "b", "label": "no"}],
+            "asked_at": ow.stamp(ow.T0 + 300), "asked_by": {"kind": "person", "id": mara, "device": did("mara1")},
+            "asked_seq": 2,
+            "answer": {"by": sev, "at": at, "seq": 3, "option": "a", "text": None},
         },
     }  # fmt: skip
     view_cases, view_results = [], []
@@ -2441,7 +2436,8 @@ def reader_kat_vector() -> dict[str, Any]:
         for auth in KAT_AUTHS:
             accepted, got = _kat_expect(auth)
             result = {"view": view, "accepted": accepted, "auth": got}
-            obj = {**copy.deepcopy(views[view]), "signer": {"device": dev, "auth": auth}}
+            obj = copy.deepcopy(views[view])
+            obj["answer"]["signer"] = {"device": dev, "auth": auth}
             view_cases.append({"name": f"{view}/{auth}", "view": view, "object": obj, "expect": result})
             view_results.append(result)
     expected = {"1": {"log": kat_digest(log_results), "view": kat_digest(view_results)}}
@@ -2468,8 +2464,9 @@ def reader_kat_vector() -> dict[str, Any]:
         },
         "view": {
             "how": "for each case: the production view parser reads `object` as an entry of view `view` "
-            "(READER_VIEWS_1); accepted = it parses and its signer.auth is a known auth value; result = {view, "
-            "accepted, auth: signer.auth if accepted else null}",
+            "(READER_VIEWS_1: a ticket.get Question whose answer carries signer); accepted = it parses and "
+            "answer.signer.auth is a known auth value; result = {view, "
+            "accepted, auth: answer.signer.auth if accepted else null}",
             "views": list(READER_VIEWS_1),
             "cases": view_cases,
             "results": view_results,

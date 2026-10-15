@@ -47,6 +47,15 @@ def test_the_expected_results_are_accepted_accepted_refused_with_auth_null():
     assert KAT["view"]["views"] == list(reader.READER_VIEWS_1)
 
 
+def test_each_view_case_differs_only_in_answer_signer_auth():
+    objs = [copy.deepcopy(c["object"]) for c in KAT["view"]["cases"]]
+    assert [o["answer"]["signer"]["auth"] for o in objs] == ["convenience", "passphrase", "bogus"]
+    for o in objs:
+        del o["answer"]["signer"]["auth"]
+    assert objs[0] == objs[1] == objs[2]
+    assert objs[0]["state"] == "answered"
+
+
 def test_each_log_case_differs_only_in_auth_and_its_signatures():
     events = [c["event"] for c in KAT["log"]["cases"]]
     strip = [{k: v for k, v in e.items() if k not in ("auth", "sig", "host_sig")} for e in events]
@@ -109,19 +118,30 @@ def test_another_pinned_workspace_or_genesis_refuses_every_case_or_the_fixture()
     ],
 )
 def test_parse_signer(signer, accepted):
-    view = {"seq": 1, "signer": signer}
+    view = {"id": "Q1", "state": "answered", "answer": {"by": "p_" + "ab" * 16, "signer": signer}}
     if accepted:
-        assert reader.parse_signer(view) == signer["auth"]
+        assert reader.parse_signer(VIEW, view) == signer["auth"]
     else:
         with pytest.raises(ValueError):
-            reader.parse_signer(view)
+            reader.parse_signer(VIEW, view)
 
 
-def test_parse_signer_needs_a_signer():
+VIEW = "ticket.get.questions.answer"
+
+
+def test_reader_views_1_is_the_question_answer_only():
+    """Owner decision with orch-f1 (#463 round 1): the answer of a question in ticket.get is the only place the phone
+    shows a signer."""
+    assert reader.READER_VIEWS_1 == (VIEW,)
+
+
+def test_parse_signer_needs_an_answer_with_a_signer():
+    for bad in ({"id": "Q1"}, {"id": "Q1", "answer": None}, {"id": "Q1", "answer": {"by": "x"}}, [], None):
+        with pytest.raises(ValueError):
+            reader.parse_signer(VIEW, bad)
+    ok = {"id": "Q1", "answer": {"signer": {"device": "d_" + "ab" * 16, "auth": "passphrase"}}}
     with pytest.raises(ValueError):
-        reader.parse_signer({"seq": 1})
-    with pytest.raises(ValueError):
-        reader.parse_signer([])
+        reader.parse_signer("activity.list.items", ok)  # not a reader view
 
 
 def test_the_view_auth_values_are_the_event_schema_values():
@@ -133,7 +153,7 @@ def test_the_view_auth_values_are_the_event_schema_values():
 
 def test_a_corpus_without_every_reader_view_is_refused():
     kat = copy.deepcopy(KAT)
-    kat["view"]["cases"] = [c for c in kat["view"]["cases"] if c["view"] != "ticket.get.log"]
+    kat["view"]["cases"] = kat["view"]["cases"][:2]
     with pytest.raises(ValueError):
         reader.run_kat(kat, "view")
     with pytest.raises(ValueError):

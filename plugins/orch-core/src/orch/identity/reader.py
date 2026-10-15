@@ -71,16 +71,17 @@ SURFACES = ("log", "view")
 FUTURE_MS = 300_000
 ENROL_MAX_AGE_MS = 30 * 86_400_000
 CODE = "reader.decl_invalid"
-READER_VIEWS_1 = ("activity.list.items", "ticket.get.log", "ticket.get.gates.decisions")
-"""The view entries that attribute a decision or a history entry and carry ``signer: {device, auth}`` (9.11), in
-corpus order. Provisional: H12d-2 fixes the exact list with orch-f1 (a needs item that shows a past decision would be
-added there; no NeedItem kind shows one today)."""
+READER_VIEWS_1 = ("ticket.get.questions.answer",)
+"""The view entries whose ``signer: {device, auth}`` a level-1 reader parses (9.11), in corpus order. Owner decision
+with orch-f1 (#463 round 1): only the answer of a question in ``ticket.get`` (``questions[].answer.signer``), the one
+place the phone shows a signer. A later phone build that renders a signer elsewhere needs ``READER_VIEWS_2`` (a new
+corpus and a new level), never a silent change of this list."""
 KAT_DIGESTS: Mapping[str, Mapping[str, str]] = MappingProxyType(
     {
         "1": MappingProxyType(
             {
                 "log": "sha256:70b450df574b6c372005b7504a7f9efe80552cb2841193b960fe538c6aa6fc0e",
-                "view": "sha256:117a2734423b0a97756bb56d4c8ebafbc712226580c152757ccdbaa4d6f2493d",
+                "view": "sha256:d76e4593ec191e91ca2f6bddef570cbfa1af14dae702bb5ded0572eebe1d9085",
             }
         )
     }
@@ -303,13 +304,20 @@ def auth_values() -> tuple[str, ...]:
 _DEVICE_REF = re.compile(r"d_[0-9a-f]{32}")
 
 
-def parse_signer(view: object) -> str:
-    """The production parser of ``signer`` in a ``READER_VIEWS_1`` entry (9.11): exactly ``{device, auth}``, a
-    ``d_`` device id and a known ``auth``; returns the ``auth``. Anything else raises :class:`ValueError`: an unknown
-    ``auth`` is refused, never mapped to a known one (level 1). H12d-2 checks every emitted ``signer`` with it."""
-    if type(view) is not dict or "signer" not in view:
-        raise ValueError("a reader view entry carries signer")
-    signer = view["signer"]
+def _signer_of(view: str, entry: object) -> object:
+    if view == "ticket.get.questions.answer":
+        if type(entry) is not dict or type(entry.get("answer")) is not dict or "signer" not in entry["answer"]:
+            raise ValueError("a ticket.get question entry carries answer.signer")
+        return entry["answer"]["signer"]
+    raise ValueError(f"{view!r} is not one of {READER_VIEWS_1}")
+
+
+def parse_signer(view: str, entry: object) -> str:
+    """The production parser of the ``signer`` of a ``READER_VIEWS_1`` entry (9.11): for
+    ``ticket.get.questions.answer`` the ``answer.signer`` of a Question; exactly ``{device, auth}``, a ``d_`` device
+    id and a known ``auth``; returns the ``auth``. Anything else raises :class:`ValueError`: an unknown ``auth`` is
+    refused, never mapped to a known one (level 1). H12d-2 checks every emitted ``signer`` with it."""
+    signer = _signer_of(view, entry)
     if type(signer) is not dict or set(signer) != {"device", "auth"}:
         raise ValueError("signer is exactly {device, auth}")
     if type(signer["device"]) is not str or not _DEVICE_REF.fullmatch(signer["device"]):
@@ -378,7 +386,7 @@ def _run_view(corpus: Mapping[str, Any]) -> list[dict[str, Any]]:
     results = []
     for case in part["cases"]:
         try:
-            auth: str | None = parse_signer(case["object"])
+            auth: str | None = parse_signer(case["view"], case["object"])
         except ValueError:
             auth = None
         results.append({"view": case["view"], "accepted": auth is not None, "auth": auth})

@@ -3,7 +3,7 @@
  "expected": {
   "1": {
    "log": "sha256:70b450df574b6c372005b7504a7f9efe80552cb2841193b960fe538c6aa6fc0e",
-   "view": "sha256:117a2734423b0a97756bb56d4c8ebafbc712226580c152757ccdbaa4d6f2493d"
+   "view": "sha256:d76e4593ec191e91ca2f6bddef570cbfa1af14dae702bb5ded0572eebe1d9085"
   }
  },
  "log": {
@@ -241,296 +241,168 @@
     "expect": {
      "accepted": true,
      "auth": "convenience",
-     "view": "activity.list.items"
+     "view": "ticket.get.questions.answer"
     },
-    "name": "activity.list.items/convenience",
+    "name": "ticket.get.questions.answer/convenience",
     "object": {
-     "actor": {
-      "device": "d_c65032f21d43401cc223b05723c1e5b4",
-      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "answer": {
+      "at": "2026-10-10T10:10:00Z",
+      "by": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "option": "a",
+      "seq": 3,
+      "signer": {
+       "auth": "convenience",
+       "device": "d_c65032f21d43401cc223b05723c1e5b4"
+      },
+      "text": null
+     },
+     "answered_by": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "answered_seq": 3,
+     "asked_at": "2026-10-10T10:05:00Z",
+     "asked_by": {
+      "device": "d_7efc1ba896b95f9151978a1dad982e3a",
+      "id": "p_6aae5cce832160e6f8cd9dadfbb4c5cd",
       "kind": "person"
      },
-     "at": "2026-10-10T10:10:00Z",
-     "data": {},
-     "id": "3.e",
-     "jpos": 3,
-     "key": null,
-     "log": "workspace",
-     "seq": 3,
-     "signer": {
-      "auth": "convenience",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "summary": "settings changed: grant_hours",
-     "title": null,
-     "type": "settings.changed",
-     "uid": null,
-     "ws_seq": 3
+     "asked_seq": 2,
+     "blocking": true,
+     "id": "Q1",
+     "options": [
+      {
+       "key": "a",
+       "label": "yes"
+      },
+      {
+       "key": "b",
+       "label": "no"
+      }
+     ],
+     "state": "answered",
+     "text": "Ship the reader handshake first?",
+     "to": [
+      "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+     ]
     },
-    "view": "activity.list.items"
+    "view": "ticket.get.questions.answer"
    },
    {
     "expect": {
      "accepted": true,
      "auth": "passphrase",
-     "view": "activity.list.items"
+     "view": "ticket.get.questions.answer"
     },
-    "name": "activity.list.items/passphrase",
+    "name": "ticket.get.questions.answer/passphrase",
     "object": {
-     "actor": {
-      "device": "d_c65032f21d43401cc223b05723c1e5b4",
-      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "answer": {
+      "at": "2026-10-10T10:10:00Z",
+      "by": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "option": "a",
+      "seq": 3,
+      "signer": {
+       "auth": "passphrase",
+       "device": "d_c65032f21d43401cc223b05723c1e5b4"
+      },
+      "text": null
+     },
+     "answered_by": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "answered_seq": 3,
+     "asked_at": "2026-10-10T10:05:00Z",
+     "asked_by": {
+      "device": "d_7efc1ba896b95f9151978a1dad982e3a",
+      "id": "p_6aae5cce832160e6f8cd9dadfbb4c5cd",
       "kind": "person"
      },
-     "at": "2026-10-10T10:10:00Z",
-     "data": {},
-     "id": "3.e",
-     "jpos": 3,
-     "key": null,
-     "log": "workspace",
-     "seq": 3,
-     "signer": {
-      "auth": "passphrase",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "summary": "settings changed: grant_hours",
-     "title": null,
-     "type": "settings.changed",
-     "uid": null,
-     "ws_seq": 3
+     "asked_seq": 2,
+     "blocking": true,
+     "id": "Q1",
+     "options": [
+      {
+       "key": "a",
+       "label": "yes"
+      },
+      {
+       "key": "b",
+       "label": "no"
+      }
+     ],
+     "state": "answered",
+     "text": "Ship the reader handshake first?",
+     "to": [
+      "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+     ]
     },
-    "view": "activity.list.items"
+    "view": "ticket.get.questions.answer"
    },
    {
     "expect": {
      "accepted": false,
      "auth": null,
-     "view": "activity.list.items"
+     "view": "ticket.get.questions.answer"
     },
-    "name": "activity.list.items/bogus",
+    "name": "ticket.get.questions.answer/bogus",
     "object": {
-     "actor": {
-      "device": "d_c65032f21d43401cc223b05723c1e5b4",
-      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "answer": {
+      "at": "2026-10-10T10:10:00Z",
+      "by": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "option": "a",
+      "seq": 3,
+      "signer": {
+       "auth": "bogus",
+       "device": "d_c65032f21d43401cc223b05723c1e5b4"
+      },
+      "text": null
+     },
+     "answered_by": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "answered_seq": 3,
+     "asked_at": "2026-10-10T10:05:00Z",
+     "asked_by": {
+      "device": "d_7efc1ba896b95f9151978a1dad982e3a",
+      "id": "p_6aae5cce832160e6f8cd9dadfbb4c5cd",
       "kind": "person"
      },
-     "at": "2026-10-10T10:10:00Z",
-     "data": {},
-     "id": "3.e",
-     "jpos": 3,
-     "key": null,
-     "log": "workspace",
-     "seq": 3,
-     "signer": {
-      "auth": "bogus",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "summary": "settings changed: grant_hours",
-     "title": null,
-     "type": "settings.changed",
-     "uid": null,
-     "ws_seq": 3
+     "asked_seq": 2,
+     "blocking": true,
+     "id": "Q1",
+     "options": [
+      {
+       "key": "a",
+       "label": "yes"
+      },
+      {
+       "key": "b",
+       "label": "no"
+      }
+     ],
+     "state": "answered",
+     "text": "Ship the reader handshake first?",
+     "to": [
+      "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+     ]
     },
-    "view": "activity.list.items"
-   },
-   {
-    "expect": {
-     "accepted": true,
-     "auth": "convenience",
-     "view": "ticket.get.log"
-    },
-    "name": "ticket.get.log/convenience",
-    "object": {
-     "actor": {
-      "device": "d_c65032f21d43401cc223b05723c1e5b4",
-      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-      "kind": "person"
-     },
-     "at": "2026-10-10T10:10:00Z",
-     "data": {},
-     "seq": 2,
-     "signer": {
-      "auth": "convenience",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "summary": "approved requirements",
-     "type": "gate.approved"
-    },
-    "view": "ticket.get.log"
-   },
-   {
-    "expect": {
-     "accepted": true,
-     "auth": "passphrase",
-     "view": "ticket.get.log"
-    },
-    "name": "ticket.get.log/passphrase",
-    "object": {
-     "actor": {
-      "device": "d_c65032f21d43401cc223b05723c1e5b4",
-      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-      "kind": "person"
-     },
-     "at": "2026-10-10T10:10:00Z",
-     "data": {},
-     "seq": 2,
-     "signer": {
-      "auth": "passphrase",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "summary": "approved requirements",
-     "type": "gate.approved"
-    },
-    "view": "ticket.get.log"
-   },
-   {
-    "expect": {
-     "accepted": false,
-     "auth": null,
-     "view": "ticket.get.log"
-    },
-    "name": "ticket.get.log/bogus",
-    "object": {
-     "actor": {
-      "device": "d_c65032f21d43401cc223b05723c1e5b4",
-      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-      "kind": "person"
-     },
-     "at": "2026-10-10T10:10:00Z",
-     "data": {},
-     "seq": 2,
-     "signer": {
-      "auth": "bogus",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "summary": "approved requirements",
-     "type": "gate.approved"
-    },
-    "view": "ticket.get.log"
-   },
-   {
-    "expect": {
-     "accepted": true,
-     "auth": "convenience",
-     "view": "ticket.get.gates.decisions"
-    },
-    "name": "ticket.get.gates.decisions/convenience",
-    "object": {
-     "at": "2026-10-10T10:10:00Z",
-     "counting": true,
-     "gen": 1,
-     "id": "01J9ZK000000000000000000W4",
-     "kind": "approved",
-     "person": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-     "seq": 2,
-     "signer": {
-      "auth": "convenience",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "voided": false
-    },
-    "view": "ticket.get.gates.decisions"
-   },
-   {
-    "expect": {
-     "accepted": true,
-     "auth": "passphrase",
-     "view": "ticket.get.gates.decisions"
-    },
-    "name": "ticket.get.gates.decisions/passphrase",
-    "object": {
-     "at": "2026-10-10T10:10:00Z",
-     "counting": true,
-     "gen": 1,
-     "id": "01J9ZK000000000000000000W4",
-     "kind": "approved",
-     "person": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-     "seq": 2,
-     "signer": {
-      "auth": "passphrase",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "voided": false
-    },
-    "view": "ticket.get.gates.decisions"
-   },
-   {
-    "expect": {
-     "accepted": false,
-     "auth": null,
-     "view": "ticket.get.gates.decisions"
-    },
-    "name": "ticket.get.gates.decisions/bogus",
-    "object": {
-     "at": "2026-10-10T10:10:00Z",
-     "counting": true,
-     "gen": 1,
-     "id": "01J9ZK000000000000000000W4",
-     "kind": "approved",
-     "person": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-     "seq": 2,
-     "signer": {
-      "auth": "bogus",
-      "device": "d_c65032f21d43401cc223b05723c1e5b4"
-     },
-     "voided": false
-    },
-    "view": "ticket.get.gates.decisions"
+    "view": "ticket.get.questions.answer"
    }
   ],
-  "digest": "sha256:117a2734423b0a97756bb56d4c8ebafbc712226580c152757ccdbaa4d6f2493d",
-  "how": "for each case: the production view parser reads `object` as an entry of view `view` (READER_VIEWS_1); accepted = it parses and its signer.auth is a known auth value; result = {view, accepted, auth: signer.auth if accepted else null}",
+  "digest": "sha256:d76e4593ec191e91ca2f6bddef570cbfa1af14dae702bb5ded0572eebe1d9085",
+  "how": "for each case: the production view parser reads `object` as an entry of view `view` (READER_VIEWS_1: a ticket.get Question whose answer carries signer); accepted = it parses and answer.signer.auth is a known auth value; result = {view, accepted, auth: answer.signer.auth if accepted else null}",
   "results": [
    {
     "accepted": true,
     "auth": "convenience",
-    "view": "activity.list.items"
+    "view": "ticket.get.questions.answer"
    },
    {
     "accepted": true,
     "auth": "passphrase",
-    "view": "activity.list.items"
+    "view": "ticket.get.questions.answer"
    },
    {
     "accepted": false,
     "auth": null,
-    "view": "activity.list.items"
-   },
-   {
-    "accepted": true,
-    "auth": "convenience",
-    "view": "ticket.get.log"
-   },
-   {
-    "accepted": true,
-    "auth": "passphrase",
-    "view": "ticket.get.log"
-   },
-   {
-    "accepted": false,
-    "auth": null,
-    "view": "ticket.get.log"
-   },
-   {
-    "accepted": true,
-    "auth": "convenience",
-    "view": "ticket.get.gates.decisions"
-   },
-   {
-    "accepted": true,
-    "auth": "passphrase",
-    "view": "ticket.get.gates.decisions"
-   },
-   {
-    "accepted": false,
-    "auth": null,
-    "view": "ticket.get.gates.decisions"
+    "view": "ticket.get.questions.answer"
    }
   ],
   "views": [
-   "activity.list.items",
-   "ticket.get.log",
-   "ticket.get.gates.decisions"
+   "ticket.get.questions.answer"
   ]
  }
 }

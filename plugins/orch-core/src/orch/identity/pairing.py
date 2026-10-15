@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import base64
 import re
-import unicodedata
 from dataclasses import dataclass, field
 
 from orch import canon, crypto
+from orch.canon.text import is_assigned, is_format
 from orch.crypto.labels import L
 from orch.relay.wire import WireError, check_origin
 
@@ -338,7 +338,6 @@ def parse_pair_link(text: str) -> PairLink:
 # --- 4. the pair request's meta and its label (§8.3 steps 2-3, §2.5) -------------------------------------------------
 
 MAX_LABEL = 80  # code points, protocol §2.5 (the relay reference's MAX_LABEL)
-_REMOVED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Co", "Cn"})
 # Default_Ignorable_Code_Point (Unicode DerivedCoreProperties), the relay reference's table verbatim.
 _IGNORABLE = (
     (0x00AD, 0x00AD),
@@ -361,19 +360,39 @@ _IGNORABLE = (
 )
 
 
+def _fixed_category(o: int) -> bool:
+    """Cc, Zl, Zp and Co: fixed sets under the Unicode stability policy, so literal ranges are exact for every
+    version."""
+    return (
+        o <= 0x1F
+        or 0x7F <= o <= 0x9F
+        or o in (0x2028, 0x2029)
+        or 0xE000 <= o <= 0xF8FF
+        or 0xF0000 <= o <= 0xFFFFD
+        or 0x100000 <= o <= 0x10FFFD
+    )
+
+
 def _removed(c: str) -> bool:
     if c == "\n":
         return False
     o = ord(c)
-    return unicodedata.category(c) in _REMOVED_CATEGORIES or any(a <= o <= b for a, b in _IGNORABLE)
+    return (
+        _fixed_category(o)
+        or is_format(o)  # Cf, Unicode 16.0 (orch.canon._unicode16)
+        or not is_assigned(o)  # Cn, Unicode 16.0
+        or any(a <= o <= b for a, b in _IGNORABLE)
+    )
 
 
 def clean_label(text: str) -> str:
     """A device-chosen label as the receiving host records it (protocol §2.5, bridge v1 §9.3): every code point of
     category Cc (except LF), Cf, Zl, Zp, Co and Cn removed, every Default_Ignorable_Code_Point removed, **no
     normalisation**, then truncated to :data:`MAX_LABEL` code points. Lone surrogates are refused (strict JSON never
-    yields them). ``Cn`` follows this Python's Unicode database. A display shows the result as named by the device,
-    never as an authenticated name.
+    yields them). ``Cn`` and ``Cf`` are Unicode **16.0**, from core's vendored tables (``orch.canon._unicode16``, the
+    version ticket-format §11.3 pins), never the running Python's ``unicodedata``: a label is recorded the same on
+    every interpreter and across an upgrade. A display shows the result as named by the device, never as an
+    authenticated name.
 
     No NFC here (decided 15 Oct 2026: exactly §2.5, as the relay reference and the vectors have it). NFC is applied
     only when core writes an F1 copy of the label (the ticket format's own text rule), never to the recorded or

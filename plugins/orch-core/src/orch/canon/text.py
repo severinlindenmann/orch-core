@@ -43,7 +43,9 @@ __all__ = [
     "check_text",
     "clean",
     "clean_line",
+    "is_assigned",
     "is_clean_text",
+    "is_format",
     "nfc",
     "normalize_text",
     "show_invisible",
@@ -102,6 +104,16 @@ def _in_ranges(starts: list[int], ranges: list[tuple[int, ...]], cp: int) -> boo
 
 def _assigned(cp: int) -> bool:
     return _in_ranges(_ASSIGNED_STARTS, _ASSIGNED, cp)
+
+
+def is_assigned(cp: int) -> bool:
+    """Whether code point ``cp`` is assigned (General_Category not Cn) in Unicode 16.0, whatever the runtime ships."""
+    return _assigned(cp)
+
+
+def is_format(cp: int) -> bool:
+    """Whether code point ``cp`` is a format character (General_Category Cf) in Unicode 16.0."""
+    return _in_ranges(_CF_STARTS, _CF, cp)
 
 
 @lru_cache(maxsize=4096)

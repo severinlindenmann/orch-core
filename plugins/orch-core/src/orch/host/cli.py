@@ -23,9 +23,17 @@ from .errors import HostError
 __all__ = ["default_peers", "disable", "enable", "ensure_service", "main"]
 
 
+class _Exact(argparse.ArgumentParser):
+    """No abbreviated long option (``--dev-sim`` never means ``--dev-sim-convenience``), in every subcommand."""
+
+    def __init__(self, *args: Any, **kw: Any) -> None:
+        kw["allow_abbrev"] = False
+        super().__init__(*args, **kw)
+
+
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="orch host", description="the orch host service")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = _Exact(prog="orch host", description="the orch host service")
+    sub = p.add_subparsers(dest="cmd", required=True, parser_class=_Exact)
     run = sub.add_parser("run", help="serve every registered workspace (the service manager runs this)")
     run.add_argument("--foreground", action="store_true", help="dev mode: run directory <state>/run")
     run.add_argument(
@@ -189,6 +197,9 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
 
                 devmode.check_launch(args.foreground, env, run_dir, state)
                 dev = devmode.prove(state, env)
+                from orch import devsandbox
+
+                devsandbox.mark_dev_process()  # the click signer refuses in this process whatever its arguments
             preload()
             host = Host(state, run_dir, dev_runner=args.dev_runner, dev=dev)
             if dev is not None:

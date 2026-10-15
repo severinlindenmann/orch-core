@@ -156,6 +156,7 @@ def observe_relay_level(
     *,
     origin: str,
     clock: Any = time.time,
+    gated: Any = None,
 ) -> bool:
     """The R1 login hook (9.8), bound to its link (#555 review F2, DECIDED): R5 builds it per session with that
     session's link origin, ``relay_info=lambda lv: observe_relay_level(state, ws, uid, lv, alarm, origin=origin)``.
@@ -175,7 +176,10 @@ def observe_relay_level(
             link = read_json(link_path(state_dir, workspace_id), host_uid)
             if not isinstance(link, dict) or link.get("origin") != origin:
                 return False
-            on = enabled(state_dir, workspace_id, host_uid) or convenience_seen(state_dir, workspace_id)
+            # the flag or the Simulator dev gate (``gated``: orch.host.devmode.gated of the service, §11A.17.4; the
+            # same rule as convenience.flag_or_gate), or the durable mark
+            dev = gated is not None and gated() is True
+            on = enabled(state_dir, workspace_id, host_uid) or dev or convenience_seen(state_dir, workspace_id)
             required = 1 if on else 0
             write_relay_level(state_dir, workspace_id, host_uid, level, int(clock() * 1000))
     except Exception as exc:  # noqa: BLE001 - the stored level stays; say so

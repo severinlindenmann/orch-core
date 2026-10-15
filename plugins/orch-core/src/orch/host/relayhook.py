@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .devmode import gated as devmode_gated
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -283,7 +284,10 @@ def start_worker(
             # H12d-3 9.8: every login re-reads the relay's reader level; stored only while link.json still names THIS
             # origin, exactly as link.json stores it (#555 F2), under relay-link.lock (a leaf lock: no store lock,
             # no relay_cond; it runs on a relay thread under the session's login lock)
-            relaylink.observe_relay_level(service.state_dir, ws, service.host_uid, level, alarms, origin=origin)
+            relaylink.observe_relay_level(
+                service.state_dir, ws, service.host_uid, level, alarms, origin=origin,
+                gated=lambda: devmode_gated(service),
+            )  # fmt: skip
 
         session = Session(conn(), signer, holder=FileHolderStore(state), alarm=alarms, stop=stop, relay_info=observe)
 

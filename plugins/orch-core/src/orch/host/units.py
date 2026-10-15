@@ -37,12 +37,15 @@ DEV_ONLY_FLAGS = ("--dev-sim-convenience", "--dev-runner", "--foreground")
 
 def refuse_dev_flags(args: list[str]) -> None:
     """Every unit writer (launchd, systemd; host and runner) refuses a dev-only flag in a unit's argv
-    (``invalid.input``), also one spelled ``--flag=…`` or passed as a path value."""
+    (``invalid.input``): the exact token, ``--flag=…``, and any prefix of it (the CLIs take no abbreviation either,
+    ``allow_abbrev=False``)."""
     from .errors import HostError
 
     for arg in args:
-        if any(arg == flag or arg.startswith(flag + "=") for flag in DEV_ONLY_FLAGS):
-            raise HostError("invalid.input", f"{arg.split('=')[0]} is never written into a service unit")
+        name = arg.split("=", 1)[0]
+        # the exact token and any abbreviation argparse could expand to it (``--dev-sim``, ``--fore``, ``--dev``)
+        if len(name) > 2 and name.startswith("--") and any(flag.startswith(name) for flag in DEV_ONLY_FLAGS):
+            raise HostError("invalid.input", f"{name} is never written into a service unit")
 
 
 def program_arguments(

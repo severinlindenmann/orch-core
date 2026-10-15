@@ -39,6 +39,14 @@ def sbx(tmp_path):
         lab.close()
 
 
+def _write_registry(state: Path, *entries: Any) -> None:
+    """The registry edited on disk (it bypasses admit): what the start-time check must catch."""
+    from orch.host.custody import write_private
+    from orch.host.registry import registry_path
+
+    write_private(registry_path(state), {"v": 1, "workspaces": [e.to_doc() for e in entries]})
+
+
 def _reason(exc: pytest.ExceptionInfo) -> str:
     assert exc.value.code == "host.dev_refused", exc.value
     return exc.value.detail["reason"]
@@ -227,11 +235,9 @@ def test_real_workspace_on_dev_host_refuses_convenience(sbx, tmp_path):
         with sbx.host(dev=dev) as h:
             res = h.client().call("host.register", {"root": real.root, "peers": real.peers()}, idem=new_idem())
             assert not res["ok"] and h.host.registry.entries() == []
-        from orch.host.registry import Entry, Registry, group_name
+        from orch.host.registry import Entry, group_name
 
-        reg = Registry(sbx.state, UID)
-        reg.load()
-        reg.add(Entry("b" * 32, "DEMO", real.root, UID, group_name("b" * 32), real.peers()))
+        _write_registry(sbx.state, Entry("b" * 32, "DEMO", real.root, UID, group_name("b" * 32), real.peers()))
         h = sbx.host(dev=dev)
         with pytest.raises(HostError) as e:
             h.__enter__()
@@ -317,7 +323,9 @@ def test_normal_host_skips_and_alarms_sbx_in_registry_at_start(sbx, tmp_path):
             ok(real.register(h.client()))
         reg = Registry(real.state, UID)
         reg.load()
-        reg.add(Entry("e" * 32, "SBX", sbx.root, UID, group_name("e" * 32), sbx.peers()))
+        _write_registry(
+            real.state, *reg.entries(), Entry("e" * 32, "SBX", sbx.root, UID, group_name("e" * 32), sbx.peers())
+        )
         with real.host() as h:
             assert "e" * 32 not in h.host.services
             assert len(h.host.services) == 1
@@ -342,8 +350,9 @@ def _calls(fn: ast.AST) -> list[ast.Call]:
 
 
 def test_registry_add_paths_table():
-    """Every registry add goes through orch.host.registry.admit (§11A.17.3 R5): Registry.add is called nowhere else
-    in the package, and admit's callers are exactly these paths. Restore and relay adopt reach the registry only
+    """Every registry add goes through orch.host.registry.admit (§11A.17.3 R5; structural through the admit token,
+    this AST table is the extra check): Registry._add is called nowhere else in the package, and admit's callers are
+    exactly these paths. Restore and relay adopt reach the registry only
     through host.register."""
     adds, admits = [], []
     for path in SRC.rglob("*.py"):
@@ -353,7 +362,7 @@ def test_registry_add_paths_table():
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in _calls(fn):
-                if isinstance(node.func, ast.Attribute) and node.func.attr == "add":
+                if isinstance(node.func, ast.Attribute) and node.func.attr in ("add", "_add"):
                     if ast.unparse(node.func.value).endswith("registry"):
                         adds.append((path.name, fn.name))
                 if imports_admit and isinstance(node.func, ast.Name) and node.func.id == "admit":
@@ -719,3 +728,106 @@ def test_dev_host_logs_its_line_at_start(sbx, caplog):
         assert devmode.status_line(sbx.dev()) == line
     finally:
         served.close()
+
+
+def test_normal_host_skips_sbx_when_the_registry_prefix_was_edited(sbx, tmp_path):
+    """The registry's prefix says DEMO, the workspace's own genesis line says SBX: skipped and alarmed all the same."""
+    from orch.host.registry import Entry, Registry, group_name
+
+    real = Lab(tmp_path / "real")
+    try:
+        with real.host() as h:
+            ok(real.register(h.client()))
+        reg = Registry(real.state, UID)
+        reg.load()
+        edited = Entry("e" * 32, "DEMO", sbx.root, UID, group_name("e" * 32), sbx.peers())
+        _write_registry(real.state, *reg.entries(), edited)
+        with real.host() as h:
+            assert "e" * 32 not in h.host.services and len(h.host.services) == 1
+            listed = ok(h.client().call("host.list"))["data"]
+            assert listed["alarms"] == [{"code": "sandbox_workspace_registered", "workspace_id": "e" * 32}]
+    finally:
+        real.close()
+
+
+def test_registry_add_needs_the_admit_token(tmp_path):
+    """The choke point is structural: Registry has no public add; _add and _save refuse a new entry without the
+    single-use token that only admit creates (an alias, a lambda or Registry._add(r, e) cannot bypass it)."""
+    from orch.host import registry as reg_mod
+    from orch.host.registry import AdmitToken, Entry, Registry, group_name
+
+    reg = Registry(tmp_path / "state", UID)
+    (tmp_path / "state").mkdir()
+    reg.load()
+    entry = Entry("c" * 32, "DEMO", str(tmp_path / "ws"), UID, group_name("c" * 32), {})
+    assert not hasattr(reg, "add") and not hasattr(Registry, "add")
+    for token in (None, object(), "admit"):
+        with pytest.raises(HostError) as e:
+            Registry._add(reg, entry, token)
+        assert e.value.code == "internal"
+    with pytest.raises(HostError):
+        AdmitToken(object(), entry)  # only admit holds the key
+    with pytest.raises(HostError):
+        reg._save({entry.workspace_id: entry})  # a new entry through _save: refused
+    assert reg.entries() == [] and not reg.path.exists()
+    token = AdmitToken(reg_mod._ADMIT_KEY, entry)  # what admit makes (the test reaches the private key)
+    other = Entry("d" * 32, "DEMO", str(tmp_path / "ws2"), UID, group_name("d" * 32), {})
+    with pytest.raises(HostError):
+        reg._add(other, token)  # bound to its entry
+    reg._add(entry, token)
+    assert [e.workspace_id for e in reg.entries()] == ["c" * 32]
+    reg.remove(entry.workspace_id)
+    with pytest.raises(HostError):
+        reg._add(entry, token)  # single use
+
+
+@pytest.mark.parametrize("argv", [["run", "--dev-sim"], ["run", "--fore"], ["run", "--dev-sim-c"], ["run", "--dev-r"]])
+def test_host_cli_takes_no_abbreviated_flag(argv):
+    from orch.host.cli import _parser
+
+    with pytest.raises(SystemExit):
+        _parser().parse_args(argv)
+    full = {"--dev-sim": "--dev-sim-convenience", "--dev-sim-c": "--dev-sim-convenience", "--fore": "--foreground"}
+    if argv[1] in full:
+        _parser().parse_args(["run", full[argv[1]]])  # the exact flag still parses
+
+
+def test_runner_cli_takes_no_abbreviated_flag():
+    from orch.runner.cli import _parser
+
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["run", "--fore"])
+    _parser().parse_args(["run", "--foreground"])
+
+
+@pytest.mark.parametrize("arg", ["--dev-sim", "--fore", "--dev", "--dev-r", "--dev-sim=1", "--foreg=x"])
+def test_unit_writers_refuse_dev_flag_prefixes(tmp_path, arg):
+    from orch.host import units
+    from orch.runner import service as runner_service
+
+    py, rel, st, run = Path("/usr/bin/python3"), Path("/opt/orch/r"), tmp_path / "s", tmp_path / "r"
+    with pytest.raises(HostError):
+        units.launchd_plist(py, rel, st, run_dir=run, extra_args=(arg,))
+    with pytest.raises(HostError):
+        runner_service.systemd_unit(py, rel, st, run, extra_args=(arg,))
+    units.launchd_plist(py, rel, st, run_dir=run, extra_args=("--x", "--"))  # not a prefix of a dev flag
+
+
+def test_cli_marks_the_dev_process_after_the_proof(sbx, monkeypatch):
+    """After prove() the CLI marks the process: the click signer's refusal is structural in-process too."""
+    from orch.host import cli, release, service
+
+    monkeypatch.setattr(devsandbox, "_PROCESS_DEV_HOST", False)
+    monkeypatch.setattr(release, "preload", lambda: None)
+
+    class FakeHost:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            assert k["dev"] is not None and devsandbox._PROCESS_DEV_HOST is True  # marked before the host exists
+
+        async def run(self) -> None:
+            return None
+
+    monkeypatch.setattr(service, "Host", FakeHost)
+    argv = ["run", "--foreground", "--dev-sim-convenience", "--state", str(sbx.state), "--run", str(sbx.run)]
+    assert cli.main(argv, env=sbx.env(), out=io.StringIO()) == 0
+    assert devsandbox.click_refusal(sbx.tmp / "anywhere", {}) == "dev_host"

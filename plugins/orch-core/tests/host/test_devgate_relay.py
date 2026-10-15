@@ -269,10 +269,37 @@ def test_worker_restart_with_convenience_history_on_level1_relay(dev_served):
     log, fields = _question(dev_served)
     _submit(dev_served, entry, log, _answer(dev_served, log, fields), rd)
     service = dev_served.service
+    from orch.host.relayr6 import _convenience_block
+
     write_relay_level(dev_served.lab.state, dev_served.wid, service.host_uid, 1, 1)
     assert _on_worker(dev_served, lambda: convenience_block(service)) is None
+    assert _on_worker(dev_served, lambda: _convenience_block(service)) is None  # R6's copy reads the level too
     write_relay_level(dev_served.lab.state, dev_served.wid, service.host_uid, 0, 2)
     assert _on_worker(dev_served, lambda: convenience_block(service)) == "convenience_events_present"
+    assert _on_worker(dev_served, lambda: _convenience_block(service)) == "convenience_events_present"
+
+
+def test_the_gate_counts_as_the_flag_for_reader_checks(dev_served):
+    """flag_or_gate everywhere the flag decides required_reader: a reader op is refused while the gate passes, and
+    observe_relay_level alarms a level-0 relay on a gated workspace (the worker is not halted: the alarm is the
+    rule)."""
+    from orch.host.relaylink import link_path, observe_relay_level
+
+    service = dev_served.service
+    with pytest.raises(HostError) as e:
+        _on_worker(dev_served, lambda: convenience.refuse_reader_op(service, "member.add"))
+    assert e.value.code == "sign.convenience_readers"
+    path = link_path(dev_served.lab.state, dev_served.wid)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    from orch.host.custody import write_private
+
+    write_private(path, {"origin": "https://relay.dev.example"})
+    alarms: list[tuple[str, str]] = []
+    observe_relay_level(
+        dev_served.lab.state, dev_served.wid, service.host_uid, 0, lambda c, d: alarms.append((c, d)),
+        origin="https://relay.dev.example", gated=lambda: devmode.gated(service),
+    )  # fmt: skip
+    assert [c for c, _ in alarms] == ["relay_reader_old"]
 
 
 def test_dev_host_link_to_other_origin_refused(dev_served):

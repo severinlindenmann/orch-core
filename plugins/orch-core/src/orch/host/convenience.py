@@ -285,7 +285,7 @@ def refuse_reader_op(
             hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)." + READER_UPGRADE,
             detail={"reason": reason, "devices": []},
         )
-    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+    if flag_or_gate(service):  # §11A.17.4: the dev gate counts as the flag
         raise HostError(
             "sign.convenience_readers",
             f"{reason}: {op} adds a reader while convenience signing is on for this workspace",

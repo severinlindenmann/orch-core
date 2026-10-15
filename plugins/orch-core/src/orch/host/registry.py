@@ -26,7 +26,28 @@ from .errors import HostError
 from .peer import Peer
 from .pins import AgentPins
 
-__all__ = ["Entry", "Registry", "admit", "host_dir", "registry_path", "validate_peers"]
+__all__ = ["AdmitToken", "Entry", "Registry", "admit", "host_dir", "registry_path", "validate_peers"]
+
+#: the key only :func:`admit` holds: an :class:`AdmitToken` cannot be made without it (§11A.17.3 R5, structural)
+_ADMIT_KEY = object()
+
+
+class AdmitToken:
+    """Proof that :func:`admit` decided this exact entry (§11A.17.3 R5): made only with :data:`_ADMIT_KEY`, bound to
+    one entry, spent by the first :meth:`Registry._add`. Without one, neither ``_add`` nor ``_save`` adds anything."""
+
+    __slots__ = ("_entry", "_spent")
+
+    def __init__(self, key: object, entry: Entry) -> None:
+        if key is not _ADMIT_KEY:
+            raise HostError("internal", "a registry entry is added only through orch.host.registry.admit")
+        self._entry, self._spent = entry, False
+
+    def spend(self, entry: Entry) -> None:
+        if self._spent or self._entry is not entry:
+            raise HostError("internal", "an admit token is used once, for the entry admit decided")
+        self._spent = True
+
 
 WS_ID = re.compile(r"[0-9a-f]{32}")
 PERSON = re.compile(r"p_[0-9a-f]{32}")
@@ -197,18 +218,30 @@ class Registry:
         with self._lock:
             self._entries = entries
 
-    def _save(self, entries: dict[str, Entry]) -> None:
-        doc = {"v": 1, "workspaces": [entries[k].to_doc() for k in sorted(entries)]}
-        write_private(self.path, doc)
+    def _save(self, entries: dict[str, Entry], *, admitted: Entry | None = None) -> None:
+        """Persist ``entries``. A workspace that is not registered now may appear only as ``admitted``, the entry
+        whose token :meth:`_add` just spent (removals and rewrites of known entries need none)."""
+        with self._lock:
+            added = {k for k in entries if k not in self._entries}
+            if added and (
+                admitted is None or added != {admitted.workspace_id} or entries[admitted.workspace_id] is not admitted
+            ):
+                raise HostError("internal", "a registry entry is added only through orch.host.registry.admit")
+            doc = {"v": 1, "workspaces": [entries[k].to_doc() for k in sorted(entries)]}
+            write_private(self.path, doc)
 
-    def add(self, entry: Entry) -> None:
+    def _add(self, entry: Entry, token: AdmitToken) -> None:
+        """Add ``entry``: only with the :class:`AdmitToken` :func:`admit` made for it (no public ``add``)."""
+        if type(token) is not AdmitToken:
+            raise HostError("internal", "a registry entry is added only through orch.host.registry.admit")
         with self._lock:
             if entry.workspace_id in self._entries:
                 raise HostError("host.busy", f"workspace {entry.workspace_id} is already registered")
             if any(e.root == entry.root for e in self._entries.values()):
                 raise HostError("host.busy", f"{entry.root} is already registered")
+            token.spend(entry)
             entries = {**self._entries, entry.workspace_id: entry}
-            self._save(entries)
+            self._save(entries, admitted=entry)
             self._entries = entries
 
     def remove(self, workspace_id: str) -> bool:
@@ -279,11 +312,12 @@ class Registry:
 def admit(host: Any, entry: Entry, view: Any) -> None:
     """**The one registration choke point** (orch-v2-host §11A.17.3 R5, F5): every path that adds a workspace to a
     host's registry (``host.register``, ``host.bootstrap`` and its start-up recovery; a restore or a relay adopt
-    reaches the registry only through ``host.register``) calls this, and nothing else calls :meth:`Registry.add`
-    (``registry_add_paths_table`` pins it). A dev host admits sandbox workspaces only; a normal host refuses every
+    reaches the registry only through ``host.register``) calls this. It is structural: :meth:`Registry._add` and
+    ``_save`` add nothing without the :class:`AdmitToken` only this function can make (``registry_add_paths_table``
+    pins the callers as an extra check). A dev host admits sandbox workspaces only; a normal host refuses every
     ``SBX`` genesis and every workspace with the sandbox marker (``host.dev_refused``,
     :func:`orch.host.devmode.check_admit`). ``view`` is the workspace's :class:`orch.host.devmode.View`."""
     from .devmode import check_admit
 
     check_admit(getattr(host, "dev", None), entry.workspace_id, entry.root, view)
-    host.registry.add(entry)
+    host.registry._add(entry, AdmitToken(_ADMIT_KEY, entry))  # noqa: SLF001 - the choke point itself

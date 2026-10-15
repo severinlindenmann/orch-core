@@ -151,6 +151,8 @@ def r6(service: Any) -> tuple[Any, Any]:
 
 def _convenience_block(service: Any) -> str | None:
     """11A.6 under the store lock: ``convenience_events_present`` when ``relay.link`` would be refused."""
+    from orch.store.readerrecs import read_relay_level
+
     from .convenience import refuse_reader_op
 
     store = service.store
@@ -158,7 +160,9 @@ def _convenience_block(service: Any) -> str | None:
         return "workspace_unavailable"
     try:
         with store.locked():
-            refuse_reader_op(service, "relay.link", history=True)
+            # the stored relay reader level, as orch.host.relayhook.convenience_block (§11A.17.4; None counts as 0)
+            level = read_relay_level(service.state_dir, service.workspace_id, service.host_uid)
+            refuse_reader_op(service, "relay.link", history=True, relay_level=level)
     except HostError as exc:
         if exc.code == "sign.convenience_readers":
             return "convenience_events_present"

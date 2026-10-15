@@ -5745,6 +5745,9 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
 - **Lock order (whole R5 path):** `relay_cond` → the workspace store lock → `relay-link.lock` (the reservation's guard
   and the observer) → R6's seal lock → the `RidStore` lock. The observer takes only `relay-link.lock` (a leaf: no store
   lock, no `relay_cond`), so it never waits for a holder of either (test). The stored level survives a restart (test).
+- **Mutation pass, round 6:** 7 mutants (the guard without the level, `link_step1` dropping it, relay-info read on the
+  worker thread, the session without the observer, an observer doing nothing, following the current `link.json`
+  origin, or normalising it): **7 killed**.
 
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`

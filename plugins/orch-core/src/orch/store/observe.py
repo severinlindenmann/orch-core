@@ -11,8 +11,8 @@ read except through an explicit allow-list.
 * **The repository's own configuration:** :func:`orch.gitsafe.command` runs :func:`orch.gitsafe.gate` before every
   operation, with no exception and no fallback (a key outside the allow-list, such as a ``filter.<d>.clean`` that a
   ``.gitattributes`` selects, or a config file another account can write: git is not started and the answer is
-  ``None``, "cannot be told"). ``status`` never opens a submodule (``--ignore-submodules=all``) and refuses a
-  populated one (:func:`orch.gitsafe.submodules`); the operation enforces both, not the caller.
+  ``None``, "cannot be told"). ``status`` never opens a submodule's work tree (``--ignore-submodules=dirty``) and
+  refuses a populated one (:func:`orch.gitsafe.submodules`); the operation enforces both, not the caller.
 * **The person's configuration:** system and global configuration off; ``status`` keeps only
   :data:`orch.gitsafe.STATUS_KEYS`, every other operation nothing.
 * **The environment** is built from scratch (:func:`orch.gitsafe.isolated_env`): no ``GIT_*`` variable of the caller
@@ -66,7 +66,8 @@ def git(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None, strip:
         return None
     if done.returncode != 0:
         return None
-    return done.stdout.strip() if strip else done.stdout
+    out = gitsafe.plain_hunk_headers(done.stdout) if op == "diff_patch" else done.stdout  # repo-chosen text, #561
+    return out.strip() if strip else out
 
 
 def head(path: Path) -> str | None:

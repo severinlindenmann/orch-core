@@ -370,6 +370,7 @@ def _base_env(env: Mapping[str, str], protocols: str) -> dict[str, str]:
         LC_ALL="C",
         GIT_TERMINAL_PROMPT="0",
         GIT_NO_REPLACE_OBJECTS="1",
+        GIT_GRAFT_FILE=os.devnull,  # grafts are refused anyway (no_grafts); defence in depth (#561 final delta, MC)
         GIT_ALLOW_PROTOCOL=protocols,
         GIT_ATTR_NOSYSTEM="1",
         GIT_OPTIONAL_LOCKS="0",

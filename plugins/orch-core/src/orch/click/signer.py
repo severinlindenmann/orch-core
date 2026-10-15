@@ -259,7 +259,8 @@ class ClickSigner:
                 reason = head if head in REASONS else None
                 if reason in READERS_OLD:  # H12d-2 (§0.8.6 item 9.11): status names it until a call succeeds
                     self.problems[wid] = "readers_old"
-            raise ClickError(exc.code, exc.message, reason=reason, retryable=exc.retryable) from None
+            # #517: the host's detail only for the two convenience codes, re-validated whole by ClickError
+            raise ClickError(exc.code, exc.message, reason=reason, retryable=exc.retryable, detail=exc.detail) from None
         except (OSError, ConnectionError) as exc:
             self.conns.pop(entry["workspace_id"], None)
             try:

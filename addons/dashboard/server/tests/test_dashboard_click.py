@@ -219,8 +219,9 @@ def test_no_click_feature_unless_the_flag_is_on_and_the_signer_can_sign(
     assert ws["click"]["problem"] == "disabled"
 
 
-def test_a_signer_of_another_contract_is_refused(client, token, stub, script):
-    script.contract = 2
+@pytest.mark.parametrize("contract", [3, 0, True, "2", None, 2.0])
+def test_a_signer_of_another_contract_is_refused(client, token, stub, script, contract):
+    script.contract = contract  # strict: only the ints 1 and 2 (True == 1 and 2.0 == 2 in Python must not pass)
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" not in ws["features"] and ws["click"] is None
     assert script.clients[0].closed  # that child is stopped
@@ -228,6 +229,15 @@ def test_a_signer_of_another_contract_is_refused(client, token, stub, script):
     assert res.status_code == 501 and res.json()["error"]["code"] == "click.contract"
     assert "orch-core" in res.json()["error"]["message"]
     assert [c for c in script.clients[0].calls if c[0] == "prepare"] == []
+
+
+def test_a_contract_2_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
+    script.contract = 2  # H11c-2: deposit-only grant mode
+    ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
+    assert "click" in ws["features"] and ws["click"]["available"] is True
+    res = prepare(client, token, stub)
+    assert res.status_code == 200, res.text
+    assert gateway.click.contract == 2
 
 
 def test_prepare_chooses_the_op_here_and_derives_the_idem_from_the_action(client, token, stub, script, auth):

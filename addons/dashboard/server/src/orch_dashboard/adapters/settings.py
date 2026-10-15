@@ -31,6 +31,8 @@ REMOTE = re.compile(r"^(?:https://[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?/[^\s@?#]{
 USERINFO = re.compile(r"^(https://)[^/@\s]*@")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+#: a grant's label (common.json `label`): `runner` marks the runner grant (H11c-2); anything else is shown as text
+GRANT_LABEL = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 MAX_SESSION_IDS = 100  # the host caps them at 100; the server never forwards more
 MAX_REPO_PAGES = 8  # 32 repos a page: 256 repos at most are listed, and the answer says when there are more
@@ -227,6 +229,8 @@ class Grant(BaseModel):
     expires_at: str
     revoked: Revoked | None
     sessions: int
+    # H11c-2: the grant.issued label (`runner` for the runner grant); None when the host does not say or it is not one
+    label: str | None = None
     # read_ext/2: absent means unknown (None), not "none". `session_ids` is capped at 100; `sessions` counts all.
     session_ids: list[str] | None = None
     sessions_more: bool | None = None
@@ -263,6 +267,7 @@ def grants(data, ext: bool) -> list[Grant]:
                     expires_at=g["expires_at"],
                     revoked=revoked(at, detail),
                     sessions=g["sessions"],
+                    label=g["label"] if isinstance(g.get("label"), str) and GRANT_LABEL.fullmatch(g["label"]) else None,
                     session_ids=ids[:MAX_SESSION_IDS] if ids is not None else None,
                     sessions_more=bool(g.get("sessions_more")) if ext and "sessions_more" in g else None,
                 )

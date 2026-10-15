@@ -2133,6 +2133,7 @@
    "id": "gr_00000000000000000000000003",
    "issued_at": "2026-01-01T09:00:00Z",
    "person": "p_00000000000000000000000000000001",
+   "label": null,
    "revoked": null,
    "scope": "workable",
    "session_ids": [],

@@ -87,6 +87,8 @@ export interface HostGrant {
   expires_at: string
   revoked: { at: string; by: string | null; seq: number | null } | null
   sessions: number
+  /** H11c-2: the grant.issued label (`runner` marks the runner grant); absent or null = the host does not say. */
+  label?: string | null
   /** `read_ext/2`; null = the host does not say. Capped at 100 by the host. */
   session_ids: string[] | null
   sessions_more: boolean | null

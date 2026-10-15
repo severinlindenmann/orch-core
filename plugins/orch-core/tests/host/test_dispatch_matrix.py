@@ -168,7 +168,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("human", "write")
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
-        elif op == "reader.declare":  # H12d-2: P only (column R with rd is H12d-3)
+        elif op == "reader.declare":  # H12d-2: P only on a socket (column R: H12d-3)
             assert kind == ("person_write", "write")
         elif op in RECORDS_OPS:
             write = op in {"records.remote_private", "records.note"}

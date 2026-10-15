@@ -101,7 +101,7 @@ def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> 
 
 def _relay_paired(state_dir: Path, workspace_id: str) -> bool:
     """The reader reservation (orch-v2-host §11A.6): a relay link, a former one or the R6 membership state exists
-    (:func:`orch.store.readerrecs.relay_level`: until H12d-3 every pairing counts as level 0)."""
+    (:func:`orch.store.readerrecs.relay_level`): its last verified level is below 1, or was never checked (H12d-3)."""
     from orch.store.readerrecs import relay_level
 
     level = relay_level(state_dir, workspace_id)
@@ -124,8 +124,8 @@ def why(
 ) -> tuple[str, list[str]] | None:
     """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
     H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
-    device whose reader record does not verify counts as 0); ``relay_paired`` counts a relay below level 1 (every
-    pairing until H12d-3); ``reader_version`` qualifies the signing device itself."""
+    device whose reader record does not verify counts as 0); ``relay_paired`` counts a relay whose last verified
+    level is below 1 or was never read (H12d-3); ``reader_version`` qualifies the signing device itself."""
     from orch.ops.readers import below_level, levels
 
     if not enabled(state_dir, workspace_id, host_uid):

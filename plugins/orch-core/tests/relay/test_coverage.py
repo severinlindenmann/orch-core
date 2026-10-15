@@ -101,7 +101,7 @@ NOT_R1_SECTIONS = {
     "checkpoints_g4": "R3",
     "unpublished": "R4",
     "reader_decl": "identity tests (tests/identity/test_reader_decl.py: decls, pair_meta gates); the pair meta and "
-    "rd in the request meta are H12d-3 with R6",
+    "rd in the request meta: tests/identity/test_pair_gate.py (pair_meta gates), tests/relay/test_relay_rd.py (H12d-3)",
 }
 TOP_LEVEL = {"encodings": "test_wire (strict_parse, b64u)", "labels": "tests/crypto", "constants": "test_wire (bridge)"}
 

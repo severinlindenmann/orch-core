@@ -226,7 +226,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
-| `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11) | workspace |
+| `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
 
 
@@ -455,8 +455,8 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1). **H12d-2:** `other_member` and `phone_device` count only readers below level 1 (item 9.9); `Error.detail` carries `{reason, devices}` (the readers below level 1); also the authoritative refusal of a convenience event at the append choke point, in host and direct mode (item 9.4). **H12c-e:** reason `pair_device`: `relay.pair_device` with `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit`, whatever the flag, the readers or any opt-in (11A.15.6); the hint names `orch keys custody passphrase --workspace W --in-place` | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
-| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device; a records push to an unmarked URL, D-P2-34) to a workspace whose history has `auth: "convenience"` events or whose durable `convenience_seen` mark is set (#441); the fix names the readers to update (§0.8.6 item 1); **H12d-2:** `member.add` refuses only a new reader below `required_reader` (reasons `no_declaration`, `reader_too_old`; a level-1 reader is admitted with convenience history and while the flag is on), at prepare, binding, submit and the append (item 9.4); `relay.link` (`relay_too_old`) and `relay.pair` keep item 1's rule until H12d-3; `Error.detail` `{reason, devices}`; **H12c-e:** `relay.pair_device` follows `member.add`'s rule with the phone's pair declaration (11A.15.6 step 9) | — |
-| `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2) | — |
+| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device; a records push to an unmarked URL, D-P2-34) to a workspace whose history has `auth: "convenience"` events or whose durable `convenience_seen` mark is set (#441); the fix names the readers to update (§0.8.6 item 1); **H12d-2:** `member.add` refuses only a new reader below `required_reader` (reasons `no_declaration`, `reader_too_old`; a level-1 reader is admitted with convenience history and while the flag is on), at prepare, binding, submit and the append (item 9.4); `Error.detail` `{reason, devices}`; **H12c-e:** `relay.pair_device` follows `member.add`'s rule with the phone's pair declaration (11A.15.6 step 9); **H12d-3:** `relay.link` refuses only a relay whose `GET /v2/relay-info` level is below `required_reader` (`relay_too_old`); `relay.pair` has no early refusal at the offer: the phone's pair declaration is gated when the host opens the pair request (`no_declaration`, `reader_too_old`; 11A.15.6 step 4) and in the allocation; a column-R request (all but `reader.declare`) whose `rd` is absent, not the device's current record or below `required_reader` while it is 1 (`no_declaration`, `declaration_unknown`, `reader_too_old`; the sealed refusal carries `reason`, and `required`/`declared` for `reader_too_old`, §0.8.6 item 9.5) | — |
+| `reader.decl_invalid` | 3 | no | stays | a reader declaration that does not verify (`member.add --reader-decl`, `reader.declare`, the phone's pair declaration of `relay.pair_device`, H12c-e; H12d-3: the pair gate of 11A.15.6 step 4, `reader.declare` in column R, a `pk_pin` pair declaration whose pin does not name the certificate's person key, reason `who`): the message starts with the reason `shape`, `signature`, `workspace`, `device`, `keys`, `who`, `bind`, `time`, `kat_missing` or `kat_mismatch` (§0.8.6 item 9.3, H12d-2); a column-R refusal carries it as `reason` (H12d-3) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
@@ -2316,7 +2316,8 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
   (they understand `convenience`), with convenience history and while the flag is on, in host and direct mode, and
   relaxes `relay_paired`, `other_member` and `phone_device` to count only readers below level 1. **H12d-2 built**
   `member.add` with a declaration and the relaxed `other_member` and `phone_device` (item 9 "As built in H12d-2");
-  `relay_paired`, relay links and pairings hold as written until H12d-3.
+  **H12d-3 built** the relaxed `relay_paired`, relay links and pairings and serving bound to `rd` (item 9 "As built
+  in H12d-3").
 
 **2. The `convenience` custody backend** (`orch.custody.convenience`, next to `passphrase` and `secure-enclave`; never
 imported by `orch.custody`'s package init, the host or the dashboard's HTTP process).
@@ -2809,6 +2810,75 @@ leaves room, the strictest reading unless said otherwise:
 - **Not in H12d-2:** the pair-meta `reader_decl` and the gate in the R6 allocation, `rd` in column R, relay-info,
   `relay_reader_old`, `readers reset` (H12d-3; hooks: `readerrecs.relay_level`, the `pair` source, the `pk_pin`
   check), the `needs` item "re-declare readers".
+
+**As built in H12d-3** (the relay part; core, with R6; Opus, orch-52). The strictest reading where the text leaves
+room; JUDGEMENT CALLS marked:
+- **The step-4 gate** (11A.15.6 step 4, 9.4 narrowed by C7): `orch.identity.pairdevice.pair_gate(meta, *,
+  workspace_id, offer_id, who, required, now_ms) -> PairGate` (pure; `orch.relay` may import it) and the host hook
+  **`orch.host.convenience.pair_gate(service, meta, *, offer_id, who)`** that R6c (orch-29) calls when it opens a
+  pair request: after step 3 (`check_pair_meta`, the meta signature, ±300 s, a presented cert), before the offer is
+  consumed, the SAS shown or the primary asked. `who` is `{"pk_pin": <link pin>}` (7b) or `{"person_id": <presented
+  cert's person, bare hex>}` (7a). `verify_decl` with `via:"pair"` only, this offer and `attempt`, the meta's two keys,
+  the `view` surface; freshness: no past window, `created_ms` at most 300 s ahead of the host clock; then the level
+  against `required_reader` (flag, mark, merged history), absent = 0. It returns `PairGate {decl, decl_who, reader,
+  level, digest}`: R6 stores `decl` and `decl_who` verbatim with the offer at step 5 (the first stored declaration
+  wins on a resend; a resend of a consumed offer never runs the gate again) and passes them as
+  `PairDeviceFacts(decl=, decl_who=)` at step 9. Refusals: `HostError` `sign.convenience_readers` (`no_declaration`,
+  `reader_too_old`; `detail.devices` the phone; the hint is the 9.15 Q4 screen text) or `reader.decl_invalid`; R6
+  answers the short `rejected` and moves the offer to `rejected`.
+- **The `pk_pin` check at the allocation** (9.3): `recheck_readers` (prepare, binding, submit, the append) refuses a
+  pair declaration signed for a `pk_pin` that does not name the person key of the certificate's person
+  (`reader.decl_invalid` reason `who`; `State.person_key`). Records keep the H12d-2 read rule (a `pk_pin` record counts
+  only under the pin of the device's person key).
+- **The relay's level** (9.8): `orch.relay.session.fetch_relay_info(conn)` reads `GET /v2/relay-info` (exact `{v:1,
+  reader, max_publication_bytes?}`; 404 = 0; anything else malformed is `RelayMisbehaving`, never a level). R5 reads it
+  at link step 1 and passes it to the reservation: `store.relay_link(link, guard=lambda:
+  relaylink.link_reservation(service, relay_level=info.reader))`. The guard refuses a relay below
+  `required_reader` (`relay_too_old`) and, while no `link.json` exists, stores the level in
+  `hosts/<ws>/relay/reader.json` (`{v:1, reader, at_ms}`, 0600; `None` clears a stale one) inside the same critical
+  section, so a refused relink never changes the existing link's level. **JUDGEMENT CALL:** a file next to
+  `link.json`, not a field in it (the store's only rewrite of `link.json` is `linking`→`linked`); it survives an unlink
+  (an unlinked relay counts with its last level) and a relink overwrites it (the former relay held no convenience
+  event while it was below level 1, and gets nothing more). `Session(…, relay_info=hook)`: every successful R1 login
+  reads relay-info again (on the session's own connection, outside the store lock) and calls the hook;
+  **`relaylink.observe_relay_level(state_dir, ws, host_uid, level, alarm)`** is that hook for R5: it stores the level of
+  a linked relay and alarms **`relay_reader_old`** when it is below `required_reader` (flag or mark; no history scan, no
+  store lock). A failed read at login keeps the last level and never fails the login. `readerrecs.relay_level` reads
+  the stored level (0 when linked and unread or unsafe, `None` without a relay), so `relay_paired` and invariant I
+  count only a relay below level 1. **`orch.ops.readers.restore_held(relay_level, evidence)`** is R3's hold predicate (a
+  restore whose evidence carries a convenience event, relay below 1; the alarm is `relay_reader_old`); R3 wires it.
+- **`relay.pair`** has no early refusal at the offer (11A.15.6 step 1): the offer carries no declaration; the gate is
+  step 4 and, authoritatively, the allocation (`relay.pair_device`).
+- **`rd` in column R** (9.5): `Call._authorize_relay` calls `readerops.check_rd` for every column-R op but
+  `reader.declare`, inside the op's own job. While `required_reader` is 1 (flag or mark, else the merged history,
+  scanned once per store state: **JUDGEMENT CALL**, the scan reads every log, and a find sets the mark), `rd` must be
+  the `digest` of the device's current record, which must verify for the device now and be at the required level;
+  else `sign.convenience_readers` `no_declaration` (no `rd`), `declaration_unknown`, `reader_too_old` (`detail`
+  `{reason, devices, required, declared}`; the socket's closed `detail` drops the last two). A replay or byte-exact
+  resend is answered from its rid record by the bridge and never reaches the check (11A.4).
+- **`reader.declare` in column R** (9.11, the phone's own device only): `columns.RELAY_OPS` and `DEVICE_SIGNED_OPS`
+  (kind `device_signed` in R; `person_write` on a socket stays). `framing.OPS["reader.declare"]` (backend
+  `reader.declare`, framing kind `read`: **JUDGEMENT CALL**, no idem, since the record is idempotent on the
+  declaration's digest and latest wins; a crash re-issues it; scope `look`). The declaration's device and person must
+  be the request's verified identity (`op.not_allowed` otherwise), `via:"declare"` (±300 s), the `view` surface, no
+  outcome record; it answers `{device, reader, level, digest}`.
+- **The sealed refusal** carries `reason` for `sign.convenience_readers` and `reader.decl_invalid`, and `required` and
+  `declared` with `reader_too_old` (`framing.REASONS`, `refusal_meta`; the bridge's `_refusal_fields` re-checks each
+  value). Both codes are class D in `framing.RETRY` (the `RETRY_NOTES` say: `declaration_unknown` → `reader.declare`,
+  then resend under a new rid with the new `rd`). The R2 framing vectors gain `reader_declare`,
+  `rd_declaration_unknown` and `rd_reader_too_old` (regenerated: signatures and salts are random, the checks are
+  semantic).
+- **`orch host readers reset --workspace W`** (9.10): removes every record file (`<32 hex>.json`) of the workspace;
+  `human_only` under `ORCH_GRANT`; a linked `readers/` directory is refused; it works with the host up or down
+  (removing a record only lowers a level). Answers `{ok, data:{workspace_id, dropped:[device]}}`.
+- **#514:** N2 done (`reader.list` uses the error-catching level wrapper). N1 (bind a record to the adding event) is
+  left open: F1 has no same-id re-add, so the remaining case is a `restore` that revives a device, whose add event is
+  the same; it needs the model to expose the adding event and is not needed for H12d-3.
+- **Not in H12d-3:** R5's wiring (calling `fetch_relay_info` at link step 1, the `relay_info` hook, the alarm sink),
+  R3's hold, R6c's pairing flow (it calls `pair_gate`), the `needs` item "re-declare readers".
+- Tests: `tests/relay/test_relay_info.py`, `tests/host/test_relay_readers.py`, `tests/identity/test_pair_gate.py`
+  (incl. the relay corpus `reader_decl.pair_meta` gates), `tests/relay/test_relay_rd.py`,
+  `tests/host/test_pair_device.py` (the `pk_pin` refusal), `tests/relay/test_r2_vectors.py`.
 
 **9.0 What this can and cannot do.**
 - **A malicious reader can always lie.** It can hard-code any answer and misparse anyway. A person's compromised device
@@ -4021,6 +4091,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     dashboard's closed tables); `op.unsupported` when no relay pairing is registered. The click signer refuses the op
     (`terminal_only`). No F1, hash or schema change; the `device.added` review keeps its frozen `derived`.
 
+53. **Reader gate on the relay (H12d-3, §0.8.6 item 9 "As built in H12d-3"; the number may be renumbered when a
+    parallel change lands first):** `relay.link` and `relay.pair` on the relaxed rule (a relay of `GET /v2/relay-info`
+    level 1 is linked with convenience history and while the flag is on; `relay_too_old` below it; no early refusal at
+    a pair offer); the relay's level is stored with the link and read again at every R1 login (alarm
+    `relay_reader_old`); `relay_paired` counts only a relay below level 1; the step-4 pair gate
+    (`orch.host.convenience.pair_gate`); column R is served only against `rd` while `required_reader` is 1
+    (`sign.convenience_readers` `no_declaration`, `declaration_unknown`, `reader_too_old`); `reader.declare` in
+    column R (the device's own, no idem); the sealed refusal gains `reason` (and `required`/`declared`) for
+    `sign.convenience_readers` and `reader.decl_invalid`; `orch host readers reset --workspace W`. No new code, no F1,
+    hash or socket schema change; the R2 framing table gains `reader.declare`.
 ---
 
 ## 1. Process model
@@ -5345,8 +5425,8 @@ clock is past the backup's time + 1 500 s (600 s before §11A.14 added the 900 s
 (J), each the fail-closed reading.
 - `host/relayid.py`: `RelayIdentity(workspace_id, device_id, person_id, cert_digest, epoch, list_hash, rd=None)`,
   shape-checked at construction (ids, `sha256:` digests, `epoch` a non-negative int); `.principal` is `r:<device_id>`,
-  `.peer()` the relay `Peer`. `rd` is the H12d hook (§0.8.6 item 9) and is unused in v1.7: its presence qualifies
-  nothing.
+  `.peer()` the relay `Peer`. `rd` is the H12d hook (§0.8.6 item 9): its presence alone qualifies nothing;
+  since H12d-3 `readerops.check_rd` compares it with the device's current reader record (§0.8.6 item 9.5).
 - `host/peer.py`: `Peer.kind "relay"` requires `uid == -1` and a person; every other kind requires a kernel UID ≥ 0.
 - `host/columns.py`: `resolve()` raises for any peer class but person, agent, worker and control; `resolve_relay(ok)`
   takes only a real bool and gives R (viewer `person`) or an N row whose new field `Column.error` refuses **every**
@@ -5774,19 +5854,21 @@ Session) and `StateDir.open_private`/`file_path` (the checked SQLite open of 11A
 builder's `HostError` is stored as that `failed` outcome (`outcomes._fields`).
 
 **R2 framing (the sheet orch-mobile codes against; data: `tests/relay/r2_vectors/r2_framing.json`, generated by
-`scripts/gen_r2_framing_vectors.py`, never edited by hand; round 3, 15 Oct 2026: 37 cases).**
+`scripts/gen_r2_framing_vectors.py`, never edited by hand; round 3, 15 Oct 2026: 37 cases; H12d-3: 40).**
 
 - Request meta, strict JSON inside the seal, `data` empty: `{"op", "args", "idem"?, "rd"?}`. Checked in this order
   before any column: an `auth` key → `req.invalid`; a grant-shaped string anywhere → `grant.secret_in_args`; an op
   outside the table → `forbidden_scope`; another key, non-object `args`, or non-empty `data` → `req.invalid`; the idem
   rules (a write without `idem` → `idem.required`; a malformed one → `idem.invalid`; one that is not the event id →
-  `invalid.input`, 14.6 P1; an `idem` on a read → `req.invalid`); `rd` must be `sha256:<hex>` (carried into the identity, never a qualification in
-  v1.7; vector `request_with_rd`).
+  `invalid.input`, 14.6 P1; an `idem` on a read → `req.invalid`); `rd` must be `sha256:<hex>` (carried into the identity; vector `request_with_rd`). **H12d-3:** while
+  `required_reader` is 1 the host serves every op but `reader.declare` only against `rd` (§0.8.6 item 9.5; vectors
+  `rd_declaration_unknown`, `rd_reader_too_old`).
 - The one closed op table (`framing.OPS`):
 
   | Relay op | Backend op | Kind | Scope (certificate AND member list) | Event |
   |---|---|---|---|---|
   | `ticket.query`, `ticket.get`, `ticket.text`, `needs`, `activity.list`, `workspace.show`, `workspace.settings`, `member.list`, `whoami`, `outcome.get` | the same | read | `look` | — |
+  | `reader.declare` (H12d-3) | the same (column R kind `device_signed`) | read (no idem: idempotent on the declaration's digest) | `look` | — |
   | `new_ticket` | `relay.submit` | write | `decide` | `ticket.created` |
   | `answer` | `relay.submit` | write | `decide` | `question.answered` |
 
@@ -5826,7 +5908,7 @@ builder's `HostError` is stored as that `failed` outcome (`outcomes._fields`).
   | `stale_epoch` | `epoch` (the committed one; for a burned or gated epoch the pending one, else `EHW + 1`) |
   | `already_done` | `status: "unknown"` |
   | `not_member`, `revoked`, `bad_signature`, `busy`, `malformed`, `forbidden_scope`, `rid_conflict` | none |
-  | every host §0.6 code (`pending` included) | `retryable` (always; DERIVED from the class: A, B true; C-auto, C-review, D false); `seqs` only for a write whose events LANDED (`failed`/`partial`: never for "not run"); `next_key` only for `ticket.key_not_next` (advisory) |
+  | every host §0.6 code (`pending` included) | `retryable` (always; DERIVED from the class: A, B true; C-auto, C-review, D false); `seqs` only for a write whose events LANDED (`failed`/`partial`: never for "not run"); `next_key` only for `ticket.key_not_next` (advisory); **H12d-3:** `reason` only for `sign.convenience_readers` (`no_declaration`, `reader_too_old`, `declaration_unknown`) and `reader.decl_invalid` (its verify reasons), `required` and `declared` (both) only with `reader_too_old` (`framing.REASONS`) |
 
   A refusal never carries a message or request text.
 - **Retry classes** (`framing.RETRY`, authoritative; ruling C): **A** nothing ran and no seq was consumed, or refused
@@ -6071,7 +6153,8 @@ A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-
   then carries `rd`, the digest of the device's current declaration (§8.6), and the host serves a convenience workspace
   only against it. `relay.link` checks the relay's `GET /v2/relay-info` level at link and at every R1 login, an
   operator statement. Qualifying readers are admitted with convenience history; `relay_paired` then counts only a relay
-  below level 1 (the permanent reservation above stays, with the relay's last level). Group H12d-3, with R6.
+  below level 1 (the permanent reservation above stays, with the relay's last level). Group H12d-3, with R6. **Built in
+  H12d-3** (§0.8.6 item 9 "As built in H12d-3"); the strict v1.7 rule above holds only for a relay of level 0.
 
 ### 11A.7 Transport
 
@@ -7252,10 +7335,10 @@ set.
 
 | # | Step | Persisted first | Failure, retry, crash |
 |---|---|---|---|
-| 1 | **Offer creation** (`orch host relay pair`, control op `relay.pair_offer`, human_only, refused under `ORCH_GRANT`). The preconditions are checked in one worker job **under the store lock**: `link.json` is `linked`; the worker is running and holds a gen; a valid `membership/primary.json` (11A.15.1); no live offer and no outstanding cert request; the early reader check (`refuse_reader_op(service, "relay.pair", history=True)` before H12d-2, then `check_readers` against the offer's `required_reader`); no `membership_quota` alarm; the device count is below the cap. R6 then draws `offer_id` (16 bytes), `S` (32), `sas_nonce` (32) and the scopes (default `["look","decide"]`, Q4; a subset of `look,decide`: `operate` and `type` are refused for a phone offer in v1.7, N1), and sets `expires_ms = now + 10 min` | `pairing/<offer>.json` state `open` (this is the pairing reservation of 11A.6, written before the link exists) | any refusal writes nothing. A crash after the write leaves an `open` offer that expires on its own. The CLI shows the link **only after** the write returns |
+| 1 | **Offer creation** (`orch host relay pair`, control op `relay.pair_offer`, human_only, refused under `ORCH_GRANT`). The preconditions are checked in one worker job **under the store lock**: `link.json` is `linked`; the worker is running and holds a gen; a valid `membership/primary.json` (11A.15.1); no live offer and no outstanding cert request; no early reader refusal (H12d-3: `refuse_reader_op(service, "relay.pair")` refuses nothing, since the offer carries no declaration yet; the gate is step 4 and step 9); no `membership_quota` alarm; the device count is below the cap. R6 then draws `offer_id` (16 bytes), `S` (32), `sas_nonce` (32) and the scopes (default `["look","decide"]`, Q4; a subset of `look,decide`: `operate` and `type` are refused for a phone offer in v1.7, N1), and sets `expires_ms = now + 10 min` | `pairing/<offer>.json` state `open` (this is the pairing reservation of 11A.6, written before the link exists) | any refusal writes nothing. A crash after the write leaves an `open` offer that expires on its own. The CLI shows the link **only after** the write returns |
 | 2 | **The link and QR** (11A.15.9): the native `orch://pair?relay=<pct origin>#v2.<ws>.<offer>.<b64u S>.<b64u wsk_pin>.<b64u pk_pin>` (in the QR, Q5) and the HTTPS fallback `https://<relay>/pair#v2.<same five fields>`, both from H12c `pair_link`. `pk_pin` is the pinned owner `PK` from the genesis delegation; `wsk_pin` is the own WSK. The `relay` origin is **byte-equal** to the card's `relay_url` (orch-f1 S7: else the phone refuses `card_origin`) | nothing new | `S` is shown on the person's terminal only. It is never logged, never sent through the control socket's logs and never in `host.status` |
 | 3 | **A pair request** (a poll item, `route:"pair"`). The pair thread runs §8.6 steps 1 to 3 (silence for an unknown offer or one past its tail, or a bad tag under `K_pair`), then §8.3 step 3 in order: meta shape and exact field set (meta v2: the six fields, or the six plus the optional seventh `reader_decl`, protocol §8.3; H1), from the **raw plaintext bytes** with a byte cap of 2 KiB plus margin **before** parsing (H12d-2 note I2); the offer `open` and unused (else the answer of the table above); `device_id(dk_sig_pub)` equal to the header's, and the signature, verified over the **original** meta bytes, the label as the phone sent it (no cleaning or normalisation before verification; D1); ±300 s; a presented `cert` (owner's person, valid, not revoked, these two keys) | none for a refusal. Each refusal is charged to the offer's own budget of 5 per minute (in memory; past it, silence), carries `wsk_pub`, and is sealed and signed (`RelaySigner.pair_answer`) | the answer bytes are appended per `rid` to the `.answers` file **before** the POST. An identical resend of that `rid` replays them byte-exact (the relay refuses other bytes with `chunk_conflict`, `bridge.py`). Pair answers are never re-stored after their 60 s copy expires, so the device re-polls with a new `rid` |
-| 4 | **The reader gate (H12d, early).** `verify_decl` with `via:"pair"` only, on both paths (**JUDGEMENT CALL**, orch-f1 S4 and orch-52: §0.8.6 item 9.4 no longer allows a `via:"declare"` declaration beside a presented cert: conflict C7 resolved by narrowing 9.4). `who` is the link's `pk_pin`, or the presented cert's person; `bind` this offer and this `attempt`; `dk_hash` of the meta's keys. The level is checked against `required_reader`; absent means 0. On resends the **first stored declaration wins** (ECDSA signatures differ per resend) | — | a failure answers the short `rejected` and moves the offer to `rejected` (the host screen gives the reason, §0.8.6 item 9.15 Q4). This happens **before** the SAS is shown and before the primary is asked (§0.8.6 item 9.4) |
+| 4 | **The reader gate (H12d, early).** `verify_decl` with `via:"pair"` only, on both paths (**JUDGEMENT CALL**, orch-f1 S4 and orch-52: §0.8.6 item 9.4 no longer allows a `via:"declare"` declaration beside a presented cert: conflict C7 resolved by narrowing 9.4). `who` is the link's `pk_pin`, or the presented cert's person; `bind` this offer and this `attempt`; `dk_hash` of the meta's keys. The level is checked against `required_reader`; absent means 0. On resends the **first stored declaration wins** (ECDSA signatures differ per resend) | — | a failure answers the short `rejected` and moves the offer to `rejected` (the host screen gives the reason, §0.8.6 item 9.15 Q4). This happens **before** the SAS is shown and before the primary is asked (§0.8.6 item 9.4). **Built in H12d-3:** R6c calls `orch.host.convenience.pair_gate(service, meta, offer_id=, who=)` (pure half `orch.identity.pairdevice.pair_gate`) and stores the returned `PairGate.decl`/`decl_who` with the offer at step 5 |
 | 5 | **Consume** the offer | state `pending` with the keys, `attempt`, the cleaned label (11A.15.13), the cert if presented, the declaration verbatim, and `phone_deadline_ms` | the write **precedes** the `pending` answer (`{state, wsk_pub, sas_nonce, dk_sig_pub, dk_kx_pub}`, exact). A second device with a valid tag (it holds `S` too) then finds the offer used: `pairing_closed`, and the CLI alarms "someone else has this link: reject" (R6 holds `S`, so it knows a second tag-valid key used the offer; Opus L10) |
 | 6 | **The human compares the SAS** on the Mac. The CLI shows the cleaned label ("named by the device") and the requested scopes, and asks the human to **type the six characters the phone shows** (Opus L10: entry, not a y/N prompt). Approval only when the typed code equals `sas(ws, offer, dk_sig_pub, dk_kx_pub, wsk_pub, sas_nonce)`. **Up to 3 typed attempts per offer** (DECIDED 15 Oct 2026, orch-52 re-check of beafc6c8, N3c: a human typo cannot be ground by an attacker, so this is safe and kinder): a wrong code re-prompts, and the third wrong code is Reject; an empty line or an explicit reject is Reject at once. The attempt count is in the offer record | `confirmed`, or `rejected` (the attempt count with each wrong code) | a reject answers the short `rejected`. An unanswered prompt expires with the phone's deadline: state `expired`. A crash keeps `pending`, and the CLI re-attaches with `orch host relay pair --resume` |
 | 7a | **A presented certificate** (the phone is already the owner's device): skip to step 8 with that cert. Its `scopes_max` caps the list scopes. This path needs no `PK` (device ids are global, §4), so every later workspace pairing of the same phone needs no recovery code | — | — |
@@ -8210,7 +8293,7 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `worktree/1` | `worktree.create` | ✓ visible ticket | ✓ own claimed ticket | — | idem create |
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
-| `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R with `rd`: H12d-3) |
+| `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R, H12d-3: the requesting device's own declaration, kind `device_signed`, no idem, exempt from `rd`) |
 | `reader/1` | `reader.list` | ✓ | — | — | read (column R too, trimmed to `{device, person, reader, level}`) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |

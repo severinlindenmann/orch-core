@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -48,6 +49,7 @@ from .errors import HostError
 from .journal import Batch, Cursors, Journal
 from .outcomes import OutcomeStore, StoreReconciler
 from .registry import Entry
+from .relayid import RelayIdentity
 from .requests import RequestStore
 from .transport import Peer, Session
 
@@ -147,6 +149,20 @@ class WorkspaceService:
         self.blobs = BlobStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         if self.requests is not None:  # a request's file bytes are charged until it goes terminal (stripped)
             self.requests.on_terminal = self.blobs.release_request
+        #: the relay worker (§11A.4, R5's ``RelayWorker``: ``stop()``), ``None`` while none runs
+        self.relay: Any = None
+        #: R5's start hook ``fn(service)``: it starts and sets :attr:`relay` (under :attr:`relay_lock`, after
+        #: :func:`orch.host.relaylink.may_start`); ``None``: no relay client in this build
+        self.relay_starter: Callable[[WorkspaceService], None] | None = None
+        #: serializes the relay worker's start against ``orch host relay stop`` and ``close``; R5's start runs under it
+        self.relay_lock = threading.Lock()
+        self.relay_cond = threading.Condition(self.relay_lock)
+        #: stops in progress (a worker taken out of :attr:`relay` whose ``stop`` and ``join`` have not returned)
+        self._relay_stopping = 0
+        #: a worker whose threads outlived the bounded join (alarm ``relay_thread_stuck``): no new worker until it ends
+        self._relay_stuck: Any = None
+        #: the bound of waiting for a stopping worker's threads (§11A.7: the longest total deadline, 120 s)
+        self.relay_join_seconds = 120.0
 
     @property
     def workspace_id(self) -> str:
@@ -442,7 +458,120 @@ class WorkspaceService:
         self.sync_git()
         return self.capabilities().with_principal(principal)
 
+    def _shutdown_relay(self, worker: Any) -> bool:
+        """R5's worker contract: ``stop()`` (§11A.7 steps 1 to 3), then ``join(timeout) -> bool``, true when every
+        relay thread has ended. A worker without ``join`` counts as ended when ``stop`` returns. Called without the
+        lock; returns whether the worker ended."""
+        try:
+            worker.stop()
+            join = getattr(worker, "join", None)
+            ended = True if join is None else bool(join(self.relay_join_seconds))
+        except Exception:  # noqa: BLE001 - a failing stop is a worker that may still run
+            LOG.exception("relay worker of %s: stop failed", self.workspace_id)
+            ended = False
+        if not ended:
+            LOG.error("relay_thread_stuck: workspace %s: a relay thread outlived the stop", self.workspace_id)
+        return ended
+
+    def _take_relay(self) -> Any:
+        """Under :attr:`relay_cond`: take the running worker out and count its stop as in progress."""
+        worker, self.relay = self.relay, None
+        if worker is not None:
+            self._relay_stopping += 1
+        return worker
+
+    def _end_stop(self, worker: Any, ended: bool) -> None:
+        with self.relay_cond:
+            self._relay_stopping -= 1
+            if not ended:
+                self._relay_stuck = worker
+            self.relay_cond.notify_all()
+
+    def _stuck_alive(self) -> bool:
+        """Under :attr:`relay_cond`: a retained stuck worker whose threads still run (``join(0)`` false); a stuck
+        worker whose threads ended is forgotten."""
+        stuck = self._relay_stuck
+        if stuck is None:
+            return False
+        join = getattr(stuck, "join", None)
+        if join is not None and not join(0):
+            return True
+        self._relay_stuck = None
+        return False
+
+    def _stops_done(self) -> bool:
+        """Under :attr:`relay_cond`: wait (bounded) until no stop is in progress."""
+        return self.relay_cond.wait_for(lambda: self._relay_stopping == 0, timeout=self.relay_join_seconds + 30)
+
+    def relay_stop(self) -> str:
+        """``orch host relay stop`` (§11A.4): persist the stop (it outlives a restart), then stop a running worker
+        and wait for its threads (bounded). Answers only once the shutdown is done: ``"stopped"``, ``"stuck"`` (a
+        thread outlived the bound) or ``"none"`` (no worker was running; a stop in progress was waited for)."""
+        from .relaylink import mark_stopped
+
+        with self.relay_cond:
+            mark_stopped(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
+            worker = self._take_relay()
+            if worker is None:  # "none" only when no worker runs at all, a retained stuck one included
+                return "none" if self._stops_done() and not self._stuck_alive() else "stuck"
+        ended = False
+        try:
+            ended = self._shutdown_relay(worker)
+        finally:
+            self._end_stop(worker, ended)
+        return "stopped" if ended else "stuck"
+
+    def relay_start(self) -> str:
+        """``orch host relay start``: wait for a stop in progress, clear the stop, and start the worker through R5's
+        hook when the workspace is linked and served. Returns ``"started"`` or ``"none"``; ``lock.busy`` while a
+        stop has not finished or a stuck worker's threads still run (no second worker beside them)."""
+        from .relaylink import clear_stopped, may_start
+
+        with self.relay_cond:
+            if self.closing:
+                raise HostError("workspace.unavailable", "the workspace is closing")
+            if not self._stops_done():
+                raise HostError("lock.busy", "a relay stop is still in progress; try again")
+            if self.closing:
+                raise HostError("workspace.unavailable", "the workspace is closing")
+            if self._stuck_alive():
+                raise HostError("lock.busy", "relay_thread_stuck: a stopped relay thread still runs; restart the host")
+            clear_stopped(self.state_dir, self.workspace_id, self.host_uid)
+            if (
+                self.relay is not None
+                or self.relay_starter is None
+                or self.closing
+                or self.state == "unavailable"
+                or not may_start(self.state_dir, self.workspace_id, self.host_uid)
+            ):
+                return "none"
+            self.relay_starter(self)
+            return "started"
+
     def close(self) -> None:
+        # §11A.7 shutdown: the relay worker stops first and its threads are waited for (bounded by 120 s) before the
+        # job that closes the store is queued; jobs it queued before stopping run first (the worker FIFO)
+        with self.relay_cond:
+            self.closing = True  # before the worker is taken: a racing relay_start never starts a new one
+            stuck = self._relay_stuck  # an earlier stop's stuck worker: stays tracked while it is joined below
+            worker = self._take_relay()
+            if worker is None:
+                self._stops_done()
+        if worker is not None:
+            ended = False
+            try:
+                ended = self._shutdown_relay(worker)
+            finally:
+                self._end_stop(worker, ended)
+        join = getattr(stuck, "join", None)
+        if join is not None:
+            if join(self.relay_join_seconds):  # a stuck worker's threads too, bounded
+                with self.relay_cond:
+                    if self._relay_stuck is stuck:
+                        self._relay_stuck = None
+            else:  # kept: a concurrent relay_stop keeps answering "stuck" (Codex #455 delta 2)
+                LOG.error("relay_thread_stuck: workspace %s: closing with a relay thread alive", self.workspace_id)
+
         def shut() -> None:
             rec = getattr(self, "session_records", None)
             if rec is not None:
@@ -481,16 +610,76 @@ class Call:
     kind: OpKind | None = None
     #: the transport's handle of this request (``sub.open``: no ``evt`` of the subscription before its ``res``)
     request: frames.Request | None = None
+    #: the verified identity of a bridge request (column R, §11A.4), else ``None``; set only by the relay entry
+    relay: RelayIdentity | None = None
 
     def authorize(self) -> None:
-        """Recompute the column from the refreshed store and refuse outside it (§0.6 steps 5 and 6, F8)."""
+        """Recompute the column from the refreshed store and refuse outside it (§0.6 steps 5 and 6, F8).
+
+        A relay call (``relay`` set, H12a) recomputes through the relay entry's ``relay_columns`` (passed as
+        :attr:`columns`) and keeps ``principal = "r:<device_id>"``: it never derives a principal from a UID. Every
+        inconsistency refuses (``op.not_allowed``): a relay identity on a socket peer or the reverse, no recompute, a
+        socket column or another viewer than the device's person, an op outside R's closed list."""
+        op = self.frame.get("op") if isinstance(self.frame, dict) else None
+        if self.column.name == "R" and self.relay is None:  # only a relay identity is ever column R (before any return)
+            raise HostError("op.not_allowed", f"{op} is not allowed here")
+        relay_peer = self.peer.kind == "relay"
+        if self.relay is not None or relay_peer:
+            self._authorize_relay(op)
+            return
         if self.columns is None:
             return
         self.column, self.viewer, self.verified = self.columns()
+        if self.column.name == "R":  # only a relay identity is ever column R
+            raise HostError("op.not_allowed", f"{op} is not allowed here")
         self.principal = principal(self.peer.uid, self.verified)
-        code = refusal(self.column, self.kind) if self.kind is not None else None
+        code = refusal(self.column, self.kind, op) if self.kind is not None else None
         if code is not None:
-            raise HostError(code, f"{self.frame['op']} is not allowed here")
+            raise HostError(code, f"{op} is not allowed here")
+
+    def _authorize_relay(self, op: Any) -> None:
+        identity = self.relay
+
+        def refuse() -> HostError:
+            return HostError("op.not_allowed", f"{op} is not allowed here")
+
+        if (
+            identity is None
+            or self.peer.kind != "relay"
+            or self.peer.uid != -1
+            or self.peer.person != identity.person_id
+            or getattr(self.service, "workspace_id", None) != identity.workspace_id
+            or self.columns is None
+        ):
+            raise refuse()
+        kind = _relay_kind(op)  # derived here, never the caller's: a caller's kind that differs refuses
+        if kind is None or (self.kind is not None and self.kind != kind):
+            raise refuse()
+        self.kind = kind
+        column, viewer, _verified = self.columns()
+        if column.name == "R" and viewer != identity.person_id:
+            raise refuse()
+        if column.name != "R" and column.error is None:  # a socket column never serves a relay request
+            raise refuse()
+        self.column, self.viewer, self.verified = column, (viewer if column.name == "R" else None), Verified("absent")
+        self.principal = identity.principal
+        code = refusal(self.column, self.kind, op)
+        if code is not None:
+            raise HostError(code, f"{op} is not allowed here")
+
+
+def _relay_kind(op: Any) -> OpKind | None:
+    """The kind of a relay op: ``device_signed`` for ``relay.submit``, else the socket backend's own ``op_kind``; an
+    op nobody serves has none."""
+    from .columns import DEVICE_SIGNED_OPS
+    from .dispatch import op_kind
+
+    if not isinstance(op, str):
+        return None
+    if op in DEVICE_SIGNED_OPS:
+        return "device_signed"
+    kind = op_kind(op)
+    return kind[0] if kind is not None else None
 
 
 class OpBackend(Protocol):
@@ -513,7 +702,10 @@ def principal_uid(value: str) -> int | None:
 
 
 def principal(uid: int, verified: Verified) -> str:
-    """§0.5, F4: ``g:<grant id>@<uid>`` only for a verified grant; a grant id alone never makes a principal."""
+    """§0.5, F4: ``g:<grant id>@<uid>`` only for a verified grant; a grant id alone never makes a principal. Raises
+    for a relay peer (``uid = -1``, §11A.4): its principal is ``r:<device_id>``, from its identity alone."""
+    if type(uid) is not int or uid < 0:
+        raise ValueError("a relay peer has no UID principal")
     return f"g:{verified.grant.id}@{uid}" if verified.grant is not None else f"uid:{uid}"
 
 

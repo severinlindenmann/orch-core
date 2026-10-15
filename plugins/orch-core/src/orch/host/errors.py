@@ -84,6 +84,8 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "worktree.unpinned": (3, False),
     "worktree.git_failed": (1, False),
     "unsupported.platform": (3, False),
+    # H12a, the relay bridge (§11A.7): relay.link above the relay-linked workspace cap
+    "host.limit": (3, False),
 }
 
 

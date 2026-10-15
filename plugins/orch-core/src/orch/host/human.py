@@ -1090,16 +1090,54 @@ def _mark_seen(service: WorkspaceService) -> HostError | None:
     return None
 
 
-def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, Any]) -> dict[str, Any]:
-    """Append the signed events of ``record`` that are not in the log yet, in order, under the store lock, then end
-    the request ``submitted`` with its outcome. Used by ``human.submit`` and by start-up recovery (roll forward). A
-    refusal after the first event landed ends the request ``failed`` naming the ``seq`` s that landed; it is never
-    ``partial``. Returns the result; raises the stored error for a failed one."""
+def _signed_by(events: list[dict[str, Any]], person: str, device: str) -> HostError | None:
+    """The relay path's precondition of :func:`append_signed`: every event is a person event of exactly this
+    (person, device) pair, signed (``sig``), and never ``auth: "convenience"`` (§11A.4, §11A.6). Checked before
+    anything lands; the store still verifies every signature against the device's certificate when it appends."""
+    for ev in events:
+        actor = ev.get("actor") if isinstance(ev, dict) else None
+        if actor != {"kind": "person", "id": person, "device": device}:
+            return HostError("op.not_allowed", "column R appends only events signed by the requesting device")
+        sig = ev.get("sig")
+        if not isinstance(sig, str) or not sig or ev.get("auth") == "convenience":
+            return HostError("op.not_allowed", "column R appends only device-signed events")
+    return None
+
+
+def append_signed(
+    service: WorkspaceService,
+    log: str,
+    events: list[dict[str, Any]],
+    extras: list[dict[str, Any]],
+    *,
+    signed_by: tuple[str, str] | None,
+) -> tuple[list[int], HostError | None]:
+    """**The single choke point for appending signed person events** (§0.8.1, §11A.4): ``human.finish`` and the relay
+    path (through :func:`append_relay`, the relay's only entry) both append through it. The one documented exception
+    is the owner-signed genesis of ``host.bootstrap`` (``control.py``), appended on the control socket before the
+    workspace is served; no column reaches it.
+
+    Appends the events of ``events`` that are not in ``log`` yet, in order, under the store lock, with an append check
+    that refuses any event the list does not name. Stops at the first refusal. Returns the ``seq`` of every event of
+    the list that is in the log (landed now or before) and the refusal, or ``None``. A refusal after the first event
+    landed is the caller's ``failed`` outcome, never ``partial``.
+
+    ``signed_by`` is keyword-required: ``None`` on the person path, ``(person, device)`` on the relay path (only
+    :func:`append_relay` passes it). There every event must be that pair's signed person event, never
+    ``auth: "convenience"``, checked before anything lands (``op.not_allowed``), and an event whose id is already in
+    the log counts as landed only when its ``sig`` and ``actor`` are the submitted ones (else ``op.not_allowed``:
+    never a false ``committed``).
+
+    The durable ``convenience_seen`` mark (#441) is written here, under the store lock and before the first append,
+    when any event carries ``auth: "convenience"``; if it cannot be written nothing is appended (fail closed). On the
+    relay path ``signed_by`` already refuses convenience events, so the mark is never needed there."""
     from orch.store import StoreError
 
+    if signed_by is not None:
+        refused = _signed_by(events, *signed_by)
+        if refused is not None:
+            return [], refused
     store = service.store
-    log = record["prepared"]["log"]
-    events = record["submit"]["events"]
     ids = {(log, e["id"]) for e in events}
     landed: list[int] = []
     error: HostError | None = None
@@ -1114,9 +1152,14 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
         try:
             if any(e.get("auth") == "convenience" for e in events):
                 error = _mark_seen(service)  # #441: the durable mark, under the store lock, before the first append
-            for ev, extra in zip(events, record["extras"], strict=True) if error is None else ():
+            for ev, extra in zip(events, extras, strict=True) if error is None else ():
                 found = store.logged_event(log, ev["id"])
                 if found is not None:
+                    if signed_by is not None and (
+                        found.get("sig") != ev.get("sig") or found.get("actor") != ev.get("actor")
+                    ):
+                        error = HostError("op.not_allowed", "an event with this id and another signer is in the log")
+                        break
                     landed.append(int(found["seq"]))
                     continue
                 artifacts = {n: base64.b64decode(b) for n, b in (extra.get("artifacts") or {}).items()} or None
@@ -1128,6 +1171,33 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
                 landed.append(int(done.event["seq"]))
         finally:
             store.append_check = old_check
+    return landed, error
+
+
+def append_relay(
+    service: WorkspaceService,
+    log: str,
+    events: list[dict[str, Any]],
+    extras: list[dict[str, Any]],
+    *,
+    person_id: str,
+    device_id: str,
+) -> tuple[list[int], HostError | None]:
+    """**The relay path's only append** (§11A.4, R2/R5): :func:`append_signed` with the device check always on.
+    ``orch/relay`` never calls ``append_signed`` itself (a test enforces it)."""
+    if not isinstance(person_id, str) or not isinstance(device_id, str) or not person_id or not device_id:
+        return [], HostError("op.not_allowed", "a relay append needs the requesting device and its person")
+    return append_signed(service, log, events, extras, signed_by=(person_id, device_id))
+
+
+def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, Any]) -> dict[str, Any]:
+    """Append the signed events of ``record`` that are not in the log yet, in order, under the store lock
+    (:func:`append_signed`), then end the request ``submitted`` with its outcome. Used by ``human.submit`` and by
+    start-up recovery (roll forward). A refusal after the first event landed ends the request ``failed`` naming the
+    ``seq`` s that landed; it is never ``partial``. Returns the result; raises the stored error for a failed one."""
+    store = service.store
+    log = record["prepared"]["log"]
+    landed, error = append_signed(service, log, record["submit"]["events"], record["extras"], signed_by=None)
     now = service.clock()
     if error is not None:
         seqs = ", ".join(map(str, landed)) or "none"

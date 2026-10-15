@@ -1835,6 +1835,11 @@ def transition_vectors() -> list[dict[str, Any]]:
         t_ws=ws_conflict,
         note="the control of restore_tail_missing_and_other_log_conflict: the same T with the tail proof present",
     )
+    # H12d (orch-v2-host §0.8.6 item 9.8, 9.12): the convenience cases for the relay's AUTH_KINDS. A restore line
+    # signed with auth "convenience" is accepted; an unknown value is refused, never mapped to a known one. Both
+    # re-signed by the owner device, every signature valid; appended last so no earlier case changes.
+    variant("restore_auth_convenience_accepted", "ok", over={"auth": "convenience"})
+    variant("restore_auth_unknown_refused", "chain.diverged", over={"auth": "bogus"})
     for case_ in cases:
         case_.setdefault("pinned_delegation", genesis["delegation"])
         case_.setdefault("now", RECEIVER_NOW)

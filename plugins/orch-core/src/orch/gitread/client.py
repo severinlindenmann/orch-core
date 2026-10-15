@@ -11,7 +11,8 @@
   file) in the host's state directory, written atomically with mode 0600.
 * :class:`HostGitReader` is what ``Capabilities.host(..., git=...)`` gets. :meth:`HostGitReader.sync` pins the repos
   that appear in ``settings.repos`` (registration, and a ``settings.changed`` that adds or moves one; an existing pin
-  is **never** replaced for the same path) and drops the ones that disappeared.
+  is **never** replaced for the same path) and drops the ones that disappeared. The new ones are pinned up to
+  :data:`~orch.gitread.limits.PIN_BATCH` at a time in one child (``pin_many``, #471), not one child per repo.
 """
 
 from __future__ import annotations
@@ -376,7 +377,8 @@ class HostGitReader:
     def sync(self, declared: Iterable[str | os.PathLike[str]]) -> dict[str, str | None]:
         """Pin every declared working copy not pinned yet; drop pins of paths no longer declared. Returns
         ``{real path: None | why it could not be pinned}``. An existing pin is kept as it is (only a
-        ``settings.changed`` that moves a repo, which gives it a new path, leads to a new pin)."""
+        ``settings.changed`` that moves a repo, which gives it a new path, leads to a new pin). The repos not pinned
+        yet are pinned in one child per :data:`~orch.gitread.limits.PIN_BATCH` of them (:meth:`_pin_batch`)."""
         out: dict[str, str | None] = {}
         reals: list[str] = []
         for p in declared:
@@ -385,17 +387,20 @@ class HostGitReader:
             except Unavailable as e:
                 out[os.fspath(p)] = e.reason  # an unclean path is refused, never normalised into another one
         put: dict[str, RepoPins] = {}
+        todo: list[str] = []
         for real in reals:
             if self.pins.get(real) is not None:
                 out[real] = None
-                continue
-            try:
-                hello = {"profile": "pin", "roots": reals}
-                got = self.pool.call(self.principal, hello, {"op": "pin", "args": {"path": real}})
-                put[real] = RepoPins.from_json(got.get("pins"))
-                out[real] = None
-            except Unavailable as e:
-                out[real] = e.reason
+            elif real not in todo:
+                todo.append(real)
+        hello = {"profile": "pin", "roots": reals}
+        for i in range(0, len(todo), limits.PIN_BATCH):
+            for real, got in self._pin_batch(hello, todo[i : i + limits.PIN_BATCH]).items():
+                if isinstance(got, RepoPins):
+                    put[real] = got
+                    out[real] = None
+                else:
+                    out[real] = got
         drop = [p for p in self.pins.paths() if p not in reals]
         # one directory is one repo: two declared paths whose working copy, gitdir or commondir is the same
         # (device, inode) (a case or Unicode variant on APFS, a hard link, a bind mount, a borrowed object store)
@@ -414,6 +419,30 @@ class HostGitReader:
         if put or drop:
             self.pins.update(put, drop)
         return out
+
+    def _pin_one(self, hello: dict[str, Any], real: str) -> RepoPins | str:
+        try:
+            got = self.pool.call(self.principal, hello, {"op": "pin", "args": {"path": real}})
+            return _check_layout(RepoPins.from_json(got.get("pins")), real, hello["roots"])
+        except Unavailable as e:
+            return e.reason
+
+    def _pin_batch(self, hello: dict[str, Any], paths: list[str]) -> dict[str, RepoPins | str]:
+        """``{path: its pins | why not}`` for ``paths`` (at most :data:`~orch.gitread.limits.PIN_BATCH`), pinned in
+        **one** child (``pin_many``, #471) under the same ``pin`` profile, roots and checks as one child per path.
+        A batch that fails as a whole (the child dies, overruns its limits or answers anything but one well-formed
+        result per path) decides nothing: each of its paths is pinned again in its own child, so one repo that
+        breaks the batch never poisons the others. A busy pool (``quota.host``) is not retried path by path: every
+        path is refused with that reason and retried after the caller's backoff."""
+        if len(paths) == 1:
+            return {paths[0]: self._pin_one(hello, paths[0])}
+        try:
+            got = self.pool.call(self.principal, hello, {"op": "pin_many", "args": {"paths": paths}})
+            return dict(zip(paths, _check_pin_many(got, paths, hello["roots"]), strict=True))
+        except Busy as e:
+            return dict.fromkeys(paths, e.reason)
+        except Unavailable:
+            return {p: self._pin_one(hello, p) for p in paths}
 
     def _pins(self, path: str | os.PathLike[str]) -> RepoPins:
         key = _key(path)
@@ -583,6 +612,47 @@ def _check_observe(got: Any, refs: list[str]) -> dict[str, Any]:
     if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
         raise Unavailable("the reader answered nonsense")
     return got
+
+
+def _check_layout(pins: RepoPins, real: str, roots: list[str]) -> RepoPins:
+    """The pins a child answered for ``real`` must have the shape :func:`orch.gitread.pinning.pin_repo` gives: the
+    working copy is ``real`` itself, the commondir is ``<declared repo>/.git`` and the gitdir is the commondir (a main
+    repository, then ``real/.git``) or ``<commondir>/worktrees/<id>`` of another declared repo (a linked worktree).
+    A child that forged pins (a path outside the declared repos for the later ``gitdir`` profile to open) is refused
+    here, whichever repo of a batch it answered for (#471: one child answers for many repos)."""
+    gits = {r.rstrip("/") + "/.git" for r in roots}
+    own = real.rstrip("/") + "/.git"
+    wt, gd, cd = pins.worktree.path, pins.gitdir.path, pins.commondir.path
+    main = gd == cd == own
+    linked = (
+        cd in gits
+        and cd != own
+        and gd.startswith(cd + "/worktrees/")
+        and gd.count("/") == cd.count("/") + 2
+        and gd.rpartition("/")[2] not in ("", ".", "..")
+    )
+    if wt != real or not (main or linked):
+        raise Unavailable("the reader answered pins outside the declared repos")
+    return pins
+
+
+def _check_pin_many(got: Any, paths: list[str], roots: list[str]) -> list[RepoPins | str]:
+    """The child's ``pin_many`` answer, checked as a whole before any of it is used: one result per path, each either
+    pins of git's layout for that path (:func:`_check_layout`) or an error with a string message. Anything else is
+    :class:`Unavailable` (the caller then pins each path in its own child)."""
+    results = got.get("results") if isinstance(got, dict) and set(got) == {"results"} else None
+    if not isinstance(results, list) or len(results) != len(paths):
+        raise Unavailable("the reader answered nonsense")
+    out: list[RepoPins | str] = []
+    for path, r in zip(paths, results, strict=True):
+        if isinstance(r, dict) and set(r) == {"pins"}:
+            out.append(_check_layout(RepoPins.from_json(r["pins"]), path, roots))
+            continue
+        err = r.get("error") if isinstance(r, dict) and set(r) == {"error"} else None
+        if not isinstance(err, dict) or set(err) != {"code", "message"} or not isinstance(err["message"], str):
+            raise Unavailable("the reader answered nonsense")
+        out.append(err["message"][:300] or "the reader failed")
+    return out
 
 
 _BASE_SOURCES = ("local_ref", "first_parent", "host_pinned", "approved", "pushed")

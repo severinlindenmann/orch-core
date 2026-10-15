@@ -1,6 +1,9 @@
 """The requests the reader answers, the same in the child (host mode) and in-process (direct mode).
 
 * ``pin {path, roots}`` (profile ``pin``): the pins of a working copy (:mod:`orch.gitread.pinning`).
+* ``pin_many {paths}`` (profile ``pin``, #471): ``pin`` for each of up to :data:`~orch.gitread.limits.PIN_BATCH`
+  distinct paths in one child, answered per path and in order (``{"pins"}`` or ``{"error": {code, message}}``): each
+  path is pinned exactly as ``pin`` would (same roots, same checks), and a refusal of one never touches the others.
 * ``observe {refs}`` (profile ``gitdir``): ``HEAD``'s branch, the commit each ref names, the raw
   ``remote.origin.url`` values.
 * ``diff {branch, default_branch, context, max_bytes}`` (profile ``gitdir``): base and head per section 0.8 and the
@@ -31,6 +34,7 @@ __all__ = ["PROFILES", "allowed_paths", "run"]
 PROFILES = ("gitdir", "worktree", "pin")
 _OPS = {
     "pin": ("pin",),
+    "pin_many": ("pin",),
     "observe": ("gitdir", "worktree"),
     "diff": ("gitdir", "worktree"),
     "tree_check": ("worktree",),
@@ -356,6 +360,28 @@ def diff(
     }
 
 
+def pin_many(args: dict[str, Any], roots: list[str]) -> dict[str, Any]:
+    """``pin`` for each path of ``args["paths"]``, one answer per path, in order. A malformed request is refused as a
+    whole; a path that cannot be pinned is refused on its own, with the code and message ``pin`` would answer, and
+    every directory it opened is closed before the next path (:func:`pin_repo` closes its own)."""
+    paths = args.get("paths")
+    if set(args) != {"paths"} or not isinstance(paths, list) or not 0 < len(paths) <= limits.PIN_BATCH:
+        raise Unavailable("bad request: paths")
+    for i, p in enumerate(paths):
+        _str({"path": p}, "path")
+        if p in paths[:i]:
+            raise Unavailable("bad request: paths")
+    out: list[dict[str, Any]] = []
+    for p in paths:
+        try:
+            out.append({"pins": pin_repo(p, roots).to_json()})
+        except Unavailable as e:
+            out.append({"error": {"code": e.code, "message": e.reason}})
+        except PermissionError:  # the audit hook: as the child answers a single pin
+            out.append({"error": {"code": Unavailable.code, "message": "the reader's profile refused an access"}})
+    return {"results": out}
+
+
 def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
     op = req.get("op")
     args = req.get("args") or {}
@@ -365,6 +391,8 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
         path = _str(args, "path")
         assert path is not None
         return {"pins": pin_repo(path, list(hello["roots"])).to_json()}
+    if op == "pin_many":
+        return pin_many(args, list(hello["roots"]))
     pins = RepoPins.from_json(hello.get("pins"))
     with Repo(pins) as repo:
         if op == "tree_check":

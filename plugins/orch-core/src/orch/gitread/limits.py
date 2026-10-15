@@ -41,3 +41,4 @@ QUEUE_PER_PRINCIPAL = 8  # requests waiting for a child, per principal (section 
 QUEUE_MAX = 64  # requests waiting for a child, host-wide
 REQUEST_MAX = 256 * 1024  # one request line on the child's stdin
 RESPONSE_MAX = 16 * MiB  # the child's whole answer
+PIN_BATCH = 64  # declared repos pinned by one child (pin_many, #471); more take more children

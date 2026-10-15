@@ -5704,6 +5704,10 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
     passes to `store.relay_link` (`host/relayhook.py`, `guard=lambda: link_reservation(service)`).
   - **Rebase dependency: #555** (H12d-3, orch-52, in review) changes `observe_relay_level` to take `origin=` (the
     session's link origin) and adds the `relay-link.lock` handling; R5 rebases onto it when it merges.
+- **Mutation pass, round 4:** 9 mutants (no fsync between the archive and the unlink, the old fsync order, the unlink
+  before the archive, the same-file reuse removed or disabled, no marker in recovery, the marker only in the rename
+  branch, the intent cleared before the rename, no fsync after the unlink): 8 killed; the last is equivalent
+  (`clear_unlink_intent` fsyncs the same directory right after the unlink).
 
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`

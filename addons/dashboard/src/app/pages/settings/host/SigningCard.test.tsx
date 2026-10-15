@@ -75,19 +75,41 @@ describe('Sign in the dashboard', () => {
     await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/))
   })
 
-  it('turning off can move the key back under a new passphrase typed twice', async () => {
-    const sw = vi.spyOn(api, 'switchClick').mockResolvedValue(OFF)
+  it('turning off never offers a new passphrase: moving the key back is a terminal command', async () => {
     mount(ON)
     fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
-    fireEvent.click(screen.getByLabelText(/Also move my key back/))
-    const submit = screen.getByRole('button', { name: 'Turn off' })
-    fireEvent.change(screen.getByLabelText('New passphrase'), { target: { value: 'a long new passphrase 7!' } })
-    fireEvent.change(screen.getByLabelText('Type it again'), { target: { value: 'a long new passphrase' } })
-    expect(screen.getByText('The two do not match.')).toBeInTheDocument()
-    expect(submit).toBeDisabled()
-    fireEvent.change(screen.getByLabelText('Type it again'), { target: { value: 'a long new passphrase 7!' } })
-    fireEvent.click(submit)
-    await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: false, passphrase: 'a long new passphrase 7!' }))
+    expect(screen.queryByLabelText(/new passphrase/i)).toBeNull()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(document.querySelectorAll('input[type=password]')).toHaveLength(0)
+    expect(screen.getByTestId('signing-move-back')).toHaveTextContent('orch keys custody passphrase --workspace INT --in-place')
+  })
+
+  it('a key already held with signing off is switched on in the terminal, never with a passphrase here', async () => {
+    const sw = vi.spyOn(api, 'switchClick')
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true })
+    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('orch host convenience on --workspace INT')
+    expect(screen.queryByRole('button', { name: /Turn on/ })).toBeNull()
+    expect(document.querySelectorAll('input[type=password]')).toHaveLength(0)
+    expect(sw).not.toHaveBeenCalled()
+  })
+
+  it('the on form shows what moves where, and the field is not autofilled', async () => {
+    mount({ ...OFF, device: 'd_' + '1'.repeat(32) })
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
+    const details = screen.getByTestId('signing-conversion')
+    expect(details).toHaveTextContent('orchestrator (INT)')
+    expect(details).toHaveTextContent('d_' + '1'.repeat(32))
+    expect(details).toHaveTextContent(/moves to.*this computer's key store/i)
+    expect(screen.getByLabelText(/Your passphrase/)).toHaveAttribute('autocomplete', 'off')
+  })
+
+  it('the signer asking for the terminal names the command', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'custody.terminal_needed', message: 'x', retryable: false }))
+    mount(OFF)
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn on…' }))
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent('orch host convenience on --workspace INT')
   })
 
   it('only an owner sees the switch', async () => {

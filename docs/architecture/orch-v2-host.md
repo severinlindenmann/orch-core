@@ -2469,7 +2469,8 @@ by proving the passphrase of a key that is in passphrase custody now, and it nev
   risk line of item 0. Its on form shows the workspace, the device and "moves to: this computer's key store"
   (the fields the terminal prompt shows). Its off form shows the terminal command for moving the key back. In the
   state where the key is held but the flag is off, it shows `orch host convenience on --workspace W` instead of a
-  passphrase field.
+  passphrase field. The dashboard server's route refuses `on` without a passphrase and `off` with one as
+  `invalid.input` before the signer is called; its validation answers never echo the request body.
 
 **4. `auth: "convenience"` and F1** (amended in H5c, F1 §5.3, §11.4, T16, §13).
 
@@ -4205,7 +4206,8 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (`custody.terminal_needed`): moving the key back is terminal-only. The wrong-passphrase limit (5 per 15 min) is
     persisted in `<person state>/person/click-custody.json`. `PassphraseBackend.answering` returns a backend that only
     exports. The conversion runs before the flag lock and is finished (or undone) under it. Tier A only. The
-    in-place move back refuses when a key file is already there. No contract, wire or F1 change.
+    in-place move back refuses when a key file is already there. The dashboard's route takes a passphrase with `on`
+    only; its card shows the terminal commands instead of a new-passphrase form. No contract, wire or F1 change.
 
 ---
 

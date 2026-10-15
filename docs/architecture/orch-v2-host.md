@@ -6987,6 +6987,37 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   a test pins it (`relay_wire_stays_import_light`, N9).
 - **R6 TODO:** `tests/relay/test_coverage.py` still lists `wk_commit` as an R6 item; update it when #476 merges.
 
+**As built in H12c-c (item 9, 15 Oct 2026).**
+- **Key types.** The passphrase backend holds two more roles: `primary` (the primary's `dk_sig`; signs
+  `PRIMARY_SIG_LABELS` = `sig_relay_auth` only, since the primary is never an F1 member) and `kx` (a key-exchange
+  key; signs nothing). A `kx` file carries `purposes` and `recipient` (the 16-byte device id the seals name) in the
+  authenticated header (the AEAD's AAD), so a changed purpose or recipient never opens. `KX_PURPOSES` is
+  `["cert-request"]` in v1.7, and `KX_PURPOSE_RULES` fixes it to epoch 0 with no extra AAD. `kx` and `primary` keys
+  are generated in custody, never imported, never exported for a custody change. `unlocked` (the importer's batch)
+  now needs a `device` key. Files of the existing roles keep their exact shape.
+- **`Backend.unseal(key_id, purpose, object_id, epoch, extra, sealed) -> bytes`.** The passphrase backend checks
+  the role, purpose, epoch and extra AAD **before** the prompt (kind `unseal`, one prompt per call). A blob that does
+  not open raises `InvalidTag`; a wrong passphrase raises `custody.wrong_passphrase`. The file, convenience and
+  planned backends refuse every call.
+- **One-command unlock.** `PassphraseBackend.primary_unlocked(sig_key_id, kx_key_id, *, action, fields)` asks one
+  passphrase (kind `primary`; the prompt says it may log in to the relay and open cert requests until the command
+  ends, and signs nothing else). Both files must be a pair: the `kx` recipient is the signing key's device id. It
+  yields a `PrimarySession` (`device_id`, `dk_sig_pub`, `dk_kx_pub`, `sign`, `unseal`) whose capabilities are dropped
+  and whose scalars are zeroised when the block ends; core dumps and debugger attach are off as for the batch. Only
+  `orch/custody/primary.py` calls it (a test pins this).
+- **`orch.custody.primary`.** The pair is stored in `<person state>/person/primary/keys/` (`primary-sig`,
+  `primary-kx`; 0700 directories checked as convenience custody's, files 0600) under one passphrase. `init` writes
+  both into a private temporary directory and renames it into place, so it is all or nothing. Any custody but
+  passphrase is refused with `sign.convenience_unavailable`, reason `primary`, and the module reads no environment
+  variable (11A.15.11 N8a). `unlocked(state, action=...)` is the one-command unlock;
+  `cert_request_unseal(session)` is `open_cert_request`'s `unseal(object_id, sealed)` (purpose `cert-request`,
+  epoch 0); `backend_cert_request_unseal(state)` is the same contract through `Backend.unseal`. A custody refusal
+  is a `CustodyError`, which `open_cert_request` does not catch: it is never reported as a malformed request.
+- **CLI.** `orch keys primary init` (human-only, the person's terminal) makes the pair; `orch keys primary status`
+  shows public facts only (device id, both public keys, purposes, custody) and never prompts. **Not yet:**
+  `init`'s `--relay`/`--invite`, the certificate (needs the `PersonKeySource`, item 10), the relay registration
+  (item 11) and `relay.primary_set`. `status` reports `certificate` and `relay` as `null` until they exist.
+
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 
 `plugins/orch-core/scripts/dev-pair` (Python, stdlib only, run with `uv run`) sets up a **throwaway** host, workspace and

@@ -3,7 +3,8 @@
 classification; nothing here appends, plans or records anything.
 
 * P5: :data:`COLUMN_R_AUTH`, the closed ``auth`` set of column R (R2 refuses others with ``op.not_allowed``).
-* P6: :func:`check_window`, the ULID time in [now - 900 s, now + 300 s]: ``event.expired``.
+* L3 then the window (amendment A): :func:`known_or_fresh`, a known identity first, then :func:`check_window` (the
+  ULID time in [now - 900 s, now + 300 s]: ``event.expired``) only for a never-seen event.
 * L3: :func:`dedup`, by :func:`signed_digest` and ``actor``, never by signature bytes (:func:`lookup` is the raw
   read): an identical landed event returns its ``seq``; ``event.duplicate_id``, ``event.abandoned``.
 * L4, L5: :func:`check_target`, the ticket exists and is visible, or the uid is unused; the owner; the exact next
@@ -37,6 +38,7 @@ __all__ = [
     "check_window",
     "dedup",
     "judge_events",
+    "known_or_fresh",
     "lookup",
     "next_key",
     "signed_digest",
@@ -45,7 +47,7 @@ __all__ = [
 
 #: P5: the only ``auth`` values column R accepts (14.3); ``convenience`` is never one of them
 COLUMN_R_AUTH = frozenset({"secure-enclave-unlocked", "passphrase"})
-#: P6: an id's ULID time must lie in [host now − 900 s, host now + 300 s] at job time (14.4)
+#: step W (was P6; amendment A: only after L3): an id's ULID time must lie in [host now − 900 s, host now + 300 s]
 WINDOW_PAST_S = 900
 WINDOW_FUTURE_S = 300
 
@@ -69,9 +71,9 @@ def ulid_ms(event_id: str) -> int:
 
 
 def check_window(event_id: str, now: float) -> None:
-    """P6 (14.4): ``event.expired`` unless the id's ULID time is within [``now`` − 900 s, ``now`` + 300 s], both edges
-    included, in milliseconds. ``now`` is the host clock at job time (epoch seconds). Replay and readers never call
-    this: only admission does."""
+    """Step W (14.4): ``event.expired`` unless the id's ULID time is within [``now`` − 900 s, ``now`` + 300 s], both
+    edges included, in milliseconds. ``now`` is the host clock at job time (epoch seconds). Replay and readers never
+    call this: only admission does."""
     t = ulid_ms(event_id)
     now_ms = int(now * 1000)
     if not now_ms - WINDOW_PAST_S * 1000 <= t <= now_ms + WINDOW_FUTURE_S * 1000:
@@ -129,6 +131,20 @@ def dedup(store: Any, log: str, event: dict[str, Any]) -> int | None:
         if found.digest == signed_digest(ws, log, event) and found.actor == event.get("actor"):
             return found.seq
         raise HostError("event.duplicate_id", "an event with this id and other content is in the log")
+
+
+def known_or_fresh(store: Any, log: str, event: dict[str, Any], now: float) -> int | None:
+    """L3 then the window, in that order (amendment A of 15 Oct 2026): a known identity is answered **before** the
+    freshness check, so freshness never turns a committed write into a re-review. Returns the ``seq`` of an identical
+    landed event (``committed``, ``duplicate:true``); raises :func:`dedup`'s codes for a known id; only a never-seen
+    event gets :func:`check_window` (``event.expired``) and then ``None``. R2 answers the outcome store by
+    ``(ws, "r:<device>", idem = id)`` before it calls this."""
+    with store.locked():
+        seq = dedup(store, log, event)
+        if seq is not None:
+            return seq
+        check_window(event["id"], now)
+        return None
 
 
 def next_key(store: Any) -> str:

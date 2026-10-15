@@ -365,3 +365,35 @@ def test_the_window_reads_the_ulid_time_exactly():
 
 def test_column_r_auth_values():
     assert admission.COLUMN_R_AUTH == frozenset({"secure-enclave-unlocked", "passphrase"})
+
+
+# --- amendment A (15 Oct 2026): a known identity is answered before the freshness window ---------------------------
+
+
+def test_a_landed_event_is_committed_even_after_its_window(env, phone):
+    uid = env.new_ticket()
+    h = ask(env, uid, options=OPTS)
+    ev = phone.event(env, uid, "question.answered", question="Q1", hash=h, option="csv")
+    seq = env.store.append(ev, log=uid).event["seq"]
+    late = env.clock[0] + 3600  # far past the window: freshness never turns a committed write into a re-review
+    assert admission.known_or_fresh(env.store, uid, ev, late) == seq
+
+
+def test_known_or_fresh_refuses_a_known_id_with_other_content_before_the_window(env, phone):
+    uid = env.new_ticket()
+    h = ask(env, uid, options=OPTS)
+    ev = phone.event(env, uid, "question.answered", question="Q1", hash=h, option="csv")
+    env.store.append(ev, log=uid)
+    with pytest.raises(HostError) as exc:
+        admission.known_or_fresh(env.store, uid, {**ev, "option": "api"}, env.clock[0] + 3600)
+    assert exc.value.code == "event.duplicate_id"
+
+
+def test_only_a_never_seen_event_gets_the_window(env, phone):
+    uid = env.new_ticket()
+    h = ask(env, uid, options=OPTS)
+    ev = phone.event(env, uid, "question.answered", question="Q1", hash=h, option="csv")
+    assert admission.known_or_fresh(env.store, uid, ev, env.clock[0]) is None
+    with pytest.raises(HostError) as exc:
+        admission.known_or_fresh(env.store, uid, ev, env.clock[0] + 901)
+    assert exc.value.code == "event.expired"

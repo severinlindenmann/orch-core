@@ -69,3 +69,27 @@ def test_a_declaration_is_refused_outside_its_window_for_another_device_or_anoth
     assert err(_declare(served, decl(q, served.wid, via="declare", created_ms=now))) == "op.not_allowed"
     assert err(_declare(served, {"o": 1, "sig": "x"})) == "reader.decl_invalid"
     assert readerrecs.device_ids(served.lab.state, served.wid) == []
+
+
+# --- register imports the direct-mode records (§0.8.6 item 9.4 "Direct mode") ---------------------------------------
+
+
+def test_register_keeps_the_records_that_verify_against_the_log_and_drops_the_rest(lab):
+    import os
+
+    from orch.ops import readers
+    from tests.identity.helpers import Person
+    from tests.store.helpers import WS
+
+    now = lab.ws.clock[0] * 1000
+    for p in (lab.ws.owner, Person()):  # the owner's device, and a device the log does not know
+        d = decl(p, WS, via="declare", created_ms=now)
+        got = readers.verify_admission(
+            d, workspace_id=WS, cert=p.cert(), person=p.ref, via="declare", surfaces=("log",), now_ms=now
+        )
+        readers.store_record(lab.state, WS, os.getuid(), readers.make_record(got, d, p.ref, "declare", "t"))
+    assert len(readerrecs.device_ids(lab.state, WS)) == 2
+    with lab.host() as h, h.client() as c:
+        res = lab.register(c)
+        assert res["ok"] is True, res
+    assert readerrecs.device_ids(lab.state, WS) == [lab.ws.owner.device[2:]]

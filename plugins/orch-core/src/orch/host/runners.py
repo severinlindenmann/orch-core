@@ -410,6 +410,8 @@ class RunnerHub:
         self._starts: dict[str, list[float]] = {}
         #: ``term.attach`` mints per person: person -> [level, at]
         self._mints: dict[str, list[float]] = {}
+        #: ``grant.deposit`` per person (H11c): person -> [level, at]
+        self._deposits: dict[str, list[float]] = {}
         self._save_lock = asyncio.Lock()
         self.ignored = 0
         from .runnergrants import RunnerGrants

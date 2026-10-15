@@ -59,6 +59,8 @@ MAX_HOURS = 12
 FILE = "runner-grants.json"
 KEEP_DEPOSITS = 256
 WATCH_SECONDS = 1.0
+#: grant.deposit per person (Opus L5): 10 a minute, burst 5 (each one is a runner round trip, an fsync, an audit line)
+DEPOSIT_RATE, DEPOSIT_BURST = 10 / 60, 5.0
 _ULID = {"type": "string", "pattern": r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
 _GRANT = {"type": "string", "pattern": r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
 _SCHEMAS = {
@@ -122,9 +124,13 @@ class GrantTable:
         self.forgotten = {
             g: u for g, u in self.forgotten.items() if (_epoch(u) or now + 1) > now - 24 * 3600
         }  # an id past its expiry can never be deposited anyway
-        if len(self.deposits) > KEEP_DEPOSITS:
-            keep = sorted(self.deposits.items(), key=lambda kv: str(kv[1].get("at")))[-KEEP_DEPOSITS:]
-            self.deposits = dict(keep)
+        if len(self.deposits) > KEEP_DEPOSITS:  # settled ones only: a pending deposit is never pruned (Opus L5)
+            settled = sorted(
+                ((d, r) for d, r in self.deposits.items() if r.get("outcome") != "pending"),
+                key=lambda kv: str(kv[1].get("at")),
+            )
+            drop = {d for d, _ in settled[: max(0, len(settled) - KEEP_DEPOSITS)]}
+            self.deposits = {d: r for d, r in self.deposits.items() if d not in drop}
         ensure_private_dir(self.state_dir / "hosts" / self.workspace_id, self.uid)
         write_private(self.path, {"v": 1, "current": self.current, "deposits": self.deposits,
                                   "forgotten": self.forgotten})  # fmt: skip
@@ -499,6 +505,10 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
             return ok_result(await grants.forget(wid, plan["person"], plan["grant"], plan["until"]))
         if not enablement.state_of(hub.host.state_dir, wid, hub.host.host_uid)["enabled"]:  # again, at use
             raise HostError("runner.disabled", "dashboard execution is off for this workspace (missing: machine)")
+        from .runners import _take
+
+        if not _take(hub._deposits, plan["person"], DEPOSIT_RATE, DEPOSIT_BURST):
+            raise HostError("rate.limited", "at most 10 grant deposits per minute", retry_after_ms=6000)
         secret = (call.frame.get("auth") or {}).get("grant")
         if not isinstance(secret, str) or not secret.startswith(plan["grant"] + "."):
             raise HostError("op.not_allowed", "grant.deposit: auth.grant is not the planned grant")

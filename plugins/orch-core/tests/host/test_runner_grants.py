@@ -364,3 +364,24 @@ def test_a_grant_cleared_after_a_runner_restart_is_forgotten(ready, rstate):
     w.runner = Runner(w, rstate, gen=GEN2)
     wait_for(lambda: ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None)
     assert err(deposit(c, value)) == "grant.forgotten"
+
+
+def test_deposits_are_rate_limited_per_person(ready):
+    """Opus L5: 10 a minute, burst 5."""
+    w = ready
+    c = w.conn()
+    for _ in range(5):
+        ok(deposit(c, issue(w)))
+    assert err(deposit(c, issue(w))) == "rate.limited"
+
+
+def test_pending_deposits_are_never_pruned(tmp_path, monkeypatch):
+    from orch.host import runnergrants
+
+    monkeypatch.setattr(runnergrants, "KEEP_DEPOSITS", 2)
+    (tmp_path / "hosts").mkdir(mode=0o700)
+    table = runnergrants.GrantTable(tmp_path, os.getuid(), "a" * 32)
+    table.deposits = {f"0{i}": {"outcome": "pending" if i == 0 else "confirmed", "at": f"2026-01-0{i + 1}"}
+                      for i in range(5)}  # fmt: skip
+    table.save()
+    assert "00" in table.deposits and len(table.deposits) == 3  # the pending one plus the two newest

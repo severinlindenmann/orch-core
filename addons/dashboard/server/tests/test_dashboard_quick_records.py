@@ -221,3 +221,27 @@ def test_waiting_status_and_opaque_page(client, token, stub, m6):
     )
     assert res.status_code == 200
     assert ("quick.list", {"status": ["waiting"], "limit": 100, "page": "opaque:token/+="}) in m6[0]["calls"]
+
+
+def test_current_route(client, token, stub, m6, gateway, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        client.app.state.records_child, "run", lambda *a, **kw: calls.append((a, kw)) or {"available": True}
+    )
+    path = f"/api/w/{stub.ws}/records/current"
+    assert client.get(path, headers=headers(token)).status_code == 200
+    assert calls == [((stub.ws,), {"status": True, "state": gateway.state, "run_dir": gateway.run})]
+    m6[0]["refusal"] = HostError({"code": "role.denied", "message": "denied"}, 4)
+    assert client.get(path, headers=headers(token)).status_code == 403
+    del m6[1].welcome["ops"]["records.status"]
+    assert client.get(path, headers=headers(token)).status_code == 501
+    assert len(calls) == 1
+
+
+def test_empty_labels_reach_set():
+    from orch_dashboard.handoff import Details, host_call
+
+    assert host_call(Details(action="details", key="DEMO-0001", labels=[])) == (
+        "set",
+        {"ref": "DEMO-0001", "pairs": ["labels="]},
+    )

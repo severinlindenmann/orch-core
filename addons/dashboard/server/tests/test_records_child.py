@@ -57,12 +57,17 @@ def spawn(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "push,auto_off,command",
-    [(False, False, ["commit"]), (True, False, ["commit", "--push"]), (False, True, ["auto", "off"])],
+    "push,auto_off,status,command",
+    [
+        (False, False, False, ["commit"]),
+        (True, False, False, ["commit", "--push"]),
+        (False, True, False, ["auto", "off"]),
+        (False, False, True, ["status"]),
+    ],
 )
-def test_exact_spawn_environment_and_fds(spawn, monkeypatch, tmp_path, push, auto_off, command):
+def test_exact_spawn_environment_and_fds(spawn, monkeypatch, tmp_path, push, auto_off, status, command):
     calls, processes, kills = spawn
-    proc = Process()
+    proc = Process(status_output() if status else b'{"ok":true}\n')
     processes.append(proc)
     env = {
         "HOME": str(tmp_path),
@@ -86,8 +91,8 @@ def test_exact_spawn_environment_and_fds(spawn, monkeypatch, tmp_path, push, aut
         },
     )
     assert rc.RecordsChild().run(
-        WS, push=push, auto_off=auto_off, state=tmp_path / "state", run_dir=tmp_path / "host-run"
-    ) == {"ok": True}
+        WS, push=push, auto_off=auto_off, status=status, state=tmp_path / "state", run_dir=tmp_path / "host-run"
+    ) == (addons.records(status_data()) if status else {"ok": True})
     args, kwargs = calls[0]
     assert args == ([sys.executable, "-I", "-m", "orch.records", *command, "--workspace", WS, "--json"],)
     assert kwargs == {
@@ -324,3 +329,57 @@ def test_a_real_child_that_exits_normally_without_grandchildren_is_parsed_not_an
     env = {"PATH": "/usr/bin:/bin", "ORCH_STATE_DIR": str(tmp_path)}
     out = RecordsChild()._execute([sys.executable, "-c", f"print({line!r})"], env)
     assert out["ok"] is True
+
+
+def status_data():
+    return {
+        "configured": True,
+        "repo": {"state": "index_differs"},
+        "pending": {"events": 0, "tickets": [], "more": False, "workspace_events": 0},
+        "last": None,
+        "auto": None,
+        "remote": {
+            "url": "https://git.example.test/old",
+            "private": False,
+            "export": "ok",
+            "current_url": "https://git.example.test/new",
+            "current_private": True,
+            "matches_last": False,
+        },
+    }
+
+
+def status_output():
+    return json.dumps({"ok": True, "detail": {"status": status_data()}}).encode()
+
+
+def test_status_projection_and_hidden():
+    data = status_data()
+    data["local"] = {"url": "never forward"}
+    data["remote"]["extra"] = "never forward"
+    data["remote"]["current_url"] = "bad\u202etext"
+    out = rc.parse(json.dumps({"ok": True, "detail": {"status": data}}).encode(), 0, status=True)
+    assert "local" not in out and "extra" not in out["remote"]
+    assert out["remote"]["current_url"] is None and out["remote"]["current_url_hidden"]
+    assert out["remote"]["current_private"] is True
+    assert out["remote"]["matches_last"] is False
+
+
+@pytest.mark.parametrize("field,value", [("current_private", 1), ("matches_last", "false"), ("current_url", {})])
+def test_status_strict_remote(field, value):
+    data = status_data()
+    data["remote"][field] = value
+    with pytest.raises(HostError, match="records.child_invalid"):
+        rc.parse(json.dumps({"ok": True, "detail": {"status": data}}).encode(), 0, status=True)
+
+
+@pytest.mark.parametrize("extra", [{"commit": "a" * 40}, {"detail": {}}, {"detail": {"status": {}, "other": 1}}])
+def test_status_strict_envelope(extra):
+    with pytest.raises(HostError, match="records.child_invalid"):
+        rc.parse(json.dumps({"ok": True, "detail": {"status": status_data()}, **extra}).encode(), 0, status=True)
+
+
+def test_status_error_catalog():
+    with pytest.raises(HostError) as error:
+        rc.parse(b'{"ok":false,"code":"records.busy","message":"busy"}', 9, status=True)
+    assert error.value.exit == 9 and error.value.error["retryable"]

@@ -4,7 +4,7 @@
 //  (b) the body that is posted equals what the dialog showed, as key + value pairs: an addon-picked arg is core's
 //      line for that exact key with that exact value (in the covers or core's "Sends" list, never inside the addon's
 //      region); a core field is the line core renders for it.
-import { screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { wordsAndId } from '@/addon-ui/SignConfirm'
 import { api } from '@/api/client'
@@ -727,4 +727,14 @@ describe('hand-off dialog', () => {
     for (const method of ['postAction', 'runAddonAction', 'issueGrant', 'revokeGrant', 'postAddonOp', 'postSettings'] as const) expect(vi.spyOn(api, method)).not.toHaveBeenCalled()
     setFeatures(null)
   })
+})
+
+
+it('records current-destination confirmation warning preserves the exact URL through Raw', async () => {
+  const { ExportWarning } = await import('@/app/pages/settings/host/Records')
+  const url = 'https://git.example.test/records\u202e.git'
+  render(<ExportWarning url={url} current />)
+  const warning = screen.getByTestId('records-export-warning')
+  expect(warning.textContent).toBe('Push publishes every ticket in this workspace to https://git.example.test/records\\u{202e}.git, restricted ones included.')
+  expect(warning.textContent).not.toContain('last known')
 })

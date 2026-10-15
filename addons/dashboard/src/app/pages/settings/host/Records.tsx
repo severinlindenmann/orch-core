@@ -1,10 +1,10 @@
-// Records on a real host (M6, host contract 12.8 and 12.11): the status the host gives owners and maintainers, the two
-// things the dashboard may run (commit [--push] and auto off, each a fixed child of the server), and, as exact commands
+// Records on a real host (M6, host contract 12.8 and 12.11): the status the host gives owners and maintainers, the
+// actions (commit [--push] and auto off) plus a status check, each a fixed child of the server; and, as exact commands
 // and never as buttons, what only a terminal may do. Everything the host or the child wrote is drawn through visible.tsx.
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { atLeast } from '@/api/permissions'
-import { EXPORT_WARNING, TERMINAL_COMMANDS, type RecordsRun, type RecordsStatus } from '@/api/quickRecords'
+import { EXPORT_WARNING, PRIVATE_REMOTE, TERMINAL_COMMANDS, type RecordsRun, type RecordsStatus } from '@/api/quickRecords'
 import { queries } from '@/api/queries'
 import { api } from '@/api/client'
 import { ApiError, type Workspace } from '@/api/types'
@@ -25,12 +25,15 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-/** Keep §12.11 verbatim except for the destination phrase: status is only a historical note. */
-export function ExportWarning({ url }: { url: string | null }) {
+/** The current destination uses §12.11 verbatim; historical status remains labelled. */
+export function ExportWarning({ url, current = false, hostOnly = false }: { url: string | null; current?: boolean; hostOnly?: boolean }) {
+  // hostOnly: core shows a non-owner only the host of the current destination (or "local"), never the full address.
   return (
     <p data-testid="records-export-warning" className="text-[13px] text-warning">
       {EXPORT_WARNING.before}
-      the remote configured in the records repository (last known: {url === null ? 'cannot be shown here' : <Raw>{url}</Raw>})
+      {current && url !== null && hostOnly ? <>the remote configured in the records repository (on <Raw>{url}</Raw>; only owners see the full address)</>
+        : current && url !== null ? <Raw>{url}</Raw>
+        : <>the remote configured in the records repository (last known: {url === null ? 'cannot be shown here' : <Raw>{url}</Raw>})</>}
       {EXPORT_WARNING.after}
     </p>
   )
@@ -179,6 +182,7 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
   const allowed = atLeast(role, 'maintainer')
   const status = useQuery({ ...queries.records(workspace.id), enabled: allowed })
   const [confirmPush, setConfirmPush] = useState(false)
+  const current = useMutation({ mutationFn: () => api.getRecordsCurrent(workspace.id) })
   const [result, setResult] = useState<RecordsRun | null>(null)
   const run = useMutation({
     mutationFn: (what: 'commit' | 'push' | 'auto-off') => (what === 'auto-off' ? api.recordsAutoOff(workspace.id) : api.recordsCommit(workspace.id, what === 'push')),
@@ -229,7 +233,7 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
       ) : (
         <>
           <Section title="Status">
-            {/* `configured` means "the records repository exists for you" (core #441: true after the first commit, with `repo` set). */}
+            {/* `configured` means "the workspace records repository exists" (core #454: ok, index_differs and unsafe count, even before a commit). */}
             {data.configured === false && (
               <p data-testid="records-not-configured" className="mb-3 text-[13px] text-text-muted">
                 No records repository yet; the first commit creates it.
@@ -246,7 +250,7 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
                     Commit now
                   </Button>
                   {canPush && (
-                    <Button variant="outline" disabled={busy} onClick={() => setConfirmPush(true)}>
+                    <Button variant="outline" disabled={busy} onClick={() => { current.reset(); current.mutate(); setConfirmPush(true) }}>
                       Commit and push
                     </Button>
                   )}
@@ -288,12 +292,24 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
               <DialogTitle>Commit and push records</DialogTitle>
               <DialogDescription>Core runs the records tool on this machine. No signature is needed.</DialogDescription>
             </DialogHeader>
-            <ExportWarning url={url} />
+            {current.isPending ? <p role="status">Checking where push goes…</p> : (() => {
+              const remote = current.data?.remote
+              const checked = !current.isError && remote?.current_url != null && !remote.current_url_hidden
+              return <div className="space-y-2">
+                <ExportWarning url={checked ? remote.current_url! : url} current={checked} hostOnly={role !== 'owner'} />
+                {/* The private mark is the owner's word about the full address: never shown against a host-only view. */}
+                {checked && role === 'owner' && remote.current_private === true && <p data-testid="records-current-private" className="text-[13px] text-text-muted">{PRIVATE_REMOTE.before}<Raw>{remote.current_url!}</Raw>{PRIVATE_REMOTE.after}</p>}
+                {checked && remote.matches_last === false && <p data-testid="records-push-mismatch" className="text-[13px] text-warning">This is not where the last push went (last: {remote.url !== null ? <Raw>{remote.url}</Raw> : 'cannot be shown here'}).</p>}
+                {!checked && <p role="alert" className="text-[13px] text-warning">Couldn't check the current destination: <Mono>{current.error instanceof ApiError ? current.error.code : current.isError ? 'records.child_unavailable' : 'records.current_url_unavailable'}</Mono>.</p>}
+              </div>
+            })()}
+
             <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setConfirmPush(false)}>
                 Cancel
               </Button>
               <Button
+                disabled={current.isPending}
                 onClick={() => {
                   setConfirmPush(false)
                   run.mutate('push')

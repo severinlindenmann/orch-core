@@ -177,7 +177,9 @@ def test_key_pair_round_trip_on_vector_keys():
 
 
 CONSUMED = {"keys", "ids", "sign", "hkdf", "salted_aead", "seal", "seal_open", "label_sealed", "certs", "revocations"}
-OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish", "relay_auth", "card"}
+# reader_decl: `decls` and the `gate` of each `pair_meta` case in tests/identity/test_reader_decl.py; the pair-meta
+# envelopes and `request_meta` (rd) wait for the pairing and column-R code (H12d-3, with R6)
+OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish", "relay_auth", "card", "reader_decl"}
 DEFERRED = {
     "wk_grants", "member_lists", "cert_request", "enroll", "bridge", "revocation_op", "push", "drop",
     "ws_envelopes", "cert_binding", "rejected_forms", "approved_anchor",

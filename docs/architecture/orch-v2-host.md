@@ -4107,6 +4107,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     column R (the device's own, no idem); the sealed refusal gains `reason` (and `required`/`declared`) for
     `sign.convenience_readers` and `reader.decl_invalid`; `orch host readers reset --workspace W`. No new code, no F1,
     hash or socket schema change; the R2 framing table gains `reader.declare`.
+54. **The owner relay client (H12c-f, §11A.15.10 item 11, "As built in H12c-f"; the number may be renumbered when a
+    parallel change lands first):** the new package `orch.relay_owner` (person path, not `orch.relay`): device login
+    (`kind:"device"`), `POST /v2/accounts`, `PUT`/`GET /v2/devices/{d}`, the D(p) cert-queue routes, the primary's
+    durable per-request journal (`<state>/person/primary/requests/`) and `PrimaryQueue` (§8.4 steps 2 to 4 with
+    `check_cert_request`, `open_cert_request`, `make_cert_challenge`, `make_device_cert`, `make_cert_rejection`).
+    No CLI, op, code, wire, hash or schema change.
+
 ---
 
 ## 1. Process model
@@ -7785,6 +7792,49 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
 - Tests: `tests/identity/test_pairdevice.py` (every binding, positive and negative), `tests/host/test_pair_device.py`
   (prepare, review, signer negatives, convenience at every point, the critical section, the H12d-2 reader rules
   through this path, the hand-off, a roll-forward, the F1 `devices.json` `device_added` vectors).
+
+**As built in H12c-f (item 11, the owner relay client; 15 Oct 2026).**
+- **Where.** `orch.relay_owner` (`client.py`, `journal.py`, `queue.py`): the person path's relay client, never
+  imported by `orch.relay` (the import ban is unchanged). **JUDGEMENT CALL:** the transport is R1's
+  `orch.relay.http.RelayConn`, *imported*, not copied: the ban restricts what `orch.relay` imports, not who imports
+  it, and the connection carries ten review rounds (11A.7: `http.client`/`ssl` only, default context or the named
+  `ca_file`, `CERT_REQUIRED`, TLS ≥ 1.2, no proxy unless named and never for `http`, no redirect, total deadline,
+  bounded reads). The origin is pinned (`check_origin`; the only origin the login signs, never from a response).
+- **`OwnerClient(origin, signer, *, transport=None, ca_file=None, proxy=None)`.** `signer` is a `DeviceSigner`
+  (`device_id`, `dk_sig_pub`, `sign`): custody's `PrimarySession` is one; every login proof is verified locally
+  before it is sent. Routes: `challenge`, `login` (`kind:"device"`, single-flight, token in memory, renewed at
+  15 min − 120 s on the monotonic clock, once on a 401 `unauthenticated`/`expired` with the identical bytes resent;
+  a challenge is never signed twice), `logout`, `create_account(invite, pk_pub, device_cert)` (the certificate is
+  checked under `pk_pub` and must be this device's before anything is sent; the answer's `person_id` must be
+  `person_id(pk_pub)`), `register_device(cert, pk_pub)` (no session; the answer must name the device),
+  `get_device(id, pk_pub)` (verified under the pinned key), `cert_requests(person, wait=)` (≤ 64 `{o, sig}`, no
+  duplicate id, 1 MiB cap), `post_challenge`, `post_rejection`; `primary_certificate(pk, signer, dk_kx_pub, label,
+  created_ms)` (`scopes_max ["look"]`, `expires_ms null`, label cleaned and sealed under the PK label key).
+  **Closed error mapping:** `OwnerTransportError` (R1's kinds), `OwnerRefused` (`code` only from the route's
+  documented set, the fixtures'; else `None`; `retry_after` capped at 1 h; `transient`), `OwnerMisbehaving` (a 2xx
+  outside the exact field set or contradicting the request), `OwnerRequestError` (nothing sent). No token, invite,
+  challenge or signature in a log, exception or `repr`.
+- **The journal** (11A.15.9, N7): `<state>/person/primary/requests/<request_id>.json` through `StateDir` (0700/0600,
+  `O_NOFOLLOW`, atomic writes); the directory's exclusive `flock` is held per transaction (**JUDGEMENT CALL:** the
+  directory's own lock, not a `.lock` file); states `verified`, `challenged`, `decided` (`sign`/`reject`),
+  `uploaded`, `expired`, `cancelled`, `superseded`, `refused`; stored bytes never change; the same id with other
+  bytes is `primary_request_conflict`; tombstones after expiry + 7 days. **Bounded, never a lockout** (orch-52's
+  review of the first push): an unreadable record is treated as burned and replaced by a tombstone, never fatal;
+  records ≤ 32 KiB; tombstones deleted after expiry + 14 days (`check_cert_request` refuses such an id as
+  `expired` anyway); above 4096 records only expired terminal ones are evicted, and a journal full of unexpired
+  requests refuses new ids only (`journal.full`); the lock is released on every exit.
+- **`PrimaryQueue(client, journal, *, pk_pub, cards, unseal, max_scopes=("look","decide"))`** (shared with
+  `tests/relay/owner.py`, N6): `poll()` resumes live journal records first, then checks, opens and records each
+  listed request in one transaction (step 2.4+ refusals burn the id; earlier ones burn nothing; requests over 8 KiB
+  are never checked). `challenge`, `sign` (needs a stored challenge) and `reject` sign at most once with the person
+  key (`ANSWER_LABELS` = challenge, rejection, certificate; the pinned owner key checked first; nothing after
+  `expires_ms` by the local clock), journal before the POST/PUT, and resend the stored bytes on resume;
+  `finish_uploads`, `close`. **JUDGEMENT CALL (N1):** a request above `max_scopes` (default: the v1.7 phone
+  ceiling) can be rejected but never challenged or signed.
+- **Not yet (orch-29):** CLI wiring (`orch keys primary init --relay --invite`, `orch host relay pair --primary
+  inline`), `relay.pair_cert`, `SOURCE_CALLERS` for the `RecoveryCodeSource` call sites, `tests/relay/owner.py` and
+  the T2 kit switching to this client. Tests: `tests/relay_owner/` (every fixture case of the nine routes, hostile
+  answers, the journal, the queue against a simulated relay, and the custody `PrimarySession` as signer and opener).
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 

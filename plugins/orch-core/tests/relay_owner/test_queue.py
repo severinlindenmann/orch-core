@@ -12,7 +12,7 @@ import pytest
 from orch import canon, crypto
 from orch.crypto.labels import L
 from orch.identity import certreq, certs, pairing, wscard
-from orch.relay_owner.journal import PrimaryJournal
+from orch.relay_owner.journal import PrimaryJournal, journal_dir
 from orch.relay_owner.queue import ANSWER_LABELS, PrimaryQueue, QueueRefused
 
 from ..relay import corpus
@@ -346,3 +346,40 @@ def test_a_full_journal_skips_new_requests_without_failing(relay, fake, jdir, mo
     monkeypatch.setattr(jmod, "MAX_ENTRIES", 0)
     fake.queue = [make_request(RID)]
     assert codes(queue(relay, jdir).poll()) == [(RID, "journal.full")]
+
+
+def test_the_custody_primary_session_is_the_signer_and_the_unseal(relay, fake, tmp_path, monkeypatch):
+    """The product wiring: ``orch.custody.primary.unlocked`` yields the login signer, ``cert_request_unseal`` the
+    opener; one passphrase prompt for the whole command."""
+    from orch.custody import KdfParams, PassphraseBackend, primary
+    from orch.relay import http as rhttp
+    from orch.relay_owner import OwnerClient
+
+    from ..relay.helpers import V_ORIGIN
+    from .kit import OPEN
+
+    prompts = []
+    monkeypatch.setattr(primary, "open_backend", lambda d: PassphraseBackend(
+        d, _passphrase_provider=lambda r: prompts.append(r.kind) or "Zq7!mPx2-vL9#rTb4w",
+        _kdf=KdfParams(n=2**10), _min_n=2**10))  # fmt: skip
+    state = tmp_path.resolve() / "state"
+    info = primary.init(state)
+    o = certreq.cert_request_o(
+        request_id=RID, workspace_id=WS, person_id=PERSON, primary_device_id=info.device_id.hex(),
+        primary_kx_pub=info.dk_kx_pub, offer_id=INNER["offer_id"], attempt=INNER["attempt"],
+        dk_sig_pub=crypto.unb64u(INNER["dk_sig_pub"]), dk_kx_pub=crypto.unb64u(INNER["dk_kx_pub"]),
+        label=INNER["label"], scopes_max=["look", "decide"], created_ms=T0,
+    )  # fmt: skip
+    sig = crypto.sign(corpus.priv("wsk_a.sig"), L["sig_cert_request"] + canon.dumps(o))
+    fake.queue = [{"o": o, "sig": crypto.b64u(sig)}]
+    with primary.unlocked(state, action="pair a device") as session:
+        conn = rhttp.RelayConn(relay.origin())
+        OPEN.append(conn)
+        c = OwnerClient(V_ORIGIN, session, transport=conn)
+        q = PrimaryQueue(
+            c, PrimaryJournal(journal_dir(state)), pk_pub=PK, cards=lambda ws: CARD,
+            unseal=primary.cert_request_unseal(session), now_ms=lambda: T0 + 1,
+        )  # fmt: skip
+        p = q.poll().get(RID)
+        assert p is not None and p.inner.device_id == INNER["device_id"]
+    assert prompts == ["create", "primary"]

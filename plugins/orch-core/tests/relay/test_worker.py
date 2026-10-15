@@ -196,8 +196,9 @@ def test_start_runs_the_precheck_as_a_job_then_the_loop_then_the_publisher(tmp_p
     r.w.unpublished = type("U", (), {"step": staticmethod(step)})()
     r.w.start()
     r.wait_started()
+    assert _wait(lambda: pub.calls == ["start"])  # the publisher right after the loop, in the same locked step
     assert seen == ["orch-ws-test_0"]  # on the workspace's worker thread (the service's submit)
-    assert pub.calls == ["start"] and r.links == 0  # linked: no first link
+    assert r.links == 0  # linked: no first link
     assert r.loop.aux_steps == [("unpublished", step)]  # R4's seam: one step on the aux thread
     with pytest.raises(RuntimeError, match="twice"):
         r.w.start()

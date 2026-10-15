@@ -503,6 +503,7 @@ def test_the_open_hook_never_starts_beside_a_stuck_worker(served, monkeypatch): 
     _reserve(served)
     starts: list[int] = []
     svc.relay_starter = lambda s: starts.append(1)
+    svc.relay_join_seconds = 0.2
     stuck = FakeWorker(stuck=True)
     with svc.relay_cond:
         svc._relay_stuck = stuck  # noqa: SLF001 - a worker whose threads outlived an earlier stop

@@ -25,6 +25,22 @@ def state_dir(env=None) -> Path:
     return core_state_dir(os.environ if env is None else env)
 
 
+class RunDirectoryError(RuntimeError):
+    """A legacy override would send the dashboard to a different host."""
+
+
+def run_dir(state: Path, env=None) -> Path:
+    from orch.host.enable import run_dir_for
+
+    env = os.environ if env is None else env
+    run = run_dir_for(state, env=env)
+    if "ORCH_RUN_DIR" in env and Path(env["ORCH_RUN_DIR"]).absolute() != run:
+        raise RunDirectoryError(
+            "ORCH_RUN_DIR is no longer read; set ORCH_HOST_RUN_DIR (the host's run directory) instead"
+        )
+    return run
+
+
 def read_pins(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
@@ -57,9 +73,9 @@ WRITE_OPS = ("move", "settings.set", "policy.set", "member.add", "member.role", 
 class Gateway:
     def __init__(self, state=None, click=None):
         self.state = state or state_dir()
+        self.run = run_dir(self.state)
         # The one signer child of this server (started on first use, so a dev server with no host starts none).
         self.click = click or Signer(self.state)
-        self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run"))).absolute()
         self.links = {}
         self.control = None
         self.lock = threading.RLock()
@@ -85,6 +101,18 @@ class Gateway:
                 existing.close()
                 raise fail("peer.denied", exit=3)
             return existing
+
+    def new_link(self, ws):
+        """A host connection of its own (one per terminal attachment, section 12.6.6), pinned like `link`."""
+        pin = self._pins().get(ws)
+        if not pin:
+            raise fail("not_found", exit=2)
+        path = os.environ.get("ORCH_HOST_SOCKET") or self.run / ws / "host.sock"
+        link = HostLink.connect(path, pin["host_uid"], ws)
+        if link.welcome["peer"]["person"] != pin["peers"][str(os.getuid())]["person"]:
+            link.close()
+            raise fail("peer.denied", exit=3)
+        return link
 
     def enabled(self, ws):
         link = self.link(ws)
@@ -127,6 +155,17 @@ class Gateway:
             "members": [("member.list", "query/1")],
             "settings_read": [("workspace.settings", "settings/1")],
             "grant_list": [("grant.list", "query/1")],
+            # Terminals (M7a, section 12.6): the person's own shells. `agent.preview`/`agent.start` (H11c) are not
+            # served by this server yet: no "agent_start" feature is ever listed and the page keeps "not available".
+            "terminals": [
+                ("run.sub", "run/1"),
+                ("run.list", "run/1"),
+                ("run.stop", "run/1"),
+                ("term.preview", "term/1"),
+                ("term.open", "term/1"),
+                ("term.attach", "term/1"),
+                ("attach.cancel", "term/1"),
+            ],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):

@@ -17,6 +17,7 @@ from orch.ops.runtime import Call, Workspace
 from orch.ops.views import verified
 
 from orch_dashboard.errors import HostError, fail
+from orch_dashboard.gateway import run_dir
 from orch_dashboard.hostlink import check_uid, encode, receive
 
 from . import reads, settingsops
@@ -240,11 +241,7 @@ class StubHost:
                                 "root": str(peer.root),
                                 "state": "ok",
                                 "tier": "A",
-                                "socket": str(
-                                    Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run")))
-                                    / peer.ws
-                                    / "host.sock"
-                                ),
+                                "socket": str(run_dir(self.state) / peer.ws / "host.sock"),
                             }
                             for peer in self.peers
                         ]

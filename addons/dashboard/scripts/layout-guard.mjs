@@ -518,6 +518,13 @@ async function run(send, close) {
               ['real-host-records-first-commit', 'records-first', [['the no-repository line', '[data-testid="records-not-configured"]']]],
               ['real-host-runner-on', 'runner-on', [['the dashboard-execution line', '[data-testid="runner-execution-line"]']]],
               ['real-host-runner-off', 'runner-off', [['the runner card', '[data-testid="workspace-card-runner"]']]],
+              // M7a: the real-host terminal dock (fixture runs and a fixture socket; nothing reaches a host).
+              ['real-host-terminal-dock', 'terminal-dock', [['the real dock', '[data-real-dock]'], ['the terminal', '[data-real-terminal] .xterm']]],
+              ['real-host-terminal-preview', 'terminal-preview', [['the preview dialog', '[data-term-preview]']]],
+              ['real-host-terminal-readonly', 'terminal-readonly', [['the read-only banner', '[data-lease="reading"]']]],
+              ['real-host-terminal-take', 'terminal-take', [['the Take control banner', '[data-lease="busy"]']]],
+              ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
+              ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)

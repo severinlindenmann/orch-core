@@ -154,3 +154,29 @@ def test_check_prepared_refuses_a_grant_issued_without_the_runner_label():
             views.deposit_checks({"op": "grant", "events": [ev]})
     views.deposit_checks({"op": "grant", "events": [{"type": "grant.issued", "label": "runner", "hours": 12,
                                                      "verbs": "agent"}]})  # fmt: skip
+
+
+def test_any_failure_of_the_hand_over_after_the_commit_is_unknown_never_internal(world):
+    """Opus info: a non-ClickError (a framing error from the host client) after the commit reports unknown."""
+    from orch.host.frames import FrameError
+
+    served, click, _, _ = world
+    execution(served)
+
+    def tamper(op, args, res):
+        if op in ("grant.deposit", "grant.deposit_status"):
+            raise FrameError("frame.invalid")
+        return res
+
+    click.tamper = tamper
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "unknown" and res["grant"].startswith("gr_")
+
+
+def test_a_click_deposit_grant_has_no_set_orch_grant_hint(world):
+    served, click, _, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert "ORCH_GRANT" not in repr(res["result"].get("hints")) + repr(res["result"].get("lines"))

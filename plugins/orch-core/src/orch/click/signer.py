@@ -509,7 +509,9 @@ class ClickSigner:
     def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
         """A deposit grant's arguments: ``hours`` 1..12 (default 8) and ``scope``; the signer sets ``label:"runner"``
         and ``verbs:"agent"`` itself. Refused (``terminal_only``) unless this machine has dashboard execution on."""
-        unknown = set(inner) - {"hours", "scope", "label", "verbs"}
+        unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner"}
+        if inner.get("runner", True) is not True:
+            raise ClickError("invalid.input", "a deposit grant is a runner grant")
         hours, scope = inner.get("hours", 8), inner.get("scope", "workable")
         if unknown or inner.get("label", "runner") != "runner" or inner.get("verbs", "agent") != "agent":
             raise ClickError("invalid.input", "a deposit grant takes hours and scope only")
@@ -519,7 +521,8 @@ class ClickSigner:
             raise refused("terminal_only", f"a click grant lasts at most {DEPOSIT_MAX_HOURS} hours; use the terminal")
         if not self._execution(entry):
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
-        return {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner"}
+        # runner:true makes the op itself a runner grant (label runner, at most 12 h, verbs agent, no ORCH_GRANT hint)
+        return {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
 
     def _deposited(
         self, entry: dict[str, Any], op: str, rid: str, res: dict[str, Any], secret: str | None = None
@@ -556,13 +559,26 @@ class ClickSigner:
                 return "unknown"
             self._note("deposit", workspace=entry["workspace_id"], code=exc.code)
             return "rejected"
+        except Exception:  # noqa: BLE001 - after the commit nothing may fail falsely: the outcome is unknown
+            self._drop_conn(entry)
+            return "unknown"
         outcome = got.get("deposit")
         return outcome if outcome in ("confirmed", "rejected", "unknown") else "unknown"
+
+    def _drop_conn(self, entry: dict[str, Any]) -> None:
+        """A connection in an unknown state (a framing error mid-answer) is never reused."""
+        conn = self.conns.pop(entry["workspace_id"], None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _deposit_status(self, entry: dict[str, Any], deposit_id: str) -> str:
         try:
             got = self._call(entry, "grant.deposit_status", {"deposit_id": deposit_id})["data"]
-        except ClickError:
+        except Exception:  # noqa: BLE001 - a ClickError or anything the host client raises: still unknown
+            self._drop_conn(entry)
             return "unknown"
         outcome = got.get("deposit")
         return outcome if outcome in ("confirmed", "rejected") else "unknown"

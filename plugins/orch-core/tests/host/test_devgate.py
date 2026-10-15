@@ -693,3 +693,10 @@ def test_the_new_code_is_in_both_catalogs_and_the_spec():
     spec = (SRC.parents[3] / "docs" / "architecture" / "orch-v2-host.md").read_text(encoding="utf-8")
     assert "| `host.dev_refused` |" in spec
     assert set(devmode.REASONS) == set(DETAIL_KEYS["host.dev_refused"]["reason"])
+
+
+def test_r2_vector_convenience_refused_on_a_normal_host():
+    """The R2 vector (core's, orch-f1 reads it): a convenience answer without the dev gate is op.not_allowed, D."""
+    doc = json.loads((SRC.parents[1] / "tests" / "relay" / "r2_vectors" / "r2_framing.json").read_text())
+    (case,) = [c for c in doc["cases"] if c["name"] == "answer_convenience_refused"]
+    assert case["answer"][0]["meta"]["refusal"] == "op.not_allowed" and case["retry_class"] == "D"

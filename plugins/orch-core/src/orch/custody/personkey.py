@@ -25,12 +25,17 @@ refused without a terminal, :class:`~orch.custody.base.NoPrompt`, and under ``OR
 BIP-39 checksum), derived exactly as ``orch init`` derives it (:func:`orch.identity.recovery.derive_person_scalar`),
 and matched against the expected person (the workspace owner's pinned ``pk_pub`` or ``person_id``) **before** any
 signature (:class:`PersonMismatch`). Nothing is written to disk; the code and the key are never logged, never in an
-exception text or a ``repr``. From before the prompt to the end of the block core dumps are off and a debugger cannot
-attach (the passphrase backend's ``_harden``). **Best effort, stated honestly:** Python keeps an immutable copy of the
-decoded code text and of the scalar as an ``int`` until the garbage collector reuses the memory, and OpenSSL holds
-the key object's copy; the module zeroises the buffers it owns (the typed bytes, the 32-byte scalar) and drops every
-reference. A program running as the user at that moment can capture the code (11A.15.16, "what every same-Mac option
-shares").
+exception text, an exception chain or its frames, or a ``repr``. The terminal is opened first; from then, before the
+prompt, to the end of the block core dumps are off and a debugger cannot attach (the passphrase backend's
+``_harden``), so a refusal without a terminal sets nothing irreversible. The ``action`` is shown printable characters
+only. The source signs only the labels its command names (``labels=``, required). **Best effort, stated honestly
+(Opus F6):** the module zeroises the buffers it owns (the typed bytes, the 32-byte scalar) and drops every reference,
+but these immutable copies stay in memory until it is reused: the decoded code text (a ``str``) and the bytes the
+parser and scrypt make from it; the scalar as a Python ``int`` and the temporary ``bytes`` of its ``to_bytes``; the
+``bytes`` copy of the scalar that :meth:`RecoveryCodeSource.derive_label_key` passes to HKDF, and the label key it
+returns; and OpenSSL's copy inside the key object. A ``SIGKILL`` while the prompt waits leaves the terminal without
+echo (``stty echo`` restores it), as with ``getpass``. A program running as the user at that moment can capture the
+code (11A.15.16, "what every same-Mac option shares").
 
 The only environment variable read is ``ORCH_GRANT``, and it only narrows (refuses), never selects (11A.15.11 N8a).
 The sandbox's source of the dev path lives in the test tree (``tests/relay/personkey_sandbox.py``), never here.
@@ -38,9 +43,13 @@ The sandbox's source of the dev path lives in the test tree (``tests/relay/perso
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import os
-from collections.abc import Callable
+import signal
+import threading
+import traceback
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, Protocol, runtime_checkable
 
 from orch import crypto
@@ -52,16 +61,22 @@ from .passphrase import _harden, _open_tty, _zeroise
 
 __all__ = [
     "LABEL_KEY_INFO",
+    "MAX_ACTION_CHARS",
     "MAX_CODE_BYTES",
     "SIGN_LABELS",
     "BadRecoveryCode",
     "HumanOnly",
     "LabelRefused",
     "PersonKeyClosed",
+    "PersonKeyError",
     "PersonKeySource",
     "PersonMismatch",
+    "PublicKeyUnknown",
     "RecoveryCodeSource",
+    "check_granted",
+    "check_labels",
     "check_payload",
+    "printable_action",
 ]
 
 SIGN_LABELS: tuple[str, ...] = ("sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation")
@@ -74,6 +89,11 @@ LABEL_KEY_INFO = b"orch/v2/pvk|p1"
 
 MAX_CODE_BYTES = 512
 """The longest line accepted at the prompt (24 words of at most 8 letters need under 220 bytes)."""
+
+MAX_ACTION_CHARS = 120
+"""The longest ``action`` shown at the prompt (after removing every non-printable character)."""
+
+_REASONS = ("recovery.words", "recovery.unknown_word", "recovery.checksum")
 
 
 class HumanOnly(CustodyError):
@@ -103,6 +123,17 @@ class PersonKeyClosed(CustodyError):
     """``sign`` or ``derive_label_key`` outside the ``with`` block, or a source entered a second time."""
 
     code = "custody.person_key_closed"
+
+
+class PersonKeyError(CustodyError):
+    """Deriving the person key from a valid code failed (for example out of memory); nothing of the code or the
+    failure's frames is kept."""
+
+    code = "custody.person_key"
+
+
+class PublicKeyUnknown(PersonKeyClosed, AttributeError):
+    """``pk_pub`` of a source named by ``person_id`` before its code is typed (also an ``AttributeError``)."""
 
 
 class LabelRefused(CustodyError):
@@ -154,6 +185,34 @@ def check_payload(label: object, payload: object) -> bytes:
     return want
 
 
+def check_labels(labels: object) -> frozenset[str]:
+    """The labels one command may sign (least privilege, Opus F4): a non-empty collection of names from
+    :data:`SIGN_LABELS` (adding a device: challenge, rejection, certificate; revoking: revocation)."""
+    if isinstance(labels, (str, bytes)) or not isinstance(labels, Iterable):
+        raise LabelRefused("name the labels this command signs, as a collection of label names")
+    names = list(labels)
+    if not names or not all(type(n) is str and n in SIGN_LABELS for n in names):
+        raise LabelRefused("the labels must be a non-empty subset of " + ", ".join(SIGN_LABELS))
+    return frozenset(names)
+
+
+def check_granted(granted: frozenset[str], label: object, payload: object) -> None:
+    """:func:`check_payload`, and ``label`` is one this source was given."""
+    check_payload(label, payload)
+    if label not in granted:
+        raise LabelRefused(f"this command did not ask to sign {label}")
+
+
+def printable_action(action: object) -> str:
+    """What the prompt shows of ``action`` (Opus F2): whitespace becomes a space, every other non-printable character
+    (C0 and C1 controls such as ESC and CSI, bidi and other format characters, unassigned code points) is removed,
+    runs of spaces collapse, at most :data:`MAX_ACTION_CHARS` characters."""
+    if not isinstance(action, str):
+        return ""
+    kept = "".join(" " if c.isspace() else c for c in action if c.isspace() or c.isprintable())
+    return " ".join(kept.split())[:MAX_ACTION_CHARS]
+
+
 def _expected(person_id: object, pk_pub: object) -> tuple[bytes, bytes | None]:
     if (person_id is None) == (pk_pub is None):
         raise CustodyError("name the expected person: exactly one of person_id or pk_pub")
@@ -175,33 +234,108 @@ def _derive_scalar(text: str) -> int:
     return recovery.derive_person_scalar(text)
 
 
+@contextlib.contextmanager
+def _echo_back_on_signal(fd: int, old: list[Any]) -> Iterator[None]:
+    """While the prompt waits (Opus F5): a ``SIGTERM`` or ``SIGHUP`` whose handler is the default (which would end the
+    process without running ``finally`` blocks, leaving the terminal without echo) first puts the terminal's settings
+    back and the previous handlers, then re-raises the signal with its default action. A signal with a Python handler
+    or ignored is left alone (a handler's exception unwinds through the ``finally`` that restores echo). Only the main
+    thread can install handlers; elsewhere this is a no-op, as ``getpass`` is."""
+    import termios
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    saved = {s: signal.SIG_DFL for s in (signal.SIGTERM, signal.SIGHUP) if signal.getsignal(s) is signal.SIG_DFL}
+
+    def handler(signum: int, frame: object) -> None:
+        with contextlib.suppress(OSError, termios.error):
+            termios.tcsetattr(fd, termios.TCSANOW, old)
+        for s, h in saved.items():
+            signal.signal(s, h)
+        signal.raise_signal(signum)
+
+    for s in saved:
+        signal.signal(s, handler)
+    try:
+        yield
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+
+
 def _read_code(r: int, w: int, prompt: str, buf: bytearray) -> bool:
     """Write ``prompt`` and read one line, echo off, into the caller's ``buf`` (so the caller zeroises it on every
     path, a ``KeyboardInterrupt`` included). Returns False when the line was longer than :data:`MAX_CODE_BYTES` (the
-    rest of the line is read and dropped). The terminal's settings are restored however it ends."""
+    rest of the line is read and dropped). The terminal's settings are restored however it ends, a default-action
+    ``SIGTERM``/``SIGHUP`` included (:func:`_echo_back_on_signal`)."""
     import termios
 
     old = termios.tcgetattr(r)
     new = old[:]
     new[3] &= ~termios.ECHO
-    termios.tcsetattr(r, termios.TCSAFLUSH, new)
     fits = True
-    try:
-        os.write(w, prompt.encode("utf-8", "replace"))
-        while True:
-            c = os.read(r, 1)
-            if not c or c == b"\n":
-                break
-            if len(buf) < MAX_CODE_BYTES:
-                buf += c
-            else:
-                fits = False
-    finally:
-        termios.tcsetattr(r, termios.TCSAFLUSH, old)
-        os.write(w, b"\n")
+    c = b""
+    with _echo_back_on_signal(r, old):
+        termios.tcsetattr(r, termios.TCSAFLUSH, new)
+        try:
+            os.write(w, prompt.encode("utf-8", "replace"))
+            while True:
+                c = os.read(r, 1)
+                if not c or c == b"\n":
+                    break
+                if len(buf) < MAX_CODE_BYTES:
+                    buf += c
+                else:
+                    fits = False
+        finally:
+            c = b""  # noqa: F841 - the last byte read is not left in a frame an exception carries
+            termios.tcsetattr(r, termios.TCSAFLUSH, old)
+            os.write(w, b"\n")
     if buf.endswith(b"\r"):
         del buf[-1]
     return fits
+
+
+def _unlock(typed: bytearray, scalar: bytearray, derive: Callable[[str], int] | None = None) -> Any:
+    """Check ``typed`` with the existing parser, derive the person key as ``orch init`` does, write its 32-byte scalar
+    into the caller's ``scalar`` and return the key object. Shared by every source that starts from a code.
+
+    **No typed text survives in an exception (Opus F1).** A parser refusal records only its reason inside the
+    ``except`` and :class:`BadRecoveryCode` is raised after it, so it has no ``__context__``; the parser's frames
+    (which hold the text) are cleared first. A failed derivation of a valid code clears the failure's frames and
+    raises a fresh :class:`PersonKeyError` (or a fresh exception of the same type for a ``BaseException`` such as
+    ``KeyboardInterrupt``) without cause or context. The caller zeroises ``typed`` and, on failure, ``scalar``."""
+    reason: str | None = None
+    text: str | None = None
+    try:
+        text = recovery.check_recovery_code(bytes(typed).decode("utf-8"))
+    except UnicodeDecodeError as e:
+        traceback.clear_frames(e.__traceback__)
+        reason = "recovery.words"
+    except recovery.RecoveryCodeError as e:
+        traceback.clear_frames(e.__traceback__)
+        reason = e.code if e.code in _REASONS else "recovery.words"
+    if reason is not None:
+        raise BadRecoveryCode(reason)
+    failed: type[BaseException] | None = None
+    key: Any = None
+    d: int | None = None
+    try:
+        d = (derive or _derive_scalar)(text)  # type: ignore[arg-type]
+        text = None
+        scalar += d.to_bytes(32, "big")
+        key = crypto.private_key_from_scalar(d)
+    except BaseException as e:  # noqa: BLE001 - re-raised below without the frames that hold the code
+        traceback.clear_frames(e.__traceback__)
+        failed = type(e)
+    text = d = None
+    if failed is None:
+        return key
+    key = None
+    if issubclass(failed, Exception):
+        raise PersonKeyError("the person key could not be derived from the recovery code; nothing was signed")
+    raise failed()
 
 
 def _prompt(action: str, person_id: bytes) -> str:
@@ -224,11 +358,19 @@ class RecoveryCodeSource:
             challenge = make_cert_challenge(pk.pk_pub, pk.signer("sig_cert_challenge"), request, inner, nonce)
     """
 
-    __slots__ = ("_action", "_live", "_person_id", "_pk_pub", "_restore", "_state")
+    __slots__ = ("_action", "_labels", "_live", "_person_id", "_pk_pub", "_restore", "_state")
 
-    def __init__(self, *, person_id: bytes | None = None, pk_pub: bytes | None = None, action: str) -> None:
+    def __init__(
+        self,
+        *,
+        labels: Iterable[str],
+        person_id: bytes | None = None,
+        pk_pub: bytes | None = None,
+        action: str,
+    ) -> None:
+        self._labels = check_labels(labels)
         self._person_id, self._pk_pub = _expected(person_id, pk_pub)
-        self._action = " ".join(action.split())[:200] if isinstance(action, str) else ""
+        self._action = printable_action(action)
         self._live: list[Any] = []  # [private key, 32-byte scalar bytearray] inside the block only
         self._restore: Callable[[], None] | None = None
         self._state = "new"
@@ -241,8 +383,11 @@ class RecoveryCodeSource:
 
     @property
     def pk_pub(self) -> bytes:
+        """The expected key when it was given, else known once the code is typed. Before that an
+        ``AttributeError``-compatible :class:`PublicKeyUnknown`, so a runtime protocol check (Python 3.11 ``hasattr``)
+        never fails with another exception."""
         if self._pk_pub is None:
-            raise PersonKeyClosed("the public key is known once the recovery code has been typed")
+            raise PublicKeyUnknown("the public key is known once the recovery code has been typed")
         return self._pk_pub
 
     def __repr__(self) -> str:
@@ -267,31 +412,21 @@ class RecoveryCodeSource:
         self._state = "closed"  # one prompt per source, whatever happens next
         if os.environ.get("ORCH_GRANT") is not None:
             raise HumanOnly("the recovery code is never asked for under ORCH_GRANT: an agent never holds PK")
-        restore = _harden()  # before the prompt: the typed code, the scalar and the key are all covered
         typed, scalar = bytearray(), bytearray()
-        text: str | None = None
-        d: int | None = None
         key: Any = None
+        restore: Callable[[], None] | None = None
         opened = False
+        # The terminal first (Opus F3): without one the refusal comes before the irreversible PT_DENY_ATTACH.
+        r, w, close = _open_tty()
         try:
-            r, w, close = _open_tty()
             try:
+                restore = _harden()  # before the prompt: the typed code, the scalar and the key are all covered
                 fits = _read_code(r, w, _prompt(self._action, self._person_id), typed)
             finally:
                 close()
             if not fits:
                 raise BadRecoveryCode("recovery.words")
-            try:
-                text = recovery.check_recovery_code(bytes(typed).decode("utf-8"))
-            except UnicodeDecodeError:
-                raise BadRecoveryCode("recovery.words") from None
-            except recovery.RecoveryCodeError as e:
-                raise BadRecoveryCode(e.code) from None
-            d = _derive_scalar(text)
-            text = None
-            scalar += d.to_bytes(32, "big")
-            key = crypto.private_key_from_scalar(d)
-            d = None
+            key = _unlock(typed, scalar)
             pub = crypto.public_bytes(key)
             if not hmac.compare_digest(crypto.person_id(pub), self._person_id) or (
                 self._pk_pub is not None and not hmac.compare_digest(pub, self._pk_pub)
@@ -299,7 +434,7 @@ class RecoveryCodeSource:
                 key = None
                 raise PersonMismatch(
                     f"that recovery code is not the one of p_{self._person_id.hex()}; nothing was signed"
-                ) from None
+                )
             self._pk_pub = pub
             self._live[:] = [key, scalar]
             self._restore = restore
@@ -307,12 +442,13 @@ class RecoveryCodeSource:
             opened = True
             return self
         finally:
-            text = d = key = None  # noqa: F841 - drop the frame's references before an exception carries the frame
+            key = None
             _zeroise(typed)
             if not opened:
                 self._live.clear()
                 _zeroise(scalar)
-                restore()
+                if restore is not None:
+                    restore()
 
     def __exit__(self, *exc: object) -> bool:
         self._close()
@@ -347,11 +483,11 @@ class RecoveryCodeSource:
     # -- what the key does --------------------------------------------------------------------------------------------
 
     def sign(self, label: str, payload: bytes) -> bytes:
-        check_payload(label, payload)
+        check_granted(self._labels, label, payload)
         return crypto.sign(self._key(), payload)
 
     def signer(self, label: str) -> Callable[[bytes], bytes]:
-        check_payload(label, L[label] if label in SIGN_LABELS else None)
+        check_granted(self._labels, label, L[label] if label in SIGN_LABELS else None)
 
         def sign(payload: bytes) -> bytes:
             return self.sign(label, payload)

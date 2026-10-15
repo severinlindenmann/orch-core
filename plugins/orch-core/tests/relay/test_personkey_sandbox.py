@@ -47,7 +47,7 @@ def test_the_sandbox_source_is_a_person_key_source_and_signs_a_challenge_the_hos
             pk.signer("sig_decision")
     assert certreq.check_cert_challenge(ch, pk_pub, signed["o"]).device_id == inner.device_id
     with pytest.raises(personkey.PersonKeyClosed):
-        src.sign("sig_revocation", L["sig_revocation"] + b"{}")
+        src.sign("sig_cert_challenge", L["sig_cert_challenge"] + b"{}")
 
 
 def test_without_the_manifest_the_sandbox_source_refuses(sandbox):

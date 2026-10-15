@@ -24,7 +24,7 @@ import json
 import os
 import secrets
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -60,9 +60,10 @@ def _dir_fd(root: Path) -> tuple[int, os.stat_result]:
 
 
 def _read_private(dir_fd: int, name: str) -> bytearray:
-    """A 0600 regular file of this user, opened without following a symbolic link, into a bytearray."""
+    """A 0600 regular file of this user, opened without following a symbolic link and without blocking (a FIFO in its
+    place never hangs the open; Opus F7), checked by ``fstat``, into a bytearray."""
     try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     except OSError:
         raise SandboxRefused(f"no {name} in the sandbox") from None
     try:
@@ -131,16 +132,18 @@ class SandboxPersonKey:
     """The sandbox person's key for one command, as :class:`~orch.custody.personkey.RecoveryCodeSource` but read
     from ``<root>/secrets/recovery-code`` after the manifest check. ``_kdf_n`` is the low-N seam for fast tests."""
 
-    __slots__ = ("_kdf_n", "_live", "_person_id", "_pk_pub", "_root", "_state")
+    __slots__ = ("_kdf_n", "_labels", "_live", "_person_id", "_pk_pub", "_root", "_state")
 
     def __init__(
         self,
         root: str | os.PathLike[str],
         *,
+        labels: Iterable[str],
         person_id: bytes | None = None,
         pk_pub: bytes | None = None,
         _kdf_n: int | None = None,
     ) -> None:
+        self._labels = personkey.check_labels(labels)
         self._person_id, self._pk_pub = personkey._expected(person_id, pk_pub)
         self._root = Path(root)
         self._kdf_n = _kdf_n
@@ -154,7 +157,7 @@ class SandboxPersonKey:
     @property
     def pk_pub(self) -> bytes:
         if self._pk_pub is None:
-            raise personkey.PersonKeyClosed("the public key is known once the code has been read")
+            raise personkey.PublicKeyUnknown("the public key is known once the code has been read")
         return self._pk_pub
 
     def __repr__(self) -> str:
@@ -175,21 +178,21 @@ class SandboxPersonKey:
             try:
                 sfd = os.open(SECRETS, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             except OSError:
-                raise SandboxRefused("no secrets directory in the sandbox") from None
+                sfd = -1
             finally:
                 os.close(fd)
+            if sfd < 0:
+                raise SandboxRefused("no secrets directory in the sandbox")
             try:
+                st = os.fstat(sfd)
+                if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
+                    raise SandboxRefused("secrets/ is not a 0700 directory of this user")  # Opus F7
                 typed = _read_private(sfd, CODE_FILE)
             finally:
                 os.close(sfd)
-            try:
-                text = recovery.check_recovery_code(bytes(typed).decode("utf-8"))
-            except (UnicodeDecodeError, recovery.RecoveryCodeError) as e:
-                raise personkey.BadRecoveryCode(getattr(e, "code", "recovery.words")) from None
             n = self._kdf_n
-            d = recovery.derive_person_scalar(text) if n is None else recovery._scalar(text, n)
-            scalar += d.to_bytes(32, "big")
-            key = crypto.private_key_from_scalar(d)
+            # The production parse-and-derive step, so a bad code leaves no text in the exception (Opus F1).
+            key = personkey._unlock(typed, scalar, None if n is None else (lambda t: recovery._scalar(t, n)))
             pub = crypto.public_bytes(key)
             if crypto.person_id(pub) != self._person_id or (self._pk_pub is not None and pub != self._pk_pub):
                 raise personkey.PersonMismatch("the sandbox code is not the expected person's")
@@ -217,11 +220,11 @@ class SandboxPersonKey:
         return self._live[0]
 
     def sign(self, label: str, payload: bytes) -> bytes:
-        personkey.check_payload(label, payload)
+        personkey.check_granted(self._labels, label, payload)
         return crypto.sign(self._key(), payload)
 
     def signer(self, label: str) -> Callable[[bytes], bytes]:
-        personkey.check_payload(label, L[label] if label in personkey.SIGN_LABELS else None)
+        personkey.check_granted(self._labels, label, L[label] if label in personkey.SIGN_LABELS else None)
         return lambda payload: self.sign(label, payload)
 
     def derive_label_key(self) -> bytes:

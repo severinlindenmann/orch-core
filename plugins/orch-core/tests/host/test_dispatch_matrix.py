@@ -94,8 +94,9 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     assert {"ops/1", "outcome/1", "sub/1", "blob/1", "diff/1"} <= set(welcome["caps"])
     assert set(FILE_OPS) == {"blob.put", "blob.drop", "artifact.get"}
     assert GIT_OPS == {"diff": 1} and welcome["ops"]["diff"] == 1  # diff/1 lists both diff and artifact.get
-    # H6b: the read caps; read_ext/2 also lists read_ext/1 (§0.4)
-    assert {"query/1", "read_ext/1", "read_ext/2", "activity/1", "settings/1", "text/1"} <= set(welcome["caps"])
+    # H6b: the read caps; each read_ext/N also lists the lower ones (§0.4; read_ext/3: v1.9 member.list devices)
+    caps = {"query/1", "read_ext/1", "read_ext/2", "read_ext/3", "activity/1", "settings/1", "text/1"}
+    assert caps <= set(welcome["caps"])
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
 
 

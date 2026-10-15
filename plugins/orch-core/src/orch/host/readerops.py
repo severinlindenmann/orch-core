@@ -101,11 +101,12 @@ def _dk_hash(evidence: Any) -> str | None:
 
 
 def device_levels(service: Any) -> dict[str, int]:
-    """device -> counted level (0 without a record that verifies), for ``member.list``."""
+    """device -> counted level, for the current devices whose record verifies (``member.list`` answers ``null`` for
+    the others, #505)."""
     from orch.ops import readers as rd
 
     lv = rd.levels(Path(service.state_dir), service.workspace_id, service.store.state, service.host_uid)
-    return {d: (v or 0) for d, v in lv.items()}
+    return {d: v for d, v in lv.items() if v is not None}
 
 
 def declare(service: Any, person: str, decl: Any) -> dict[str, Any]:

@@ -14,7 +14,11 @@ Decisions the contract leaves open:
   genesis event; ``epoch`` is the **committed** membership epoch of §11. P2 publishes no membership list yet, so
   nothing is committed: :func:`committed_epoch` answers ``0`` until the P3 bridge records one.
 * ``member.list`` ``devices[].auth`` is the ``auth`` of the latest workspace-log event the device signed (the custody
-  label F1 records), ``null`` when it has signed none there.
+  label F1 records), ``null`` when it has signed none there. The ``read_ext/3`` device fields (v1.9):
+  ``cert_expires_at`` is the F1 certificate's ``expires_ms`` as ``Time``; ``label``, ``paired_at`` and ``relay`` come
+  from R6's relay record and ``reader`` from the H12d reader record, neither of which is built yet
+  (:func:`relay_devices`, :func:`reader_levels`): until then ``null``, ``null``, ``false`` and ``null``, never a guess.
+  ``label`` is for persons only (P, and R, which reads as P): N and G get ``null``.
 * ``session.list`` ``claims`` are the tickets whose **live** claim is this session under this grant.
 * ``workspace.settings`` binds the first page's ``limit`` into the token: a later page that names another ``limit`` is
   ``invalid.input`` (the only argument that op has); one that names none keeps the first page's.
@@ -152,13 +156,59 @@ def _device_auth(events: list[dict[str, Any]]) -> dict[str, str]:
     return out
 
 
-@handler("member.list")
-def member_list(ctx: ReadCtx) -> dict[str, Any]:
+def relay_devices(ctx: ReadCtx) -> dict[str, dict[str, Any]]:
+    """device -> its R6 relay record (``membership/devices/<id>.json``, 11A.15.3: ``{device_id, person_id, label,
+    paired_ms, ...}``), for the devices paired through the relay.
+
+    **R6 is not built**: core has no writer and no reader of that record yet, so no device is relay-paired and this is
+    empty. R6 replaces this body with its own read; :func:`member_list` already maps a record to ``label``,
+    ``paired_at`` and ``relay``."""
+    return {}
+
+
+def reader_levels(ctx: ReadCtx) -> dict[str, int]:
+    """device -> the H12d reader level of its reader record (``readers/<device_id>.json``, §0.8.6 item 9.10), for the
+    current devices whose record verifies now (H12d-2, :func:`orch.host.readerops.device_levels`). A device without
+    one is absent, so ``member.list`` answers ``reader: null`` (no record), never 0: the gate's "no record counts as 0"
+    is the gate's rule, not a level the device declared."""
     from .readerops import device_levels
 
+    return device_levels(ctx.service)
+
+
+def _label(record: dict[str, Any] | None) -> str | None:
+    """The record's label cleaned per protocol §2.5 (:func:`orch.identity.pairing.clean_label`), ``None`` when there
+    is no record, no label, or nothing is left after cleaning."""
+    from orch.identity.errors import Refused
+    from orch.identity.pairing import clean_label
+
+    text = record.get("label") if record else None
+    if not isinstance(text, str):
+        return None
+    try:
+        return clean_label(text) or None
+    except Refused:
+        return None
+
+
+#: the first epoch ms past ``9999-12-31T23:59:59Z``: a later value has no RFC 3339 ``Time``
+_TIME_END_MS = 253402300800000
+
+
+def _ms_time(value: Any) -> str | None:
+    """An epoch-ms value as ``Time`` (whole seconds, like every host read); ``None`` for anything else, and for a value
+    outside the RFC 3339 range (before 1970 or after year 9999, which a verified cert may carry): one odd value never
+    breaks the read."""
+    return iso(value // 1000) if type(value) is int and 0 <= value < _TIME_END_MS else None
+
+
+@handler("member.list")
+def member_list(ctx: ReadCtx) -> dict[str, Any]:
     ws = ctx.workspace
     auth = _device_auth(_ws_events(ctx))
-    levels = device_levels(ctx.service)  # H12d-2: each current device's reader level (0 without a record)
+    relay = relay_devices(ctx)
+    readers = reader_levels(ctx)
+    labels = ctx.viewer.column in {"P", "R"}  # N and G get label null (orch-52, #505); R reads exactly as P (§11A.4)
     now_ms = ctx.now * 1000
     members = []
     for person, member in ws.members.items():
@@ -167,13 +217,21 @@ def member_list(ctx: ReadCtx) -> dict[str, Any]:
             if dev.person != person:
                 continue
             valid = not dev.removed and not dev.revoked and (dev.expires_ms is None or dev.expires_ms > now_ms)
+            record = relay.get(dev.id)
+            if record is not None and record.get("person_id") != dev.person:
+                record = None  # a record for another person is not this device's pairing
             devices.append(
                 {
                     "id": dev.id,
                     "auth": auth.get(dev.id),
                     "scopes": list(dev.scopes),
                     "valid": valid,
-                    "reader": levels.get(dev.id, 0),
+                    # v1.9, read_ext/3 (§0.8.5 "member.list device fields")
+                    "label": _label(record) if labels else None,
+                    "paired_at": _ms_time(record.get("paired_ms")) if record else None,
+                    "relay": record is not None,
+                    "cert_expires_at": _ms_time(dev.expires_ms),
+                    "reader": readers.get(dev.id),
                 }
             )
         devices.sort(key=lambda d: d["id"])

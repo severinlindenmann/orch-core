@@ -1616,3 +1616,42 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** Dashboard and devhost reuse core's `run_dir_for` with `ORCH_HOST_RUN_DIR`, then `<state>/run`. Reject a differing legacy `ORCH_RUN_DIR` before dashboard startup; accept an identical absolute path silently.
 - **Why:** Discovery, signing, records and terminals must reach the same host as core. A stale override must not silently select another host.
 - **Revert:** Restore the old resolver and startup behavior in the dashboard and devhost, along with their tests and documentation.
+
+## 2026-10-15 Pair a phone: Settings → Devices, fixtures only, behind `pair/1` (PROPOSAL PENDING)
+
+- **Decision:** A real host's settings gain a **Devices** tab (`HOST_TABS`), always listed. It asks `pairServed(ws)`: the server lists
+  feature `pair` (host serves the proposed `pair/1` ops in `welcome.ops`) **and** this build's `pairingApi.served()`. The real
+  implementation (`realPairingApi` in `src/api/pairing.ts`) answers "not available" for every call and `served()` is false, so every real
+  host today shows "Pairing a phone is not available on this host yet." No server route and no `pair` feature were added. The mockup's
+  "Relay & devices" preview tab is unchanged; the new page is reachable in dev only through `/__layout/pair-*` (fixture api in
+  `src/dev/pairFixture.ts`).
+- **Why Devices, not Members:** phones are devices of the viewer, not people; Members is the roster and its hand-offs. Devices holds both
+  "Pair a phone" and the paired-device list, so the remove hand-off sits beside what it removes.
+- **Assumptions (the proposal `proposal-dashboard-pairing-ops.md` is not agreed; each is a guess to check):**
+  1. Op names and shapes as in the proposal: `pair.preview`, `pair.offer`, `pair.list`, `pair.answer`, `pair.cancel`, `sub.open
+     {topics:["pair"]}` items `{t:"pair", offer_id, state}`, devices `{device, label, paired_ms, relay, cert_expires, reader}`.
+  2. `blocked.history` (new, optional): for `sign.convenience_readers`, whether click-to-sign was ever used. Absent, the page explains
+     both cases (turn it off with `orch host convenience off --workspace <PREFIX>` if never used; otherwise no phone yet).
+  3. `pair.list` rows may carry `cert_ready: true` (certificate in, ready for the `relay.pair_device` signature) and `needs_remove`
+     (the host's "remove the device" text after a post-add failure). Without them: cert_pending shows only the primary step; failed
+     shows a core sentence about removing the device.
+  4. The primary command is shown as `orch keys primary approve` (the CLI name is not fixed; `PRIMARY_COMMAND`).
+  5. Hand-off actions `pair_device {offer}` and `device_remove {device}` are new `HandoffAction`s for the server's `/handoff` route;
+     neither is click-eligible (terminal only). The server refuses them today (unknown action): they are only reachable behind the gate.
+  6. Offer TTL: always the host's `expires_ms` (5-minute class); nothing is hard-coded.
+  7. The label is the host's cleaned label (controls/bidi stripped, NFC, ≤80 code points). The page does no cleaning: it renders it
+     through `Inline` (visible.tsx: escapes, isolates) with "named by the device".
+- **Link rules (R6 §11A.15 relaxed as proposed; binding conditions from orch-29):** the link exists only in the answer to the person's own
+  `pair.offer` and in `Devices.tsx` component state. Not a query or a mutation (no cache entry), not storage, URL, history, toast or
+  log. The QR (native `orch://pair?…#v2.…` only) is drawn in the page by `uqr` 0.1.3 (MIT, unjs, zero dependencies, pinned) after an
+  explicit **Show QR**; **Copy link** copies the native link; the https link is selectable text "type this on the phone", never an anchor.
+  Dropped at the first state past `open`, at `expires_ms`, on cancel and on unmount; on blur it may stay but is never fetched again (a
+  page that finds a live `open` offer it has no link for says "cancel it and create a new one").
+- **SAS:** typed entry. The person types the phone's six characters; `checkSas` compares them with `pair.list`'s `sas` (case-insensitive,
+  spaces/dashes ignored). Approve is enabled only on a match; a full mismatch says "The codes differ: reject this phone." Reject is the
+  default and has the focus; Enter in the field does nothing. The host's SAS is never displayed.
+- **For the real server route (later):** `pair.offer`'s answer must not be logged (request/response body), must be `Cache-Control:
+  no-store`, must not go into idempotency/outcome records or any SSE item; `Referrer-Policy: no-referrer` on the page.
+- **Revert:** drop `devices` from `HOST_TABS` and its line in `settings/index.tsx`; delete `src/api/pairing.ts`,
+  `src/app/pages/settings/host/Devices.tsx`, `src/dev/pairFixture.ts`, the `pair-*` scenarios and guard entries, the two `HandoffAction`
+  members, the `summary` pass-through in `useSettingsHandoff`, and `uqr` from package.json.

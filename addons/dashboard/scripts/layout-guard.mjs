@@ -525,10 +525,34 @@ async function run(send, close) {
               ['real-host-terminal-take', 'terminal-take', [['the Take control banner', '[data-lease="busy"]']]],
               ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
               ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
+              // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
+              ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
+              ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],
+              ['real-host-pair-offer', 'pair-offer', [['the warnings', '[data-testid="pair-warnings"]'], ['the device list', '[data-testid="device-row"]']]],
+              ['real-host-pair-pending', 'pair-pending', [['the code entry', '#pair-sas'], ['the label', '[data-testid="pair-label"]']]],
+              ['real-host-pair-cert', 'pair-cert', [['the cert code', '[data-testid="pair-cert-code"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
+              ['real-host-pair-failed', 'pair-failed', [['the remove-the-device line', '[data-testid="pair-needs-remove"]']]],
+              ['real-host-pair-devices', 'pair-devices', [['the device list', '[data-testid="device-row"]']]],
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)
               await check(config, name, await need(shown))
+            }
+            // Pair a phone: Create pairing link, then Show QR: the QR, Copy link and the typed fallback at 720 px.
+            if (!ONLY || ONLY.test('real-host-pair-link')) {
+              await go('/__layout/pair-offer')
+              const created = (await present('[data-testid="pair-before"]')) && (await clickText('button', /^Create pairing link$/))
+              const shown = created && (await present('[data-testid="pair-waiting"]')) && (await clickText('button', /^Show QR$/))
+              await settle()
+              await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR is missing'])
+            }
+            // The device remove hand-off open.
+            if (!ONLY || ONLY.test('real-host-pair-remove')) {
+              await go('/__layout/pair-devices')
+              const opened = (await present('[data-testid="device-row"]')) && (await clickText('button', /^Remove$/))
+              await settle()
+              await check(config, 'real-host-pair-remove', opened ? await need([['the hand-off dialog', '[role="dialog"]'], ['the rotation line', '[data-testid="device-remove-rotates"]']]) : ['the Remove button is missing'])
+              await escape()
             }
             // The Limits box open on the quick page, and the "Make a normal ticket" hand-off open.
             if (!ONLY || ONLY.test('real-host-quick-limits')) {

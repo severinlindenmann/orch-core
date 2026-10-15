@@ -575,3 +575,18 @@ tests/test_realhost_terminals.py` (core's host and runner in this process, a rea
 it read-only with **Take control**; taking it there shows **Take back** here; **Stop** ends it ("Some processes may still be running"
 when cleanup was incomplete); an ended run whose output is gone says "Output no longer kept". Layout: `/__layout/terminal-dock` (and
 `-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.
+
+## Try pairing (fixtures)
+
+Nothing reaches a host: the ops are a proposal (`pair/1`). On a real host Settings → **Devices** says "Pairing a phone is not available on
+this host yet." To see the page, run `npm run dev` and open the dev-only scenarios:
+
+- `/__layout/pair-unavailable`: the not-available line.
+- `/__layout/pair-blocked-convenience`: `sign.convenience_readers` with the host's message, why, and `orch host convenience off --workspace DEMO`.
+- `/__layout/pair-offer`: the warning about click-to-sign, **Create pairing link** → waiting with a countdown, **Show QR** (scan it: it is
+  `orch://pair?relay=…#v2.…` with demo values), **Copy link** (the native link), the https fallback as selectable text (not a link),
+  **Cancel pairing**.
+- `/__layout/pair-pending`: type the phone's code. Reject has the focus; Approve stays off until the code matches (`K7Q2MA`; `k7q-2ma`
+  works too); a different code says "The codes differ: reject this phone."
+- `/__layout/pair-cert`: the cert code and the primary command as text. `/__layout/pair-failed`: the reason and "remove the device".
+- `/__layout/pair-devices`: the list; **Remove** opens the hand-off with "This also rotates the relay keys."

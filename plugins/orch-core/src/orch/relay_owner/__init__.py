@@ -11,18 +11,19 @@ cert-request queue. See :mod:`orch.relay_owner.client` (routes and transport) an
         client = OwnerClient(origin, session)                                 # RelayConn to origin; logs in lazily
         q = PrimaryQueue(client, PrimaryJournal(journal_dir(state)), pk_pub=owner_pk,
                          cards=lambda ws: verified_card_or_None, unseal=primary.cert_request_unseal(session))
-        poll = q.poll(wait=None)            # Poll(pending, skipped); warn on every pending you did not create
-        p = poll.get(request_id_r6_reported)
+        poll = q.poll(rid, wait=None)       # rid: the request R6 reported; others are skipped other_open (warn)
+        p = poll.get(rid)                   # a display snapshot (Pending); actions take the id only
         with RecoveryCodeSource(labels=ANSWER_LABELS, pk_pub=owner_pk, action=...) as pk:   # Q1 = B
-            p = q.challenge(p, pk)          # show p.cert_code, p.label ("named by the device"), p.scopes_max
-            cert = q.sign(p, pk)            # after the human typed cert_code; or q.reject(p, pk)
+            p = q.challenge(rid, pk)        # show p.cert_code, p.label ("named by the device"), p.scopes_max
+            cert = q.sign(rid, pk)          # after the human typed cert_code; or q.reject(rid, pk)
         # hand ``cert`` to R6 (relay.pair_cert)
 
 * account: ``client.create_account(invite, owner_pk, primary_certificate(pk, session, session.dk_kx_pub,
   label=..., created_ms=...))`` (``pk`` with ``labels={"sig_device_cert"}``); a second relay:
   ``client.register_device(cert, owner_pk)``; ``client.get_device(id, owner_pk)``.
-* ``q.finish_uploads()`` resends decided-but-not-uploaded bytes after a crash; ``q.close(id, "cancelled")`` ends a
-  request of a cancelled offer.
+* ``q.finish_uploads()`` resends decided-but-not-uploaded bytes after a crash (``{id: uploaded | upload_failed |
+  retry}``; a permanent refusal is the durable ``upload_failed``); ``q.close(id, "cancelled")`` ends a request of a
+  cancelled offer, or a decision that will not upload.
 * Tests (``tests/relay/owner.py``, the T2 kit) pass ``transport=RelayConn(loopback)`` with the signed ``origin``
   kept, a vector ``DeviceSigner`` (``device_id``, ``dk_sig_pub``, ``sign``) and any object with ``pk_pub``,
   ``signer(label)``, ``derive_label_key()`` as the person key (``tests/relay_owner/kit.py``: ``VecSigner``,

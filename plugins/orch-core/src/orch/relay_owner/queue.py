@@ -13,9 +13,16 @@ Rules (each enforced here, independently of what the relay asserts):
   one journal transaction, so two requests (or two owner clients) can never both pass ``request_open``. A refusal
   from step 2.4 on burns the id (``refused``); one before it (``other_person``, ``bad_signature``,
   ``not_for_this_device``) is reported and burns nothing (its id is not authenticated).
-* **Journal first.** Live requests the journal holds are resumed from the stored bytes (the relay lists open requests
-  only, so a challenged request is recoverable only here); a listed id the journal holds is compared byte for byte
-  (``primary_request_conflict``); a listed id the journal closed is never acted on again.
+* **One request per command** (review of #557, DECIDED): :meth:`PrimaryQueue.poll` works only the ``request_id`` R6
+  reported for this command's offer; every other listed request is skipped ``other_open`` (shown as a warning),
+  neither opened nor journaled. A listed entry that is not protocol JSON (nesting deeper than 16) is ``malformed``.
+* **Journal first.** A live request the journal holds is resumed from the stored bytes (the relay lists open requests
+  only, so a challenged request is recoverable only here); a listed copy is compared byte for byte
+  (``primary_request_conflict``); an id the journal closed is never acted on again.
+* **Actions take the id only** (review of #557, Opus Medium). :class:`Pending` is a display snapshot; ``challenge``,
+  ``sign`` and ``reject`` take a ``request_id`` and, under the lock, re-check and re-open the request from the
+  **stored** bytes, recompute the policy, and (for the certificate) require the inner's device and both keys to be
+  the stored challenge's.
 * **Never re-sign.** A challenge, certificate or rejection is signed at most once per request; a resume resends the
   stored bytes. Nothing is signed after ``expires_ms`` (local clock), after a rejection, or for a request this primary
   closed. The certificate needs a stored challenge (the human compared ``cert_code`` first).
@@ -29,10 +36,11 @@ Rules (each enforced here, independently of what the relay asserts):
 from __future__ import annotations
 
 import hmac
+import logging
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any
 
 from orch import canon, crypto
@@ -40,19 +48,32 @@ from orch.identity import Refused, certreq, certs, pairing
 from orch.identity.certreq import CertInner, CertRequest, RequestRefused
 from orch.identity.wscard import VerifiedCard
 
-from .client import OwnerClient
-from .journal import Entry, JournalError, JournalView, PrimaryJournal, RequestConflict
+from .client import OwnerClient, OwnerError, OwnerRefused
+from .journal import DECIDED, Entry, JournalError, JournalView, PrimaryJournal, RequestConflict
 
-__all__ = ["ANSWER_LABELS", "PHONE_SCOPES", "Pending", "Poll", "PrimaryQueue", "QueueRefused", "Skipped"]
+__all__ = [
+    "ANSWER_LABELS",
+    "PERMANENT_UPLOAD",
+    "PHONE_SCOPES",
+    "Pending",
+    "Poll",
+    "PrimaryQueue",
+    "QueueRefused",
+    "Skipped",
+]
 
 ANSWER_LABELS = frozenset({"sig_cert_challenge", "sig_cert_rejection", "sig_device_cert"})
 PHONE_SCOPES = ("look", "decide")  # 11A.15.6 N1: the v1.7 phone ceiling
+PERMANENT_UPLOAD = frozenset({"expired", "not_found", "cert_conflict"})  # review of #557 (Codex P2)
+log = logging.getLogger("orch.relay_owner.queue")
 MAX_REQUEST_BYTES = 8 * 1024  # a real request is about 1.5 KiB; a bigger one is never checked or journaled
 
 
 class QueueRefused(Exception):
     """The queue refused a step locally, before any signature: ``code`` is ``expired``, ``scope_exceeded``,
-    ``not_live``, ``not_challenged``, ``already_decided``, ``person_mismatch`` or ``not_this_request``."""
+    ``not_live``, ``not_challenged``, ``already_decided``, ``person_mismatch``, ``not_this_request`` (an id the journal
+    does not hold, or a stored challenge that does not match the stored request), or a re-check's §8.4 code
+    (``unknown_workspace`` when the card is gone)."""
 
     def __init__(self, code: str, request_id: str) -> None:
         super().__init__(f"{code}: request {request_id}")
@@ -61,54 +82,30 @@ class QueueRefused(Exception):
 
 @dataclass(frozen=True)
 class Pending:
-    """A request this primary checked and opened (minted ``request``/``inner``), live in the journal. Show
-    :attr:`label` (``clean_label`` applied, "named by the device"), :attr:`scopes_max`, :attr:`cert_code` once
-    challenged, and warn on ``client_hosted``."""
+    """What the human sees of one live request: a **display snapshot**, never an input. Every action takes the
+    ``request_id`` only and re-derives everything from the journal's stored bytes under the lock (review of #557,
+    Opus Medium: a caller-built or ``replace``-d snapshot changes nothing). Show :attr:`label` (``clean_label``
+    applied, "named by the device"), :attr:`scopes_max`, :attr:`cert_code` once challenged, and warn on
+    ``client_hosted``."""
 
-    request: CertRequest = field(repr=False)
-    inner: CertInner = field(repr=False)
+    request_id: str
+    workspace_id: str
+    expires_ms: int
+    device_id: str
+    label: str
+    scopes_max: tuple[str, ...]
+    client_hosted: bool
     state: str
-    challenge: dict[str, Any] | None = field(default=None, repr=False)
-    within_policy: bool = True
-
-    @property
-    def request_id(self) -> str:
-        return self.request.request_id
-
-    @property
-    def workspace_id(self) -> str:
-        return self.request.workspace_id
-
-    @property
-    def expires_ms(self) -> int:
-        return self.request.expires_ms
-
-    @property
-    def device_id(self) -> str:
-        return self.inner.device_id
-
-    @property
-    def label(self) -> str:
-        return self.inner.display_label
-
-    @property
-    def scopes_max(self) -> tuple[str, ...]:
-        return self.inner.scopes_max
-
-    @property
-    def client_hosted(self) -> bool:
-        return self.request.client_hosted
-
-    @property
-    def cert_code(self) -> str | None:
-        return None if self.challenge is None else pairing.cert_code(self.challenge["o"])
+    within_policy: bool
+    cert_code: str | None = None
 
 
 @dataclass(frozen=True)
 class Skipped:
     """A listed request this primary did not take: ``code`` is the §8.4 refusal (``bad_signature``,
     ``not_for_this_device``, ``other_person``, ``expired``, ``replayed``, ``request_open``, ``malformed``,
-    ``scope_exceeded``), ``unknown_workspace`` (no card for it), ``closed`` (the journal closed it),
+    ``scope_exceeded``), ``other_open`` (not the request this command works), ``unknown_workspace`` (no card for it),
+    ``closed`` (the journal closed it),
     ``primary_request_conflict``, ``too_large`` (over :data:`MAX_REQUEST_BYTES`: never checked or journaled) or
     ``journal.full`` (it waits until expired records are pruned).
     ``request_id`` is ``None`` when the relay's text was not a valid id."""
@@ -171,45 +168,62 @@ class PrimaryQueue:
 
     # -- reading the queue --------------------------------------------------------------------------------------------
 
-    def poll(self, *, wait: int | None = None) -> Poll:
-        """Read the relay's queue, then, under one journal transaction: resume every live journaled request, and check,
-        open and record each new one. Returns what the human may act on and what was skipped."""
+    def poll(self, request_id: str, *, wait: int | None = None) -> Poll:
+        """Work the one request R6 reported for this command's offer (11A.15.9: "The challenge, cert and rejection are
+        made only for the request R6 created for **this** CLI's offer"). Reads the relay's queue, then, under one
+        journal transaction: resumes the request if the journal holds it live, else checks, opens and records it.
+        Every other listed request is skipped ``other_open`` (a warning to show), neither opened nor journaled."""
+        target = _rid({"request_id": request_id})
+        if target is None:
+            raise ValueError("request_id")
         raws = self._client.cert_requests(self._person, wait=wait)
-        pending: dict[str, Pending] = {}
         skipped: list[Skipped] = []
+        listed: dict[str, tuple[dict, bytes]] = {}
+        for raw in raws:
+            rid = _rid(raw.get("o"))
+            try:
+                raw_cj = canon.dumps(raw)  # protocol subset, depth <= 16 (review of #557: a deeper one is malformed)
+            except (canon.JcsError, ValueError, RecursionError):
+                log.warning("cert queue: a listed request is not canonical JSON; skipped")
+                skipped.append(Skipped(rid, "malformed"))
+                continue
+            if rid is None:
+                skipped.append(Skipped(None, "malformed"))
+            elif rid != target:
+                skipped.append(Skipped(rid, "other_open"))
+            else:
+                listed[rid] = (raw, raw_cj)
         with self._journal.transaction() as v:
             now = self._now()
             v.prune(now)
-            listed = {}
-            for raw in raws:
-                rid = _rid(raw.get("o"))
-                if rid is None:
-                    skipped.append(Skipped(None, "malformed"))
-                    continue
-                listed[rid] = raw
-            for e in v.entries():  # journal first
-                if e.live:
-                    p = self._resume(v, e, now, skipped)
-                    if p is not None:
-                        pending[p.request_id] = p
-            for rid, raw in listed.items():
-                cur = v.get(rid)
-                if cur is not None:
-                    if cur.request_cj is not None and canon.dumps(raw) != cur.request_cj:
-                        skipped.append(Skipped(rid, "primary_request_conflict"))
-                    elif rid not in pending:
-                        skipped.append(Skipped(rid, "closed"))
-                    continue
-                p = self._take(v, rid, raw, now, skipped)
-                if p is not None:
-                    pending[rid] = p
-        return Poll(tuple(pending.values()), tuple(skipped))
+            cur = v.get(target)
+            p = None
+            if cur is not None:
+                if target in listed and (cur.request_cj is None or listed[target][1] != cur.request_cj):
+                    skipped.append(Skipped(target, "primary_request_conflict"))
+                if cur.live:
+                    p = self._resume(v, cur, now, skipped)
+                elif target in listed and cur.request_cj == listed[target][1]:
+                    skipped.append(Skipped(target, "closed"))
+            elif target in listed:
+                p = self._take(v, target, *listed[target], now, skipped)
+        return Poll(() if p is None else (p,), tuple(skipped))
 
     def _policy(self, inner: CertInner) -> bool:
         return all(s in self._max for s in inner.scopes_max)
 
-    def _take(self, v: JournalView, rid: str, raw: dict, now: int, skipped: list[Skipped]) -> Pending | None:
-        if len(canon.dumps(raw)) > MAX_REQUEST_BYTES:
+    def _view(self, req: CertRequest, inner: CertInner, e_state: str, challenge: dict | None) -> Pending:
+        return Pending(
+            request_id=req.request_id, workspace_id=req.workspace_id, expires_ms=req.expires_ms,
+            device_id=inner.device_id, label=inner.display_label, scopes_max=inner.scopes_max,
+            client_hosted=req.client_hosted, state=e_state, within_policy=self._policy(inner),
+            cert_code=None if challenge is None else pairing.cert_code(challenge["o"]),
+        )  # fmt: skip
+
+    def _take(
+        self, v: JournalView, rid: str, raw: dict, raw_cj: bytes, now: int, skipped: list[Skipped]
+    ) -> Pending | None:
+        if len(raw_cj) > MAX_REQUEST_BYTES:
             skipped.append(Skipped(rid, "too_large"))
             return None
         o = raw["o"]
@@ -239,14 +253,14 @@ class PrimaryQueue:
             skipped.append(Skipped(req.request_id, e.code))
             return None
         try:
-            v.put(Entry(req.request_id, req.workspace_id, req.expires_ms, "verified", request_cj=canon.dumps(raw)))
+            v.put(Entry(req.request_id, req.workspace_id, req.expires_ms, "verified", request_cj=raw_cj))
         except RequestConflict:  # pragma: no cover - the id was not in the journal a moment ago, under the lock
             skipped.append(Skipped(rid, "primary_request_conflict"))
             return None
         except JournalError as e:  # journal.full: this request waits; nothing else breaks
             skipped.append(Skipped(rid, e.code))
             return None
-        return Pending(req, inner, "verified", None, self._policy(inner))
+        return self._view(req, inner, "verified", None)
 
     @staticmethod
     def _burn(v: JournalView, e: Entry) -> None:
@@ -256,146 +270,182 @@ class PrimaryQueue:
         except JournalError:
             pass
 
-    def _resume(self, v: JournalView, e: Entry, now: int, skipped: list[Skipped]) -> Pending | None:
-        """Re-check and re-open a live journaled request from its stored bytes (against everything else in the
-        journal); an expired one is closed ``expired``."""
+    def _reload(self, v: JournalView, e: Entry, now: int) -> tuple[CertRequest, CertInner]:
+        """The request and its inner, re-checked and re-opened from the journal's **stored** bytes (against everything
+        else in the journal), at ``now``. An expired one is written ``expired``; a refusal is :class:`Refused`; no
+        card is ``unknown_workspace`` (the record stays live until it expires: prune then ends it)."""
         raw = e.request
         card = self._cards(e.workspace_id)
         if card is None or raw is None:
-            skipped.append(Skipped(e.request_id, "unknown_workspace"))
-            return None
+            raise Refused("unknown_workspace", "no card for this request's workspace")
         try:
             req = certreq.check_cert_request(
                 raw, card, me_person_id=self._person, me_device_id=self._client.device_id,
                 journal=v.cert_journal(excluding=e.request_id), now_ms=now,
             )  # fmt: skip
-            inner = certreq.open_cert_request(req, self._unseal)
+            return req, certreq.open_cert_request(req, self._unseal)
         except Refused as r:
             if r.code == "expired":
-                v.put(Entry(e.request_id, e.workspace_id, e.expires_ms, "expired", request_cj=e.request_cj,
-                            challenge_cj=e.challenge_cj))  # fmt: skip
+                v.put(replace(e, state="expired"))
+            raise
+
+    def _resume(self, v: JournalView, e: Entry, now: int, skipped: list[Skipped]) -> Pending | None:
+        try:
+            req, inner = self._reload(v, e, now)
+        except Refused as r:
             skipped.append(Skipped(e.request_id, r.code))
             return None
-        return Pending(req, inner, e.state, e.challenge, self._policy(inner))
+        return self._view(req, inner, e.state, e.challenge)
 
-    # -- acting on one request ----------------------------------------------------------------------------------------
+    # -- acting on one request (by id only) ---------------------------------------------------------------------------
 
-    def _live(self, v: JournalView, p: Pending) -> Entry:
-        if type(p) is not Pending:
-            raise TypeError("a Pending from poll()")
-        certreq.require_minted(p.request, CertRequest)
-        e = v.get(p.request_id)
-        if e is None or e.request is None or canon.dumps(e.request["o"]) != p.request.o_cj:
-            raise QueueRefused("not_this_request", p.request_id)
+    def _entry(self, v: JournalView, request_id: object) -> Entry:
+        rid = _rid({"request_id": request_id})
+        e = None if rid is None else v.get(rid)
+        if e is None or e.tombstone:
+            raise QueueRefused("not_this_request", str(rid))
         return e
 
-    def _usable(self, v: JournalView, e: Entry, p: Pending, pk: Any) -> None:
-        """Before any person-key operation: live, unexpired by the local clock, within policy, and ``pk`` is the
-        pinned owner's key."""
+    def _ready(self, v: JournalView, e: Entry, pk: Any) -> tuple[CertRequest, CertInner]:
+        """Before any person-key operation, under the lock: live, unexpired by the local clock, ``pk`` is the pinned
+        owner's key, and the request re-checked and re-opened from the stored bytes."""
         if not e.live:
-            raise QueueRefused("already_decided" if e.state in ("decided", "uploaded") else "not_live", e.request_id)
-        if self._now() >= e.expires_ms:
-            v.put(Entry(e.request_id, e.workspace_id, e.expires_ms, "expired", request_cj=e.request_cj,
-                        challenge_cj=e.challenge_cj))  # fmt: skip
+            raise QueueRefused("already_decided" if e.state in DECIDED else "not_live", e.request_id)
+        now = self._now()
+        if now >= e.expires_ms:
+            v.put(replace(e, state="expired"))
             raise QueueRefused("expired", e.request_id)
         pub = pk.pk_pub
         if type(pub) is not bytes or not hmac.compare_digest(pub, self._pk):
             raise QueueRefused("person_mismatch", e.request_id)
+        try:
+            return self._reload(v, e, now)
+        except Refused as r:
+            raise QueueRefused(r.code, e.request_id) from None
 
-    def challenge(self, p: Pending, pk: Any) -> Pending:
+    def challenge(self, request_id: str, pk: Any) -> Pending:
         """Sign the challenge (§8.4 step 3) with ``primary_nonce`` drawn now, journal it, then post it. A request
         already challenged is never signed again: the stored bytes are posted again. ``pk`` is the entered person-key
-        source. Returns the challenged :class:`Pending` (show :attr:`Pending.cert_code`)."""
+        source. Returns the challenged snapshot (show :attr:`Pending.cert_code`)."""
         with self._journal.transaction() as v:
-            e = self._live(v, p)
+            e = self._entry(v, request_id)
             if e.state != "challenged":
-                self._usable(v, e, p, pk)
-                if not p.within_policy:
-                    raise QueueRefused("scope_exceeded", p.request_id)
-                signed = certreq.make_cert_challenge(
-                    self._pk, pk.signer("sig_cert_challenge"), p.request, p.inner, self._nonce()
-                )
-                e = v.put(Entry(e.request_id, e.workspace_id, e.expires_ms, "challenged", request_cj=e.request_cj,
-                                challenge_cj=canon.dumps(signed)))  # fmt: skip
+                req, inner = self._ready(v, e, pk)
+                if not self._policy(inner):
+                    raise QueueRefused("scope_exceeded", e.request_id)
+                signed = certreq.make_cert_challenge(self._pk, pk.signer("sig_cert_challenge"), req, inner,
+                                                     self._nonce())  # fmt: skip
+                e = v.put(replace(e, state="challenged", challenge_cj=canon.dumps(signed)))
+                view = self._view(req, inner, "challenged", signed)
+            else:
+                try:
+                    view = self._view(*self._reload(v, e, self._now()), "challenged", e.challenge)
+                except Refused as r:
+                    raise QueueRefused(r.code, e.request_id) from None
         challenge = e.challenge
         assert challenge is not None
-        self._client.post_challenge(p.request_id, challenge)
-        return Pending(p.request, p.inner, "challenged", challenge, p.within_policy)
+        self._client.post_challenge(e.request_id, challenge)
+        return view
 
-    def sign(self, p: Pending, pk: Any) -> dict[str, Any]:
-        """Sign the device certificate (§8.4 step 4) after the human confirmed ``cert_code``: ``scopes_max`` as
-        requested, ``expires_ms: null`` (v1.7), the label sealed under the label key derived from ``PK``. Journaled
-        ``decided`` before ``PUT /v2/devices/{d}``; returns the certificate (hand it to R6 with ``relay.pair_cert``).
-        A request already signed returns (and re-uploads) the stored certificate."""
+    def sign(self, request_id: str, pk: Any) -> dict[str, Any]:
+        """Sign the device certificate (§8.4 step 4) after the human confirmed ``cert_code``: the inner re-opened from
+        the stored request, which must name the device and both keys of the **stored** challenge; ``scopes_max`` as
+        requested and within policy; ``expires_ms: null`` (v1.7); the label sealed under the label key derived from
+        ``PK``. Journaled ``decided`` before ``PUT /v2/devices/{d}``; returns the certificate (hand it to R6 with
+        ``relay.pair_cert``). A request already signed returns (and re-uploads) the stored certificate."""
         with self._journal.transaction() as v:
-            e = self._live(v, p)
+            e = self._entry(v, request_id)
             if e.state == "challenged":
-                self._usable(v, e, p, pk)
-                if not p.within_policy:
-                    raise QueueRefused("scope_exceeded", p.request_id)
+                req, inner = self._ready(v, e, pk)
+                if not self._policy(inner):
+                    raise QueueRefused("scope_exceeded", e.request_id)
+                ch = e.challenge
+                assert ch is not None
+                co = ch["o"]
+                if (co.get("request_id"), co.get("device_id"), co.get("dk_sig_pub"), co.get("dk_kx_pub")) != (
+                    req.request_id, inner.device_id, crypto.b64u(inner.dk_sig_pub), crypto.b64u(inner.dk_kx_pub)
+                ):  # fmt: skip
+                    raise QueueRefused("not_this_request", e.request_id)
                 person = crypto.person_id(self._pk)
-                device = bytes.fromhex(p.inner.device_id)
-                label_sealed = certs.seal_device_label(pk.derive_label_key(), person, device, p.inner.label)
+                device = bytes.fromhex(inner.device_id)
+                label_sealed = certs.seal_device_label(pk.derive_label_key(), person, device, inner.label)
                 cert = certs.make_device_cert(
-                    self._pk, pk.signer("sig_device_cert"), dk_sig_pub=p.inner.dk_sig_pub,
-                    dk_kx_pub=p.inner.dk_kx_pub, label_sealed=label_sealed, created_ms=self._now(), expires_ms=None,
-                    scopes_max=list(p.inner.scopes_max),
+                    self._pk, pk.signer("sig_device_cert"), dk_sig_pub=inner.dk_sig_pub, dk_kx_pub=inner.dk_kx_pub,
+                    label_sealed=label_sealed, created_ms=self._now(), expires_ms=None,
+                    scopes_max=list(inner.scopes_max),
                 )  # fmt: skip
-                e = v.put(Entry(e.request_id, e.workspace_id, e.expires_ms, "decided", request_cj=e.request_cj,
-                                challenge_cj=e.challenge_cj, decision="sign",
-                                decided_cj=canon.dumps(cert)))  # fmt: skip
+                e = v.put(replace(e, state="decided", decision="sign", decided_cj=canon.dumps(cert)))
             elif e.state == "verified":
-                raise QueueRefused("not_challenged", p.request_id)
+                raise QueueRefused("not_challenged", e.request_id)
             elif e.decision != "sign":
-                raise QueueRefused("already_decided", p.request_id)
+                raise QueueRefused("already_decided" if e.decision else "not_live", e.request_id)
         return self._upload(e)
 
-    def reject(self, p: Pending, pk: Any) -> dict[str, Any]:
+    def reject(self, request_id: str, pk: Any) -> dict[str, Any]:
         """Sign the rejection (P3-D11) and post it, journaled ``decided`` first. A request already rejected re-posts
         the stored rejection; one already signed is refused."""
         with self._journal.transaction() as v:
-            e = self._live(v, p)
+            e = self._entry(v, request_id)
             if e.live:
-                self._usable(v, e, p, pk)
-                signed = certreq.make_cert_rejection(self._pk, pk.signer("sig_cert_rejection"), p.request)
-                e = v.put(Entry(e.request_id, e.workspace_id, e.expires_ms, "decided", request_cj=e.request_cj,
-                                challenge_cj=e.challenge_cj, decision="reject",
-                                decided_cj=canon.dumps(signed)))  # fmt: skip
+                req, _inner = self._ready(v, e, pk)
+                signed = certreq.make_cert_rejection(self._pk, pk.signer("sig_cert_rejection"), req)
+                e = v.put(replace(e, state="decided", decision="reject", decided_cj=canon.dumps(signed)))
             elif e.decision != "reject":
-                raise QueueRefused("already_decided" if e.decision else "not_live", p.request_id)
+                raise QueueRefused("already_decided" if e.decision else "not_live", e.request_id)
         return self._upload(e)
 
     def _upload(self, e: Entry) -> dict[str, Any]:
+        """Send the stored decision; a 2xx makes it ``uploaded``, a permanent refusal (:data:`PERMANENT_UPLOAD`)
+        ``upload_failed`` (then re-raised); anything else leaves it ``decided`` for :meth:`finish_uploads`."""
         decided = e.decided
         assert decided is not None and e.decision is not None
-        if e.state == "decided":
+        if e.state != "decided":
+            return decided
+        try:
             if e.decision == "sign":
                 self._client.register_device(decided, self._pk)
             else:
                 self._client.post_rejection(e.request_id, decided)
-            with self._journal.transaction() as v:
-                cur = v.get(e.request_id)
-                if cur is not None and cur.state == "decided":
-                    v.put(Entry(e.request_id, e.workspace_id, e.expires_ms, "uploaded", request_cj=e.request_cj,
-                                challenge_cj=e.challenge_cj, decision=e.decision, decided_cj=e.decided_cj))  # fmt: skip
+        except OwnerRefused as r:
+            if r.code in PERMANENT_UPLOAD:
+                self._settle(e.request_id, "upload_failed")
+            raise
+        self._settle(e.request_id, "uploaded")
         return decided
 
-    def finish_uploads(self) -> list[str]:
-        """Resend every ``decided`` record's stored bytes (a crash between the decision and the relay's 2xx). Returns
-        the request ids now uploaded."""
+    def _settle(self, request_id: str, state: str) -> None:
+        with self._journal.transaction() as v:
+            cur = v.get(request_id)
+            if cur is not None and cur.state == "decided":
+                v.put(replace(cur, state=state))
+
+    def finish_uploads(self) -> dict[str, str]:
+        """Resend every ``decided`` record's stored bytes (a crash between the decision and the relay's 2xx), each on
+        its own: a refusal of one never stops the others. Returns ``{request_id: outcome}`` with outcome
+        ``uploaded``, ``upload_failed`` (permanent) or ``retry`` (transient: still ``decided``)."""
         with self._journal.transaction() as v:
             todo = [e for e in v.entries() if e.state == "decided" and not e.tombstone]
+        out: dict[str, str] = {}
         for e in todo:
-            self._upload(e)
-        return [e.request_id for e in todo]
+            try:
+                self._upload(e)
+                out[e.request_id] = "uploaded"
+            except OwnerRefused as r:
+                out[e.request_id] = "upload_failed" if r.code in PERMANENT_UPLOAD else "retry"
+            except OwnerError:
+                out[e.request_id] = "retry"
+        return out
 
     def close(self, request_id: str, state: str) -> None:
-        """End a live request locally: ``cancelled`` (its offer was cancelled), ``expired`` or ``superseded``."""
+        """End a request locally: a live one ``cancelled`` (its offer was cancelled), ``expired`` or ``superseded``;
+        a ``decided`` one whose upload will not succeed ``upload_failed`` (whatever ``state`` names)."""
         if state not in ("cancelled", "expired", "superseded"):
             raise ValueError("state")
         with self._journal.transaction() as v:
-            e = v.get(request_id)
-            if e is None or not e.live:
-                raise QueueRefused("not_live", request_id)
-            v.put(Entry(e.request_id, e.workspace_id, e.expires_ms, state, request_cj=e.request_cj,
-                        challenge_cj=e.challenge_cj))  # fmt: skip
+            e = self._entry(v, request_id)
+            if e.state == "decided":
+                v.put(replace(e, state="upload_failed"))
+            elif e.live:
+                v.put(replace(e, state=state))
+            else:
+                raise QueueRefused("not_live", e.request_id)

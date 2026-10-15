@@ -159,9 +159,15 @@ def test_other_member_and_phone_device_count_only_readers_below_level_1(click, s
     _, key = human.ticket()
     q = served.lab.add_member()
     refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "sign.convenience_unavailable", "other_member")
+
+    def problem():
+        (row,) = click.signer.status({})["workspaces"]
+        return row.get("problem")
+
+    assert problem() == "readers_old"  # the click signer's status names it (9.11)
     declare(served, q, 1)
     p = click.prepare("log", {"ref": key, "text": "x"})  # every other reader is level 1 now
-    assert p["request_id"]
+    assert p["request_id"] and problem() != "readers_old"
     add_device(served.lab)  # a second device of mine, no declaration
     refused(lambda: click.prepare("log", {"ref": key, "text": "y"}), "sign.convenience_unavailable", "phone_device")
     declare(served, q, 0)  # a newer, lower declaration lowers the level

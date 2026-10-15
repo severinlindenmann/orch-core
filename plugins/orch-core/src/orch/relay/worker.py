@@ -373,12 +373,17 @@ class RelayWorker:
             log.exception("relay worker of %s: on_ended failed", self.workspace_id)
 
     def status(self) -> dict[str, Any]:
-        """For ``host.status.relay``: no secret, no relay bytes."""
+        """For ``host.status.relay``: no secret, no relay bytes. ``serving`` only while the loop runs without an
+        error; a loop that stopped itself (``fenced``, a lost session: R2 stops its own threads) shows its error
+        class here, and the worker stays in place until ``orch host relay stop`` (then ``start``)."""
+        loop_error = self.loop.error if self.loop is not None else None
+        alive = self.alive()
+        error = self.error or (type(loop_error).__name__ if loop_error is not None else None)
         return {
-            "alive": self.alive(),
+            "alive": alive,
             "stopping": self._stopping,
-            "serving": self._running and not self._stopping,
-            "error": self.error,
+            "serving": self._running and not self._stopping and loop_error is None and alive,
+            "error": error,
             "gen": self.session.gen,
             "fenced": self.session.fenced,
             "alarms": self.alarm.snapshot()["alarms"],

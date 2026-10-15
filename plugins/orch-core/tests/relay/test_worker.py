@@ -409,3 +409,16 @@ def test_the_worker_closes_its_state_directory_so_a_next_worker_can_open_it(tmp_
     again = StateDir(path)  # the lock was released by join's finish
     again.close()
     r.ex.shutdown(wait=True)
+
+
+def test_a_loop_that_stopped_itself_is_reported_failed_not_serving(tmp_path, gate):
+    r = Rig(tmp_path)
+    r.w.start()
+    r.wait_started()
+    assert _wait(lambda: r.w.status()["serving"])
+    r.loop.error = RuntimeError("fenced")  # R2's guard records the error and stops its own threads
+    r.loop.release.set()
+    assert _wait(lambda: not r.w.alive())
+    st = r.w.status()
+    assert st["serving"] is False and st["error"] == "RuntimeError" and st["alive"] is False
+    r.close()

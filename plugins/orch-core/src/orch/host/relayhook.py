@@ -459,7 +459,15 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
     }  # fmt: skip
     if worker is not None:
         st = worker.status() if callable(getattr(worker, "status", None)) else {}
-        out.update(worker="stopping" if st.get("stopping") else "running", alive=bool(st.get("alive", True)))
+        if st.get("stopping"):
+            state = "stopping"
+        elif st.get("serving", True):
+            state = "running"
+        elif st.get("alive", True) and not st.get("error"):
+            state = "starting"
+        else:
+            state = "failed"  # the loop stopped itself (fenced, session lost) or the start failed: stop, then start
+        out.update(worker=state, alive=bool(st.get("alive", True)))
         out["reason"] = st.get("error")
         out["alarms"] = list(st.get("alarms") or [])
         if st.get("gen") is not None:

@@ -7,6 +7,10 @@ from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
+# A launch code lives 30 s; its redirect file lives exactly as long (#542 item 3): deleted when the code is redeemed,
+# else by a timer at the code's expiry, else by the next server start's sweep.
+CODE_TTL = 30
+
 
 class Auth:
     def __init__(self, clock=time.time, directory=None):
@@ -29,12 +33,12 @@ class Auth:
             now = self.clock()
             self.codes = {c: until for c, until in self.codes.items() if until > now}
             code = secrets.token_urlsafe(32)
-            self.codes[code] = now + 30
+            self.codes[code] = now + CODE_TTL
             payload = {"instance": self.instance, "port": port, "probe_key": self.probe_key, "code": code}
             if self.directory is not None:
                 self.files[code] = Path(self.redirect_path(code))
                 payload["redirect_file"] = str(self.files[code])
-                timer = threading.Timer(60, lambda: self.remove_redirect(code))
+                timer = threading.Timer(CODE_TTL, lambda: self.remove_redirect(code))
                 timer.daemon = True
                 timer.start()
             return payload

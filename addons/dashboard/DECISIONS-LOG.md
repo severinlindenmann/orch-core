@@ -1842,3 +1842,36 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Why:** An unexpected host key (a path, a token, free text) reached the browser. The list is exactly what the page reads (`ApiErrorBody`); `state` is not read by the page but is the server's own N15 answer (its tests assert it), so it stays, closed per code.
 - **Revert:** Restore the pass-through in `host_response`; the per-key checks are then unused.
 - **Follow-up (Opus review CHANGES, same day):** the response's `exit` is a plain int 1..9 (§0.6), else 1; `HostError` itself turns an error without a valid code (or not a dict) into `internal` (exit 1) and checks `exit`, so every reader of `exc.error["code"]` (hostlink, gateway `host_state`, live, terminals) sees a checked code; hostlink reads `error`/`exit` with `.get`. The terminal `end` frame uses the same `valid_code`/`retry_after` helpers. The server's own keys are bound to their codes: `summary`/`signed_at`/`op` to `intent.done`, `commit` to `records.*`, `request_id`/`why` to `human.click_refused`. `SUMMARY_MAX` is 65536 (a long review no longer loses its summary); a plain-text `fix` is capped at 400 like `hint`.
+
+## 2026-10-15 No dashboard under an agent's environment; no launch code at rest (#542 items 1+3)
+
+- **Decision (item 1):** core's `orch dashboard` (`plugins/orch-core/src/orch/cli/dashboard.py`) and the addon's own
+  entry point (`orch-dashboard`, `python -m orch_dashboard`; `open`, `launch`, `serve`, and `open_dashboard()`/`serve()`
+  themselves) refuse when `ORCH_GRANT` or `ORCH_SESSION` is set and non-empty, before anything is looked up, started or
+  minted: `<prog>: human_only: <message>` on stderr, exit 3, the text shape of `orch sign`'s refusal
+  (`orch/host/handoff.py`, `human_only` exit 3 in `host/errors.py`). `stop` (and `--stop`) stays allowed: it mints
+  nothing and only ends the person's own server, which an agent of the same UID could kill anyway; refusing it would
+  only keep an agent from cleaning up after a test. `addon-manifest` stays allowed (it writes the packaged manifest and
+  never touches ctl.sock). Core passes only an exact `stop`/`--stop`; the addon checks its parsed arguments.
+- **Decision (item 3):** keep the file handoff and shrink its window. The redirect file (0600, `O_CREAT|O_EXCL|O_NOFOLLOW`,
+  in the private 0700 directory) is deleted by the server the moment its code is redeemed (it records the exact path at
+  mint), else by a timer at the code's own expiry (`CODE_TTL`, 30 s, was 60 s), else by the next startup sweep (files
+  older than 30 s, was 60 s). If `webbrowser.open` reports no browser, the launcher deletes the file at once and says to
+  use `--print-url`. The page is `no-store`, replaces itself (`location.replace`) and the dashboard scrubs the fragment
+  (`history.replaceState`) before anything runs. `--print-url` to a TTY is unchanged.
+- **Rejected: a one-time nonce URL in argv** (`open http://127.0.0.1:<port>/launch/<nonce>`). argv is readable by every
+  UID (`ps`), and the loopback port is reachable by every local user, so another UID could redeem the nonce before the
+  person's browser does and get the person's session: a cross-user takeover, worse than today, where the 0600 file in a
+  0700 directory keeps every other UID out. Anything handed to the browser through argv must be worthless to another
+  UID; a redeemable nonce is not. "The person's browser would then fail and show it" detects the takeover only after it
+  happened.
+- **Rejected: the page unlinks itself.** A `file://` page cannot delete its own file; it would need the server to do it
+  on redemption, which is what the chosen design does.
+- **Rejected: peer-environment inspection on ctl.sock** (item 2, orch-52's decision on #542): racy, and evaded by unsetting
+  the variables.
+- **Why:** smallest window that never exposes the code to another UID. Honest limit: in tier A an agent runs as the
+  person's UID, so it can still read the file within its 30 s or call ctl.sock itself; items 1 and 3 close the easy
+  paths, not a boundary (D-P2-31). A real boundary needs tier B or a user-presence factor (phase 3).
+- **Revert:** drop `refuse_agent()` and the `AgentRefused` branch in `orch_dashboard/__main__.py`, `agent_refusal` in
+  core's `cli/dashboard.py`; set `CODE_TTL` timer and sweep back to 60 s; drop the `no-store` meta and the
+  `webbrowser.open` result check.

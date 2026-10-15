@@ -158,10 +158,16 @@ reflect submitted bodies. The launcher disables access logs. No request body exc
 The launcher opens a private 0600 HTML redirect file inside an owned 0700
 `$XDG_RUNTIME_DIR/orch-dashboard` directory when `$XDG_RUNTIME_DIR` already exists as a real 0700 directory
 you own (it is never created), otherwise the 0700 dashboard state
-folder. Startup removes owned regular `launch-*.html` files older than 60 seconds from both
+folder. Startup removes owned regular `launch-*.html` files older than 30 seconds (a code's life) from both
 locations; it does not follow symlinks. Browser process arguments contain only its file URL, never the launch code.
 The server picks the directory and returns it to the launcher in the `launch` reply, so both agree.
-The server deletes the redirect after a successful exchange or after 60 seconds.
+The server deletes the redirect the moment its code is redeemed, or when the code expires (30 seconds); a browser
+that cannot be opened deletes it at once. The page is `no-store` and replaces itself (`location.replace`); the
+dashboard scrubs the fragment before anything else runs.
+
+`orch dashboard` and `orch-dashboard` (`open`, `launch`, `serve`, also `python -m orch_dashboard`) refuse with
+`human_only` (exit 3) when `ORCH_GRANT` or `ORCH_SESSION` is set and non-empty: a dashboard session acts as the person.
+Only `stop` passes. In tier A this is a speed bump, not a boundary (an agent runs as your UID).
 Failed exchanges share a per-minute budget; a valid code always bypasses that budget.
 
 ## Live updates and contract v1.3.2

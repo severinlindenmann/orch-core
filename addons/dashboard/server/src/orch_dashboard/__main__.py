@@ -24,9 +24,30 @@ from pathlib import Path
 import uvicorn
 
 from .app import create_app
-from .auth import Auth
+from .auth import CODE_TTL, Auth
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
+
+AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
+
+
+class AgentRefused(RuntimeError):
+    """``human_only``: the dashboard acts as the person, so it never opens or serves under an agent's environment."""
+
+    def __init__(self):
+        super().__init__(
+            "human_only: the dashboard is a person's; an agent never opens it "
+            "(unset ORCH_GRANT and ORCH_SESSION in your own terminal)"
+        )
+
+
+def refuse_agent(environ=None):
+    """Refuse (#542 item 1) when ORCH_GRANT or ORCH_SESSION is set and non-empty: the same code, exit and message
+    as core's ``orch dashboard`` (and ``orch sign``'s ``human_only``). A speed bump in tier A (same UID), not a
+    boundary."""
+    environ = os.environ if environ is None else environ
+    if any(environ.get(name) for name in AGENT_ENV):
+        raise AgentRefused()
 
 
 @contextmanager
@@ -107,11 +128,12 @@ def sweep_redirects(directory, now=None):
     now = time.time() if now is None else now
     for path in directory.glob("launch-*.html"):
         st = path.lstat()
-        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime >= 60:
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime >= CODE_TTL:
             path.unlink(missing_ok=True)
 
 
 def serve(lock_held=False):
+    refuse_agent()
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
@@ -221,6 +243,7 @@ def verify_probe(launch, fetch=None):
 
 
 def open_dashboard(path="/", print_url=False):
+    refuse_agent()  # before anything is started or minted
     path = safe_path(path)
     if print_url and not sys.stdout.isatty():
         raise RuntimeError("--print-url requires a terminal")  # before anything is started or minted
@@ -285,10 +308,13 @@ def open_dashboard(path="/", print_url=False):
             with os.fdopen(fd, "w") as file:
                 file.write(
                     '<!doctype html><meta name="referrer" content="no-referrer">'
+                    '<meta http-equiv="Cache-Control" content="no-store">'
                     f'<meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}">'
                     f"<script>location.replace({json.dumps(url)});</script>"
                 )
-            webbrowser.open(redirect.resolve().as_uri())
+            # Only the file's path goes to the browser's argv, never the code: argv is readable by every UID (ps).
+            if not webbrowser.open(redirect.resolve().as_uri()):
+                raise RuntimeError("no browser could be opened; use --print-url in your own terminal")
         except BaseException:
             redirect.unlink(missing_ok=True)
             raise
@@ -307,12 +333,17 @@ def main():
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
+        if not (args.stop or args.command == "stop"):
+            refuse_agent()  # stop passes: it mints nothing and only ends the person's own server
         if args.command == "serve" and not args.stop:
             return serve(args.launcher_lock)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
         else:
             open_dashboard(args.path, print_url=args.print_url)
+    except AgentRefused as exc:
+        print(f"orch-dashboard: {exc}", file=sys.stderr)
+        return 3
     except RunDirectoryError as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -7,6 +7,7 @@ import os
 
 import pytest
 
+from orch.click.log import ClickLog
 from orch.click.protocol import FEATURES, OPS, ClickError
 from orch.click.signer import CUSTODY_TRIES, CUSTODY_WINDOW, ClickSigner
 from orch.custody import PassphraseBackend, select
@@ -27,11 +28,15 @@ class Mono:
         return self.t
 
 
-class Log:
-    def __init__(self) -> None:
+class Log(ClickLog):
+    """The real signer log (its closed set of entries and field rules), also kept in memory for the assertions."""
+
+    def __init__(self, state) -> None:
+        super().__init__(state)
         self.lines: list[tuple[str, dict]] = []
 
     def write(self, what: str, **kw) -> None:
+        super().write(what, **kw)  # raises for an entry the log does not know
         self.lines.append((what, kw))
 
 
@@ -46,7 +51,7 @@ def switch(tmp_path, monkeypatch):
     monkeypatch.setattr(select, "_store", lambda _state: store)
     uid = os.getuid()
     entry = {"workspace_id": WS, "prefix": "INT", "host_uid": uid}
-    mono, log = Mono(), Log()
+    mono, log = Mono(), Log(state)
     signer = ClickSigner(
         state,
         uid=uid,
@@ -176,3 +181,12 @@ def test_the_passphrase_never_reaches_the_log_or_an_answer(switch):
     for secret in ("wrong secret words", provider.passphrase, STRONG):
         assert secret not in text
     assert [what for what, _ in log.lines if what.startswith("custody")] == ["custody_on", "custody_off"]
+
+
+def test_the_written_log_has_the_switch_and_no_passphrase(switch):
+    signer, state, provider, _, _, log = switch
+    on(signer, provider.passphrase)
+    signer.handle("custody_off", {"workspace_id": WS})
+    text = (log.root / "click.jsonl").read_text()
+    assert '"what": "custody_on"' in text and '"what": "custody_off"' in text
+    assert provider.passphrase not in text

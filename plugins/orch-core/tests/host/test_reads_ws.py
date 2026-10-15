@@ -157,43 +157,54 @@ def test_member_list_marks_a_revoked_device_invalid_and_is_open_to_g_and_n(w):
 
 
 #: the v1.9 ``read_ext/3`` device fields (§0.8.5)
-DEVICE_EXT = {"label", "paired_ms", "relay", "cert_expires", "reader"}
+DEVICE_EXT = {"label", "paired_at", "relay", "cert_expires_at", "reader"}
+PAIRED_MS = 1_760_000_123_456  # a relay record's paired_ms: served as Time, whole seconds
 
 
 def test_member_list_device_fields_without_r6_or_reader_records(w):
-    """read_ext/3 (v1.9): ``cert_expires`` is the F1 certificate's; the R6 relay record and the H12d reader record are
-    not built, so ``label``, ``paired_ms`` and ``reader`` are null and ``relay`` is false: never a guess."""
+    """read_ext/3 (v1.9): ``cert_expires_at`` is the F1 certificate's expiry as ``Time``; the R6 relay record and the
+    H12d reader record are not built, so ``label``, ``paired_at`` and ``reader`` are null and ``relay`` is false."""
     c = w.client()
     assert "read_ext/3" in c.welcome["caps"] and "read_ext/2" in c.welcome["caps"]
     ws = w.service.store.state.workspace
     for member in ok(c.req("member.list"))["members"]:
         for device in member["devices"]:
-            assert device["cert_expires"] == ws.devices[device["id"]].expires_ms
-            assert (device["label"], device["paired_ms"], device["reader"]) == (None, None, None)
+            assert ws.devices[device["id"]].expires_ms is None and device["cert_expires_at"] is None  # never expires
+            assert (device["label"], device["paired_at"], device["reader"]) == (None, None, None)
             assert device["relay"] is False
-    expires = (w.lab.ws.clock[0] + 3600) * 1000
+    expires_ms = (w.lab.ws.clock[0] + 3600) * 1000 + 999
     store = w.lab.ws.other()
     w.lab.ws.store = store
     try:
-        ref, _ = w.lab.ws.add_device(expires_ms=expires)
+        ref, _ = w.lab.ws.add_device(expires_ms=expires_ms)
     finally:
         store.close()
         w.lab.ws.store = None
     owner = next(m for m in ok(c.req("member.list"))["members"] if m["person"] == w.lab.owner)
     added = next(d for d in owner["devices"] if d["id"] == ref)
-    assert (added["cert_expires"], added["valid"], added["relay"]) == (expires, True, False)
+    assert added["cert_expires_at"] == iso(expires_ms // 1000) == iso(w.lab.ws.clock[0] + 3600)
+    assert (added["valid"], added["relay"]) == (True, False)
+
+
+def _owner_dev(w) -> str:
+    return next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.lab.owner)
 
 
 def test_member_list_maps_a_relay_record_and_a_reader_record(w, monkeypatch):
-    """The seams R6 and H12d fill: a relay record gives the cleaned label (protocol §2.5), ``paired_ms`` and ``relay``;
+    """The seams R6 and H12d fill: a relay record gives the cleaned label (protocol §2.5), ``paired_at`` and ``relay``;
     a reader record gives the level. A record naming another person gives nothing; a label that cleans to nothing is
-    null."""
+    null, and so is a ``paired_ms`` that is not a non-negative integer."""
     from orch.host import reads_ws
 
     quinn_dev = next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.quinn.ref)
-    owner_dev = next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.lab.owner)
+    owner_dev = _owner_dev(w)
     records = {
-        owner_dev: {"device_id": owner_dev, "person_id": w.lab.owner, "label": "Phone\u200b\x07 one", "paired_ms": 7},
+        owner_dev: {
+            "device_id": owner_dev,
+            "person_id": w.lab.owner,
+            "label": "Phone\u200b\x07 one",
+            "paired_ms": PAIRED_MS,
+        },
         quinn_dev: {"device_id": quinn_dev, "person_id": w.lab.owner, "label": "not quinn's", "paired_ms": 9},
     }
     monkeypatch.setattr(reads_ws, "relay_devices", lambda ctx: records)
@@ -201,32 +212,43 @@ def test_member_list_maps_a_relay_record_and_a_reader_record(w, monkeypatch):
     c = w.client()
     by_person = {m["person"]: m for m in ok(c.req("member.list"))["members"]}
     (mine,) = by_person[w.lab.owner]["devices"]
-    assert (mine["label"], mine["paired_ms"], mine["relay"], mine["reader"]) == ("Phone one", 7, True, 1)
+    assert (mine["label"], mine["relay"], mine["reader"]) == ("Phone one", True, 1)
+    assert mine["paired_at"] == "2025-10-09T08:55:23Z" == iso(PAIRED_MS // 1000)
     (theirs,) = by_person[w.quinn.ref]["devices"]
-    assert (theirs["label"], theirs["paired_ms"], theirs["relay"], theirs["reader"]) == (None, None, False, None)
-    records[owner_dev] = {**records[owner_dev], "label": "\u200b\u2060", "paired_ms": -1}
-    (mine,) = {m["person"]: m for m in ok(c.req("member.list"))["members"]}[w.lab.owner]["devices"]
-    assert (mine["label"], mine["paired_ms"], mine["relay"]) == (None, None, True)
+    assert (theirs["label"], theirs["paired_at"], theirs["relay"], theirs["reader"]) == (None, None, False, None)
+    for bad in (-1, 1.5, "7", True):
+        records[owner_dev] = {**records[owner_dev], "label": "\u200b\u2060", "paired_ms": bad}
+        (mine,) = {m["person"]: m for m in ok(c.req("member.list"))["members"]}[w.lab.owner]["devices"]
+        assert (mine["label"], mine["paired_at"], mine["relay"]) == (None, None, True), bad
 
 
-def test_member_list_device_fields_follow_the_viewer_filter_unchanged(w, monkeypatch):
-    """Viewer filtering stays as before read_ext/3: P, G and N get the same members and devices, now with the same
-    five fields."""
+def test_member_list_label_is_for_persons_only_g_and_n_get_null(w, monkeypatch):
+    """orch-52 (#505): only a person (P) sees device labels; G (an agent grant) and N (no-person) get ``label: null``
+    and everything else exactly as P, with the same members and devices (the viewer filter is otherwise unchanged)."""
     from orch.host import reads_ws
 
-    owner_dev = next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.lab.owner)
-    record = {"device_id": owner_dev, "person_id": w.lab.owner, "label": "Phone", "paired_ms": 7}
+    owner_dev = _owner_dev(w)
+    record = {"device_id": owner_dev, "person_id": w.lab.owner, "label": "Anna's phone", "paired_ms": PAIRED_MS}
     monkeypatch.setattr(reads_ws, "relay_devices", lambda ctx: {owner_dev: record})
     c = w.client()
+
+    def labels(data):
+        return {d["id"]: d["label"] for m in data["members"] for d in m["devices"]}
+
+    def without_labels(data):
+        return [{**m, "devices": [{**d, "label": None} for d in m["devices"]]} for m in data["members"]]
+
     as_p = ok(c.req("member.list"))
-    as_g = ok(c.req("member.list", grant=w.grant, session=SESSION))
-    assert as_g == as_p
-    ids = sorted((m["person"], d["id"]) for m in as_p["members"] for d in m["devices"])
+    assert labels(as_p)[owner_dev] == "Anna's phone"
     assert all(set(d) == {"id", "auth", "scopes", "valid", *DEVICE_EXT} for m in as_p["members"] for d in m["devices"])
+    as_g = ok(c.req("member.list", grant=w.grant, session=SESSION))
+    assert set(labels(as_g).values()) == {None}
+    assert without_labels(as_g) == without_labels(as_p)  # paired_at, relay, cert_expires_at, reader: as P
     as_agent_class(w)
     as_n = ok(c.req("member.list"))
-    assert as_n == as_p
-    assert sorted((m["person"], d["id"]) for m in as_n["members"] for d in m["devices"]) == ids
+    assert set(labels(as_n).values()) == {None}
+    assert without_labels(as_n) == without_labels(as_p)
+    assert labels(as_n).keys() == labels(as_p).keys()  # the same devices
 
 
 # --- grant.list ------------------------------------------------------------------------------------------------------

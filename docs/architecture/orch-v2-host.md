@@ -202,7 +202,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `query/1` | `ticket.query`, `ticket.get`, `needs`, `workspace.show`, `member.list`, `session.list`, `grant.list` (all 1) | workspace |
 | `read_ext/1` | no ops of its own: a host that lists it sends **every** optional field that v1.4 adds to `ticket.query`, `ticket.get` and `needs` (§0.8) | workspace |
 | `read_ext/2` | no ops of its own (v1.5): a host that lists it sends **every** optional field that v1.5 adds to `ticket.query`, `ticket.get` and `grant.list` (§0.8.5), and also lists `read_ext/1` | workspace |
-| `read_ext/3` | no ops of its own (v1.9): a host that lists it sends the `member.list` device fields `label`, `paired_ms`, `relay`, `cert_expires` and `reader` (§0.8.5), and also lists `read_ext/1` and `read_ext/2` | workspace |
+| `read_ext/3` | no ops of its own (v1.9): a host that lists it sends the `member.list` device fields `label`, `paired_at`, `relay`, `cert_expires_at` and `reader` (§0.8.5), and also lists `read_ext/1` and `read_ext/2` | workspace |
 | `settings/1` | `workspace.settings` (1) (v1.5) | workspace |
 | `text/1` | `ticket.text` (1) (v1.5) | workspace |
 | `sub_ext/1` | no ops of its own (v1.5): `sub.open` accepts `detail` (§0.9) | workspace |
@@ -1213,7 +1213,7 @@ column G (judgement call of H12e: an agent's `new` allocates its own key), and a
 {members:[{person:Person, name:str, role:"owner"|"maintainer"|"member"|"viewer",
            devices:[{id:Device, auth:str | null, scopes:[str], valid:bool,
                      // v1.9, read_ext/3 (§0.8.5):
-                     label?:str | null, paired_ms?:int | null, relay?:bool, cert_expires?:int | null,
+                     label?:str | null, paired_at?:Time | null, relay?:bool, cert_expires_at?:Time | null,
                      reader?:int | null}]}]}
 ```
 
@@ -2040,20 +2040,22 @@ RepoSetting = {default_branch:str | null, path?:str, remote?:str | null}      //
 
 **`member.list` device fields (v1.9, `read_ext/3`; for the dashboard's "Pair a phone").** A host that lists
 `read_ext/3` sends all five on every device. Which members and devices a viewer gets is unchanged (every column that may
-call `member.list` gets the same list, §0.5), and each of them gets the five fields.
-- **`cert_expires`** is the device certificate's `expires_ms` from F1 (`device.added`, `member.added`,
-  `workspace.created`; the same value as the review's `derived.cert_expires`, §0.8.1), `null` for a certificate that
-  never expires.
+call `member.list` gets the same list, §0.5). Times are `Time` (whole seconds, as `grant.list` `expires_at`).
+- **`label` is for persons only (orch-52, #505):** column P, and R, which reads exactly as P (11A.4), get it; G (an
+  agent grant) and N (no-person) get `label: null` on every device. Every other field is the same for every column.
+- **`cert_expires_at`** is the device certificate's `expires_ms` from F1 (`device.added`, `member.added`,
+  `workspace.created`; the review's `derived.cert_expires`, §0.8.1) as `Time`, `null` for a certificate that never
+  expires.
 - **`relay`** is true exactly when the device was paired through the relay: it has R6's record
   `membership/devices/<device_id>.json` (11A.15.3) for the same person. **`label`** is that record's label, cleaned
   per protocol §2.5 by `orch.identity.pairing.clean_label` (the one cleaner, 11A.15.10 item 4), `null` without a record
-  or when nothing is left after cleaning; it is the device's own name, never an authenticated one. **`paired_ms`** is
-  the record's `paired_ms`, `null` without a record.
+  or when nothing is left after cleaning; it is the device's own name, never an authenticated one. **`paired_at`** is
+  the record's `paired_ms` as `Time`, `null` without a record.
 - **`reader`** is the level of the device's H12d reader record (§0.8.6 item 9.10), `null` when it has none. `null` is
   not 0: the gate's "no record counts as 0" is the gate's rule, not a level the device declared.
 - **As built (H12d-2 and R6 not yet built).** Core has neither R6's `membership/devices/` records nor the reader
-  records, so today every device has `label: null`, `paired_ms: null`, `relay: false` and `reader: null`; only
-  `cert_expires` has a value. The host reads them through two seams in `orch.host.reads_ws` (`relay_devices`,
+  records, so today every device has `label: null`, `paired_at: null`, `relay: false` and `reader: null`; only
+  `cert_expires_at` has a value. The host reads them through two seams in `orch.host.reads_ws` (`relay_devices`,
   `reader_levels`), which R6 and H12d-2 fill; the field mapping above is already built and tested against them.
   `required_reader` (§0.8.6 item 9.11) is not part of `read_ext/3`.
 
@@ -3830,9 +3832,10 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
     (§0.4), so no cap or op version changes.
 45. **`member.list` device fields under `read_ext/3`** (§0.4, §0.8, §0.8.5; for the dashboard's "Pair a phone"):
-    each device gains `label`, `paired_ms`, `relay`, `cert_expires` and `reader`. `cert_expires` comes from the F1
-    certificate; the other four come from R6's relay record and H12d's reader record, which are not built yet, so they
-    are `null`/`false` until then. Viewer filtering is unchanged. `read_ext/3` lists `read_ext/1` and `read_ext/2`
+    each device gains `label`, `paired_at` (Time), `relay`, `cert_expires_at` (Time) and `reader`. `cert_expires_at`
+    comes from the F1 certificate; the other four come from R6's relay record and H12d's reader record, which are not
+    built yet, so they are `null`/`false` until then. Which members and devices a viewer gets is unchanged; `label` is
+    `null` for G and N (persons only, orch-52). `read_ext/3` lists `read_ext/1` and `read_ext/2`
     too. No F1, schema or op version change.
 
 ---

@@ -4138,7 +4138,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     persisted outers resent unchanged), the H13b Drop client (a mirror by change position, full reconciliation rules,
     host-written `file`s with persisted `ODU2` frames, claims and re-wraps for the phone's `drop_claim`/`drop_rewrap`,
     the retire intent with its 29-day window), the one audience function for restricted tickets, the planned cap
-    `drop/1` with its ops and the planned codes in §0.6 "Planned codes of H13", and H13c: no F1, hash, schema or
+    `drop/1` with eight ops (`drop.bind` included) and the planned codes in §0.6 "Planned codes of H13", and H13c: no F1, hash, schema or
     reader-level change. Decided after the challenge: the audience is the intersection everywhere and is revalidated before every seal
     and send; a host authorization journal with quarantine; per-direction Drop cursors until `direction: "all"`
     with a generation (orch-29, pending A2/D39a2); event-hash intent keys and immutable deadlines; no push for an
@@ -8824,13 +8824,13 @@ This section is the host half of orch-52's review commitments:
 | D1 | carriage | The core records **no** F1 event, checkpoint field or hash input for Drop objects or pushes. There is no schema, hash or reader-level change. Authorization metadata about Drop objects lives in a durable host journal, `relay/drop-auth.sqlite`, which is not F1 | 11A.16.7 |
 | D2 | push kinds | `question`, `question.closed`, and `drop.new`. `drop.new` is never sent for an unclaimed inbox object; for an inbox object its intent is created atomically with the claim. `ticket.update` is deferred out of H13. `join` and `peer.ticket` are never sent | 11A.16.4 |
 | D3 | push intents | The planner reads committed events through a durable per-log cursor. The intent key includes the committed event's hash. Intents of an abandoned branch are invalidated explicitly. Every intent has an immutable deadline. A start fence keeps history from being pushed | 11A.16.4 |
-| D4 | audience | **The intersection, everywhere.** A device passes only if its standing is current, the object's ticket is visible to its person, the object's recipient restriction includes it, and the object's binding is known. One function, `relay/audience.py`, applies this to every read, listing, push target, wrap and bridge answer | 11A.16.2 |
+| D4 | audience | **The intersection, everywhere.** A device passes only if its standing is current, the object's ticket is visible to its person, the object's recipient restriction includes it, and the object's binding is known. One function, `relay/audience.py`, applies this to every read, listing, push target, wrap and bridge answer. Hand-offs see objects only through its approval view (minimum metadata, never contents). The single exception is the column-P listing of unverified documents (`{object, kind, size, head}` only) | 11A.16.2 |
 | D5 | sealing and dispatch | Sealing happens inside `BridgeKeys` under one seal snapshot, at the committed epoch with the gate down. The audience is **revalidated immediately before every seal and every send**, against one consistent authorization state | 11A.16.2, 11A.16.4 |
 | D6 | persist before send | Every outbound relay write is persisted byte-exact before its first attempt. New bytes appear only through a recorded transition: a reseal, a rewrap or a narrowed target list | 11A.16.3 |
 | D7 | Drop writes | The host writes `file` objects only. A device-only frame carries no workspace wrap. The host's recovery wrap is a typed, host-only envelope that is never sent | 11A.16.5 |
 | D8 | Drop reads | The mirror keeps **separate cursors per list direction** until `direction: "all"` with a `generation` exists. Once it does, the host switches to it (agreed with orch-29, pending A2/D39a2). The host reconciles in full after a gap of more than 29 days, a restore or a takeover. An object whose binding is unknown is quarantined | 11A.16.5 |
 | D9 | retire | The UI holds an opaque head token, and `drop.retire` sends exactly that token. The host never substitutes the mirror's current hash. A lost answer is retried only inside the 29-day window. Files only: the host retires no document in H13 | 11A.16.5 |
-| D10 | ops and gestures | Seven ops under the cap `drop/1`. Grants are checked on every op. A claim of someone else's inbox content, and a retire of someone else's upload, need a terminal hand-off bound to object, head and audience. A person's own sends, claims of their own uploads and retires of their own uploads need none | 11A.16.6 |
+| D10 | ops and gestures | Eight ops under the cap `drop/1`, `drop.bind` included. Grants are checked on every op. A claim of someone else's inbox content, a retire of someone else's upload, and every `drop.bind` need a signed terminal hand-off bound to object, head and audience (for a bind, also the destination ticket and the resulting audience). A person's own sends, claims of their own uploads and retires of their own uploads need none | 11A.16.6 |
 | D11 | host storage | Storage is under `relay/drop/` only, through the `StateDir` fd. Bytes are reserved before allocation, the caps are explicit, garbage collection and ENOSPC recovery are defined, a free-space reserve is kept, and the per-sender limits are aggregate | 11A.16.5 "Host storage" |
 
 #### 11A.16.0 Scope and the split
@@ -8851,7 +8851,11 @@ This section is the host half of orch-52's review commitments:
   - a phone retire request (Q6);
   - cross-workspace addressing, personal and shared spaces, and `drop:` agents (P6);
   - the lease, and public and upload links;
-  - any sealed or signed format change, except the host-local envelope of D7, which never leaves the host.
+  - any F1 event, checkpoint or schema change. The only new signed or sealed formats are two:
+    - the host-local recovery envelope of D7, which never leaves the host;
+    - the `sig_drop_handoff` hand-off material of D10: non-event, made by the terminal signer, domain-separated from
+      the event and reader labels.
+    No relay-visible or phone-visible format changes.
 - **The split:**
   - H13a: push;
   - H13b: Drop;
@@ -8904,6 +8908,33 @@ lock.
 4. **Narrowing.** For a push context: the device belongs to one of the addressee persons, or to one of a send's `to`
    persons.
 5. **Binding known.** The object's binding is `bound`. A `quarantined` object passes for no device and no person (D8).
+
+**The approval view (the one mode for hand-offs).** Two hand-offs need a person to approve something D4 hides from
+them: a claim of someone else's unclaimed inbox object, and a `drop.bind` of a quarantined object. For these,
+`audience.py` has a second mode, `approval_view(state, person, obj, op)`. It is the only way such an object reaches a
+person before the hand-off commits.
+- **Who gets it.** It answers only inside `human.prepare` for the material kinds `drop.claim` and `drop.bind`, on the
+  terminal path. The click signer, the dashboard's plain ops and the bridge never get it.
+- **The person's checks.** The person passes step 1 for one of their devices, and holds the op's role: a member in
+  standing for a claim, an owner or maintainer for a bind.
+- **What it returns** is a closed minimum, enough for the person to see what they approve:
+  - the object id, the head token and the size;
+  - the sender's identity: the verified author device and person, or the host sender from the journal, or
+    `unverified`;
+  - the file name as **untrusted text**, under the same `clean_label` rules and caps as push labels, and marked as
+    untrusted in the review.
+- **What it never returns:** contents, a wrap, a DEK, or `mime`. Contents become readable only after the claim or the
+  bind commits, and then through the normal D4 mode.
+
+**The single exception: unverified documents.** Documents are never verified, bound, pushed or relayed to any device
+in H13 (Q9). So D4's step 5 (binding known) can never hold for them, and they would be invisible even to the host's
+operator. The one exception is the separate listing `drop.list {view: "unverified_documents"}`. It answers only in
+column P on this host, never to G, never over the bridge, and never in a push. It returns only
+`{object, kind: "document", size, head}`: no title, no label, no name, no author name, and no contents.
+- **Why the exception is safe:** it shows nothing that D4 protects (no ticket, no label, no content), only that an
+  object exists and how large it is, which is what the relay's own oracle already reveals to members.
+- **What it does not grant:** it applies no audience rule to anything else, and a document never enters any other
+  listing or decision.
 
 The rule for persons (socket listings) is the same with "a device of the person" in steps 1 and 3. There is **no
 owner bypass** (Q10): an owner sees a device-only object only if one of that owner's own devices is listed and the
@@ -9142,9 +9173,11 @@ the reason `deadline`.
 
   A failure quarantines the entry, raises the alarm `drop_integrity`, and hides it from every op. The mirror keeps the
   highest verified version per object and refuses a lower one.
-- **Documents (DECIDED (orch-52, Codex), Q9):** listed as **unverified metadata only**. A document is never opened,
-  never retired by the host in H13, and never used for any decision (no push, no audience, no claim). Socket ops show
-  it marked `unverified`, subject to D4 like everything else.
+- **Documents (DECIDED (orch-52, Codex), Q9):**
+  - mirrored as **unverified metadata only**: no binding, never opened, never retired by the host in H13, and never used
+    for any decision (no push, no audience, no claim, no relay to devices);
+  - shown only through the single exception of D4: `drop.list {view: "unverified_documents"}`, in column P only,
+    returning `{object, kind, size, head}` and nothing else.
 - **Metadata:**
   - for a verified live file, the host opens a DEK it can reach (`open_wrap_wk`, or `open_wrap_wxk` for an inbox file),
     checks `dek_commit`, opens `meta`, and stores `name`, `mime` and `size`, after `clean_label` and the caps of D11.
@@ -9212,8 +9245,10 @@ the reason `deadline`.
     (`author_person` from the journal, set by the certificate check, never from listing metadata). It needs no hand-off,
     like the person's own `drop.send`. That applies to `drop.claim` on the socket and to the phone's `drop_claim` (the
     requesting device's person must equal `author_person`).
-  - **Anyone else's inbox content.** It needs a **terminal hand-off** bound to object, head and audience (11A.16.6). The
-    phone's `drop_claim` for such an object answers `drop.handoff_required`; the person claims it from a terminal.
+  - **Anyone else's inbox content.** It needs a **terminal hand-off** bound to object, head and audience (11A.16.6).
+    The person sees the object only through D4's approval view: its id, head token, size, sender identity, and its
+    name as untrusted text, never its contents. The phone's `drop_claim` for such an object answers
+    `drop.handoff_required`, and the person claims it from a terminal.
   - **No auto-claim (Q8).**
   - **The commit.** The claim record is persisted inside the seal span. After the relay's 200, one `OutboundStore`
     transaction marks the claim done **and** inserts the `drop.new` intent (item 5).
@@ -9316,12 +9351,12 @@ viewer. A hidden object and an absent one are both `not_found`.
 
 | Op | P | G (grant) | N | Notes |
 |---|---|---|---|---|
-| `drop.list`, `drop.get` | ✓ | ✓, only within the grant's ticket scope | — | the mirror, through D4; `head` in every item |
+| `drop.list`, `drop.get` | ✓ | ✓, only within the grant's ticket scope | — | the mirror, through D4; `head` in every item. `drop.list {view: "unverified_documents"}` is column P only (D4's single exception) |
 | `drop.fetch`, `drop.read` | ✓ | ✓, as above | — | the reservations of D11 |
 | `drop.send {blob, ticket?, to?}` | ✓ (no hand-off) | ✓ only if the grant's purpose explicitly includes Drop publication (a new grant verb `drop.send`), `ticket` is within the grant's scope, and the grant is unexpired with its person in standing; `origin: "agent"` | — | write with `opts.idem`; the aggregate limits apply |
 | `drop.claim {object, head}` | ✓; the person's own verified upload needs no hand-off; anyone else's needs the hand-off | never | — | write with `opts.idem` |
 | `drop.retire {object, head}` | ✓; the person's own upload (`sender_person` or `author_person` is the person) needs no hand-off; anyone else's needs the hand-off and the role of owner or maintainer | never | — | write with `opts.idem`; files only |
-| `drop.bind {object, ticket?}` | ✓, an owner or maintainer, always with a hand-off | never | — | rebinds a quarantined object (11A.16.3) |
+| `drop.bind {object, head, ticket?, to?}` | ✓, an owner or maintainer, always with a hand-off | never | — | rebinds a quarantined object (11A.16.3) to a destination ticket (or none) and audience; the person sees it only through D4's approval view |
 
 **Grants (DECIDED (orch-52, Codex), item 9).** Every Drop op from column G checks, at every call, the grant's ticket
 scope, its purpose (its verbs), its person's standing and its expiry. The same function (`Call.sees`) serves the
@@ -9332,22 +9367,33 @@ registry reads. A G call can never claim, retire or bind.
   through `human.prepare`, with new **non-event** material kinds `drop.claim`, `drop.retire` and `drop.bind`. These are
   reviewed and confirmed **only by the terminal signer** (`orch sign`). The click signer refuses them (`terminal_only`),
   as for `relay.pair_device`.
-- **What is bound.** The material binds the workspace id, the object id, the head token, the audience (`space`, or the
-  sorted device list), the verified author or sender, and the displayed name and size. `host/signer.check` recomputes
-  them and refuses any extra field and any cross-kind substitution.
+- **What is bound.** The material binds:
+  - the workspace id, the object id and the head token;
+  - the audience: `space`, or the sorted device list;
+  - the verified author or sender;
+  - the displayed name (as untrusted text) and the size;
+  - for `drop.bind`, also the **destination ticket** (a uid, or `null`), the `to` persons, and the **resulting
+    audience** computed by D4 for that ticket.
+
+  `host/signer.check` recomputes all of them and refuses any extra field and any cross-kind substitution.
 - **The signature (DECIDED (orch-52, 15 Oct 2026), O1).** The hand-off is **signed** by the person's terminal signer,
   the same machinery as `orch sign` and `human.prepare`, so it is a bound, auditable person gesture. Its label is a new
   device label, `sig_drop_handoff` = `orch/v2/sig/drop-handoff|`. It is added to the planned labels in
   `orch.crypto.labels` (H13-0) and to `DEVICE_KEY_LABELS` (H13b-4). The signed bytes are
   `"orch/v2/sig/drop-handoff|" ‖ cj(material)`, where the material carries `kind` (`drop.claim`, `drop.retire` or
-  `drop.bind`) and the bound fields below.
+  `drop.bind`) and the bound fields above.
 - **Domain separation.** `sig_drop_handoff` is a `_p` label (`orch/v2/sig/...|`), separate from the event labels
   (`sig_ticket_event`, `sig_ws_event`, the `_e` labels) and from the reader label (`sig_reader_decl`). No label is a
   prefix of another, and a test over `orch.crypto.labels` asserts that. The host verifies a hand-off only under this
   label and only as non-event material. It never counts as an F1 event or a reader declaration, and no other label's
   signature counts as a hand-off.
-- **The check at submit.** At `human.submit` the host re-checks the head and the audience against the bound values. If
-  they differ, the answer is `drop.conflict` and nothing is sent.
+- **The check at submit.** At `human.submit`, under the store lock, the host recomputes and compares:
+  - the head;
+  - the audience;
+  - for `drop.bind`, the destination ticket's existence and visibility, and the resulting audience.
+
+  If any of them differs from the bound values (for example, the ticket was restricted in the meantime), the answer is
+  `drop.conflict`, and nothing is sent or rebound.
 - **The plain op.** A plain `drop.claim` or `drop.retire` that needs a hand-off answers `drop.handoff_required`.
 
 **Risk that remains (stated as orch-52 asked).** The dashboard runs as the person's UID. A compromised dashboard can
@@ -9485,7 +9531,8 @@ The catalogs to update in the PR that serves these codes:
 - each item carries the `head` token, which retire and claim send back unchanged;
 - the health card reads `host.status.relay.push` and `.drop`;
 - device-only objects appear only for persons whose own device is listed and who see the ticket (no owner bypass);
-- unverified documents are shown as unverified;
+- unverified documents appear only in the separate column-P listing `view: "unverified_documents"`, with id, kind, size
+  and head only;
 - quarantined objects are invisible, except a count in status;
 - claims and retires that need a hand-off show "confirm in a terminal" (`drop.handoff_required`), with the
   `orch sign` request id.

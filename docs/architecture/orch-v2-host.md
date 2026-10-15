@@ -11400,8 +11400,10 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     - `diff.<driver>.binary`: `diff.<driver>.binary=false` for every driver the repository defines, plus `--text` on
       the patch;
     - `diff.<driver>.xfuncname`, `.funcname`: pinned to `^$` for every driver the repository defines, so its regex
-      never runs (a backtracking one stalled the patch until the timeout), and for git's built-in drivers too; the text it would choose after a hunk
-      header's second `@@` is shown in the dashboard's diff (it draws whole hunk lines), so `store/observe` also
+      never runs (a backtracking one stalled the patch until the timeout), and for git's built-in drivers too
+      (`gitsafe.BUILTIN_DRIVERS`: git's userdiff set as of git 2.54, 27 drivers; a built-in a newer git adds stays
+      unpinned until it is listed, which is harmless: its regex is git's, and the stripping below is the backstop);
+      the text it would choose after a hunk header's second `@@` is shown in the dashboard's diff (it draws whole hunk lines), so `store/observe` also
       strips it from `diff_patch` (`gitsafe.plain_hunk_headers`);
     - `diff.<driver>.wordRegex`: only `--word-diff`, which no operation uses.
 

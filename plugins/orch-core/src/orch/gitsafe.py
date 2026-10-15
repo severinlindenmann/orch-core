@@ -560,12 +560,15 @@ def command(
     return _argv(repo, args), isolated_env(own, entries)
 
 
-#: git's built-in diff drivers (userdiff.c, git 2.54): an attribute can select them with no repo config at all. Their
-#: regexes are git's own (no backreferences), but the rule is simpler when it covers every driver git can select
-#: (Opus R8 I1): they are pinned like the repo's own.
+#: git's built-in diff drivers: its userdiff set AS OF GIT 2.54 (userdiff.c, 27 drivers). An attribute can select them
+#: with no repo config at all. Their regexes are git's own (no backreferences), but the rule is simpler when it covers
+#: every driver git can select (Opus R8 I1): they are pinned like the repo's own. A built-in that a newer git adds
+#: stays unpinned until it is listed here; that is harmless because its regex is git's, and the text it would put
+#: after a hunk header's second ``@@`` is stripped by ``store/observe`` (:func:`plain_hunk_headers`), the backstop.
 BUILTIN_DRIVERS = (
-    "ada", "bash", "bibtex", "cpp", "csharp", "css", "dts", "elixir", "fortran", "fountain", "golang", "html", "java",
-    "kotlin", "markdown", "matlab", "objc", "pascal", "perl", "php", "python", "r", "ruby", "rust", "scheme", "tex",
+    "ada", "bash", "bibtex", "cpp", "csharp", "css", "dts", "elixir", "fortran", "fountain", "golang", "html", "ini",
+    "java", "kotlin", "markdown", "matlab", "objc", "pascal", "perl", "php", "python", "r", "ruby", "rust", "scheme",
+    "tex",
 )  # fmt: skip
 
 

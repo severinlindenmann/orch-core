@@ -1355,3 +1355,81 @@ def test_check_staged_says_git_is_unavailable_when_its_diff_times_out(world, mon
     finally:
         store.close()
     assert [f.code for f in found] == ["git.unavailable"] and found[0].what == what
+
+
+# ------------------------------------- Opus R9 on #561: every exit but 0 and 1 is no answer; git's built-ins
+
+
+def _fake_git(monkeypatch, script: str) -> None:
+    """Every operation's argv becomes ``sh -c <script>`` (after the real gate)."""
+    real = gitsafe.command
+
+    def command(repo, op, own, **kw):
+        _argv, env = real(repo, op, own, **kw)
+        return ["sh", "-c", script], env
+
+    monkeypatch.setattr(gitsafe, "command", command)
+
+
+LOOKUP_OPERANDS = {
+    "ref": "refs/heads/main", "commit": "refs/heads/main", "parent": "refs/heads/main",
+    "merge_base": ("refs/heads/main", "refs/heads/main"),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("op", sorted(LOOKUP_OPERANDS))
+@pytest.mark.parametrize(
+    "script", ["exit 128", "exit 2", "kill -9 $$", "sleep 5"], ids=["128", "2", "signal", "timeout"]
+)
+def test_a_lookup_exit_other_than_0_or_1_is_no_answer(world, monkeypatch, op, script):
+    """R9-L1: exit 0 is the answer, exit 1 git's honest "no result" (None), anything else no answer (NoAnswer)."""
+    repo = make_repo(world, "r")
+    monkeypatch.setattr(observe, "_TIMEOUT", 1)
+    _fake_git(monkeypatch, script)
+    with pytest.raises(observe.NoAnswer):
+        observe.lookup(repo, op, rev=LOOKUP_OPERANDS[op])
+    assert observe.git(repo, op, rev=LOOKUP_OPERANDS[op]) is None  # observe.git still answers None for all of them
+
+
+@pytest.mark.parametrize("op", sorted(LOOKUP_OPERANDS))
+def test_a_lookup_exit_1_is_no_result_and_exit_0_the_answer(world, monkeypatch, op):
+    repo = make_repo(world, "r")
+    _fake_git(monkeypatch, "exit 1")
+    assert observe.lookup(repo, op, rev=LOOKUP_OPERANDS[op]) is None
+    _fake_git(monkeypatch, "echo " + "a" * 40)
+    assert observe.lookup(repo, op, rev=LOOKUP_OPERANDS[op]) == "a" * 40
+
+
+def test_ini_is_one_of_gits_builtin_drivers_and_pinned(world):
+    """R9-L2: git 2.54 has 27 built-in drivers, ``ini`` among them."""
+    w = world
+    repo, h1, h2 = _redos_repo(w, "r")
+    assert len(gitsafe.BUILTIN_DRIVERS) == 27 and "ini" in gitsafe.BUILTIN_DRIVERS
+    (repo / ".gitattributes").write_text("*.g diff=ini\n")
+    _argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", h1, h2))
+    pins = {(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(int(env["GIT_CONFIG_COUNT"]))}
+    assert {("diff.ini.xfuncname", "^$"), ("diff.ini.funcname", "^$")} <= pins
+
+
+def test_the_hunk_header_stripping_is_the_backstop_for_an_unpinned_builtin(world, monkeypatch):
+    """R9-L2: a built-in a newer git adds is not on BUILTIN_DRIVERS, so it is unpinned; its function text in the
+    hunk header still never reaches a person: store/observe strips it. Simulated by un-listing ``cpp``."""
+    w = world
+    base = w.tmp / "b"
+    base.mkdir()
+    repo = base / "r"
+    w.git(base, "init", "-q", "-b", "main", str(repo))
+    (repo / ".gitattributes").write_text("*.c diff=cpp\n")
+    body = "".join(f"    x{i} = {i};\n" for i in range(20))
+    (repo / "f.c").write_text(f"int important_function(void)\n{{\n{body}}}\n")
+    w.git(repo, "add", "-A")
+    w.git(repo, "commit", "-qm", "1")
+    (repo / "f.c").write_text(f"int important_function(void)\n{{\n{body.replace('x15 = 15', 'x15 = 99')}}}\n")
+    w.git(repo, "commit", "-qam", "2")
+    c1, c2 = (w.git(repo, "rev-parse", r).stdout.strip() for r in ("HEAD~1", "HEAD"))
+    monkeypatch.setattr(gitsafe, "BUILTIN_DRIVERS", tuple(d for d in gitsafe.BUILTIN_DRIVERS if d != "cpp"))
+    raw = _raw_hunk_headers(repo, c1, c2)
+    assert raw and all("important_function" in ln for ln in raw), raw  # positive control: unpinned, git's text
+    patch = observe.git(repo, "diff_patch", rev=("3", c1, c2))
+    headers = [ln for ln in patch.splitlines() if ln.startswith("@@")]
+    assert headers and all(ln.endswith("@@") for ln in headers) and "important_function" not in "".join(headers)

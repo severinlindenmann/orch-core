@@ -2905,8 +2905,10 @@ reader_decl = {"o": {"v": 1, "kind": "reader_decl", "suite": 2, "workspace_id": 
 - **Attempt binding (pairing, orch-29 #2).** `bind.offer_id` and `bind.attempt` must equal the pair meta's
   `offer_id` and `attempt`. With `dk_hash`, the declaration cannot be lifted into another offer or attempt.
 - **Freshness is checked once, at admission (Codex 8, orch-f1 O4):**
-  - `via:"pair"`: no clock window. The host-issued, single-use, 10-minute offer and the attempt bound it, and a
-    pairing can wait 10 minutes in `cert_pending`.
+  - `via:"pair"`: no past window (the host-issued, single-use, 10-minute offer and the attempt bound it, and a
+    pairing can wait 10 minutes in `cert_pending`), but `created_ms` at most 300 s ahead of the host clock, as for
+    every `via`: `created_ms` orders reader records (the latest valid one wins), so a far-future pair declaration
+    would otherwise beat every later `reader.declare`. A phone builds `created_ms` with its known host offset.
   - `via:"enrol"`: `created_ms` at most 300 s ahead of the host clock and at most 30 days old (the invitation travels
     out of band).
   - `via:"declare"`: the request's own ±300 s window (11A.8), and `created_ms` inside it.

@@ -11,6 +11,11 @@ holds right now (F8). :func:`refusal` then applies the precedence of §0.6 steps
   plain ``req`` and for ``human.*`` with a grant.
 
 The full matrix (every op name, `session.list` scoping, H4a1) builds on :func:`refusal` with the op's category.
+
+Column R (orch-v2-host §11A.4, H12a) is the relay peer's: a bridge request has no kernel UID, so :func:`resolve`
+refuses the ``relay`` peer class (and every class it does not list) and :func:`resolve_relay` gives R or a row that
+refuses every op. R is served only an op of its closed list :data:`RELAY_OPS` whose kind is in its matrix row; the
+kind alone never serves R. Only R has the kind ``device_signed`` (``relay.submit``).
 """
 
 from __future__ import annotations
@@ -18,15 +23,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-__all__ = ["Column", "GrantState", "OpKind", "refusal", "resolve"]
+__all__ = [
+    "DEVICE_SIGNED_OPS",
+    "RELAY_OPS",
+    "Column",
+    "GrantState",
+    "OpKind",
+    "refusal",
+    "resolve",
+    "resolve_relay",
+]
 
 GrantState = Literal["absent", "verified", "malformed", "unverified"]
-PeerClass = Literal["person", "agent", "worker", "control"]
+PeerClass = Literal["person", "agent", "worker", "control"]  # "relay" is refused: :func:`resolve_relay`
 #: read: registry read ops (and the §0.8 reads); person_read: doctor, instructions.sync, instructions.hook;
 #: agent / unattended / human: the registry ``who``; human_api: ``human.*``; job, control: their sockets' ops;
 #: pg_read: ``session.list`` and ``grant.list`` (P and G only, H6b).
 #: person_write: a host-side write only a person-class caller makes (``records.remote_private``, H11e).
 #: pg_write: a host-side side effect of P and G (``worktree.create``/``remove``, H11d; the op narrows G further).
+#: device_signed: device-signed person events through the relay entry (``relay.submit``, column R only, §11A.4).
 OpKind = Literal[
     "read",
     "person_read",
@@ -39,21 +54,27 @@ OpKind = Literal[
     "human_api",
     "job",
     "control",
+    "device_signed",
 ]
 
 
 @dataclass(frozen=True)
 class Column:
-    name: Literal["P", "G", "N", "W", "C"]
+    name: Literal["P", "G", "N", "W", "C", "R"]
     viewer: Literal["person", "grant", "no-person", "none"]
     #: the answer to every write in this row, overriding the matrix (None: the matrix decides)
     write_error: str | None = None
     #: the answer to ``human.*`` in this row, overriding the matrix
     human_error: str | None = None
+    #: the answer to **every** op in this row (a relay identity that no longer holds, §11A.4)
+    error: str | None = None
 
 
 def resolve(peer: PeerClass, grant: GrantState, mapping_valid: bool) -> Column:
-    """One row of the §0.5 effective-column table."""
+    """One row of the §0.5 effective-column table. Raises ``ValueError`` for the ``relay`` peer and for any peer class
+    it does not list (fail closed): a relay request is resolved only by :func:`resolve_relay`."""
+    if peer not in _SOCKET_PEERS:
+        raise ValueError(f"peer.denied: no socket column for the peer class {peer!r}")
     if peer == "worker":
         if grant != "absent":
             raise ValueError("req.invalid: auth is not allowed on the worker socket")
@@ -69,10 +90,44 @@ def resolve(peer: PeerClass, grant: GrantState, mapping_valid: bool) -> Column:
         return Column("N", "no-person", write_error=code, human_error="human_only" if peer == "person" else None)
     if peer == "agent":
         return Column("N", "no-person")
+    if peer != "person":  # the relay, and any class not listed here: never a socket column (fail closed)
+        raise ValueError(f"peer.denied: no socket column for the peer class {peer!r}")
     if mapping_valid:
         return Column("P", "person")
     return Column("N", "no-person", write_error="op.not_allowed", human_error="op.not_allowed")
 
+
+def resolve_relay(ok: bool) -> Column:
+    """Column R for a relay request whose identity holds now (§11A.4 steps 1 to 3 and the scopes, checked by the
+    caller inside the op's own job), else a row that refuses every op."""
+    if ok is True:
+        return Column("R", "person")
+    if ok is False:
+        refused = "op.not_allowed"
+        return Column("N", "no-person", write_error=refused, human_error=refused, error=refused)
+    raise ValueError("resolve_relay takes a bool")
+
+
+#: the ops column R may be served (§11A.4), closed: the registry read ops except ``doctor`` and ``instructions.*``
+#: (and ``wait``, which parks on a socket session's bus), the host reads the relay maps, ``whoami``, ``outcome.get`` and
+#: ``relay.submit``. A new registry read op is not served to R until it is listed here.
+RELAY_OPS = frozenset(
+    {
+        # registry read ops
+        "addon.list", "artifact.list", "check", "describe", "help", "inbox", "list", "next", "quick.list", "search",
+        "show", "status", "task.list", "task.next",
+        # host reads, filtered for the viewer exactly as P (F6)
+        "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
+        "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings",
+        # the principal's own
+        "whoami", "outcome.get",
+        # device-signed person events
+        "relay.submit",
+    }
+)  # fmt: skip
+#: the ops of kind ``device_signed``: never served on a socket
+DEVICE_SIGNED_OPS = frozenset({"relay.submit"})
+_SOCKET_PEERS = frozenset({"person", "agent", "worker", "control"})
 
 # The permission matrix (§0.5) for each column.
 _MATRIX: dict[str, set[str]] = {
@@ -81,6 +136,7 @@ _MATRIX: dict[str, set[str]] = {
     "N": {"read", "unattended"},
     "W": {"job"},
     "C": {"control"},
+    "R": {"read", "device_signed"},
 }
 _WRITES = {
     "agent",
@@ -90,8 +146,14 @@ _WRITES = {
 }  # person_write is outside every column but P: op.not_allowed there
 
 
-def refusal(column: Column, kind: OpKind) -> str | None:
-    """The error code for an op of ``kind`` in ``column``, or ``None`` when it may run."""
+def refusal(column: Column, kind: OpKind, op: str | None = None) -> str | None:
+    """The error code for an op of ``kind`` in ``column``, or ``None`` when it may run. Column R needs ``op`` too:
+    only an op of :data:`RELAY_OPS` (``device_signed`` only for :data:`DEVICE_SIGNED_OPS`) may run there."""
+    if column.error is not None:
+        return column.error
+    if column.name == "R":
+        if op not in RELAY_OPS or (kind == "device_signed") != (op in DEVICE_SIGNED_OPS):
+            return "op.not_allowed"
     if kind == "human" and column.name in {"P", "G", "N"}:
         return "human_only"  # a human registry op as a plain req, in every workspace column
     if kind == "human_api" and column.human_error is not None:

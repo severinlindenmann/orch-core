@@ -1691,3 +1691,48 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 
 - **Decision:** the primary step is `orch host relay pair --resume --offer <offer_id>` and the hand-off is `orch sign <CODE>` (R6 #473 head a4b7bb0f, per orch-52). Offer ids are 32 lower-case hex characters, as in the contract; the fixtures use that format. Every command the page offers for pasting into a shell is built only from host values that pass `shellWord` (ASCII letters, digits, `._-`, at most 64, not starting with `-`) or, for the offer, exactly 32 lower-case hex characters. Anything else gives a warning and no command (Opus delta N1). The device id in the list is shown through `Inline`, so hidden and bidi characters are visible. `orch device remove <id> --workspace <ws>` is still an assumption: R6 names no removal command.
 - **Revert:** only with a host that guarantees these formats in the contract, and then the checks stay as defence in depth.
+
+## 2026-10-15 Drop: Workspace → Drop, fixtures only, behind `drop/1` (PROPOSAL PENDING)
+
+- **Decision:** A real host gains a **Drop** page at `/drop` (`src/app/pages/drop/index.tsx`), with a sidebar entry after Quick tasks.
+  The route exists on every real host (redirects to `/` in the mock, whose catalog Drop addon is unchanged); the nav entry is listed
+  only where the server lists feature `drop`, so today it is reachable by address only. The page asks `dropServed(ws)`: feature `drop`
+  (the host serves `drop/1` in `welcome.ops`) **and** `dropApi.served()`. The real implementation (`realDropApi` in `src/api/drop.ts`)
+  answers `drop.unavailable` for every call, so every real host shows "Drop is not available on this host yet." No server route, no
+  `drop` feature in `gateway.py`. Dev reaches the page through `/__layout/drop-*` (fixture `src/dev/dropFixture.ts`).
+- **Why a workspace page, not Settings:** Drop is content people exchange every day, like Quick tasks, not configuration.
+- **Binding decisions applied (orch-52 host, orch-29 relay, 15 Oct):** (1) the host writes FILES only in P4: uploads create files;
+  document versions are display-only (version list and "N of 1024"), no "save new version" (fixture flag `documentWrites`, default off,
+  keeps that path); (2) names and MIME types are cleaned by the HOST (one rule, shared with device labels); the page renders them through
+  `visible.tsx` (`Inline`) and cleans nothing; (3) no auto-claim: unclaimed items are explained, their download is off, no claim button;
+  (4) **Delete** for files and documents through one host op (`drop.retire`), confirm "removed for everyone at once": **pending the
+  D39a1 amendment** that lets the host retire files (the merged relay design retires documents only); (5) entry states
+  `live`/`pruned`/`expired`/`retired`; expired and retired entries are tombstones for 30 days (no download, a reason).
+- **Assumptions (proposal `proposal-dashboard-drop-ops.md` not agreed; each to check):**
+  1. Op names and shapes as proposed: `drop.list {direction, after?, limit?}` → `{items, next}`, `drop.versions` → `{versions, next, cap}`,
+     `drop.send {blob, name, mime, object_id?, base_version?}` + idem, `drop.read {object_id, version}` → `{blob, name, name_hidden,
+     mime, size}`, `drop.retire {object_id}`, `sub.open {topics:["drop"]}` items `{t:"drop", object_id, version}`.
+  2. **`drop.info {}`** (new, the "gate answer") → `{max_bytes, version_cap, writes}`. The proposal names the limits but no op. The page
+     reads the plaintext cap (25 MiB) and the version cap (1024) only from here; the fixture's `FIXTURE_INFO` is the only other place.
+  3. `author.person_name` (optional): the person's display name, untrusted text; without it the page shows the person id.
+  4. `name_hidden` also on `drop.read`; a hidden name downloads as `drop-<object_id>-v<version>`.
+  5. Unclaimed received items cannot be downloaded from the dashboard until claimed (the relay answers 403 for an unclaimed inbox blob;
+     whether the host may open it via WXK first is the open carriage question).
+  6. Error extras ride beside `code`: `drop.too_large {limit_bytes}`, `drop.quota {quota, limit, used}` (the relay's quota names; count
+     quotas are shown as counts, the rest as bytes; an unknown name is shown as untrusted text), and a retryable error with
+     `retry_after_ms`. `DropError` (in `drop.ts`) carries them; the shared `ApiError` is unchanged.
+  7. Upload is browser → `blob.put` (§0.10: 768 KiB chunks, `upload_key`, `sha256` on the last chunk) → `drop.send`. Progress is the
+     acknowledged chunks (bytes and percent). Cancel works during the browser upload (also mid-chunk); the allocated blob is dropped
+     with `blob.drop`. "Sealing and sending…" (the host step) can't be cancelled (the host persists the frame).
+  8. One file at a time (a multi-file drop takes the first); the MIME sent is `file.type` or `application/octet-stream`.
+- **Download (this slice, fixtures):** `drop.read`, then the bytes (`dropApi.content`, fixture-provided), wrapped in a `Blob` typed
+  `application/octet-stream`, behind a hidden `<a download>` that is clicked and removed; the object URL is revoked after 30 s. Never
+  rendered inline, never `window.open`, no iframe/img/object, no preview.
+- **The future server route** (`GET /api/workspaces/:ws/drop/blob/:blob`, not built): `Content-Type: application/octet-stream`,
+  `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded host-cleaned name>`,
+  `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Content-Security-Policy: sandbox; default-src 'none'`,
+  `Referrer-Policy: no-referrer`; the blob id checked against `^b_[A-Z2-7]{26}$`, bound to the viewer's session and workspace; no Range.
+  The page then uses an anchor to that route with `download` instead of the blob URL.
+- **Revert:** delete `src/api/drop.ts`, `src/app/pages/drop/`, `src/dev/dropFixture.ts`, the `drop-*` scenarios in
+  `src/dev/layoutPreview.tsx`, the `real-host-drop-*` guard entries (`scripts/layout-guard.mjs`, `layout-guard-pages.mjs`, the test in
+  `layoutGuardPages.test.ts`), `dropRoute` in `router.tsx` and the Drop entry in `Sidebar.tsx`.

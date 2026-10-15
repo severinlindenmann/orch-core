@@ -59,7 +59,7 @@ from orch.store.outbox import OutboxEntry, RelayPosition, Segment
 
 from . import wire
 from .directory import Directory, VerifiedCheckpoint
-from .http import Transport, TransportError
+from .http import RedirectRefused, Transport, TransportError
 from .retry import PERMANENT_QUOTAS, RelayRefused, delay
 from .session import NotHolder, RelayMisbehaving, Session
 from .state import StateDir, StateError
@@ -507,6 +507,9 @@ class Publisher:
             return "wait", self._backoff()
         except RelayRefused as e:
             return "wait", self._refused(e)
+        except RedirectRefused:
+            self._raise("relay_redirect", "a 3xx answer: no redirect is followed (11A.7)")
+            return "wait", HELD_RECHECK_S
         except TransportError as e:
             log.info("relay publish: transport %s", e.kind)
             return "wait", self._backoff()

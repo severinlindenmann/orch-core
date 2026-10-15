@@ -259,20 +259,28 @@ class ControlOps:
             ws = store.state.workspace
             if ws.genesis != pin or ws.workspace_id != workspace_id:
                 raise HostError("trust.genesis_mismatch", "the verified genesis differs from the pinned one")
-            self._import_readers(workspace_id, store.state)
             return workspace_id, ws.prefix, ws
         finally:
             store.close()
 
-    def _import_readers(self, workspace_id: str, state: Any) -> None:
+    def _import_readers(self, workspace_id: str, root: str) -> None:
         """H12d-2 (§0.8.6 item 9.4 "Direct mode"): ``register`` imports direct mode's reader records. In tier A they
         already lie in this state directory (``<state>/hosts/<ws>/readers/``), so the import verifies each against the
-        log just read and drops the ones that do not verify (their devices count as 0 anyway). Best effort: a record
-        that cannot be removed still counts as 0 at every read."""
+        log and drops the ones that do not verify (their devices count as 0 anyway). It runs **after admission**, with
+        the ownership lock held and under the workspace's store lock, the lock every record writer holds (#513
+        review: a refused registration prunes nothing). Best effort: a record that cannot be removed still counts as 0
+        at every read."""
         from orch.ops.readers import prune
+        from orch.store import Store
 
         try:
-            out = prune(self.state_dir, workspace_id, state, self.host_uid)
+            store = Store.open(root, expected_workspace_id=workspace_id, host_state_dir=None, load="lazy")
+            try:
+                with store.locked():
+                    store.refresh()
+                    out = prune(self.state_dir, workspace_id, store.state, self.host_uid)
+            finally:
+                store.close()
         except Exception as exc:  # noqa: BLE001 - never blocks a registration: every read verifies again
             _log.warning("register: reader records of %s not checked (%s)", workspace_id, type(exc).__name__)
             return
@@ -310,6 +318,7 @@ class ControlOps:
             self.intents.update(intent, workspace_id=workspace_id)
             entry = Entry(workspace_id, prefix, root, self.host_uid, group_name(workspace_id), peers)
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
+                self._import_readers(workspace_id, root)  # H12d-2: after admission, under the store lock
                 self.host.registry.add(entry)
                 self.host.serve_from_thread(entry)
             return self.intents.complete(intent, ok_result({"workspace_id": workspace_id}))["result"]

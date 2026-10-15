@@ -19,8 +19,8 @@ holds as worker jobs, then the durable position, then one ack of at most 10 s):
   A store fault (an exception) means no result: nothing after it is stored or acked; the page is read again.
 * **Order.** All items of the page have a result (``held``/``pending`` are durable in ``HostPins``), then the new
   position is written atomically (``unpublished.json``), and only then the page's ``cursor`` is acked
-  (``POST unpublished/ack {cursor}``, exactly that field: the relay refuses any other). An ack is not publication. The ack is owed
-  (``ack`` in the file) from the write until the relay accepted it: a failed one is retried first, later or after a
+  (``POST unpublished/ack {cursor}``, exactly that field: the relay refuses any other). An ack is not publication. The ack is
+  owed (``ack`` in the file) from the write until the relay accepted it: a failed one is retried first, later or after a
   restart.
 * **Held evidence.** The host has no host-originated ``needs`` items yet (issue #572), so a ``held`` result raises
   the relay alarm ``unpublished_held`` naming the pair, and the pair joins ``held`` in ``unpublished.json``

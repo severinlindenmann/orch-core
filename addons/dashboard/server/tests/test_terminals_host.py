@@ -206,3 +206,76 @@ def test_a_changed_runner_ends_with_4503_and_cancels_the_capability(tw, monkeypa
         code, texts = until_close(ws)
     assert code == 4503 and texts == [{"t": "end", "reason": "runner.changed"}]
     assert calls.count("term.attach") == 1 and "attach.cancel" in calls
+
+
+def slow_attach(monkeypatch, delay=1.5):
+    """`term.attach` answers after `delay`; every HostLink op and every TermClient.connect is recorded."""
+    from orch.runner import termclient
+
+    from orch_dashboard.hostlink import HostLink
+
+    calls, connects = [], []
+    real_call, real_connect = HostLink.call, termclient.TermClient.connect
+
+    def call(self, op, args=None, **kw):
+        calls.append(op)
+        if op == "term.attach":
+            time.sleep(delay)
+        return real_call(self, op, args, **kw)
+
+    def connect(self, timeout=5.0):
+        connects.append(1)
+        return real_connect(self, timeout)
+
+    monkeypatch.setattr(HostLink, "call", call)
+    monkeypatch.setattr(termclient.TermClient, "connect", connect)
+    return calls, connects
+
+
+def test_logout_during_the_bind_closes_at_once_and_presents_nothing_review_l2(tw, monkeypatch):
+    run = tw.open_shell()["run"]
+    calls, connects = slow_attach(monkeypatch)
+    with tw.connect(run, mode="write", take=True) as ws:
+        time.sleep(0.2)  # the bind is waiting for term.attach
+        tw.client.post("/auth/logout", headers=tw.headers())
+        t0 = time.monotonic()
+        code, texts = until_close(ws, timeout=5)
+        assert code == 4401 and texts == [] and time.monotonic() - t0 < 1.0  # no ready, no end
+    deadline = time.monotonic() + 5
+    while "attach.cancel" not in calls and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert connects == [] and "attach.cancel" in calls  # the host ticket was never presented, the capability cancelled
+
+
+def test_a_message_during_the_bind_closes_at_once_review_l3(tw, monkeypatch):
+    run = tw.open_shell()["run"]
+    calls, connects = slow_attach(monkeypatch)
+    with tw.connect(run) as ws:
+        time.sleep(0.2)
+        ws.send_bytes(key(b"too early"))
+        t0 = time.monotonic()
+        code, texts = until_close(ws, timeout=5)
+        assert code == 4400 and texts == [{"t": "end", "reason": "protocol"}] and time.monotonic() - t0 < 1.0
+    deadline = time.monotonic() + 5
+    while "attach.cancel" not in calls and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert connects == [] and "attach.cancel" in calls
+
+
+def test_a_failed_connect_after_the_ticket_closes_the_runner_socket_review_l4(tw, monkeypatch):
+    import socket as socketlib
+
+    from orch.runner import termclient
+
+    made = []
+
+    def broken(self, timeout=5.0):
+        self.sock = socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM)
+        made.append(self.sock)
+        raise TimeoutError("no frame")  # e.g. no first frame after the attach was sent
+
+    monkeypatch.setattr(termclient.TermClient, "connect", broken)
+    run = tw.open_shell()["run"]
+    with tw.connect(run) as ws:
+        code, _ = until_close(ws)
+    assert code == 4503 and made and made[0].fileno() == -1

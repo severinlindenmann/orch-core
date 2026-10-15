@@ -409,6 +409,10 @@ class Pump:
             client.close()
 
 
+#: release tasks still running after their socket's handler ended (kept referenced until done)
+_CLEANUPS: set[asyncio.Task] = set()
+
+
 class TermSocket:
     """One browser WebSocket bridged to one attachment."""
 
@@ -428,6 +432,10 @@ class TermSocket:
         self.resize_task: asyncio.Task | None = None
         self.final: Closed | None = None
         self.done = asyncio.Event()
+        #: set when the socket is doomed while the bind runs: the bind thread presents no host ticket after it
+        self.abort = threading.Event()
+        #: a bind still running when the socket ends: `finish` closes the socket first, then waits for it and releases
+        self.binding: asyncio.Task | None = None
 
     # -- the whole life of the socket
     async def serve(self) -> None:
@@ -447,12 +455,24 @@ class TermSocket:
             self.streams.add(intent.token)
             counted = True
             tasks.append(asyncio.create_task(self.watch_bearer()))
-            # Any message before the attachment is bound closes the socket (checked once the bind has finished, so
-            # its host connection and runner socket are released in `finish`).
+            # Any message before the attachment is bound, and a logout, end the socket at once (review L2, L3): the
+            # bind is raced against both; a doomed bind presents no host ticket (`abort`, checked in its thread) and is
+            # waited for in `finish`, after the socket has closed, so its capability is still cancelled.
             early = asyncio.create_task(self.refuse_early())
-            tasks.append(early)
-            ready = await self.bind()
-            if early.done() and early.exception() is not None:
+            ended = asyncio.create_task(self.done.wait())
+            tasks += [early, ended]
+            bind = asyncio.create_task(self.bind())
+            await asyncio.wait({bind, early, ended}, return_when=asyncio.FIRST_COMPLETED)
+            if not bind.done():
+                self.abort.set()
+                self.binding = bind
+                if early.done() and not early.cancelled() and early.exception() is not None:
+                    raise early.exception()
+                return  # the bearer ended: `final` is set
+            ready = bind.result()
+            if self.done.is_set():
+                return  # no `ready` after the session ended
+            if early.done() and not early.cancelled() and early.exception() is not None:
                 raise early.exception()
             early.cancel()
             with suppress(asyncio.CancelledError):
@@ -482,16 +502,30 @@ class TermSocket:
 
     async def finish(self) -> None:
         final = self.final or Closed("internal", close=4500)
+        self.abort.set()
         if self.pump is not None:
             self.pump.stop()
-        att, link = self.att, self.link
-        if att is not None or link is not None:
-            await asyncio.to_thread(self._release, att, link)
         if self.websocket.application_state == WebSocketState.CONNECTED:
             with suppress(Exception):
                 if not final.silent:
                     await self.websocket.send_text(_json(final.end()))
                 await self.websocket.close(final.close)
+        # The release must outlive a cancelled handler (the server may cancel it once the socket is closed): it runs as
+        # its own task. A bind still running (its thread cannot be cancelled) is waited for first.
+        cleanup = asyncio.create_task(self._cleanup())
+        _CLEANUPS.add(cleanup)
+        cleanup.add_done_callback(_CLEANUPS.discard)
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(cleanup)
+
+    async def _cleanup(self) -> None:
+        if self.binding is not None:
+            await asyncio.gather(self.binding, return_exceptions=True)
+            if self.pump is not None:
+                self.pump.stop()
+        att, link = self.att, self.link
+        if att is not None or link is not None:
+            await asyncio.to_thread(self._release, att, link)
 
     @staticmethod
     def _release(att, link):
@@ -557,11 +591,18 @@ class TermSocket:
                 args["from"] = intent.from_
             answer = self.link.call("term.attach", args)
             self.att = answer.get("att") if isinstance(answer, dict) else None
+            # Doomed meanwhile (logout, an early message, the socket closed): the host ticket is never presented.
+            if self.abort.is_set() or not self.auth.valid(intent.token, touch=False):
+                raise Closed("cancelled", silent=True)
             client = TermClient(self.gateway.run, answer)
             try:
                 first = client.connect()
             except RunnerChanged:
+                client.close()
                 raise Closed("runner.changed") from None
+            except BaseException:
+                client.close()  # the ticket may have gone out: never leave the runner socket open (review L4)
+                raise
             if first.get("t") == "end":
                 client.close()
                 reason = first.get("reason")
@@ -577,6 +618,9 @@ class TermSocket:
             raise host_closed(exc) from None
         except (OSError, KeyError, TypeError, ValueError):
             raise Closed("runner.lost") from None
+        if self.abort.is_set():
+            client.close()
+            raise Closed("cancelled", silent=True)
         self.pump = Pump(client, loop, self.post)
         self.pump.start()
         return ready

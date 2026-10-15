@@ -8922,7 +8922,9 @@ structurally: the invariant is named and enforced in one place.
   expired device that still holds `WK_e` raises no gate; `desired()` must drop it (a rotation), as it must a
   `pending` forwarded revocation that later becomes effective. Every F1 device loss gates, listed or not
   (availability: one rotation per removal).
-- Mutation, round 4: see the end of this section.
+- Mutation, round 4: 16 new mutants of the round-4 code on a `git archive` copy (the pre-write gate, the pregated
+  skip, the per-device loop, the fallback, the gate-first raise, the hook identity and live-error checks, the
+  `load_budget` hook, close, a vanished device, held evidence): 16 killed; one malformed mutant definition discarded.
 - J-R6a-21 **The key store is bound to the LIVE store, never a latch.** `R6Gate.install(live, rebuild=...)` sets
   `relay_gate` on `live()`, runs the start-up rebuild, and only then binds; `seal_state` is gated unless `live()` (the
   host's `service.store`, re-read at every decision) carries exactly that hook. A reopened (replaced) store, a closed

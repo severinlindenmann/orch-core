@@ -6858,6 +6858,10 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   stored position is the last acked page's `cursor` (a read from it only moves forward; a completed full read ends
   past everything). `orch status` (the workspace op) is unchanged: the held evidence is a host fact, shown by
   `orch host status` and `host.status.relay`.
+- Mutation pass (R4): 24 mutants on a `git archive` copy (the ack order, the full-read triggers, the notice rule,
+  `cursor_ahead`, `Retry-After`, a swallowed store fault, an unknown result, the held alarm and list, the page and
+  position checks, the worker job, both status surfaces, `BridgeLoop.notices`): 23 killed at first, the survivor
+  (the position check before the query string) closed by a test, 24 of 24.
 
 **Authenticity, not currency.** R1's readers (`GET card`, `members`, `checkpoint`) prove that an object was signed by
 the right key for this workspace, not that it is the newest: a relay can serve an older card, an older WSK-signed member

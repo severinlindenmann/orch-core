@@ -99,17 +99,30 @@ function Pairing({ workspace }: { workspace: Workspace }) {
     if (offer && status && status.offer_id === offer.offer_id && status.state !== 'open') setOffer(null)
   }, [offer, status])
 
-  // Expiry from the host's `expires_ms`: drop the link and say so.
+  // Expiry from the host's `expires_ms`: drop the link and say so. A timer alone can run late (a hidden tab is throttled),
+  // so every second and whenever the tab shows again the page also checks the clock.
+  const expireIfDue = useCallback(() => {
+    const o = offerRef.current
+    if (!o || Date.now() < o.expires_ms) return
+    offerRef.current = null
+    setOffer((cur) => (cur?.offer_id === o.offer_id ? null : cur))
+    setExpiredHere(o.offer_id)
+    refresh()
+  }, [refresh])
   useEffect(() => {
     if (!offer) return
-    const id = offer.offer_id
-    const t = setTimeout(() => {
-      setOffer((o) => (o?.offer_id === id ? null : o))
-      setExpiredHere(id)
-      refresh()
-    }, Math.max(0, offer.expires_ms - Date.now()))
-    return () => clearTimeout(t)
-  }, [offer, refresh])
+    const t = setTimeout(expireIfDue, Math.max(0, offer.expires_ms - Date.now()))
+    const tick = setInterval(expireIfDue, 1000)
+    const onShow = () => document.visibilityState !== 'hidden' && expireIfDue()
+    document.addEventListener('visibilitychange', onShow)
+    window.addEventListener('focus', onShow)
+    return () => {
+      clearTimeout(t)
+      clearInterval(tick)
+      document.removeEventListener('visibilitychange', onShow)
+      window.removeEventListener('focus', onShow)
+    }
+  }, [offer, expireIfDue])
 
   const create = async () => {
     setCreating(true)
@@ -172,7 +185,7 @@ function Pairing({ workspace }: { workspace: Workspace }) {
         ) : (
           <BeforeOffer workspace={workspace} preview={preview.data} creating={creating} onCreate={() => void create()} />
         )}
-        {error ? <ErrorLine error={error} /> : null}
+        {error && !(error instanceof ApiError && preview.data?.blocked?.code === error.code) ? <ErrorLine error={error} /> : null}
       </section>
       <DeviceList workspace={workspace} devices={devices.data?.devices ?? null} failed={devices.isError} refresh={refresh} />
     </div>
@@ -256,14 +269,17 @@ const mmss = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
+/** The SVG path of a QR for `value` (pure; the tests compare it with the native link's). */
+export function qrPath(value: string): { d: string; size: number } {
+  const qr = encode(value, { ecc: 'M', border: 2 })
+  let d = ''
+  qr.data.forEach((row, y) => row.forEach((on, x) => on && (d += `M${x} ${y}h1v1h-1z`)))
+  return { d, size: qr.size }
+}
+
 /** The QR, drawn here from memory (no network, no service). It carries the native `orch://` link only. */
 export function PairQr({ value }: { value: string }) {
-  const path = useMemo(() => {
-    const qr = encode(value, { ecc: 'M', border: 2 })
-    let d = ''
-    qr.data.forEach((row, y) => row.forEach((on, x) => on && (d += `M${x} ${y}h1v1h-1z`)))
-    return { d, size: qr.size }
-  }, [value])
+  const path = useMemo(() => qrPath(value), [value])
   return (
     <svg role="img" aria-label="Pairing QR code" data-testid="pair-qr" viewBox={`0 0 ${path.size} ${path.size}`} className="size-56 shrink-0 rounded bg-white" shapeRendering="crispEdges">
       <path d={path.d} className="fill-black" />
@@ -272,12 +288,22 @@ export function PairQr({ value }: { value: string }) {
 }
 
 function LinkPanel({ offer, onCancel }: { offer: PairOffer; onCancel: () => void }) {
-  const [showQr, setShowQr] = useState(false)
+  // Everything that carries the secret (QR, typed fallback, Copy link) waits for one explicit reveal.
+  const [shown, setShown] = useState(false)
   const [copied, setCopied] = useState(false)
+  const copiedRef = useRef(false)
   const left = useCountdown(offer.expires_ms)
+  // When the link is dropped (pending, expiry, cancel, unmount) and this panel copied it, overwrite the clipboard.
+  useEffect(
+    () => () => {
+      if (copiedRef.current) void navigator.clipboard?.writeText('').catch(() => {})
+    },
+    [],
+  )
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(offer.native_link)
+      copiedRef.current = true
       setCopied(true)
     } catch {
       setCopied(false)
@@ -288,26 +314,31 @@ function LinkPanel({ offer, onCancel }: { offer: PairOffer; onCancel: () => void
       <p className="font-medium">Waiting for the phone.</p>
       <p className="text-text-muted">
         Open the orch app on your phone and scan the code. The link works once and expires in <span data-testid="pair-countdown">{mmss(left)}</span>.
-        Anyone who sees it can try to pair, so show it only to your phone.
+        Anyone who sees it can try to pair, so show it only to your phone (not while sharing your screen).
       </p>
-      <div className="flex flex-wrap items-start gap-3">
-        {showQr ? (
-          <PairQr value={offer.native_link} />
-        ) : (
-          <Button size="sm" variant="outline" onClick={() => setShowQr(true)}>
-            Show QR
-          </Button>
-        )}
-        <Button size="sm" variant="outline" onClick={() => void copy()}>
-          {copied ? 'Copied' : 'Copy link'}
+      {!shown ? (
+        <Button size="sm" variant="outline" onClick={() => setShown(true)}>
+          Show QR and link
         </Button>
-      </div>
-      <div className="space-y-1">
-        <p className="text-text-muted">If scanning fails, type this on the phone:</p>
-        <CopyText label="Pairing link to type on the phone" testId="pair-fallback">
-          {offer.link}
-        </CopyText>
-      </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-start gap-3">
+            <PairQr value={offer.native_link} />
+            <div className="space-y-1">
+              <Button size="sm" variant="outline" onClick={() => void copy()}>
+                {copied ? 'Copied' : 'Copy link'}
+              </Button>
+              {copied && <p className="text-[12px] text-text-muted">The page clears your clipboard when this link is no longer shown.</p>}
+            </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-text-muted">If scanning fails, type this on the phone:</p>
+            <CopyText label="Pairing link to type on the phone" testId="pair-fallback">
+              {offer.link}
+            </CopyText>
+          </div>
+        </>
+      )}
       <Button size="sm" variant="ghost" onClick={onCancel}>
         Cancel pairing
       </Button>

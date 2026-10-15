@@ -6,7 +6,8 @@ import { api } from '@/api/client'
 import { setFeatures } from '@/api/features'
 import { checkSas, pairingApi, pairServed, realPairingApi } from '@/api/pairing'
 import { pairPreviewForTests, resetLayoutPreview } from '@/dev/layoutPreview'
-import { createPairFixture, installPairFixture } from '@/dev/pairFixture'
+import { createPairFixture, fixtureLinks, installPairFixture } from '@/dev/pairFixture'
+import { qrPath } from './host/Devices'
 import { renderApp } from '@/test/renderApp'
 
 const SECRET = 'demo-not-a-real-pair-secret'
@@ -115,17 +116,64 @@ describe('before offering', () => {
 })
 
 describe('the offer and its link', () => {
-  async function created(opts?: Parameters<typeof pairPreviewForTests.set>[0]) {
+  async function created(opts?: Parameters<typeof pairPreviewForTests.set>[0], reveal = true) {
     const view = open('pair-offer', opts)
     await view.user.click(await screen.findByRole('button', { name: 'Create pairing link' }, T))
     await screen.findByTestId('pair-waiting', {}, T)
+    if (reveal) await view.user.click(screen.getByRole('button', { name: 'Show QR and link' }))
     return view
   }
 
-  it('the QR waits for Show QR; the fallback is selectable text, never a link; Copy link copies the native link', async () => {
-    const view = await created()
+  it('review M1: nothing that carries the secret (QR, typed fallback, Copy link) shows before the one explicit reveal', async () => {
+    const view = await created(undefined, false)
     expect(screen.queryByTestId('pair-qr')).toBeNull()
-    await view.user.click(screen.getByRole('button', { name: 'Show QR' }))
+    expect(screen.queryByTestId('pair-fallback')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull()
+    expect(document.body.innerHTML).not.toContain(SECRET)
+    await view.user.click(screen.getByRole('button', { name: 'Show QR and link' }))
+    expect(screen.getByTestId('pair-qr')).toBeInTheDocument()
+    expect(screen.getByTestId('pair-fallback')).toHaveTextContent(SECRET)
+    expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+  })
+
+  it('review L2: the QR carries the native orch:// link, not the https form', async () => {
+    await created()
+    const d = screen.getByTestId('pair-qr').querySelector('path')!.getAttribute('d')
+    expect(d).toBe(qrPath(fixtureLinks(1).native_link).d)
+    expect(d).not.toBe(qrPath(fixtureLinks(1).link).d)
+  })
+
+  it('review L1: Copy link, then a drop (cancel), clears the clipboard', async () => {
+    const view = await created()
+    await view.user.click(screen.getByRole('button', { name: 'Copy link' }))
+    expect(await navigator.clipboard.readText()).toContain(SECRET)
+    expect(screen.getByText(/clears your clipboard/)).toBeInTheDocument()
+    const write = vi.spyOn(navigator.clipboard, 'writeText')
+    await view.user.click(screen.getByRole('button', { name: 'Cancel pairing' }))
+    await screen.findByTestId('pair-end-cancelled', {}, T)
+    await waitFor(() => expect(write).toHaveBeenLastCalledWith(''))
+  })
+
+  it('review L3: a late timer does not keep the link: the clock is checked when the tab shows again', async () => {
+    const view = await created() // the host's 5 minutes: the timer would fire much later
+    expect(document.body.innerHTML).toContain(SECRET)
+    const later = Date.now() + 6 * 60_000
+    vi.spyOn(Date, 'now').mockReturnValue(later)
+    act(() => void document.dispatchEvent(new Event('visibilitychange')))
+    expect(await screen.findByTestId('pair-end-expired', {}, T)).toBeInTheDocument()
+    expect(document.body.innerHTML).not.toContain(SECRET)
+    expectNoLinkAnywhere(view)
+  })
+
+  it('review I1: an offer-time convenience refusal shows the dedicated screen, not the generic error line', async () => {
+    const view = open('pair-offer', { offerError: { code: 'sign.convenience_readers', message: 'click-to-sign was switched on' } })
+    await view.user.click(await screen.findByRole('button', { name: 'Create pairing link' }, T))
+    expect(await screen.findByTestId('pair-blocked-convenience', {}, T)).toBeInTheDocument()
+    expect(screen.queryByText(/Not done\./)).toBeNull()
+  })
+
+  it('the fallback is selectable text, never a link; Copy link copies the native link', async () => {
+    const view = await created()
     expect(screen.getByTestId('pair-qr').tagName.toLowerCase()).toBe('svg')
     const fallback = screen.getByTestId('pair-fallback')
     expect(fallback.textContent).toMatch(/^https:\/\/relay\.example\.test\/pair#v2\./)

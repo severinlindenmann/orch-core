@@ -538,13 +538,13 @@ async function run(send, close) {
               await go(`/__layout/${scenario}`)
               await check(config, name, await need(shown))
             }
-            // Pair a phone: Create pairing link, then Show QR: the QR, Copy link and the typed fallback at 720 px.
+            // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
             if (!ONLY || ONLY.test('real-host-pair-link')) {
               await go('/__layout/pair-offer')
               const created = (await present('[data-testid="pair-before"]')) && (await clickText('button', /^Create pairing link$/))
-              const shown = created && (await present('[data-testid="pair-waiting"]')) && (await clickText('button', /^Show QR$/))
+              const shown = created && (await present('[data-testid="pair-waiting"]')) && (await clickText('button', /^Show QR and link$/))
               await settle()
-              await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR is missing'])
+              await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR and link is missing'])
             }
             // The device remove hand-off open.
             if (!ONLY || ONLY.test('real-host-pair-remove')) {

@@ -60,7 +60,11 @@ export function createPairFixture(opts: PairFixtureOptions = {}): PairFixture {
     preview: async () => (log('preview'), preview()),
     offer: async (ws, args) => {
       log('offer', ws, args)
-      if (opts.offerError) throw new ApiError(409, { ...opts.offerError, retryable: false })
+      if (opts.offerError) {
+        // Like the host: a refusal at offer time is what the next preview reports as `blocked`.
+        opts = { ...opts, preview: { ...opts.preview, blocked: { code: opts.offerError.code, message: opts.offerError.message } } }
+        throw new ApiError(409, { ...opts.offerError, retryable: false })
+      }
       n += 1
       const offer_id = 'of_' + hex(n)
       const now = Date.now()

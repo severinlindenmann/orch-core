@@ -119,3 +119,11 @@ def test_ancestry_between_two_checkpoints(grown):
     forked = sign_object(env.signer.sign, o)
     assert not s.relay_ancestor(forked, newer)
     assert _entry(env, WORKSPACE, 1)["seq"] == 1
+
+
+def test_a_checkpoint_with_the_logs_heads_but_another_accumulator_is_not_contained(grown):
+    env, uid = grown
+    s = env.store
+    o = json.loads(json.dumps(workspace_cp(env)["o"]))
+    o["tickets"][uid]["acc"] = "sha256:" + "6" * 64
+    assert not s.relay_position(sign_object(env.signer.sign, o)).contained

@@ -490,3 +490,125 @@ def test_no_head_signature_or_body_reaches_the_log(make, caplog):
         assert line["hash"] not in text
     cp = k.sim.held
     assert cp["sig"] not in text and cp["o"]["workspace_log"]["head"] not in text
+
+
+def test_an_idle_thread_reads_the_relay_rarely_and_wake_publishes_at_once(make, monkeypatch):
+    monkeypatch.setattr(publish, "IDLE_POLL_S", 30.0)
+    k = make(tickets=1)
+    p = k.make_publisher()
+    p.start()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and k.store.outbox_entries():
+        time.sleep(0.05)
+    reads = sum(1 for s in k.mock.seen if s.method == "GET" and s.path.endswith("/checkpoint"))
+    time.sleep(1.0)
+    assert sum(1 for s in k.mock.seen if s.method == "GET" and s.path.endswith("/checkpoint")) == reads  # idle: quiet
+    k.env.log(k.uids[0], "x")
+    p.wake()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and k.store.outbox_entries():
+        time.sleep(0.05)
+    assert k.store.outbox_entries() == [] and k.held_n() == k.current()["n"]
+    p.stop()
+    assert p.join(5)
+
+
+# -- mutation-pass additions -----------------------------------------------------------------------------------------
+
+
+def test_a_resumed_page_that_no_longer_matches_its_recorded_digest_is_never_sent(make, monkeypatch):
+    k = make(tickets=3, events=1)
+    real = _crash_on(k, monkeypatch, lambda m, t: "/pages/" in t)
+    with pytest.raises(Crash):
+        k.drain()
+    import json as _json
+
+    raw = k.state.read("publish-manifest.json", limit=8 << 20)
+    man = _json.loads(raw)
+    for d in man["pages"]:
+        d["digest"] = "sha256:" + "e" * 64  # what was recorded is not what the logs build now
+    raw = canon.dumps(man)
+    head = k.state.read_json("publish.json")
+    head["manifest_digest"] = wire.sha256_ref(raw)
+    k.state.write("publish-manifest.json", raw, limit=8 << 20)
+    k.state.write_json("publish.json", head)
+    monkeypatch.setattr(k.session, "call", real)
+    k.sim.stages = {}  # the set expired at the relay: the recorded manifest is staged afresh
+    pages = len(calls(k, "page"))
+    p = _restart(k)
+    assert p.step() == ("wait", publish.HELD_RECHECK_S)
+    assert k.alarms.codes() == ["relay_staging_rebuild"] and len(calls(k, "page")) == pages
+
+
+def test_an_acknowledgement_with_the_right_n_and_another_hash_deletes_nothing(make):
+    from .mock import json_reply
+
+    k = make(tickets=1)
+
+    def other(s, r):
+        if s.method == "PUT" and s.path.endswith("/checkpoint") and r.status == 200:
+            body = canon.loads_strict(r.body)
+            return json_reply(200, {**body, "hash": "sha256:" + "9" * 64})
+        return r
+
+    k.sim.after = other
+    assert k.publisher.step()[0] == "wait" and k.alarms.codes() == ["relay_misbehaving"]
+    assert k.publisher.history.lines() == [] and k.store.outbox_entries()
+
+
+def test_ignored_for_a_staged_extension_is_a_lie_even_when_the_relay_holds_it(make):
+    from .mock import json_reply
+
+    k = make(tickets=1)
+
+    def ignored(s, r):
+        if s.method == "PUT" and s.path.endswith("/checkpoint") and r.status == 200:
+            return json_reply(200, {**canon.loads_strict(r.body), "result": "ignored"})
+        return r
+
+    k.sim.after = ignored
+    assert k.publisher.step()[0] == "wait" and k.alarms.codes() == ["relay_misbehaving"]
+    assert k.publisher.history.lines() == []
+
+
+def test_the_cap_is_lowered_at_most_four_times_an_hour(make):
+    k = make(tickets=1)
+    p = k.publisher
+    pub = publish._Pub("plain", {}, 1, "sha256:" + "1" * 64, None)
+    for i in range(publish.LOWERINGS_PER_HOUR):
+        with pytest.raises(publish._Again):
+            p._too_large(pub, 10_000 >> i)
+    with pytest.raises(PublishHeld) as e:
+        p._too_large(pub, 100)
+    assert e.value.code == "relay_too_large"
+    k.clock.advance(3601)  # the window rolls
+    with pytest.raises(publish._Again):
+        p._too_large(pub, 100)
+
+
+def test_a_target_lower_than_the_source_in_any_log_is_not_an_extension():
+    def cp(ws, t):
+        return {"o": {"workspace_log": ws, "tickets": t}}
+
+    e = lambda seq, x: {"seq": seq, "head": f"sha256:{x * 64}", "acc": f"sha256:{x * 64}"}  # noqa: E731
+    u = "01J9ZP0000000000000000000S"
+    assert publish._extension_runs(cp(e(2, "a"), {u: e(3, "b")}), cp(e(3, "c"), {u: e(2, "d")})) is None
+    assert publish._extension_runs(cp(e(2, "a"), {u: e(3, "b")}), cp(e(3, "c"), {})) is None
+    assert publish._extension_runs(cp(e(2, "a"), {}), cp(e(2, "f"), {})) is None
+    runs = publish._extension_runs(cp(e(2, "a"), {}), cp(e(4, "c"), {u: e(1, "d")}))
+    assert [(r.log, r.count) for r in runs] == [("workspace", 2), (u, 1)]
+
+
+def test_heads_from_the_store_that_do_not_fold_to_the_target_are_never_staged(make, monkeypatch):
+    from orch.store.outbox import Segment as Seg
+
+    k = make(tickets=2, events=1)
+    real = k.store.relay_segment
+
+    def bent(log, after, upto, **kw):
+        s = real(log, after, upto, **kw)
+        return Seg(s.log, s.after_seq, "sha256:" + "8" * 64, s.heads)  # a wrong accumulator before the page
+
+    monkeypatch.setattr(k.store, "relay_segment", bent)
+    assert k.publisher.step() == ("wait", publish.HELD_RECHECK_S)
+    assert k.alarms.codes() == ["relay_staging_rebuild"] and calls(k, "page") == [] and calls(k, "manifest") == []

@@ -99,6 +99,8 @@ STAGING_EXPIRY_S = 3600.0  # a staged set lives one hour from its creation (P3-D
 MANIFEST_ROUNDS = 3
 INCOMPLETE_LIMIT = 3
 START_POLL_S = 0.5
+IDLE_POLL_S = 2.0  # an idle publisher checks the outbox locally this often (R5's wake() is immediate)
+IDLE_RECHECK_S = 60.0  # and reads H from the relay again at least this often
 HISTORY_SEGMENT = 1024  # lines per published.jsonl segment; older segments are kept as published-<k>.jsonl
 RECORD_LIMIT = 8 << 20  # published-restore-<n>.json and publish-manifest.json (StateDir.BIG_FILE)
 ZERO = "sha256:" + "0" * 64
@@ -404,6 +406,7 @@ class Publisher:
         self.history = History(state)
         self._journal = _Journal(state)
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
         self._info_read = False
         self._info_cap: int | None = None
@@ -431,6 +434,7 @@ class Publisher:
     def stop(self) -> None:
         """Set the stop event and end a blocked call (``shutdown`` of this thread's connection, 11A.7)."""
         self._stop.set()
+        self._wake.set()
         c = self._conn
         if c is not None:
             try:
@@ -457,9 +461,9 @@ class Publisher:
                 self._stop.wait(START_POLL_S)  # the start fence: nothing before this holder's own host/hold
             while not self._stop.is_set():
                 state, wait = self.step()
-                if state == "idle" and wait <= 0:
-                    wait = 1.0
-                if wait > 0 and self._stop.wait(wait):
+                if state == "idle":
+                    self._idle()
+                elif wait > 0 and self._stop.wait(wait):
                     return
         except Exception as e:  # noqa: BLE001 - a fence or session error (or a bug): the publisher stops, R5 is told
             if not self._stop.is_set():
@@ -468,6 +472,24 @@ class Publisher:
                 if self._on_error is not None:
                     self._on_error(e)
             self._stop.set()
+
+    def wake(self) -> None:
+        """R5's hint that the store queued an outbox entry (an append while linked): publish now, not at the next
+        idle check."""
+        self._wake.set()
+
+    def _idle(self) -> None:
+        """Idle: a local check of the outbox every :data:`IDLE_POLL_S` (or at once on :meth:`wake`), and a full step
+        (which reads H from the relay) only when an entry is queued or :data:`IDLE_RECHECK_S` passed, so an idle
+        workspace does not read the relay every second."""
+        since = self._mono()
+        while not self._stop.is_set():
+            self._wake.wait(IDLE_POLL_S)
+            self._wake.clear()
+            if self._stop.is_set() or self._mono() - since >= IDLE_RECHECK_S:
+                return
+            if self._job(lambda: self._store.outbox_first()) is not None:
+                return
 
     # -- R1's first link -----------------------------------------------------------------------------------------
 

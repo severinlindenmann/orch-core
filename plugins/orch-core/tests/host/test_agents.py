@@ -349,3 +349,28 @@ def test_a_same_idem_retry_with_another_spec_is_idem_conflict(ready):
     idem = new_idem()
     ok(start(c, idem, ticket=key, harness="codex", mode="work", spec=pre["spec"]))
     assert err(start(c, idem, ticket=key, harness="codex", mode="refine", spec="1" * 64)) == "idem.conflict"
+
+
+def test_a_joiner_whose_first_start_failed_before_its_record_answers_outcome_unknown(ready):
+    """Opus info (round 2): never internal."""
+    import asyncio
+
+    from orch.host.errors import HostError
+
+    w = ready
+    c, d = w.conn(), w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    hub = w.h.host.runners
+
+    async def failing_intent(*a, **kw):
+        await asyncio.sleep(0.5)
+        raise HostError("run.spawn_failed", "the intent could not be written")
+
+    hub.intent = failing_intent
+    idem = new_idem()
+    args = {"ticket": key, "harness": "codex", "mode": "work", "spec": pre["spec"]}
+    c.ws.send("j1", "agent.start", args, opts={"idem": idem})
+    d.ws.send("j2", "agent.start", args, opts={"idem": idem})
+    assert err(c.answer("j1")) == "run.spawn_failed"
+    assert err(d.answer("j2")) == "outcome.unknown"

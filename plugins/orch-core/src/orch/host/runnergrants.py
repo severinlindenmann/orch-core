@@ -170,8 +170,17 @@ class RunnerGrants:
 
     # -- grant.deposit
     async def deposit(self, workspace_id: str, plan: dict[str, Any], secret: str) -> dict[str, Any]:
-        async with self.lock(workspace_id, plan["person"]):
-            return await self._deposit(workspace_id, plan, secret)
+        return await self._shielded(workspace_id, plan["person"], self._deposit(workspace_id, plan, secret))
+
+    async def _shielded(self, workspace_id: str, person: str, step: Any) -> Any:
+        """Run ``step`` under the person's lock as its own task: a client that goes away cancels only its wait, never
+        the step, so the lock is held until the runner answered (or the command timed out or its session ended)."""
+
+        async def locked() -> Any:
+            async with self.lock(workspace_id, person):
+                return await step
+
+        return await asyncio.shield(asyncio.get_running_loop().create_task(locked()))
 
     async def _deposit(self, workspace_id: str, plan: dict[str, Any], secret: str) -> dict[str, Any]:
         table = self.table(workspace_id)
@@ -247,8 +256,7 @@ class RunnerGrants:
 
     # -- grant.forget
     async def forget(self, workspace_id: str, person: str, gid: str, until: str) -> dict[str, Any]:
-        async with self.lock(workspace_id, person):
-            return await self._forget(workspace_id, person, gid, until)
+        return await self._shielded(workspace_id, person, self._forget(workspace_id, person, gid, until))
 
     async def _forget(self, workspace_id: str, person: str, gid: str, until: str) -> dict[str, Any]:
         table = self.table(workspace_id)
@@ -271,7 +279,11 @@ class RunnerGrants:
     # -- runner.hello
     async def reconcile(self, reported: list[dict[str, Any]]) -> None:
         """After a hello: what the runner holds decides ``current`` and every pending deposit; anything the host no
-        longer allows is dropped at the runner."""
+        longer allows is dropped at the runner.
+
+        No await happens before the tables change (the drops are sent after every change is made), so this never
+        interleaves with a deposit's or a forget's bookkeeping; if an await is ever added before a change, take the
+        per-person lock (:meth:`lock`) around it."""
         held = {(r["workspace_id"], r["person"]): r for r in reported}
         drops: list[str] = []
         for (wid, person), rep in held.items():
@@ -505,13 +517,13 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
             return ok_result(await grants.forget(wid, plan["person"], plan["grant"], plan["until"]))
         if not enablement.state_of(hub.host.state_dir, wid, hub.host.host_uid)["enabled"]:  # again, at use
             raise HostError("runner.disabled", "dashboard execution is off for this workspace (missing: machine)")
-        from .runners import _take
-
-        if not _take(hub._deposits, plan["person"], DEPOSIT_RATE, DEPOSIT_BURST):
-            raise HostError("rate.limited", "at most 10 grant deposits per minute", retry_after_ms=6000)
         secret = (call.frame.get("auth") or {}).get("grant")
         if not isinstance(secret, str) or not secret.startswith(plan["grant"] + "."):
             raise HostError("op.not_allowed", "grant.deposit: auth.grant is not the planned grant")
+        from .runners import _take
+
+        if not _take(hub._deposits, plan["person"], DEPOSIT_RATE, DEPOSIT_BURST):  # after every refusal above
+            raise HostError("rate.limited", "at most 10 grant deposits per minute", retry_after_ms=6000)
         return redactor.obj(ok_result(await grants.deposit(wid, plan, secret)))
     except HostError as exc:
         raise redactor.error(exc) from None

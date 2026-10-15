@@ -399,3 +399,40 @@ def test_an_agent_class_peer_cannot_deposit_even_its_own_runner_grant(ready):
     as_agent_class(w)
     assert err(deposit(w.conn(), value)) == "op.not_allowed"
     assert w.runner.grants.report() == []
+
+
+# -- review round 2 (#466): the race across a disconnect and a timeout -------------------------------------------------
+
+
+def test_a_forget_after_the_depositing_client_disconnected_still_wins(ready):
+    """Codex delta 2: the depositing client goes away while grant.put is in flight; a forget follows."""
+    import time as _time
+
+    w = ready
+    c, d = w.conn(), w.conn()
+    value = issue(w)
+    _slow_puts(w)
+    c.send("grant.deposit", {"deposit_id": new_ulid()}, grant=value)
+    _time.sleep(0.3)
+    c.client.close()  # the depositing client disconnects
+    ok(d.call("grant.forget", {"grant": gid_of(value)}))
+    _time.sleep(2.0)  # the slow put has long finished at the runner
+    assert w.runner.grants.report() == []
+    assert ok(d.call("whoami", {}))["data"]["runner"]["grant"] is None
+    assert err(deposit(d, value)) == "grant.forgotten"
+
+
+def test_a_forget_after_a_deposit_timed_out_still_wins(ready):
+    """Codex delta 2: grant.put outlives the host's command timeout (unknown); a forget follows at once."""
+    import time as _time
+
+    w = ready
+    c = w.conn()
+    w.h.host.runners.command_timeout = 0.5
+    value = issue(w)
+    _slow_puts(w)
+    assert ok(deposit(c, value))["data"]["deposit"] == "unknown"
+    ok(c.call("grant.forget", {"grant": gid_of(value)}))
+    _time.sleep(2.0)
+    assert w.runner.grants.report() == []
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None

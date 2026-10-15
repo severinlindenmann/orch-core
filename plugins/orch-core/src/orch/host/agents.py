@@ -457,8 +457,11 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
         if spec != data["spec"]:
             raise HostError("idem.conflict", "this idem names another request")
         await asyncio.shield(future)
-        _same(hub.store.records[run], wid, person, data["spec"])
-        return runners.view(hub.store.records[run])
+        rec = hub.store.records.get(run)
+        if rec is None:  # the first start failed before its record existed (Opus info): its outcome is not ours
+            raise HostError("outcome.unknown", "the same request was being started and did not record a run; retry")
+        _same(rec, wid, person, data["spec"])
+        return runners.view(rec)
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     launch = data["launch"]

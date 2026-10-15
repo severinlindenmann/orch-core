@@ -400,7 +400,10 @@ class HostLink:
         """``attach.end`` runs inline on this (the link) thread: it never blocks (the term socket's ``end`` takes its
         lock, queues and reports), and it must not wait behind ``stop``/``spawn`` in the command pool, or the host's
         5 s confirmation deadline would drop the whole runner session. Every other command goes to the pool."""
-        if item.get("op") == "attach.end":
+        if item.get("op") in ("attach.end", "grant.put", "grant.drop"):
+            # grant.put and grant.drop run inline too, in arrival order (#466 review round 2): the host sends a forget's
+            # drop after the put it follows, so the drop can never overtake that put in the pool (a client that went
+            # away or a host timeout releases the host's per-person lock while the put is still in flight)
             self._command(item, tag)
         else:
             self._pool.submit(self._command, item, tag)

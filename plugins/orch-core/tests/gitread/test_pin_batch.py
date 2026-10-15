@@ -211,3 +211,54 @@ def test_pin_many_in_the_child_stays_inside_the_roots(mixed):
     got = pool.call("x", {"profile": "pin", "roots": [good[1]]}, {"op": "pin_many", "args": {"paths": good[::-1]}})
     assert got["results"][0] == {"pins": pin_repo(good[1], [good[1]]).to_json()}
     assert "not one of the declared repos" in got["results"][1]["error"]["message"]
+
+
+# ---------------------------------------------------------------- forged pins never reach the pin store
+
+
+def _forge(pins, **paths):
+    j = pins.to_json() if hasattr(pins, "to_json") else dict(pins)
+    return {k: ({**v, "path": paths[k]} if k in paths else v) for k, v in j.items()}
+
+
+FORGERIES = [
+    {"gitdir": "/etc", "commondir": "/etc"},
+    {"worktree": "/etc"},
+    {"commondir": "/etc"},
+    {"gitdir": "/etc/worktrees/x"},
+]
+
+
+@pytest.mark.parametrize("forged", FORGERIES)
+def test_a_batch_answer_with_pins_outside_git_layout_is_never_trusted(mixed, forged):
+    """The host checks every pin a child answers against git's layout under the declared roots (the worktree is the
+    asked path; gitdir and commondir are ``<declared>/.git`` or ``<declared>/.git/worktrees/<id>``): a child that
+    forged one repo's pins cannot get them stored, and the batch falls back to one child per repo."""
+    declared, good, bad = mixed
+
+    def forge(got):
+        res = [dict(r) for r in got["results"]]
+        res[0] = {"pins": _forge(res[0]["pins"], **forged)}
+        return {"results": res}
+
+    pool = Spy(forge)
+    host = HostGitReader(pool, PinStore())
+    res = host.sync(declared)
+    clean = [p for p in declared if not p.endswith("/.")]
+    assert pool.ops == ["pin_many"] + ["pin"] * len(clean)
+    for p in good:
+        assert res[p] is None and host.pins.get(p) == pin_repo(p, clean)
+
+
+@pytest.mark.parametrize("forged", FORGERIES)
+def test_a_single_pin_answer_outside_git_layout_is_refused(make_repo, forged):
+    r = committed(make_repo, "one")
+    real = pin_repo(str(r.path), [str(r.path)])
+
+    class Fake(ReaderPool):
+        def call(self, principal, hello, req, **kw):
+            return {"pins": _forge(real, **forged)}
+
+    host = HostGitReader(Fake(spawn=lambda: None), PinStore())
+    assert host.sync([r.path])[str(r.path)]
+    assert host.pins.paths() == []

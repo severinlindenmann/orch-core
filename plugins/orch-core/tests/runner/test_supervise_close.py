@@ -4,6 +4,7 @@ closed under it."""
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import sys
@@ -107,8 +108,12 @@ def test_a_stuck_io_thread_releases_its_fds_and_the_lock_itself_once_it_ends(sta
     assert not {*wake, lock_fd} & set(closed)
     assert all(os.fstat(fd) for fd in (*wake, lock_fd))  # still ours, still open
     assert any("I/O thread" in r.getMessage() for r in caplog.records)
-    with pytest.raises(RunnerBusy):  # no other runner starts while the old thread still runs
-        Supervisor(state, cgroups=None).open()
+    probe = Supervisor(state, cgroups=None)
+    try:
+        with pytest.raises(RunnerBusy):  # no other runner starts while the old thread still runs
+            probe.open()
+    finally:
+        probe.close()
     go.set()
     sup._thread.join(5)
     assert not sup._thread.is_alive()
@@ -156,3 +161,65 @@ def test_a_spawn_racing_close_is_stopped_with_the_others_never_orphaned(state, t
     finally:
         if spawned:
             kill_own(spawned[0]["pid"], spawned[0]["birth"])
+
+
+def test_a_run_pruned_before_its_stop_does_not_leave_close_half_done(state, tmp_path, monkeypatch, caplog):
+    """A run in the stop snapshot that is gone by the time it is stopped (not_found) is logged; the other runs are
+    still stopped and close() still ends the I/O thread and releases every fd and runner.lock."""
+    sup = _opened(state)
+    first, second = (spec(tmp_path, ["/bin/sh", "-c", "exec sleep 60"]) for _ in range(2))
+    spawned = [sup.spawn(first), sup.spawn(second)]
+    real_stop = sup.stop
+
+    def stop(run, *, grace):
+        if run == first.run:
+            raise SpawnError("not_found", "no such run")  # pruned between the snapshot and the stop
+        return real_stop(run, grace=grace)
+
+    sup.stop = stop  # type: ignore[method-assign]
+    wake = (sup._wake_r, sup._wake_w)
+    closed = _spy(monkeypatch, "close")
+    try:
+        with caplog.at_level(logging.ERROR, logger="orch.runner.supervise"):
+            sup.close(stop_runs=True, grace=0.5)
+        assert any(first.run in r.getMessage() for r in caplog.records)
+        assert peek_exit(sup.live[second.run].proc) is not None
+        assert sup._closing and not sup._thread.is_alive()
+        assert [closed.count(fd) for fd in wake] == [1, 1]
+        nxt = Supervisor(state, cgroups=None)
+        nxt.open()  # runner.lock was released
+        nxt.close()
+    finally:
+        for rec in spawned:
+            kill_own(rec["pid"], rec["birth"])
+
+
+def test_a_failing_selector_close_still_releases_the_wake_pipe_and_the_lock(state, monkeypatch):
+    sup = _opened(state)
+    wake, lock_fd = (sup._wake_r, sup._wake_w), sup._lock_fd
+
+    def broken():
+        raise OSError(errno.EBADF, "injected")
+
+    monkeypatch.setattr(sup._sel, "close", broken)
+    closed = _spy(monkeypatch, "close")
+    sup.close()
+    assert [closed.count(fd) for fd in (*wake, lock_fd)] == [1, 1, 1]
+
+
+def test_a_failing_lock_close_is_logged_not_raised(state, monkeypatch, caplog):
+    sup = _opened(state)
+    lock_fd = sup._lock_fd
+    real = os.close
+
+    def close(fd):
+        if fd == lock_fd:
+            raise OSError(errno.EBADF, "injected")
+        return real(fd)
+
+    monkeypatch.setattr(os, "close", close)
+    with caplog.at_level(logging.ERROR, logger="orch.runner.supervise"):
+        sup.close()
+    assert any("runner.lock" in r.getMessage() for r in caplog.records)
+    monkeypatch.undo()
+    os.close(lock_fd)  # the injected failure left it open

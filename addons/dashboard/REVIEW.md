@@ -562,6 +562,8 @@ You should see: "Quick tasks" in the sidebar listing both tasks with "counts unk
 shows the commit. The four terminal-only commands appear as text with no button. With a remote (use a local bare repo only) the export warning
 shows verbatim before **Commit and push**. `orch runner enable` (terminal) makes Settings, General show the "Dashboard execution" line.
 
+M6 follow-up (2026-10-14): In the disposable workspace, open Commit and push and check the current destination and private assurance. Change the local remote URL, reopen, and check the mismatch against the last push. Layout fixtures `/__layout/records-push-failed` and `/__layout/records-push-mismatch` exercise long current URLs. Convert a ticket with only `quick`: the dialog says “Labels kept: none”, and the signed set removes its last label.
+
 ## Try terminals (M7a, real host, own terminal)
 
 The end-to-end check is in-process (a subprocess host admits only the runner unit's main PID, and `orch runner enable` installs a

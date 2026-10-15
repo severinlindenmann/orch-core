@@ -11,13 +11,72 @@ import time
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .adapters.addons import prose
+from .adapters.addons import prose, records
 from .errors import HostError, fail
 from .gateway import WORKSPACE_ID, state_dir
 
 BUDGET = 60
 OUTPUT_LIMIT = 65_536  # each pipe; stderr is drained but never returned or logged
 ENV_KEYS = ("HOME", "PATH", "SSH_AUTH_SOCK", "LANG")
+
+
+class Projection(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+
+class Repo(Projection):
+    state: str
+    problem: str | None = None
+
+
+class PendingTicket(Projection):
+    key: str
+    events: int
+
+
+class Pending(Projection):
+    events: int
+    tickets: list[PendingTicket]
+    more: bool
+    workspace_events: int
+
+
+class Last(Projection):
+    commit: str
+    at: str
+    by: str
+    ws_seq: int
+    pushed_at: str | None
+
+
+class Noted(Projection):
+    by: str
+    at: str
+
+
+class Auto(Projection):
+    on: bool
+    every_min: int
+    push: bool
+
+
+class Remote(Projection):
+    url: str | None
+    private: bool
+    export: str
+    current_url: str | None
+    current_private: bool | None
+    matches_last: bool | None
+
+
+class Status(Projection):
+    configured: bool
+    repo: Repo | None
+    pending: Pending
+    last: Last | None
+    last_noted: Noted | None = None
+    auto: Auto | None
+    remote: Remote | None
 
 
 class Result(BaseModel):
@@ -55,7 +114,7 @@ def child_error(code):
     return HostError({"code": code, "message": code, "retryable": retryable}, exit_code)
 
 
-def parse(output, returncode):
+def parse(output, returncode, *, status=False):
     try:
         # Exactly one line, with an optional final newline. Reject duplicate keys and non-JSON constants.
         def pairs(items):
@@ -82,6 +141,11 @@ def parse(output, returncode):
         if result.ok:
             if returncode != 0:
                 raise ValueError("success with nonzero exit")
+            if status:
+                if set(raw) != {"ok", "detail"} or set(result.detail or {}) != {"status"}:
+                    raise ValueError("invalid status envelope")
+                validated = Status.model_validate(result.detail["status"])
+                return records(validated.model_dump())
             out = result.model_dump(include={"ok", "commit", "pushed", "url"}, exclude_none=True)
             if result.url is not None:
                 out.update(prose(out, "url"))
@@ -104,7 +168,7 @@ class RecordsChild:
         self.lock = threading.Lock()
         self.active = set()
 
-    def run(self, ws, *, push=False, auto_off=False, state=None, run_dir=None):
+    def run(self, ws, *, push=False, auto_off=False, status=False, state=None, run_dir=None):
         if not isinstance(ws, str) or not WORKSPACE_ID.fullmatch(ws):
             raise fail("invalid.input", exit=5)
         with self.lock:
@@ -117,7 +181,7 @@ class RecordsChild:
             env["ORCH_STATE_DIR"] = str(state_dir({**os.environ, **({"ORCH_STATE_DIR": str(state)} if state else {})}))
             env["ORCH_HOST_RUN_DIR"] = str(run_dir or os.path.join(env["ORCH_STATE_DIR"], "run"))
             argv = [sys.executable, "-I", "-m", "orch.records"]
-            argv += ["auto", "off"] if auto_off else ["commit", *(["--push"] if push else [])]
+            argv += ["status"] if status else ["auto", "off"] if auto_off else ["commit", *(["--push"] if push else [])]
             argv += ["--workspace", ws, "--json"]
             return self._execute(argv, env)
         finally:
@@ -183,4 +247,4 @@ class RecordsChild:
             else:
                 proc.stdout.close()
                 proc.stderr.close()
-        return parse(bytes(output), proc.returncode)
+        return parse(bytes(output), proc.returncode, status=argv[4:5] == ["status"])

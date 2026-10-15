@@ -28,6 +28,7 @@ export const LAYOUT_SCENARIOS = [
   'records-hidden-url',
   'records-first',
   'records-push-failed',
+  'records-push-mismatch',
   'runner-on',
   'runner-off',
   // M7a: the real-host terminal dock (RealDock with fixture runs and a fixture socket).
@@ -193,6 +194,7 @@ function install() {
     return { available: true, rows: done ? [quickRow(900, { status: 'done', title: 'Drop the old logo' })] : rows, next_page: current === 'quick-many' ? 'page-2' : null, total: done ? 1 : rows.length }
   })
   set('getRecords', async () => records(current))
+  set('getRecordsCurrent', async () => ({ ...records(current), remote: { ...records(current).remote!, current_url: LONG_URL + (current === 'records-push-mismatch' ? '/changed' : ''), current_url_hidden: false, current_private: true, matches_last: current !== 'records-push-mismatch' } }))
   // M7a: the real-host dock's routes and its socket answer from fixtures.
   const r = runsApi as unknown as Record<string, unknown>
   for (const name of ['list', 'preview', 'open', 'stop', 'ticket']) originals.set(`runs.${name}`, r[name])

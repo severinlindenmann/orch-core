@@ -1627,6 +1627,8 @@ DOC_NON_EVENTS = {
     "addon.field_unknown", "addon.value_invalid", "device.invalid", "device.scope", "gate.invalidated_mismatch",
     "gate.not_applicable", "gate.not_eligible", "gate.status", "grant.invalid", "grant.scope", "member.unknown",
     "role.denied", "ticket.exists", "ticket.not_visible", "ticket.unknown",
+    # a host op named by the H12d view id (`ticket.get.questions.answer`, F1 §11.5)
+    "ticket.get",
 }  # fmt: skip
 
 

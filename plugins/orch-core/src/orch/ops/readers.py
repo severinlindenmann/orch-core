@@ -8,7 +8,7 @@ then add the reader.
 
 **The durable mark (#441, orch-v2-host §0.8.6 item 9 / H12d 9.7).** ``<state>/hosts/<ws>/convenience_seen.json``
 records that a convenience event once landed in this workspace. It is written at the append choke point (the host's
-:func:`orch.host.human.finish` and direct mode's ``Human`` append) before the first convenience event is written,
+:func:`orch.host.human.append_signed` and direct mode's ``Human`` append) before the first convenience event is written,
 and whenever a history scan finds one. Nothing clears it: an owner repair (``abandon_tail``, then ``restore``) can
 drop convenience events from the merged history, but the record files and any records repo still hold them. Every
 reader-adding check asks the mark as well as the merged history. Reading fails closed: any doubt (an unsafe or
@@ -50,9 +50,10 @@ __all__ = [
     "seen_path",
 ]
 
-#: ops that add a reader of the workspace's log (P3 pairing and device ops join this list when they exist); the host
-#: (:mod:`orch.host.convenience`) and the op handlers use this one set
-READER_OPS = frozenset({"member.add"})
+#: ops that add a reader of the workspace's log; the host (:mod:`orch.host.convenience`) and the op handlers use this
+#: one set. ``relay.link`` (a relay link) and ``relay.pair`` (the host's ``approved`` answer to a pairing, and any
+#: member list that adds a device) are host ops of the relay bridge (orch-v2-host §11A.6)
+READER_OPS = frozenset({"member.add", "relay.link", "relay.pair"})
 
 
 def has_convenience_events(store: Any) -> bool:

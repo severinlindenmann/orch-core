@@ -1542,6 +1542,19 @@ machinery unchanged and keep core in charge of wording. Converting would need a 
 - **Revert:** Restore the prior URL replacement in `src/api/bootstrap.ts` and remove the uncertain-outcome re-mark in `server/src/orch_dashboard/click.py`, accepting the two residual races again.
 - **F-2 (Opus delta, info) closed structurally:** `Handoffs.begin_sign`/`end_sign` count sign calls in flight per request and remember unknown outcomes. A definite failure clears the mark only when no other sign is in flight and no outcome is unknown, in any finish order; an unknown outcome stays marked until the host answer is known (`settled`) or the mark expires. Two concurrent definite failures still clear it (nothing is at the host).
 
+## 2026-10-14 — M6 current destination in push confirmation
+
+**Decision:** Replace the 2026-10-13 M6 wording deviation inside push confirmation: check the read-only records status child on every opening, use the current URL in the verbatim §12.11 export warning, and show the private assurance only for `current_private: true`. Show a mismatch against the last push. If the check fails or withholds the URL, retain the last-known warning and display the failure code. Outside the dialog, retain “Last known destination” and “Last noted as private”. Allow quick-only tickets to become normal tickets with `labels=`.
+
+**Why:** Core #454 supplies the current effective push destination and its exact private mark through the bounded status child, and accepts the empty label set. Historical status alone cannot establish the destination of the next push. The tool still resolves and checks the destination again when pushing.
+
+**Revert:** Restore the historical confirmation wording and hide quick-only conversion if deployed core no longer supports these contracts.
+
+## 2026-10-14 Push confirm for maintainers; the records page is keyed by workspace
+
+- **Decision:** For anyone but an owner, core's `remote.current_url` is only the destination's host. The confirm then says "the remote configured in the records repository (on <host>; only owners see the full address)" instead of presenting the host as the full §12.11 address, and the private line ("orch trusts your word that only you read …") shows to owners only. `HostRecords` is keyed by workspace, so a workspace switch can never leave one workspace's destination check in a dialog that pushes another (Opus delta L1, L2 on 63b62458).
+- **Revert:** Only if core shows maintainers the full address.
+
 ## M7a: real terminals in the dock (14 Oct 2026)
 
 **Decision:** On a real host the dock is drawn only when the server lists the `terminals` feature for the workspace (the host serves
@@ -1597,4 +1610,3 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - Delta D-I2: a `term.attach` answer lost in transit (the host minted, the dashboard never read `att`) cannot be cancelled by id; it
   relies on the host's 10 s capability expiry and on the link closing. Delta D-I3: if the person moves to another run before the list
   shows the run they opened, that run's first later mount still asks `write` (never `take`): still one-shot and still their Open.
-

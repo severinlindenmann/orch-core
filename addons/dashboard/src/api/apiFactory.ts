@@ -141,6 +141,7 @@ export function createApi(transport: Transport) {
     /** Quick tasks of a real host (M6): `available: false` without `quick/1`. The limits are the browser's own setting. */
     getQuick: (ws: string, _p: QuickParams = {}) => call<QuickPage>('GET', `/api/w/${ws}/quick`),
     /** Records of a real host (M6): the host's status for owners and maintainers; `available: false` without `records/1`. */
+    getRecordsCurrent: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records/current`),
     getRecords: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records`),
     recordsCommit: (ws: string, push: boolean) => call<RecordsRun>('POST', `/api/w/${ws}/records/commit`, { push }),
     recordsAutoOff: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-off`),

@@ -8,6 +8,8 @@
   whose client side is :func:`orch.ops.workspace_init.create_workspace_hosted`).
 * ``host.outcome``: the stored outcome of a control write.
 * ``host.restart``: drain (D-P2-4).
+* ``host.relay_stop``, ``host.relay_start`` (H12a, §11A.4): keep a workspace's relay worker stopped (persisted, it
+  outlives a restart: the operator procedure after a state restore), or clear that stop. Idempotent; no idem.
 
 The three writes are control writes: ``opts.idem`` is required, an intent is fsynced before anything changes, and
 :meth:`ControlOps.recover` finishes or rolls back every ``started`` intent at host start.
@@ -82,6 +84,8 @@ _SCHEMAS = {
     "host.restart": _closed({}),
     "host.register": _closed({"root": _ROOT, "peers": _PEERS}),
     "host.unregister": _closed({"workspace_id": _WS}),
+    "host.relay_stop": _closed({"workspace_id": _WS}),
+    "host.relay_start": _closed({"workspace_id": _WS}),
     "host.outcome": _closed({"idem": {"type": "string", "pattern": r"^a_" + frames.ULID + "$"}}),
     "host.bootstrap": _closed(
         {
@@ -334,6 +338,35 @@ class ControlOps:
             return self.intents.complete(intent, ok_result({}))["result"]
 
         return self._guarded(intent, run, lambda: False)
+
+    # -- host.relay_stop, host.relay_start (H12a)
+    def relay_stop(self, args: dict[str, Any]) -> dict[str, Any]:
+        from .relaylink import mark_stopped
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is not None:
+            worker = service.relay_stop()
+        else:
+            mark_stopped(self.state_dir, workspace_id, self.host_uid)
+            worker = "none"
+        return ok_result({"workspace_id": workspace_id, "stopped": True, "worker": worker})
+
+    def relay_start(self, args: dict[str, Any]) -> dict[str, Any]:
+        from .relaylink import clear_stopped
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is not None:
+            worker = service.relay_start()
+        else:
+            clear_stopped(self.state_dir, workspace_id, self.host_uid)
+            worker = "none"
+        return ok_result({"workspace_id": workspace_id, "stopped": False, "worker": worker})
 
     # -- host.bootstrap
     def bootstrap(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
@@ -663,6 +696,8 @@ class ControlGate:
                 "host.unregister": lambda: ops.unregister(args, idem),
                 "host.bootstrap": lambda: ops.bootstrap(args, idem),
                 "host.outcome": lambda: ops.outcome(args),
+                "host.relay_stop": lambda: ops.relay_stop(args),
+                "host.relay_start": lambda: ops.relay_start(args),
             }[op]
             result = await asyncio.to_thread(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})

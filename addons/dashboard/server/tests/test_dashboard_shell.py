@@ -41,6 +41,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",
+        "/api/w/{ws}/records/current",
         "/api/w/{ws}/runs",
         "/api/w/{ws}/terminals/preview",
         "/api/w/{ws}/terminals/open",

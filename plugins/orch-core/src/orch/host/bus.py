@@ -415,7 +415,9 @@ class Bus:
             if mapped == sub.person and not pins.pinned(sub.uid) and auth.person_ok(mapped, now):
                 return None
             return "person.removed"
-        return None
+        if sub.column == "N":  # no principal to revalidate: it sees workspace items only
+            return None
+        return "person.removed"  # any other column (R included) is never served a subscription: end it (fail closed)
 
     def _flush(self, sub: Subscription, fresh: dict[str, bool]) -> None:
         session = sub.session

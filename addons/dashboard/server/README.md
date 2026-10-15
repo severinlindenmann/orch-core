@@ -80,6 +80,8 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    uv run orch-dashboard open /w/DEMO/tickets
    # Stop through the checked control socket:
    uv run orch-dashboard --stop
+   # Stop, wait until the old server has let go of its control socket, open a new one (after an update):
+   uv run orch-dashboard restart
    ```
 
    `serve` runs in the foreground if preferred. `open` starts or locates one server per OS

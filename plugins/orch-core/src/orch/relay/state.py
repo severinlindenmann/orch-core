@@ -325,6 +325,19 @@ class StateDir:
                     pass
                 raise
 
+    def remove(self, name: str) -> bool:
+        """Unlink ``name`` relative to the locked directory fd (never by path, never through a symlink: the entry
+        itself is removed). ``False`` when it did not exist."""
+        name = self._name(name)
+        with self.lock:
+            dfd = self._dir()
+            try:
+                os.unlink(name, dir_fd=dfd)
+            except FileNotFoundError:
+                return False
+            os.fsync(dfd)
+            return True
+
     def open_private(self, name: str) -> int:
         """The checked open of 11A.3 step 2 for a file a library opens by path (``rids.sqlite`` and its sidecars):
         ``O_RDWR | O_CREAT | O_NOFOLLOW`` (0600) relative to the locked directory fd, then ``fstat``: a regular file

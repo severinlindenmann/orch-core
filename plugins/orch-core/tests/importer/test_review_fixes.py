@@ -302,13 +302,15 @@ def test_the_process_is_hardened_before_the_passphrase_prompt(tmp_path):
 
 
 def test_only_the_importer_unlocks_a_batch():
+    import re
     from pathlib import Path
 
     src = Path(import_run.__file__).parents[1]
     users = sorted(
         p.relative_to(src).as_posix()
         for p in src.rglob("*.py")
-        if ".unlocked(" in p.read_text() or 'getattr(backend, "unlocked"' in p.read_text()
+        # ``primary.unlocked(`` is orch.custody.primary's one-command unlock (H12c-c), not a backend batch unlock
+        if re.search(r"(?<!\bprimary)\.unlocked\(", p.read_text()) or 'getattr(backend, "unlocked"' in p.read_text()
     )
     assert users == ["ops/import_run.py"]
 

@@ -18,7 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import uvicorn
@@ -28,6 +28,10 @@ from .auth import CODE_TTL, Auth
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
 
+#: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
+GRACE = 3
+#: seconds `restart` waits for the old server to free its control socket
+RESTART_WAIT = 10.0
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 # Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
 # covers the gap between the server's monotonic timer and the wall clock both sides read.
@@ -177,6 +181,8 @@ def _serve(directory, lock_fd=None):
         ws="websockets",
         ws_max_size=65536,
         ws_per_message_deflate=False,
+        # A browser tab's live stream never ends by itself: after `stop`, cut open connections after GRACE seconds.
+        timeout_graceful_shutdown=GRACE,
     )
     server = uvicorn.Server(config)
     ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -186,6 +192,10 @@ def _serve(directory, lock_fd=None):
     finally:
         os.umask(old)
     os.chmod(ctl_path, 0o600)
+    # Linux hands a removed socket's inode number to the next one: its change time tells them apart.
+    st = ctl_path.lstat()
+    ctl_id = (st.st_ino, st.st_ctime_ns)
+    retired = threading.Event()
     ctl.listen(8)
     ctl.settimeout(0.5)
     if lock_fd is not None:
@@ -209,8 +219,23 @@ def _serve(directory, lock_fd=None):
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
+                        # Free the control socket now, not after the shutdown: until then a launcher would connect
+                        # to a server that no longer answers (and time out) instead of starting a new one.
+                        retire()
+                        break
                 except Exception:
                     pass  # never log the launch payload
+
+    def retire():
+        """Close the control socket and remove its path if it is still ours (a new server may have bound it). Once."""
+        if retired.is_set():
+            return
+        retired.set()
+        ctl.close()
+        with suppress(OSError):
+            st = ctl_path.lstat()
+            if stat.S_ISSOCK(st.st_mode) and (st.st_ino, st.st_ctime_ns) == ctl_id:
+                ctl_path.unlink()
 
     thread = threading.Thread(target=ipc, daemon=True)
     thread.start()
@@ -218,10 +243,9 @@ def _serve(directory, lock_fd=None):
         server.run(sockets=[listener])
     finally:
         server.should_exit = True
-        ctl.close()
+        retire()
         thread.join(timeout=3)
         listener.close()
-        ctl_path.unlink(missing_ok=True)
 
 
 def safe_path(value):
@@ -337,13 +361,46 @@ def open_dashboard(path="/", print_url=False):
             raise
 
 
+def _free(path) -> bool:
+    """Is the control socket free for a new server: gone, or no one accepts on it?"""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        try:
+            sock.connect(str(path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def restart_dashboard(path="/", print_url=False, wait=RESTART_WAIT):
+    """`orch-dashboard restart`: stop the running server (if any), wait until it has let go of its control socket,
+    then open a new one. A server that does not answer `stop` (an older, hung one) is named, not killed."""
+    ctl = state_dir() / "dashboard" / "ctl.sock"
+    try:
+        control(ctl, "stop")
+    except (FileNotFoundError, ConnectionRefusedError):
+        pass  # none running: just open
+    except TimeoutError:
+        raise RuntimeError(
+            "a dashboard is running but does not answer; find it with `pgrep -fl orch_dashboard` and stop it with kill"
+        ) from None
+    deadline = time.monotonic() + wait
+    while not _free(ctl):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("the running dashboard did not stop in time; try again in a moment")
+        time.sleep(0.1)
+    open_dashboard(path, print_url=print_url)
+
+
 def main():
     if sys.argv[1:2] == ["addon-manifest"]:
         from .manifest import main as manifest_main
 
         return manifest_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop"], default="open")
+    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart"], default="open")
     parser.add_argument("path", nargs="?", default="/")
     parser.add_argument("--print-url", action="store_true", help="print a single-use 30 s URL to a terminal")
     parser.add_argument("--stop", action="store_true")
@@ -356,6 +413,8 @@ def main():
             return serve(args.launcher_lock)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
+        elif args.command == "restart":
+            restart_dashboard(args.path, print_url=args.print_url)
         else:
             open_dashboard(args.path, print_url=args.print_url)
     except AgentRefused as exc:

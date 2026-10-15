@@ -8,6 +8,7 @@ import { CHUNK_BYTES, DropError, dropApi, dropError, downloadName, dropServed, f
 import { DROP_SAMPLE_ERRORS, dropPreviewForTests, resetLayoutPreview } from '@/dev/layoutPreview'
 import { createDropFixture, dropItem, installDropFixture, PHONE } from '@/dev/dropFixture'
 import { renderApp } from '@/test/renderApp'
+import { fmtDateTime } from '@/lib/time'
 
 const T = { timeout: 4000 }
 const MiB = 1024 * 1024
@@ -313,6 +314,34 @@ describe('documents', () => {
 })
 
 describe('delete', () => {
+  it.each(['demo-current-head', null])('sends the listed version and head (%s), keeps conflicts open and refreshes', async (head) => {
+    const item = dropItem({ name: 'changed.pdf', version: 7, head })
+    const view = open('drop-list', { received: [item], retireConflict: true })
+    await view.user.click(within(await rowOf('changed.pdf')).getByTestId('drop-delete'))
+    const listsBefore = ops('list').length
+    await view.user.click(await screen.findByTestId('drop-confirm-delete', {}, T))
+    const dialog = screen.getByTestId('drop-confirm')
+    await waitFor(() => expect(dialog).toHaveTextContent('This item changed in the meantime. Reload the list and try again.'))
+    expect(within(dialog).getByTestId('drop-error')).toHaveAttribute('data-code', 'drop.version_conflict')
+    expect(ops('retire')[0].args).toEqual([{ object_id: item.object_id, expect_version: 7, expect_head: head }])
+    await waitFor(() => expect(ops('list').length).toBeGreaterThan(listsBefore))
+    expect(dialog).toBeInTheDocument()
+    expect(fixture().items('received')[0].state).toBe('live')
+  })
+
+  it('shows removal dates beside both tombstone reasons, without a line for live items', async () => {
+    open('drop-list')
+    for (const name of ['expired-photo.heic', 'deleted-contract.pdf']) {
+      const row = await rowOf(name)
+      const item = fixture().items('received').find((i) => i.name === name)!
+      expect(within(row).getByTestId('drop-download-reason')).toHaveTextContent(
+        `Disappears from this list on ${fmtDateTime(new Date(item.tombstone_until_ms!).toISOString())}`,
+      )
+    }
+    expect(within(await rowOf('quarterly-report.pdf')).queryByTestId('drop-tombstone-until')).toBeNull()
+    expect(fixture().items('received').find((i) => i.name === 'quarterly-report.pdf')!.tombstone_until_ms).toBeNull()
+  })
+
   it('asks first, says it is removed for everyone at once; Keep it does nothing; Delete retires it', async () => {
     const view = open('drop-list')
     const row = await rowOf('quarterly-report.pdf')

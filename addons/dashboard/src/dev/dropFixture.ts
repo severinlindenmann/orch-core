@@ -32,6 +32,8 @@ export interface DropFixtureOptions {
   readError?: Record<string, DropError>
   /** `drop.retire` fails with this error. */
   retireError?: DropError
+  /** Simulate an item changing before deletion. */
+  retireConflict?: boolean
   /** `drop.list` fails with this error. */
   listError?: DropError
 }
@@ -49,6 +51,8 @@ export function dropItem(over: Partial<DropItem> = {}): DropItem {
     kind: 'file',
     version: 1,
     versions: 1,
+    head: `demo-head-${serial}-v1`,
+    tombstone_until_ms: null,
     name: `report-${serial}.pdf`,
     name_hidden: false,
     mime: 'application/pdf',
@@ -163,7 +167,7 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
         if (args.base_version !== item.version) throw new DropError(409, { code: 'drop.version_conflict', message: 'drop.version_conflict', retryable: false }, { current: item.version })
         const version = item.version + 1
         versions[item.object_id] = [dropVersion(version, { size, author: ME, created_ms: Date.now() }), ...(versions[item.object_id] ?? [])]
-        emit('sent', { ...item, version, versions: item.versions + 1, size, created_ms: Date.now(), author: ME })
+        emit('sent', { ...item, head: `demo-head-${item.object_id}-v${version}`, version, versions: item.versions + 1, size, created_ms: Date.now(), author: ME })
         return { object_id: item.object_id, version }
       }
       const item = dropItem({ name: args.name, mime: args.mime, size, author: ME, created_ms: Date.now(), expires_ms: Date.now() + 7 * 86_400_000 })
@@ -190,12 +194,16 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
       if (!bytes) throw new DropError(404, { code: 'blob.invalid', message: 'blob.invalid', retryable: false })
       return new Blob([bytes as BlobPart])
     },
-    retire: async (_ws, object_id) => {
-      log('retire', object_id)
+    retire: async (_ws, args) => {
+      log('retire', args)
       if (opts.retireError) throw opts.retireError
+      const { object_id, expect_version, expect_head } = args
+      const current = find(object_id)
+      if (opts.retireConflict || (current && (current.version !== expect_version || current.head !== expect_head)))
+        throw new DropError(409, { code: 'drop.version_conflict', message: 'drop.version_conflict', retryable: false })
       for (const dir of ['received', 'sent'] as const) {
         const item = lists[dir].find((i) => i.object_id === object_id)
-        if (item) emit(dir, { ...item, state: 'retired' })
+        if (item) emit(dir, { ...item, state: 'retired', tombstone_until_ms: Date.now() + 30 * 86_400_000 })
       }
     },
     subscribe: (_ws, onItem) => {

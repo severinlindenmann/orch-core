@@ -35,6 +35,8 @@ export interface DropItem {
   kind: DropKind
   version: number
   versions: number
+  head: string | null
+  tombstone_until_ms: number | null
   name: string | null
   /** The host could not show the name safely: the page says "a name that can't be shown". */
   name_hidden: boolean
@@ -129,7 +131,7 @@ export interface DropApi {
    * (DECISIONS-LOG). Nothing serves it yet: the fixture provides the bytes.
    */
   content: (ws: string, blob: string) => Promise<Blob>
-  retire: (ws: string, object_id: string) => Promise<void>
+  retire: (ws: string, args: { object_id: string; expect_version: number; expect_head: string | null }) => Promise<void>
   /** `sub.open {topics:["drop"]}`; returns the close function. */
   subscribe: (ws: string, onItem: (item: DropSubItem) => void) => () => void
 }

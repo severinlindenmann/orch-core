@@ -446,6 +446,9 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
+| `event.expired` | 3 | no | stays | `relay.submit`: the event id's ULID time is outside [host now − 900 s, host now + 300 s] at job time (§11A.14 step W, after L3: amendment A; H12e `admission.known_or_fresh`). Definite, nothing landed (class C-review) | — |
+| `event.abandoned` | 3 | no | stays | `relay.submit`: a restore abandoned the event with this id (in the replayed log's ids, not in its lines; §11A.14 L3; H12e `admission.dedup`). Class C-review | — |
+| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); the relay answer carries the advisory `next_key` (R2; the socket `Error` has no `detail`, `HostError.detail` is in-process), never a reservation. Class C-auto | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -807,13 +810,16 @@ Errors: `invalid.input`, `page.expired`, `not_found` (`parent` or `epic`).
  artifacts?:[Artifact]{0..1000}, artifacts_more?:bool,
  claim?:ClaimFull | null,
  source?:[{name:str, repo:str, ref:str, sha:str}], pushes?:[Push]{0..50}, pushes_more?:bool,
- sections?:{str: [SectionRev]{0..20}}, sections_more?:{str:bool}}
+ sections?:{str: [SectionRev]{0..20}}, sections_more?:{str:bool},
+ // v1.7 (§11A.14, H12e), always sent:
+ members_v:int}
 
 LogItem  = {seq:int, type:str, at:Time, actor:Actor, summary:str{0..200}, data?:LogData}
 Question = {id:str, state:"open"|"answered"|"stale", to:[Person], blocking:bool, answered_by:Person | null, answered_seq:int | null,
             text?:str, why?:str, to_ref?:str, options?:[{key:str, label:str, cost?:str}], recommended?:str,
             asked_at?:Time, asked_by?:Actor, asked_seq?:int,
-            answer?:{by:Person, at:Time, seq:int, option:str | null, text:str | null, auth?:str},  // auth: v1.5
+            answer?:{by:Person, at:Time, seq:int, option:str | null, text:str | null, auth?:str,  // auth: v1.5
+                     id:ULID},                                                       // id: v1.7 (§11A.14)
             qid?:str/[0-9a-f]{32}/, hash?:Hash}                                          // v1.5, read_ext/2 (§0.8.5)
 Criterion = {id:str, text:str, evidence:[{artifact:str, digest:Hash, kind:str, attested_by:"agent"|"person"|"unattended"}],
              covered?:bool, tasks?:[{id:str, evidence:bool}]}
@@ -839,7 +845,12 @@ Push      = {seq:int, at:Time, repo_name:str, repo_id:str, ref:str, sha:str, bef
 SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"external", refs:[str]}
 ```
 
-- `TicketDoc` is the F1 §7 ticket document.
+- `TicketDoc` is the F1 §7 ticket document, plus (v1.7, §11A.14, H12e) `head:{seq:int, head:Hash}`: the `seq` and
+  event head of the ticket log's last event.
+- **One snapshot (v1.7, H12e).** `doc.head`, `questions[].answer.id` (the id of the answer event that counts) and
+  `members_v` (the roster version a person event signs as `roster_v`) are read under the same store lock as every
+  other field, so a phone review needs one `ticket.get`. They are viewer-filtered like the rest: an invisible
+  ticket is `not_found`, an answer appears only where `answer` already did (never for `open` or `stale`).
 - `summary` is host text, escaped as in F1 §10.4 item 11. The content itself is fetched with `show --log`.
 - **Closed and done tickets** are returned like any other (§0.8.4): `status` is `"done"` or `"closed"`, `settled` is `true` for
   both, and `closed` (present only when `status` is `"closed"`) is `Closed` of `ticket.query` plus the `text` of the
@@ -1167,8 +1178,14 @@ Errors: `not_found`, `invalid.input`.
 `workspace.show {}` (read; unchanged in v1.5, the settings and policies are read with `workspace.settings`, §0.8.5) →
 
 ```
-{id:str, prefix:str, name:str, genesis:Hash, epoch:int, wsk_fingerprint:str, members_v:int, state:"ok"|"degraded"}
+{id:str, prefix:str, name:str, genesis:Hash, epoch:int, wsk_fingerprint:str, members_v:int, state:"ok"|"degraded",
+ next_key:Key | null}                                                                // next_key: v1.7 (§11A.14)
 ```
+
+`next_key` (v1.7, H12e) is the store's exact next key (`_next_key()` after the directory scan, under the lock),
+advisory and never a reservation. It is `null` for a principal that may not create a ticket: a viewer, no-person,
+column G (judgement call of H12e: an agent's `new` allocates its own key), and a column-R device without a valid
+`decide` certificate on the replayed roster.
 
 `epoch` is the committed epoch, never the highest allocated one (§11, membership publication).
 
@@ -3721,6 +3738,14 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     exact next key (`ticket.key_not_next` with an advisory `next_key`); `ticket.get` gains `doc.head`,
     `questions[].answer.id` and `members_v`, `workspace.show` gains `next_key` (`null` for non-creators); the relay
     hold-off after a state restore becomes backup + 1 500 s. F1 §5.1 `id` amended; no hash, contract or schema change.
+39. **Phone person events, core side (H12e, §11A.14 "As built in H12e"; the number may be renumbered when H11c
+    lands):** `judge_events` shared by `human.submit` and `relay.submit`; `orch.host.admission` (`known_or_fresh`,
+    `dedup`, `lookup`, `signed_digest`, `check_window`, `check_target`, `next_key`, `COLUMN_R_AUTH`); codes
+    `event.expired`, `event.abandoned`, `ticket.key_not_next` in §0.6; `ticket.get` gains `doc.head`,
+    `questions[].answer.id`, `members_v` (one snapshot); `workspace.show` gains `next_key`; vectors
+    `phone_events.json` and a changed `text.json`; amendments A–D to §11A.14 (known identity before freshness,
+    re-seal under a new rid, the retry table authoritative, a same-rid resend after the chunk expired). No hash,
+    contract or schema change.
 
 ---
 
@@ -5765,7 +5790,7 @@ each finding against the code (core `d020aea6`, relay `772d7b0`).
 ### 11A.14 Phone person events over `relay.submit`
 
 **Status: decided 15 Oct 2026 by orch-52** (#465). Drafted 15 Oct 2026, challenged by Codex, reviewed by orch-f1 and
-orch-29, settled by an Opus tie-break whose recommendations were adopted in full (14.10). Nothing here is built yet; R2
+orch-29, settled by an Opus tie-break whose recommendations were adopted in full (14.10). The core side is built (H12e, "As built in H12e" after 14.6); R2
 builds it. Facts come from F1 §5.1–§5.6, §5.10, §11 and core at `9823cc69` (`model/engine.py`, `model/questions.py`,
 `model/authz.py`, `model/lifecycle.py`, `canon/hashing.py`, `host/human.py`, `host/outcomes.py`, `store/store.py`,
 `host/reads_ticket.py`, `host/reads_ws.py`). "MUST" is normative for R2 and for the phone.
@@ -5871,12 +5896,21 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   otherwise `invalid.input`. The outcome key is `(ws, "r:<device>", id)`. With `actor.device` = the device (P4),
   the key **is** the event's identity per device. The same id with other content is `idem.conflict`. An identical
   retry gets the stored outcome (`duplicate:true`).
+- **Re-seal under a new rid (amendment B, decided 15 Oct 2026 by orch-52).** The phone may re-seal the same signed
+  event with the same idem under a new rid; the bridge is idempotent by idem. While that idem is admitted or running
+  the answer is `pending`: no join, no second execution. The stored outcome replays later.
+- **A same-rid resend after the chunk bytes expired (amendment D).** While the rid record is still alive, a resend
+  with the same rid whose chunk bytes have expired is answered `already_done{status:"unknown"}` (class B).
 - **Dedup by content, never by signature bytes.** P-256 signatures are randomized and high-s is accepted, so the host
   compares `digest = sha256(person_signing_bytes(ws, log, event))` plus `actor`. Under the lock (L3): the id logged with
   the same digest and actor → `committed`, `duplicate:true`, with its `seq`; with other content →
   `event.duplicate_id`; the id abandoned by a restore (in `lc.ids`, not logged) → `event.abandoned`. The outcome plan
   records the digest, and `relay_fields` reconciliation matches it.
-- **Freshness window.** At job time (P6) the id's ULID time MUST lie in **[host now − 900 s, host now + 300 s]**;
+- **Known identity first (amendment A, decided 15 Oct 2026 by orch-52).** A known identity is answered **before**
+  the freshness check: first the outcome store by `(ws, "r:<device>", idem = id)`, then the log dedup by `(log, id)`
+  plus the signed-content digest and `actor` (L3). Only a never-seen event gets the ULID window check
+  (`event.expired`). Freshness never turns a committed write into a re-review.
+- **Freshness window.** At job time (step W, after L3) the id's ULID time MUST lie in **[host now − 900 s, host now + 300 s]**;
   otherwise `event.expired`. 900 s covers delivery (signing needs a fresh `ticket.get`) and equals the relay's chunk
   deadline. A recovered admitted submission that runs after the window also gets `event.expired`. The phone does not
   send an outbox item older than 840 s; it re-reviews. Replay and readers never check the ULID time.
@@ -5893,6 +5927,13 @@ The host refuses with `validation.text` and never normalises a signed string. Th
   create a second ticket.
 - **The four classes.** Only C and D are **definite**. An unknown code is D. The table is closed: a shared data file
   that both the R2 tests and the phone read, with a test asserting that every code R2 can emit is in it.
+- **The table is authoritative (amendment C, decided 15 Oct 2026 by orch-52).** `retryable` on a relay answer is
+  derived from it: A and B → `true`; C-auto, C-review and D → `false`. Placements it fixes:
+  - `busy` with nothing run and no seq consumed → A;
+  - `outcome.unknown_idem` → B before the bound (ULID time + 900 s + 300 s), C-review after it;
+  - `already_done{status:"unknown"}` on a read → re-issue the read under a new rid;
+  - `internal` → D, except after admission where effects are possible → B;
+  - `event.expired` → C-review.
 
   | Class | Meaning | Codes | The phone |
   |---|---|---|---|
@@ -5958,7 +5999,6 @@ Checks before the lock (no state read):
 | P3 | submitted-subset schema: `cj`-canonical, exact field set, no `seq`/`at`/`prev`/`ws_seq`/`host_sig`, `v` 2, `hash_v` 1, a creation's `based_on` null; F1 §11.3 text | `validation.event` / `validation.text` |
 | P4 | `actor` = `{person, identity.person_id, identity.device_id}`, `sig` present | `op.not_allowed` |
 | P5 | `auth` ∈ {`secure-enclave-unlocked`, `passphrase`} | `op.not_allowed` |
-| P6 | the ULID window (14.4) | `event.expired` |
 | P7 | `sig` verifies under the identity's `dk_sig_pub` over 14.2's bytes | `sig.invalid` |
 
 One `store.locked()` span (re-entrant), held through the append and the outcome:
@@ -5967,7 +6007,8 @@ One `store.locked()` span (re-entrant), held through the append and the outcome:
 |---|---|---|
 | L1 | `store.refresh()` | — |
 | L2 | identity and scopes again on fresh state: the device is valid; member-list scopes ∩ `scopes_max` ⊇ `decide` (both types) | 11A.4 codes / `forbidden_scope` |
-| L3 | dedup by event identity (14.4) | `committed` + `duplicate:true` (stop) / `event.duplicate_id` / `event.abandoned` |
+| L3 | dedup by event identity (14.4); the outcome store by idem has already answered a known idem (amendment A) | `committed` + `duplicate:true` (stop) / `event.duplicate_id` / `event.abandoned` |
+| W | only a never-seen event: the ULID window (14.4, amendment A; was P6 before the lock) | `event.expired` |
 | L4 | answer: the ticket exists and the person may see it; creation: the uid is unused | `not_found` (uniform for missing and invisible) / `ticket.exists` |
 | L5 | creation: `owner` = the actor's person; `key` == `store._next_key()`, computed here after `refresh` | `invalid.input` / `ticket.key_not_next` |
 | L6 | `judge_events(store, log, [ev])`: `model.preview` with `peek_stamp` (roster, base, hash, authority, scopes at the position) | the model's code |
@@ -5982,6 +6023,44 @@ fills in or changes a submitted field: what lands is what the phone signed, plus
   C-auto). It carries `detail.next_key`, advisory and never a reservation. `ticket.exists` means only that the uid
   exists; for our own landed event L3 has already answered. `workspace.show.next_key` is `null` for a principal that
   may not create (a viewer, or no `decide`).
+
+**As built in H12e (core side, 15 Oct 2026).** Core now has everything the R2 handler calls from the step table;
+R2 (orch-29, `orch/relay/submit.py`) owns the order, the outcome plan, `append_relay` and the classification.
+- **`orch.host.human.judge_events(store, log, events, *, git=None, copies=None) -> None`** (L6), factored out of
+  `HumanOps._judge`, which is now a thin wrapper (the prepared log and the request's bound copies); the person path
+  behaves exactly as before. The caller holds `store.locked()` after `store.refresh()`; nothing is appended. Raises
+  `HostError` with the model's code. A `source_sha` list needs `git` and fails closed without it (`internal`); the
+  relay's two types carry none.
+- **`orch.host.admission`** (re-exports `judge_events`), every helper re-entrant under the store lock:
+  - `known_or_fresh(store, log, event, now) -> int | None`: L3 then W in that order (amendment A). Returns the
+    `seq` of an identical landed event (answer `committed`, `duplicate:true`); raises `event.duplicate_id` or
+    `event.abandoned` for a known id; checks the window only for a never-seen event (`event.expired`).
+  - `dedup(store, log, event) -> int | None` and `lookup(store, log, id) -> Logged(seq, digest, actor) |
+    "abandoned" | None`: the parts of L3. `signed_digest(ws, log, event)` is `"sha256:" + hex(sha256(
+    person_signing_bytes))`, the digest L7 records in `Planned` and `relay_fields` matches.
+  - `check_window(id, now)` and `ulid_ms(id)`: the window, both edges included, in ms (`WINDOW_PAST_S` = 900,
+    `WINDOW_FUTURE_S` = 300); a malformed id is `validation.event`.
+  - `check_target(store, log, event)`: L4 and L5 (`not_found` with one message for missing and invisible;
+    `ticket.exists`; `invalid.input` for another owner; `ticket.key_not_next` against `next_key(store)`, which is
+    `Store.peek_key()`, `_next_key()` after the directory scan).
+  - `COLUMN_R_AUTH` = {`secure-enclave-unlocked`, `passphrase`} (P5).
+  - `lookup`, `dedup` and `known_or_fresh` take a ticket uid or `"workspace"`; `check_target` takes a ticket uid
+    only. Anything else (a key, a number) is `validation.event` (review #474).
+- **Order note (review #474, I-1).** L3 runs before L4, so a caller who already holds an event id of a ticket it may
+  no longer see learns `committed`, `event.duplicate_id` or `event.abandoned` instead of `not_found`. This confirms
+  only a uid the caller already knew (the id has 80 random bits); the order is decided (amendment A).
+- **`ticket.key_not_next`** carries `HostError.detail = {"next_key": …}`. `detail` is an in-process attribute, not
+  part of the socket `Error` (§0.3 has no `detail`): R2 decides how its relay answer carries it.
+- **Codes.** `event.expired`, `event.abandoned`, `ticket.key_not_next` are in the §0.6 table and `HOST_CODES`
+  (exit 3, not retryable: class C).
+- **Reads.** `ticket.get` sends `doc.head`, `questions[].answer.id` and `members_v`, all under one store lock;
+  `workspace.show` sends `next_key` (`null` for a viewer, no-person, column G and a column-R device without a valid
+  `decide` certificate) (§0.8).
+- **Vectors.** `tests/vectors/f1/phone_events.json` (`phone_events_vector()` in `tests/canon/oracle_f1_signed.py`,
+  registered in `oracle_f1.py` and `index.json`, byte-checked by `tests/canon/test_f1_vectors.py`, its scenarios
+  replayed through the real model by `tests/model/test_f1_scenarios.py`). `World.ev` gained `auth` (default
+  `passphrase`) and `based_on`; every older file is byte-identical. `text.json` gained `lf_kept` and two code
+  points unassigned in 16.0 but assigned in 17.0 (U+323B0 CJK Extension J, U+10940 Sidetic).
 
 **14.7 F1 amendment (the only one).** F1 §5.1 `id`: "In P2 the host prepares it on the person path. On `relay.submit`
 the signing device makes it (CSPRNG, 80 random bits), and the host admits it only within the window of host §11A.14.

@@ -69,6 +69,11 @@
    "output": "a\tb"
   },
   {
+   "input": "a\nb",
+   "name": "lf_kept",
+   "output": "a\nb"
+  },
+  {
    "input": "\ufb01",
    "name": "compat_not_folded",
    "output": "\ufb01"
@@ -179,6 +184,7 @@
    "output": "\ud81b\udd6a"
   }
  ],
+ "pins": "[shared, CHANGED] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3); H12e (orch-v2-host 11A.14 14.8) adds LF kept and code points unassigned in 16.0 but assigned in Unicode 17.0 (a phone with newer tables must refuse them before the sign sheet)",
  "refused": [
   {
    "input": "a\u0000b",
@@ -263,6 +269,14 @@
   {
    "input": "\r\u0378",
    "name": "unassigned_cr_survivor"
+  },
+  {
+   "input": "\ud888\udfb0",
+   "name": "newer_than_16_cjk_ext_j"
+  },
+  {
+   "input": "\ud802\udd40",
+   "name": "newer_than_16_sidetic"
   }
  ],
  "refused_not_normalised": [

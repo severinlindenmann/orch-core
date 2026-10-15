@@ -253,3 +253,70 @@ def test_only_the_primary_module_unlocks_the_primary_pair():
     root = Path(primary.__file__).parents[1]
     users = sorted(p.relative_to(root).as_posix() for p in root.rglob("*.py") if ".primary_unlocked(" in p.read_text())
     assert users == ["custody/primary.py"]
+
+
+# --- with the H12c-b builders: a real cert request opened by the custody primary ----------------------------------
+
+
+def _request_to(info):
+    """A §8.4 request from the corpus host (WSK ``wsk_a``) to this custody primary, checked as the primary checks it."""
+    from orch import canon
+    from orch.identity import certreq, wscard
+
+    from ..relay import corpus
+
+    s2 = corpus.S2
+    cr, keys = s2["cert_request"], s2["keys"]
+    inner = cr["inner"]
+    o = certreq.cert_request_o(
+        request_id=RID.hex(),
+        workspace_id=cr["signed"]["o"]["workspace_id"],
+        person_id=cr["signed"]["o"]["person_id"],
+        primary_device_id=info.device_id.hex(),
+        primary_kx_pub=info.dk_kx_pub,
+        offer_id=inner["offer_id"],
+        attempt=inner["attempt"],
+        dk_sig_pub=crypto.unb64u(inner["dk_sig_pub"]),
+        dk_kx_pub=crypto.unb64u(inner["dk_kx_pub"]),
+        label=inner["label"],
+        scopes_max=inner["scopes_max"],
+        created_ms=cr["signed"]["o"]["created_ms"],
+    )
+    seed = int.from_bytes(bytes.fromhex(keys["wsk_a.sig"]["seed"]), "big")
+    wsk = crypto.private_key_from_scalar(seed % (crypto.P256_N - 1) + 1)
+    signed = {"o": o, "sig": crypto.b64u(crypto.sign(wsk, L["sig_cert_request"] + canon.dumps(o)))}
+    card = wscard.verify_card(cr["cases"][0]["card"], corpus.pub("person_alice.sig"))
+    req = certreq.check_cert_request(
+        signed,
+        card,
+        me_person_id=s2["ids"]["person_alice"],
+        me_device_id=info.device_id.hex(),
+        journal=certreq.CertJournal(),
+        now_ms=o["created_ms"],
+    )
+    return req, inner
+
+
+def test_the_custody_primary_opens_a_real_cert_request(tmp_path, prov):
+    from orch.identity import certreq
+
+    info = primary.init(tmp_path)
+    req, inner = _request_to(info)
+    with primary.unlocked(tmp_path, action="pair") as keys:
+        got = certreq.open_cert_request(req, primary.cert_request_unseal(keys))
+    assert got.as_dict() == inner and got.request_id == req.request_id
+    assert certreq.open_cert_request(req, primary.backend_cert_request_unseal(tmp_path)).as_dict() == inner
+
+
+def test_a_custody_refusal_is_not_a_malformed_request(tmp_path, prov):
+    from orch.identity import certreq
+
+    info = primary.init(tmp_path)
+    req, _ = _request_to(info)
+    with primary.unlocked(tmp_path, action="pair") as keys:
+        opener = primary.cert_request_unseal(keys)
+    with pytest.raises(CustodyError):  # locked again: a custody error, not Refused("malformed")
+        certreq.open_cert_request(req, opener)
+    prov.phrase = "the wrong phrase"
+    with pytest.raises(WrongPassphrase):
+        certreq.open_cert_request(req, primary.backend_cert_request_unseal(tmp_path))

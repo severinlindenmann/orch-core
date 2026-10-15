@@ -4118,6 +4118,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     durable per-request journal (`<state>/person/primary/requests/`) and `PrimaryQueue` (§8.4 steps 2 to 4 with
     `check_cert_request`, `open_cert_request`, `make_cert_challenge`, `make_device_cert`, `make_cert_rejection`).
     No CLI, op, code, wire, hash or schema change.
+55. **Git isolation for every read-only git call (#546, follow-up to #541; §12.7 "Isolation"; the number may be
+    renumbered when a parallel change lands first):** `orch.gitsafe` holds the one mechanism of the invariant "no git
+    invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list"
+    (`isolated_env`, `config_env`, `person_entries`, `argv`). `store/observe.git` now runs the gitsafe gate before
+    every command (a repository whose own config sets a key outside the allow-list, such as a filter its
+    `.gitattributes` selects, gives `None`: D58's "git cannot be asked", never clean) and refuses a populated
+    submodule for `status`; `ops/health._git` (`orch check --staged`) gates once and answers `git.unavailable` naming
+    the key. Both run with system and global config off; observe's `status` keeps only the person's
+    `core.excludesFile`, `core.autocrlf` and `core.eol`. `wtgit.run_git` stays the documented exception. No CLI, op,
+    code, wire, hash or schema change.
 
 ---
 
@@ -9364,6 +9374,25 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     which `-c core.hooksPath` does not turn off. The deny-list of known keys stays only as documentation
     (`gitsafe.KNOWN_EXEC`) and as tests.
   - **Records.** The records tool's `check_local` applies the same function before its stricter rules.
+  - **Isolation (#541, #546).** The invariant's second half: *no git invocation by orch reads configuration the
+    person or a repo controls, except through an explicit allow-list.* The repo's half is the gate above. The person's
+    half is one mechanism in `orch.gitsafe`: `isolated_env` (built from scratch, no `GIT_*` of the caller,
+    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (the caller's own allow-list of the person's
+    keys, passed as command-scope config; `person_entries` reads them, which executes nothing) and `argv` (`NEUTRAL`
+    plus `core.attributesFile=/dev/null` and `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff
+    --no-textconv` on `diff`, `show` and `log`). Every invocation site:
+
+    | Site | Isolation |
+    |---|---|
+    | `gitsafe` gate's own reads | `argv`, `isolated_env`, no person keys |
+    | `store/observe.git` (`head`, `porcelain`, `dirty`, `repo_identity`; `ops/caps.Git` and `hostclient` in direct mode) | gate before every command, `submodules` for `status`; `argv`, `isolated_env`; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (the person's own idea of clean; a pattern file and line-ending settings, no program) (#546) |
+    | `ops/health._git` (`check --staged`: `diff --cached --raw`, `show :<path>`) | gate once per check (`git.unavailable` naming the key), `argv`, `isolated_env`, no person keys, through `caps.exec` (#546) |
+    | `runner/wtgit.read_git`, `tree_dirty` | gate (and `submodules`), `argv`, `isolated_env`, no person keys |
+    | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
+    | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
+    | `records/git.open_repo` probe | reads configuration only |
+    | `runner/wtgit.run_git` (`worktree add/remove/prune`) | **the one exception:** gate on the repo (and the worktree) plus `NEUTRAL`, but the person's system and global config stays on by design: a checkout must run their checkout filters (`git lfs install`'s smudge), as their own `git worktree add` would |
+    | `gitread/*` | no git process |
   - **Config file ownership (Opus D3).** `<common dir>/config`, `config.worktree` and the git dirs holding them must
     be owned by the runner's effective UID and writable by no group or other. A symlinked config file is refused. git
     itself checks only the directory's owner.

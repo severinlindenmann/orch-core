@@ -65,11 +65,10 @@ def test_the_whole_allowed_shape_passes_unchanged():
         "hint": "h",
         "retryable": False,
         "retry_after_ms": 5,
-        "request_id": RID,
+        "state": "submitted",
         "signed_at": "2026-10-15T12:00:00Z",
         "op": "answer",
         "summary": "[]",
-        "commit": SHA1,
         "message_hidden": False,
     }
     status, got = body(error, 5)
@@ -205,3 +204,113 @@ def test_the_code_pattern_admits_every_code_core_and_the_dashboard_send():
 
     for code in [*HOST_CODES, *ERRORS, "intent.done", "intent.failed", "records.child_invalid", "human.click_refused"]:
         assert errors.CODE.fullmatch(code) and len(code) <= errors.CODE_MAX, code
+
+
+# ---- review I4 follow-up (Opus CHANGES) -----------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "exit", [{"path": "/Users/me/.config/orch/key", "token": "ghp_x"}, "ghp_secret", True, None, 0, 10, -1, 3.0]
+)
+def test_m1_an_invalid_exit_never_reaches_the_page(exit):
+    """M1: the response's `exit` is a plain int 1..9 (§0.6), else the dashboard's 1."""
+    _, got = body(base("host.busy"), exit)
+    assert got["exit"] == 1 and type(got["exit"]) is int
+    exc = HostError(base("host.busy"), 3)
+    exc.exit = exit  # a later assignment is checked again at the response
+    again = json.loads(host_response(exc).body)["exit"]
+    assert again == 1 and type(again) is int
+
+
+@pytest.mark.parametrize("exit", [1, 5, 9])
+def test_m1_a_valid_exit_passes(exit):
+    assert body(base("host.busy"), exit)[1]["exit"] == exit
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"error": {"code": "host.busy", "message": "m", "retryable": True}, "exit": {"path": "/x", "token": "t"}},
+        {"error": {"code": "host.busy", "message": "m", "retryable": True}},  # no exit at all
+        {"error": {"message": "no code", "path": "/x"}, "exit": 3},  # L1: a missing code
+        {"error": {"code": 7, "message": "m"}, "exit": 3},  # L1: a non-string code
+        {"exit": 3},  # no error at all
+    ],
+)
+def test_m1_l1_hostlink_reads_a_bad_error_frame_as_a_checked_error(frame):
+    import os
+    import socket
+    import threading
+
+    from test_hostlink import WS, welcome
+
+    from orch_dashboard.hostlink import HostLink, encode, receive
+
+    a, b = socket.socketpair()
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome()))
+            req = receive(b)
+            b.sendall(encode({"t": "res", "id": req["id"], "ok": False, **frame}))
+
+    t = threading.Thread(target=host)
+    t.start()
+    link = HostLink(a, os.getuid(), WS)
+    with pytest.raises(HostError) as err:
+        link.call("whoami")
+    link.close()
+    t.join()
+    got = json.loads(host_response(err.value).body)
+    assert 1 <= got["exit"] <= 9 and isinstance(got["exit"], int)
+    code = frame.get("error", {}).get("code")
+    assert got["error"]["code"] == (code if code == "host.busy" else "internal")
+    assert "path" not in json.dumps(got) and "token" not in json.dumps(got)
+
+
+@pytest.mark.parametrize("error", [None, "boom", {"message": "m"}, {"code": "/Users/me/x"}, {"code": ["a"]}])
+def test_l1_l2_every_host_error_holds_a_checked_code(error):
+    """L1/L2: `exc.error["code"]` is valid wherever it is read (hostlink, gateway host_state, live, terminals)."""
+    exc = HostError(error, 3)  # type: ignore[arg-type]
+    assert exc.error == {"code": "internal", "message": "internal", "retryable": False} and exc.exit == 1
+
+
+def test_l2_the_terminal_end_frame_checks_code_and_retry_after():
+    from orch_dashboard import terminals
+
+    exc = HostError(base("rate.limited", retryable=True), 9)
+    exc.error["code"] = "ghp_" + "a" * 36 + "/x"  # a code changed after construction is checked again
+    assert terminals.host_closed(exc).code == "internal"
+    for bad in (-5, 10**12, True):
+        closed = terminals.host_closed(HostError(base("rate.limited", retryable=True, retry_after_ms=bad), 9))
+        assert closed.end()["retry_after_ms"] == 1000, bad
+    closed = terminals.host_closed(HostError(base("rate.limited", retryable=True, retry_after_ms=700), 9))
+    assert closed.end()["retry_after_ms"] == 700
+
+
+@pytest.mark.parametrize(
+    "code,key,value",
+    [
+        ("host.busy", "summary", "A similar thing was signed"),
+        ("intent.ended", "summary", "[]"),
+        ("host.busy", "signed_at", "2026-10-15T12:00:00Z"),
+        ("host.busy", "op", "answer"),
+        ("host.busy", "commit", SHA1),
+        ("intent.done", "commit", SHA1),
+        ("host.busy", "request_id", RID),
+        ("host.busy", "why", "update_orch"),
+    ],
+)
+def test_l3_the_servers_own_keys_only_on_the_codes_that_own_them(code, key, value):
+    _, got = body(base(code, **{key: value}))
+    assert key not in got["error"]
+
+
+def test_i1_a_long_review_summary_still_passes():
+    summary = json.dumps([{"body": "x" * 30_000}])
+    assert body(base("intent.done", summary=summary))[1]["error"]["summary"] == summary
+
+
+def test_i2_a_plain_text_fix_is_capped():
+    assert body(base("host.busy", fix="update the readers first"))[1]["error"]["fix"] == "update the readers first"
+    assert "fix" not in body(base("host.busy", fix="x" * (errors.FIX_TEXT_MAX + 1)))[1]["error"]
+    assert "fix" not in body(base("host.busy", fix=""))[1]["error"]

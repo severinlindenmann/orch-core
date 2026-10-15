@@ -6,9 +6,20 @@ from .text import hidden
 
 
 class HostError(Exception):
+    """One refused request. Every HostError holds a valid `code` and `exit` (review I4): an error that is not a dict
+    or whose code fails `valid_code` becomes the dashboard's own `internal` (exit 1), and an `exit` that fails
+    `valid_exit` becomes 1. So every reader of `exc.error["code"]` (hostlink, gateway, live, terminals) and
+    `host_response` see a checked code and exit, whatever the host sent."""
+
     def __init__(self, error: dict, exit: int = 9):
-        self.error, self.exit = error, exit
-        super().__init__(str(error.get("code")) if isinstance(error, dict) else "internal")
+        if not isinstance(error, dict) or not valid_code(error.get("code")):
+            error, exit = internal(), 1
+        self.error, self.exit = error, exit if valid_exit(exit) else 1
+        super().__init__(error["code"])
+
+
+def internal() -> dict:
+    return {"code": "internal", "message": "internal", "retryable": False}
 
 
 def fail(code: str, message: str | None = None, exit: int = 9):
@@ -159,13 +170,17 @@ def closed_detail(code, detail) -> dict | None:
 #: `retry_after_ms`, and what this server adds itself (`reason`, `why`, `request_id`, `signed_at`, `op`, `summary`,
 #: `commit`, `message_hidden`, and `state` on its `intent.*` answers, part of its N15 contract). A key the page needs
 #: is added here, with its check, before any producer sends it. `code` is required: an error without a valid code
-#: answers the dashboard's own `internal`.
+#: answers the dashboard's own `internal`. This server's own keys are bound to the codes that own them (`_on`). The
+#: response's `exit` beside the error is checked too (`valid_exit`, §0.6 1..9, else 1), here and in `HostError`.
 CODE = re.compile(r"[a-z_][a-z0-9_]*(?:\.[a-z0-9_]+)*")
 CODE_MAX = 64
 MESSAGE_MAX = 1000  # the host caps at 400; this server's own messages are longer, never unbounded
 HINT_MAX = 400
 RETRY_AFTER_MAX = 3_600_000  # §0.3: `retry_after_ms` is 1..3600000
-SUMMARY_MAX = 16_384  # `intent.done`: the signed review as JSON, from the host's record
+SUMMARY_MAX = 65_536  # `intent.done`: the signed review as JSON, from the host's record (comment bodies included)
+FIX_TEXT_MAX = 400  # a plain-text `fix`, capped like `hint`
+#: an error's CLI exit code: §0.6, an error `Res` has `exit:int 1..9` (0 is success, never an error)
+EXIT_MIN, EXIT_MAX = 1, 9
 OP = re.compile(r"[a-z][a-z_]*(?:\.[a-z_]+)*")
 OP_MAX = 64
 REQUEST_ID = re.compile(r"(?:hr_)?[0-7][0-9A-HJKMNP-TV-Z]{25}")  # a human request id (a ULID, `hr_` on the page)
@@ -206,6 +221,20 @@ STATES: dict[str, tuple[str, ...]] = {
 WHYS = ("update_orch",)
 
 
+def valid_code(v) -> bool:
+    """An error code the dashboard passes on (to the page, a WebSocket `end`, a workspace's `host_state`)."""
+    return isinstance(v, str) and len(v) <= CODE_MAX and CODE.fullmatch(v) is not None
+
+
+def valid_exit(v) -> bool:
+    return type(v) is int and EXIT_MIN <= v <= EXIT_MAX
+
+
+def retry_after(v) -> int | None:
+    """`retry_after_ms` when it is a plain int in range, else None (also for the terminal `end` frame)."""
+    return v if type(v) is int and 0 <= v <= RETRY_AFTER_MAX else None
+
+
 def _text(limit: int):
     return lambda v, code: isinstance(v, str) and 0 < len(v) <= limit
 
@@ -221,19 +250,35 @@ def _reason(v, code) -> bool:
     return allowed.fullmatch(v) is not None if isinstance(allowed, re.Pattern) else v in allowed
 
 
-#: key -> check(value, code). `code` and `message` are handled by `host_response` (required on the page).
+def _on(codes, check):
+    """`check`, only on the codes that own the key (a str prefix ending in `.` matches a namespace)."""
+    return lambda v, code: (code in codes or any(c.endswith(".") and code.startswith(c) for c in codes)) and check(
+        v, code
+    )
+
+
+#: the codes that own this server's own keys (review I4 L3): any other code drops them
+CLICK_REFUSED = ("human.click_refused",)
+INTENT_DONE = ("intent.done",)
+RECORDS = ("records.",)
+
+#: key -> check(value, code). `code` and `message` are handled by `allowed_error` (required on the page).
 TOP_KEYS = {
     "hint": _text(HINT_MAX),
     "retryable": lambda v, code: isinstance(v, bool),
-    "retry_after_ms": lambda v, code: type(v) is int and 0 <= v <= RETRY_AFTER_MAX,
+    "retry_after_ms": lambda v, code: retry_after(v) is not None,
     "reason": _reason,
-    "why": lambda v, code: isinstance(v, str) and v in WHYS,
+    "why": _on(CLICK_REFUSED, lambda v, code: isinstance(v, str) and v in WHYS),
     "state": lambda v, code: isinstance(v, str) and v in STATES.get(code, ()),
-    "request_id": _match(REQUEST_ID, 32),
-    "signed_at": lambda v, code: v is None or (isinstance(v, str) and len(v) <= 40 and TIME.fullmatch(v) is not None),
-    "op": _match(OP, OP_MAX),
-    "summary": lambda v, code: isinstance(v, str) and len(v) <= SUMMARY_MAX,
-    "commit": _match(COMMIT, 64),
+    "request_id": _on(CLICK_REFUSED, _match(REQUEST_ID, 32)),
+    "signed_at": _on(
+        INTENT_DONE,
+        lambda v, code: v is None or (isinstance(v, str) and len(v) <= 40 and TIME.fullmatch(v) is not None),
+    ),
+    "op": _on(INTENT_DONE, _match(OP, OP_MAX)),
+    "summary": _on(INTENT_DONE, lambda v, code: isinstance(v, str) and len(v) <= SUMMARY_MAX),
+    "commit": _on(RECORDS, _match(COMMIT, 64)),
+    # a bool says only that the message was replaced: on any code (the records child sets it for host codes too)
     "message_hidden": lambda v, code: isinstance(v, bool),
 }
 
@@ -242,7 +287,7 @@ def allowed_error(raw) -> dict | None:
     """The browser's error from a host (or this server's) error, through `TOP_KEYS`, `closed_detail` and the `fix`
     rule; None when its `code` is missing or invalid (the caller answers `internal`)."""
     code = raw.get("code") if isinstance(raw, dict) else None
-    if not isinstance(code, str) or len(code) > CODE_MAX or CODE.fullmatch(code) is None:
+    if not valid_code(code):
         return None
     message = raw.get("message")
     error: dict = {"code": code, "message": message if _text(MESSAGE_MAX)(message, code) else code}
@@ -257,7 +302,7 @@ def allowed_error(raw) -> dict | None:
     # and the command a person runs to leave a signing-path refusal (`orch host convenience off --workspace …`), only
     # for those codes and only when every argv word is plain. Both are rendered as untrusted text.
     fix = raw.get("fix")
-    if isinstance(fix, str) or (code in FIX_COMMAND_CODES and plain_argv(fix)):
+    if (isinstance(fix, str) and 0 < len(fix) <= FIX_TEXT_MAX) or (code in FIX_COMMAND_CODES and plain_argv(fix)):
         error["fix"] = fix
     return error
 
@@ -265,8 +310,6 @@ def allowed_error(raw) -> dict | None:
 def host_response(exc: HostError):
     error = allowed_error(exc.error)
     if error is None:
-        return JSONResponse(
-            {"ok": False, "exit": 1, "error": {"code": "internal", "message": "internal", "retryable": False}},
-            status_code=status("internal"),
-        )
-    return JSONResponse({"ok": False, "exit": exc.exit, "error": error}, status_code=status(error["code"]))
+        return JSONResponse({"ok": False, "exit": 1, "error": internal()}, status_code=status("internal"))
+    exit = exc.exit if valid_exit(exc.exit) else 1  # `HostError` checks it; a later assignment is checked again
+    return JSONResponse({"ok": False, "exit": exit, "error": error}, status_code=status(error["code"]))

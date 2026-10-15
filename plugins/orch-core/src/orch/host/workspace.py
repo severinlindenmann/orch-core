@@ -666,6 +666,10 @@ class Call:
         code = refusal(self.column, self.kind, op)
         if code is not None:
             raise HostError(code, f"{op} is not allowed here")
+        if self.column.name == "R" and op != "reader.declare":  # H12d-3: serving is bound to the current rd (9.5)
+            from .readerops import check_rd
+
+            check_rd(self.service, identity)
 
 
 def _relay_kind(op: Any) -> OpKind | None:

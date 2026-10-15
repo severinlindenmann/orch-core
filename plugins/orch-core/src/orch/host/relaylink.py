@@ -6,11 +6,17 @@ link reservation's critical section and the persistent stop of ``orch host relay
   (state ``linking`` or ``linked``; a dangling link or an entry that cannot be inspected counts too). ``relay.link``
   above the cap is refused with ``host.limit``.
 * **The reservation.** The only writer of ``link.json`` is ``store.relay_link(link, guard=lambda:
-  relaylink.link_reservation(service))`` (H12b), state ``linking``, before any network write; the only rewrite is
-  ``store.relay_mark_linked(expect)`` (``linking`` to ``linked``). :func:`link_reservation` is the guard: under the
-  store lock and a host-wide lock it refuses a workspace whose history or durable mark holds ``auth: "convenience"``
-  or whose convenience flag is on (``sign.convenience_readers``, §11A.6, strict in v1.7) and a link above the cap;
-  the store then refuses an existing link (``relay.link_exists``) and writes inside both locks.
+  relaylink.link_reservation(service, relay_level=N))`` (H12b), state ``linking``, before any network write; the only
+  rewrite is ``store.relay_mark_linked(expect)`` (``linking`` to ``linked``). :func:`link_reservation` is the guard:
+  under the store lock and a host-wide lock it refuses a relay whose level (``GET /v2/relay-info`` at link step 1,
+  H12d-3) is below ``required_reader`` (``sign.convenience_readers`` reason ``relay_too_old``; the relaxed rule of
+  §0.8.6 item 9.4: a level-1 relay is linked with convenience history and while the flag is on) and a link above the
+  cap, and stores the level with the link (``relay/reader.json``); the store then refuses an existing link
+  (``relay.link_exists``) and writes inside both locks.
+* **The level at every R1 login** (H12d-3, 9.8): :func:`observe_relay_level` is the session's ``relay_info`` hook,
+  bound to the session's link origin. Under ``relay-link.lock`` it stores the level of that link only and alarms
+  ``relay_reader_old`` when it is below ``required_reader``; R3 then holds every restore whose evidence carries a
+  convenience event (:func:`orch.ops.readers.restore_held`).
 * **The stop.** ``hosts/<ws>/relay/stopped.json`` (0600) keeps the relay worker stopped across host restarts, the
   operator procedure after a state restore (§11A.4 "Scope of exactly-once"). :func:`may_start` is the check the relay
   worker's start (R5) must pass: linked, and not stopped. A marker that cannot be read safely counts as stopped.
@@ -38,6 +44,7 @@ __all__ = [
     "linked_workspaces",
     "mark_stopped",
     "may_start",
+    "observe_relay_level",
     "relay_dir",
     "stopped_path",
 ]
@@ -81,19 +88,25 @@ def linked_workspaces(state_dir: Path) -> list[str]:
 
 
 @contextlib.contextmanager
-def link_reservation(service: Any) -> Iterator[None]:
+def link_reservation(service: Any, *, relay_level: int | None = None, clock: Any = time.time) -> Iterator[None]:
     """The guard of ``store.relay_link`` (§11A.6), the only writer of ``link.json``:
-    ``store.relay_link(link, guard=lambda: relaylink.link_reservation(service))``. Holds the store lock (re-entrant)
-    and a host-wide lock (two workspaces linking at once cannot both take the last slot), then refuses with
-    ``sign.convenience_readers`` (convenience history, mark or flag) and ``host.limit`` (the cap). An existing link is
-    the store's refusal (``relay.link_exists``), so the guard has no relink case."""
+    ``store.relay_link(link, guard=lambda: relaylink.link_reservation(service, relay_level=info.reader))``, with the
+    level R5 read from ``GET /v2/relay-info`` just before (:func:`orch.relay.session.fetch_relay_info`; ``None``: not
+    read, counts as 0). Holds the store lock (re-entrant) and a host-wide lock (two workspaces linking at once cannot
+    both take the last slot), then refuses with ``sign.convenience_readers`` (``relay_too_old``: the level below
+    ``required_reader``, from the flag, the mark or the merged history) and ``host.limit`` (the cap). While no
+    ``link.json`` exists it stores the level (or clears a stale one when ``None``), so a refused relink never changes
+    the level of the existing link. An existing link is the store's refusal (``relay.link_exists``), so the guard has
+    no relink case."""
+    from orch.store.readerrecs import clear_relay_level, write_relay_level
+
     from .convenience import _flock, refuse_reader_op
 
     store = service.store
     if store is None:
         raise HostError("workspace.unavailable", "the workspace is not open")
     with store.locked(), _flock(service.state_dir, "relay-link.lock", service.host_uid):
-        refuse_reader_op(service, "relay.link", history=True)
+        refuse_reader_op(service, "relay.link", history=True, relay_level=relay_level)
         linked = linked_workspaces(service.state_dir)
         if len(linked) >= MAX_LINKED:
             raise HostError(
@@ -101,7 +114,59 @@ def link_reservation(service: Any) -> Iterator[None]:
                 f"this host already serves {len(linked)} relay-linked workspaces (at most {MAX_LINKED})",
                 hint="unlink another relay-linked workspace first, or serve this one from another host",
             )
+        if not os.path.lexists(link_path(service.state_dir, service.workspace_id)):
+            try:
+                if relay_level is None:
+                    clear_relay_level(service.state_dir, service.workspace_id)
+                else:
+                    write_relay_level(
+                        service.state_dir, service.workspace_id, service.host_uid, relay_level, int(clock() * 1000)
+                    )
+            except HostError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the level must be stored with the link, or no link
+                raise unsafe(f"the relay's reader level could not be stored ({type(exc).__name__})") from None
         yield
+
+
+def observe_relay_level(
+    state_dir: Path,
+    workspace_id: str,
+    host_uid: int,
+    level: int,
+    alarm: Any,
+    *,
+    origin: str,
+    clock: Any = time.time,
+) -> bool:
+    """The R1 login hook (9.8), bound to its link (#555 review F2, DECIDED): R5 builds it per session with that
+    session's link origin, ``relay_info=lambda lv: observe_relay_level(state, ws, uid, lv, alarm, origin=origin)``.
+    Under the host-wide ``relay-link.lock`` (the link reservation's lock), it stores ``level`` only while
+    ``link.json`` is still that link (a private JSON object naming ``origin``); a stale login of a former relay after
+    a relink writes nothing, and an unlinked relay keeps its last level. It alarms ``relay_reader_old`` when the level
+    is below ``required_reader`` (the flag or the durable mark; no history scan and no store lock: it runs on a relay
+    thread under the session's login lock). Returns whether a stored level is below the required one. A busy lock or
+    a level that cannot be stored keeps the stored one."""
+    from orch.ops.readers import convenience_seen
+    from orch.store.readerrecs import write_relay_level
+
+    from .convenience import _flock, enabled
+
+    try:
+        with _flock(state_dir, "relay-link.lock", host_uid):
+            link = read_json(link_path(state_dir, workspace_id), host_uid)
+            if not isinstance(link, dict) or link.get("origin") != origin:
+                return False
+            on = enabled(state_dir, workspace_id, host_uid) or convenience_seen(state_dir, workspace_id)
+            required = 1 if on else 0
+            write_relay_level(state_dir, workspace_id, host_uid, level, int(clock() * 1000))
+    except Exception as exc:  # noqa: BLE001 - the stored level stays; say so
+        alarm("relay_reader_old", f"the relay's reader level {level} was not stored ({type(exc).__name__})")
+        return False
+    if level < required:
+        alarm("relay_reader_old", f"the relay declares reader level {level}, this workspace requires {required}")
+        return True
+    return False
 
 
 def _private_relay_dir(state_dir: Path, workspace_id: str, host_uid: int) -> Path:

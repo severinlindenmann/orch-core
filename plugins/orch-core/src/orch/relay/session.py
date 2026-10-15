@@ -10,6 +10,11 @@
 * **bad_signature.** A 401 ``bad_signature`` on login is not retried within 60 s (:class:`LoginHeldOff`), and after 3
   in a row the alarm ``origin_mismatch_suspected`` names the stored origin and :class:`OriginMismatch` stops the
   worker (a wrong stored origin only ever shows as this).
+* **Relay info (H12d-3, orch-v2-host §0.8.6 item 9.8).** :func:`fetch_relay_info` reads ``GET /v2/relay-info``
+  (no session, no workspace data): ``{"v":1, "reader":N, "max_publication_bytes"?}``; an absent route (404) is level
+  0. Link step 1 calls it before the reservation; with the ``relay_info`` hook, every successful login reads it again
+  and hands the level to the hook (the host stores it and alarms ``relay_reader_old``). A failed read at login keeps
+  the last stored level and never fails the login. An honest-operator statement, never a security control.
 * **Holder.** ``POST host/hold {gen: holder.gen or null, take_over}``; 409 ``holder_conflict`` waits out the lease
   (40 s, monotonic) and retries; ``fenced`` (on hold or on any W(g) write) alarms ``fenced``, and every later write is
   refused locally (:class:`Fenced`). Takeover (``take_over: true``) is only the explicit operator command.
@@ -44,9 +49,11 @@ __all__ = [
     "NotHolder",
     "OriginMismatch",
     "RelayMisbehaving",
+    "RelayInfo",
     "Session",
     "SessionError",
     "TakeoverRefused",
+    "fetch_relay_info",
 ]
 
 log = logging.getLogger("orch.relay.session")
@@ -61,6 +68,44 @@ SMALL_DEADLINE_S = 30.0
 AUX_HOLD_DEADLINE_S = 10.0
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{8,512}")
 _SEEN_CHALLENGES = 64
+
+
+@dataclass(frozen=True)
+class RelayInfo:
+    """``GET /v2/relay-info`` (§0.8.6 item 9.8): the relay software's reader level (0 for an absent route) and its
+    optional publication cap."""
+
+    reader: int
+    max_publication_bytes: int | None = None
+
+
+RELAY_INFO_ROUTE = "GET /v2/relay-info"
+_READER_MAX = 2**31 - 1
+
+
+def fetch_relay_info(conn: Transport, *, deadline_s: float = SMALL_DEADLINE_S) -> RelayInfo:
+    """Read ``GET /v2/relay-info`` once (no session). 404: level 0 (a relay before H12d). Any other non-2xx answer
+    raises :class:`~orch.relay.retry.RelayRefused`; a 2xx body that is not exactly ``{"v":1, "reader":uint31}`` plus
+    an optional positive ``max_publication_bytes`` raises :class:`RelayMisbehaving` (never a level)."""
+    r = conn.request(
+        "GET", "/v2/relay-info", route=RELAY_INFO_ROUTE, headers={}, body=None, deadline_s=deadline_s, cap=SMALL_CAP
+    )
+    if r.status == 404:
+        return RelayInfo(0, None)
+    if not 200 <= r.status < 300:
+        raise RelayRefused.from_response(RELAY_INFO_ROUTE, r)
+    try:
+        obj = wire.loads_body(r.body, cap=SMALL_CAP)
+    except wire.WireError:
+        raise RelayMisbehaving("relay-info: malformed body") from None
+    if type(obj) is not dict or not {"v", "reader"} <= set(obj) <= {"v", "reader", "max_publication_bytes"}:
+        raise RelayMisbehaving("relay-info: field set")
+    reader, cap = obj["reader"], obj.get("max_publication_bytes")
+    if type(obj["v"]) is not int or obj["v"] != 1 or type(reader) is not int or not 0 <= reader <= _READER_MAX:
+        raise RelayMisbehaving("relay-info: v or reader")
+    if "max_publication_bytes" in obj and (type(cap) is not int or not 0 < cap <= wire.MAX_SAFE_INT):
+        raise RelayMisbehaving("relay-info: max_publication_bytes")
+    return RelayInfo(reader, cap)
 
 
 class SessionError(Exception):
@@ -126,8 +171,11 @@ class Session:
         mono: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         stop: threading.Event | None = None,
+        relay_info: Callable[[int], None] | None = None,
     ) -> None:
         self._t, self._signer, self._holder, self._alarm = transport, signer, holder, alarm
+        #: H12d-3: called with the relay's reader level after every successful login (R1, §0.8.6 item 9.8)
+        self._relay_info = relay_info
         self._mono, self._sleep, self._stop = mono, sleep, stop
         self._login_lock = threading.Lock()
         # serialises preflight() (round 9): a passing run cannot set _checked after another thread's StateError. A leaf
@@ -313,6 +361,23 @@ class Session:
         self._bad_sig_count = 0
         self._bad_sig_at = None
         log.info("relay login ok workspace=%s", self.workspace_id)
+        if self._relay_info is not None:
+            self._read_relay_info()
+
+    def _read_relay_info(self) -> None:
+        """The relay's reader level at this login (9.8), handed to the hook. Any failure keeps the last stored level
+        (logged by class only); the login stands. The hook itself takes no store lock (it may run under the login
+        lock on any relay thread)."""
+        try:
+            info = fetch_relay_info(self._t)
+        except Exception as exc:  # noqa: BLE001 - an operator statement: a failed read changes nothing now
+            log.info("relay-info not read at login (%s); the last level stays", type(exc).__name__)
+            return
+        assert self._relay_info is not None
+        try:
+            self._relay_info(info.reader)
+        except Exception as exc:  # noqa: BLE001 - #555 review F5: the hook never fails the login
+            log.error("relay-info hook failed at login (%s); the last level stays", type(exc).__name__)
 
     def logout(self, deadline_s: float = 5.0) -> None:
         """Best effort; the token is forgotten whatever the answer. After a refusal nothing is sent, not even the logout

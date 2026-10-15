@@ -225,6 +225,13 @@ class FakeHost:
             raise Refusal("not_found", retryable=False)
         if op == "ticket.text" and "size" in args:
             return _ok({"text": "x" * args["size"]})
+        # H12d-3 (the host's check_rd and reader.declare in column R; only the framing is normative here)
+        if op == "ticket.get" and args.get("ref") == "rd-unknown":
+            raise Refusal("sign.convenience_readers", reason="declaration_unknown")
+        if op == "ticket.get" and args.get("ref") == "rd-old":
+            raise Refusal("sign.convenience_readers", reason="reader_too_old", required=1, declared=0)
+        if op == "reader.declare":
+            return _ok({"device": identity.device_id, "reader": 1, "level": 1, "digest": "sha256:" + "cd" * 32})
         return _ok({"op": op, "viewer": identity.person_id, "principal": identity.principal})
 
     def lookup(self, identity: Identity, idem: str) -> dict[str, Any]:

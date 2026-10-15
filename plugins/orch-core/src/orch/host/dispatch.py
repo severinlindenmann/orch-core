@@ -235,7 +235,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
-    if name in readerops.READER_HOST_OPS:  # H12d-2: column P (column R with rd is H12d-3)
+    if name in readerops.READER_HOST_OPS:  # H12d-2: column P (column R: device_signed, H12d-3)
         return ("person_write", "write")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")

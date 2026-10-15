@@ -936,6 +936,13 @@ def _refusal_fields(r: Refusal, *, effects_possible: bool = False, before_bound:
     nk = r.fields.get("next_key")
     if r.code == "ticket.key_not_next" and type(nk) is str and 0 < len(nk) <= 64:
         out["next_key"] = nk  # advisory
+    reason = r.fields.get("reason")  # H12d-3: only a member of the code's closed set
+    if r.code in framing.REASONS and type(reason) is str and reason in framing.REASONS[r.code]:
+        req, dec = r.fields.get("required"), r.fields.get("declared")
+        if reason != "reader_too_old":
+            out["reason"] = reason
+        elif all(type(v) is int and 0 <= v < 2**31 for v in (req, dec)):
+            out.update(reason=reason, required=req, declared=dec)
     return out
 
 

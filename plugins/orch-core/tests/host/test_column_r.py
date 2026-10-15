@@ -135,9 +135,11 @@ def test_matrix_r_is_read_and_device_signed_and_no_other_column_has_device_signe
 
 def test_column_r_serves_only_its_closed_op_list():
     r = resolve_relay(True)
-    for op in sorted(columns.RELAY_OPS - {"relay.submit"}):
+    for op in sorted(columns.RELAY_OPS - columns.DEVICE_SIGNED_OPS):
         assert refusal(r, "read", op) is None, op
     assert refusal(r, "device_signed", "relay.submit") is None
+    assert refusal(r, "device_signed", "reader.declare") is None  # H12d-3
+    assert refusal(r, "person_write", "reader.declare") == "op.not_allowed"  # never as the socket's kind
     # the kind alone never serves R: an op must be named and listed
     assert refusal(r, "read") == "op.not_allowed"
     assert refusal(r, "read", None) == "op.not_allowed"
@@ -172,8 +174,9 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",
         "reader.list",  # H12d-2 (§0.8.6 item 9.11): P and R
     }  # fmt: skip
-    assert columns.RELAY_OPS == frozenset(reads | host | {"whoami", "outcome.get", "relay.submit"})
-    assert columns.DEVICE_SIGNED_OPS == frozenset({"relay.submit"})
+    own = {"whoami", "outcome.get", "relay.submit", "reader.declare"}  # reader.declare: H12d-3, the device's own
+    assert columns.RELAY_OPS == frozenset(reads | host | own)
+    assert columns.DEVICE_SIGNED_OPS == frozenset({"relay.submit", "reader.declare"})
 
 
 def test_no_socket_op_has_kind_device_signed_and_relay_submit_is_not_served_on_the_socket():
@@ -189,9 +192,29 @@ def test_no_socket_op_has_kind_device_signed_and_relay_submit_is_not_served_on_t
 # --- Call.authorize, principal(), principal_of() --------------------------------------------------------------------
 
 
+class _NoConvenienceStore:
+    """H12d-3: what ``check_rd`` asks of the store (no convenience history: rd is not required)."""
+
+    state = object()
+    state_dir = None
+
+    def merged_events(self) -> list:
+        return []
+
+    @contextlib.contextmanager
+    def locked(self):
+        yield
+
+    def revision(self) -> tuple:
+        return ((), ())
+
+
 class WsService:
     def __init__(self, workspace_id: str = WS) -> None:
         self.workspace_id = workspace_id
+        self.state_dir = Path("/nonexistent-h12d3-state")
+        self.host_uid = UID
+        self.store = _NoConvenienceStore()
 
 
 def relay_call(

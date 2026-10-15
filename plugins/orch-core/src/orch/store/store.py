@@ -423,6 +423,18 @@ class Store:
             last = info.seq if limit is None else min(info.seq, after + limit)
             return self._read_events(uid, max(after, 0) + 1, last)
 
+    def revision(self) -> tuple[Any, ...]:
+        """A value that stays equal exactly while no log changed (H12d-3, #555 review F1): the read heads ``(log, seq,
+        offset)`` of every log this store holds, after the lock re-read what changed on disk, and the stat signature
+        ``(size, inode, mtime_ns, ctime_ns)`` of every ticket log file (``_scan_dirs``: one stat per ticket), so an
+        append by this store or another writer, a new ticket log and a cut tail each change it. For a caller that
+        caches a judgement over the whole history (``Store.state`` is a new object at every read)."""
+        with self._locked():
+            self._scan_dirs()
+            heads = tuple(sorted((log, info.seq, info.offset) for log, info in self._logs.items()))
+            files = tuple(sorted((uid, hint.sig) for uid, hint in self._hints.items()))
+            return heads, files
+
     def replay_context(self) -> Any:
         """The model context this store replays with (its verifier and both pins), for a caller that replays the same
         events itself (the host's subscription journal)."""

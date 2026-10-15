@@ -51,6 +51,7 @@ __all__ = [
     "prune",
     "record_level",
     "required_reader",
+    "restore_held",
     "store_record",
     "verify_admission",
     "SEEN_FILE",
@@ -85,6 +86,14 @@ def has_convenience_events(store: Any) -> bool:
 
 def events_have_convenience(events: Iterable[dict[str, Any]]) -> bool:
     return any(isinstance(ev, dict) and ev.get("auth") == "convenience" for ev in events)
+
+
+def restore_held(relay_level: int | None, evidence: Iterable[dict[str, Any]]) -> bool:
+    """R3's hold (H12d-3, §0.8.6 item 9.8): a restore publication whose evidence carries an ``auth:"convenience"``
+    event is held while the relay's last verified level is below 1 (``None``, never checked, counts as 0). The
+    publications are one ordered chain (11A.5): a held restore blocks every later publication until the relay is
+    updated or the restore is resolved; the alarm is ``relay_reader_old``."""
+    return (relay_level is None or relay_level < 1) and events_have_convenience(evidence)
 
 
 def _pairs_auth(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -276,6 +285,10 @@ def pair_entry(facts: Any, workspace_id: str) -> dict[str, Any] | None:
     decl = facts.decl
     if decl is None:
         return None
+    if "person_id" in facts.decl_who and "p_" + facts.decl_who["person_id"] != facts.person:  # #555 review F3
+        from orch.identity import reader
+
+        raise reader.DeclInvalid("who", "the pair declaration names another person than the certificate's")
     entry: dict[str, Any] = {
         "source": "pair",
         "who": facts.decl_who,

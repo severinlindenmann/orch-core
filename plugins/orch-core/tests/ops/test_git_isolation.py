@@ -75,6 +75,8 @@ def _prog(bin_dir: Path, mark: Path, name: str) -> str:
         p.chmod(0o755)
         return str(p)
     body = {"clean": "exec cat", "smudge": "exec cat", "textconv": 'exec cat "$1"'}.get(name.split("-")[-1], "exit 0")
+    if name.startswith("pager"):
+        body = "exec cat > /dev/null"  # read everything: git must not die of SIGPIPE (rc -13 on Linux)
     p.write_text(f'#!/bin/sh\necho ran >> "{mark / name}"\n{body}\n')
     p.chmod(0o755)
     return str(p)
@@ -1160,11 +1162,16 @@ def test_a_backtracking_funcname_never_stalls_the_review_patch(world):
     clean, c1, c2 = _redos_repo(w, "clean")
     repo, h1, h2 = _redos_repo(w, "hostile")
     assert (c1, c2) == (h1, h2)
-    for key in ("diff.x.funcname", "diff.x.xfuncname"):
-        w.git(repo, "config", "--unset-all", key, check=False)
+    # positive control: plain git runs the repo's funcname regex (its match lands in the hunk header)
+    w.git(repo, "config", "diff.x.funcname", r"^\(a*b\)$")
+    hunks = [ln for ln in w.git(repo, "diff", h1, h2).stdout.splitlines() if ln.startswith("@@")]
+    assert hunks and all(ln.endswith("a" * 28 + "b") for ln in hunks), hunks
+    # the backtracking one: plain git may stall on it (macOS's regex engine does, until a 30 s kill; glibc's does
+    # not), orch never runs it
     w.git(repo, "config", "diff.x.funcname", REDOS)
-    with pytest.raises(subprocess.TimeoutExpired):  # positive control: plain git stalls on the regex
-        subprocess.run(["git", "-C", str(repo), "diff", h1, h2], env=w.env(w.empty), capture_output=True, timeout=5)
+    _argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", h1, h2))
+    pins = {(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(int(env["GIT_CONFIG_COUNT"]))}
+    assert {("diff.x.funcname", "^$"), ("diff.x.xfuncname", "^$")} <= pins  # on every platform
     started = time.monotonic()
     got = observe.git(repo, "diff_patch", rev=("3", h1, h2))
     assert time.monotonic() - started < 5

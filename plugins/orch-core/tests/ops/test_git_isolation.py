@@ -361,3 +361,72 @@ def test_the_isolated_environment_is_built_from_scratch():
     assert argv[-4:] == ["show", "--no-ext-diff", "--no-textconv", ":x"]
     assert "--no-pager" in argv and "core.attributesFile=/dev/null" in argv and "i18n.commitEncoding=UTF-8" in argv
     assert gitsafe.argv("/r", ["status"])[-1] == "status"
+
+
+# ----------------------------------------------------------------------------- the gate fails closed, on every path
+
+
+def _no_git_after_a_failed_gate(monkeypatch, exc: BaseException) -> list:
+    """``gitsafe.gate`` raises ``exc``; every later ``subprocess.run`` (the git command itself) is recorded."""
+    ran: list = []
+
+    def gate(repo, own, **kw):
+        raise exc
+
+    monkeypatch.setattr(gitsafe, "gate", gate)
+    real = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: ran.append(a) or real(*a, **k))
+    return ran
+
+
+@pytest.mark.parametrize("exc", [gitsafe.Unsafe("refused"), gitsafe.Unsafe("checking the config timed out")])
+def test_observe_never_runs_git_when_the_gate_refuses(world, monkeypatch, exc):
+    repo = make_repo(world, "r")
+    ran = _no_git_after_a_failed_gate(monkeypatch, exc)
+    for call in (
+        lambda: observe.git(repo, "rev-parse", "HEAD"),
+        lambda: observe.git(repo, "config", "--no-includes", "--get-all", "remote.origin.url"),  # no exempt prefix
+        lambda: observe.git(repo, "config", "--list"),
+        lambda: observe.head(repo),
+        lambda: observe.porcelain(repo),
+        lambda: observe.dirty(repo),
+    ):
+        assert call() is None
+    assert ran == []  # git itself was never started
+
+
+def test_an_unexpected_gate_error_propagates_and_never_falls_through_to_git(world, monkeypatch):
+    repo = make_repo(world, "r")
+    ran = _no_git_after_a_failed_gate(monkeypatch, RuntimeError("boom"))
+    with pytest.raises(RuntimeError):
+        observe.git(repo, "status")
+    assert ran == []
+
+
+def test_a_config_that_cannot_be_listed_is_refused(world):
+    w = world
+    repo = make_repo(w, "r")
+    cfg = repo / ".git" / "config"
+    cfg.chmod(0o000)
+    try:
+        assert observe.head(repo) is None and observe.porcelain(repo) is None
+        assert observe.repo_identity(repo, "r") == "local:r"  # the listing failed: local, never a guess
+    finally:
+        cfg.chmod(0o644)
+    assert observe.head(repo) is not None  # the same repo, readable again
+
+
+def test_health_never_runs_git_when_the_gate_refuses(world, monkeypatch, ws):
+    repo = make_repo(world, "r")
+    caps = Capabilities.direct()
+    _no_git_after_a_failed_gate(monkeypatch, gitsafe.Unsafe("refused"))
+    assert health._gate(repo, caps) == "refused"
+    ran = []
+    monkeypatch.setattr(health, "_git", lambda *a, **k: ran.append(a))
+    store = ws.other()
+    try:
+        found = health.check_staged(store, repo, caps)
+    finally:
+        store.close()
+    assert [f.code for f in found] == ["git.unavailable"] and "refused" in found[0].what
+    assert ran == []

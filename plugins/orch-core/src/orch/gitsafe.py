@@ -56,9 +56,8 @@ Site                                                    Isolation
 ``store/observe.git`` (``head``, ``porcelain``,         :func:`gate` (and :func:`submodules` for ``status``), then
 ``dirty``, ``repo_identity``, ``ops/caps.Git`` and      :func:`argv`, :func:`isolated_env`; person keys only for
 ``hostclient`` in direct mode)                          ``status`` (``core.excludesFile``, ``core.autocrlf``,
-                                                        ``core.eol``); a ``git config --no-includes`` read (the
-                                                        identity's ``remote.origin.url``) executes nothing and is
-                                                        not gated, like the gate's own listing (#546)
+                                                        ``core.eol``); the identity's ``remote.origin.url`` comes
+                                                        from :func:`local_config`, the gate's own listing (#546)
 ``ops/health._git`` (``check --staged``: ``diff         :func:`gate` once per check, then :func:`argv`,
 --cached --raw``, ``show :path``)                       :func:`isolated_env`, no person keys, through ``caps.exec``
                                                         (#546)

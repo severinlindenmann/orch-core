@@ -5,8 +5,8 @@ One place that talks to git for the core: ``orch.ops.runner`` (the commit and th
 :mod:`orch.gitsafe` (:data:`orch.gitsafe.ISOLATION`, #546): no configuration the person or the repository controls is
 read except through an explicit allow-list.
 
-* **The repository's own configuration:** :func:`orch.gitsafe.gate` before every command but a plain
-  ``git config --no-includes`` read, which executes nothing (a key outside the
+* **The repository's own configuration:** :func:`orch.gitsafe.gate` before every command, with no exception and no
+  fallback (a key outside the
   allow-list, such as a ``filter.<d>.clean`` that a ``.gitattributes`` selects, or a config file another account can
   write: git is not started and the answer is ``None``, "cannot be told"); ``status`` also refuses a populated
   submodule (:func:`orch.gitsafe.submodules`: its own config is not gated).
@@ -46,15 +46,12 @@ def git(path: Path, *args: str, strip: bool = True, person: Iterable[str] = (), 
     stdout stripped (unless ``strip`` is off). ``None`` if the gate refuses, git fails or is missing. ``whole_tree``:
     the command reads the working tree (``status``), so a populated submodule is refused too.
 
-    A ``git config --no-includes`` read is not gated: it reads the repository's own config file as data and executes
-    nothing, exactly as the gate's own listing does (``repo_identity`` reads ``remote.origin.url`` this way, so a
-    repository with, say, a local ``url.<base>.insteadOf`` still has its identity, F1 5.7)."""
+    There is no path around the gate: it runs first on every call, and anything it raises (a refusal, a config that
+    cannot be listed, a timeout, git missing) returns ``None`` before git is started (fail closed)."""
     own = os.environ
     repo = os.path.abspath(path)
-    config_read = args[:2] == ("config", "--no-includes")
     try:
-        if not config_read:
-            gitsafe.gate(repo, own)
+        gitsafe.gate(repo, own)
         if whole_tree:
             gitsafe.submodules(repo, own)
         entries = gitsafe.person_entries(own, person)
@@ -112,9 +109,17 @@ def repo_path(root: Path, repos: Mapping[str, Mapping[str, str]], name: str) -> 
 def repo_identity(path: Path, name: str) -> str:
     """The identity of the repository (F1 5.7) from the raw ``remote.origin.url`` (no ``insteadOf``, unstripped): the
     canonical ``https://`` URL it maps to, else ``local:<name>``; more than one value is ``local:<name>`` (git fetches
-    from the first and pushes to all)."""
-    out = git(path, "config", "--no-includes", "--null", "--get-all", "remote.origin.url", strip=False)
-    values = [v for v in (out or "").split("\0") if v]
+    from the first and pushes to all).
+
+    Read from the repository's own configuration as the gate lists it (:func:`orch.gitsafe.local_config`: isolated,
+    ``--no-includes``, executes nothing), not by a second git command, so a repository the gate would refuse (say, a
+    local ``url.<base>.insteadOf``) still has its identity (F1 5.7) and nothing runs. A listing that fails is
+    ``local:<name>``."""
+    try:
+        entries = gitsafe.local_config(os.path.abspath(path), os.environ)
+    except gitsafe.Unsafe:
+        entries = []
+    values = [v for _scope, k, v in entries if k == "remote.origin.url" and v]
     return canon.canonical_repo_identity(values[0] if len(values) == 1 else "", name)
 
 

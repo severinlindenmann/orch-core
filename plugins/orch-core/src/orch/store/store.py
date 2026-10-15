@@ -3640,6 +3640,12 @@ class Store:
                 self._raise_relay_gate(device, "held_evidence")
             return result
 
+    def pair_revoked(self, device: str, person: str) -> bool:
+        """Whether the workspace's own state revokes ``(d_device, p_person)`` (a verified F1 ``device.revoked`` or a
+        restore's revocation, tombstones included): R4 does not show the owner evidence the chain already carries."""
+        with self._locked():
+            return self._state is not None and (device, person) in self._state.revocation_evidence()
+
 
 def device_standing_ok(state: State, device: str, person: str | None = None) -> bool:
     """THE F1 standing ``ok`` (R6a round 5, one implementation): ``device`` (``d_<hex>``) is known, belongs to

@@ -24,8 +24,9 @@ holds as worker jobs, then the durable position, then one ack of at most 10 s):
   later or after a restart.
 * **Held evidence.** The host has no host-originated ``needs`` items yet (issue #572), so a ``held`` result raises
   the relay alarm ``unpublished_held`` naming the pair, and the pair joins ``held`` in ``unpublished.json``
-  (bounded; every completed full read replaces it with the pairs that read held, so a published revocation leaves
-  the list within a day), which ``host.status.relay`` and ``orch host status`` show to the owner with what to do.
+  (bounded; every completed full read replaces it with the pairs that read held; a pair the workspace's own state
+  already revokes is not held, the store answers that through ``relayr4``), which ``host.status.relay`` and
+  ``orch host status`` show to the owner with what to do.
   SEAM (#572): promote this to a host-originated ``needs`` item ("publish this revocation") when those exist.
 * **Failures.** ``cursor_ahead`` (a bug, a forgery or a relay restored from backup): restart from the start (the
   store deduplicates per pair). 429: wait ``Retry-After`` (else 60 s). Any other refusal or transport error: one
@@ -37,6 +38,8 @@ Nothing here touches the store directly (``orch.store`` is reached only through 
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import time
@@ -59,9 +62,16 @@ PAGE_CAP = 4 << 20  # 11A.7: R4 pages read at most 4 MiB (the relay sends at mos
 DEADLINE_S = 10.0  # 11A.7: 10 s per relay call on the aux thread
 BACKOFF_S = 30.0
 RATE_LIMIT_S = 60.0
+SCAN_PAGES_MAX = 2 * (4096 // PAGE_LIMIT + 1)  # a full read (11A.7: at most 4,096 ever-devices per workspace)
+SCAN_ITEMS_MAX = 4096 + PAGE_LIMIT  # ... is cut off beyond this, whatever the relay says (F3)
+SCAN_COOLDOWN_S = 3600.0  # ... and starts over from the start after this
+HOLD_BUDGET_S = 20.0  # the aux thread waits at most this long on the worker's jobs per turn (F6)
+FULL_EVERY_S = FULL_EVERY_MS / 1000.0
 HELD_MAX = 256  # the held pairs shown to the owner; the store keeps the evidence itself (HostPins)
 _POSITION = re.compile(r"[A-Za-z0-9_-]{1,512}")  # an opaque b64u position, put into a query string unescaped
 _HEX32 = re.compile(r"[0-9a-f]{32}")
+_HELD_KEYS = {"device_id", "person_id", "reason", "digest", "at_ms", "chain_reason"}
+_SIG = re.compile(r"[0-9a-f]{64}")
 
 
 def _position(value: object) -> str:
@@ -72,13 +82,14 @@ def _position(value: object) -> str:
 
 def _empty() -> dict[str, Any]:
     return {"v": 1, "cursor": None, "scan": None, "gen": None, "last_full_ms": 0, "notice": None, "held": [],
-            "scan_held": [], "ack": None}  # fmt: skip
+            "scan_held": [], "ack": None, "resume": None, "scan_pages": 0, "scan_items": 0}  # fmt: skip
 
 
 class UnpublishedConsumer:
-    """One workspace's R4 consumer. ``hold(item) -> "held" | "pending" | "dropped"`` is the host's worker job (it
-    raises on a store fault); ``notices()`` returns the last poll's ``notices`` object (or ``None``); ``alarm(code,
-    detail)`` is the worker's alarm sink."""
+    """One workspace's R4 consumer. ``hold(item) -> "held" | "published" | "pending" | "dropped"`` is the host's
+    worker job (``published``: held, but the workspace already revokes the pair; it raises on a store fault);
+    ``notices()`` returns the last poll's ``notices`` object (or ``None``); ``alarm(code, detail)`` is the worker's
+    alarm sink."""
 
     def __init__(
         self,
@@ -99,6 +110,7 @@ class UnpublishedConsumer:
         self._notices, self._alarm, self._now_ms, self._mono = notices, alarm, now_ms, mono
         self._not_before = 0.0
         self._alarmed: set[str] = set()
+        self._full_mono: float | None = None  # when this process last completed a full read (the wall clock may move)
 
     def __repr__(self) -> str:
         return f"UnpublishedConsumer(workspace={self.ws})"
@@ -123,6 +135,17 @@ class UnpublishedConsumer:
             st["gen"] = obj["gen"]
         if type(obj.get("last_full_ms")) is int and obj["last_full_ms"] >= 0:
             st["last_full_ms"] = obj["last_full_ms"]
+        r = obj.get("resume")
+        if type(r) is dict and set(r) == {"pos", "n", "sig"} and type(r["pos"]) is str and type(r["n"]) is int:
+            if (
+                (r["pos"] == "" or _POSITION.fullmatch(r["pos"]))
+                and 1 <= r["n"] < PAGE_LIMIT
+                and _SIG.fullmatch(str(r["sig"]))
+            ):
+                st["resume"] = dict(r)
+        for key in ("scan_pages", "scan_items"):
+            if type(obj.get(key)) is int and 0 <= obj[key] <= 1 << 20:
+                st[key] = obj[key]
         for key in ("held", "scan_held"):
             if type(obj.get(key)) is list:
                 st[key] = [h for h in obj[key] if _held_ok(h)][-HELD_MAX:]
@@ -146,10 +169,11 @@ class UnpublishedConsumer:
             # A new holder generation always starts over, whatever a crashed predecessor left mid-scan (the scan
             # position, its held pairs) or still owed (a pending ack: the new full read re-reads and re-acks every
             # position from the start, so an older generation's ack is dropped, never sent).
-            st["scan"], st["gen"], st["scan_held"], st["ack"] = "", gen, [], None
+            self._restart(st)
+            st["gen"] = gen
             self._save(st)
-        elif st["scan"] is None and now - st["last_full_ms"] >= FULL_EVERY_MS:
-            st["scan"], st["scan_held"] = "", []  # the daily full read from the start
+        elif st["scan"] is None and self._daily_due(st, now):
+            self._restart(st)  # the daily full read from the start
             self._save(st)
         if st["ack"] is not None:
             self._send_ack(st)  # an ack owed from an earlier turn or run: retried first, nothing else this turn
@@ -170,16 +194,47 @@ class UnpublishedConsumer:
             self._backoff("unpublished_transport", type(e).__name__, BACKOFF_S)
             return
         items, cursor, more = page
-        for item in items:
-            result = self._hold(item)  # a store fault raises: no result, nothing stored, nothing acked
-            if result == "held":
-                self._held(st, item, full)
-            elif result not in ("pending", "dropped"):
-                raise ValueError("note_forwarded_revocation answered no known result")
+        if full and (st["scan_pages"] + 1 > SCAN_PAGES_MAX or st["scan_items"] + len(items) > SCAN_ITEMS_MAX):
+            # F3: a relay that never ends a full read cannot pin the host: one alarm, a cool-down, a fresh start
+            self._restart(st)
+            self._save(st)
+            self._backoff("unpublished_scan_unbounded", "a full read exceeded its page or item bound", SCAN_COOLDOWN_S)
+            return
+        sig = hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()
+        key = position or ""
+        done = st["resume"]["n"] if st["resume"] and (st["resume"]["pos"], st["resume"]["sig"]) == (key, sig) else 0
+        started, seen = self._mono(), set()
+        try:
+            for n, item in enumerate(items):
+                if n < done:
+                    continue  # held durably in an earlier turn of this same page (checked by position and content)
+                if n > done and self._mono() - started >= HOLD_BUDGET_S:
+                    # F6: the aux thread does not wait on the worker without bound; the rest carries to the next turn
+                    st["resume"] = {"pos": key, "n": n, "sig": sig}
+                    self._save(st)
+                    return
+                ident = json.dumps(item, sort_keys=True, default=str)
+                if ident in seen:
+                    continue  # a page that repeats an item costs one job, not one per copy
+                seen.add(ident)
+                result = self._hold(item)  # a store fault raises: no result, nothing stored, nothing acked
+                if result == "held":
+                    self._held(st, item, full)
+                elif result == "published":
+                    self._unheld(st, item)  # the workspace already revokes this pair: nothing for the owner to do
+                elif result not in ("pending", "dropped"):
+                    raise ValueError("note_forwarded_revocation answered no known result")
+        except BaseException:
+            self._not_before = self._mono() + BACKOFF_S  # F4: a faulting store is not asked again on every tick
+            raise
+        st["resume"] = None
         if full:
             st["scan"] = cursor if more else None
+            st["scan_pages"], st["scan_items"] = st["scan_pages"] + 1, st["scan_items"] + len(items)
             if not more:  # a completed full read: the held list is exactly what the relay still serves as held
                 st["last_full_ms"], st["held"], st["scan_held"] = now, st["scan_held"], []
+                st["scan_pages"] = st["scan_items"] = 0
+                self._full_mono = self._mono()
         if not full or not more:
             st["cursor"] = cursor  # a read from the stored position only moves forward; a full read ends past all
         if not more:
@@ -187,6 +242,26 @@ class UnpublishedConsumer:
         st["ack"] = cursor  # the ack is owed from here on, also across a restart, until the relay accepts it
         self._save(st)  # durable before the ack (obligation 4)
         self._send_ack(st)
+
+    def _daily_due(self, st: dict[str, Any], now: int) -> bool:
+        """Obligation 1 ("at least once a day"): by the wall clock, by this process's monotonic clock (a clock set back
+        cannot suppress it), and at once when the stored time lies in the future."""
+        if now - st["last_full_ms"] >= FULL_EVERY_MS or now < st["last_full_ms"]:
+            return True
+        return self._full_mono is not None and self._mono() - self._full_mono >= FULL_EVERY_S
+
+    @staticmethod
+    def _restart(st: dict[str, Any]) -> None:
+        """A full read from the start: nothing of an earlier scan (position, held pairs, owed ack, partial page,
+        counters) survives."""
+        st["scan"], st["scan_held"], st["ack"], st["resume"], st["scan_pages"], st["scan_items"] = (
+            "",
+            [],
+            None,
+            None,
+            0,
+            0,
+        )
 
     def _send_ack(self, st: dict[str, Any]) -> None:
         try:
@@ -228,9 +303,9 @@ class UnpublishedConsumer:
 
     def _refused(self, e: RelayRefused, st: dict[str, Any]) -> None:
         if e.status == 409 and e.code == "cursor_ahead":
-            # obligation 1: restart from the start; the store deduplicates
-            st["scan"], st["scan_held"], st["ack"] = "", [], None
+            self._restart(st)  # obligation 1: restart from the start; the store deduplicates
             self._save(st)
+            self._not_before = self._mono() + BACKOFF_S  # F4: the relay's answer does not set the pace
             self._alarm("unpublished_cursor_ahead", "the relay refused the stored position: reading from the start")
             return
         if e.status == 429:
@@ -245,24 +320,39 @@ class UnpublishedConsumer:
             self._alarm(code, detail)
         log.info("unpublished: %s (%s), next read in %.0f s", code, detail, seconds)
 
+    def _unheld(self, st: dict[str, Any], item: Mapping[str, Any]) -> None:
+        """The pair is already revoked by the workspace's own state (the store's answer): it leaves the held list."""
+        pair = (item.get("device_id"), item.get("person_id"))
+        for key in ("held", "scan_held"):
+            st[key] = [h for h in st[key] if (h["device_id"], h["person_id"]) != pair]
+
     def _held(self, st: dict[str, Any], item: Mapping[str, Any], full: bool) -> None:
         """The interim owner notice (#572): the pair joins ``held`` and the alarm names it. The ids come from the item
         the store just verified and held (its outer fields equal the signed ones, or the store would have dropped
         it)."""
         dev, person, reason = item.get("device_id"), item.get("person_id"), item.get("reason")
         digest = (item.get("provenance") or {}).get("digest") if isinstance(item.get("provenance"), Mapping) else None
-        row = {"device_id": dev, "person_id": person, "reason": reason, "digest": digest, "at_ms": self._now_ms()}
+        chain = item.get("chain_reason")  # the relay's outer field (display only): why the pair is a chain upgrade
+        if type(chain) is not str or len(chain) > 32 or not chain.isascii():
+            chain = None
+        row = {"device_id": dev, "person_id": person, "reason": reason, "digest": digest, "at_ms": self._now_ms(),
+               "chain_reason": chain}  # fmt: skip
         if not _held_ok(row):
             return
         for key in ("held", "scan_held") if full else ("held",):
             rest = [h for h in st[key] if (h["device_id"], h["person_id"]) != (dev, person)]  # one row per pair
             st[key] = [*rest, row][-HELD_MAX:]
-        self._alarm("unpublished_held", f"d_{dev} of p_{person} ({reason}): publish this revocation (F1 §5.3)")
+        todo = "carry the pair in a restore (F1 §5.3)" if row["chain_reason"] else "publish this revocation (F1 §5.3)"
+        self._alarm("unpublished_held", f"d_{dev} of p_{person} ({reason}): {todo}")
 
 
 def _held_ok(h: object) -> bool:
-    if type(h) is not dict or set(h) != {"device_id", "person_id", "reason", "digest", "at_ms"}:
+    if type(h) is not dict or set(h) not in ({"device_id", "person_id", "reason", "digest", "at_ms"}, _HELD_KEYS):
         return False
+    if "chain_reason" in h and h["chain_reason"] is not None:
+        c = h["chain_reason"]
+        if type(c) is not str or len(c) > 32 or not c.isascii() or not c.isprintable():
+            return False
     if type(h["device_id"]) is not str or not _HEX32.fullmatch(h["device_id"]):
         return False
     if type(h["person_id"]) is not str or not _HEX32.fullmatch(h["person_id"]):

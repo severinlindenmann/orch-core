@@ -38,10 +38,12 @@ class Relay:
         self.calls: list[tuple[str, str, object, object]] = []
         self.fail: dict[str, BaseException] = {}
         self.acked: list[str] = []
+        self.kws: list[dict] = []
 
     def call(self, method, path, route, **kw):
         snap = self.state.read_json(up.FILE)
         self.calls.append((method, path, kw.get("body"), snap))
+        self.kws.append(kw)
         if route in self.fail:
             e = self.fail.pop(route)
             raise e
@@ -266,7 +268,7 @@ def test_cursor_ahead_on_the_ack_drops_it_and_restarts(state):
 def test_cursor_ahead_restarts_from_the_start(state):
     relay = Relay(state)
     note = {"unpublished": pos(9)}
-    c, _, alarms = make(state, relay, lambda i: "pending", notices=lambda: note)
+    c, clock, alarms = make(state, relay, lambda i: "pending", notices=lambda: note)
     c.step()  # full read
     relay.fail["GET /v2/workspaces/{ws}/unpublished"] = RelayRefused(409, "cursor_ahead")
     note["unpublished"] = pos(10)
@@ -274,20 +276,23 @@ def test_cursor_ahead_restarts_from_the_start(state):
     assert c.load()["scan"] == "" and ("unpublished_cursor_ahead",) == alarms[-1][:1]
     n = len(relay.calls)
     c.step()
+    assert len(relay.calls) == n  # F4: backed off, the relay's answer does not set the pace
+    clock.mono += up.BACKOFF_S + 1
+    c.step()
     assert relay.calls[n][1].endswith("unpublished?limit=64")
 
 
 def test_rate_limited_waits_for_retry_after(state):
     relay = Relay(state)
-    relay.fail["GET /v2/workspaces/{ws}/unpublished"] = RelayRefused(429, "rate_limited", retry_after=30)
+    relay.fail["GET /v2/workspaces/{ws}/unpublished"] = RelayRefused(429, "rate_limited", retry_after=120)
     c, clock, alarms = make(state, relay, lambda i: "pending")
     c.step()
     n = len(relay.calls)
     c.step()
-    clock.mono += 29
+    clock.mono += up.BACKOFF_S + 60  # past the 30 s back-off, still inside Retry-After
     c.step()
     assert len(relay.calls) == n
-    clock.mono += 2
+    clock.mono += 31
     c.step()
     assert len(relay.calls) > n and alarms[0][0] == "unpublished_rate_limited"
 
@@ -492,3 +497,290 @@ def test_a_position_never_reaches_a_query_string_unchecked(bad):
     with pytest.raises(ValueError):
         up._position(bad)  # noqa: SLF001
     assert up._position(pos(3)) == pos(3)  # noqa: SLF001
+
+
+# -- round 2: F1 (a pair the workspace already revokes), F2 (pins), F3 (bounded scan), F4-F6 --------------------
+
+
+def _seam(env, state, relay):
+    """The real ``relayr4.unpublished`` seam over a real store (the job runs inline)."""
+    from types import SimpleNamespace
+
+    from orch.host import relayr4
+
+    alarms: list[tuple[str, str]] = []
+    svc = SimpleNamespace(workspace_id=WS, store=env.store, clock=lambda: T0)
+    worker = SimpleNamespace(session=relay, state=state, job=lambda fn: fn(), loop=None,
+                             alarm=lambda code, detail: alarms.append((code, detail)))  # fmt: skip
+    c = relayr4.unpublished(svc, worker)
+    return c, alarms
+
+
+def test_f1_a_pair_the_workspace_already_revokes_is_not_held(ws, state):
+    env, device, sig_pub = ws
+    it = item(env.owner, sig_pub)
+    relay = Relay(state, {None: ([it], pos(1), False)})
+    c, alarms = _seam(env, state, relay)
+    c.step()
+    assert [h["device_id"] for h in c.load()["held"]] == [device[2:]]  # not yet revoked: held, the owner is told
+    env.revoke_device(device)  # the owner signs device.revoked
+    st = c.load()
+    st["last_full_ms"] = 0
+    c._save(st)  # noqa: SLF001 - the daily full read
+    n_alarms = len(alarms)
+    c.step()
+    st = c.load()
+    assert st["held"] == [] and len(alarms) == n_alarms and relay.acked[-1] == pos(1)  # still read and acked
+
+
+def test_f1_the_consumer_drops_a_published_pair_from_the_held_list(state):
+    relay = Relay(state, {None: ([_it()], pos(1), True), pos(1): ([_it()], pos(2), False)})
+    results = iter(["held", "published"])
+    c, _, alarms = make(state, relay, lambda i: next(results))
+    c.step()
+    assert len(c.load()["scan_held"]) == 1
+    c.step()
+    assert c.load()["held"] == [] and [a[0] for a in alarms] == ["unpublished_held"]
+
+
+def test_f1_the_fix_text_follows_chain_reason_and_never_asks_for_a_duplicate_revocation(state):
+    from orch.host import relayr4
+
+    plain = {**HELD_ROW, "chain_reason": None}
+    chain = {**HELD_ROW, "chain_reason": "upgrade", "device_id": "ef" * 16}
+    a = relayr4.held_attention("X", [plain])
+    b = relayr4.held_attention("X", [chain])
+    c = relayr4.held_attention("X", [plain, chain])
+    assert "device.revoked event" in a["fix"] and "restore" not in a["fix"]
+    assert "only a restore" in b["fix"] and "device.revoked event" not in b["fix"]
+    assert "device.revoked event" in c["fix"] and "only a restore" in c["fix"]
+    relay = Relay(state, {None: ([{**_it(), "chain_reason": "upgrade"}], pos(1), False)})
+    cons, _, alarms = make(state, relay, lambda i: "held")
+    cons.step()
+    assert cons.load()["held"][0]["chain_reason"] == "upgrade" and "restore" in alarms[-1][1]
+    assert up.held_pairs(json.loads(state.read(up.FILE)))[0]["chain_reason"] == "upgrade"
+
+
+HELD_ROW = {"device_id": "ab" * 16, "person_id": "cd" * 16, "reason": "compromised", "digest": "sha256:" + "1" * 64,
+            "at_ms": 1}  # fmt: skip
+
+
+def test_f2_a_fence_error_on_the_ack_is_not_swallowed(state):  # M37 (also above)
+    relay = Relay(state, {None: ([], pos(1), False)})
+    relay.fail[ACK] = Fenced("fenced")
+    c, _, _ = make(state, relay, lambda i: "pending")
+    with pytest.raises(Fenced):
+        c.step()
+
+
+def test_f2_the_notice_is_answered_only_when_an_incremental_read_completes(state):  # M16
+    relay = Relay(state, {None: ([], pos(1), False), pos(1): ([], pos(2), True), pos(2): ([], pos(3), False)})
+    note = {"unpublished": pos(9)}
+    c, _, _ = make(state, relay, lambda i: "pending", notices=lambda: note)
+    c.step()  # the full read
+    note["unpublished"] = pos(10)
+    relay.pages[pos(1)] = ([], pos(2), True)
+    c.step()  # an incremental read from pos(1), more pages follow
+    assert c.load()["notice"] == pos(9)  # not answered yet
+    c.step()
+    assert c.load()["notice"] == pos(10) and c.load()["cursor"] == pos(3)
+
+
+def test_f2_the_position_is_checked_before_it_reaches_a_query_string(state):  # M24
+    c, _, _ = make(state, Relay(state), lambda i: "pending")
+    with pytest.raises(ValueError):
+        c._get("x&y")  # noqa: SLF001
+
+
+def test_f2_the_page_cap_and_the_deadline_are_passed_to_every_call(state):  # M09
+    relay = Relay(state, {None: ([], pos(1), False)})
+    c, _, _ = make(state, relay, lambda i: "pending")
+    c.step()
+    assert [kw["deadline_s"] for kw in relay.kws] == [up.DEADLINE_S, up.DEADLINE_S]
+    assert relay.kws[0]["cap"] == up.PAGE_CAP == 4 << 20
+
+
+def test_f2_the_held_list_is_bounded(state):  # M12, M34
+    def page(lo):
+        return [_it(dev=f"{i:032x}") for i in range(lo, lo + 64)]
+
+    pages = {None: (page(0), pos(1), True)}
+    for k in range(1, 5):
+        pages[pos(k)] = (page(64 * k), pos(k + 1), k < 4)
+    relay = Relay(state, pages)
+    c, _, _ = make(state, relay, lambda i: "held")
+    for _ in range(5):
+        c.step()
+    st = c.load()
+    assert len(st["held"]) == up.HELD_MAX == 256  # 320 pairs held, 256 kept (the newest)
+    assert st["held"][-1]["device_id"] == f"{319:032x}" and st["held"][0]["device_id"] == f"{64:032x}"
+    assert len(up.held_pairs({"held": [HELD_ROW] * 300})) == up.HELD_MAX
+
+
+@pytest.mark.parametrize(
+    "field,bad",
+    [("device_id", "zz"), ("person_id", "AB" * 16), ("reason", "x" * 33), ("reason", "\u00e9"), ("digest", "x" * 81),
+     ("at_ms", "1"), ("chain_reason", 5), ("chain_reason", "x" * 33)],
+)  # fmt: skip
+def test_f2_a_held_row_is_checked_field_by_field(field, bad):  # M21, M22
+    assert up.held_pairs({"held": [HELD_ROW]}) == [HELD_ROW]
+    assert up.held_pairs({"held": [{**HELD_ROW, field: bad}]}) == []
+    assert up.held_pairs({"held": [{**HELD_ROW, "extra": 1}]}) == []
+
+
+class _Endless(Relay):
+    """A hostile relay: every full-read page says ``more`` with a fresh cursor and a valid item."""
+
+    def call(self, method, path, route, **kw):
+        if method == "GET":
+            self.calls.append((method, path, None, None))
+            n = len(self.calls)
+            return {"items": [_it(dev=f"{n:032x}")], "cursor": pos(n), "more": True}
+        return super().call(method, path, route, **kw)
+
+
+def gets(relay):
+    return sum(1 for c in relay.calls if c[0] == "GET")
+
+
+def test_f3_a_full_read_that_never_ends_is_cut_off_with_one_alarm_and_restarts_after_a_cooldown(state):
+    relay = _Endless(state)
+    holds = []
+    c, clock, alarms = make(state, relay, lambda i: holds.append(1) or "held")
+    for _ in range(up.SCAN_PAGES_MAX + 5):
+        c.step()
+    assert len(holds) <= up.SCAN_ITEMS_MAX and sum(a[0] == "unpublished_scan_unbounded" for a in alarms) == 1
+    assert c.load()["scan"] == ""  # restarted from the start, not abandoned
+    n = gets(relay)
+    for _ in range(50):
+        c.step()
+    assert gets(relay) == n  # the cool-down
+    clock.mono += up.SCAN_COOLDOWN_S / 2
+    for _ in range(5):
+        c.step()
+    assert gets(relay) == n  # still inside it
+    clock.mono += up.SCAN_COOLDOWN_S / 2 - 1
+    clock.mono += up.SCAN_COOLDOWN_S + 1
+    c.step()
+    assert gets(relay) == n + 1
+    assert [c for c in relay.calls if c[0] == "GET"][-1][1].endswith("unpublished?limit=64")
+
+
+def test_f3_a_page_that_repeats_an_item_costs_one_job(state):
+    relay = Relay(state, {None: ([_it()] * 64, pos(1), False)})
+    holds = []
+    c, _, alarms = make(state, relay, lambda i: holds.append(1) or "held")
+    c.step()
+    assert len(holds) == 1 and sum(a[0] == "unpublished_held" for a in alarms) == 1
+
+
+def test_f4_a_store_fault_or_an_unknown_result_backs_off(state):
+    relay = Relay(state, {None: ([_it()], pos(1), False)})
+
+    def boom(i):
+        raise RuntimeError("store")
+
+    c, clock, _ = make(state, relay, boom)
+    with pytest.raises(RuntimeError):
+        c.step()
+    n = len(relay.calls)
+    c.step()
+    c.step()
+    assert len(relay.calls) == n  # no new GET until the back-off passed
+    clock.mono += up.BACKOFF_S + 1
+    with pytest.raises(RuntimeError):
+        c.step()
+    assert len(relay.calls) == n + 1
+
+
+def test_f5_a_clock_set_back_does_not_suppress_the_daily_read(state):
+    relay = Relay(state)
+    c, clock, _ = make(state, relay, lambda i: "pending")
+    clock.ms += 10 * 86400 * 1000  # the clock was far ahead
+    c.step()
+    assert c.load()["last_full_ms"] == clock.ms
+    clock.ms -= 10 * 86400 * 1000  # and is corrected
+    n = gets(relay)
+    c.step()
+    assert gets(relay) == n + 1  # stored time in the future: read again
+    # the process's own monotonic clock also brings it back, whatever the wall clock says
+    n = gets(relay)
+    clock.mono += up.FULL_EVERY_S + 1
+    clock.ms = c.load()["last_full_ms"]  # a wall clock that stands still
+    c.step()
+    assert gets(relay) == n + 1
+
+
+def test_f6_a_page_is_held_within_a_time_budget_and_the_rest_carries_over_without_an_ack(state):
+    items = [_it(dev=f"{i:032x}") for i in range(10)]
+    relay = Relay(state, {None: (items, pos(1), False)})
+    held = []
+    clock = Clock()
+
+    def hold(i):
+        held.append(i["device_id"])
+        clock.mono += up.HOLD_BUDGET_S / 3  # a slow worker queue
+        return "pending"
+
+    c, _, _ = make(state, relay, hold, clock=clock)
+    c.step()
+    assert 1 <= len(held) < 10 and relay.acked == []  # stopped at the budget: no ack, position not moved
+    assert c.load()["resume"]["n"] == len(held) and c.load()["cursor"] is None
+    for _ in range(20):
+        c.step()
+        if relay.acked:
+            break
+    assert relay.acked == [pos(1)] and held == [f"{i:032x}" for i in range(10)]  # each held exactly once
+    assert c.load()["resume"] is None
+
+
+def test_f6_a_changed_page_is_held_again_from_its_start(state):
+    a = [_it(dev=f"{i:032x}") for i in range(6)]
+    relay = Relay(state, {None: (a, pos(1), False)})
+    held = []
+    clock = Clock()
+
+    def hold(i):
+        held.append(i["device_id"])
+        clock.mono += up.HOLD_BUDGET_S / 2
+        return "pending"
+
+    c, _, _ = make(state, relay, hold, clock=clock)
+    c.step()
+    assert c.load()["resume"] is not None
+    relay.pages[None] = ([_it(dev=f"{i:032x}") for i in range(10, 16)], pos(1), False)  # the relay answers otherwise
+    held.clear()
+    c.step()
+    assert held[0] == f"{10:032x}"  # the first item of the new page is not skipped
+
+
+class _Wide(Relay):
+    """A hostile relay: pages of 64 distinct items, ``more`` forever."""
+
+    def call(self, method, path, route, **kw):
+        if method == "GET":
+            self.calls.append((method, path, None, None))
+            n = sum(1 for c in self.calls if c[0] == "GET")
+            return {"items": [_it(dev=f"{n * 64 + i:032x}") for i in range(64)], "cursor": pos(n), "more": True}
+        return super().call(method, path, route, **kw)
+
+
+def test_f3_the_item_bound_cuts_off_wide_pages_before_the_page_bound(state):
+    relay = _Wide(state)
+    holds = []
+    c, _, alarms = make(state, relay, lambda i: holds.append(1) or "pending")
+    for _ in range(up.SCAN_PAGES_MAX):
+        c.step()
+    assert len(holds) <= up.SCAN_ITEMS_MAX and sum(a[0] == "unpublished_scan_unbounded" for a in alarms) == 1
+    assert gets(relay) <= up.SCAN_ITEMS_MAX // 64 + 1
+
+
+def test_f6_a_zero_budget_still_holds_one_item_per_turn(state, monkeypatch):
+    monkeypatch.setattr(up, "HOLD_BUDGET_S", 0.0)
+    items = [_it(dev=f"{i:032x}") for i in range(4)]
+    relay = Relay(state, {None: (items, pos(1), False)})
+    held = []
+    c, _, _ = make(state, relay, lambda i: held.append(i["device_id"]) or "pending")
+    for _ in range(6):
+        c.step()
+    assert relay.acked == [pos(1)] and len(held) == 4

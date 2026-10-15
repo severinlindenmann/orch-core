@@ -1,12 +1,10 @@
 # Contributing
 
-> **develop = orch v2 in progress; v1 lives on `main`.** The v1 instructions below apply to `main`; the v2 core workflow is in the next section.
-
 Thanks for helping. A few rules keep the project healthy.
 
-## orch v2 core (develop)
+## orch v2 core
 
-The v2 core lives in `plugins/orch-core` (layout: `docs/architecture/orch-v2-core.md`, test tiers: `docs/architecture/orch-v2.md` Part B). The v1 steps below (addons, `orch-session` fixtures) apply to `main` only.
+The v2 core lives in `plugins/orch-core` (layout: `docs/architecture/orch-v2-core.md`, test tiers: `docs/architecture/orch-v2.md` Part B).
 
 ```bash
 cd plugins/orch-core
@@ -18,24 +16,21 @@ uv run pytest -q -n auto                           # T2: the whole core with slo
 
 The shared protocol vectors and HTTP fixtures in `plugins/orch-core/tests/relay/vectors/` come from orch-relay. The vector file is stored xz-compressed (`vectors_v2.json.xz`; `SOURCE` pins the sha256 of the decompressed bytes); never commit the raw `vectors_v2.json`. Refresh them (and `SOURCE`) with `scripts/sync-vectors.sh [ref]`; the default ref is `origin/develop` and the clone is `~/orch-dev/orch-relay` (override with `ORCH_RELAY_DIR`). Then bump `PINNED_RELAY_COMMIT` in `tests/relay/test_corpus.py` and commit the result as one PR.
 
-## Before you push (v1, `main`)
+## Before you push
 
 Run the same steps CI runs, locally:
 
 ```bash
 cd plugins/orch-core
-uv sync --locked --extra dev --extra dashboard
-uv run pytest -q -n auto --dist loadfile   # parallel (pytest-xdist); drop -n auto to debug one test
-uv run orch addon check addon-template --strict && uv run pytest -q addon-template/tests
-for m in addons/*/orch-addon.json; do d=${m%/orch-addon.json}; uv run orch addon check "$d" --strict; [ -d "$d/tests" ] && uv run pytest -q "$d/tests"; done
-cd ../..
-uv run --project plugins/orch-core python plugins/orch-session/test/make_fixtures.py /tmp/orch-session-fixtures \
-  && ORCH_SESSION_FIXTURES=/tmp/orch-session-fixtures node --test plugins/orch-session/test/*.spec.ts
+uv sync --locked
+uv run ruff check && uv run ruff format --check
+uv run pytest -q -m "not slow" -n auto     # parallel (pytest-xdist); drop -n auto to debug one test
+uv run pytest -q -m slow -n auto           # the slow tests, which CI runs as a second job
 ```
 
-While you work, `uv run pytest -q -m "not slow"` skips the tests marked `slow` (wheel and venv builds, the bridge mutants, a performance budget); CI runs them all. Every run lists its 15 slowest tests: mark a new test `@pytest.mark.slow` when it lands there.
+The tests marked `slow` (wheel and venv builds, the bridge mutants, a performance budget) run in their own CI job. Every run lists its 15 slowest tests: mark a new test `@pytest.mark.slow` when it lands there.
 
-CI uses Python 3.11 and Node 24, so avoid syntax that needs a newer Python. The orch-core workflow runs the core tests and the addon checks as parallel jobs; the `orch-core` check is green when both are. CI also runs on every pull request to `main` and on `main` itself, but not on pushes to other branches.
+CI uses Python 3.11, so avoid syntax that needs a newer Python. The workflows are in `.github/workflows` (`orch-core`, `dashboard`).
 
 ## Pull requests
 

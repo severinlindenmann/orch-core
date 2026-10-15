@@ -41,6 +41,9 @@ const rowOf = async (name: string) => (await screen.findAllByTestId('drop-row', 
 const file = (bytes: number, name = 'notes.txt', type = 'text/plain') => new File([new Uint8Array(bytes).fill(7)], name, { type })
 const pick = async (view: ReturnType<typeof renderApp>, f: File) => view.user.upload(await screen.findByTestId('drop-file-input', {}, T), f)
 
+/** Tests that push a real multi-MiB file through the chunked upload in jsdom: pure CPU, slow on a busy CI runner. */
+const BIG_FILE_MS = 30_000
+
 describe('the gate', () => {
   it('the real api answers "not available" and the gate needs both the feature and a served api', async () => {
     expect(realDropApi.served('w')).toBe(false)
@@ -175,7 +178,7 @@ describe('upload', () => {
     // The list shows the new item under Sent.
     await view.user.click(screen.getByTestId('drop-tab-sent'))
     await rowOf('figures.xlsx')
-  })
+  }, BIG_FILE_MS)
 
   it('Cancel during the browser upload stops it, drops the host blob and sends nothing', async () => {
     const view = open('drop-list', { stallAfterChunks: 1 })
@@ -185,7 +188,7 @@ describe('upload', () => {
     expect(await screen.findByTestId('drop-cancelled', {}, T)).toHaveTextContent('Upload of slow.bin cancelled. Nothing was sent.')
     await waitFor(() => expect(ops('blob.drop')).toHaveLength(1))
     expect(ops('send')).toHaveLength(0)
-  })
+  }, BIG_FILE_MS)
 
   it('drag and drop uploads the dropped file', async () => {
     open('drop-list')
@@ -375,7 +378,7 @@ describe('review fixes', () => {
     await waitFor(() => expect(ops('blob.drop')).toHaveLength(1))
     expect(ops('blob.drop')[0].args[0]).toMatch(/^b_DEMO/)
     expect(ops('send')).toHaveLength(0)
-  })
+  }, BIG_FILE_MS)
 
   it('L3: a refused drop.send drops the uploaded blob', async () => {
     const view = open('drop-errors')

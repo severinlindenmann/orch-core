@@ -175,8 +175,9 @@ def test_grant_list_fields(w):
     c = w.client()
     (grant,) = ok(c.req("grant.list"))["grants"]
     assert set(grant) == {
-        "id", "person", "scope", "verbs", "issued_at", "expires_at", "revoked_at", "sessions", "session_ids",
+        "id", "person", "scope", "verbs", "label", "issued_at", "expires_at", "revoked_at", "sessions", "session_ids",
     }  # fmt: skip
+    assert isinstance(grant["label"], str)  # the grant.issued label (null when the grant has none)
     assert grant["id"] == grant_id(w.grant) and grant["person"] == w.lab.owner
     assert grant["scope"] == "all" and grant["verbs"] == "agent" and grant["revoked_at"] is None
     assert grant["issued_at"] < grant["expires_at"] and grant["sessions"] == 0 and grant["session_ids"] == []

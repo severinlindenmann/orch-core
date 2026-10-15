@@ -121,6 +121,7 @@ def grants(store, ws, person: str, args: dict[str, Any], ext: bool) -> dict[str,
             "person": g.person,
             "scope": g.scope,
             "verbs": g.verbs,
+            "label": getattr(g, "label", None),  # H11c-2: the grant.issued label
             "issued_at": issued[g.id],
             "expires_at": g.expires_at,
             "revoked_at": revoked[g.id]["at"] if g.id in revoked else None,

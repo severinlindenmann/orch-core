@@ -239,6 +239,7 @@ class RunnerGrants:
             return None
         table.forgotten[cur["grant"]] = str(cur.get("until") or "")
         self._audit("grant.drop", workspace_id=table.workspace_id, grant=cur["grant"], person=person, reason=reason)
+        self.hub.publish_grant(table.workspace_id, person)
         return str(cur["grant"])
 
     def _confirm(self, table: GrantTable, person: str, gid: str, until: str, scope: str, did: str) -> None:
@@ -250,6 +251,7 @@ class RunnerGrants:
         if did in table.deposits:
             table.deposits[did].update(outcome="confirmed", reason=None)
         table.save()
+        self.hub.publish_grant(table.workspace_id, person)
         self._audit("grant.deposit", workspace_id=table.workspace_id, grant=gid, person=person, deposit_id=did,
                     outcome="confirmed")  # fmt: skip
         self.watch()
@@ -266,6 +268,8 @@ class RunnerGrants:
         if was:
             table.current.pop(person, None)
         table.save()
+        if was:
+            self.hub.publish_grant(workspace_id, person)
         self._audit("grant.forget", workspace_id=workspace_id, grant=gid, person=person, held=was)
         await self._drop(gid)
         return {"forgotten": was}
@@ -331,6 +335,8 @@ class RunnerGrants:
         for gid in drops:
             self._audit("grant.drop", grant=gid, reason="revalidated")
             await self._drop(gid)
+        for wid in sorted(set(self.hub.host.services)):
+            self.hub.publish_grant(wid)  # the runner (re)connected: every person's view may differ from before
         self.watch()
 
     def _scope(self, wid: str, gid: str) -> str:
@@ -485,7 +491,8 @@ def _deposit_plan(call: Call, hub: RunnerHub, deposit_id: str) -> dict[str, Any]
         raise HostError("grant.expiring", "the grant has less than 15 minutes left; issue a new one")
     if not enablement.state_of(hub.host.state_dir, service.workspace_id, hub.host.host_uid)["enabled"]:
         raise HostError("runner.disabled", "dashboard execution is off for this workspace on this machine "
-                        "(missing: machine); turn it on in your terminal: orch runner enable")  # fmt: skip
+                        "(missing: machine); turn it on in your terminal: orch runner enable",
+                        detail={"missing": "machine"})  # fmt: skip
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     return {"deposit_id": deposit_id, "grant": grant.id, "person": mapped, "until": view.expires_at,
@@ -512,11 +519,17 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
             if dep is None or dep.get("person") != plan["person"]:
                 return ok_result({"deposit": "none"})
             outcome = dep.get("outcome")
-            return ok_result({"deposit": "unknown" if outcome == "pending" else outcome})
+            reason = dep.get("reason") if outcome == "rejected" else None
+            return ok_result({"deposit": "unknown" if outcome == "pending" else outcome,
+                              **({"reason": reason} if reason else {})})  # fmt: skip
         if op == "grant.forget":
             return ok_result(await grants.forget(wid, plan["person"], plan["grant"], plan["until"]))
         if not enablement.state_of(hub.host.state_dir, wid, hub.host.host_uid)["enabled"]:  # again, at use
-            raise HostError("runner.disabled", "dashboard execution is off for this workspace (missing: machine)")
+            raise HostError(
+                "runner.disabled",
+                "dashboard execution is off for this workspace (missing: machine)",
+                detail={"missing": "machine"},
+            )
         secret = (call.frame.get("auth") or {}).get("grant")
         if not isinstance(secret, str) or not secret.startswith(plan["grant"] + "."):
             raise HostError("op.not_allowed", "grant.deposit: auth.grant is not the planned grant")

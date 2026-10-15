@@ -292,6 +292,18 @@ _ERROR = _object(
         "hint": _str(low=1, high=400),
         "fix": _object({"argv": _array(_STRING, 32, 1)}, host=True),
         "retry_after_ms": _int(1, 3_600_000),
+        # §0.3 (v1.9): a closed per-code object; a reader ignores unknown keys (§0.1), the host sends only the table's
+        "detail": _object(
+            {},
+            {
+                "state": _str(r"[a-z_]+", 1, 32),
+                "which": _str(r"[a-z_]+", 1, 32),
+                "reason": _str(r"[a-z_]+", 1, 32),
+                "missing": _str(r"[a-z_]+", 1, 32),
+                "next_key": _str(KEY),
+            },
+            host=True,
+        ),
     },
     host=True,
 )
@@ -342,6 +354,15 @@ _ITEM = {
         _object({"id": _str(r"[0-9]{1,15}\.r"), "t": _const("run"), "run": {"type": "object"}}, host=True),
         _object(
             {"id": _str(r"[0-9]{1,15}\.r"), "t": _const("gone"), "run": _str(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}")},
+            host=True,
+        ),
+        # H11c-2: the caller person's runner grant (id, until, scope; never the secret) or null
+        _object(
+            {
+                "id": _str(r"[0-9]{1,15}\.g[0-9]{1,9}"),
+                "t": _const("runner"),
+                "grant": _nullable(_object({"id": _STRING, "until": _STRING, "scope": _STRING}, host=True)),
+            },
             host=True,
         ),
     ]

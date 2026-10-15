@@ -145,7 +145,8 @@ Res     = {t:"res", id:ReqId, ok:true, result:Result}
 Result  = {data:any, key:Key | null, seq:int 0.., cursor:int 0.., hints:[str]{0..8}, lines:[str]{0..10000},
            duplicate:bool, exit:int 0..9, head:str | null}
 Error   = {code:str/[a-z_]+(\.[a-z_]+)*/, message:str{1..400}, hint?:str{1..400},
-           fix?:{argv:[str]{1..32}}, retryable:bool, retry_after_ms?:int 1..3600000}
+           fix?:{argv:[str]{1..32}}, retryable:bool, retry_after_ms?:int 1..3600000,
+           detail?:{state?:str, which?:str, reason?:str, missing?:str, next_key?:Key}}   // v1.9, closed per code (below)
 Evt     = {t:"evt", sub:SubId, cursor:Cursor, items:[Item]{0..64}, end?:EndReason}
 Fatal   = {t:"fatal", error:Error}
 OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
@@ -153,7 +154,21 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 
 - **`Result`** is `orch.ops.Result` in full. The CLI renders text from it with its own templates, so P1's golden
   output is unchanged.
-- **`Error`** is the F1 §10.4 item 4 body plus the optional `retry_after_ms`. The `exit` member of an error `Res` is
+- **`Error.detail` (v1.9, #479)** is optional and **closed per code**: only the five codes below may carry it, only the
+  keys listed for the code, and only a closed value or a `Key`-format string; never free text, a path or a secret. The
+  host drops any other code, key or value before it sends. A client ignores unknown keys (§0.4), so this is additive.
+
+  | Code | `detail` keys (all optional; a missing key means the host did not know) |
+  |---|---|
+  | `term.not_attachable` | `state`: `starting`, `running`, `exited` or `lost` |
+  | `run.limit` | `which`: `agent_ws`, `agent_person`, `shell_person` or `runner` |
+  | `launch.no_grant` | `reason`: `none`, `expiring`, `scope` or `revoked` |
+  | `runner.disabled` | `missing`: `addon`, `machine` or `terminals` |
+  | `ticket.key_not_next` | `next_key`: the store's next ticket key (advisory, never a reservation) |
+
+  The `blocked` object of a preview (§12) keeps its own `detail` with the same keys; it is part of the result, not of
+  an `Error`.
+- **`Error`** is the F1 §10.4 item 4 body plus the optional `retry_after_ms` and `detail`. The `exit` member of an error `Res` is
   the CLI exit code (§0.6).
 - **Malformed requests.** A `req` with an unknown key, a missing required key or a wrong type answers `req.invalid`
   when its `id` is readable, and is `fatal` `frame.invalid` otherwise. `args` that fail the op's schema answer
@@ -447,14 +462,14 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
-| `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
+| `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` (v1.9: on the `Error` only where the host knows the reason; a preview's `blocked.detail` always has it) | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
 | `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
 | `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
 | `grant.expiring` | 3 | no | stays | `grant.deposit` of a grant with less than 15 minutes left | — |
 | `event.expired` | 3 | no | stays | `relay.submit`: the event id's ULID time is outside [host now − 900 s, host now + 300 s] at job time (§11A.14 step W, after L3: amendment A; H12e `admission.known_or_fresh`). Definite, nothing landed (class C-review) | — |
 | `event.abandoned` | 3 | no | stays | `relay.submit`: a restore abandoned the event with this id (in the replayed log's ids, not in its lines; §11A.14 L3; H12e `admission.dedup`). Class C-review | — |
-| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); the relay answer carries the advisory `next_key` (R2; the socket `Error` has no `detail`, `HostError.detail` is in-process), never a reservation. Class C-auto | — |
+| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); the `Error` carries the advisory `detail.next_key` (v1.9, §0.3; R2's relay answer may carry it too), never a reservation. Class C-auto | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -1205,8 +1220,8 @@ column G (judgement call of H12e: an agent's `new` allocates its own key), and a
 `grant.list {active?:bool = true}` (read, R2) →
 
 ```
-{grants:[{id:str, person:Person, scope:"all"|"workable", verbs:"agent" | [OpName], issued_at:Time, expires_at:Time,
-          revoked_at:Time | null, sessions:int,
+{grants:[{id:str, person:Person, scope:"all"|"workable", verbs:"agent" | [OpName], label:str | null,   // label: the grant.issued label (H11c-2)
+          issued_at:Time, expires_at:Time, revoked_at:Time | null, sessions:int,
           // v1.5, read_ext/2 (§0.8.5):
           revoked?:{by:Person, at:Time, seq:int}, session_ids?:[str]{0..100}, sessions_more?:bool}]}
 ```
@@ -2386,7 +2401,10 @@ envelope.
   (`sha256(cj(sorted served_ops()))`); a mismatch refuses that workspace with `host.version_mismatch` ("the signer's
   orch-core differs from the host's") and `status` shows `available:false, problem:"version_mismatch"`. Algorithm
   drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
-  answers `core` (the orch-core version) and `contract: 1`; the dashboard refuses a signer with another contract.
+  answers `core` (the orch-core version) and `contract`: **1** (H5c to H11b) or **2** (H11c-2, deposit support: `prepare {deposit}` and the
+  `deposit`, `deposit_id`, `grant`, `deposit_reason` answers of `sign`). A contract-1 signer reads `deposit` as an unknown
+  argument and answers `invalid.input`, and refuses every `grant` as `terminal_only`; a client reads `contract` to tell
+  the two apart. A client written for contract 2 accepts 1 and 2 (1: no click grants) and refuses any other value.
 - **Frames (normative)** on the socketpair: §0.2's codec (`orch.host.frames.encode` and `Decoder`: a 4-byte big-endian
   length, then strict JSON, at most 2 MiB; parsing and nesting limits before any validation), one request at a time:
   - request: `{"t":"req", "id":str/[A-Za-z0-9_-]{1,32}/, "op":"prepare"|"view"|"sign"|"cancel"|"status", "args":{…}}`;
@@ -2402,9 +2420,12 @@ prepare {workspace_id:WsId, op:OpName, args:object, idem:Idem, files?:{name: {b6
 view    {workspace_id:WsId, request_id:ReqHr} → {view:View, view_digest:Hash}
 sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, word?:str{1..128}}
   → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool,     // never a secret
-     deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID, grant?:str}           // v1.6: deposit grants only
+     deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID, grant?:str,           // v1.6: deposit grants only
+     deposit_reason?:DepositReason}                  // contract 2: only when deposit is "rejected"
+DepositReason = "grant.forgotten"|"grant.not_runner"|"grant.verbs"|"grant.expiring"|"rate.limited"|"runner.unavailable"|"other"
+               // a static code of this closed set, never host text; any other host refusal is "other"
 cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
-status  {} → {core:str, contract:1, workspaces:[{workspace_id:WsId, prefix:str,
+status  {} → {core:str, contract:1|2, workspaces:[{workspace_id:WsId, prefix:str,
                            custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
                            available:bool, problem?:str}]}
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
@@ -3768,7 +3789,30 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     unexpected model exceptions to `validation.event`; §11A.14 amended: a `failed` outcome with nothing landed counts as
     `refused` (14.4), the identity check lives in the result builder with no digest in `Planned` (14.6 L7, 14.9),
     start-up recovery runs in R2's `Bridge.start` (H12a R5). No hash, contract or schema change.
-43. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10; the number may be renumbered if another item lands first):**
+43. **Start-agent dashboard follow-ups (H11c-2):** `grant.list` items gain `label`
+    (`issued_at` was already there); the click signer's `sign` answer gains `deposit_reason` when `deposit` is
+    `rejected` (closed set `grant.forgotten`, `grant.not_runner`, `grant.verbs`, `grant.expiring`, `rate.limited`,
+    `runner.unavailable`, `other`; never host text) and `grant.deposit_status` gains `reason`; the click signer
+    `contract` goes from 1 to 2 (deposit support; a client for contract 2 accepts 1 and 2); `run.sub` gains the
+    `{t:"runner", grant}` item (§12.3). No F1, schema or capability change.
+44. **Read-time worktree back-pointers (#486, after #485):** every reader open (`gitdir` and `worktree` profiles,
+    and direct mode) checks git's back-pointers against the pins: a linked gitdir is `<commondir>/worktrees/<id>`
+    whose `gitdir` file names the pinned `<working copy>/.git`, a main gitdir is `<working copy>/.git`, and the
+    working copy's `.git`, read through its pinned fd, names the pinned gitdir (linked) or is it (main); the
+    `gitdir` profile's allow-list gains exactly `<working copy>/.git`. Relative back-pointers (git 2.48+
+    `worktree.useRelativePaths`) are refused, as at pin time. A main repo that a compromised batch pin child passed off as another declared repo's worktree,
+    or a worktree moved since it was pinned, is observe.unavailable. No wire, schema or capability change.
+
+**v1.8 → v1.9 (additive, #479; item numbers may be renumbered when a parallel change lands first).**
+
+45. **`Error.detail`** (§0.3): an optional object on the socket `Error`, closed per code. `HostError.error()` sends it
+    and `frames._ERROR` allows it. Only `term.not_attachable` (`state`), `run.limit` (`which`), `launch.no_grant`
+    (`reason`), `runner.disabled` (`missing`: `addon`, `machine` or `terminals`) and `ticket.key_not_next` (`next_key`) may carry it; any other code, key
+    or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
+    `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
+    (§0.4), so no cap or op version changes.
+
+46. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10):**
     `orch.identity.answers` (the six exact §8.3 pair answers; a relayed challenge or rejection enters only as the
     verified `CertChallenge`/`CertRejection`); `orch.identity.memberlist` (`member_list_o`, `check_member_list`,
     `seal_wk`, `wk_grant_o`, `check_wk_grant`, `card_key_wrap`); `orch.identity.wscard` (`card_o` for the rotation, and
@@ -4172,6 +4216,14 @@ UID. P2 adds no keychain.**
       path; the commondir is a declared repo's `.git`; the gitdir is that commondir or its `worktrees/<id>`) before it
       is stored, so a child forging pins fails its batch. One child per repo had made the first request after such a
       `settings.changed` cost ~70 ms per repo (#468).
+      The layout check cannot tell a main repo B passed off as `<A>/.git/worktrees/<id>` of another declared repo A
+      from a real worktree of A; every read therefore re-checks git's back-pointers (#486): the worktree's `gitdir`
+      file must name the pinned `<working copy>/.git` (read with `O_NOFOLLOW`), its `commondir` the pinned commondir,
+      and the working copy's `.git`, read through the pinned working copy's fd (`O_NOFOLLOW` walk, device and inode),
+      must be a `gitdir: <path>` file naming the pinned gitdir (or be the pinned gitdir, for a main repo). This runs
+      on every open, in both profiles and in direct mode; the `gitdir` profile admits exactly `<working copy>/.git`
+      for it, the working copy only as an ancestor (#498). A forged or moved pin is refused when it is used.
+      Relative back-pointers (git 2.48+ `worktree.useRelativePaths`) are refused, as they already are at pin time.
     - Every open stays under the pins, with `O_NOFOLLOW` and a regular-file check.
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.
@@ -7490,6 +7542,7 @@ RunnerInfo = {connected:bool, enabled:bool, terminals:bool, gen:Gen | null,
               grant:{id:str, until:Time, scope:"all"|"workable"} | null}     // the caller person's runner grant
 
 run.sub        {} → {sub:SubId}        evt items: {id, t:"run", run:Run} | {id, t:"gone", run:RunId}
+                                                | {id, t:"runner", grant:RunnerGrant | null}   // H11c-2: see below
 run.list       {state?:"live"|"all" = "live", ticket?:Ref, kind?:"agent"|"shell", since?:int, page?:str{1..512}}
                → {runs:[Run & {out_bytes:int}]{0..256}, next_page:str | null, runner:RunnerInfo}
 whoami         (v1.6, with run/1) gains runner?:RunnerInfo for P and G of the person (the card reads it before any
@@ -7518,7 +7571,7 @@ run.stop       {run:RunId, grace_ms?:int 0..30000 = 10000}
                → {state:"exited"|"stopping", cleanup:"complete"|"incomplete"|"unknown"|null}
 grant.deposit  {deposit_id:ULID} + auth.grant → {deposit:"confirmed"|"rejected"|"unknown", grant:str, until:Time,
                                                  scope:str, reason?:str}
-grant.deposit_status {deposit_id:ULID} → {deposit:"confirmed"|"rejected"|"unknown"|"none"}
+grant.deposit_status {deposit_id:ULID} → {deposit:"confirmed"|"rejected"|"unknown"|"none", reason?:str}   // reason: only with rejected (H11c-2)
 grant.forget   {grant:str} → {forgotten:bool}
 term.attach    {run:RunId, mode:"read"|"write" = "read", take?:bool = false, from?:int 0..}
                → {att:AttId, ticket:str/[A-Za-z0-9_-]{43}/, expires_at:Time, socket:str, runner:{uid:int, pid:int, gen:Gen},
@@ -7533,6 +7586,13 @@ attach.cancel  {att:AttId} → {}
   caller's view, also when it is evicted by retention. The host coalesces `run` items that only change `viewers`,
   `writer`, `cols` or `rows` to at most one per run per 250 ms. `run.sub` ends as `sub/1` subscriptions do (§0.9:
   `person.removed`, `grant.expired`, `overflow`, `host.restarting`).
+- **The `runner` item (H11c-2).** `{id:"<rev>.g<n>", t:"runner", grant:RunnerGrant | null}` with `RunnerGrant = {id, until,
+  scope}` (the `whoami.runner.grant` shape; never the secret) is sent to a subscriber whenever **its own person's**
+  runner grant state changes: a deposit confirmed (also a pending one settled at `runner.hello`), a grant replaced,
+  forgotten, revoked, expired, dropped by the switch or the watcher, cleared because a restarted runner no longer holds
+  it, and the runner connecting or disconnecting (`grant:null` while no runner is connected). Another person's change
+  sends nothing. The item is checked like a `run` item (fresh authentication snapshot, principal still valid); a G
+  subscriber gets its grant's person's. It is not replayed: after a reconnect read `whoami.runner.grant`.
 - `kind:"agent"` runs appear on the Agents page; the dock lists both kinds. `label` is client-chosen untrusted text
   (rendered through `visible.tsx`; null shows the harness and ticket).
 - `runner.disabled` with several things missing reports the first of `addon`, `machine`, `terminals`. Whether the

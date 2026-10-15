@@ -272,6 +272,7 @@ def grant_list(ctx: ReadCtx) -> dict[str, Any]:
             "person": grant.person,
             "scope": grant.scope,
             "verbs": grant.verbs if isinstance(grant.verbs, str) else list(grant.verbs),
+            "label": grant.label,
             "issued_at": issued.get(gid),
             "expires_at": grant.expires_at,
             "revoked_at": _revoked_at(gid, grant, issued, revoked, enders),

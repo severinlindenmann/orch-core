@@ -27,6 +27,7 @@ from . import view as views
 from .protocol import (
     CONTRACT,
     DEPOSIT_MAX_HOURS,
+    DEPOSIT_REASONS,
     HASH,
     IDEM,
     OP_NAME,
@@ -539,31 +540,36 @@ class ClickSigner:
         did = rid[3:]
         data = (res.get("result") or {}).get("data") or {}
         gid = data.get("grant") if isinstance(data.get("grant"), str) else None
-        outcome = "unknown"
+        outcome, reason = "unknown", None
         if secret is not None:
             gid = gid or secret.partition(".")[0]
-            outcome = self._hand_over(entry, did, secret)
+            outcome, reason = self._hand_over(entry, did, secret)
         if outcome == "unknown":
-            outcome = self._deposit_status(entry, did)
+            outcome, reason = self._deposit_status(entry, did)
         self._note("deposit", workspace=wid, request=rid, code=outcome)
-        out = {"deposit": outcome, "deposit_id": did, "grant": gid}
+        out: dict[str, Any] = {"deposit": outcome, "deposit_id": did, "grant": gid}
+        if outcome == "rejected":  # a static code of a closed set, never host text (contract 2)
+            out["deposit_reason"] = reason if reason in DEPOSIT_REASONS else "other"
         if approval is not None and outcome in ("confirmed", "rejected"):
             approval.deposit_result = out
         return {**res, **out}
 
-    def _hand_over(self, entry: dict[str, Any], deposit_id: str, secret: str) -> str:
+    def _hand_over(self, entry: dict[str, Any], deposit_id: str, secret: str) -> tuple[str, str | None]:
+        """``(outcome, reason)``: ``reason`` is the host's refusal code (mapped to the closed set by the caller)."""
         try:
             got = self._call(entry, "grant.deposit", {"deposit_id": deposit_id}, auth={"grant": secret})["data"]
         except ClickError as exc:
             if exc.code in ("host.unavailable", "outcome.unknown", "timeout"):
-                return "unknown"
+                return "unknown", None
             self._note("deposit", workspace=entry["workspace_id"], code=exc.code)
-            return "rejected"
+            return "rejected", exc.code
         except Exception:  # noqa: BLE001 - after the commit nothing may fail falsely: the outcome is unknown
             self._drop_conn(entry)
-            return "unknown"
+            return "unknown", None
         outcome = got.get("deposit")
-        return outcome if outcome in ("confirmed", "rejected", "unknown") else "unknown"
+        if outcome not in ("confirmed", "rejected", "unknown"):
+            return "unknown", None
+        return outcome, got.get("reason") if isinstance(got.get("reason"), str) else None
 
     def _drop_conn(self, entry: dict[str, Any]) -> None:
         """A connection in an unknown state (a framing error mid-answer) is never reused."""
@@ -574,14 +580,16 @@ class ClickSigner:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _deposit_status(self, entry: dict[str, Any], deposit_id: str) -> str:
+    def _deposit_status(self, entry: dict[str, Any], deposit_id: str) -> tuple[str, str | None]:
         try:
             got = self._call(entry, "grant.deposit_status", {"deposit_id": deposit_id})["data"]
         except Exception:  # noqa: BLE001 - a ClickError or anything the host client raises: still unknown
             self._drop_conn(entry)
-            return "unknown"
+            return "unknown", None
         outcome = got.get("deposit")
-        return outcome if outcome in ("confirmed", "rejected") else "unknown"
+        if outcome not in ("confirmed", "rejected"):
+            return "unknown", None
+        return outcome, got.get("reason") if isinstance(got.get("reason"), str) else None
 
     def _replay(self, entry: dict[str, Any], rec: dict[str, Any], view_digest: str) -> dict[str, Any]:
         """Answer from a durable record: the cached result, or the identical events and idem resent. Another

@@ -1,7 +1,7 @@
 // The terminal dock on a real host (M7a): the person's own runs from `run.list` + `run.sub`, a New terminal that shows
 // the host's preview before anything starts, Stop, and one RealTerminal for the selected run. Same frame as the
-// mockup's dock (header, tabs, resize edge); the mock's agent start stays on its "not available" path here, because
-// this server does not serve `agent.start` (no `agent_start` feature).
+// mockup's dock (header, tabs, resize edge). Start agent (M7b) opens core's Start agent dialog when the host serves it
+// (feature `agent_start`); the agent's run then appears here like a shell and attaches the same way.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, PanelBottomClose, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
@@ -24,8 +24,10 @@ import type { TerminalDockProps } from '../dock/TerminalDock'
 import { ResizeHandle } from '../dock/ResizeHandle'
 import { RealTerminal } from './RealTerminal'
 
-/** D-P2-31, the card line (core words): shown in the dock's New terminal dialog. */
-export const EXECUTION_LINE = 'Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys.'
+import { EXECUTION_LINE } from './executionLine'
+import { StartAgentDialog } from './StartAgentDialog'
+
+export { EXECUTION_LINE }
 
 /** A run's name in the dock: its label (untrusted, shown through visible.tsx), else the harness and the ticket. */
 export function runName(run: Run): string {
@@ -49,6 +51,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
   const [preview, setPreview] = useState<{ args: { ticket?: string }; data: TermPreview | null; error: string; idem: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [agent, setAgent] = useState(false)
+  const agents = !!ws && hasFeature('agent_start', ws)
   const [error, setError] = useState('')
   const current = shown.find((r) => r.run === selected) ?? shown.find((r) => r.state === 'running') ?? shown[0]
   const region = useRef<HTMLElement>(null)
@@ -120,8 +124,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             <DropdownMenuItem onSelect={() => void ask(false)}>Shell in the workspace</DropdownMenuItem>
             {ticket && <DropdownMenuItem onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
             <DropdownMenuSeparator />
-            {/* H11c (agent.preview/agent.start) is not served by this server yet. */}
-            <DropdownMenuItem disabled={!hasFeature('agent_start', ws)}>Start agent{!hasFeature('agent_start', ws) && ' — not available on this host'}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!agents} onSelect={() => setAgent(true)}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents && ' — not available on this host'}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         {current && current.state === 'running' && (
@@ -152,6 +155,9 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
       {off && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine. Turn them on in your terminal with <code className="font-mono">orch runner enable</code>.</p>}
+      {current && current.grant_state === 'ended' && current.state === 'running' && (
+        <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-grant-ended>This agent's runner grant ended: the host refuses its writes. Stop it when you are done reading.</p>
+      )}
       {current && (doubt[current.run] || (current.exit && cleanupDoubt(current.exit.cleanup))) && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-cleanup-doubt>Some processes may still be running.</p>
       )}
@@ -165,6 +171,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             </div>
           ) : ws ? <RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /> : null}
       </div>
+      {ws && agents && <StartAgentDialog ws={ws} ticket={ticket} open={agent} onClose={() => setAgent(false)} onStarted={(run) => setSelected(run.run)} />}
       <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
     </section>
   )

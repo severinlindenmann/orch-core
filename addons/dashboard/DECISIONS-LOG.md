@@ -1696,3 +1696,92 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 
 - **Decision:** the dashboard accepts a signer whose `status.contract` is exactly the int 1 or 2 (core H11c-2 #488: 2 adds deposit-only grant mode). Anything else, including `True`, `"2"` or `2.0`, is still `click.contract` ("Update orch-core"). The contract is remembered (`Signer.contract`) so start agent (M7b) can offer the click-issued runner grant only on 2. Nothing else changes here: the sign route still passes no deposit fields until M7b.
 - **Revert:** only together with core going back to a single contract.
+
+## 2026-10-15 M7b Start agent and the runner grant
+
+- **Decision:** Start agent is core's own dialog (`StartAgentDialog`), never an addon frame, reached from the dock menu and the ticket's
+  Actions on a real host with feature `agent_start`. Preview first; Start posts exactly the previewed values plus `spec`, with one idem
+  per dialog opening; a changed field must be previewed again; `launch.changed` previews again and asks for a new Start.
+  **Why:** spec §12.4 (Tier A, no signature; "never a value edited between preview and start"). **Revert:** none planned.
+- **Decision:** the runner grant is a click request of its own typed action `runner_grant` (hours 1..12, scope), not part of the
+  hand-off's `PrepareBody`: the terminal fallback for a grant is `orch grant --runner`, not `orch sign`. The server checks the host's
+  prepared `grant.issued` (runner/agent/hours/scope/the caller as actor) and the View's deposit parts before anything is shown; the
+  sign answer carries only `deposit`, `deposit_id`, `grant`, `deposit_reason`. `grant.deposit` is in a FORBIDDEN set of the host link.
+  **Why:** D-P2-27 and §0.8.6 item 6: the secret never reaches this process or the browser. **Revert:** none.
+- **Decision:** a signer below contract 2 makes the grant terminal only with "This orch version can't hand a grant to the runner;
+  update orch." (`why:"update_orch"`). The check that accepts contract 2 at all is left to the coordinator's separate PR.
+  **Why:** orch-52's answer 9 and the coordinator (15 Oct). **Revert:** when every supported core is contract 2.
+- **Decision (wording, dashboard's own):** the `deposit_reason` sentences and the `launch.no_grant` reasons in `src/api/agents.ts`
+  (core sends codes only). `unknown` asks `grant.deposit_status` 5 times, 2 s apart, then shows "The grant may or may not be with your
+  runner. Revoke it to be sure." with a click **Revoke grant** (the existing `grant_revoke` action).
+- **Decision:** agent runs attach read-only after Start (not with the write lease as a new shell does): an agent's terminal is watched,
+  not typed into. **Revert:** pass `initial: 'write'` from `onStarted` in `RealDock`.
+
+## 2026-10-15 Drop: Workspace → Drop, fixtures only, behind `drop/1` (PROPOSAL PENDING)
+
+- **Decision:** A real host gains a **Drop** page at `/drop` (`src/app/pages/drop/index.tsx`), with a sidebar entry after Quick tasks.
+  The route exists on every real host (redirects to `/` in the mock, whose catalog Drop addon is unchanged); the nav entry is listed
+  only where the server lists feature `drop`, so today it is reachable by address only. The page asks `dropServed(ws)`: feature `drop`
+  (the host serves `drop/1` in `welcome.ops`) **and** `dropApi.served()`. The real implementation (`realDropApi` in `src/api/drop.ts`)
+  answers `drop.unavailable` for every call, so every real host shows "Drop is not available on this host yet." No server route, no
+  `drop` feature in `gateway.py`. Dev reaches the page through `/__layout/drop-*` (fixture `src/dev/dropFixture.ts`).
+- **Why a workspace page, not Settings:** Drop is content people exchange every day, like Quick tasks, not configuration.
+- **Binding decisions applied (orch-52 host, orch-29 relay, 15 Oct):** (1) the host writes FILES only in P4: uploads create files;
+  document versions are display-only (version list and "N of 1024"), no "save new version" (fixture flag `documentWrites`, default off,
+  keeps that path); (2) names and MIME types are cleaned by the HOST (one rule, shared with device labels); the page renders them through
+  `visible.tsx` (`Inline`) and cleans nothing; (3) no auto-claim: unclaimed items are explained, their download is off, no claim button;
+  (4) **Delete** for files and documents through one host op (`drop.retire`), confirm "removed for everyone at once": **pending the
+  D39a1 amendment** that lets the host retire files (the merged relay design retires documents only); (5) entry states
+  `live`/`pruned`/`expired`/`retired`; expired and retired entries are tombstones for 30 days (no download, a reason).
+- **Assumptions (proposal `proposal-dashboard-drop-ops.md` not agreed; each to check):**
+  1. Op names and shapes as proposed: `drop.list {direction, after?, limit?}` → `{items, next}`, `drop.versions` → `{versions, next, cap}`,
+     `drop.send {blob, name, mime, object_id?, base_version?}` + idem, `drop.read {object_id, version}` → `{blob, name, name_hidden,
+     mime, size}`, `drop.retire {object_id}`, `sub.open {topics:["drop"]}` items `{t:"drop", object_id, version}`.
+  2. **`drop.info {}`** (new, the "gate answer") → `{max_bytes, version_cap, writes}`. The proposal names the limits but no op. The page
+     reads the plaintext cap (25 MiB) and the version cap (1024) only from here; the fixture's `FIXTURE_INFO` is the only other place.
+  3. `author.person_name` (optional): the person's display name, untrusted text; without it the page shows the person id.
+  4. `name_hidden` also on `drop.read`; a hidden name downloads as `drop-<object_id>-v<version>`.
+  5. Unclaimed received items cannot be downloaded from the dashboard until claimed (the relay answers 403 for an unclaimed inbox blob;
+     whether the host may open it via WXK first is the open carriage question).
+  6. Error extras ride beside `code`: `drop.too_large {limit_bytes}`, `drop.quota {quota, limit, used}` (the relay's quota names; count
+     quotas are shown as counts, the rest as bytes; an unknown name is shown as untrusted text), and a retryable error with
+     `retry_after_ms`. `DropError` (in `drop.ts`) carries them; the shared `ApiError` is unchanged.
+  7. Upload is browser → `blob.put` (§0.10: 768 KiB chunks, `upload_key`, `sha256` on the last chunk) → `drop.send`. Progress is the
+     acknowledged chunks (bytes and percent). Cancel works during the browser upload (also mid-chunk); the allocated blob is dropped
+     with `blob.drop`. "Sealing and sending…" (the host step) can't be cancelled (the host persists the frame).
+  8. One file at a time (a multi-file drop takes the first); the MIME sent is `file.type` or `application/octet-stream`.
+- **Download (this slice, fixtures):** `drop.read`, then the bytes (`dropApi.content`, fixture-provided), wrapped in a `Blob` typed
+  `application/octet-stream`, behind a hidden `<a download>` that is clicked and removed; the object URL is revoked after 30 s. Never
+  rendered inline, never `window.open`, no iframe/img/object, no preview.
+- **The future server route** (`GET /api/workspaces/:ws/drop/blob/:blob`, not built): `Content-Type: application/octet-stream`,
+  `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded name>`,
+  `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Content-Security-Policy: sandbox; default-src 'none'`,
+  `Referrer-Policy: no-referrer`; no Range. Review L5 (Opus, 15 Oct) fixes the plan:
+  1. **Auth:** the page keeps `fetch` with the `Authorization` header, then the blob URL + `<a download>` it uses now. A plain anchor to
+     the route can't carry the bearer token; the session token is never put in a query string. (A short-lived single-use download ticket
+     is the alternative if streaming large files through memory becomes a problem.)
+  2. **Header values:** the name is first passed through the page's `downloadName` rule (below), server side too. The `filename=` ASCII
+     fallback keeps only `[A-Za-z0-9._ -]` (so no `"`, `\`, CR/LF, `;` or non-ASCII; empty → `drop-<object>-v<n>`). `filename*` percent-
+     encodes every byte outside RFC 8187 attr-char.
+  3. **Blob scope:** the route serves only a blob that a `drop.read` by this viewer's session in this workspace returned (the server
+     remembers it), never any other host blob; id checked against `^b_[A-Z2-7]{26}$`; the blob is dropped after it is served.
+- **Review fixes (Opus review, 15 Oct; APPROVE, 6 Low):**
+  - **L1, saved filename:** display and the filesystem are separate sinks. Display still cleans nothing. The saved name
+    (`downloadName` in `drop.ts`) is the host's name only if it is plain: `visible(name) === name` (no invisible, bidi, control,
+    non-plain space or decomposed characters, no backslash), no `/ \ : * ? " < > |`, no leading or trailing dot or space, not a Windows
+    device name, not a launcher (`.lnk`, `.url`, `.desktop`, `.command`, `.webloc` …), at most 120 characters. Anything else is saved as
+    `drop-<object>-v<n>`. The name is never rewritten into a look-alike.
+  - **L2:** `uploadBlob` checks the bytes it actually read against `max_bytes` (as well as `File.size` at pick time).
+  - **L3:** the allocated blob is dropped on any upload failure (not only cancel) and after a refused `drop.send`. The decrypted
+    `drop.read` blob is dropped once its bytes are fetched (best-effort `blob.drop`). Host contract wish: read blobs single-use or
+    short-lived anyway.
+  - **L4:** the upload continues from the host's `received`, clamped to the file. A `received` that goes backwards or doesn't move is
+    `blob.invalid`.
+  - **L6:** `DropItem.can_retire` (optional, ASSUMPTION pending D39a1): `false` hides Delete. A refusal maps to `drop.not_eligible`
+    with a sentence.
+  - **Info:** host ids and error codes are shown through `visible()`/`Raw` (I1). The revoke after 30 s is tested (I3). The real api's
+    "not served" is its own code, `drop.not_served`, distinct from `drop.unavailable` (relay unreachable) (I4). I2 (a countdown on Retry
+    following `retry_after_ms`) is not done: nothing retries automatically and the text says when.
+- **Revert:** delete `src/api/drop.ts`, `src/app/pages/drop/`, `src/dev/dropFixture.ts`, the `drop-*` scenarios in
+  `src/dev/layoutPreview.tsx`, the `real-host-drop-*` guard entries (`scripts/layout-guard.mjs`, `layout-guard-pages.mjs`, the test in
+  `layoutGuardPages.test.ts`), `dropRoute` in `router.tsx` and the Drop entry in `Sidebar.tsx`.

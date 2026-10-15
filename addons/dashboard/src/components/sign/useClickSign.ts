@@ -4,9 +4,9 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { CLICK_RISK, clickProblem, unknownOutcome, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
+import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
-import { type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { type HandoffRequest, type HandoffState } from '@/api/handoff'
 
 export type ClickPhase =
   | 'idle'
@@ -29,7 +29,7 @@ export interface ClickRun {
   view: ClickViewAnswer | null
   problem: ClickProblem | null
   signed: ClickSigned | null
-  start: (action: HandoffAction) => Promise<void>
+  start: (action: ClickAction) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   sign: (word?: string) => Promise<void>
@@ -39,7 +39,7 @@ export interface ClickRun {
    * the retry counter advances (an explicit new attempt); with none prepared yet, the same intent is repeated so a lost
    * prepare answer returns the same request.
    */
-  again: (action: HandoffAction) => Promise<void>
+  again: (action: ClickAction) => Promise<void>
   /** Back to the start (the request must already be settled or cancelled). */
   reset: (keepKey?: boolean) => void
   /** The person switched workspace with a request open: it was cancelled. */
@@ -48,6 +48,8 @@ export interface ClickRun {
   leftUnsettled: boolean
   /** While settling: what is known about the wait (set when it can no longer be followed). */
   settleNote: string | null
+  /** The last refusal as it came (callers that branch on more than `problem`, e.g. the runner grant's `why`). */
+  error: unknown
 }
 
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
@@ -69,6 +71,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const [switched, setSwitched] = useState(false)
   const [leftUnsettled, setLeftUnsettled] = useState(false)
   const [settleNote, setSettleNote] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const live = useRef({ phase: 'idle' as ClickPhase, prepared: null as ClickPrepared | null, ws: undefined as string | undefined })
   const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
   const busy = useRef(false)
@@ -88,6 +91,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const fail = useCallback(
     (e: unknown, keep: ClickPhase = 'failed') => {
       const p = clickProblem(e)
+      setError(e)
       setProblem(p)
       // A refusal to sign that can simply be tried again leaves the View where it is; the request stays open.
       setPhase(keep === 'ready' && p.next === 'retry' ? 'ready' : 'failed')
@@ -110,7 +114,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const start = useCallback(
-    async (action: HandoffAction) => {
+    async (action: ClickAction) => {
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
       setProblem(null)
@@ -287,12 +291,13 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     setPrepared(null)
     setView(null)
     setProblem(null)
+    setError(null)
     setSigned(null)
     setPhase('idle')
   }, [setPhase])
 
   const again = useCallback(
-    async (action: HandoffAction) => {
+    async (action: ClickAction) => {
       const open = live.current.prepared
       if (open && live.current.phase !== 'done' && live.current.phase !== 'settling') {
         await cancel() // the old request must not keep its quota slot
@@ -321,5 +326,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote }
+  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
 }

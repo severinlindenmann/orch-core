@@ -176,13 +176,18 @@ def _gate(call: Call) -> None:
     service = call.service
     addon = service.store.state.workspace.addons.get(ADDON)
     if addon is None or not addon["enabled"] or addon["purged"]:
-        raise HostError("runner.disabled", "dashboard execution: the worktrees addon is not granted (missing: addon)")
+        raise HostError(
+            "runner.disabled",
+            "dashboard execution: the worktrees addon is not granted (missing: addon)",
+            detail={"missing": "addon"},
+        )
     hub = getattr(service, "runners", None)
     if hub is None or not hub.runner_state(service.workspace_id)["enabled"]:
         raise HostError(
             "runner.disabled",
             "dashboard execution is off for this workspace on this machine (missing: machine); "
             "turn it on in your terminal: orch runner enable",
+            detail={"missing": "machine"},
         )
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)

@@ -395,7 +395,7 @@ def serve(call: Call) -> dict[str, Any]:
         return ok_result({"replay": run})
     found = plan(call, args, hub, agent=True)
     if found["blocked"] is not None:
-        raise HostError(found["blocked"]["code"], found["blocked"]["message"])
+        raise HostError(found["blocked"]["code"], found["blocked"]["message"], detail=found["blocked"].get("detail"))
     if found["spec"] != args["spec"]:
         raise HostError("launch.changed", "what agent.start would start differs from the preview: preview again")
     return ok_result({
@@ -443,8 +443,9 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
 
     service = call.service
     wid, person, run = service.workspace_id, data["person"], data["run"]
-    if await asyncio.wrap_future(service.submit(agent_missing, service, hub)) is not None:  # again, at use
-        raise HostError("runner.disabled", "dashboard execution is not available here")
+    gone = await asyncio.wrap_future(service.submit(agent_missing, service, hub))  # again, at use
+    if gone is not None:
+        raise HostError("runner.disabled", "dashboard execution is not available here", detail={"missing": gone})
     # from here to the reservation there is no await: the identity check, the limits, the rate charge and the
     # reservation are one step, so two requests with one idem never both start (Codex P2 #1, Opus L2)
     existing = hub.store.records.get(run)
@@ -471,9 +472,17 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
     live = [r for r in hub.store.records.values() if r.get("state") in runners.LIVE]
     mine = [r for r in live if r.get("person") == person and r.get("kind") == "agent"]
     if sum(1 for r in mine if r.get("workspace_id") == wid) >= AGENTS_PER_WORKSPACE or len(mine) >= AGENTS_PER_PERSON:
-        raise HostError("run.limit", "at most 8 agent runs per person in a workspace, 16 in all", retry_after_ms=5000)
+        which = (
+            "agent_ws"
+            if sum(1 for r in mine if r.get("workspace_id") == wid) >= AGENTS_PER_WORKSPACE
+            else "agent_person"
+        )
+        raise HostError(
+            "run.limit", "at most 8 agent runs per person in a workspace, 16 in all", retry_after_ms=5000,
+            detail={"which": which},
+        )  # fmt: skip
     if sum(1 for r in live if r.get("runner_uid") == hub.uid) >= RUNS_PER_RUNNER:
-        raise HostError("run.limit", "at most 64 runs per runner", retry_after_ms=5000)
+        raise HostError("run.limit", "at most 64 runs per runner", retry_after_ms=5000, detail={"which": "runner"})
     if not hub.take_start(person):
         raise HostError("rate.limited", "at most 10 starts per minute", retry_after_ms=6000)
     future: asyncio.Future[None] = asyncio.get_running_loop().create_future()

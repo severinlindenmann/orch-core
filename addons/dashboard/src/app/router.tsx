@@ -22,6 +22,7 @@ const ArtifactsPage = lazyPage(() => import('./pages/artifacts'), 'ArtifactsPage
 const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
 const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
+const DropPage = lazyPage(() => import('./pages/drop'), 'DropPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
 // The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
 // `import.meta.env.DEV` is false in a build, so the import, its chunk and the fixtures are not in the production bundle.
@@ -106,6 +107,19 @@ const quickRoute = createRoute({
   loader: pageLoader(() => [], [QuickPage.preload]),
   component: QuickPage,
 })
+/**
+ * Drop of a real host (proposed `drop/1`): the mock keeps its own Drop addon page. On a real host the route is always
+ * there; without the gate the page says "Drop is not available on this host yet." and calls nothing.
+ */
+const dropRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'drop',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+  },
+  loader: pageLoader(() => [], [DropPage.preload]),
+  component: DropPage,
+})
 const layoutPreviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '__layout/$name',
@@ -187,7 +201,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

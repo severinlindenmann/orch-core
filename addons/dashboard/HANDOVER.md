@@ -1098,7 +1098,7 @@ M6 follow-up (#454, 2026-10-14): `GET /api/w/<ws>/records/current` checks `recor
 ## Terminals on the real host (M7a, 14 Oct)
 
 Stream B M7a (host contract v1.6 §12.3, §12.6; H11b). The dock is real when the server lists `terminals` (host caps `run/1`, `term/1`
-and the seven ops below); otherwise it is not drawn on a real host. Start agent (H11c) is not wired: no `agent_start` feature.
+and the seven ops below); otherwise it is not drawn on a real host. Start agent is M7b (next section).
 
 | Route | Host op | Notes |
 |---|---|---|
@@ -1127,6 +1127,35 @@ The dashboard and devhost use core's `ORCH_HOST_RUN_DIR`, falling back to `<stat
 A set legacy `ORCH_RUN_DIR` is accepted silently only when its absolute path matches that directory;
 otherwise dashboard startup exits 1 with a migration message.
 
+## Start agent on the real host (M7b, 15 Oct)
+
+Host contract v1.6 §12.3/§12.4 (H11c #466), D-P2-27 (the runner grant), D-P2-31, §0.8.6 item 6 (the click signer's deposit-only grant
+mode), changelog 40; H11c-2 (core #488, not merged) for signer contract 2, `deposit_reason`, `grant.deposit_status.reason`,
+`grant.list.label` and the `run.sub` `{t:"runner"}` item. Features: `agent_start` (`agent.preview`, `agent.start`, `run.list`,
+`whoami`) and `runner_grant` (`grant.deposit_status`, `grant.forget`, `whoami`). The host link sends these four ops under `run/1`;
+**`grant.deposit` is never sent by this process** (`hostlink.FORBIDDEN`, refused in `HostLink.call` before any I/O).
+
+| Route | Host op / signer frame | Notes |
+|---|---|---|
+| `POST /api/w/{ws}/agents/preview` | `agent.preview` | own body model: harness `claude-code`/`codex`, mode `refine|work|fix|continue|context`, model, subagent_model, label ≤40, worktree (default true). Projection `adapters/runs.agent_preview`: `spec, ticket, display, cwd{kind,repo,ticket}, cwd_path, will_create_worktree, login_shell, env` (names), `grant{id,until,scope}`, `blocked{code,message,detail{reason?,missing?}}`, `warnings` ≤8; never `argv`/`program`; hidden characters withheld |
+| `POST /api/w/{ws}/agents/start` `{…preview args, spec, idem, cols?, rows?}` | `agent.start` (idem write) | one `a_<ULID>` idem per dialog opening, reused on every retry (run id `r_` + its ULID); `launch.changed` → the page previews again |
+| `GET /api/w/{ws}/runner` | `whoami` | `{runner: {connected, enabled, terminals, grant}|null}`; re-read on every live `resync`/`ready` (a runner restart drops the grant) |
+| `GET /api/w/{ws}/runner/deposits/{deposit_id}` | `grant.deposit_status` | `{deposit, reason?}`; `reason` only when rejected, from the closed set, else `other` |
+| `POST /api/w/{ws}/runner/forget` `{grant, idem}` | `grant.forget` (idem write) | "Forget runner grant", after a confirm |
+| `POST /api/w/{ws}/click/prepare` `{action:"runner_grant", hours 1..12 = 8, scope workable|all}` | signer `prepare {op:"grant", args:{hours, scope}, deposit:true}` | click only (not a hand-off action); a signer below contract 2 → `human.click_refused` `terminal_only` with `why:"update_orch"` |
+| `POST /api/w/{ws}/click/view` | signer `view` | `expected()` checks the host's prepared `grant.issued` (label runner, verbs agent, the hours and scope asked, 1..12 h, actor = the caller); the View must have `deposit:true`, `deposit_line` = core's constant (also in `lines`), the owner's risk sentence in `lines`, and the word `<PREFIX>~<WS8>/GRANT`; a non-grant View claiming a deposit is refused |
+| `POST /api/w/{ws}/click/sign` | signer `sign` | a grant's answer is only `{state, duplicate, deposit, deposit_id (= request ULID), grant (gr_ id), deposit_reason? (rejected only, closed set)}`; never `result` or anything else |
+| SSE `runs` | `run.sub` | `{t:"runner", grant}` items (H11c-2) patch the runner card; run rows gain `grant_state` (`ok|ended`); `session` and the run's grant id stay out |
+
+- **Page:** `src/app/terminal/real/StartAgentDialog.tsx` (core's dialog: preview, approved texts, blocked, Start, the runner grant card),
+  `src/api/agents.ts` (routes, texts). Opened from the dock's **Start agent** and the ticket's **Actions → Start agent** on a real host.
+- **Signer contract:** `click_signer.Signer.contract` and `deposits()`; the check that accepts contract 2 is the coordinator's own PR.
+- **Tests:** `server/tests/test_agents.py`, the M7b block of `test_dashboard_click.py`, `test_realhost_agents.py` (core host + runner +
+  core's ClickSigner in process, fake harness); page `StartAgentDialog.test.tsx`, `src/test/signing-surface.test.tsx` (start agent),
+  `src/dev/layoutPreview.test.tsx`. Layout guard: `real-host-agent-dialog|blocked|grant|outcomes`.
+- **Requests for core:** (1) the `deposit_reason` sentence set is the dashboard's own wording (core sends codes only); (2) `run.limit`
+  detail does not reach the socket (#479): the host's message is shown as text.
+
 ## Pair a phone (pair/1, contract v1.9, fixtures only, 15 Oct)
 
 Settings → Devices (`src/app/pages/settings/host/Devices.tsx`). Gate: feature `pair` **and** `pairingApi.served()`; the real api
@@ -1149,3 +1178,29 @@ Fixture: `src/dev/pairFixture.ts` (`createPairFixture`, `installPairFixture`, `e
 `pair-blocked-convenience`, `pair-offer`, `pair-pending`, `pair-cert`, `pair-failed`, `pair-devices`; guard entries `real-host-pair-*`
 (plus `real-host-pair-link` and `real-host-pair-remove-command`; listed in `scripts/layout-guard-pages.mjs` so `--only pair` finds them).
 Tests: `src/app/pages/settings/pairing.test.tsx`, the Devices case in `src/production/settings.test.tsx`, `src/dev/layoutGuardPages.test.ts`. QR: `uqr` 0.1.3 (pinned).
+
+## Drop (drop/1, proposal pending, fixtures only, 15 Oct)
+
+Workspace → Drop (`src/app/pages/drop/index.tsx`, route `/drop`, sidebar entry after Quick tasks when the server lists `drop`). Gate:
+feature `drop` **and** `dropApi.served()`; the real api (`src/api/drop.ts`) answers `drop.unavailable` for every call; the server lists no
+`drop` feature and has no route. Binding decisions of 15 Oct (files only in P4, host cleans names, no auto-claim, Delete through
+`drop.retire` pending D39a1, states `live`/`pruned`/`expired`/`retired`) and the assumptions: DECISIONS-LOG "Drop: Workspace → Drop".
+
+| Page call (`dropApi`) | Proposed host op | Notes |
+|---|---|---|
+| `info(ws)` | `drop.info {}` (assumed) | `{max_bytes, version_cap, writes}`: the only source of the 25 MiB and 1024 limits |
+| `list(ws, {direction, after, limit})` | `drop.list` | Received / Sent, cursor pages of 32 |
+| `versions(ws, {object_id, after})` | `drop.versions` | documents only; `cap` |
+| `blobPut`, `blobDrop` | `blob.put`, `blob.drop` (§0.10, served today) | 768 KiB chunks; `uploadBlob` gives progress and cancel |
+| `send(ws, {blob, name, mime, object_id?, base_version?}, idem)` | `drop.send` | the host seals and PUTs ("Sealing and sending…") |
+| `read(ws, {object_id, version})` + `content(ws, blob)` | `drop.read` + a future dashboard route | download only (attachment headers in DECISIONS-LOG) |
+| `retire(ws, object_id)` | `drop.retire` | files and documents, confirm first |
+| `subscribe(ws, fn)` | `sub.open {topics:["drop"]}` | items `{t:"drop", object_id, version}`; the page refetches |
+
+Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `emit`; options `documentWrites`, `chunkDelayMs`,
+`stallAfterChunks`, `sendDelayMs`, `sendError`, `readError`, `retireError`, `listError`, `pageSize`). Layout scenarios `drop-unavailable`,
+`drop-list`, `drop-long-names`, `drop-upload-progress`, `drop-errors`, `drop-versions`; guard entries `real-host-drop-*` plus
+`real-host-drop-delete` (listed in `scripts/layout-guard-pages.mjs`, so `--only drop` finds them). Tests: `src/app/pages/drop/drop.test.tsx`, `src/production/drop.test.tsx` (real host: not available, no nav entry, no call),
+`src/dev/layoutGuardPages.test.ts`. No new dependency.
+To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
+

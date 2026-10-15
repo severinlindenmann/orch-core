@@ -576,6 +576,19 @@ it read-only with **Take control**; taking it there shows **Take back** here; **
 when cleanup was incomplete); an ended run whose output is gone says "Output no longer kept". Layout: `/__layout/terminal-dock` (and
 `-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.
 
+## Try start agent (M7b, real host, own terminal)
+
+In-process end to end (core's host, runner and click signer, a fake `codex`): `cd addons/dashboard/server && uv run pytest -m realhost
+tests/test_realhost_agents.py`. On a disposable real host with `start-agent` granted, dashboard execution on and a runner: the dock's
+**New terminal → Start agent on KEY** (or the ticket's **Actions → Start agent**) opens core's dialog. What you should see: the D-P2-31
+line; the host's preview (command, "A worktree for KEY in REPO will be created at …" or "the repository's shared working copy (not a
+separate worktree)", env names, warnings); without a grant the **Runner grant** card with the owner's risk sentence, hours (1–12),
+tickets (workable/all) and **Issue runner grant** (off, with "Turn on dashboard execution (orch runner enable) or use the terminal",
+while execution is off). Issuing shows the signer's View with the deposit line and the word `PREFIX~WS8/GRANT`; after Sign: "Your runner
+holds the grant until …" and the preview no longer blocks; **Start agent** adds the run to the dock. With a contract-1 core the card
+says "This orch version can't hand a grant to the runner; update orch." **Forget runner grant** asks first. Layout:
+`/__layout/agent-dialog` (and `-blocked`, `-grant`, `-outcomes`) in the dev build.
+
 ## Try pairing (fixtures)
 
 Nothing reaches a host: the `pair/1` ops (contract v1.9) are agreed but not served yet. On a real host Settings → **Devices** says "Pairing a phone is not available on
@@ -592,3 +605,24 @@ this host yet." To see the page, run `npm run dev` and open the dev-only scenari
 - `/__layout/pair-cert`: two terminal steps with copyable commands (primary approval with the cert code; `orch sign <CODE>`). `/__layout/pair-failed`: the reason and "remove the device".
 - `/__layout/pair-devices`: the list from `member.list` (the Mac itself is not listed; a two-line label; an empty one shows "phone");
   **Remove this device** opens the CLI command as text (removal is CLI only this round).
+
+## Try Drop (fixtures)
+
+Nothing reaches a host: the `drop/1` ops are proposed, not agreed. On a real host `/w/<PREFIX>/drop` says "Drop is not available on this
+host yet." (no sidebar entry until the server lists `drop`). To see the page, run `npm run dev` and open the dev-only scenarios:
+
+- `/__layout/drop-unavailable`: the not-available line.
+- `/__layout/drop-list`: Received / Sent tabs, 8 per page (**Older** / **Newer**). Rows show name, kind and type, size, author (person,
+  device, "from a phone" or a "sealed by an agent" mark), created, expiry and state. Pruned, Expired and Deleted rows and the Unclaimed
+  one have Download off with the reason. **Send a file** (or drop a file on the dashed box): over 25 MiB is refused before anything is
+  uploaded; otherwise progress in bytes and percent, then "Sealing and sending…", then "Sent …" and the file shows under Sent.
+  **Download** saves a file (the fixture's content is HTML with a script: it must arrive as a download, never open). **Delete** asks
+  "Delete this file for everyone?" (removed for everyone at once); **Delete for everyone** turns the row into a Deleted tombstone.
+- `/__layout/drop-long-names`: very long names and types, `<img src=x onerror=alert(1)>.html` as text, a right-to-left override shown as
+  `\u{202e}`, a newline and a NUL shown escaped, a name that can't be shown, a long person name and device id.
+- `/__layout/drop-upload-progress`: an upload stalled at 1.5 MiB of 3 MiB (50 %); **Cancel** says nothing was sent.
+- `/__layout/drop-errors`: every error text with its code (too large, three quotas, version cap, version conflict, expired, pruned,
+  unavailable, not visible, busy with retry time); sending or downloading there fails with the workspace quota.
+- `/__layout/drop-versions`: a document at 1024 of 1024 versions (cap line, pruned versions' downloads off, 12 per page) and "New versions
+  of a document are saved from a phone. This host sends files only." Open **Versions** on meeting-notes.md for 37 of 1024.
+

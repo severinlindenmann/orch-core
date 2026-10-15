@@ -664,36 +664,68 @@ def test_r5_the_starter_runs_only_after_the_start_blocker_under_the_relay_lock()
     assert ast.unparse(first_if.test) == "not relay_worker.r6_ready()"
 
 
+def _gate_violations(text: str, *, in_worker: bool) -> list[str]:
+    """Every way a module reaches the R6 gate other than ``r6_ready()`` (round 5 L2): a name, an attribute, an alias
+    import (``from orch.relay.worker import R6_READY as _g``), any string ``"R6_READY"`` (``getattr``, ``globals()``
+    keys, ``setattr``) and, in ``worker.py``, anything outside the module-level literal and the body of
+    ``r6_ready``. Honest limit: a string built at runtime (``"R6_" + "READY"``) is not seen; the runtime gate tests
+    with a truthy non-True value pin the behaviour of every entry instead."""
+    tree = ast.parse(text)
+    allowed: set[int] = set()
+    if in_worker:
+        for n in tree.body:
+            if (isinstance(n, ast.FunctionDef) and n.name == "r6_ready") or (
+                isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id in ("R6_READY", "__all__") for t in n.targets)
+            ):  # the literal, the helper's body and the export list
+                allowed |= {id(x) for x in ast.walk(n)}
+    bad = []
+    for x in ast.walk(tree):
+        if id(x) in allowed:
+            continue
+        hit = (
+            (isinstance(x, ast.Name) and x.id == "R6_READY")
+            or (isinstance(x, ast.Attribute) and x.attr == "R6_READY")
+            or (isinstance(x, ast.alias) and (x.name == "R6_READY" or x.asname == "R6_READY"))
+            or (isinstance(x, ast.Constant) and isinstance(x.value, str) and "R6_READY" == x.value)
+        )
+        if hit:
+            bad.append(f"{type(x).__name__}:{getattr(x, 'lineno', '?')}")
+    return bad
+
+
+@pytest.mark.parametrize(
+    "snippet,in_worker",
+    [
+        ("from orch.relay.worker import R6_READY as _g\nif not _g: pass", False),
+        ("from orch.relay.worker import R6_READY\n", False),
+        ("import orch.relay.worker as w\nx = w.R6_READY", False),
+        ("from orch.relay import worker\nx = getattr(worker, 'R6_READY')", False),
+        ("def start():\n    if not R6_READY: pass", True),
+        ("x = globals()['R6_READY']", True),
+    ],
+)
+def test_r5_the_gate_rule_catches(snippet, in_worker):
+    assert _gate_violations(snippet, in_worker=in_worker) != []
+
+
+def test_r5_the_gate_rule_allows_the_literal_and_the_helper():
+    ok_worker = "R6_READY = False\n\ndef r6_ready() -> bool:\n    return R6_READY is True\n"
+    assert _gate_violations(ok_worker, in_worker=True) == []
+    assert _gate_violations("from orch.relay import worker\nx = worker.r6_ready()", in_worker=False) == []
+
+
 def test_r5_one_gate_check_and_no_test_transport_in_production():
-    """Review Low 2: every gate check goes through ``worker.r6_ready()`` (``R6_READY is True``); nothing outside
-    ``worker.py`` reads ``R6_READY`` itself. Review Low 1: no production call passes the test-only ``transport=``
-    to ``make_starter``/``start_worker``, and ``Seams`` has no transport field."""
+    """Review Low 2 and round 5 L2: every gate check goes through ``worker.r6_ready()`` (``R6_READY is True``);
+    nothing reaches ``R6_READY`` otherwise (:func:`_gate_violations`). Review Low 1: no production call passes the
+    test-only ``transport=`` to ``make_starter``/``start_worker``."""
     src = PKG.parent
     offenders = []
     for path in sorted(src.rglob("*.py")):
-        tree = ast.parse(path.read_text())
-        if path.name == "worker.py" and path.parent.name == "relay":
-            # D19: inside worker.py only the module-level literal and the body of r6_ready() may name the gate
-            allowed = set()
-            for n in tree.body:
-                if (
-                    isinstance(n, ast.FunctionDef)
-                    and n.name == "r6_ready"
-                    or (
-                        isinstance(n, ast.Assign)
-                        and any(isinstance(t, ast.Name) and t.id == "R6_READY" for t in n.targets)
-                    )
-                ):
-                    allowed |= {id(x) for x in ast.walk(n)}
-            bad = [x.lineno for x in ast.walk(tree) if isinstance(x, ast.Name) and x.id == "R6_READY"
-                   and id(x) not in allowed]  # fmt: skip
-            assert bad == [], f"worker.py names R6_READY outside r6_ready(): {bad}"
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr == "R6_READY":
-                offenders.append(f"{path.name}:{node.lineno} reads R6_READY")
-            if isinstance(node, ast.Name) and node.id == "R6_READY":
-                offenders.append(f"{path.name}:{node.lineno} names R6_READY")
+        text = path.read_text()
+        in_worker = path.name == "worker.py" and path.parent.name == "relay"
+        offenders += [f"{path.name} {v}" for v in _gate_violations(text, in_worker=in_worker)]
+        for node in ast.walk(ast.parse(text)):
             if isinstance(node, ast.Call):
                 f = node.func
                 name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None

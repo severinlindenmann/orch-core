@@ -264,11 +264,13 @@ class WorkspaceService:
             from .relayhook import unlink_job
 
             try:
-                unlink_job(self)
+                done = unlink_job(self)
             except Exception as exc:  # noqa: BLE001 - the intent stays: nothing starts, the next open tries again
                 LOG.error("relay unlink of %s could not finish: %s", self.workspace_id, type(exc).__name__)
                 self.relay_reason = "unlink_pending"
-            return
+                return
+            if done != "stale":  # a stale intent (another link's) was discarded: this link goes on as usual
+                return
         if not os.path.lexists(link_path(self.state_dir, self.workspace_id)):
             self.relay_reason = "not_linked"
             return
@@ -693,6 +695,7 @@ class WorkspaceService:
         then no worker starts (``start_blocker``: ``unlink_pending``), ``relay start`` is refused, and an open after a
         restart finishes it. Refused while a worker's threads still run (``lock.busy``, the intent stays: the next
         open finishes it). Returns the new file name (``"done"`` when a crash had already renamed it)."""
+        from .custody import read_json
         from .relayhook import unlink_job
         from .relaylink import link_path, mark_stopped, mark_unlink_intent, unlink_pending
 
@@ -703,7 +706,13 @@ class WorkspaceService:
                 self.state_dir, self.workspace_id
             ):
                 raise HostError("relay.not_linked", "the workspace has no relay link")
-            mark_unlink_intent(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
+            if not unlink_pending(self.state_dir, self.workspace_id):  # an existing intent is never rebound
+                link = read_json(link_path(self.state_dir, self.workspace_id), self.host_uid)
+                at = link.get("linked_at") if isinstance(link, dict) else None
+                mark_unlink_intent(
+                    self.state_dir, self.workspace_id, self.host_uid,
+                    linked_at=at if type(at) is int and at >= 0 else None, clock=self.clock,
+                )  # fmt: skip
             mark_stopped(self.state_dir, self.workspace_id, self.host_uid, clock=self.clock)
             self.relay_reason = "unlink_pending"
             worker = self._take_relay()

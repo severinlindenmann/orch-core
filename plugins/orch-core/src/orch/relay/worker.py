@@ -447,16 +447,21 @@ class RelayWorker:
             try:
                 if self.loop is not None and self.loop.error is not None and self.error is None:
                     self.error = type(self.loop.error).__name__
-                self.alarm.save()
-                try:
-                    self.session.logout()
-                except Exception:  # noqa: BLE001 - best effort (11A.7 step 3)
-                    log.info("relay logout failed (ignored)")
-                if self.rids is not None:
-                    self.rids.close()
-                self.state.close()
-            except Exception as e:  # noqa: BLE001 - a release that fails never wedges the slot: alarmed, then released
-                self.alarm("relay_release_failed", type(e).__name__)
+                # each step on its own (round 5 L4): one that raises is alarmed and the next still runs, so a failed
+                # rid-store close never leaks the state directory's lock
+                for step, fn in (
+                    ("alarms", self.alarm.save),
+                    ("logout", self.session.logout),
+                    ("rids", self.rids.close if self.rids is not None else (lambda: None)),
+                    ("state", self.state.close),
+                ):
+                    try:
+                        fn()
+                    except Exception as e:  # noqa: BLE001 - alarmed by step and class, then the next step
+                        if step == "logout":
+                            log.info("relay logout failed (ignored)")  # best effort (11A.7 step 3)
+                        else:
+                            self.alarm("relay_release_failed", f"{step}: {type(e).__name__}")
             finally:
                 try:
                     self._on_ended()

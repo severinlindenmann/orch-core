@@ -5709,6 +5709,27 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   branch, the intent cleared before the rename, no fsync after the unlink): 8 killed; the last is equivalent
   (`clear_unlink_intent` fsyncs the same directory right after the unlink).
 
+**Round 5 (15 Oct 2026, Opus micro-delta of rounds 3 and 4: PASS, five Lows, all fixed).**
+- **L1:** `link_reservation` refuses (`lock.busy` `unlink_pending`) while an unlink intent exists, and the intent is
+  bound to the link it was made for (`linked_at`). `unlink_job` discards an intent for another `linked_at` (alarm
+  `relay_unlink_intent_stale` in `alarms.json`, reason `unlink_intent_stale`) without renaming or marking anything,
+  and the open then goes on as usual. An intent that is not a private JSON object with `linked_at` fails closed (it
+  stays, nothing is renamed, nothing starts).
+- **L2:** the gate rule is one checker (`_gate_violations`) with self-tests: a name, an attribute, an alias import, or
+  the string `"R6_READY"` (`getattr`, `globals()`) anywhere but the literal, the body of `r6_ready()` and `__all__` in
+  `worker.py`. Honest limit: a name built at runtime (`"R6_" + "READY"`) is not seen; a runtime test with the gate set
+  to `1` pins every host entry (`relay start`, the open).
+- **L3:** an unserved `host.relay_start` refuses (`lock.busy`) while an unlink intent exists, instead of clearing
+  `stopped.json`.
+- **L4:** `_finish` runs every release step (alarms, logout, rid store, state directory) on its own; one that raises
+  is alarmed with its step and the next still runs, so the state directory's lock never leaks.
+- **L5:** tests pin `unlink_pending`'s fail-closed branches (a dangling symlink intent, an unreadable directory) and
+  the open never falling through to a start after a failed unlink.
+- **Informational (accepted):** a seam factory that re-enters `relay_stop` (or `relay_start`) on the starter's thread
+  now gets `none` from the re-entrant lock instead of deadlocking, and `_take_slot` still prevents a second worker of
+  the workspace; if both `stopped.json` and `unlink-intent.json` are deleted by hand, the relay serves again once the
+  gate is open (operator action on the state directory, as with any marker).
+
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`
   (`service.relay_starter`, `may_start`), which R5 follows: there is no `relay.worker.start(service)` function.

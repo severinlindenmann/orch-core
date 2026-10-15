@@ -406,7 +406,15 @@ def unlink_job(service: WorkspaceService) -> str:
     from orch.store import fsio
 
     from .custody import read_json
-    from .relaylink import clear_unlink_intent, link_path, mark_stopped, relay_dir, unlink_pending
+    from .relaylink import (
+        clear_unlink_intent,
+        link_path,
+        mark_stopped,
+        note_alarm,
+        read_unlink_intent,
+        relay_dir,
+        unlink_pending,
+    )  # fmt: skip
 
     store = service.store
     if store is None:
@@ -414,10 +422,25 @@ def unlink_job(service: WorkspaceService) -> str:
     with service.relay_cond:
         if service.relay is not None:
             raise HostError("lock.busy", "a relay worker runs; stop it first")
-        if unlink_pending(service.state_dir, service.workspace_id):  # before either completion branch (P2)
-            mark_stopped(service.state_dir, service.workspace_id, service.host_uid, clock=service.clock)
+        pending = unlink_pending(service.state_dir, service.workspace_id)
         with store.locked():
             path = link_path(service.state_dir, service.workspace_id)
+            if pending:
+                intent = read_unlink_intent(service.state_dir, service.workspace_id, service.host_uid)  # bad: raises
+                if os.path.lexists(path):
+                    current = read_json(path, service.host_uid)
+                    cur_at = current.get("linked_at") if isinstance(current, dict) else None
+                    if intent["linked_at"] != cur_at:  # round 5 L1: an intent for another link: never acted on
+                        note_alarm(
+                            service.state_dir, service.workspace_id, service.host_uid, "relay_unlink_intent_stale",
+                            "an unlink intent for another link was discarded", clock=service.clock,
+                        )  # fmt: skip
+                        LOG.error("relay unlink intent of %s is stale (another link): discarded", service.workspace_id)
+                        clear_unlink_intent(service.state_dir, service.workspace_id, service.host_uid)
+                        service.relay_reason = "unlink_intent_stale"
+                        return "stale"
+                # before either completion branch (P2)
+                mark_stopped(service.state_dir, service.workspace_id, service.host_uid, clock=service.clock)
             if not os.path.lexists(path):
                 if unlink_pending(service.state_dir, service.workspace_id):  # renamed before a crash: finish
                     clear_unlink_intent(service.state_dir, service.workspace_id, service.host_uid)

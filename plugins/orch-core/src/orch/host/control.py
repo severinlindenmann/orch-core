@@ -388,7 +388,7 @@ class ControlOps:
         return ok_result({"workspace_id": workspace_id, "stopped": True, "worker": worker})
 
     def relay_start(self, args: dict[str, Any]) -> dict[str, Any]:
-        from .relaylink import clear_stopped
+        from .relaylink import clear_stopped, unlink_pending
 
         workspace_id = args["workspace_id"]
         if self.host.registry.get(workspace_id) is None:
@@ -397,6 +397,8 @@ class ControlOps:
         if service is not None:
             worker = service.relay_start()
         else:
+            if unlink_pending(self.state_dir, workspace_id):  # round 5 L3: never clear the marker under an intent
+                raise HostError("lock.busy", "unlink_pending: an unlink of this workspace has not finished yet")
             clear_stopped(self.state_dir, workspace_id, self.host_uid)
             worker = "none"
         data: dict[str, Any] = {"workspace_id": workspace_id, "stopped": False, "worker": worker}

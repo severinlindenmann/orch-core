@@ -61,6 +61,14 @@ def _seams(r6, **kw) -> relayhook.Seams:
     return relayhook.Seams(**{**base, **kw})
 
 
+def _intent(state, wid) -> None:
+    """An unlink intent bound to the current link (its ``linked_at``), as ``relay_unlink`` writes it."""
+    from orch.host.custody import read_json
+
+    link = read_json(relaylink.link_path(state, wid), UID)
+    relaylink.mark_unlink_intent(state, wid, UID, linked_at=link.get("linked_at") if isinstance(link, dict) else None)
+
+
 def _reserve(served, origin: str = "https://relay.example") -> dict:  # noqa: F811
     svc = served.service
     return _on_worker(served, lambda: relayhook.reserve_link(svc, origin=origin, max_publication_bytes=MIB4))
@@ -814,7 +822,7 @@ def test_an_unlink_interrupted_by_a_restart_is_finished_at_open_and_never_serves
         svc.submit(lambda: relayhook.reserve_link(svc, origin="https://r.example", max_publication_bytes=MIB4)).result(
             30
         )
-        relaylink.mark_unlink_intent(hl.state, wid, UID)  # the unlink began; the host dies before the rename
+        _intent(hl.state, wid)  # the unlink began; the host dies before the rename
         if crash == "after_rename":
             link = relaylink.link_path(hl.state, wid)
             os.rename(link, link.parent / "unlinked-1.json")
@@ -830,7 +838,7 @@ def test_relay_start_is_refused_while_an_unlink_is_pending_and_unlink_sets_the_m
     monkeypatch.setattr(relay_worker, "R6_READY", True)
     svc = served.service
     _reserve(served)
-    relaylink.mark_unlink_intent(svc.state_dir, served.wid, UID)
+    _intent(svc.state_dir, served.wid)
     with pytest.raises(HostError) as e:
         svc.relay_start()
     assert e.value.code == "lock.busy" and "unlink_pending" in e.value.message
@@ -1009,7 +1017,7 @@ def test_a_crash_between_the_intent_and_the_marker_still_leaves_the_worker_stopp
         svc.submit(lambda: relayhook.reserve_link(svc, origin="https://r.example", max_publication_bytes=MIB4)).result(
             30
         )
-        relaylink.mark_unlink_intent(hl.state, wid, UID)  # the crash comes before mark_stopped
+        _intent(hl.state, wid)  # the crash comes before mark_stopped
         if renamed:  # and (both completion branches) after the rename too
             link = relaylink.link_path(hl.state, wid)
             os.rename(link, link.parent / "unlinked-1.json")
@@ -1023,3 +1031,112 @@ def test_a_crash_between_the_intent_and_the_marker_still_leaves_the_worker_stopp
         # a relink: the open hook does not start it; only relay start (an operator act) may
         svc.submit(svc._relay_open).result(30)  # noqa: SLF001
         assert starts == [] and svc.relay_reason == "stopped"
+
+
+# -- round 5 (Opus micro-delta of rounds 3+4) -------------------------------------------------------------------------
+
+
+def test_a_reservation_is_refused_while_an_unlink_is_pending(served):  # noqa: F811
+    """L1: a relink waits for the pending unlink (finished at the next open), so a leftover intent can never take the
+    new link with it."""
+    svc = served.service
+    _reserve(served)
+    _intent(svc.state_dir, served.wid)
+    link = relaylink.link_path(svc.state_dir, served.wid)
+    os.rename(link, link.parent / "unlinked-1.json")  # renamed; clearing the intent failed
+    with pytest.raises(HostError) as e:
+        _reserve(served)
+    assert e.value.code == "lock.busy" and "unlink_pending" in e.value.message and not link.exists()
+
+
+def test_a_stale_intent_for_another_link_is_discarded_with_an_alarm_never_acted_on(served):  # noqa: F811
+    """L1: an intent bound to another ``linked_at`` never renames or stops the current link."""
+    from orch.host.custody import read_json
+
+    svc = served.service
+    _reserve(served)
+    relaylink.mark_unlink_intent(svc.state_dir, served.wid, UID, linked_at=1)  # an old link's intent
+    _on_worker(served, svc._relay_open)  # noqa: SLF001
+    d = relaylink.relay_dir(svc.state_dir, served.wid)
+    assert (d / "link.json").exists() and not list(d.glob("unlinked-*.json"))
+    assert not relaylink.unlink_pending(svc.state_dir, served.wid)
+    assert not relaylink.is_stopped(svc.state_dir, served.wid, UID)  # not acted on: no marker either
+    rows = read_json(d / "alarms.json", UID)["alarms"]
+    assert [r["code"] for r in rows] == ["relay_unlink_intent_stale"]
+    assert svc.relay_reason == relay_worker.R6_GATE_REASON  # the link goes on as usual (dormant by the gate)
+
+
+@pytest.mark.parametrize("body", [{"v": 1}, ["x"], {"v": 1, "linked_at": "soon"}])
+def test_a_corrupt_intent_fails_closed(served, body):  # noqa: F811
+    from orch.host.custody import write_private
+
+    svc = served.service
+    _reserve(served)
+    write_private(relaylink.unlink_intent_path(svc.state_dir, served.wid), body)
+    _on_worker(served, svc._relay_open)  # noqa: SLF001
+    assert relaylink.link_path(svc.state_dir, served.wid).exists()  # nothing renamed
+    assert relaylink.unlink_pending(svc.state_dir, served.wid) and svc.relay_reason == "unlink_pending"
+    assert relaylink.start_blocker(svc.state_dir, served.wid, UID) == "unlink_pending"
+
+
+def test_unlink_pending_fails_closed_on_a_dangling_symlink_and_an_unreadable_directory(served):  # noqa: F811
+    """L5 (E13, E14): ``unlink_pending`` uses ``lstat`` (a dangling symlink is an intent) and counts any doubt."""
+    svc = served.service
+    _reserve(served)
+    intent = relaylink.unlink_intent_path(svc.state_dir, served.wid)
+    intent.symlink_to(intent.parent / "nowhere")
+    assert relaylink.unlink_pending(svc.state_dir, served.wid) is True
+    intent.unlink()
+    assert relaylink.unlink_pending(svc.state_dir, served.wid) is False
+    d = relaylink.relay_dir(svc.state_dir, served.wid)
+    os.chmod(d, 0)
+    try:
+        assert relaylink.unlink_pending(svc.state_dir, served.wid) is True  # cannot tell: pending
+    finally:
+        os.chmod(d, 0o700)
+
+
+def test_the_open_never_falls_through_to_a_start_after_a_failed_unlink(served, monkeypatch):  # noqa: F811
+    """L5 (E22): a failed unlink at open returns; it never goes on to start a worker (even if the blocker missed it)."""
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    _reserve(served)
+    _intent(svc.state_dir, served.wid)
+    starts: list[int] = []
+    svc.relay_starter = lambda s: starts.append(1)
+
+    def fail(service):
+        raise OSError("disk")
+
+    monkeypatch.setattr(relayhook, "unlink_job", fail)
+    monkeypatch.setattr(relaylink, "start_blocker", lambda *a: None)
+    _on_worker(served, svc._relay_open)  # noqa: SLF001
+    assert starts == [] and svc.relay_reason == "unlink_pending"
+
+
+def test_a_truthy_non_true_gate_keeps_every_host_entry_dormant(served, monkeypatch):  # noqa: F811
+    """L2: ``start_blocker`` itself goes through ``r6_ready()``: a gate set to 1 opens nothing."""
+    monkeypatch.setattr(relay_worker, "R6_READY", 1)
+    svc = served.service
+    _reserve(served)
+    starts: list[int] = []
+    svc.relay_starter = lambda s: starts.append(1)
+    assert svc.relay_start() == "none" and svc.relay_reason == relay_worker.R6_GATE_REASON
+    _on_worker(served, svc._relay_open)  # noqa: SLF001
+    assert starts == [] and svc.relay_reason == relay_worker.R6_GATE_REASON
+
+
+def test_an_unserved_relay_start_never_clears_the_marker_under_an_intent(served):  # noqa: F811
+    """L3: ``host.relay_start`` for a registered workspace that is not served refuses while an unlink is pending."""
+    svc = served.service
+    _reserve(served)
+    _intent(svc.state_dir, served.wid)
+    relaylink.mark_stopped(svc.state_dir, served.wid, UID)
+    services = served.h.host.services
+    held = services.pop(served.wid)
+    try:
+        res = served.control.call("host.relay_start", {"workspace_id": served.wid})
+    finally:
+        services[served.wid] = held
+    assert res["ok"] is False and res["error"]["code"] == "lock.busy"
+    assert relaylink.is_stopped(svc.state_dir, served.wid, UID)

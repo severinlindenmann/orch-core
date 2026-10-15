@@ -664,3 +664,22 @@ def test_a_release_that_raises_never_wedges_the_slot(tmp_path, gate):
     assert r.w.join(5) is True
     assert r.ended == 1 and r.w.alive() is False and "relay_release_failed" in r.alarms.codes()
     r.close()
+
+
+def test_every_release_step_runs_even_when_one_raises(tmp_path, gate):
+    """L4: a rid-store close that raises never keeps the state directory locked: each step on its own, alarmed."""
+    r = Rig(tmp_path)
+    path = r.state.path
+    r.w.start()
+    r.wait_started()
+
+    def boom() -> None:
+        raise OSError("disk gone")
+
+    r.rids.close = boom  # type: ignore[method-assign]
+    r.w.stop()
+    assert r.w.join(5) is True
+    StateDir(path).close()  # released despite the failed rid-store close
+    row = next(a for a in r.alarms.snapshot()["alarms"] if a["code"] == "relay_release_failed")
+    assert row["detail"] == "rids: OSError" and r.ended == 1
+    r.ex.shutdown(wait=True)

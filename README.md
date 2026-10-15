@@ -37,7 +37,7 @@ Each ticket follows the same path, with a gate before every next step:
   <img src="docs/images/readme/gates-light.png" alt="Ticket, then gate 1 requirements and acceptance criteria (you sign), plan, gate 2 plan approved (you sign), build and prove, gate 3 verdict (you sign).">
 </picture>
 
-- **Gates only a person can open.** Approvals, answers and verdicts are bound to the exact text you saw and need a physical act to sign: your fingerprint, your phone (Face ID), or any hardware signer such as a security key or a TPM chip. Agents get no signing commands, and orch refuses a gate without a person's signature.
+- **Gates only a person can open.** Approvals, answers and verdicts are bound to the exact text you saw and need a physical act to sign: your fingerprint or your phone (Face ID). Hardware keys and TPM chips are next. Agents get no signing commands, and orch refuses a gate without a person's signature.
 - **Agents that ask instead of guessing.** `orch ask` parks a question with options and a recommended answer, and `orch wait` blocks until you reply, at your desk or on your phone.
 - **Evidence, not claims.** Acceptance criteria, a task list ticked off with proof, and artifacts (screenshots, test reports, PRs) per criterion, before a ticket reaches your verdict.
 - **Memory that survives a holiday.** Every change is an appended, signed event. The current-state note on each ticket tells you where it stands and what's next.

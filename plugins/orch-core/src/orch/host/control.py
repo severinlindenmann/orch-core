@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -38,6 +39,8 @@ from .ownership import OwnershipLock
 from .registry import PERSON, Entry, group_name, validate_peers
 from .transport import Session
 from .workspace import ok_result, person_ok
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .service import Host
@@ -260,6 +263,32 @@ class ControlOps:
         finally:
             store.close()
 
+    def _import_readers(self, workspace_id: str, root: str) -> None:
+        """H12d-2 (§0.8.6 item 9.4 "Direct mode"): ``register`` imports direct mode's reader records. In tier A they
+        already lie in this state directory (``<state>/hosts/<ws>/readers/``), so the import verifies each against the
+        log and drops the ones that do not verify (their devices count as 0 anyway). It runs **after admission**, with
+        the ownership lock held and under the workspace's store lock, the lock every record writer holds (#513
+        review: a refused registration prunes nothing). Best effort: a record that cannot be removed still counts as 0
+        at every read."""
+        from orch.ops.readers import prune
+        from orch.store import Store
+
+        try:
+            store = Store.open(root, expected_workspace_id=workspace_id, host_state_dir=None, load="lazy")
+            try:
+                with store.locked():
+                    store.refresh()
+                    out = prune(self.state_dir, workspace_id, store.state, self.host_uid)
+            finally:
+                store.close()
+        except Exception as exc:  # noqa: BLE001 - never blocks a registration: every read verifies again
+            _log.warning("register: reader records of %s not checked (%s)", workspace_id, type(exc).__name__)
+            return
+        if out["dropped"]:
+            _log.info(
+                "register: dropped %d reader record(s) of %s that do not verify", len(out["dropped"]), workspace_id
+            )
+
     def register(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
         root = os.path.realpath(args["root"])
         begun = self._begin(idem, "host.register", {"root": root, "peers": args["peers"]})
@@ -289,6 +318,7 @@ class ControlOps:
             self.intents.update(intent, workspace_id=workspace_id)
             entry = Entry(workspace_id, prefix, root, self.host_uid, group_name(workspace_id), peers)
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
+                self._import_readers(workspace_id, root)  # H12d-2: after admission, under the store lock
                 self.host.registry.add(entry)
                 self.host.serve_from_thread(entry)
             return self.intents.complete(intent, ok_result({"workspace_id": workspace_id}))["result"]

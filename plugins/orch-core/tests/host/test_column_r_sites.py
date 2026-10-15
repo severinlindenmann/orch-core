@@ -40,6 +40,10 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("dispatch.py", "RegistryBackend.whoami"): (2, "R gets no runner info (P and G only)"),
     ("outcomes.py", "principal_of"): (2, "raises for R (the principal is r:<device>, never derived from a uid)"),
     ("reads_ws.py", "_person_reader"): (1, "unreachable (session.list, grant.list are not R ops); refuses R"),
+    ("reads_ws.py", "reader_list"): (
+        2,
+        "R: the current devices' levels only ({device, person, reader, level}: no decl, no dk_hash; H12d-2, 9.11)",
+    ),
     ("reads_ws.py", "may_create"): (
         2,
         "R: true only for a non-viewer whose requesting device is its person's, valid, with decide; G and N: false",

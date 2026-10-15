@@ -604,7 +604,10 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"
         )
-        out.write("Phone, relay link or other member later? A reader-version handshake is planned for phase 2.\n")
+        out.write(
+            "Every other reader (another device, another member's core, a relay link) must declare reader level 1 "
+            "first: until then each convenience signature is refused and names it (orch keys reader declare).\n"
+        )
     return 0
 
 

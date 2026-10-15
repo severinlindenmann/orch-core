@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "sign.convenience_unavailable",
+    "message": "a reader of this workspace has not declared that it understands convenience signatures",
+    "hint": "declare the readers it names (orch keys reader declare), or remove them; sign with your passphrase key",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

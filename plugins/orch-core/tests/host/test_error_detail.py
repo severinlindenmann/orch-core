@@ -13,6 +13,9 @@ ALLOWED = {
     "launch.no_grant": {"reason": "expiring"},
     "runner.disabled": {"missing": "terminals"},
     "ticket.key_not_next": {"next_key": "ORCH-0042"},
+    # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level
+    "sign.convenience_unavailable": {"reason": "other_member", "devices": ["d_" + "1" * 32]},
+    "sign.convenience_readers": {"reason": "reader_too_old", "devices": ["d_" + "2" * 32]},
 }
 
 
@@ -28,7 +31,7 @@ def test_each_allowed_code_sends_exactly_its_allowed_keys(code):
     validate_envelope(res(err), sender="host")
 
 
-def test_the_table_is_exactly_the_five_codes():
+def test_the_table_is_exactly_the_seven_codes():
     assert set(DETAIL_KEYS) == set(ALLOWED)
 
 
@@ -54,6 +57,9 @@ def test_an_unlisted_code_never_carries_detail():
         ("ticket.key_not_next", {"next_key": "not a key"}),
         ("ticket.key_not_next", {"next_key": "ORCH-1\nx"}),
         ("ticket.key_not_next", {"next_key": 5}),
+        ("sign.convenience_readers", {"reason": "history"}),
+        ("sign.convenience_readers", {"devices": ["d_x", "free text"]}),
+        ("sign.convenience_unavailable", {"devices": "d_" + "1" * 32}),
     ],
 )
 def test_an_open_value_is_dropped_not_sent(code, detail):

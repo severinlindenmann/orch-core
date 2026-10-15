@@ -54,6 +54,9 @@ class Capture:
     #: H11d (D-P2-32): the working copy each linked repo was checked in, ``{repo, ticket, gen, registered, pin}``;
     #: binding and ``precommit`` require the same registration (generation and pin), never a fallback
     copies: list[dict[str, Any]] = field(default_factory=list)
+    #: H12d-2 (§0.8.6 item 9.4): the readers the request admits, verified at prepare (``member.add --reader-decl``):
+    #: ``{device, person, decl, source, reader, level, digest}``; not signed, not in ``material`` (an argument)
+    readers: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def actor(self) -> dict[str, Any]:

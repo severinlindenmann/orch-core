@@ -70,6 +70,7 @@ def test_workspace_show_gives_the_identity_of_the_workspace(w):
     ws = w.service.store.state.workspace
     assert set(data) == {
         "id", "prefix", "name", "genesis", "epoch", "wsk_fingerprint", "members_v", "state", "next_key",
+        "required_reader",  # H12d-2
     }  # fmt: skip
     assert data["id"] == w.wid == ws.workspace_id and data["prefix"] == ws.prefix == "DEMO"
     assert data["name"] == "Acme"  # config.json `workspace.name`
@@ -140,6 +141,7 @@ def test_member_list_has_the_devices_with_their_validity(w):
     assert (owner["role"], owner["name"], quinn["role"]) == ("owner", "Owner", "member")
     (device,) = owner["devices"]
     assert set(device) == {"id", "auth", "scopes", "valid", *DEVICE_EXT} and device["valid"] is True
+    assert device["reader"] is None  # H12d-2: no reader record (#505: null, never 0)
     assert device["auth"] == "passphrase"  # the genesis was signed with it: the custody label F1 records
     assert sorted(device["scopes"]) == ["decide", "look", "operate", "type"]
     assert quinn["devices"][0]["auth"] is None  # signed nothing in the workspace log: unknown, not guessed

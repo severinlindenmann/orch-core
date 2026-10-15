@@ -120,6 +120,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     ),
     "workspace.show": _obj({}),
     "member.list": _obj({}),
+    "reader.list": _obj({}),  # H12d-2 (§0.8.6 item 9.11): columns P and R
     "session.list": _obj({"active": {"type": "boolean"}}),
     "grant.list": _obj({"active": {"type": "boolean"}}),
     "workspace.settings": _obj({"limit": {**_INT, "minimum": 1, "maximum": 32}, "page": _PAGE}),

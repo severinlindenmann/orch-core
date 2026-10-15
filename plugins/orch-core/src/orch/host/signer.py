@@ -228,7 +228,15 @@ def check_reviews(material: Mapping[str, Any], events: list[Mapping[str, Any]]) 
         reviews = [review.of(e, material) for e in events]
     except review.ReviewError as exc:
         _refuse(str(exc))
-    if not _same(material.get("review"), reviews):
+    sent = material.get("review")
+    if isinstance(sent, list) and len(sent) == len(reviews):
+        for got, want in zip(sent, reviews, strict=True):
+            if want["type"] in review.READER_TYPES:  # H12d-2: the reader level, a host attestation (shown as such)
+                level = got.get("derived", {}).get("reader") if isinstance(got, dict) else None
+                if type(level) is not int or not 0 <= level <= review.LEVEL_MAX:
+                    _refuse("a reader-adding event carries no reader level (update orch)")
+                want["derived"]["reader"] = level
+    if not _same(sent, reviews):
         _refuse("the review the host sent differs from the one recomputed from the events and the material")
 
 
@@ -559,6 +567,8 @@ def render(
         for key, value in sorted(block["derived"].items()):
             if key == "ticket_key":
                 out.append(f"ticket_key: {_clean(value)} (ticket key per host)")
+            elif key == "reader":
+                out.append(review.reader_line(int(value)))
             elif key != "sections":
                 out.append(f"{_clean(key)}: {_clean(value)}")
     if material.get("kind") == "gate":

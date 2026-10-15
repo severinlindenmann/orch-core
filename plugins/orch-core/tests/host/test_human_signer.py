@@ -193,6 +193,9 @@ def _sample(typ: str) -> tuple[dict, dict]:
 def test_the_review_is_recomputed_by_the_signer_for_every_person_event_type(typ):
     assert allows("human", typ)
     event, material = _sample(typ)
+    reader = typ in review.READER_TYPES  # H12d-2: the host attests the new reader's level (§0.8.6 item 9.11)
+    if reader:
+        material["review"][0]["derived"]["reader"] = 1
     signer.check_reviews(material, [event])
     (block,) = material["review"]
     assert block["payload"] == {k: v for k, v in event.items() if k not in review.ENVELOPE}
@@ -209,8 +212,25 @@ def test_the_review_is_recomputed_by_the_signer_for_every_person_event_type(typ)
     # an unknown payload key is part of the review and shown (L2)
     future = {**event, "future_field": {"x": 1}}
     material2 = {**material, "review": [review.of(future, material)]}
+    if reader:
+        material2["review"][0]["derived"]["reader"] = 1
     signer.check_reviews(material2, [future])
     assert material2["review"][0]["payload"]["future_field"] == {"x": 1}
+
+
+def test_a_reader_level_is_required_on_a_reader_event_and_must_be_a_level():
+    """H12d-2: a signer refuses a reader-adding event without the host's level (a host before H12d-2) or with a
+    malformed one; the level is shown as a host attestation."""
+    event, material = _sample("member.added")
+    with pytest.raises(signer.SignerRefused, match="no reader level"):
+        signer.check_reviews(material, [event])
+    for bad in (-1, "1", 1.0, True, 2**31):
+        m = copy.deepcopy(material)
+        m["review"][0]["derived"]["reader"] = bad
+        with pytest.raises(signer.SignerRefused):
+            signer.check_reviews(m, [event])
+    assert review.reader_line(1).startswith("Reader: understands convenience signing (level 1)")
+    assert review.reader_line(0).startswith("Reader: old (level 0)")
 
 
 def test_the_derived_table(served):

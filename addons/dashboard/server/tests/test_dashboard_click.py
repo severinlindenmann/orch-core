@@ -1802,3 +1802,11 @@ def test_a_wrong_passphrase_keeps_its_code(client, token, stub, script):
     script.refuse["custody_on"] = ClickError("rate.limited", "wait", retry_after_ms=5000, retryable=True)
     err = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE}).json()["error"]
     assert err["code"] == "rate.limited" and err["retry_after_ms"] == 5000
+
+
+def test_the_switch_takes_a_small_body(client, token, stub, script):
+    """orch-9d L3 on #578: /click/custody is a sign-route body (16 KiB), not the general 1 MiB."""
+    script.features = ["custody"]
+    res = switch(client, token, stub, {"on": True, "passphrase": "x" * 20_000})
+    assert res.status_code == 413 and "x" * 100 not in res.text
+    assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)

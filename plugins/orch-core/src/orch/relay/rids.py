@@ -680,9 +680,29 @@ class RidStore:
                 self._live = kept + self._live[cut:]
         for _ in range(VACUUM_PAGES // VACUUM_STEP):
             with self._lock:
-                self._db.execute(f"PRAGMA incremental_vacuum({VACUUM_STEP})").fetchall()
-                if self._db.execute("PRAGMA freelist_count").fetchone()[0] == 0:
+                if self._vacuum_step():
                     break
+
+    def _vacuum_step(self) -> bool:
+        """Return at most :data:`VACUUM_STEP` free pages in one transaction (the caller holds the lock); True when none
+        are left. One page per ``PRAGMA incremental_vacuum(1)``: ``execute(...).fetchall()`` steps a pragma without
+        result columns only ONCE on Python 3.11, so ``incremental_vacuum(N)`` there frees one page, not N. Every
+        transaction of this connection is a :meth:`_tx` that ends under the same lock, so none is open here; an open
+        one is refused, never committed or joined."""
+        db = self._db
+        if db.in_transaction:
+            raise StateError("relay_state_unsafe: a transaction is open at the vacuum step")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            for _ in range(VACUUM_STEP):
+                if db.execute("PRAGMA freelist_count").fetchone()[0] == 0:
+                    break
+                db.execute("PRAGMA incremental_vacuum(1)").fetchall()
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+        db.execute("COMMIT")
+        return db.execute("PRAGMA freelist_count").fetchone()[0] == 0
 
     def counts(self) -> dict[str, Any]:
         """The in-memory counts and the same counts from the file (a test keeps them equal)."""

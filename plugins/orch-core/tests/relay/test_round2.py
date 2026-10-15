@@ -14,6 +14,7 @@ from orch.relay import bridge as B
 from orch.relay import framing, rids, wire
 from orch.relay.bridge import BridgeLoop, Item
 from orch.relay.keys import SealRefused
+from orch.relay.state import StateError
 
 from .bridgekit import T0, Phone, World, open_chunk, ulid
 
@@ -240,6 +241,34 @@ def test_tombstones_are_capped_oldest_first_and_the_file_returns_pages(w, monkey
     states = [r[2] for r in w.rids.dump()["rid"]]
     assert states.count("tombstone") == 2
     assert w.rids._db.execute("PRAGMA freelist_count").fetchone()[0] == 0  # noqa: SLF001 - vacuumed
+
+
+def test_a_vacuum_step_frees_exactly_its_page_budget(w, monkeypatch):
+    """Pages are really returned, VACUUM_STEP per step (Python 3.11 too, where `incremental_vacuum(N)` through
+    `execute` frees ONE page)."""
+    monkeypatch.setattr(rids, "VACUUM_PAGES", 0)  # the sweep frees rows but returns no pages
+    monkeypatch.setattr(rids, "VACUUM_STEP", 50)
+    w.send(w.phone.request(w.wk, {"op": "ticket.text", "args": {"size": 1 << 20}}))
+    w.rids.sweep(w.clock.ms + rids.RID_KEEP_MS)
+    db = w.rids._db  # noqa: SLF001
+    free, pages = (db.execute(f"PRAGMA {k}").fetchone()[0] for k in ("freelist_count", "page_count"))
+    assert free > 2 * 50
+    with w.rids._lock:  # noqa: SLF001
+        assert w.rids._vacuum_step() is False  # noqa: SLF001
+    assert db.execute("PRAGMA freelist_count").fetchone()[0] == free - 50
+    assert db.execute("PRAGMA page_count").fetchone()[0] == pages - 50
+    assert not db.in_transaction
+
+
+def test_the_vacuum_step_refuses_an_open_transaction_and_never_commits_it(w):
+    db = w.rids._db  # noqa: SLF001
+    db.execute("BEGIN IMMEDIATE")
+    db.execute("INSERT INTO window(device, high, bitmap) VALUES('vacuum-probe', 1, '0')")
+    with w.rids._lock, pytest.raises(StateError, match="transaction is open"):  # noqa: SLF001
+        w.rids._vacuum_step()  # noqa: SLF001
+    assert db.in_transaction  # still open: neither committed nor joined
+    db.execute("ROLLBACK")
+    assert db.execute("SELECT COUNT(*) FROM window WHERE device='vacuum-probe'").fetchone()[0] == 0
 
 
 # -- R2-5: the answer cap is the relay's per-device undelivered budget ------------------------------------------------

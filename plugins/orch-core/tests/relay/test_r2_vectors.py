@@ -14,7 +14,7 @@ import pytest
 from orch import crypto
 from orch.relay import bridge, framing, submit, wire
 
-from .bridgekit import World, open_chunk
+from .bridgekit import World, apply_setup, open_chunk
 
 VECTORS = json.loads((Path(__file__).with_name("r2_vectors") / "r2_framing.json").read_text())
 
@@ -27,11 +27,31 @@ def test_the_tables_are_the_codes():
     assert t["events"] == {k: list(v) for k, v in submit.EVENTS.items()}
     assert t["auth"] == sorted(submit.AUTH)
     assert t["retry"] == dict(framing.RETRY)
+    assert t["retry_context"] == {k: dict(v) for k, v in framing.RETRY_CONTEXT.items()}
+    assert t["retry_notes"] == dict(framing.RETRY_NOTES)
+    assert t["refusal_fields"]["proto"] == {k: sorted(v) for k, v in framing.PROTO_FIELDS.items()}
     assert t["proto_codes"] == sorted(bridge.PROTO_CODES)
     assert t["meta_keys"] == sorted(framing.META_KEYS)
     c = VECTORS["constants"]
     assert c["max_answer"] == framing.MAX_ANSWER and c["chunk_room"] == bridge.CHUNK_ROOM
     assert c["pending_no_record_ms"] == framing.PENDING_NO_RECORD_MS
+    assert c["relay_device_response_bytes"] == framing.RELAY_DEVICE_RESPONSE_BYTES
+    assert c["busy_allowance"] == bridge.BUSY_ALLOWANCE
+
+
+def test_round_2_cases_are_present_and_classified():
+    names = {c["name"] for c in VECTORS["cases"]}
+    assert {
+        "answer_write", "ticket_key_not_next", "outcome_get_failed", "outcome_get_partial", "outcome_get_unknown_idem",
+        "outcome_get_idem_expired", "outcome_get_pending_admitted", "same_idem_new_rid_while_running",
+        "request_with_rd", "answer_over_the_relay_budget", "already_done_on_a_read", "stale_epoch_under_a_burned_key",
+    } <= names  # fmt: skip
+    for c in VECTORS["cases"]:
+        meta = c["answer"][0]["meta"] if c["answer"] else None
+        if meta and "refusal" in meta:
+            assert c["retry_class"] == framing.retry_class(meta["refusal"])
+            if meta["refusal"] not in framing.PROTO_CODES:
+                assert meta["retryable"] is (c["retry_class"] in ("A", "B")), c["name"]
 
 
 @pytest.mark.parametrize("case", VECTORS["cases"], ids=[c["name"] for c in VECTORS["cases"]])
@@ -56,8 +76,10 @@ def test_replaying_the_requests_gives_the_same_answers(tmp_path):
     try:
         assert w.phone.device == VECTORS["device"]["device_id"]
         for case in VECTORS["cases"]:
+            for action in case["setup"]:
+                apply_setup(w, action)
             w.clock.ms = case["now_ms"]
-            chunks = w.send(bytes.fromhex(case["request"]))
+            chunks = w.send(bytes.fromhex(case["request"]), run=case["run"])
             answer = []
             for c in chunks:
                 h, meta, data = open_chunk(c, w.wk, w.key.public_key)

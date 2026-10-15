@@ -448,4 +448,34 @@ class World:
         }
 
 
-__all__ = ["Clock", "Epochs", "FakeHost", "Phone", "Poster", "R6", "World", "framing", "idem", "open_chunk", "ulid"]
+def apply_setup(w: World, action: dict[str, Any]) -> None:
+    """A framing vector's setup step (the generator and the replay test both use it): ``clock`` (+ms), ``restart``,
+    ``burn`` (an epoch above the committed one), ``outcome`` (a stored outcome for the phone's own principal)."""
+    do = action["do"]
+    if do == "clock":
+        w.clock.ms += action["ms"]
+    elif do == "restart":
+        w.reopen()
+    elif do == "burn":
+        w.epochs.burn()
+    elif do == "outcome":
+        fields = {k: v for k, v in action.items() if k not in ("do", "idem", "step")}
+        w.host.set_outcome("r:d_" + w.phone.device, action["idem"], action["step"], **fields)
+    else:
+        raise ValueError(do)
+
+
+__all__ = [
+    "Clock",
+    "apply_setup",
+    "Epochs",
+    "FakeHost",
+    "Phone",
+    "Poster",
+    "R6",
+    "World",
+    "framing",
+    "idem",
+    "open_chunk",
+    "ulid",
+]

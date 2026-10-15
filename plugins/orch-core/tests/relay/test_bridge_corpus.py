@@ -27,11 +27,11 @@ from . import corpus
 from .bridgekit import FakeHost, Poster, open_chunk
 from .helpers import Key
 
-CASES = [
-    c
-    for c in corpus.S2["bridge"]["host_cases"]
-    if "steps" not in c and not c["name"].startswith("pair") and not c["state"].get("rids")
-]
+CASES = [c for c in corpus.S2["bridge"]["host_cases"] if "steps" not in c and not c["name"].startswith("pair")]
+#: the multi-step non-pairing cases (round 2: every non-pairing host case runs against core). Core's mapping of a
+#: relay-ref "accept" is R2's closed op table (``forbidden_scope``, recorded): so the ref's ``already_done`` for an
+#: identical resend of an accepted (still running) rid is, in core, the stored answer re-posted byte for byte.
+STEPPED = [c for c in corpus.S2["bridge"]["host_cases"] if "steps" in c and not c["name"].startswith("pair")]
 
 
 class _Epochs:
@@ -66,7 +66,12 @@ class _R6:
 def test_the_corpus_has_the_cases_r2_runs():
     names = {c["name"] for c in CASES}
     assert {"full_request_accepted", "previous_epoch_refused_stale_epoch", "revoked_device", "old_timestamp"} <= names
-    assert len(CASES) >= 20
+    assert "quota_busy" in names and len(CASES) >= 21
+    assert {c["name"] for c in STEPPED} == {
+        "replayed_request", "stale_epoch_consumes_its_seq_then_a_new_request_runs", "repeated_sequence",
+    }  # fmt: skip
+    every = corpus.S2["bridge"]["host_cases"]
+    assert len(CASES) + len(STEPPED) == len([c for c in every if not c["name"].startswith("pair")])
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
@@ -103,12 +108,18 @@ def test_host_case(tmp_path, monkeypatch, case):
                 r6=_R6(st), port=host, job=lambda fn: fn(), post=post, now_ms=lambda: now,
             )  # fmt: skip
             b._budget.extend(st.get("unverified", []))  # noqa: SLF001 - the vector's spent budget
+            for r, rec in (st.get("rids") or {}).items():  # the vector's live records (quota cases)
+                rids.record_refusal(
+                    device=rec["device"], rid=r, first_ms=rec["until"] - bridge_mod.RID_RETENTION_MS,
+                    req_digest="sha256:" + rec["digest"], epoch=st["epoch"], seq=0, kind="refusal", chunk=b"",
+                    window=None,
+                )  # fmt: skip
             env = bytes.fromhex(case["envelope"])
             dev = env[24:40].hex() if len(env) >= 40 else ""
             b.receive(Item(1, "bridge", dev, case.get("mailbox_id") or env[40:56].hex(), env))
             want = case["expect"]
             if want["result"] == "drop":
-                assert post.posts == [] and rids.dump()["rid"] == []
+                assert post.posts == [] and len(rids.dump()["rid"]) == len(st.get("rids") or {})
                 return
             (chunk,) = [e for _, _, e in post.posts]
             h, meta, data = open_chunk(chunk, epochs.keys, key.public_key)
@@ -121,3 +132,47 @@ def test_host_case(tmp_path, monkeypatch, case):
         finally:
             rids.close()
     assert crypto
+
+
+@pytest.mark.parametrize("case", STEPPED, ids=[c["name"] for c in STEPPED])
+def test_host_case_steps(tmp_path, monkeypatch, case):
+    st = case["state"]
+    clock = [0]
+
+    def fake_verify_cert(cert, pk_pub, now_ms):
+        d = next(d for d, c in st["certs"].items() if c["dk_sig_pub"] == cert["dk_sig_pub"])
+        return {"device_id": d, "person_id": "00" * 16, "dk_sig_pub": cert["dk_sig_pub"],
+                "scopes_max": ["look", "decide", "operate", "type"]}  # fmt: skip
+
+    monkeypatch.setattr(bridge_mod, "verify_cert", fake_verify_cert)
+    epochs, host, key, post = _Epochs(st), FakeHost(tmp_path), Key(), Poster()
+    keys = BridgeKeys(epochs, bytes.fromhex(st["workspace"]))
+    with StateDir(tmp_path / "relay") as sd:
+        rids = RidStore(sd)
+        try:
+            b = Bridge(
+                workspace_id=st["workspace"], rids=rids, keys=keys,
+                signer=sign.RelaySigner(key, sign.LinkContext(st["workspace"], "https://relay.example"), epochs=keys),
+                r6=_R6(st), port=host, job=lambda fn: fn(), post=post, now_ms=lambda: clock[0],
+            )  # fmt: skip
+            stored: dict[str, bytes] = {}
+            for i, step in enumerate(case["steps"]):
+                clock[0] = step["now_ms"]
+                env = bytes.fromhex(step["envelope"])
+                n = len(post.posts)
+                b.receive(Item(i + 1, "bridge", env[24:40].hex(), step["mailbox_id"], env))
+                got = [e for _, _, e in post.posts[n:]]
+                want = step["expect"]
+                if want["result"] == "refuse" and want["code"] == "already_done" and step["mailbox_id"] in stored:
+                    assert got == [stored[step["mailbox_id"]]]  # core: the stored answer again, byte for byte
+                    continue
+                (chunk,) = got
+                stored[step["mailbox_id"]] = chunk
+                _h, meta, _ = open_chunk(chunk, epochs.keys, key.public_key)
+                if want["result"] == "refuse":
+                    fields = {k: v for k, v in want.items() if k not in ("result", "code")}
+                    assert meta == {"refusal": want["code"], **fields}
+                else:
+                    assert want["result"] == "accept" and meta == {"refusal": "forbidden_scope"}
+        finally:
+            rids.close()

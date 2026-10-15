@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from orch import crypto  # noqa: E402
 from orch.relay import bridge, framing, submit, wire  # noqa: E402
-from tests.relay.bridgekit import T0, World, open_chunk, ulid  # noqa: E402
+from tests.relay.bridgekit import T0, World, apply_setup, open_chunk, ulid  # noqa: E402
 
 OUT = ROOT / "tests" / "relay" / "r2_vectors" / "r2_framing.json"
 SEED = b"r2-framing-vectors-v1"
@@ -37,11 +37,14 @@ def main() -> None:
 
             stranger = Phone(seed=stranger_seed)
 
-            def run(name: str, meta: dict | bytes, note: str, *, phone=None, **kw) -> None:
+            def run(name: str, meta: dict | bytes, note: str, *, phone=None, setup=(), execute=True, **kw) -> None:
+                for action in setup:
+                    apply_setup(w, action)
                 p = phone or w.phone
+                kw.setdefault("ts_ms", w.clock.ms)
                 env = p.request(w.wk, meta, **kw)
                 n = len(w.post.posts)
-                w.send(env)
+                w.send(env, run=execute)
                 chunks = [e for _, r, e in w.post.posts[n:] if r == env[40:56].hex()]
                 answer = []
                 for c in chunks:
@@ -52,6 +55,9 @@ def main() -> None:
                     "device": p.device, "request_meta": meta if isinstance(meta, dict) else None,
                     "request_plaintext": None if isinstance(meta, dict) else meta.hex(),
                     "request": env.hex(), "response": [c.hex() for c in chunks], "answer": answer,
+                    "setup": list(setup), "run": execute,
+                    "retry_class": framing.retry_class(answer[0]["meta"]["refusal"]) if answer and "refusal" in
+                    answer[0]["meta"] else None,
                 })  # fmt: skip
 
             run("read_whoami", {"op": "whoami", "args": {}}, "a read: status ok, the Result in data")
@@ -88,6 +94,56 @@ def main() -> None:
                 signer=stranger.dk)  # fmt: skip
             run("chunked_answer", {"op": "ticket.text", "args": {"size": 300_000}},
                 "an answer over one chunk: chunk 0 meta {status: ok}, later {}, LAST on the final one")  # fmt: skip
+            # -- round 2 (orch-f1's asks) --
+            ans = w.phone.event(m["args"]["log"], "question.answered", eid=ulid(T0), question="q1",
+                                hash="sha256:" + "0" * 64, option="yes")  # fmt: skip
+            run("answer_write", {"op": "answer", "args": {"log": m["args"]["log"], "events": [ans]}, "idem": ans["id"]},
+                "an answer write: relay.submit of one device-signed question.answered (scope decide)")  # fmt: skip
+            run(
+                "ticket_key_not_next",
+                w.new_ticket(key="DEMO-TAKEN"),
+                "the key is not the next free key: C-auto, rebuild with next_key (advisory) under a NEW event id",
+            )
+            failed = w.new_ticket(title="refuse me")
+            run("write_failed_ticket_exists", failed, "a write refused by the host: ticket.exists, D")
+            run("outcome_get_failed", {"op": "outcome.get", "args": {"idem": failed["idem"]}},
+                "outcome.get of a failed write: data.state failed with its error")  # fmt: skip
+            pid = ulid(T0)
+            run("outcome_get_partial", {"op": "outcome.get", "args": {"idem": pid}},
+                "outcome.get of a partial record: seqs are events that LANDED, never 'not run'",
+                setup=[{"do": "outcome", "idem": pid, "step": "partial", "error": {"code": "invalid.input"},
+                        "seqs": [7]}])  # fmt: skip
+            run("outcome_get_unknown_idem", {"op": "outcome.get", "args": {"idem": ulid(T0 - 1_200_001)}},
+                "no record and past the event id's ULID time + 1200 s: outcome.unknown_idem, C-review")  # fmt: skip
+            tid = ulid(T0)
+            run("outcome_get_idem_expired", {"op": "outcome.get", "args": {"idem": tid}},
+                "a tombstoned idem: idem.expired, B (read the log)",
+                setup=[{"do": "outcome", "idem": tid, "step": "tombstone"}])  # fmt: skip
+            held = w.new_ticket()
+            run("write_admitted_not_yet_run", held, "admitted (T1), still running: no answer yet", execute=False)
+            run("outcome_get_pending_admitted", {"op": "outcome.get", "args": {"idem": held["idem"]}},
+                "outcome.get of an idem this device has admitted: pending")  # fmt: skip
+            run(
+                "same_idem_new_rid_while_running",
+                held,
+                "the same signed event + idem on a NEW rid while it runs: refusal pending (B), never a second run",
+            )
+            run("request_with_rd", {"op": "whoami", "args": {}, "rd": "sha256:" + "ab" * 32},
+                "rd (H12d) is accepted and carried into the identity; never a qualification in v1.7")  # fmt: skip
+            run("answer_over_the_relay_budget", {"op": "ticket.text", "args": {"size": framing.MAX_ANSWER}},
+                "an answer whose chunk envelopes would exceed the relay's 2 MiB per-device budget: frame.too_large "
+                "(the 4 MiB-class answer of round 1 is refused up front, never stored)")  # fmt: skip
+            run("already_done_on_a_read", {"op": "whoami", "args": {}},
+                "stamped before the host (re)started: already_done {status: unknown}; on a read: re-issue, new rid",
+                setup=[{"do": "clock", "ms": 1000}, {"do": "restart"}], ts_ms=T0 + 500)  # fmt: skip
+            run(
+                "stale_epoch_under_a_burned_key",
+                {"op": "whoami", "args": {}},
+                "a request under a burned epoch above the committed one: ONLY a signed stale_epoch under that key, "
+                "naming the pending epoch, else EHW + 1 (C5, proto 8.5 G2b)",
+                setup=[{"do": "burn"}],
+                epoch=3,
+            )
         finally:
             w.close()
     doc = {
@@ -95,6 +151,7 @@ def main() -> None:
         "suite": wire.SUITE,
         "workspace_id": w.bridge.ws_hex,
         "epoch": w.epochs.cur,
+        "burned": sorted(w.epochs.burned),
         "wk": {str(e): k.hex() for e, k in w.epochs.keys.items()},
         "wsk_pub": crypto.b64u(w.key.public_key),
         "device": {
@@ -113,11 +170,25 @@ def main() -> None:
             "events": {k: list(v) for k, v in submit.EVENTS.items()},
             "auth": sorted(submit.AUTH),
             "retry": dict(sorted(framing.RETRY.items())),
+            "retry_context": {k: dict(v) for k, v in sorted(framing.RETRY_CONTEXT.items())},
+            "retry_notes": dict(sorted(framing.RETRY_NOTES.items())),
+            "refusal_fields": {
+                "proto": {k: sorted(v) for k, v in sorted(framing.PROTO_FIELDS.items())},
+                "host": {
+                    "always": ["retryable"],
+                    "seqs": "only for a write whose events LANDED (failed/partial)",
+                    "next_key": ["ticket.key_not_next"],
+                },
+            },  # fmt: skip
             "proto_codes": sorted(bridge.PROTO_CODES),
             "meta_keys": sorted(framing.META_KEYS),
         },
         "constants": {
             "max_answer": framing.MAX_ANSWER,
+            "relay_device_response_bytes": framing.RELAY_DEVICE_RESPONSE_BYTES,
+            "busy_allowance": bridge.BUSY_ALLOWANCE,
+            "device_chunk_bytes": bridge.DEVICE_CHUNK_BYTES,
+            "stuck_backoff_ms": list(bridge.STUCK_BACKOFF_MS),
             "chunk_room": bridge.CHUNK_ROOM,
             "window_ms": bridge.WINDOW_MS,
             "pending_no_record_ms": framing.PENDING_NO_RECORD_MS,

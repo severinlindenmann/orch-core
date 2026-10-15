@@ -424,3 +424,49 @@ def test_check_target_refuses_the_workspace_log(env, phone):
         admission.check_target(env.store, "workspace", ev)
     assert exc.value.code == "validation.event"
     assert admission.lookup(env.store, "workspace", ev["id"]) is None  # lookup and dedup may read the workspace log
+
+
+# --- H12e-2: device standing for column R (I2) and judge_events never leaks a model exception (I3b) -----------------
+
+
+def test_device_standing_follows_the_f1_log(env, phone):
+    """R2's ``standing()`` must use this: a REAL ``device.removed`` through the normal path ends the standing."""
+    s = env.store
+    with s.locked():
+        assert admission.device_standing(s, env.owner.ref, phone.device) == "ok"
+        assert admission.device_standing(s, env.owner.ref, env.owner.device) == "ok"
+        assert admission.device_standing(s, env.owner.ref, "d_" + "A" * 43) == "unknown"
+        assert admission.device_standing(s, "p_" + "B" * 20, phone.device) == "unknown"  # another person's device
+    s.append(env.person_event(env.owner, "workspace", "device.removed", device=phone.device), log="workspace")
+    with s.locked():
+        assert admission.device_standing(s, env.owner.ref, phone.device) == "removed"
+        assert admission.device_standing(s, env.owner.ref, env.owner.device) == "ok"
+
+
+def test_judge_events_maps_a_model_exception_to_validation_event(env, phone):
+    """A signed but malformed event (an unknown ticket type) made ``model.preview`` raise ``KeyError``."""
+    uid = new_ulid()
+    ev = phone.event(
+        env, uid, "ticket.created", based_on=None, key=env.store.peek_key(), ticket_type="no-such-type", title="x",
+        owner=env.owner.ref,
+    )  # fmt: skip
+    with pytest.raises(HostError) as exc, env.store.locked():
+        judge_events(env.store, uid, [ev])
+    assert exc.value.code == "validation.event"
+
+
+def test_judge_events_maps_other_exception_types(env, phone, monkeypatch):
+    import orch.model as model
+
+    uid = env.new_ticket()
+    h = ask(env, uid, options=OPTS)
+    ev = phone.event(env, uid, "question.answered", question="Q1", hash=h, option="csv")
+    for exc_type in (KeyError, TypeError, ValueError, AttributeError):
+
+        def boom(*a: Any, _t: Any = exc_type, **k: Any) -> Any:
+            raise _t("boom")
+
+        monkeypatch.setattr(model, "preview", boom)
+        with pytest.raises(HostError) as exc, env.store.locked():
+            judge_events(env.store, uid, [ev])
+        assert exc.value.code == "validation.event"

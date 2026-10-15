@@ -37,6 +37,7 @@ __all__ = [
     "check_target",
     "check_window",
     "dedup",
+    "device_standing",
     "judge_events",
     "known_or_fresh",
     "lookup",
@@ -68,6 +69,31 @@ def ulid_ms(event_id: str) -> int:
     for ch in event_id[:10]:
         n = n * 32 + _CROCKFORD.index(ch)
     return n
+
+
+def device_standing(store: Any, person_id: str, device_id: str) -> Literal["ok", "removed", "unknown"]:
+    """The liveness of a device in the F1 log (11A.4 step 3: "neither removed nor revoked"), for column R's
+    ``standing()`` in R2: **the** API it must use (never ``state._core``, never ``device_person`` alone, which also
+    answers for a removed device).
+
+    * ``"ok"``: ``device_id`` was added (``device.added``) for ``person_id`` and is neither removed (``device.removed``,
+      or its person's ``member.removed``) nor revoked (``device.revoked``).
+    * ``"removed"``: it is known for ``person_id`` and removed or revoked, or a revocation of it by ``person_id`` is on
+      record (a tombstone).
+    * ``"unknown"``: no such device of this person.
+
+    Certificate expiry is not part of it (``verify_cert`` covers that). Takes the lock itself (re-entrant), so it is
+    safe to call inside R2's ``store.locked()`` span; it reads the state as of the last refresh."""
+    with store.locked():
+        state = store.state
+        view = state.workspace.devices.get(device_id)
+        if view is not None:
+            if view.person != person_id:
+                return "unknown"
+            return "removed" if view.removed or view.revoked else "ok"
+        if (device_id, person_id) in state.revocation_evidence():
+            return "removed"
+        return "unknown"
 
 
 def check_window(event_id: str, now: float) -> None:

@@ -303,6 +303,9 @@ function Row({ ws, item, info, open, onToggle, onRetire, onChanged }: { ws: stri
       {blocked && (
         <p id={`why-${item.object_id}`} data-testid="drop-download-reason" className="text-[12px] text-text-muted">
           {blocked}
+          {tomb && item.tombstone_until_ms !== null && (
+            <span data-testid="drop-tombstone-until"> Disappears from this list on {when(item.tombstone_until_ms)}</span>
+          )}
         </p>
       )}
       {item.kind === 'document' && (
@@ -426,11 +429,15 @@ function RetireDialog({ ws, item, onClose, onDone }: { ws: string; item: DropIte
     setBusy(true)
     setError(null)
     try {
-      await dropApi.retire(ws, item.object_id)
+      await dropApi.retire(ws, { object_id: item.object_id, expect_version: item.version, expect_head: item.head })
       onDone()
       onClose()
     } catch (e) {
-      setError(dropError(e))
+      const detail = dropError(e)
+      if (detail.code === 'drop.version_conflict') {
+        setError({ ...detail, text: 'This item changed in the meantime. Reload the list and try again.' })
+        onDone()
+      } else setError(detail)
     } finally {
       setBusy(false)
     }

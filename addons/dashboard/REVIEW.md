@@ -614,10 +614,10 @@ host yet." (no sidebar entry until the server lists `drop`). To see the page, ru
 - `/__layout/drop-unavailable`: the not-available line.
 - `/__layout/drop-list`: Received / Sent tabs, 8 per page (**Older** / **Newer**). Rows show name, kind and type, size, author (person,
   device, "from a phone" or a "sealed by an agent" mark), created, expiry and state. Pruned, Expired and Deleted rows and the Unclaimed
-  one have Download off with the reason. **Send a file** (or drop a file on the dashed box): over 25 MiB is refused before anything is
+  one have Download off with the reason. Expired and Deleted rows also show “Disappears from this list on” with the removal date. **Send a file** (or drop a file on the dashed box): over 25 MiB is refused before anything is
   uploaded; otherwise progress in bytes and percent, then "Sealing and sending…", then "Sent …" and the file shows under Sent.
   **Download** saves a file (the fixture's content is HTML with a script: it must arrive as a download, never open). **Delete** asks
-  "Delete this file for everyone?" (removed for everyone at once); **Delete for everyone** turns the row into a Deleted tombstone.
+  "Delete this file for everyone?" (removed for everyone at once); **Delete for everyone** turns the row into a Deleted tombstone. Delete sends the listed version and head; a `drop.version_conflict` keeps the dialog open, explains that the item changed, and refreshes the list (fixture option `retireConflict: true`).
 - `/__layout/drop-long-names`: very long names and types, `<img src=x onerror=alert(1)>.html` as text, a right-to-left override shown as
   `\u{202e}`, a newline and a NUL shown escaped, a name that can't be shown, a long person name and device id.
 - `/__layout/drop-upload-progress`: an upload stalled at 1.5 MiB of 3 MiB (50 %); **Cancel** says nothing was sent.

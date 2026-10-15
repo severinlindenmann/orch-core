@@ -3795,6 +3795,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `runner.unavailable`, `other`; never host text) and `grant.deposit_status` gains `reason`; the click signer
     `contract` goes from 1 to 2 (deposit support; a client for contract 2 accepts 1 and 2); `run.sub` gains the
     `{t:"runner", grant}` item (§12.3). No F1, schema or capability change.
+44. **Read-time worktree back-pointers (#486, after #485):** every reader open (`gitdir` and `worktree` profiles,
+    and direct mode) checks git's back-pointers against the pins: a linked gitdir is `<commondir>/worktrees/<id>`
+    whose `gitdir` file names the pinned `<working copy>/.git`, a main gitdir is `<working copy>/.git`, and the
+    working copy's `.git`, read through its pinned fd, names the pinned gitdir (linked) or is it (main); the
+    `gitdir` profile's allow-list gains exactly `<working copy>/.git`. Relative back-pointers (git 2.48+
+    `worktree.useRelativePaths`) are refused, as at pin time. A main repo that a compromised batch pin child passed off as another declared repo's worktree,
+    or a worktree moved since it was pinned, is observe.unavailable. No wire, schema or capability change.
 
 **v1.8 → v1.9 (additive, #479; item numbers may be renumbered when a parallel change lands first).**
 
@@ -4196,6 +4203,14 @@ UID. P2 adds no keychain.**
       path; the commondir is a declared repo's `.git`; the gitdir is that commondir or its `worktrees/<id>`) before it
       is stored, so a child forging pins fails its batch. One child per repo had made the first request after such a
       `settings.changed` cost ~70 ms per repo (#468).
+      The layout check cannot tell a main repo B passed off as `<A>/.git/worktrees/<id>` of another declared repo A
+      from a real worktree of A; every read therefore re-checks git's back-pointers (#486): the worktree's `gitdir`
+      file must name the pinned `<working copy>/.git` (read with `O_NOFOLLOW`), its `commondir` the pinned commondir,
+      and the working copy's `.git`, read through the pinned working copy's fd (`O_NOFOLLOW` walk, device and inode),
+      must be a `gitdir: <path>` file naming the pinned gitdir (or be the pinned gitdir, for a main repo). This runs
+      on every open, in both profiles and in direct mode; the `gitdir` profile admits exactly `<working copy>/.git`
+      for it, the working copy only as an ancestor (#498). A forged or moved pin is refused when it is used.
+      Relative back-pointers (git 2.48+ `worktree.useRelativePaths`) are refused, as they already are at pin time.
     - Every open stays under the pins, with `O_NOFOLLOW` and a regular-file check.
     - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
       observe.unavailable and is never fetched.

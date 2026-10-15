@@ -206,17 +206,18 @@ class Request:
 
 def check_meta(meta: Mapping[str, Any], data: bytes) -> Request:
     """Step 11's first checks, in order, before any column is resolved: ``auth`` -> ``req.invalid``; a grant-shaped
-    string -> ``grant.secret_in_args``; other unknown keys, non-object args or non-empty data -> ``req.invalid``; an op
-    outside :data:`OPS` -> ``forbidden_scope``; the idem rules (``idem.required`` / ``req.invalid``)."""
+    string -> ``grant.secret_in_args``; an op outside :data:`OPS` -> ``forbidden_scope``; other unknown keys, non-object
+    args or non-empty data -> ``req.invalid``; the idem rules (``idem.required`` / ``req.invalid`` /
+    ``idem.invalid``)."""
     if "auth" in meta:
         raise Refusal("req.invalid")
     if grant_shaped(meta):
         raise Refusal("grant.secret_in_args")
-    if set(meta) - META_KEYS or "args" not in meta or type(meta["args"]) is not dict or data:
-        raise Refusal("req.invalid")
     spec = OPS.get(meta["op"])
     if spec is None:
         raise Refusal("forbidden_scope")
+    if set(meta) - META_KEYS or "args" not in meta or type(meta["args"]) is not dict or data:
+        raise Refusal("req.invalid")
     idem = meta.get("idem")
     if spec.kind == "write":
         if idem is None:

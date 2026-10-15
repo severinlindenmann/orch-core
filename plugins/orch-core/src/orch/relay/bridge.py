@@ -72,7 +72,15 @@ POST_DEADLINE_S, POST_CAP = 30.0, 16 * 1024
 RENEW_EVERY_S = 15.0
 AUX_HOLD_DEADLINE_S = 10.0
 JOBS = 2
+REPLAY_EVERY_MS, REPLAY_MAX, REPLAY_TRACKED = 10_000, 8, 4096
 _PROTO_FIELDS = {"high", "host_ms", "epoch", "status"}
+#: the proto §14 codes this bridge seals (their documented fields only); every other code is a host §0.6 code
+PROTO_CODES = frozenset(
+    {
+        "not_member", "revoked", "bad_signature", "busy", "malformed", "stale_sequence", "stale_timestamp",
+        "stale_epoch", "forbidden_scope", "already_done", "rid_conflict",
+    }
+)  # fmt: skip
 
 
 class HostPort(submit.SubmitPort, Protocol):
@@ -139,6 +147,9 @@ class Bridge:
         self.job, self.post, self.now_ms, self.alarm = job, post, now_ms, alarm
         self._budget: collections.deque[int] = collections.deque()
         self._start_ms: int | None = rids.start_ms()
+        #: (device, rid) -> (count, last ms) of replays re-opened for posting: at most one per 10 s and 8 per rid,
+        #: the relay's own re-store bounds (P3-D27), so a replayed request cannot make the host re-POST without end
+        self._reopened: collections.OrderedDict[tuple[str, str], tuple[int, int]] = collections.OrderedDict()
 
     # -- start-up (11A.4 recovery, start fence) -------------------------------------------------------------------
 
@@ -387,6 +398,14 @@ class Bridge:
         """The exact stored chunk bytes again (proto §8.6 step 5, P3-D27); nothing is re-sealed or re-stamped."""
         if rec.state != "answered":
             return  # admitted: running, or waiting for recovery: no answer now (no interim already_done)
+        key, now = (rec.device, rec.rid), self.now_ms()
+        count, last = self._reopened.get(key, (0, -REPLAY_EVERY_MS))
+        if count >= REPLAY_MAX or now - last < REPLAY_EVERY_MS:
+            return  # bounded (P3-D27's bounds): the relay would refuse a ninth re-store anyway
+        self._reopened[key] = (count + 1, now)
+        self._reopened.move_to_end(key)
+        while len(self._reopened) > REPLAY_TRACKED:
+            self._reopened.popitem(last=False)
         self.rids.reopen_posting(rec.device, rec.rid)
         self._post_rid(rec.device, rec.rid)
 
@@ -540,7 +559,7 @@ def _pending() -> dict[str, Any]:
 def _host_fields(r: Refusal) -> dict[str, Any]:
     """The documented fields a refusal may carry: §14's for the proto codes; ``retryable``, ``seqs`` and (for
     ``ticket.key_not_next``) the advisory ``next_key`` for a host code. Never a message (it could echo request text)."""
-    if "." not in r.code:
+    if r.code in PROTO_CODES:
         return {k: v for k, v in r.fields.items() if k in _PROTO_FIELDS}
     out: dict[str, Any] = {"retryable": bool(r.fields.get("retryable", False))}
     seqs = r.fields.get("seqs")
@@ -694,6 +713,10 @@ class BridgeLoop:
             for item in _items(obj):
                 if item.n <= self._highest:
                     continue  # already queued (non-consuming poll)
+                with self._qlock:
+                    full = self._queue.qsize() >= QUEUE_ITEMS or self._queued_bytes >= QUEUE_BYTES
+                if full:
+                    break  # the rest is delivered again by the next poll (non-consuming): the queue stays bounded
                 self._highest = item.n
                 with self._qlock:
                     self._queued_bytes += len(item.envelope)

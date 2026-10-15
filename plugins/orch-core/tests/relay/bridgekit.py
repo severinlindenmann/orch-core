@@ -88,7 +88,12 @@ class Phone:
         )  # fmt: skip
         hb = h.pack()
         pt = meta if isinstance(meta, bytes) else wire.build_plaintext(meta, data)
-        body = wire.seal_body(wire.k_bridge(keys[epoch], bytes.fromhex(ws), epoch), hb, pt)
+        chan = (
+            wire.k_pair(keys[0], bytes.fromhex(ws), stream)
+            if epoch == 0
+            else wire.k_bridge(keys[epoch], bytes.fromhex(ws), epoch)
+        )
+        body = wire.seal_body(chan, hb, pt)
         sig = crypto.sign(signer or self.dk, wire.bridge_signed_bytes(hb, body))
         return hb + body + sig
 
@@ -360,7 +365,12 @@ class World:
         ev = self.phone.event(log, "ticket.created", eid=ulid(self.clock.ms),
                               key=key or f"DEMO-{secrets.randbelow(10**6) + 1}", ticket_type="task", title=title,
                               owner="p_" + self.phone.person)  # fmt: skip
-        return {"op": "new_ticket", "args": {"log": log, "events": [ev]}, "idem": kw.pop("idem", None) or ev["id"], **kw}
+        return {
+            "op": "new_ticket",
+            "args": {"log": log, "events": [ev]},
+            "idem": kw.pop("idem", None) or ev["id"],
+            **kw,
+        }
 
 
 __all__ = ["Clock", "Epochs", "FakeHost", "Phone", "Poster", "R6", "World", "framing", "idem", "open_chunk", "ulid"]

@@ -6049,6 +6049,60 @@ The T2 real-relay job is not in R1; it MUST land before R2 or R5 merges. The R1 
 `SOURCE` and checks the vendored copy against itself; it cannot notice the relay moving on (only T2, or the guard's
 optional `ORCH_RELAY_DIR` cross-check, compares with the relay).
 
+**As built for R2 (T2 job, 15 Oct 2026).** CI job `relay-t2` in `.github/workflows/orch-core.yml` (its own job, py3.14;
+the main matrix runs `-m "not slow and not relay_t2"`). It reads `relay_commit` from `SOURCE`, checks out
+`severinlindenmann/orch-relay` at exactly that commit (`actions/checkout`, `ref:` from `SOURCE`), runs `uv sync --locked`
+in both, then `pytest tests/relay/t2` (the `relay_t2` tests and the harness self-tests) plus the drift guard's
+`ORCH_RELAY_DIR` cross-check of the vendored corpus, with `ORCH_RELAY_DIR` set and `ORCH_RELAY_T2_REQUIRED=1`. It does
+not depend on the base branch. Nothing of the relay is vendored: the tests load its `ref/orch_protocol_ref.py` by file
+path from `ORCH_RELAY_DIR`.
+- **Harness** (`tests/relay/t2/harness.py`, `conftest.py`): `ORCH_RELAY_DIR` must be at the `SOURCE` commit (`git
+  rev-parse HEAD`, else fail); unset, the tests SKIP with a message locally and FAIL under `CI` or
+  `ORCH_RELAY_T2_REQUIRED`. One relay process per test, each test run twice (`ORCH_RELAY_MAX_PUBLICATION_BYTES=4194304`,
+  and unset for the 16 MiB default): free loopback port chosen first, `uv run orch-relay serve --host 127.0.0.1 --port
+  P`, an allow-list environment (`ORCH_RELAY_ORIGIN=http://127.0.0.1:P`, a temp `ORCH_RELAY_DATA`, a random
+  `ORCH_RELAY_INSTANCE`), started only when `/healthz` answers that instance while the child is alive (else another
+  port, at most 3). The relay runs under `tests/relay/t2/supervisor.py`, the leader of its own process group, whose
+  stdin is a pipe only the harness holds: when the harness process dies in any way (SIGKILL, an alarm, OOM) the pipe
+  reads EOF and the supervisor ends the group (`SIGTERM`, `SIGINT`, `SIGKILL`; tested with a child python killed by a
+  5 s alarm). Teardown signals only that group (`SIGTERM`, `SIGINT` = uvicorn's forced exit, `SIGKILL` after 10 s); a
+  group or port left behind is reaped (`SIGKILL`, only after checking that every member was born after the spawn and
+  names `--port <port>` as whole tokens and the relay or the supervisor; once the supervisor is reaped every teardown
+  signal goes through the same check) AND fails the test; every group still registered is reaped at
+  `pytest_sessionfinish` (which then fails the session) and `atexit`. The supervisor refuses to run unless it leads its
+  own group. Known limits: if the supervisor is SIGKILLed and the harness process dies too, the relay keeps running
+  (two independent kills); a child of the harness forked without exec would hold the pipes open (the tests never
+  fork). Each test has a hard 20 s limit (SIGALRM, raising a `BaseException` so no `except Exception` swallows it) from the relay answering `/healthz`
+  to its teardown (relay start-up and stop are outside it; the requeue tests use about 11 s of it). Locally: `ORCH_RELAY_DIR=<a worktree of the SOURCE commit, uv-synced> uv run pytest -p no:xdist -m relay_t2
+  tests/relay/t2` (25 relay tests and 15 harness self-tests, about 2 minutes locally).
+- **Covered (R1):** `/healthz` instance and `GET /v2/relay-info` `max_publication_bytes` equal to the configured cap;
+  the owner account from an operator invite (`orch-relay invite create` on the temp data directory) through `POST
+  /v2/accounts`, the identical request replayed with the same answer and the used invite with a fresh proof refused
+  `403 not_eligible`; a device registration; the first card without a session, then a session-less PUT answered 401
+  (`put_card(first=True)` returns `None`); the verified card read; login with the exact origin, `bad_signature` with
+  another port or `localhost` for the same port, then `LoginHeldOff`; `host/hold`, a renewal, an operator takeover by a
+  second Session fencing the first (renewal and W(g) writes refused), the new holder's card PUT.
+- **Covered (R2), through `BridgeLoop`, the real Session and `Bridge` over a fresh state directory with the bridge
+  kit's `FakeHost`:** a member list and WK grant **ref-built, not R6** (`ref.make_member_list`, `ref.make_wk_grant`
+  under the vector WSK, PUT under W(g)); the phone as the relay's reference client (device login, its grant opened with
+  `ref.open_wk_grant`, request envelopes by `ref.envelope`, every answer chunk through `ref.device_check`, §8.8). Tests:
+  a read answered and opened; a write landing once; a requeued rid (the device's identical resend after the relay's
+  10 s requeue bound) answered with the same chunk bytes and never run twice; a request under an old epoch answered with
+  a signed `stale_epoch` naming the committed one (`device_check` sets `fetch_grants`; the test does not re-fetch); an answer over `MAX_ANSWER` refused up
+  front with one `frame.too_large` chunk, a 1 MiB answer delivered in full; requests reaching the host out of `seq`
+  order each answered once, the same `seq` again under a new rid `stale_sequence`; a request held by the relay from
+  before the worker started fenced (`already_done {status: unknown}`), its re-issue answered; a takeover fencing the
+  running loop (`Fenced`, the threads joined).
+- **Not yet covered (each lands with its group):** link with a first publication and catch-up, histories above 4 and
+  16 MiB, a restore (R3); unpublished evidence (R4); the worker and the first real link through `orch host relay link`
+  (R5, with the test owner client `tests/relay/owner.py` of 11A.15.11); pairing, the real member list and WK custody,
+  the `dev-pair` step and the reference test phone (R6); the hostile-relay rows of the release gate through a proxy in
+  front of the real relay (the R2 identity and exactly-once rows run against the mock and the fakes only, layer 1).
+- **`SOURCE` check (relay `438b719`):** it has everything the R2 tests need (`/healthz` `instance`, `relay-info` with
+  `max_publication_bytes`, `invite create`, the membership, grants, bridge and hold routes, `ref.device_check`). `ref`
+  has no `auth_bytes`; the device signs over core's `wire.auth_bytes`, byte-equal to the relay's (vector-checked).
+  A `SOURCE` bump is its own PR (Vendoring, above); T2 then runs against the new commit.
+
 **Release gate: adversarial tests** (required for the group named; mock plus a proxy in front of the real relay).
 
 | Group | Tests |

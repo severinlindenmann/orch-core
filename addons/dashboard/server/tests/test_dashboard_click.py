@@ -1719,27 +1719,60 @@ def test_switching_on_sends_the_passphrase_to_the_signer_only(client, token, stu
     assert PASSPHRASE not in caplog.text + out + err + res.text
 
 
-def test_switching_off_needs_no_passphrase_and_may_move_the_key_back(client, token, stub, script):
+def test_switching_off_needs_no_passphrase_and_never_re_keys(client, token, stub, script):
+    """Opus H2 on #539: off only turns the flag off. A passphrase with `off` (a NEW one, which would re-key the device
+    key from the dashboard) is refused at the route before the signer is called, and never echoed."""
     script.features = ["custody"]
     res = switch(client, token, stub, {"on": False})
     assert res.status_code == 200 and res.json()["enabled"] is False and res.json()["problem"] == "disabled"
-    switch(client, token, stub, {"on": False, "passphrase": "a new long passphrase"})
+    bad = switch(client, token, stub, {"on": False, "passphrase": PASSPHRASE})
+    assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input"
+    assert PASSPHRASE not in bad.text
     calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
-    assert calls == [
-        ("custody_off", {"workspace_id": stub.ws}),
-        ("custody_off", {"workspace_id": stub.ws, "passphrase": "a new long passphrase"}),
-    ]
+    assert calls == [("custody_off", {"workspace_id": stub.ws})]
 
 
 @pytest.mark.parametrize(
     "body",
-    [{"on": True}, {"on": "yes"}, {"on": True, "passphrase": ""}, {"on": True, "passphrase": "x" * 1025}, {}],
+    [
+        {"on": True},
+        {"on": "yes"},
+        {"on": True, "passphrase": ""},
+        {"on": True, "passphrase": "x" * 1025},
+        {},
+        {"on": "yes", "passphrase": PASSPHRASE},
+        {"on": True, "passphrase": PASSPHRASE, "new_passphrase": PASSPHRASE},
+        {"on": False, "passphrase": PASSPHRASE},
+        {"on": False, "passphrase": None},
+        {"on": True, "passphrase": [PASSPHRASE]},
+    ],
 )
-def test_switch_bodies_are_checked_and_never_echoed(client, token, stub, script, body):
+def test_switch_bodies_are_checked_and_never_echoed(client, token, stub, script, body, caplog, capfd):
     script.features = ["custody"]
+    caplog.set_level(logging.DEBUG)
     res = switch(client, token, stub, body)
-    assert res.status_code == 400 and "x" * 100 not in res.text
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
+    assert "x" * 100 not in res.text and "CANARY" not in res.text
+    out, err = capfd.readouterr()
+    assert "CANARY" not in caplog.text + out + err
     assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
+
+
+def test_the_card_names_the_device_that_would_move(client, token, stub, script):
+    from orch_dashboard import adapters
+
+    dev = "d_" + "1" * 32
+    row = {"custody": "passphrase", "enabled": False, "available": False, "problem": "not_convenience"}
+    assert adapters.click_card({**row, "device": dev})["device"] == dev
+    assert "device" not in adapters.click_card({**row, "device": "d_<script>"})
+    assert "device" not in adapters.click_card(row)
+
+
+def test_a_terminal_needed_refusal_keeps_its_code(client, token, stub, script):
+    script.features = ["custody"]
+    script.refuse["custody_on"] = ClickError("custody.terminal_needed", "orch host convenience on --workspace INT")
+    res = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE})
+    assert res.json()["error"]["code"] == "custody.terminal_needed" and PASSPHRASE not in res.text
 
 
 def test_a_signer_without_the_switch_says_update(client, token, stub, script):

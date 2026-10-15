@@ -4,6 +4,7 @@ attempt id of a refused call, session notes."""
 from __future__ import annotations
 
 import json
+import os
 
 from orch import model
 from orch.ops import runtime
@@ -197,3 +198,155 @@ def test_a_v2_command_in_a_v1_layout_folder_refuses_and_points_to_the_importer(t
     out, err = io.StringIO(), io.StringIO()
     assert main(["check"], env={"HOME": str(tmp_path)}, stdout=out, stderr=err) == 2
     assert "no orch workspace here" in err.getvalue()
+
+
+def _v1_copy(dest):
+    import shutil
+    from pathlib import Path
+
+    shutil.copytree(Path(__file__).parents[1] / "importer" / "fixtures" / "v1", dest)
+    return dest
+
+
+def _refusal(cwd, env, monkeypatch):
+    import io
+
+    from orch.cli.main import main
+
+    monkeypatch.chdir(cwd)
+    out, err = io.StringIO(), io.StringIO()
+    assert main(["check"], env=env, stdout=out, stderr=err) == 2
+    return err.getvalue()
+
+
+def test_v1_detection_never_follows_a_symlink_and_never_opens_a_file_outside(tmp_path, monkeypatch):
+    """P1 (review of #509): ``orchestrator``, ``config.json``, ``tickets`` or a parent that is a symlink to a valid
+    v1 layout elsewhere is not a v1 workspace, and nothing under that elsewhere is opened (sentinel on every open)."""
+    import builtins
+    import io as _io
+
+    outside = _v1_copy(tmp_path / "outside")
+    real_out = os.path.realpath(outside)
+    out_dirs = {(st.st_dev, st.st_ino) for st in (os.stat(p) for p, _, _ in os.walk(outside))}
+
+    def is_outside(path, dir_fd=None):
+        if dir_fd is not None:
+            st = os.fstat(dir_fd)
+            if (st.st_dev, st.st_ino) in out_dirs:
+                return True
+            if not os.path.isabs(os.fspath(path)):
+                return False
+        rp = os.path.realpath(os.fspath(path))
+        return rp == real_out or rp.startswith(real_out + os.sep)
+
+    real_os_open, real_open, real_io_open = os.open, builtins.open, _io.open
+
+    def guard_os_open(path, flags, mode=0o777, *, dir_fd=None):
+        assert not is_outside(path, dir_fd), f"opened outside: {path}"
+        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+    def guard_open(file, *a, **kw):
+        if isinstance(file, (str, bytes, os.PathLike)):
+            assert not is_outside(file), f"opened outside: {file}"
+        return real_open(file, *a, **kw)
+
+    def guard_io_open(file, *a, **kw):
+        if isinstance(file, (str, bytes, os.PathLike)):
+            assert not is_outside(file), f"opened outside: {file}"
+        return real_io_open(file, *a, **kw)
+
+    # the four shapes, each next to (not inside) the outside layout
+    a = tmp_path / "a"
+    a.mkdir()
+    (a / "orchestrator").symlink_to(outside / "orchestrator", target_is_directory=True)
+    b = tmp_path / "b" / "orchestrator"
+    (b / "tickets").mkdir(parents=True)
+    (b / "config.json").symlink_to(outside / "orchestrator" / "config.json")
+    c = tmp_path / "c" / "orchestrator"
+    c.mkdir(parents=True)
+    (c / "config.json").write_bytes((outside / "orchestrator" / "config.json").read_bytes())
+    (c / "tickets").symlink_to(outside / "orchestrator" / "tickets", target_is_directory=True)
+    link = tmp_path / "d"
+    link.symlink_to(outside, target_is_directory=True)
+
+    monkeypatch.setattr(os, "open", guard_os_open)
+    monkeypatch.setattr(builtins, "open", guard_open)
+    monkeypatch.setattr(_io, "open", guard_io_open)
+    files = Files.direct()
+    cwds = [a, a / "orchestrator", b.parent, b, b / "tickets", c.parent, c, link, link / "orchestrator"]
+    cwds.append(link / "orchestrator" / "tickets")
+    for cwd in cwds:
+        assert runtime.locate_workspace({}, str(cwd), files) is None, cwd
+        ws_ = runtime.Workspace({}, cwd=str(cwd), files=files)
+        try:
+            ws_.require_root()
+        except runtime.OrchError as e:
+            assert "v1" not in e.message and "no orch workspace here" in e.message, (cwd, e.message)
+        else:  # pragma: no cover
+            raise AssertionError(cwd)
+    for p in (a / "orchestrator", b, c, link / "orchestrator"):
+        from orch.importer.v1 import is_v1_home
+
+        assert not is_v1_home(str(p)), p
+    # ORCH_WORKSPACE through a symlink: not v1 either. The v2 check of a named path reads ``<path>/config.json`` as
+    # before (the person named that path; a link there redirects nothing a plain name could not), so here only the v1
+    # detector's opens (all ``os.open``) are guarded.
+    monkeypatch.setattr(builtins, "open", real_open)
+    monkeypatch.setattr(_io, "open", real_io_open)
+    for named in (a / "orchestrator", a, b, c, link / "orchestrator", link):
+        assert runtime.locate_workspace({"ORCH_WORKSPACE": str(named)}, None, files) is None, named
+    monkeypatch.undo()
+    # the outside layout itself, by its real path, is v1: the refusals above were the symlinks, not the layout
+    assert runtime.locate_workspace({}, str(outside), files) == (outside / "orchestrator", True)
+
+
+def test_a_loose_schema_1_config_without_the_v1_layout_is_not_v1(tmp_path, monkeypatch):
+    """P2: the importer's layout, not ``{"schema": 1}`` alone: a ``tickets/`` directory and an ``id`` object."""
+    import json as _json
+
+    cases = {
+        "only-schema": ({"schema": 1}, False),
+        "schema-and-id-no-tickets": ({"schema": 1, "id": {"prefix": "X"}}, False),
+        "tickets-no-id": ({"schema": 1}, True),
+        "bool-schema": ({"schema": True, "id": {"prefix": "X"}}, True),
+        "id-not-object": ({"schema": 1, "id": "X"}, True),
+    }
+    files = Files.direct()
+    for name, (doc, tickets) in cases.items():
+        d = tmp_path / name / "orchestrator"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text(_json.dumps(doc))
+        if tickets:
+            (d / "tickets").mkdir()
+        for cwd in (d.parent, d):
+            assert runtime.locate_workspace({}, str(cwd), files) is None, (name, cwd)
+        assert "no orch workspace here" in _refusal(d, {"HOME": str(tmp_path / "home")}, monkeypatch), name
+    ok = tmp_path / "ok" / "orchestrator"
+    (ok / "tickets").mkdir(parents=True)
+    (ok / "config.json").write_text(_json.dumps({"schema": 1, "id": {"prefix": "X"}}))
+    assert runtime.locate_workspace({}, str(ok.parent), files) == (ok, True)
+
+
+def test_the_nearest_workspace_wins_v1_under_v2_refuses_and_v2_under_v1_opens(ws, tmp_path, monkeypatch):
+    """P2: walking up, the first directory that is a v2 or a v1 workspace wins; a nearer v1 never falls through to the
+    v2 ancestor. A v2 workspace under a v1 parent is still v2."""
+    files = Files.direct()
+    env = {"HOME": str(tmp_path / "home")}
+    nested = _v1_copy(ws.root / "nested")
+    (nested / "sub").mkdir()
+    for cwd in (nested, nested / "orchestrator", nested / "orchestrator" / "tickets", nested / "sub"):
+        assert runtime.locate_workspace({}, str(cwd), files) == (nested / "orchestrator", True), cwd
+        assert runtime.find_workspace({}, str(cwd), files) is None
+        err = _refusal(cwd, env, monkeypatch)
+        assert "v1 workspace" in err and "orch import v1" in err, (cwd, err)
+    # ORCH_WORKSPACE naming the nested v1 folder (or its project folder): the same refusal, no fallback
+    for named in (nested, nested / "orchestrator"):
+        assert runtime.find_v1_workspace({"ORCH_WORKSPACE": str(named)}, None, files) == nested / "orchestrator"
+    # the v2 workspace itself is unaffected
+    assert runtime.locate_workspace({}, str(ws.root), files) == (ws.root, False)
+    # a v2 workspace under a v1 parent opens as v2
+    parent = _v1_copy(tmp_path / "v1parent")
+    inner = parent / "orchestrator" / "tickets" / "inner"
+    inner.mkdir()
+    (inner / "config.json").write_text((ws.root / "config.json").read_text())
+    assert runtime.locate_workspace({}, str(inner), files) == (inner, False)

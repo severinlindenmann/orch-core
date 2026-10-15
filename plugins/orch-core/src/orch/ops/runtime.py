@@ -52,6 +52,7 @@ __all__ = [
     "find_v1_workspace",
     "find_workspace",
     "guarded",
+    "locate_workspace",
     "records_dir",
     "scoped_key",
     "visible_to",
@@ -99,46 +100,66 @@ def _config(path: Path, files: Files) -> dict[str, Any] | None:
     return doc
 
 
-def find_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> Path | None:
-    """``ORCH_WORKSPACE`` if it names a workspace, else the nearest directory above ``cwd`` that is one or holds
-    ``orchestrator/`` that is. ``None`` when there is none."""
+def _no_link(path: Path) -> bool:
+    """No component of the absolute ``path`` is a symlink (a v2 candidate found by walking up is checked so before its
+    ``config.json`` is read: a planted ``orchestrator -> /elsewhere`` is not followed)."""
+    return os.path.realpath(path) == os.fspath(path)
+
+
+def _is_v1(path: Path) -> bool:
+    from orch.importer.v1 import is_v1_home
+
+    return is_v1_home(os.fspath(path))
+
+
+def locate_workspace(
+    env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files
+) -> tuple[Path, bool] | None:
+    """The nearest workspace: ``(path, is_v1)``, or ``None``. ``ORCH_WORKSPACE`` if set (a v2 workspace, else a v1 one
+    there or in its ``orchestrator/``, else ``None``: no fallback); otherwise walking up from ``cwd``, the **first**
+    directory that is (or holds in ``orchestrator/``) a v2 or a v1 workspace wins, v2 first at the same level. A v1
+    workspace nested under a v2 one is therefore never opened as the v2 ancestor. v1 detection never follows a
+    symlink in any component and reads only ``config.json`` (:func:`orch.importer.v1.is_v1_home`); host mode (files
+    with roots) never detects v1."""
+    v1_ok = files.roots is None
     explicit = env.get("ORCH_WORKSPACE")
     if explicit:
         p = Path(explicit)
-        return p if _config(p, files) else None
-    here = Path(cwd or files.getcwd()).resolve()
+        if _config(p, files):
+            return p, False
+        if v1_ok and p.is_absolute():
+            p = Path(os.path.normpath(p))
+            for cand in (p, p / "orchestrator"):
+                if _is_v1(cand):
+                    return cand, True
+        return None
+    raw = os.fspath(cwd) if cwd is not None else files.getcwd()
+    here = Path(os.path.normpath(raw if os.path.isabs(raw) else os.path.join(files.getcwd(), raw)))
     for d in (here, *here.parents):
-        for cand in (d, d / "orchestrator"):
-            if _config(cand, files):
-                return cand
+        cands = (d, d / "orchestrator")
+        for cand in cands:
+            if _no_link(cand) and _config(cand, files):
+                return cand, False
+        if v1_ok:
+            for cand in cands:
+                if _is_v1(cand):
+                    return cand, True
     return None
+
+
+def find_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> Path | None:
+    """``ORCH_WORKSPACE`` if it names a workspace, else the nearest directory above ``cwd`` that is one or holds
+    ``orchestrator/`` that is. ``None`` when there is none, or when the nearest one is a v1 workspace
+    (:func:`locate_workspace`)."""
+    found = locate_workspace(env, cwd, files)
+    return found[0] if found is not None and not found[1] else None
 
 
 def find_v1_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> Path | None:
-    """The v1 workspace that holds ``cwd`` (or ``ORCH_WORKSPACE``), or ``None``. Detection only: a v1 layout
-    (``config.json`` with ``"schema": 1``, here or in ``orchestrator/``) is never opened as a workspace; the one
-    thing v2 does with it is ``orch import v1``."""
-
-    def is_v1(path: Path) -> bool:
-        cfg = path / "config.json"
-        try:
-            if cfg.is_symlink() or not cfg.is_file() or cfg.stat().st_size > (1 << 20):
-                return False
-            doc = json.loads(files.read_bytes(cfg))
-        except (OSError, ValueError, RecursionError):
-            return False
-        return isinstance(doc, dict) and doc.get("schema") == 1 and not isinstance(doc.get("schema"), bool)
-
-    explicit = env.get("ORCH_WORKSPACE")
-    if explicit:
-        p = Path(explicit)
-        return p if is_v1(p) else None
-    here = Path(cwd or files.getcwd()).resolve()
-    for d in (here, *here.parents):
-        for cand in (d, d / "orchestrator"):
-            if is_v1(cand):
-                return cand
-    return None
+    """The v1 workspace that is the nearest workspace of ``cwd`` (or ``ORCH_WORKSPACE``), or ``None``. Detection
+    only: a v1 workspace is never opened; the one thing v2 does with it is ``orch import v1``."""
+    found = locate_workspace(env, cwd, files)
+    return found[0] if found is not None and found[1] else None
 
 
 def scoped_key(principal: str, session: str) -> str:
@@ -179,6 +200,8 @@ class Workspace:
         self._cwd = cwd
         self._root: Path | None = None
         self._looked = False
+        #: the nearest workspace is a v1 one (never opened: require_root refuses and names ``orch import v1``)
+        self._v1: Path | None = None
         self._store: Any = None
         #: set by opening the store: was the genesis pin created by this call (trust on first use)?
         self.pin_created = False
@@ -204,13 +227,18 @@ class Workspace:
     @property
     def root(self) -> Path | None:
         if not self._looked:
-            self._root, self._looked = find_workspace(self.env, self._cwd, self.files), True
+            found = locate_workspace(self.env, self._cwd, self.files)
+            self._looked = True
+            if found is not None and found[1]:
+                self._v1 = found[0]
+            elif found is not None:
+                self._root = found[0]
         return self._root
 
     def require_root(self) -> Path:
         root = self.root
         if root is None:
-            v1 = find_v1_workspace(self.env, self._cwd, self.files)
+            v1 = self._v1
             if v1 is not None:
                 raise OrchError(
                     "not_found",

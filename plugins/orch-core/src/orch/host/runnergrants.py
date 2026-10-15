@@ -273,7 +273,9 @@ class RunnerGrants:
             table = self.table(wid) if service is not None else None
             if table is None or not self._allowed(service, table, person, rep["grant"]):
                 drops.append(rep["grant"])
-        for wid in sorted(set(self.tables) | {w for w, _ in held}):
+        # every served workspace's persisted table, loaded or not: after a host restart nothing is loaded yet, and a
+        # persisted ``current`` the runner does not hold must not read as available (Codex P2 #2)
+        for wid in sorted(set(self.tables) | {w for w, _ in held} | set(self.hub.host.services)):
             if self.hub.host.services.get(wid) is None:
                 continue
             table = self.table(wid)
@@ -296,11 +298,18 @@ class RunnerGrants:
             for person, cur in list(table.current.items()):
                 rep = held.get((wid, person))
                 if rep is None or rep["grant"] != cur.get("grant") or rep["grant"] in drops:
-                    table.current.pop(person, None)
+                    self._forget_current(table, person, "not_held")  # a dropped grant never comes back (item 7)
                     changed = True
             if changed:
                 with contextlib.suppress(HostError):
                     table.save()
+        for (wid, _person), rep in held.items():  # a reported grant the host no longer allows is forgotten too
+            if rep["grant"] in drops and wid in self.hub.host.services:
+                table = self.table(wid)
+                if rep["grant"] not in table.forgotten:
+                    table.forgotten[rep["grant"]] = str(rep.get("until") or "")
+                    with contextlib.suppress(HostError):
+                        table.save()
         for gid in drops:
             self._audit("grant.drop", grant=gid, reason="revalidated")
             await self._drop(gid)
@@ -383,10 +392,9 @@ class RunnerGrants:
                         continue
                     forgotten = cur["grant"] in table.forgotten  # defence in depth: a forgotten id is never current
                     if off or forgotten or service is None or self.valid(service, person, cur["grant"]) is not None:
-                        table.current.pop(person, None)
+                        self._forget_current(table, person, "switch_off" if off else "ended")  # never again (item 7)
                         with contextlib.suppress(HostError):
                             table.save()
-                        self._audit("grant.drop", workspace_id=wid, grant=cur["grant"], person=person, reason="ended")
                         await self._drop(cur["grant"])
         for rec in list(self.hub.store.records.values()):
             if not _watched(rec) or not rec.get("grant"):

@@ -321,3 +321,46 @@ def test_a_pending_deposit_of_the_current_grant_settles_at_hello(ready):
     w.runner.link.drop_reports.clear()
     hub.drop_session(hub.session)
     wait_for(lambda: ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["deposit"] == "confirmed")
+
+
+def test_hello_after_a_host_restart_clears_persisted_grants_the_runner_does_not_hold(ready, rstate):
+    """Codex P2 #2: both restart; the host's tables are not loaded yet; hello must still settle them."""
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    hub = w.h.host.runners
+    hub.command_timeout = 1.0
+    w.runner.link.drop_reports.add("grant.put")
+    did = new_ulid()
+    assert ok(deposit(c, issue(w), did))["data"]["deposit"] == "unknown"  # pending
+    w.runner.close()
+    hub.grants.tables.clear()  # as a restarted host: nothing loaded
+    w.runner = Runner(w, rstate, gen=GEN2)  # a restarted runner holds nothing
+    wait_for(lambda: hub.grants.tables.get(w.wid) is not None and not hub.grants.tables[w.wid].current)
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+    assert ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["deposit"] == "rejected"
+
+
+def test_a_grant_dropped_by_the_switch_is_forgotten_for_good(ready):
+    """Item 7 (owner decision): re-enabling never resurrects an old grant; a new one must be issued."""
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    enable(w, False)
+    wait_for(lambda: w.runner.grants.report() == [])
+    enable(w, True)
+    assert err(deposit(c, value)) == "grant.forgotten"
+    assert ok(deposit(c, issue(w)))["data"]["deposit"] == "confirmed"
+
+
+def test_a_grant_cleared_after_a_runner_restart_is_forgotten(ready, rstate):
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    w.runner.close()
+    w.runner = Runner(w, rstate, gen=GEN2)
+    wait_for(lambda: ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None)
+    assert err(deposit(c, value)) == "grant.forgotten"

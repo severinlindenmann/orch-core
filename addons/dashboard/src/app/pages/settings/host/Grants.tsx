@@ -93,6 +93,11 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                     <TableCell>
                       <span className="block"><Raw>{name(g.person)}</Raw></span>
                       <Mono className="text-[11px] text-text-faint">{g.id}</Mono>
+                      {g.label === 'runner' ? (
+                        <span data-testid="runner-grant-tag" className="ml-1.5"><Pill tone="neutral">runner grant</Pill></span>
+                      ) : g.label ? (
+                        <span className="ml-1.5 text-[11px] text-text-faint">label <Raw>{g.label}</Raw></span>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <Mono><Raw>{g.scope}</Raw></Mono>

@@ -11,13 +11,23 @@ real runner, and core's real click signer.
   key, and the runner can only be admitted by a host in this process (`runner_identity`, see test_realhost_terminals).
 - Everything lives under pytest's tmp_path and core's short run directory: no launchd, no keychain, no ~/.config/orch.
 
-The flow: preview (no grant: `launch.no_grant`), issue the runner grant by click (deposit confirmed, the secret only at
-the runner), preview again, start a `codex` agent, see it in the run list, forget the grant.
+The flow: preview (no grant: `launch.no_grant`), issue the runner grant by click against core's contract-2 signer
+(deposit confirmed, the secret only at the runner), preview again, start a `codex` agent, see it in the run list, forget
+the grant; the page's live stream carries run.sub's `runner` item after the confirm and after the forget (H11c-2). A
+second grant, forgotten between its issue and its hand-over, is a real rejected deposit with `deposit_reason`
+`grant.forgotten`; a deposit whose answer is lost and whose runner restarts resolves from unknown to rejected through
+`grant.deposit_status` (the host's `runner_restarted` reads `other`). The contract-1 path ("update orch") is a unit test
+with a fake signer (test_dashboard_click).
 """
 
+import asyncio
 import json
 import os
+import queue
+import re
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -40,6 +50,66 @@ class Chan:
 
     def close(self):
         pass
+
+
+class LiveTap:
+    """The page's live stream (`Live.stream`, the SSE body a tab reads) on a thread of its own: every frame it sends."""
+
+    def __init__(self, aw):
+        from orch_dashboard.live import Live
+
+        self.frames, self.queue = [], queue.Queue()
+        self.loop = asyncio.new_event_loop()
+        self.task = None
+        ready = threading.Event()
+
+        async def read():
+            live = Live(aw.gateway, aw.auth)
+            w, tab = live.attach(aw.w.wid, aw.token)
+            stream = live.stream(w, tab)
+            try:
+                async for frame in stream:
+                    self.queue.put(frame)
+                    if "event: ready" in frame:
+                        ready.set()
+            finally:
+                await stream.aclose()
+                await live.close()
+
+        def main():
+            asyncio.set_event_loop(self.loop)
+            self.task = self.loop.create_task(read())
+            try:
+                self.loop.run_until_complete(self.task)
+            except BaseException:  # noqa: BLE001 - cancelled at close
+                pass
+
+        self.thread = threading.Thread(target=main, daemon=True)
+        self.thread.start()
+        assert ready.wait(10), "the live stream never became ready"
+
+    def runner_item(self, match, timeout=10.0):
+        """The next `runs` event's `runner` item whose grant `match`es (earlier frames are kept in `frames`)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                frame = self.queue.get(timeout=max(0.05, deadline - time.monotonic()))
+            except queue.Empty:
+                break
+            self.frames.append(frame)
+            if "event: runs" not in frame:
+                continue
+            for item in json.loads(frame.split("data: ", 1)[1].split("\n", 1)[0]):
+                if item.get("t") == "runner" and match(item.get("grant")):
+                    return item
+        raise AssertionError(f"no matching runner item on the live stream: {self.frames}")
+
+    def close(self):
+        if self.task is not None and not self.task.done():
+            self.loop.call_soon_threadsafe(self.task.cancel)
+        self.thread.join(10)
+        while not self.queue.empty():
+            self.frames.append(self.queue.get_nowait())
 
 
 class AgentWorld:
@@ -81,6 +151,7 @@ class AgentWorld:
             lab.close()
             raise
         self.runner = self.click = self.client = self.gateway = None
+        self.taps = []
         try:
             grant_dashboard(w)
             grant(w, "start-agent", ["spawn_agent"])
@@ -92,6 +163,7 @@ class AgentWorld:
             cfg.chmod(0o600)
             rstate = tmp_path / "rs"
             rstate.mkdir(mode=0o700)
+            self.rstate = rstate
             self.runner = Runner(w, rstate, config=parse(doc))
             self.out = tmp_path / "out"
             self.click = Click(w)
@@ -126,7 +198,14 @@ class AgentWorld:
     def word(self):
         return f"{self.w.service.entry.prefix}~{self.w.wid[-8:]}/GRANT"
 
+    def tap(self):
+        tap = LiveTap(self)
+        self.taps.append(tap)
+        return tap
+
     def close(self):
+        for tap in self.taps:
+            tap.close()
         if self.client is not None:
             self.client.__exit__(None, None, None)
         if self.gateway is not None:
@@ -175,9 +254,7 @@ def issue_grant(aw, hours=8, scope="workable"):
     return rid, view, s
 
 
-def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch, caplog, capfd):
-    from orch_dashboard import click_signer
-
+def test_preview_grant_by_click_start_an_agent_and_forget(aw, caplog, capfd):
     key = aw.w.ticket()[1]
     args = {"ticket": key, "harness": "codex", "mode": "work"}
     pre = aw.post("/agents/preview", args)
@@ -186,19 +263,15 @@ def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch, caplo
     assert aw.get("/runner").json()["runner"]["enabled"] is True
     assert aw.get("/runner").json()["runner"]["grant"] is None
 
-    contract = core_contract()
-    if contract < 2:
-        # This core's signer is contract 1: the dashboard keeps the runner grant terminal only (update orch).
-        res = aw.post("/click/prepare", {"action": "runner_grant"})
-        assert res.status_code == 409 and res.json()["error"]["why"] == "update_orch"
-        # #466's signer already hands a grant to the runner; set the contract gate aside to exercise the real deposit.
-        monkeypatch.setattr(click_signer.Signer, "deposits", lambda self: True)
+    assert core_contract() == 2  # H11c-2: the real deposit against the real contract-2 signer, no gate set aside
+    tap = aw.tap()  # the page's live stream, opened before anything changes (run.sub does not replay the grant)
 
     rid, view, signed = issue_grant(aw)
     assert view["deposit"] is True and view["confirm"]["word"] == aw.word()
     body = signed.json()
     assert body["deposit"] == "confirmed" and body["deposit_id"] == rid[3:] and body["grant"].startswith("gr_")
     assert set(body) <= {"state", "duplicate", "deposit", "deposit_id", "grant", "deposit_reason"}
+    assert "deposit_reason" not in body  # only with a rejected deposit
     gid = body["grant"]
     secret = aw.runner.grants.secret_for(aw.w.wid, aw.w.lab.ws.owner.ref, gid)
     tail = secret.partition(".")[2]
@@ -206,6 +279,8 @@ def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch, caplo
     card = aw.get("/runner").json()["runner"]
     assert card["grant"]["id"] == gid and tail not in json.dumps(card)
     assert aw.get(f"/runner/deposits/{rid[3:]}").json() == {"deposit": "confirmed"}
+    confirmed = tap.runner_item(lambda g: g is not None and g["id"] == gid)  # run.sub's runner item reached the page
+    assert set(confirmed["grant"]) == {"id", "until", "scope"} and confirmed["grant"]["until"] == card["grant"]["until"]
 
     pre = aw.post("/agents/preview", args)
     assert pre.json()["blocked"] is None and pre.json()["grant"]["id"] == gid
@@ -227,7 +302,62 @@ def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch, caplo
     forgot = aw.post("/runner/forget", {"grant": gid, "idem": new_idem()})
     assert forgot.status_code == 200 and forgot.json() == {"forgotten": True}
     assert aw.get("/runner").json()["runner"]["grant"] is None
+    tap.runner_item(lambda g: g is None)  # and the forget reached it too
     assert aw.post("/agents/preview", args).json()["blocked"]["code"] == "launch.no_grant"
     aw.post(f"/runs/{run['run']}/stop")
+    tap.close()
+    assert tail not in json.dumps(tap.frames)
     out, errs = capfd.readouterr()
     assert tail not in caplog.text and tail not in out and tail not in errs  # never in a log of this process
+
+
+def test_a_grant_forgotten_before_its_hand_over_is_a_rejected_deposit_with_its_reason(aw):
+    """A real rejected deposit: the grant is issued, then forgotten (the dashboard's own forget, a real host op) before
+    the signer hands it to the runner. The host refuses the deposit with `grant.forgotten`; the sign answer says
+    `rejected`, names the grant (Revoke uses it) and the static reason, and never the secret."""
+    from orch.host.control_client import new_idem
+
+    assert core_contract() == 2
+    forgotten = []
+
+    def between(op, args, res):  # timing only: the host's answer is passed on unchanged
+        issued = re.search(r'"grant": "(gr_[0-7][0-9A-HJKMNP-TV-Z]{25})"', json.dumps(res))
+        if op == "human.submit" and issued and not forgotten:
+            link = aw.gateway.enabled(aw.w.wid)
+            forgotten.append((issued[1], link.call("grant.forget", {"grant": issued[1]}, write=True, idem=new_idem())))
+        return res
+
+    aw.click.tamper = between
+    rid, _view, signed = issue_grant(aw)
+    aw.click.tamper = None
+    assert forgotten and forgotten[0][1] == {"forgotten": False}  # issued but never held: nothing to drop
+    body = signed.json()
+    assert body["deposit"] == "rejected" and body["deposit_reason"] == "grant.forgotten"
+    assert body["grant"] == forgotten[0][0] and body["deposit_id"] == rid[3:]
+    assert aw.get("/runner").json()["runner"]["grant"] is None
+    # The host refused it before recording a deposit: grant.deposit_status knows none.
+    assert aw.get(f"/runner/deposits/{rid[3:]}").json() == {"deposit": "none"}
+
+
+def test_an_unknown_deposit_resolves_to_rejected_with_the_reason_from_deposit_status(aw, monkeypatch):
+    """The runner takes the grant but its answer is lost (unknown), then the runner restarts without it: the host
+    settles the deposit as rejected (`runner_restarted`), and the dashboard's deposit-status route says `rejected` with
+    `reason` mapped to the closed set (`other`)."""
+    from orch.runner.config import parse
+
+    from tests.host.test_runner_socket import GEN2, Runner
+
+    assert core_contract() == 2
+    aw.w.h.host.runners.command_timeout = 1.0
+    aw.runner.link.drop_reports.add("grant.put")
+    rid, _view, signed = issue_grant(aw)
+    did = rid[3:]
+    assert signed.json()["deposit"] == "unknown" and "deposit_reason" not in signed.json()
+    assert aw.get(f"/runner/deposits/{did}").json() == {"deposit": "unknown"}
+    doc = json.loads((Path(aw.w.lab.state) / "runner.json").read_text())
+    aw.runner.close()
+    aw.runner = Runner(aw.w, aw.rstate, gen=GEN2, config=parse(doc))  # restarted: it does not hold the grant
+    deadline = time.monotonic() + 10
+    while (got := aw.get(f"/runner/deposits/{did}").json())["deposit"] != "rejected" and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert got == {"deposit": "rejected", "reason": "other"}  # the host's `runner_restarted` is outside the closed set

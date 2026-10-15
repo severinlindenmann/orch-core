@@ -192,6 +192,7 @@ def test_the_model_state_changes_only_through_the_setter():
                         if x.attr in writes:
                             writes[x.attr].add(fn.name)
     assert writes == {"_state_v": {"__init__", "_state"}, "_state": {"_load", "_commit"}}, writes
+    assert "self._gate_lost_standing(old_state, new_state)" in src  # _commit gates before the durable write
     assert "_gate_lost_standing(old, new)" in src
 
 
@@ -203,9 +204,130 @@ def test_a_device_that_vanishes_from_the_state_counts_as_lost():
 
     calls = []
     s = Store.__new__(Store)
-    s._state_v = None  # noqa: SLF001
+    s._state_v = s._relay_pregated = None  # noqa: SLF001
     s.relay_gate = lambda d, r: calls.append((d, r))
     dev = "d_" + "1" * 32
     s._state = NS(workspace=NS(devices={dev: NS(removed=False, revoked=False)}))  # noqa: SLF001
     s._state = NS(workspace=NS(devices={}))  # noqa: SLF001
     assert calls == [("1" * 32, "f1_standing")]
+
+
+# -- round 4 (Opus delta 2) -----------------------------------------------------------------------------------
+
+
+def _boom(*a, **k):
+    raise OSError("disk")
+
+
+@pytest.mark.parametrize("where", ["finish", "append_durable_after_write", "write_pending"])
+def test_a_commit_failing_after_or_at_the_commit_point_is_gated_before_the_lock_is_released(env, monkeypatch, where):
+    """F-A: the gate goes up before the event can become durable; a failure at any later point (or at the pending
+    write itself) still released the lock with the gate up."""
+    d2, _ = env.add_device()
+    rec = Recorder(env.store)
+    if where == "finish":
+        monkeypatch.setattr(store_mod.Store, "_finish", _boom)
+    elif where == "write_pending":
+        monkeypatch.setattr(store_mod.Store, "_write_pending", _boom)
+    else:
+        real = store_mod.append_durable
+
+        def late(path, line, **kw):
+            real(path, line, **kw)
+            raise OSError("fsync")
+
+        monkeypatch.setattr(store_mod, "append_durable", late)
+    with pytest.raises(OSError):
+        env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+    assert rec.calls == [(d2[2:], "f1_standing")] and all(rec.locked)  # no further lock entry needed
+
+
+def test_a_failed_commit_with_the_real_key_store_is_gated_at_once(env, tmp_path, monkeypatch):
+    """E1b: with R6's key store bound to this store, seal_state is gated right after the failed append."""
+    from orch.relay.r6.keystore import R6Gate
+    from tests.relay.r6kit import open_keys, rotate
+
+    d2, _ = env.add_device()
+    (tmp_path / "k").mkdir(mode=0o700)
+    mk = open_keys(tmp_path / "k", hooked=False)
+    try:
+        rotate(mk)
+        R6Gate(mk).install(lambda: env.store)
+        assert not mk.seal_state().gated
+        monkeypatch.setattr(store_mod.Store, "_finish", _boom)
+        with pytest.raises(OSError):
+            env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+        assert mk.seal_state().gated
+    finally:
+        mk.close()
+
+
+def test_a_successful_commit_gates_once(env):
+    d2, _ = env.add_device()
+    rec = Recorder(env.store)
+    env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+    env.store.refresh()
+    assert rec.calls == [(d2[2:], "f1_standing")]
+
+
+def test_member_removed_gates_every_device_of_the_person_not_only_the_first(env):
+    """S16: a person with two devices."""
+    other = Person()
+    s = env.store
+    s.append(
+        env.person_event(env.owner, "workspace", "member.added", person=other.ref, name="Mara", role="member",
+                         pk_pub=crypto.b64u(other.pk_pub), device_cert=other.cert(created=env.clock[0] * 1000)),
+        log="workspace",
+    )  # fmt: skip
+    d2, _ = env.add_device(other)
+    rec = Recorder(s)
+    s.append(env.person_event(env.owner, "workspace", "member.removed", person=other.ref), log="workspace")
+    assert sorted(rec.calls) == sorted([(other.device[2:], "f1_standing"), (d2[2:], "f1_standing")])
+
+
+def test_later_appends_do_not_regate_an_already_removed_device(env):
+    """S04: only new losses raise the gate."""
+    d2, _ = env.add_device()
+    rec = Recorder(env.store)
+    env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+    env.new_ticket()
+    env.add_device()
+    assert rec.calls == [(d2[2:], "f1_standing")]
+
+
+def test_a_refused_gate_call_falls_back_to_every_device(env):
+    calls = []
+
+    def gate(dev, why):
+        calls.append((dev, why))
+        if why != "h7":
+            raise ValueError("gate reason")
+
+    d2, _ = env.add_device()
+    env.store.relay_gate = gate
+    env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+    assert calls == [(d2[2:], "f1_standing"), ("", "h7")]
+
+
+def test_a_load_budget_rollback_never_restores_a_cleared_hook(env):
+    from orch.store.store import LoadBudgetExceeded
+
+    Recorder(env.store)
+    with pytest.raises(LoadBudgetExceeded):
+        with env.store.load_budget(5):
+            env.store.relay_gate = None  # close() meanwhile
+            raise LoadBudgetExceeded
+    assert env.store.relay_gate is None
+
+
+def test_dict_writes_only_in_load_budget():
+    """The setter is bypassed only by load_budget's rollback (``__dict__.update``), which restores an OLDER state
+    and keeps the live hook: fail closed (a raised gate stays raised). Any other ``__dict__`` write fails here."""
+    src = Path(store_mod.__file__).read_text()
+    users = set()
+    for fn in ast.walk(ast.parse(src)):
+        if isinstance(fn, ast.FunctionDef):
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Attribute) and n.attr == "__dict__":
+                    users.add(fn.name)
+    assert users == {"load_budget"}, users

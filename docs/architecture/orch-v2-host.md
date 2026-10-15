@@ -8905,7 +8905,24 @@ structurally: the invariant is named and enforced in one place.
   evidence is not model state: a `held` forwarded revocation calls the same `_raise_relay_gate`; a `pending` one that
   becomes effective later (the device associated afterwards) is R6b's `desired()`. A gate error is logged and never
   undoes the state change (R6's in-memory gate is up before anything can fail). The event-type `R6Gate.on_commit` is
-  removed. First load (old state `None`) is covered by the start-up rebuild.
+  removed. First load (old state `None`) is covered by the start-up rebuild. **Precisely (round 4):** an append on the
+  live store raises the gate BEFORE the event can become durable (`_commit` diffs `old_state`/`new_state` before
+  `_write_pending`; a failure after the commit point, in `_finish` or after `append_durable`'s write, therefore never
+  releases the lock ungated; a write that fails before the commit point gated for nothing: a rotation); the setter
+  does not raise it twice. A **foreign** append (another process, a stale `Store` object) is gated at the live
+  store's next lock entry (its reload), not at the foreign commit; R2's data path always enters the live store lock
+  (the job's recheck) before its seal span, so the residual is the job-to-seal latency. `load_budget`'s rollback
+  (`__dict__.update`) is the one write that bypasses the setter: it restores an OLDER state (a raised gate stays
+  raised) and keeps the live hook; an AST test allows `__dict__` writes there only. `R6Gate.raise_for` raises the
+  in-memory gate before it validates anything (a refused call is still fail closed), and the store retries a refused
+  call as `("", "h7")`.
+- **Duties recorded (round 4):** R5: after `WorkspaceService.open()` replaces the store, R6 stays gated until
+  `relayr6.r6(service)` runs again (`relayhook.start_worker` calls it once per worker start): restart the worker or
+  re-run `r6` on reopen. R6b `desired()`: certificate expiry is not F1 standing (`admission.device_standing`), so an
+  expired device that still holds `WK_e` raises no gate; `desired()` must drop it (a rotation), as it must a
+  `pending` forwarded revocation that later becomes effective. Every F1 device loss gates, listed or not
+  (availability: one rotation per removal).
+- Mutation, round 4: see the end of this section.
 - J-R6a-21 **The key store is bound to the LIVE store, never a latch.** `R6Gate.install(live, rebuild=...)` sets
   `relay_gate` on `live()`, runs the start-up rebuild, and only then binds; `seal_state` is gated unless `live()` (the
   host's `service.store`, re-read at every decision) carries exactly that hook. A reopened (replaced) store, a closed

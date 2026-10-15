@@ -625,12 +625,15 @@ class MembershipKeys:
         returns. A write that fails (a disk error) leaves the in-memory gate up and the raise queued for the next
         flush, and is logged; it never undoes the store's commit. Inside a seal-lock hold the durable part is refused
         (``RuntimeError``, F5) after the in-memory gate is up."""
+        # round 4 (F-C1): the in-memory gate FIRST, before any check can fail (a plain attribute write, no lock: a
+        # forked child must never block here), then validation, then the queue under the seal lock
+        self._gate_up = True
+        if self._forked():
+            raise MembershipUnsafe("forked")
         if type(device) is not str or not (_HEX32.fullmatch(device) or device == ""):
             raise ValueError("gate device")
         if reason not in GATE_REASONS:
             raise ValueError("gate reason")
-        if self._forked():
-            raise MembershipUnsafe("forked")
         with self._seal:
             self._gate_up = True
             self._gate_queue.append({"device": device, "reason": reason})

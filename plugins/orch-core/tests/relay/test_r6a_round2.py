@@ -622,3 +622,45 @@ def test_a_malformed_committed_member_lists_as_every_device(tmp_path):
         assert ("", "") in mk.listed_devices()
     finally:
         mk.close()
+
+
+# -- round 4 (Opus delta 2) -----------------------------------------------------------------------------------
+
+
+def test_k03_a_reinstall_whose_rebuild_fails_leaves_the_key_store_gated(tmp_path):
+    """The store carries the NEW hook, the key store is still bound to the OLD one: gated (identity check)."""
+    mk = open_keys(tmp_path, hooked=False)
+    try:
+        rotate(mk)
+        store = _FakeStore()
+        R6Gate(mk).install(lambda: store)
+        assert not mk.seal_state().gated
+
+        def boom():
+            raise RuntimeError("store unavailable")
+
+        with pytest.raises(RuntimeError):
+            R6Gate(mk).install(lambda: store, rebuild=boom)
+        assert store.relay_gate is not None and mk.seal_state().gated
+    finally:
+        mk.close()
+
+
+def test_k04_a_live_callable_that_raises_is_gated(tmp_path):
+    mk = open_keys(tmp_path, hooked=False)
+    try:
+        rotate(mk)
+        store = _FakeStore()
+        state = {"raise": False}
+
+        def live():
+            if state["raise"]:
+                raise RuntimeError("service gone")
+            return store
+
+        R6Gate(mk).install(live)
+        assert not mk.seal_state().gated
+        state["raise"] = True
+        assert mk.seal_state().gated
+    finally:
+        mk.close()

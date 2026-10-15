@@ -274,6 +274,7 @@ class Store:
         self._loaded: set[str] = set()
         self._load_budget: int | None = None
         self._state_v: State | None = None
+        self._relay_pregated: State | None = None  # _commit's new state whose losses were gated before its write
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
         self._genesis_event: dict[str, Any] | None = None
@@ -413,8 +414,10 @@ class Store:
         """The ONE place the model state changes (``_load`` and ``_commit``), so the relay gate invariant is enforced
         here: assign, then raise the gate for every device whose standing was lost. Always under the store lock."""
         old, self._state_v = self._state_v, new
+        pregated, self._relay_pregated = self._relay_pregated, None
         if self.relay_gate is not None and old is not None and new is not None and old is not new:
-            self._gate_lost_standing(old, new)
+            if new is not pregated:  # _commit raised it already, before the event became durable
+                self._gate_lost_standing(old, new)
 
     @staticmethod
     def _standing_ok(state: State, device: str) -> bool:
@@ -445,6 +448,10 @@ class Store:
             gate(device[2:] if ok else "", reason)
         except Exception as exc:  # noqa: BLE001 - the state change stands; R6's in-memory gate is already up
             _log.error("relay gate raise failed (%s)", type(exc).__name__)
+            try:
+                gate("", "h7")  # once more with arguments R6 always accepts, so the raise is durable if it can be
+            except Exception as exc2:  # noqa: BLE001
+                _log.error("relay gate fallback failed (%s)", type(exc2).__name__)
 
     def close(self) -> None:
         self.relay_gate = None  # a closed store's hook is gone: R6 (bound to the live store) is gated
@@ -955,7 +962,11 @@ class Store:
         try:
             yield
         except LoadBudgetExceeded:
+            # rolls back to the state before the span (never a newer one, so a raised relay gate stays raised); the
+            # relay hook is NOT rolled back: a hook cleared or set meanwhile (close, R6Gate.install) stands (R6a)
+            gate = self.relay_gate
             self.__dict__.update(saved)
+            self.relay_gate = gate
             raise
         finally:
             self._load_budget = saved["_load_budget"]
@@ -1757,6 +1768,12 @@ class Store:
         if stat_sig(path) != info_sig(info):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
+        # R6a round 4 (F-A): the relay gate goes up BEFORE the event can become durable, so no failure after the commit
+        # point (``_finish``, ``append_durable`` after its write) releases the lock with a lost standing ungated. A
+        # write that then fails gated for nothing: a rotation (fail closed). The setter does not raise it twice.
+        if self.relay_gate is not None:
+            self._gate_lost_standing(old_state, new_state)
+            self._relay_pregated = new_state
         try:
             if ev["type"] == "restore":
                 transition = self._stage_transition(ev, log, old_state)

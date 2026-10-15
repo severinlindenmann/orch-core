@@ -402,11 +402,12 @@ def test_the_gate_waits_for_an_open_seal_span_and_never_takes_the_store_lock(mk)
         assert st.gated  # a seal that begins after the gate fails
 
 
-def test_raise_gate_validates_its_arguments(mk):
+def test_raise_gate_validates_its_arguments_after_raising_the_gate(mk):
+    """Round 4 (F-C1): bad arguments are refused, but the in-memory gate is already up (fail closed)."""
     for dev, why in (("x", "device.removed"), (DEVICE, "nope"), (None, "device.removed")):
         with pytest.raises(ValueError):
             mk.raise_gate(dev, why)
-    assert not mk.gate_up()
+    assert mk.gate_up()
 
 
 def test_epoch_key_source_answers_per_epoch(mk):

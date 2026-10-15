@@ -765,43 +765,59 @@ def test_finding1_global_config_is_frozen_between_check_and_push(r):
 
 _QUIET = {"GIT_CONFIG_GLOBAL": os.devnull}  # this test's own git calls once the hostile config is in place
 
+#: programs a hostile ``~/.gitconfig`` makes plain git run for the operations the records tool performs (the positive
+#: control below shows each one fires): ``core.fsmonitor`` (update-index, write-tree, diff-tree, diff-index),
+#: ``core.hooksPath`` (reference-transaction on fast-import/update-ref; pre-push, and pre-receive/update/post-update on
+#: a file:// remote's side), ``core.alternateRefsCommand`` (the receiving side of a push). Left out because the records
+#: tool's operations never trigger them, even in plain git: filters (clean/smudge/process: no checkout, no add),
+#: ``diff.external``/``diff.<d>.command``/textconv (only raw diffs), merge drivers (no merge), aliases (fixed argv),
+#: ``core.pager``/``core.editor`` (no tty, ``-F -``) and ``gpg.program`` (``commit-tree`` does not sign by config).
+_VECTORS = ("fsmonitor", "reference-transaction", "pre-push", "alternate-refs")
+_HOOKS = ("reference-transaction", "pre-push", "pre-receive", "update", "post-update", "post-index-change")
+
 
 def _hostile_gitconfig(r) -> Path:
-    """Append to the private ``~/.gitconfig`` every key that names a program or changes what git reads (filters through
-    ``core.attributesFile``, ``diff.external``, ``core.alternateRefsCommand``, ``core.hooksPath``, an alias, an
-    unrelated ``url.insteadOf``, ``i18n.commitEncoding``): each program appends to the returned marker when run."""
+    """Append to the private ``~/.gitconfig`` a program for every vector the records tool's operations can reach, each
+    a link named after its vector to one script that appends that name to the returned marker; plus
+    ``i18n.commitEncoding``, which would change the tool's own commits."""
     marker = r.tmp / "f541-marker"
-    evil = r.tmp / "f541-evil.sh"
-    evil.write_text(f'#!/bin/sh\necho "$0 $*" >> "{marker}"\ncat\n')
+    bin_ = r.tmp / "f541-bin"
+    bin_.mkdir()
+    evil = bin_ / "evil"
+    evil.write_text(f'#!/bin/sh\nbasename "$0" >> "{marker}"\nexit 0\n')
     evil.chmod(0o755)
     hooks = r.tmp / "f541-hooks"
     hooks.mkdir()
-    for name in ("pre-commit", "post-commit", "pre-push", "reference-transaction", "post-index-change"):
-        (hooks / name).symlink_to(evil)
-    attrs = r.tmp / "f541-attrs"
-    attrs.write_text("* filter=f541 diff=f541 merge=f541\n")
+    for name in (*_HOOKS, "fsmonitor", "alternate-refs"):
+        ((hooks if name in _HOOKS else bin_) / name).symlink_to(evil)
     with open(r.home / ".gitconfig", "a") as fh:
         fh.write(
-            f"[core]\n\tattributesFile = {attrs}\n\talternateRefsCommand = {evil}\n\thooksPath = {hooks}\n"
-            f"\tpager = {evil}\n\teditor = {evil}\n\tfsmonitor = {evil}\n"
-            f'[filter "f541"]\n\tclean = {evil}\n\tsmudge = {evil}\n\tprocess = {evil}\n\trequired = true\n'
-            f'[diff]\n\texternal = {evil}\n[diff "f541"]\n\tcommand = {evil}\n\ttextconv = {evil}\n'
-            f'[merge "f541"]\n\tdriver = {evil}\n[gpg]\n\tprogram = {evil}\n[commit]\n\tgpgSign = true\n'
-            f"[alias]\n\tf541 = !{evil}\n"
-            f'[url "file:///nonexistent/f541/"]\n\tinsteadOf = https://f541.invalid/\n'
-            f"[i18n]\n\tcommitEncoding = ISO-8859-1\n"
+            f"[core]\n\thooksPath = {hooks}\n\tfsmonitor = {bin_ / 'fsmonitor'}\n"
+            f"\talternateRefsCommand = {bin_ / 'alternate-refs'}\n[i18n]\n\tcommitEncoding = ISO-8859-1\n"
         )
     return marker
 
 
+def _fired(marker: Path) -> set[str]:
+    return set(marker.read_text().split()) if marker.exists() else set()
+
+
 def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
     """``Git.env`` is the one place: a local call gets ``user.*`` and ``url.*.(push)insteadOf`` of the person's global
-    config, a call in the transport repo only the authentication and transport subset, nothing else."""
+    config, a call in the transport repo only the authentication and transport subset, nothing else (keys that name
+    a program or change a read included, whether or not the tool's operations would run them today)."""
     r.init()
     git(r.root, "remote", "add", "origin", r.bare())
     _hostile_gitconfig(r)
     with open(r.home / ".gitconfig", "a") as fh:
-        fh.write("[credential]\n\thelper = f541-helper\n[http]\n\tsslVerify = true\n")
+        fh.write(
+            "[core]\n\tattributesFile = /nonexistent/f541\n\tpager = f541\n\teditor = f541\n"
+            '[filter "f541"]\n\tclean = f541\n\tsmudge = f541\n\tprocess = f541\n'
+            '[diff]\n\texternal = f541\n[diff "f541"]\n\ttextconv = f541\n[merge "f541"]\n\tdriver = f541\n'
+            "[gpg]\n\tprogram = f541\n[commit]\n\tgpgSign = true\n[alias]\n\tf541 = !f541\n"
+            '[url "file:///nonexistent/f541/"]\n\tinsteadOf = https://f541.invalid/\n'
+            "[credential]\n\thelper = f541-helper\n[http]\n\tsslVerify = true\n"
+        )
     repo = r.repo()
 
     def keys(env):
@@ -811,7 +827,8 @@ def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
     assert local == {"user.name", "user.email", "url.file:///nonexistent/f541/.insteadof"}, local
     seen = repo.out("config", "--list").lower()
     for bad in ("filter.", "diff.", "merge.", "alias.", "core.attributesfile", "core.alternaterefscommand",
-                "core.pager", "core.editor", "gpg.", "commit.gpgsign", "i18n.", "credential.", "http."):  # fmt: skip
+                "core.pager", "core.editor", "gpg.", "commit.gpgsign", "i18n.", "credential.", "http.",
+                "core.fsmonitor=/"):  # fmt: skip
         assert bad not in seen, bad
     assert "core.hookspath=/dev/null" in seen and f"core.hookspath={r.tmp}" not in seen
     with repo.transport() as net:
@@ -827,6 +844,21 @@ def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit
     git(r.root, "remote", "add", "origin", url)
     r.push(initial=True)
     marker = _hostile_gitconfig(r)
+    # positive control: plain git under the same HOME runs every vector for the records tool's own operations
+    ctl, ctl_remote = r.tmp / "f541-ctl", r.tmp / "f541-ctl.git"
+    git(r.tmp, "init", "-q", "--bare", "-b", "main", str(ctl_remote), env=_QUIET)
+    git(r.tmp, "init", "-q", "-b", "main", str(ctl), env=_QUIET)
+    (r.tmp / "f541-blob").write_text("x\n")
+    blob = git(ctl, "hash-object", "-w", str(r.tmp / "f541-blob"))
+    git(ctl, "update-index", "--add", "--cacheinfo", f"100644,{blob},x.txt")
+    tree = git(ctl, "write-tree")
+    commit = git(ctl, "commit-tree", "--no-gpg-sign", tree, "-m", "control")
+    assert "\nencoding ISO-8859-1\n" in git(ctl, "cat-file", "commit", commit)
+    git(ctl, "update-ref", "refs/heads/main", commit)
+    git(ctl, "push", "-q", f"file://{ctl_remote}", "main")
+    assert _fired(marker) >= set(_VECTORS), _fired(marker)
+    marker.unlink()
+    # the records tool under that config: nothing runs, its commits and the fast-forward check are unchanged
     r.w.ticket("one")
     t = r.commit()["commit"]  # T, child of R
     assert "encoding " not in git(r.root, "cat-file", "commit", t, env=_QUIET)
@@ -841,8 +873,9 @@ def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit
         r.push()
     assert e.value.code == "records.push_rejected" and "never a non-fast-forward" in e.value.message
     assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main", env=_QUIET) == t
-    r.cli("status")  # its diff-index runs under the hostile config too
-    assert not marker.exists(), marker.read_text()
+    code, out = r.cli("status")  # its diff-index runs under the hostile config too
+    assert code == 0 and out["detail"]["status"]["local"] == {"repo": {"state": "ok"}, "url": url}, out
+    assert _fired(marker) == set()
 
 
 def test_541_init_reads_no_template_or_other_config_of_the_person(r):

@@ -184,6 +184,19 @@ def test_a_lost_ack_is_unknown_never_a_false_failure_and_hello_settles_it(ready)
     assert ok(c.call("whoami", {}))["data"]["runner"]["grant"]["id"] == gid_of(value)
 
 
+def test_deposit_status_names_the_reason_of_a_rejected_deposit(ready, rstate):
+    w = ready
+    c = w.conn()
+    w.h.host.runners.command_timeout = 1.0
+    w.runner.link.drop_reports.add("grant.put")
+    did = new_ulid()
+    assert ok(deposit(c, issue(w), did))["data"]["deposit"] == "unknown"
+    w.runner.close()
+    w.runner = Runner(w, rstate, gen=GEN2)  # the runner restarted: it does not hold the grant
+    wait_for(lambda: ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["deposit"] == "rejected")
+    assert ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["reason"] == "runner_restarted"
+
+
 def test_a_runner_restart_loses_the_grant_and_whoami_says_so(ready, rstate):
     w = ready
     c = w.conn()

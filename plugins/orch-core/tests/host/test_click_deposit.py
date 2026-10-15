@@ -139,6 +139,40 @@ def test_a_deposit_refused_by_the_host_is_rejected_with_the_grant_named(world):
     res = click.sign(p["request_id"], v["view_digest"], word=word(served))
     assert res["deposit"] in ("rejected", "unknown") and res["grant"].startswith("gr_")  # Revoke uses it
     assert res["result"]["data"]["grant"] == res["grant"]
+    if res["deposit"] == "rejected":
+        assert res["deposit_reason"] == "runner.unavailable"
+    else:
+        assert "deposit_reason" not in res
+
+
+@pytest.mark.parametrize(
+    ("host_reason", "expected"),
+    [("grant.forgotten", "grant.forgotten"), ("grant.not_runner", "grant.not_runner"), ("grant.verbs", "grant.verbs"),
+     ("grant.expiring", "grant.expiring"), ("rate.limited", "rate.limited"),
+     ("runner.unavailable", "runner.unavailable"), ("runner_restarted", "other"),
+     ("secret text from the host /Users/x", "other"), (None, "other")],
+)  # fmt: skip
+def test_a_rejected_deposit_carries_a_static_reason_from_the_closed_set(world, host_reason, expected):
+    served, click, _, _ = world
+    execution(served)
+
+    def tamper(op, args, res):
+        if op == "grant.deposit":
+            res["data"] = {"deposit": "rejected", **({"reason": host_reason} if host_reason else {})}
+        return res
+
+    click.tamper = tamper
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "rejected" and res["deposit_reason"] == expected
+
+
+def test_a_confirmed_or_unknown_deposit_has_no_reason(world):
+    served, click, _, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    res = click.sign(p["request_id"], v["view_digest"], word=word(served))
+    assert res["deposit"] == "confirmed" and "deposit_reason" not in res
 
 
 def test_check_prepared_refuses_a_grant_issued_without_the_runner_label():

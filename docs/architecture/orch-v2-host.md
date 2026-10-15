@@ -2383,7 +2383,10 @@ envelope.
   (`sha256(cj(sorted served_ops()))`); a mismatch refuses that workspace with `host.version_mismatch` ("the signer's
   orch-core differs from the host's") and `status` shows `available:false, problem:"version_mismatch"`. Algorithm
   drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
-  answers `core` (the orch-core version) and `contract: 1`; the dashboard refuses a signer with another contract.
+  answers `core` (the orch-core version) and `contract`: **1** (H5c to H11b) or **2** (H11c-2, deposit support: `prepare {deposit}` and the
+  `deposit`, `deposit_id`, `grant`, `deposit_reason` answers of `sign`). A contract-1 signer reads `deposit` as an unknown
+  argument and answers `invalid.input`, and refuses every `grant` as `terminal_only`; a client reads `contract` to tell
+  the two apart. A client written for contract 2 accepts 1 and 2 (1: no click grants) and refuses any other value.
 - **Frames (normative)** on the socketpair: §0.2's codec (`orch.host.frames.encode` and `Decoder`: a 4-byte big-endian
   length, then strict JSON, at most 2 MiB; parsing and nesting limits before any validation), one request at a time:
   - request: `{"t":"req", "id":str/[A-Za-z0-9_-]{1,32}/, "op":"prepare"|"view"|"sign"|"cancel"|"status", "args":{…}}`;
@@ -2399,9 +2402,12 @@ prepare {workspace_id:WsId, op:OpName, args:object, idem:Idem, files?:{name: {b6
 view    {workspace_id:WsId, request_id:ReqHr} → {view:View, view_digest:Hash}
 sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, word?:str{1..128}}
   → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool,     // never a secret
-     deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID, grant?:str}           // v1.6: deposit grants only
+     deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID, grant?:str,           // v1.6: deposit grants only
+     deposit_reason?:DepositReason}                  // contract 2: only when deposit is "rejected"
+DepositReason = "grant.forgotten"|"grant.not_runner"|"grant.verbs"|"grant.expiring"|"rate.limited"|"runner.unavailable"|"other"
+               // a static code of this closed set, never host text; any other host refusal is "other"
 cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
-status  {} → {core:str, contract:1, workspaces:[{workspace_id:WsId, prefix:str,
+status  {} → {core:str, contract:1|2, workspaces:[{workspace_id:WsId, prefix:str,
                            custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
                            available:bool, problem?:str}]}
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
@@ -3755,6 +3761,12 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     show or hand to the runner; the runner commands `grant.put`, `grant.drop` and the `spawn` fields `grant`,
     `session`, `person`; `<state>/runner.json` (`login_shell`, `programs`, `pass_env`); first-party manifest
     `addons/start-agent`. No F1 log or certificate change ("As built in H11c", §12.4).
+41. **Start-agent dashboard follow-ups (H11c-2; the number may be renumbered):** `grant.list` items gain `label`
+    (`issued_at` was already there); the click signer's `sign` answer gains `deposit_reason` when `deposit` is
+    `rejected` (closed set `grant.forgotten`, `grant.not_runner`, `grant.verbs`, `grant.expiring`, `rate.limited`,
+    `runner.unavailable`, `other`; never host text) and `grant.deposit_status` gains `reason`; the click signer
+    `contract` goes from 1 to 2 (deposit support; a client for contract 2 accepts 1 and 2); `run.sub` gains the
+    `{t:"runner", grant}` item (§12.3). No F1, schema or capability change.
 
 ---
 
@@ -7436,6 +7448,7 @@ RunnerInfo = {connected:bool, enabled:bool, terminals:bool, gen:Gen | null,
               grant:{id:str, until:Time, scope:"all"|"workable"} | null}     // the caller person's runner grant
 
 run.sub        {} → {sub:SubId}        evt items: {id, t:"run", run:Run} | {id, t:"gone", run:RunId}
+                                                | {id, t:"runner", grant:RunnerGrant | null}   // H11c-2: see below
 run.list       {state?:"live"|"all" = "live", ticket?:Ref, kind?:"agent"|"shell", since?:int, page?:str{1..512}}
                → {runs:[Run & {out_bytes:int}]{0..256}, next_page:str | null, runner:RunnerInfo}
 whoami         (v1.6, with run/1) gains runner?:RunnerInfo for P and G of the person (the card reads it before any
@@ -7464,7 +7477,7 @@ run.stop       {run:RunId, grace_ms?:int 0..30000 = 10000}
                → {state:"exited"|"stopping", cleanup:"complete"|"incomplete"|"unknown"|null}
 grant.deposit  {deposit_id:ULID} + auth.grant → {deposit:"confirmed"|"rejected"|"unknown", grant:str, until:Time,
                                                  scope:str, reason?:str}
-grant.deposit_status {deposit_id:ULID} → {deposit:"confirmed"|"rejected"|"unknown"|"none"}
+grant.deposit_status {deposit_id:ULID} → {deposit:"confirmed"|"rejected"|"unknown"|"none", reason?:str}   // reason: only with rejected (H11c-2)
 grant.forget   {grant:str} → {forgotten:bool}
 term.attach    {run:RunId, mode:"read"|"write" = "read", take?:bool = false, from?:int 0..}
                → {att:AttId, ticket:str/[A-Za-z0-9_-]{43}/, expires_at:Time, socket:str, runner:{uid:int, pid:int, gen:Gen},
@@ -7479,6 +7492,13 @@ attach.cancel  {att:AttId} → {}
   caller's view, also when it is evicted by retention. The host coalesces `run` items that only change `viewers`,
   `writer`, `cols` or `rows` to at most one per run per 250 ms. `run.sub` ends as `sub/1` subscriptions do (§0.9:
   `person.removed`, `grant.expired`, `overflow`, `host.restarting`).
+- **The `runner` item (H11c-2).** `{id:"<rev>.g<n>", t:"runner", grant:RunnerGrant | null}` with `RunnerGrant = {id, until,
+  scope}` (the `whoami.runner.grant` shape; never the secret) is sent to a subscriber whenever **its own person's**
+  runner grant state changes: a deposit confirmed (also a pending one settled at `runner.hello`), a grant replaced,
+  forgotten, revoked, expired, dropped by the switch or the watcher, cleared because a restarted runner no longer holds
+  it, and the runner connecting or disconnecting (`grant:null` while no runner is connected). Another person's change
+  sends nothing. The item is checked like a `run` item (fresh authentication snapshot, principal still valid); a G
+  subscriber gets its grant's person's. It is not replayed: after a reconnect read `whoami.runner.grant`.
 - `kind:"agent"` runs appear on the Agents page; the dock lists both kinds. `label` is client-chosen untrusted text
   (rendered through `visible.tsx`; null shows the harness and ticket).
 - `runner.disabled` with several things missing reports the first of `addon`, `machine`, `terminals`. Whether the

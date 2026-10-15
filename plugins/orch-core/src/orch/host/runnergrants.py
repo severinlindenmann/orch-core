@@ -512,7 +512,9 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
             if dep is None or dep.get("person") != plan["person"]:
                 return ok_result({"deposit": "none"})
             outcome = dep.get("outcome")
-            return ok_result({"deposit": "unknown" if outcome == "pending" else outcome})
+            reason = dep.get("reason") if outcome == "rejected" else None
+            return ok_result({"deposit": "unknown" if outcome == "pending" else outcome,
+                              **({"reason": reason} if reason else {})})  # fmt: skip
         if op == "grant.forget":
             return ok_result(await grants.forget(wid, plan["person"], plan["grant"], plan["until"]))
         if not enablement.state_of(hub.host.state_dir, wid, hub.host.host_uid)["enabled"]:  # again, at use

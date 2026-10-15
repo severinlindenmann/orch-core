@@ -512,3 +512,44 @@ def test_a15_step_4_records_respect_the_host_wide_row_caps(w, monkeypatch):
     monkeypatch.setattr(B, "MAX_RETAINED_ROWS", 3)
     assert w.send(_whoami(w, Phone())) == []
     assert not any(r[0].startswith("u:") for r in w.rids.dump()["rid"])
+
+
+# -- round-3 mutation survivors (R33, R37, R39) ----------------------------------------------------------------------
+
+
+def test_superseding_stored_chunks_lowers_the_byte_counts(w):
+    w.rids.record_refusal(device="d" * 32, rid="e" * 32, first_ms=w.clock.ms, req_digest="sha256:x", epoch=2, seq=1,
+                          kind="refusal", chunk=b"x" * 1000, window=None)  # fmt: skip
+    w.rids.replace_unattempted("d" * 32, "e" * 32, [(0, 2, b"y" * 10)])
+    c = w.rids.counts()
+    assert c["memory"] == c["file"] and w.rids.chunk_bytes("d" * 32) == 10
+
+
+def test_the_relay_submit_builder_is_registered_by_importing_outcomes_alone():
+    """M1: a fresh process that imports only orch.host.outcomes (what reconcile_all needs) has the builder."""
+    import subprocess
+    import sys
+
+    code = "import orch.host.outcomes as o; print(o.BUILDERS['relay.submit'].__module__)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=True)
+    assert out.stdout.strip() == "orch.host.relaybuild"
+
+
+def test_an_aux_step_that_raises_is_logged_and_the_session_errors_still_stop(w):
+    from orch.relay.session import Fenced
+
+    alarms = []
+    w.bridge.alarm = lambda c, d: alarms.append(c)
+    loop = BridgeLoop(w.bridge, session=None, conn=lambda: None, workspace_id=WS)  # type: ignore[arg-type]
+
+    def boom():
+        raise OSError("disk")
+
+    loop._aux_step("sweep", boom)  # noqa: SLF001 - never raises
+    assert alarms == ["relay_item_failed"]
+
+    def fenced():
+        raise Fenced("x")
+
+    with pytest.raises(Fenced):
+        loop._aux_step("flush", fenced)  # noqa: SLF001

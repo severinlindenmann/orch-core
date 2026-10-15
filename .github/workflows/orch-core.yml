@@ -115,3 +115,16 @@ jobs:
         env:
           ORCH_RELAY_DIR: ${{ github.workspace }}/orch-relay
           ORCH_RELAY_T2_REQUIRED: "1"
+  gate:
+    # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
+    name: core gate
+    if: always()
+    needs: [tests, perf-schema, perf-budgets, relay-t2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*) exit 1 ;; esac  # skipped (draft, nothing relevant) is fine

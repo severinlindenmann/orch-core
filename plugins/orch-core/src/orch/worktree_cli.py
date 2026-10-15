@@ -99,10 +99,13 @@ class Direct:
         clock: Any = time.time,
         *,
         ident: tuple[int, int] | None = None,
+        config: bytes | None = None,
     ) -> None:
         self.root, self.wid, self.state, self.env, self.clock = Path(root), wid, Path(state), env, clock
         #: the root's identity when it was discovered: checked before the store opens below it
         self.ident = ident
+        #: the config.json bytes discovery read: the store's open-time check uses them, never a re-read by path
+        self.config = config
         from orch.host.ownership import DirectGuard
         from orch.ops.caps import Git
 
@@ -127,7 +130,8 @@ class Direct:
                 raise WtError("not_found", f"{self.root} is no longer the workspace directory that was found")
             try:
                 self._store = Store.open(self.root, expected_workspace_id=self.wid, host=None,
-                                         host_state_dir=self.state, load="lazy", guard=self.guard)  # fmt: skip
+                                         host_state_dir=self.state, load="lazy", guard=self.guard,
+                                         config=self.config)  # fmt: skip
             except StoreError as exc:
                 raise WtError(exc.code, exc.detail or exc.code) from None
             except OrchError as exc:
@@ -456,7 +460,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO | None = No
             root = ws.verify_root()  # still the directory found, before anything under it is opened
         except OrchError as exc:
             raise WtError(exc.code, str(exc.message), hint=exc.hint) from None
-        direct = Direct(Path(root), wid, state_dir(env, files), env, now, ident=ws.ident)
+        direct = Direct(Path(root), wid, state_dir(env, files), env, now, ident=ws.ident, config=ws.config_bytes)
         with direct.guarded():
             if cmd == "list":
                 data: Any = direct.list(a["ticket"], a["check"])

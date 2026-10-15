@@ -239,6 +239,12 @@ class Workspace:
         for a caller that opens the root later (:func:`orch.discovery.same_root`)."""
         return self._found.ident if self.root is not None and self._found is not None else None
 
+    @property
+    def config_bytes(self) -> bytes | None:
+        """The ``config.json`` bytes discovery read from the checked fd (``None``: not discovered by fd), for a caller
+        that opens the store itself (``Store.open(config=...)``)."""
+        return (self._found.raw or None) if self.root is not None and self._found is not None else None
+
     def verify_root(self) -> Path:
         """The root, after checking it is still the directory discovery found (``st_dev``/``st_ino``): call it before
         opening anything else under the root by path. A root swapped after discovery refuses."""

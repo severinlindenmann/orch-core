@@ -33,12 +33,22 @@ class _Holder:
 class DirectLink:
     """``link(op, args)`` for a workspace in direct mode."""
 
-    def __init__(self, root: Path, workspace_id: str, state: Path, *, ident: tuple[int, int] | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        workspace_id: str,
+        state: Path,
+        *,
+        ident: tuple[int, int] | None = None,
+        config: bytes | None = None,
+    ) -> None:
         if os.name == "nt":
             raise RecordsError("records.unsupported", "direct-mode records do not run on Windows yet (D-P2-38)")
         self.root, self.workspace_id, self.state = Path(root), workspace_id, Path(state)
         #: the root's identity when it was discovered here: checked before the store opens below it
         self.ident = ident
+        #: the config.json bytes discovery read: the store's open-time check uses them, never a re-read by path
+        self.config = config
         self._store: Any = None
         self._holder = _Holder()
 
@@ -75,6 +85,7 @@ class DirectLink:
                     host_state_dir=self.state,
                     load="lazy",
                     guard=DirectGuard(self.state, self.workspace_id),
+                    config=self.config,
                 )
             except StoreError as exc:
                 raise RecordsError(exc.code, exc.detail or exc.code, exit_=3) from None

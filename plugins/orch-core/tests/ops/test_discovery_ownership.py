@@ -273,3 +273,60 @@ def test_a_root_swapped_after_discovery_is_refused(ws, tmp_path, how):
     assert e.value.code == "not_found" and "no longer the workspace directory" in e.value.message
     with pytest.raises(runtime.OrchError):
         w.verify_root()
+
+
+def _swap_config_at_the_identity_check(ws, monkeypatch, m):
+    """At the root identity check (right before the store opens), replace ``config.json`` in place (same root
+    directory, so the dev/ino check passes) by one naming another workspace, then forbid any path open of it."""
+    real = discovery.same_root
+    swapped = []
+
+    def same_root(root, ident):
+        ok = real(root, ident)
+        if not swapped:
+            doc = json.loads((ws.root / "config.json").read_text())
+            doc["workspace"]["id"] = "f" * 32
+            tmp = ws.root / "swap.json"
+            tmp.write_text(json.dumps(doc))
+            os.replace(tmp, ws.root / "config.json")
+            swapped.append(True)
+            _no_path_open_of_config(m)
+        return ok
+
+    m.setattr(discovery, "same_root", same_root)
+    return swapped
+
+
+def test_orch_worktree_opens_the_store_with_the_checked_config_bytes(ws, monkeypatch):
+    """``orch worktree``: ``config.json`` replaced after discovery (the root stays the same directory) is never read
+    by path; the store opens with the bytes discovery checked."""
+    from orch import worktree_cli
+
+    env = ws.env(grant=False, session=None)
+    env.pop("ORCH_WORKSPACE")
+    monkeypatch.setenv("ORCH_NO_SERVICE_MANAGER", "1")
+    monkeypatch.chdir(ws.root)
+    out = io.StringIO()
+    with monkeypatch.context() as m:
+        swapped = _swap_config_at_the_identity_check(ws, monkeypatch, m)
+        code = worktree_cli.main(["list", "--json"], env=env, out=out)
+    assert swapped and code == 0, out.getvalue()
+    assert json.loads(out.getvalue())["ok"] is True
+
+
+def test_orch_records_direct_mode_opens_the_store_with_the_checked_config_bytes(ws, monkeypatch):
+    """``orch records`` in direct mode on the workspace found here: the same, through ``host_link.resolve``."""
+    from orch.records import host_link
+
+    env = ws.env(grant=False, session=None)
+    env.pop("ORCH_WORKSPACE")
+    monkeypatch.chdir(ws.root)
+    res = host_link.resolve(env, None)
+    try:
+        assert res.mode == "direct"
+        with monkeypatch.context() as m:
+            swapped = _swap_config_at_the_identity_check(ws, monkeypatch, m)
+            store = res.link._open()
+        assert swapped and store.workspace_id == res.workspace_id != "f" * 32
+    finally:
+        res.close()

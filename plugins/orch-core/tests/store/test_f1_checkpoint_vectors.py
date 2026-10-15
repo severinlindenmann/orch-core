@@ -286,3 +286,12 @@ def test_the_store_carries_the_revocation_as_the_vector_says(tmp_path):
     assert s.state.workspace.devices[d2].revoked == "lost"
     s.close()
     env.store = None
+
+
+def test_the_convenience_cases_for_the_relay_auth_kinds():
+    """H12d (orch-v2-host §0.8.6 item 9.8): checkpoint.json carries a restore line with auth "convenience" (accepted)
+    and one with an unknown auth (refused); the relay vendors them for AUTH_KINDS. Both are judged above."""
+    by_name = {c["name"]: c for c in C["transition_cases"]}
+    ok, bad = by_name["restore_auth_convenience_accepted"], by_name["restore_auth_unknown_refused"]
+    assert (ok["restore"]["event"]["auth"], ok["expect"]) == ("convenience", "ok")
+    assert (bad["restore"]["event"]["auth"], bad["expect"]) == ("bogus", "chain.diverged")

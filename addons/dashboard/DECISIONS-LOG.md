@@ -1541,3 +1541,78 @@ machinery unchanged and keep core in charge of wording. Converting would need a 
 - **Why:** A later untagged reload must not authenticate an attacker-chosen path or query (R-2); unknown signature outcomes must retain the cancellation/replacement guard across concurrent attempts (R-3). The foreign notice still directs users to open from the terminal or a bookmark at `/`.
 - **Revert:** Restore the prior URL replacement in `src/api/bootstrap.ts` and remove the uncertain-outcome re-mark in `server/src/orch_dashboard/click.py`, accepting the two residual races again.
 - **F-2 (Opus delta, info) closed structurally:** `Handoffs.begin_sign`/`end_sign` count sign calls in flight per request and remember unknown outcomes. A definite failure clears the mark only when no other sign is in flight and no outcome is unknown, in any finish order; an unknown outcome stays marked until the host answer is known (`settled`) or the mark expires. Two concurrent definite failures still clear it (nothing is at the host).
+
+## 2026-10-14 — M6 current destination in push confirmation
+
+**Decision:** Replace the 2026-10-13 M6 wording deviation inside push confirmation: check the read-only records status child on every opening, use the current URL in the verbatim §12.11 export warning, and show the private assurance only for `current_private: true`. Show a mismatch against the last push. If the check fails or withholds the URL, retain the last-known warning and display the failure code. Outside the dialog, retain “Last known destination” and “Last noted as private”. Allow quick-only tickets to become normal tickets with `labels=`.
+
+**Why:** Core #454 supplies the current effective push destination and its exact private mark through the bounded status child, and accepts the empty label set. Historical status alone cannot establish the destination of the next push. The tool still resolves and checks the destination again when pushing.
+
+**Revert:** Restore the historical confirmation wording and hide quick-only conversion if deployed core no longer supports these contracts.
+
+## 2026-10-14 Push confirm for maintainers; the records page is keyed by workspace
+
+- **Decision:** For anyone but an owner, core's `remote.current_url` is only the destination's host. The confirm then says "the remote configured in the records repository (on <host>; only owners see the full address)" instead of presenting the host as the full §12.11 address, and the private line ("orch trusts your word that only you read …") shows to owners only. `HostRecords` is keyed by workspace, so a workspace switch can never leave one workspace's destination check in a dialog that pushes another (Opus delta L1, L2 on 63b62458).
+- **Revert:** Only if core shows maintainers the full address.
+
+## M7a: real terminals in the dock (14 Oct 2026)
+
+**Decision:** On a real host the dock is drawn only when the server lists the `terminals` feature for the workspace (the host serves
+`run/1` and `term/1`: `run.sub`, `run.list`, `run.stop`, `term.preview`, `term.open`, `term.attach`, `attach.cancel`); it is then
+`RealDock` (the person's own runs) with `RealTerminal` per run. The mock keeps its terminals addon. Start agent (H11c) stays a disabled
+"not available on this host" menu item: this server lists no `agent_start` feature. The bytes go through the server's `/term` WebSocket
+and core's `TermClient` (verification, `input_id`/`lease_gen`, one frame in flight, throttle, `lost`); the server never re-implements
+the term socket protocol.
+**Why:** contract §12.6.6 makes the dashboard server the bridge and the enforcement point for the browser path; reusing `TermClient`
+keeps one implementation of §12.6.1/§12.6.3.
+**Revert:** drop `terminals.py`, `RealDock`/`RealTerminal` and the `terminals` feature; the dock falls back to "not available".
+
+**Decision:** The first attach right after the person clicks **Open terminal** in the preview dialog asks for `mode:"write"` with
+`take:false` (the lease only if nobody holds it). Every other attach (selecting a tab, a remount, any reconnect after 4401/4429/4503) is
+`read`; only **Take control** / **Take back** send `take:true`.
+**Why:** opening your own shell is the explicit gesture to type in it; §12.6.2 allows `write` without `take` (it never moves a lease
+someone holds), and §12.6.5's "never take by itself" is about `take` and reconnects. A shell that opens read-only would need a second
+click every time.
+**Revert:** pass `initial="read"` for the opened run in `RealDock`.
+
+**Decision (review H1, replaces the first tag-0 design):** Tag 0 is decided by xterm's own flag: its key, paste, IME and
+input handlers call `coreService.triggerDataEvent(data, true)`, which fires `onUserInput` synchronously right before `onData`; the
+parser's replies never set it. `termView` subscribes to `_core.coreService.onUserInput` (not public API; xterm is pinned by the lockfile,
+and a build without it refuses to draw the terminal). Data flagged while a pointer or wheel event is dispatched (mouse tracking reports,
+wheel-to-arrows) is swallowed, decided per event from `window.event` (delta D-L1: a timer window after pointer events
+dropped keys typed while the mouse moved). A test pins xterm to exactly 5.5.0 (delta D-L2): a bump needs the audit of every
+`triggerDataEvent(…, true)` caller first.
+**Why:** the first design (a capture listener opening a window closed by a microtask) dropped every real keystroke and paste, because a
+browser runs a microtask checkpoint between listeners. Widening that window to a task would let a reply parsed synchronously after user
+input (`WriteBuffer.handleUserInput`) go out as tag 0. xterm's flag has neither problem.
+**Revert:** none safe without an equivalent per-datum user-input signal; an xterm upgrade must keep the canary and H1 tests green.
+
+**Decision:** Browser tickets live 30 s, 10 per minute per bearer session (`rate.limited`, HTTP 503 like the other host-busy codes);
+the WebSocket also refuses a query string; a socket that piles up 4096 undelivered control frames ends with `overflow` (4429).
+Terminal sockets and SSE tabs count together toward 16 per session (`quota.host`, 4429). The host's `message` on a `term.attach`
+refusal is passed only when it is plain text of at most 300 characters (else left out).
+**Why:** the spec bounds output (512 KiB) but never drops control frames; an unread browser must still end, not grow. The other limits
+are the spec's.
+**Revert:** constants at the top of `server/src/orch_dashboard/terminals.py`.
+
+**Decision:** The real-host terminal pytest runs core's host and runner **in this process** (`tests/termkit.py`, core's H11b helpers
+with the `runner_identity` hook), not `orch host run` as a subprocess.
+**Why:** a subprocess host admits a runner only if its PID is the service manager's main PID; the service manager is off in tests and
+no launchd/systemd unit may be installed. Requested from stream A: a dev-only seam (e.g. `orch host run --foreground` accepting a
+foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
+**Revert:** switch `test_realhost_terminals.py` to `realhost_kit` once that seam exists.
+
+**Residuals accepted after the M7a security review (I2, I3):**
+- I2: WebSockets that have not yet presented a ticket count toward no limit; a local non-browser process that forges Host/Origin can hold
+  many accepted sockets for 5 s each. Not reachable from a web page (exact Host/Origin). Revisit with a per-process accept budget if needed.
+- I3: `run.list`/`run.sub` rely on the host's person filter (D-P2-26); the dashboard does not compare runs to the pinned person (it does
+  not project `person` at all). Defence in depth only; the host is the authority.
+- Delta D-I2: a `term.attach` answer lost in transit (the host minted, the dashboard never read `att`) cannot be cancelled by id; it
+  relies on the host's 10 s capability expiry and on the link closing. Delta D-I3: if the person moves to another run before the list
+  shows the run they opened, that run's first later mount still asks `write` (never `take`): still one-shot and still their Open.
+
+## 2026-10-15 Canonical host run directory
+
+- **Decision:** Dashboard and devhost reuse core's `run_dir_for` with `ORCH_HOST_RUN_DIR`, then `<state>/run`. Reject a differing legacy `ORCH_RUN_DIR` before dashboard startup; accept an identical absolute path silently.
+- **Why:** Discovery, signing, records and terminals must reach the same host as core. A stale override must not silently select another host.
+- **Revert:** Restore the old resolver and startup behavior in the dashboard and devhost, along with their tests and documentation.

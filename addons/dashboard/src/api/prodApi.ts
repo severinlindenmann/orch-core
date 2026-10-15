@@ -199,6 +199,7 @@ const reads = {
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
   },
+  getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
   getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),
 }
 

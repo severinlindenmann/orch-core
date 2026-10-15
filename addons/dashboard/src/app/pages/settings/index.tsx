@@ -48,7 +48,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {tab === 'members' && <HostMembers workspace={workspace} />}
         {tab === 'gates' && <HostGates workspace={workspace} />}
         {tab === 'grants' && <HostGrants workspace={workspace} />}
-        {tab === 'records' && <HostRecords workspace={workspace} />}
+        {tab === 'records' && <HostRecords key={workspace.id} workspace={workspace} />}
       </SettingsFrame>
     )
   }

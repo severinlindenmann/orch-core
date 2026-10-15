@@ -114,7 +114,7 @@ def test_isolated_state_required(tmp_path, monkeypatch, case):
     state.mkdir()
     (state / ".orch-dev").touch()
     monkeypatch.setenv("ORCH_STATE_DIR", str(state))
-    monkeypatch.delenv("ORCH_RUN_DIR", raising=False)
+    monkeypatch.delenv("ORCH_HOST_RUN_DIR", raising=False)
     monkeypatch.delenv("ORCH_HOST_SOCKET", raising=False)
     default = Path.home() / ".config/orch"
     if case == "unset":
@@ -134,7 +134,7 @@ def test_isolated_state_required(tmp_path, monkeypatch, case):
     elif case == "unmarked":
         (state / ".orch-dev").unlink()
     elif case == "run_override":
-        monkeypatch.setenv("ORCH_RUN_DIR", str(default / "run"))
+        monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(default / "run"))
     elif case == "xdg_default":
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         state.rename(tmp_path / "orch")
@@ -153,7 +153,7 @@ def test_isolated_state_accepted(tmp_path, monkeypatch):
 
     (tmp_path / ".orch-dev").touch()
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
-    monkeypatch.delenv("ORCH_RUN_DIR", raising=False)
+    monkeypatch.delenv("ORCH_HOST_RUN_DIR", raising=False)
     monkeypatch.delenv("ORCH_HOST_SOCKET", raising=False)
     assert dev_directories() == (tmp_path.resolve(), tmp_path.resolve() / "run")
 
@@ -170,7 +170,7 @@ def test_signal_cleanup_without_binding(p1, monkeypatch, sig_name):
     state.mkdir(parents=True, exist_ok=True)
     (state / ".orch-dev").touch()
     monkeypatch.setenv("ORCH_STATE_DIR", str(state))
-    monkeypatch.delenv("ORCH_RUN_DIR", raising=False)
+    monkeypatch.delenv("ORCH_HOST_RUN_DIR", raising=False)
     monkeypatch.delenv("ORCH_HOST_SOCKET", raising=False)
     monkeypatch.setattr(sys, "argv", ["devhost", str(p1.root), "--person", p1.owner.ref])
     sockets = []

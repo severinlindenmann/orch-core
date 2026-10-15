@@ -9,6 +9,9 @@ import type { TerminalSessionView } from '@/api/terminals'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline } from '@/addon-ui/addonClasses'
 import { canUsePty } from '@/addon-ui/capabilities'
+import { hasFeature, isRealHost } from '@/api/features'
+import { runQueries } from '@/api/runs'
+import { useQuery } from '@tanstack/react-query'
 import { useAddons, useAddonStates } from '@/addon-ui/slots'
 import { cn } from '@/lib/utils'
 import { CollapsedDockWidthContext, PageWidthContext } from '../../pageWidth'
@@ -27,10 +30,15 @@ export const DOCK_BOTTOM_VAR = '--dock-bottom'
 /** CSS variable on <html>: the width a right-hand dock takes (px), 0 otherwise. */
 export const DOCK_RIGHT_VAR = '--dock-right'
 
-/** May the dock show here? The terminals addon must hold `pty` in this workspace (same gate as the terminal node). */
+/**
+ * May the dock show here? Mock: the terminals addon must hold `pty` in this workspace (same gate as the terminal node).
+ * Real host (M7a): the server lists `terminals` for this workspace (the host serves `run/1` and `term/1`); otherwise the
+ * dock is not drawn (the "not available" path). The host still refuses what is switched off.
+ */
 export function useDockAllowed(): boolean {
   const { data } = useAddons()
   const { workspace } = useWorkspace()
+  if (isRealHost()) return !!workspace && hasFeature('terminals', workspace.id)
   return canUsePty(data?.find((a) => a.name === DOCK_ADDON), workspace?.addons[DOCK_ADDON])
 }
 
@@ -166,8 +174,12 @@ export function DockArea({ children }: { children: ReactNode }) {
 function DockBar({ right, open, focus }: { right: boolean; open: () => void; focus: React.MutableRefObject<'dock' | 'bar' | null> }) {
   const { workspace } = useWorkspace()
   const ticket = useDockTicket()
-  const { [DOCK_ADDON]: state } = useAddonStates(workspace?.id, [DOCK_ADDON])
-  const running = sessionsIn((state?.sessions as TerminalSessionView[] | undefined) ?? [], ticket).running.length
+  const real = isRealHost()
+  const { [DOCK_ADDON]: state } = useAddonStates(real ? undefined : workspace?.id, [DOCK_ADDON])
+  const runs = useQuery({ ...runQueries.list(workspace?.id ?? ''), enabled: real && !!workspace })
+  const running = real
+    ? (runs.data?.runs ?? []).filter((r) => r.state === 'running').length
+    : sessionsIn((state?.sessions as TerminalSessionView[] | undefined) ?? [], ticket).running.length
   const button = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (focus.current !== 'bar') return

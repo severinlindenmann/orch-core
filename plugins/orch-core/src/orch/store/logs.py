@@ -18,7 +18,7 @@ from orch import canon, schema
 
 from .fsio import open_nofollow
 
-__all__ = ["LogInfo", "read_new_lines"]
+__all__ = ["LogInfo", "parse_line", "read_new_lines"]
 
 WORKSPACE = "workspace"
 MAX_LINE = schema.MAX_EVENT_LINE_BYTES  # an event line is at most this long (with its LF): the cap before parsing
@@ -57,6 +57,22 @@ class LogInfo:
         return "workspace" if self.name == WORKSPACE else "ticket"
 
 
+LINE_ERRORS = (canon.HashError, schema.SchemaError, ValueError, KeyError, TypeError, RecursionError)
+
+
+def parse_line(line: bytes, seq: int, kind: str, *, validate: bool = True) -> tuple[dict[str, Any], str]:
+    """One log line (with its LF) as the store reads it: strict ``cj`` parse, the event schema of ``kind``
+    (``"workspace"`` or ``"ticket"``) and the expected ``seq``. Returns ``(event, head)``; raises one of
+    :data:`LINE_ERRORS`. The production line parser: every log read and the reader KAT (``orch.identity.reader``)
+    use it, so a KAT result is what a real read gives."""
+    e = canon.parse_event_line(line)
+    if validate:
+        schema.validate("event", e, log=kind)
+    if e.get("seq") != seq:
+        raise ValueError(f"seq is {e.get('seq')!r}, expected {seq}")
+    return e, canon.event_head(e)
+
+
 def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, Any]]:
     """Parse the lines of ``info.path`` after ``info.offset``; extend ``info`` with them; return the events.
 
@@ -88,13 +104,8 @@ def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, An
                 info.error, info.error_seq = "the last line has no LF (a torn append)", seq
                 break
             try:
-                e = canon.parse_event_line(line)
-                if validate:
-                    schema.validate("event", e, log=info.kind)
-                if e.get("seq") != seq:
-                    raise ValueError(f"seq is {e.get('seq')!r}, expected {seq}")
-                head = canon.event_head(e)
-            except (canon.HashError, schema.SchemaError, ValueError, KeyError, TypeError, RecursionError) as err:
+                e, head = parse_line(line, seq, info.kind, validate=validate)
+            except LINE_ERRORS as err:
                 info.error, info.error_seq = f"{type(err).__name__}: {err}"[:300], seq
                 break
             out.append(e)

@@ -8,11 +8,12 @@ import pytest
 from orch import canon
 from orch.canon import jcs
 
+from ..relay import corpus
 from . import oracle_f1 as oracle
 from . import oracle_f1_gate as oracle_gate
 
 DIR = Path(__file__).parent.parent / "vectors" / "f1"
-PROTOCOL_LABELS = json.loads((DIR.parent / "vectors_v2.json").read_text(encoding="utf-8"))["labels"]
+PROTOCOL_LABELS = corpus.VECTORS["labels"]  # the one vendored copy (tests/relay/vectors, xz-compressed)
 
 
 def load(name: str):

@@ -1064,7 +1064,7 @@ real host they are native pages in the same style (the mock's pages are declarat
 | Page | Gate | Reads / runs |
 |---|---|---|
 | `/quick` (sidebar "Quick tasks", real host only) | feature `quick` (host caps `quick/1` and `quick.list`) | `GET /api/w/{ws}/quick?status=..&max_commits=..&max_files=..&limit=..&page=..` (flat limits, per the H11f as-built contract) |
-| Settings, Records tab | feature `records` (`records/1` and `records.status`); owners and maintainers only | `GET /records`; `POST /records/commit {push}`; `POST /records/auto-off` with no body |
+| Settings, Records tab | feature `records` (`records/1` and `records.status`); owners and maintainers only | `GET /records`; `GET /records/current` (authorized, bounded status child); `POST /records/commit {push}`; `POST /records/auto-off` with no body |
 | Settings, General, "Dashboard execution" | `runner` from `/api/workspaces`, `/api/me`, identity (`whoami.runner`, cap `run/1`) | draws the D-P2-31 line verbatim whenever `runner.enabled`; nothing when the host says nothing |
 
 - **Per-workspace switch:** nothing here is a dashboard setting. The pages exist only where the host advertises the caps and ops, which the
@@ -1075,13 +1075,12 @@ real host they are native pages in the same style (the mock's pages are declarat
 - **Add a quick task** (a person): `new` (chore) then a second signed change setting the label `quick` (`details` with `labels:["quick"]`,
   follow-up through `CompleteDetails`). Both use `HandoffDialog`, so click-to-sign where it is on and the terminal where it is off; the UI says
   "two signatures". Close uses the existing `close` hand-off. "Make a normal ticket" (orch-52): there is no
-  remove-label op, so it is `details` with `labels` set to the remaining labels (replace-only), offered only when a label besides `quick`
-  is left; with `quick` alone the button is hidden (TODO #441: core will allow an empty set).
+  remove-label op, so it is `details` with `labels` set to the remaining labels (replace-only). With `quick` alone, `labels:[]` reaches core as `labels=` (#454).
 - **Records strings, verbatim:** the export warning (shown on the page whenever a push is configured, and again in the confirm dialog before
   "Commit and push") and the private-remote line, each with the exact URL drawn through `Raw`. A URL the server withheld (hidden characters) is
   said to be withheld; no URL is invented. Child failures show the stable code, the child's message only when it was safe (`message_hidden`),
   and the local commit that landed when only the push failed (`error.commit`).
-- **`records.status.configured`** means "the records repository exists for you" (core #441: true after the first commit, with `repo` set).
+- **`records.status.configured`** means "the workspace records repository exists" (core #454: `ok`, `index_differs` and `unsafe`, even before a commit).
   false reads "No records repository yet; the first commit creates it." with Commit now; `last == null` reads "nothing noted yet".
 - **What was dropped from the mock honestly:** own Q-001 keys and statuses, the "agents may add" setting, records settings and pull.
 
@@ -1093,3 +1092,37 @@ workspace's own repository, a push to a LOCAL bare repo refused and nothing publ
 `import.meta.env.DEV`; in production the route remains registered but only redirects to `/`) draws the real quick page, Records tab and runner card with fixture answers (it swaps the
 mock api's methods per scenario). `scripts/layout-guard.mjs` checks the `real-host-*` pages: quick, many rows, limits open, normal-ticket
 and add (first signature) dialogs, records (long URLs), hidden URL, first commit, push confirm, failed push, runner on/off.
+
+M6 follow-up (#454, 2026-10-14): `GET /api/w/<ws>/records/current` checks `records/1` and `records.status`, authorizes with the host, then runs `python -I -m orch.records status --workspace <id> --json` under the same isolation, 60-second budget, output cap and workspace guard as commit. Its strict success envelope is `{ok:true,detail:{status:…}}`; only validated status fields reach the browser (`local` is discarded). The confirm dialog checks on each opening and uses `remote.current_url`, `current_private`, and `matches_last`; unavailable/hidden current URLs retain the historical warning with a failure code. The page outside keeps the last-known labels. No new events.
+
+## Terminals on the real host (M7a, 14 Oct)
+
+Stream B M7a (host contract v1.6 §12.3, §12.6; H11b). The dock is real when the server lists `terminals` (host caps `run/1`, `term/1`
+and the seven ops below); otherwise it is not drawn on a real host. Start agent (H11c) is not wired: no `agent_start` feature.
+
+| Route | Host op | Notes |
+|---|---|---|
+| `GET /api/w/{ws}/runs` | `run.list {state:"all"}` (paged, 8 pages max) | runs projected (`adapters/runs.py`: no grant, session, person); `runner` = `{connected, enabled, terminals}` |
+| SSE `/api/events` event `runs` | `run.sub` (opened before the page lists, D-P2-37) | items `{t:"run", run}` / `{t:"gone", run}`; the page merges by `rev`; `resync`/`ready` read the full list again |
+| `POST /api/w/{ws}/terminals/preview` | `term.preview` | `display`, `cwd_path`, `notice`, `blocked`, `warnings`: untrusted text, hidden characters withheld |
+| `POST /api/w/{ws}/terminals/open` `{…, spec, idem}` | `term.open` (idem create) | the page draws one `a_<ULID>` idem per confirmed preview and reuses it on a retry |
+| `POST /api/w/{ws}/runs/{run}/stop` | `run.stop` | `{state, cleanup}`; incomplete/unknown → "Some processes may still be running" |
+| `POST /api/w/{ws}/runs/{run}/attach` `{mode, take?, from?}` | none | the browser ticket of §12.6.6 step 1 (128 bits, sha256 kept, single use, 30 s, 10/min/session, bound to ws/run/mode/take/from/session/server generation) |
+| WebSocket `GET /term` | `term.attach` (own host connection), `attach.cancel` on every teardown | §12.6.6 checks in `Security.websocket`; uvicorn `ws_max_size=65536`, `ws_per_message_deflate=False`; dependency `websockets==13.1` |
+
+- **Bridge** (`server/src/orch_dashboard/terminals.py`): `TermSocket` per WebSocket; a `Pump` thread owns core's `TermClient` after
+  `connect` (input, resizes, throttled resends, continuous reads); `OutQueue` keeps 512 KiB of decoded output (oldest → one `gap`),
+  control frames never dropped. Close codes: `CLOSE_TABLE`, verbatim from §12.6.6.
+- **Page** (`src/app/terminal/real/`): `termProtocol.ts` (messages, close policy, reply filter), `termView.ts` (xterm per §12.6.7),
+  `RealTerminal.tsx` (lease UX), `RealDock.tsx` (runs, preview, stop). `src/api/runs.ts` holds the routes and the live merge.
+- **Tests:** `server/tests/test_terminals.py` (table, tickets, socket checks, queue, sink), `test_terminals_host.py` (core host + runner in
+  process: lease, 4409, resize, 4401, replay of an exited run, stop, live `runs`, the log canary), `test_realhost_terminals.py`
+  (`-m realhost`); page: `src/app/terminal/real/*.test.ts(x)` including `canary.test.ts` (§12.6.7 corpus with a real xterm in jsdom),
+  `src/api/runs.test.ts`, `src/dev/layoutPreview.test.tsx`. Layout guard: `real-host-terminal-*`.
+- **Requests for stream A:** (1) a dev-only seam so `orch host run --foreground` can admit a foreground runner (`orch runner run
+  --foreground`) without a service manager, for a subprocess real-host test; (2) `term.attach`'s refusals could carry `retry_after_ms`
+  for `rate.limited`/`attach.limit` (the server passes it on when present, else 1000 ms).
+
+The dashboard and devhost use core's `ORCH_HOST_RUN_DIR`, falling back to `<state>/run`.
+A set legacy `ORCH_RUN_DIR` is accepted silently only when its absolute path matches that directory;
+otherwise dashboard startup exits 1 with a migration message.

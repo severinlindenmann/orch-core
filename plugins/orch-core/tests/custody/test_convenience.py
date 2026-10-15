@@ -303,3 +303,16 @@ def test_the_real_keychains_are_unreachable_by_explicit_path_too():
             call()
     with pytest.raises(CustodyError):  # the module itself refuses too, guard or not
         keychain._refuse_real_keychains(login)
+
+
+def test_the_backend_refuses_a_reader_declaration_until_h12d_2():
+    """#463 review L1: sig_reader_decl is a device-key label, but the convenience backend signs without any review,
+    so it refuses the label outright (as the passphrase prompt does: not prompted for in P1); H12d-2 decides."""
+    scalar, pub, dev = _key()
+    store = FakeStore()
+    store.put(WS, dev, scalar)
+    b = ConvenienceBackend(store, WS, dev, pub)
+    before = store.gets
+    with pytest.raises(CustodyError, match="reader_decl signatures are not prompted for in P1"):
+        b.sign("dk", canon.LABELS["sig_reader_decl"].encode() + b"{}", action="x")
+    assert store.gets == before and b.signatures == 0  # refused before the key is read

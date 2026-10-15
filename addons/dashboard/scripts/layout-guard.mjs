@@ -518,6 +518,13 @@ async function run(send, close) {
               ['real-host-records-first-commit', 'records-first', [['the no-repository line', '[data-testid="records-not-configured"]']]],
               ['real-host-runner-on', 'runner-on', [['the dashboard-execution line', '[data-testid="runner-execution-line"]']]],
               ['real-host-runner-off', 'runner-off', [['the runner card', '[data-testid="workspace-card-runner"]']]],
+              // M7a: the real-host terminal dock (fixture runs and a fixture socket; nothing reaches a host).
+              ['real-host-terminal-dock', 'terminal-dock', [['the real dock', '[data-real-dock]'], ['the terminal', '[data-real-terminal] .xterm']]],
+              ['real-host-terminal-preview', 'terminal-preview', [['the preview dialog', '[data-term-preview]']]],
+              ['real-host-terminal-readonly', 'terminal-readonly', [['the read-only banner', '[data-lease="reading"]']]],
+              ['real-host-terminal-take', 'terminal-take', [['the Take control banner', '[data-lease="busy"]']]],
+              ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
+              ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)
@@ -551,6 +558,14 @@ async function run(send, close) {
               await escape()
             }
             // A failed push: Commit and push, confirmed, and the failure line with the commit that did land.
+            if (!ONLY || ONLY.test('real-host-records-push-mismatch')) {
+              await go('/__layout/records-push-mismatch')
+              await present('[data-testid="records-export-warning"]')
+              const asked = await clickText('button', /^Commit and push$/)
+              await present('[data-testid="records-push-mismatch"]')
+              await check(config, 'real-host-records-push-mismatch', asked ? await need([['the changed destination', '[role="dialog"] [data-testid="records-push-mismatch"]']]) : ['the Commit and push button is missing'])
+              await escape()
+            }
             if (!ONLY || ONLY.test('real-host-records-push')) {
               await go('/__layout/records-push-failed')
               await present('[data-testid="records-export-warning"]')

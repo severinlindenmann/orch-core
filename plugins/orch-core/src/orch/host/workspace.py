@@ -380,9 +380,12 @@ class WorkspaceService:
 
     def _relay_audit(self) -> None:
         """§11A.6 "Foreign appends": after a refresh that loaded events this host did not append, a running relay
-        worker is stopped when the history now holds a convenience event (or the mark or flag is set)."""
-        if self.relay is None:
-            return
+        worker is stopped when the history now holds a convenience event (or the mark or flag is set). The worker is
+        read under ``relay_cond``: a start in progress (which never waits for this thread) finishes first, so a worker
+        whose precheck already passed is always seen here (review R1). A check that raises fails closed."""
+        with self.relay_cond:
+            if self.relay is None:
+                return
         from .relayhook import convenience_block
 
         try:
@@ -608,6 +611,12 @@ class WorkspaceService:
         stuck = self._relay_stuck
         if stuck is None:
             return False
+        alive = getattr(stuck, "alive", None)
+        if callable(alive):  # R5's worker: no join and no I/O under the lock (its reaper releases what it holds)
+            if alive():
+                return True
+            self._relay_stuck = None
+            return False
         join = getattr(stuck, "join", None)
         if join is not None and not join(0):
             return True
@@ -684,7 +693,16 @@ class WorkspaceService:
                 self._end_stop(worker, ended)
             if not ended:
                 raise HostError("lock.busy", "relay_thread_stuck: the relay worker did not stop; nothing was renamed")
-        name = self.submit(lambda: unlink_job(self)).result(timeout=60)
+        pending = self.submit(lambda: unlink_job(self))
+        try:
+            name = pending.result(timeout=60)
+        except TimeoutError:  # the rename stays queued behind the worker thread and will still run
+            self.relay_reason = "unlink_pending"
+            raise HostError(
+                "lock.busy",
+                "unlink_pending: the rename is queued behind the workspace's worker and completes when it runs",
+                hint="check with orch host status: the link shows as unlinked once it ran",
+            ) from None
         self.relay_reason = "not_linked"
         return name
 

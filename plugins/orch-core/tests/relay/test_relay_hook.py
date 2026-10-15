@@ -47,6 +47,20 @@ def _relay_threads(id8: str) -> list[str]:
     return sorted(t.name for t in threading.enumerate() if t.name.startswith("orch-relay-") and t.name.endswith(id8))
 
 
+class _NoStep:
+    def step(self) -> None:
+        return None
+
+
+def _seams(r6, **kw) -> relayhook.Seams:
+    """Every seam set (the gate-open rule): R6's fixture, and stand-ins for R3, R4 and R6a."""
+    base = {
+        "r6": r6, "publisher": lambda s, w: relay_worker.NoPublisher(), "unpublished": lambda s, w: _NoStep(),
+        "link_source": lambda s: relay_worker.NoLinkSource(),
+    }  # fmt: skip
+    return relayhook.Seams(**{**base, **kw})
+
+
 def _reserve(served, origin: str = "https://relay.example") -> dict:  # noqa: F811
     svc = served.service
     return _on_worker(served, lambda: relayhook.reserve_link(svc, origin=origin, max_publication_bytes=MIB4))
@@ -120,7 +134,7 @@ def test_a_start_that_fails_after_opening_the_state_directory_releases_everythin
     def r6(service):
         raise RuntimeError("R6 load failed")  # after the slot and the StateDir were taken
 
-    svc.relay_starter = relayhook.make_starter(object(), relayhook.Seams(r6=r6))
+    svc.relay_starter = relayhook.make_starter(object(), _seams(r6))
     assert svc.relay_start() == "none" and svc.relay_reason == "start_failed: RuntimeError"
     assert relayhook.running_slots(svc.state_dir) == set()  # the slot is released
     StateDir(relayhook.relay_state_path(svc)).close()  # and the directory lock
@@ -227,8 +241,7 @@ def loopback(served, monkeypatch):  # noqa: F811
         OPEN_CONNS.append(c)
         return c
 
-    seams = relayhook.Seams(r6=lambda s: (epochs, r6), conn=conn)
-    svc.relay_starter = relayhook.make_starter(RegistryBackend(), seams)
+    svc.relay_starter = relayhook.make_starter(RegistryBackend(), _seams(lambda s: (epochs, r6)), transport=conn)
     env = {"m": m, "sim": sim, "epochs": epochs, "phone": phone, "wsk_pub": wsk_pub}
     yield env
     svc.relay_stop()
@@ -512,3 +525,252 @@ def test_the_open_hook_never_starts_beside_a_stuck_worker(served, monkeypatch): 
     stuck.release.set()
     with svc.relay_cond:
         svc._relay_stuck = None  # noqa: SLF001
+
+
+# -- round 2 (Opus review of #532) ------------------------------------------------------------------------------------
+
+
+def test_a_foreign_convenience_event_between_the_precheck_and_service_relay_is_caught(served, loopback, monkeypatch):  # noqa: F811
+    """Review R1, the reviewer's repro adapted: on the ``orch host relay start`` path the start thread's precheck
+    passes, then a foreign refresh loads a convenience event on the worker thread while the starter still holds
+    ``relay_cond``. The audit waits for the starter, sees the worker (``service.relay`` is set before the start
+    thread exists) and halts it: never serving with the event in the history."""
+    svc = served.service
+    prechecked = threading.Event()
+    calls: list[str] = []
+    audits: list[Any] = []
+
+    def block(s):
+        calls.append(threading.current_thread().name)
+        if not prechecked.is_set():
+            prechecked.set()
+            return None  # clean at the worker's precheck
+        return "convenience_events_present"  # the history now holds a foreign convenience event
+
+    monkeypatch.setattr(relayhook, "convenience_block", block)
+    real_start = relay_worker.RelayWorker.start
+
+    def start(self):
+        real_start(self)
+        assert prechecked.wait(10)
+        # the foreign-append refresh lands on the worker thread while the starter still holds relay_cond (it must
+        # not wait for it: the starter rule)
+        audits.append(svc.submit(lambda: svc._build_journal(audit=True)))  # noqa: SLF001
+
+    monkeypatch.setattr(relay_worker.RelayWorker, "start", start)
+    assert svc.relay_start() == "started"
+    audits[0].result(10)
+    assert len(calls) == 2  # the audit ran the check
+    assert svc.relay is None and svc.relay_reason == "convenience_events_present"
+    assert _wait(lambda: not _relay_threads(served.wid[:8]))
+    assert relayhook.status(svc)["worker"] == "off"
+
+
+def test_the_audit_fails_closed_when_the_check_raises(served, monkeypatch):  # noqa: F811
+    svc = served.service
+    w = FakeWorker()
+    svc.relay = w
+
+    def boom(s):
+        raise RuntimeError("cannot read the history")
+
+    monkeypatch.setattr(relayhook, "convenience_block", boom)
+    _on_worker(served, lambda: svc._build_journal(audit=True))  # noqa: SLF001
+    assert svc.relay is None and svc.relay_reason == "relay_convenience_check_failed" and w.stops >= 1
+
+
+def test_a_failed_journal_build_still_audits(served, monkeypatch):  # noqa: F811
+    from orch.host.journal import Journal
+
+    svc = served.service
+    w = FakeWorker()
+    svc.relay = w
+    monkeypatch.setattr(relayhook, "convenience_block", lambda s: "convenience_events_present")
+
+    def fail(self, store):
+        raise RuntimeError("build failed")
+
+    monkeypatch.setattr(Journal, "build", fail)
+    _on_worker(served, lambda: svc._build_journal(audit=True))  # noqa: SLF001
+    assert svc.relay is None and svc.relay_reason == "convenience_events_present"
+
+
+def test_the_halts_join_never_runs_on_the_worker_thread(served, monkeypatch):  # noqa: F811
+    svc = served.service
+    joined: list[str] = []
+
+    class SlowJoin(FakeWorker):
+        def join(self, timeout: float) -> bool:
+            joined.append(threading.current_thread().name)
+            return True
+
+    svc.relay = SlowJoin()
+    monkeypatch.setattr(relayhook, "convenience_block", lambda s: "convenience_events_present")
+    _on_worker(served, lambda: svc._build_journal(audit=True))  # noqa: SLF001
+    assert _wait(lambda: joined)
+    assert joined[0].startswith(f"orch-relay-halt-{served.wid[:8]}")
+
+
+def test_the_convenience_check_holds_the_store_lock(served, monkeypatch):  # noqa: F811
+    import contextlib
+
+    from orch.host import convenience
+
+    svc = served.service
+    store = svc.store
+    real_locked, real_refuse = store._locked, convenience.refuse_reader_op  # noqa: SLF001
+    depth = threading.local()
+    seen: list[int] = []
+
+    @contextlib.contextmanager
+    def locked(*a, **k):
+        depth.n = getattr(depth, "n", 0) + 1
+        try:
+            with real_locked(*a, **k):
+                yield
+        finally:
+            depth.n -= 1
+
+    def refuse(*a, **k):
+        seen.append(getattr(depth, "n", 0))
+        return real_refuse(*a, **k)
+
+    monkeypatch.setattr(store, "_locked", locked)
+    monkeypatch.setattr(convenience, "refuse_reader_op", refuse)
+    assert _on_worker(served, lambda: relayhook.convenience_block(svc)) is None
+    assert seen and seen[0] >= 1
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        {"v": 1, "workspace_id": "0" * 32, "origin": "https://relay.example", "state": "linked"},
+        {"v": 1, "origin": "ftp://relay.example", "state": "linked"},
+        {"v": 1, "origin": "https://relay.example/path", "state": "linked"},
+        {"v": 1, "origin": "https://relay.example", "state": "linked-ish"},
+        ["not", "a", "dict"],
+    ],
+)
+def test_start_refuses_a_link_record_of_another_workspace_or_origin(served, monkeypatch, link):  # noqa: F811
+    from orch.host.custody import write_private
+
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    d = relaylink.relay_dir(svc.state_dir, served.wid)
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(d / "link.json", link)
+    with pytest.raises(HostError) as e:
+        relayhook.start_worker(svc, object(), _seams(lambda s: (Epochs(), R6(Epochs()))))
+    assert e.value.code == "relay.link_mismatch" and svc.relay is None
+    assert relayhook.running_slots(svc.state_dir) == set()
+    StateDir(relayhook.relay_state_path(svc)).close()
+
+
+def test_with_the_gate_open_every_seam_must_be_set_and_conform(served, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    _reserve(served)
+    fixture = lambda s: (Epochs(), R6(Epochs()))  # noqa: E731
+    for missing in ("publisher", "unpublished", "link_source"):
+        with pytest.raises(relay_worker.SeamMissing, match=missing):
+            relayhook.start_worker(svc, object(), _seams(fixture, **{missing: None}))
+    with pytest.raises(relay_worker.SeamMissing, match="publisher"):
+        relayhook.start_worker(svc, object(), _seams(fixture, publisher=lambda s, w: object()))
+    with pytest.raises(relay_worker.SeamMissing, match="r6"):
+        relayhook.start_worker(svc, object(), _seams(lambda s: (object(), object())))
+    assert svc.relay is None and relayhook.running_slots(svc.state_dir) == set()
+    assert "conn" not in {f.name for f in __import__("dataclasses").fields(relayhook.Seams)}
+
+
+def test_a_starter_whose_worker_fails_to_start_leaves_no_partial_worker(served, loopback, monkeypatch):  # noqa: F811
+    svc = served.service
+
+    def boom(self):
+        raise RuntimeError("start failed")
+
+    monkeypatch.setattr(relay_worker.RelayWorker, "start", boom)
+    assert svc.relay_start() == "none" and svc.relay is None
+    assert svc.relay_reason == "start_failed: RuntimeError"
+    assert relayhook.running_slots(svc.state_dir) == set()
+
+
+def test_the_open_hook_waits_out_a_stop_in_progress(served, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    _reserve(served)
+    starts: list[int] = []
+    svc.relay_starter = lambda s: starts.append(1)
+    with svc.relay_cond:
+        svc._relay_stopping = 1  # noqa: SLF001
+    _on_worker(served, svc._relay_open)  # noqa: SLF001
+    assert starts == [] and svc.relay_reason == "stop_in_progress"
+    with svc.relay_cond:
+        svc._relay_stopping = 0  # noqa: SLF001
+
+
+def test_unlink_while_closing_or_beside_a_stuck_worker_is_refused(served):  # noqa: F811
+    svc = served.service
+    _reserve(served)
+    svc.relay_join_seconds = 0.1
+    stuck = FakeWorker(stuck=True)
+    with svc.relay_cond:
+        svc._relay_stuck = stuck  # noqa: SLF001
+    with pytest.raises(HostError) as e:
+        svc.relay_unlink()
+    assert e.value.code == "lock.busy" and relaylink.link_path(svc.state_dir, served.wid).exists()
+    stuck.release.set()
+    with svc.relay_cond:
+        svc._relay_stuck = None  # noqa: SLF001
+    svc.closing = True
+    try:
+        with pytest.raises(HostError) as e:
+            svc.relay_unlink()
+        assert e.value.code == "workspace.unavailable"
+    finally:
+        svc.closing = False
+
+
+def test_an_unlink_that_times_out_is_reported_pending_not_internal(served, monkeypatch):  # noqa: F811
+    from concurrent.futures import Future
+
+    svc = served.service
+    _reserve(served)
+    slow: Future = Future()
+    monkeypatch.setattr(svc, "submit", lambda fn: slow)  # the rename stays queued behind the worker
+    real_result = Future.result
+    monkeypatch.setattr(Future, "result", lambda self, timeout=None: real_result(self, timeout=0.05))
+    with pytest.raises(HostError) as e:
+        svc.relay_unlink()
+    assert e.value.code == "lock.busy" and e.value.message.startswith("unlink_pending")
+    assert svc.relay_reason == "unlink_pending"
+
+
+def test_reserve_link_bounds_max_publication_bytes(served):  # noqa: F811
+    svc = served.service
+    for bad in (0, (1 << 20) - 1, (1 << 30) + 1, 4.0, True):
+        with pytest.raises(HostError) as e:
+            _on_worker(served, lambda b=bad: relayhook.reserve_link(svc, origin="https://r.example",
+                                                                   max_publication_bytes=b))  # fmt: skip
+        assert e.value.code == "invalid.input"
+
+
+def test_host_status_never_fails_on_a_relay_status_error(served, monkeypatch):  # noqa: F811
+    _reserve(served)
+
+    def boom(s):
+        raise RuntimeError("status broke")
+
+    monkeypatch.setattr(relayhook, "status", boom)
+    data = ok(served.client().req("host.status"))["data"]
+    assert data["state"] == "ok" and data["relay"] == {"error": "RuntimeError"}
+
+
+def test_stored_alarms_are_bounded_and_whitelisted(served):  # noqa: F811
+    from orch.host.custody import write_private
+
+    svc = served.service
+    _reserve(served)
+    rows = [{"code": f"c{i}", "count": 1, "detail": "d", "token": "SECRET"} for i in range(100)]
+    write_private(relaylink.relay_dir(svc.state_dir, served.wid) / "alarms.json", {"v": 1, "alarms": rows})
+    got = relayhook.status(svc)["alarms"]
+    assert len(got) == 64 and all("token" not in r for r in got)

@@ -38,7 +38,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from .bridge import BridgeLoop
 from .directory import Directory
@@ -58,6 +58,8 @@ __all__ = [
     "SeamMissing",
     "Unpublished",
     "WorkerStopped",
+    "check_seam",
+    "r6_ready",
 ]
 
 log = logging.getLogger("orch.relay.worker")
@@ -67,6 +69,12 @@ log = logging.getLogger("orch.relay.worker")
 #: the checklist of 11A.4 "As built in R5"; ``tests/relay/test_worker.py`` pins the literal.
 R6_READY = False
 R6_GATE_REASON = "r6_not_ready: the relay worker stays dormant until R6 is merged and integration-tested (11A.1)"
+
+
+def r6_ready() -> bool:
+    """THE gate check (every caller uses it): open only for the literal ``True``, never for another truthy value."""
+    return R6_READY is True
+
 
 #: open alarm codes kept per worker (each with a count); a new code past this is counted under one overflow code
 MAX_ALARM_CODES = 64
@@ -81,10 +89,13 @@ class SeamMissing(Exception):  # noqa: N818 - a dependency group not built yet
     """A seam whose group (R3, R4, R6) is not built: the step refuses; nothing is sent or written."""
 
 
+@runtime_checkable
 class Publisher(Protocol):
     """R3's seam (11A.5 "Publisher (R3)"): a thread ``orch-relay-pub-<id8>`` beside the loop, with the worker
     contract, and the first publication (with catch-up) that :func:`orch.relay.link.first_link` runs as
-    ``LinkSteps.publish``. It reaches the store only through :meth:`RelayWorker.submit` (``job``)."""
+    ``LinkSteps.publish``. It reaches the store only through :meth:`RelayWorker.submit` (``job``), never under a lock
+    of the worker: ``start()`` is called outside the worker's lock and must return without waiting for a job of the
+    workspace's worker thread (its thread may submit jobs once running); ``join`` is bounded by its timeout."""
 
     def start(self) -> None: ...
 
@@ -112,6 +123,7 @@ class NoPublisher:
         raise SeamMissing("R3 (the checkpoint publisher) is not built: the first publication cannot run")
 
 
+@runtime_checkable
 class Unpublished(Protocol):
     """R4's seam (11A.9 "Unpublished evidence"): one bounded step, run on the aux thread after the lease renewal
     (10 s total deadline per relay call); it holds evidence only through ``job``
@@ -120,6 +132,7 @@ class Unpublished(Protocol):
     def step(self) -> None: ...
 
 
+@runtime_checkable
 class LinkSource(Protocol):
     """What the first link needs from R6a and the person path (11A.5 steps 2 and 3; conflict C6): the card (WXK and
     CK custody), the owner-signed genesis pin with its certificate, and the owner's ``PK`` from the genesis
@@ -145,6 +158,19 @@ class NoLinkSource:
         raise SeamMissing("the first link's owner key source is not built")
 
 
+def printable(text: str) -> str:
+    """Alarm text without control characters (it reaches ``host.status`` and logs)."""
+    return "".join(c if c.isprintable() else "?" for c in text)
+
+
+def check_seam(obj: Any, kind: type, name: str) -> Any:
+    """A registered seam object must conform to its protocol (its methods exist); else :class:`SeamMissing` and the
+    worker does not start."""
+    if not isinstance(obj, kind):
+        raise SeamMissing(f"the {name} seam does not provide the {kind.__name__} methods")
+    return obj
+
+
 class Alarms:
     """The worker's open alarms (11A.3 ``alarms.json``, shown in ``host.status.relay``): per code a count, the first
     and last time and the last detail (clipped; callers pass classes and routes, never secrets). At most
@@ -156,8 +182,8 @@ class Alarms:
         self._open: dict[str, dict[str, Any]] = {}
 
     def __call__(self, code: str, detail: str) -> None:
-        code = str(code)[:64]
-        detail = str(detail)[:ALARM_DETAIL_MAX]
+        code = printable(str(code)[:64])
+        detail = printable(str(detail)[:ALARM_DETAIL_MAX])
         now = self._now_ms()
         with self._lock:
             row = self._open.get(code)
@@ -231,6 +257,7 @@ class RelayWorker:
         self._started = False
         self._running = False  # the loop and the publisher were started
         self._ended = False
+        self._reaping = False
         self.loop: BridgeLoop | None = None
         self.rids: RidStore | None = None
         self._start_thread: threading.Thread | None = None
@@ -266,7 +293,7 @@ class RelayWorker:
 
     def start(self) -> None:
         """Check the R6 gate, then hand off to the start thread. Never blocks on the workspace's worker thread."""
-        if not R6_READY:
+        if not r6_ready():
             raise SeamMissing(R6_GATE_REASON)
         if os.getpid() != self._pid:
             raise WorkerStopped("a forked child never starts the parent's worker")
@@ -290,6 +317,12 @@ class RelayWorker:
                 return
             if self._link_state() == "linking":
                 self._first_link()
+                # the first link can take long: the history is checked again right before anything is served; a
+                # foreign append after this job is caught by the service's audit (the worker is service.relay by then)
+                why = self.job(self._precheck)
+                if why is not None:
+                    self._fail(str(why), why)
+                    return
             with self._lock:
                 if self._stopping:
                     return
@@ -298,7 +331,10 @@ class RelayWorker:
                     self.loop.aux_steps.append(("unpublished", self.unpublished.step))
                 self.loop.start()
                 self._running = True
-                self.publisher.start()
+            # outside the worker's lock: a publisher whose start submits a job cannot deadlock the start thread
+            self.publisher.start()
+            if self._stopping:  # a stop between the lock and here: tell it (again; stop is idempotent)
+                self.publisher.stop()
         except WorkerStopped:
             return
         except Exception as e:  # noqa: BLE001 - the start failed: the worker stops, by class only
@@ -334,9 +370,19 @@ class RelayWorker:
         """True when every relay thread ended within ``timeout`` (shared): the start thread, the loop (joined twice:
         threads the poll thread spawned after a first snapshot are caught by the second) and the publisher. Once all
         ended (in the owning process only): a best-effort logout, then the rid store and the state directory are
-        closed (the lock is released for the next worker) and ``on_ended`` runs, once."""
+        closed (the lock is released for the next worker) and ``on_ended`` runs, once. When a thread outlives the
+        bound, a reaper thread ``orch-relay-reap-<id8>`` waits for the rest and then releases them, so no caller has
+        to join again and no lock holder ever runs the logout's network I/O (review Low 3)."""
         if os.getpid() != self._pid:
             return True  # a forked child has none of the parent's threads; it releases nothing
+        ended = self._join_all(timeout)
+        if ended:
+            self._finish()
+        else:
+            self._reap()
+        return ended
+
+    def _join_all(self, timeout: float) -> bool:
         end = self._mono() + timeout
 
         def left() -> float:
@@ -350,16 +396,32 @@ class RelayWorker:
             ended = self.loop.join(left()) and ended
             ended = self.loop.join(left()) and ended
         ended = self.publisher.join(left()) and ended
-        if ended:
-            self._finish()
         return ended
 
+    def _reap(self) -> None:
+        with self._lock:
+            if self._reaping or self._ended:
+                return
+            self._reaping = True
+
+        def reap() -> None:
+            while not self._join_all(60.0):
+                pass
+            self._finish()
+
+        threading.Thread(target=reap, name=f"orch-relay-reap-{self.id8}", daemon=True).start()
+
     def alive(self) -> bool:
-        """Whether any relay thread of this worker still runs (``host.status.relay``)."""
+        """Whether this worker still holds anything (``host.status.relay``, the service's stuck check): a relay thread
+        runs, or it stopped but has not yet released its directory and slot. No I/O, no join."""
+        if self._ended:
+            return False
         t = self._start_thread
         if t is not None and t.is_alive():
             return True
-        return self.loop is not None and any(th.is_alive() for th in self.loop.threads())
+        if self.loop is not None and any(th.is_alive() for th in self.loop.threads()):
+            return True
+        return self._stopping
 
     def _finish(self) -> None:
         if os.getpid() != self._pid:

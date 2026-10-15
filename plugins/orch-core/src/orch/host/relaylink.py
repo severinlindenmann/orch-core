@@ -233,7 +233,7 @@ def start_blocker(state_dir: Path, workspace_id: str, host_uid: int) -> str | No
         return "link_unsafe"
     if not isinstance(link, dict):
         return "link_unsafe"
-    if worker.R6_READY is not True:
+    if not worker.r6_ready():
         return worker.R6_GATE_REASON
     return None
 

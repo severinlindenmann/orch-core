@@ -1204,3 +1204,52 @@ def test_store_relay_link_with_the_host_guard_refuses_cap_convenience_and_an_exi
         env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
     assert sexc.value.code == "relay.link_exists"
     env.store.close()
+
+
+def _unlink_cli_env(tmp_path, run):
+    from orch.host import relaylink
+    from orch.host.custody import write_private
+    from orch.host.registry import registry_path
+
+    state = _state(tmp_path)
+    reg = registry_path(state)
+    reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(reg, {"v": 1, "workspaces": [{"workspace_id": WS, "prefix": "DEMO", "root": "/x"}]})
+    _link(state, WS)
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(run)}
+    return state, env, relaylink.link_path(state, WS)
+
+
+def test_the_cli_relay_unlink_is_refused_to_an_agent_and_needs_the_host(tmp_path):
+    """R5 review R2 (C1, C2): ``orch host relay unlink`` is a person's decision (refused under ``ORCH_GRANT`` before
+    anything is touched), and the rename needs the store lock, so with no host it is refused, never done locally."""
+    import io
+
+    from orch.host.cli import main
+
+    run = _short_run()
+    state, env, link = _unlink_cli_env(tmp_path, run)
+    out = io.StringIO()
+    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env={**env, "ORCH_GRANT": "g"},
+                out=out)  # fmt: skip
+    assert code != 0 and "an agent never runs orch host relay unlink" in out.getvalue() and link.exists()
+    out = io.StringIO()
+    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
+    assert code != 0 and "unlink runs through the host" in out.getvalue()
+    assert link.exists() and not list(link.parent.glob("unlinked-*"))
+    run.rmdir()
+
+
+def test_the_cli_relay_unlink_with_an_unreachable_host_unlinks_nothing(tmp_path):
+    import io
+
+    from orch.host.cli import main
+
+    state, env, link = _unlink_cli_env(tmp_path, tmp_path / ("r" * 120))
+    out = io.StringIO()
+    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
+    doc = json.loads(out.getvalue().splitlines()[-1])
+    assert (
+        code == 9 and doc["error"]["code"] == "host.unavailable" and "nothing was unlinked" in doc["error"]["message"]
+    )
+    assert link.exists() and not list(link.parent.glob("unlinked-*"))

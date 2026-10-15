@@ -5545,8 +5545,8 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
   read through it, the WSK as `BackendSigner(FileBackend(hosts/<ws>/keys), "wsk")` inside `RelaySigner` (with
   `FileSignLedger`; `last_card_seq` = `link.card_seq` when `linked`, else 0), R6's `(EpochKeySource, R6View)`, ONE
   `Session` (`FileHolderStore`, the worker's stop event), the `RidStore`, `Bridge(port=RelayEntry(service, backend),
-  job=worker.job)` and `BridgeLoop`; then `worker.start()` and `service.relay = worker`. Any failure closes what it
-  opened and releases the slot.
+  job=worker.job)` and `BridgeLoop`; then `service.relay = worker` and only then `worker.start()` (round 2, review R1).
+  Any failure clears `service.relay`, closes what it opened and releases the slot.
 - **The worker.** `start()` checks the gate and spawns `orch-relay-start-<id8>`, which (1) runs the convenience check
   as a worker job (`convenience_block`: `refuse_reader_op(service, "relay.link", history=True)` under the store lock;
   a hit is the alarm `convenience_events_present` and the worker stops, nothing sent), (2) while `link.json` is
@@ -5620,7 +5620,39 @@ changes only the literal and the pinning test.
 | R4 | `unpublished(service, worker) -> Unpublished`: `step()` | appended to `BridgeLoop.aux_steps` before the loop starts; one bounded step per aux turn (10 s per relay call), holding evidence only through `worker.job` |
 | R6 | `r6(service) -> (EpochKeySource, R6View)` | 11A.15.2; R6's own threads (`r6m`, `r6p`) are started by R6 beside these and must follow the worker contract |
 | R6a, person path | `link_source(service) -> LinkSource`: `card()`, `genesis() -> (pin, cert, genesis_hash)`, `owner_pk_pub()` | 11A.5 steps 2 and 3; the default refuses before anything is sent |
-| tests | `conn(origin, link) -> Transport` | the loopback relay of 11A.10 layer 1; default `RelayConn` with `link.json`'s `ca_file`/`proxy` |
+
+With the gate open a worker starts only when **all four** seams are set, and each object they build must conform
+(`worker.check_seam`: the protocol's methods; R6's objects: `current_epoch`, `wk`, `seal_state`, `refusal_key`,
+`member_list`), else `SeamMissing` and nothing starts (round 2, review Low 1). `Seams` is frozen; a group lands by
+replacing `SEAMS` with `dataclasses.replace`. **No factory and no `Publisher.start` may wait for a job of the
+workspace's worker thread** (the starter runs them under `relay_lock`, on the open path on the worker thread itself);
+`Publisher.start` is called outside the worker's lock, so a publisher thread may submit jobs once running. The
+transport is not a seam: production always uses `RelayConn` with `link.json`'s `ca_file`/`proxy`; only a test passes
+`make_starter(…, transport=)` (an AST rule refuses any other value in `src/`).
+
+**Round 2 (15 Oct 2026, Opus review of #532: PASS WITH REQUIRED CHANGES).**
+- **R1 (fixed).** On the `orch host relay start` path the starter set `service.relay` after `worker.start()`, and
+  `_relay_audit` read it without the lock: a foreign convenience event loaded between the start thread's precheck
+  and that assignment was never audited, and the worker served with it in the history. Now `service.relay` is set
+  before the start thread exists, `_relay_audit` reads it under `relay_cond` (it waits for a starter, which never waits
+  for the worker thread), and the start thread runs the check again after a first link, right before the loop. The
+  reviewer's repro is `test_a_foreign_convenience_event_between_the_precheck_and_service_relay_is_caught`.
+- **R2 (tests).** The agent refusal and the host-required paths of `orch host relay unlink`, the audit failing closed
+  (a check that raises, and a failed journal build), the WorkerStop re-raise, `join` waiting for the start thread and
+  the publisher, the halt's join off the worker thread, the convenience check holding the store lock, the `link.json`
+  workspace and origin checks at start, a partial worker cleared after a failed start, the open beside a stop in
+  progress, unlink while closing or beside a stuck worker, the `max_publication_bytes` bound, `host.status` surviving
+  a relay status error, the stored alarms' bound and whitelist.
+- **Lows (fixed).** One gate check, `worker.r6_ready()` (`R6_READY is True`), at all three places (an AST rule refuses
+  any other read); the seam rules above; `Publisher.start` outside the worker's lock; no logout under `relay_cond`:
+  the service's stuck check calls `RelayWorker.alive()` (no join, no I/O), and a `join` that runs out starts a reaper
+  thread `orch-relay-reap-<id8>` that waits for the rest and then releases the directory, the rid store and the slot
+  (logging out first); an unlink whose rename is still queued after 60 s answers `lock.busy` `unlink_pending` (it
+  still runs) instead of `internal`; alarm codes and details lose control characters (also when read back from
+  `alarms.json`). Left as noted by the reviewer: `host.relay_unlink`, like H12a's `relay_start`, is open to any
+  control-socket client of the host UID (the agent refusal is the CLI's); eight stuck workers that outlive `close()`
+  keep their slots until the process restarts (fail closed); a first link in flight at `stop()` runs to its per-call
+  deadlines (the session's own transport is not in the loop's connections), bounded by the 120 s join.
 
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`

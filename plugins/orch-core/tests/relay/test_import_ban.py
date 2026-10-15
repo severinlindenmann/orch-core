@@ -661,7 +661,32 @@ def test_r5_the_starter_runs_only_after_the_start_blocker_under_the_relay_lock()
     hook = ast.parse((HOST / "relayhook.py").read_text())
     sw = next(n for n in ast.walk(hook) if isinstance(n, ast.FunctionDef) and n.name == "start_worker")
     first_if = next(n for n in sw.body if isinstance(n, ast.If))
-    assert "R6_READY" in ast.unparse(first_if.test)
+    assert ast.unparse(first_if.test) == "not relay_worker.r6_ready()"
+
+
+def test_r5_one_gate_check_and_no_test_transport_in_production():
+    """Review Low 2: every gate check goes through ``worker.r6_ready()`` (``R6_READY is True``); nothing outside
+    ``worker.py`` reads ``R6_READY`` itself. Review Low 1: no production call passes the test-only ``transport=``
+    to ``make_starter``/``start_worker``, and ``Seams`` has no transport field."""
+    src = PKG.parent
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        if path.name == "worker.py" and path.parent.name == "relay":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Attribute) and node.attr == "R6_READY":
+                offenders.append(f"{path.name}:{node.lineno} reads R6_READY")
+            if isinstance(node, ast.Name) and node.id == "R6_READY":
+                offenders.append(f"{path.name}:{node.lineno} names R6_READY")
+            if isinstance(node, ast.Call):
+                f = node.func
+                name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+                if name in ("make_starter", "start_worker") and any(
+                    k.arg == "transport" and not (isinstance(k.value, ast.Name) and k.value.id == "transport")
+                    for k in node.keywords
+                ):  # forwarding the parameter (make_starter -> start_worker) is fine; any value is not
+                    offenders.append(f"{path.name}:{node.lineno} passes transport=")
+    assert offenders == []
 
 
 def _calls_in(node: ast.AST) -> list[tuple[str, int]]:

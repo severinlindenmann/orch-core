@@ -448,3 +448,104 @@ def test_a_loop_that_stopped_itself_is_reported_failed_not_serving(tmp_path, gat
     st = r.w.status()
     assert st["serving"] is False and st["error"] == "RuntimeError" and st["alive"] is False
     r.close()
+
+
+# -- round 2 (Opus review of #532) ------------------------------------------------------------------------------------
+
+
+def test_a_workerstop_on_the_start_thread_stops_the_worker_and_is_re_raised(tmp_path, gate):
+    """N4-1 (head commit d06e95a4): the start thread never swallows R2's WorkerStop; it stops the worker first."""
+    from orch.relay.bridge import WorkerStop
+    from orch.relay.session import Fenced
+
+    seen: list[type] = []
+    old = threading.excepthook
+    threading.excepthook = lambda args: seen.append(args.exc_type)
+    try:
+
+        def fenced():
+            raise WorkerStop(Fenced("fenced"))
+
+        r = Rig(tmp_path, link_state="linking", first_link=fenced)
+        r.w.start()
+        assert r.w.join(5) is True
+    finally:
+        threading.excepthook = old
+    assert seen == [WorkerStop] and r.w.stopping and r.loop.started == 0
+    assert r.w.error == "relay_start_failed: WorkerStop"
+    r.close()
+
+
+def test_join_waits_for_the_start_thread_before_releasing_anything(tmp_path, gate):
+    release = threading.Event()
+    r = Rig(tmp_path, link_state="linking", first_link=lambda: release.wait(10) and None)
+    r.w.start()
+    time.sleep(0.05)
+    r.w.stop()
+    assert r.w.join(0.2) is False
+    assert r.rids.closed == 0 and r.ended == 0 and r.session.logouts == 0  # the start thread still runs
+    release.set()
+    assert _wait(lambda: r.ended == 1)  # the reaper releases once it ended: no second join needed
+    assert r.rids.closed == 1 and r.session.logouts == 1 and r.w.alive() is False
+    r.close()
+
+
+def test_join_waits_for_the_publisher_before_releasing_anything(tmp_path, gate):
+    done = threading.Event()
+
+    class SlowPub(Pub):
+        def join(self, timeout: float) -> bool:
+            return done.wait(timeout)
+
+    r = Rig(tmp_path, publisher=SlowPub())
+    r.w.start()
+    r.wait_started()
+    r.w.stop()
+    assert r.w.join(0.2) is False and r.ended == 0 and r.rids.closed == 0
+    assert r.w.alive() is True  # still holding its directory and slot
+    done.set()
+    assert _wait(lambda: r.ended == 1) and r.w.alive() is False
+    r.close()
+
+
+def test_a_publisher_whose_start_submits_a_job_does_not_deadlock_the_start(tmp_path, gate):
+    got: list[int] = []
+    box: dict = {}
+
+    class JobPub(Pub):
+        def start(self) -> None:
+            got.append(box["w"].job(lambda: 7))
+
+    r = Rig(tmp_path, publisher=JobPub())
+    box["w"] = r.w
+    r.w.start()
+    assert _wait(lambda: got == [7], timeout=5)
+    r.close()
+
+
+def test_the_gate_helper_opens_only_for_true(monkeypatch):
+    for value, opened in ((False, False), (1, False), ("yes", False), (True, True)):
+        monkeypatch.setattr(W, "R6_READY", value)
+        assert W.r6_ready() is opened
+
+
+def test_alarm_text_has_no_control_characters():
+    a = W.Alarms(now_ms=lambda: 1)
+    a("code\x1b[2J", "detail\nwith\x07bell")
+    row = a.snapshot()["alarms"][0]
+    assert row["code"] == "code?[2J" and row["detail"] == "detail?with?bell"
+
+
+def test_check_seam_refuses_an_object_without_the_protocol_methods():
+    assert isinstance(W.check_seam(W.NoPublisher(), W.Publisher, "publisher"), W.NoPublisher)
+    with pytest.raises(W.SeamMissing, match="publisher"):
+        W.check_seam(object(), W.Publisher, "publisher")
+
+
+def test_the_history_is_checked_again_after_a_first_link_before_anything_is_served(tmp_path, gate):
+    answers = iter([None, "convenience_events_present"])
+    r = Rig(tmp_path, link_state="linking", precheck=lambda: next(answers))
+    r.w.start()
+    assert r.w.join(5) is True
+    assert r.links == 1 and r.loop.started == 0 and r.w.error == "convenience_events_present"
+    r.close()

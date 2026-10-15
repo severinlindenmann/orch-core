@@ -61,25 +61,32 @@ LOG = logging.getLogger("orch.host.relayhook")
 _OUTBOX_ENTRY = re.compile(r"\d{20}\.json")
 
 
-@dataclass
+@dataclass(frozen=True)
 class Seams:
-    """The dependency seams (each ``None`` until its group lands):
+    """The dependency seams (each ``None`` until its group lands). With the gate open, a worker starts only when
+    ALL are set (:meth:`missing`) and each object they build conforms to its protocol
+    (:func:`orch.relay.worker.check_seam`). None of these factories may wait for a job of the workspace's worker
+    thread: the starter calls them under ``relay_lock``, on the open path on the worker thread itself.
 
     * ``r6(service) -> (EpochKeySource, R6View)``: R6 (11A.15.2), the real key source and member view;
     * ``publisher(service, worker) -> Publisher``: R3 (11A.5), the publisher thread and ``publish_first``;
     * ``unpublished(service, worker) -> Unpublished``: R4 (11A.9), one step on the aux thread;
-    * ``link_source(service) -> LinkSource``: R6a and the genesis-pin person path (11A.5 steps 2 and 3);
-    * ``conn(origin, link) -> Transport``: the transport factory (tests: a loopback relay); default
-      :class:`orch.relay.http.RelayConn` with ``link.json``'s ``ca_file`` and ``proxy``."""
+    * ``link_source(service) -> LinkSource``: R6a and the genesis-pin person path (11A.5 steps 2 and 3).
+
+    The transport is not a seam here: production always uses :class:`orch.relay.http.RelayConn` with ``link.json``'s
+    ``ca_file`` and ``proxy``; only a test passes ``transport=`` to :func:`make_starter` (an AST rule refuses it in
+    ``src/``)."""
 
     r6: Callable[[WorkspaceService], tuple[EpochKeySource, R6View]] | None = None
     publisher: Callable[[WorkspaceService, RelayWorker], Publisher] | None = None
     unpublished: Callable[[WorkspaceService, RelayWorker], Unpublished] | None = None
     link_source: Callable[[WorkspaceService], LinkSource] | None = None
-    conn: Callable[[str, Mapping[str, Any]], Any] | None = None
+
+    def missing(self) -> list[str]:
+        return [n for n in ("r6", "publisher", "unpublished", "link_source") if getattr(self, n) is None]
 
 
-#: the seams the host uses (R3, R4 and R6 set theirs here when they land)
+#: the seams the host uses (frozen: R3, R4 and R6 replace it with ``dataclasses.replace`` when they land)
 SEAMS = Seams()
 
 
@@ -126,11 +133,14 @@ def relay_state_path(service: WorkspaceService) -> Path:
     return Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id / "relay"
 
 
-def make_starter(backend: Any, seams: Seams | None = None) -> Callable[[WorkspaceService], None]:
-    """``service.relay_starter``: :func:`start_worker` with the socket backend (``RelayEntry`` runs the same ops)."""
+def make_starter(
+    backend: Any, seams: Seams | None = None, *, transport: Callable[[str, Mapping[str, Any]], Any] | None = None
+) -> Callable[[WorkspaceService], None]:
+    """``service.relay_starter``: :func:`start_worker` with the socket backend (``RelayEntry`` runs the same ops).
+    ``transport(origin, link)`` is for tests only (a loopback relay)."""
 
     def starter(service: WorkspaceService) -> None:
-        start_worker(service, backend, seams if seams is not None else SEAMS)
+        start_worker(service, backend, seams if seams is not None else SEAMS, transport=transport)
 
     return starter
 
@@ -175,10 +185,25 @@ def convenience_block(service: WorkspaceService) -> str | None:
     return None
 
 
-def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
-    """Build and start the worker; sets ``service.relay``. Runs under ``service.relay_lock`` (the caller's) and never
-    waits for the workspace's worker thread. Any failure leaves nothing open (the slot, the state directory and the
-    rid store are released) and raises."""
+def _check_r6(epochs: Any, view: Any) -> None:
+    from orch.relay.worker import SeamMissing
+
+    for obj, names in ((epochs, ("current_epoch", "wk", "seal_state", "refusal_key")), (view, ("member_list",))):
+        if not all(callable(getattr(obj, n, None)) for n in names):
+            raise SeamMissing("the r6 seam does not provide an EpochKeySource and an R6View")
+
+
+def start_worker(
+    service: WorkspaceService,
+    backend: Any,
+    seams: Seams,
+    *,
+    transport: Callable[[str, Mapping[str, Any]], Any] | None = None,
+) -> None:
+    """Build and start the worker. Runs under ``service.relay_lock`` (the caller's) and never waits for the
+    workspace's worker thread. ``service.relay`` is set to the worker BEFORE its start thread exists, so a foreign
+    append that the service audits while the start thread runs always sees it (review R1); a failure clears it again.
+    Any failure leaves nothing open (the slot, the state directory and the rid store are released) and raises."""
     from orch.custody import FileBackend
     from orch.relay import http
     from orch.relay import worker as relay_worker
@@ -195,14 +220,18 @@ def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
 
     from .relayentry import RelayEntry
 
-    if not relay_worker.R6_READY:  # the host checked it (start_blocker); checked again before anything is opened
+    if not relay_worker.r6_ready():  # the host checked it (start_blocker); checked again before anything is opened
         raise relay_worker.SeamMissing(relay_worker.R6_GATE_REASON)
-    if seams.r6 is None:
-        raise relay_worker.SeamMissing("R6 (EpochKeySource, R6View) is not built")
+    missing = seams.missing()
+    if missing:
+        raise relay_worker.SeamMissing(f"seams not set: {', '.join(missing)}")
+    assert seams.r6 is not None and seams.publisher is not None and seams.unpublished is not None
+    assert seams.link_source is not None
     ws = service.workspace_id
     release = _take_slot(service.state_dir, ws)
     state: Any = None
     rids: Any = None
+    worker: Any = None
     try:
         state = StateDir(relay_state_path(service))
         link = _link_record(state, ws)
@@ -213,6 +242,7 @@ def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
             raise HostError("workspace.unavailable", "the workspace signing key is not in the host's custody")
         wsk = BackendSigner(backend_keys, "wsk")
         epochs, view = seams.r6(service)
+        _check_r6(epochs, view)
         bkeys = BridgeKeys(epochs, bytes.fromhex(ws))
         card_seq = link.get("card_seq") if link.get("state") == "linked" else 0
         signer = RelaySigner(
@@ -227,8 +257,8 @@ def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
         alarms = relay_worker.Alarms(now_ms=now_ms, persist=lambda snap: state.write_json("alarms.json", snap))
 
         def conn() -> Any:
-            if seams.conn is not None:
-                return seams.conn(origin, link)
+            if transport is not None:
+                return transport(origin, link)
             return http.RelayConn(origin, ca_file=link.get("ca_file"), proxy=link.get("proxy"))
 
         session = Session(conn(), signer, holder=FileHolderStore(state), alarm=alarms, stop=stop)
@@ -236,7 +266,7 @@ def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
         holder: dict[str, RelayWorker] = {}
 
         def run_first_link() -> None:
-            source = seams.link_source(service) if seams.link_source is not None else relay_worker.NoLinkSource()
+            source = relay_worker.check_seam(seams.link_source(service), relay_worker.LinkSource, "link_source")
             directory = Directory(session, owner_pk_pub=source.owner_pk_pub(), wsk_pub=wsk.public_key)
             retrier = Retrier(sleep=time.sleep, alarm=alarms, stop=stop)
             first_link(_LinkSteps(holder["w"], service, state, source, link, session, directory), session, directory,
@@ -248,10 +278,12 @@ def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
             first_link=run_first_link, on_ended=release,
         )  # fmt: skip
         holder["w"] = worker
-        if seams.publisher is not None:
-            worker.publisher = seams.publisher(service, worker)
-        if seams.unpublished is not None:
-            worker.unpublished = seams.unpublished(service, worker)
+        worker.publisher = relay_worker.check_seam(
+            seams.publisher(service, worker), relay_worker.Publisher, "publisher"
+        )
+        worker.unpublished = relay_worker.check_seam(
+            seams.unpublished(service, worker), relay_worker.Unpublished, "unpublished"
+        )
         rids = RidStore(state)
 
         def no_post(device: str, rid: str, envelope: bytes) -> str:
@@ -262,15 +294,17 @@ def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
             job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms,
         )  # fmt: skip
         worker.attach(BridgeLoop(bridge, session, conn=conn, workspace_id=ws), rids)
+        service.relay = worker  # before the start thread exists (review R1); the caller holds relay_lock
         worker.start()
     except BaseException:
+        if worker is not None and service.relay is worker:
+            service.relay = None
         if rids is not None:
             rids.close()
         if state is not None:
             state.close()
         release()
         raise
-    service.relay = worker
 
 
 class _LinkSteps:
@@ -418,6 +452,8 @@ def _outbox_pending(service: WorkspaceService) -> int | None:
 
 
 def _stored_alarms(service: WorkspaceService) -> list[dict[str, Any]]:
+    from orch.relay import worker as relay_worker
+
     from .custody import read_json
     from .relaylink import relay_dir
 
@@ -429,7 +465,11 @@ def _stored_alarms(service: WorkspaceService) -> list[dict[str, Any]]:
     out = []
     for row in rows if isinstance(rows, list) else []:
         if isinstance(row, dict) and type(row.get("code")) is str:
-            out.append({k: row[k] for k in ("code", "count", "first_ms", "last_ms", "detail") if k in row})
+            kept = {k: row[k] for k in ("code", "count", "first_ms", "last_ms", "detail") if k in row}
+            for k in ("code", "detail"):
+                if type(kept.get(k)) is str:
+                    kept[k] = relay_worker.printable(kept[k][: relay_worker.ALARM_DETAIL_MAX])
+            out.append(kept)
     return out[:64]
 
 
@@ -453,8 +493,8 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
     out: dict[str, Any] = {
         "link": _link_summary(service),
         "stopped": is_stopped(service.state_dir, service.workspace_id, service.host_uid),
-        "gate": {"r6_ready": relay_worker.R6_READY is True,
-                 "reason": None if relay_worker.R6_READY is True else relay_worker.R6_GATE_REASON},
+        "gate": {"r6_ready": relay_worker.r6_ready(),
+                 "reason": None if relay_worker.r6_ready() else relay_worker.R6_GATE_REASON},
         "outbox_pending": _outbox_pending(service),
     }  # fmt: skip
     if worker is not None:

@@ -278,6 +278,9 @@ class Store:
         self._own_at = 0
         self._needs_reload = False
         self._torn: set[str] = set()
+        #: while opening: the ``config.json`` bytes the caller read (discovery), used instead of a read by path until
+        #: the store installs a new ``config.json`` itself
+        self._known_config: bytes | None = None
         self._bad_projection: dict[str, str] = {}
         self._ticket_appends_since_cp = 0
         self._healing = False
@@ -307,6 +310,7 @@ class Store:
         load: str = "lazy",
         lock_timeout: float | None = LOCK_TIMEOUT,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
+        config: bytes | None = None,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -321,7 +325,9 @@ class Store:
         store did is in ``reports``. A call that waits longer than ``lock_timeout`` seconds for the workspace lock
         raises ``store.busy``. ``guard`` wraps every outermost transaction, outside the workspace lock: the direct-mode
         CLI passes :class:`orch.host.ownership.DirectGuard` (D-P2-18), which holds the ownership lock shared and
-        answers ``host.required`` for a workspace the host has adopted.
+        answers ``host.required`` for a workspace the host has adopted. ``config``: the ``config.json`` bytes the
+        caller already read (direct-mode discovery, :mod:`orch.discovery`); the open-time workspace id check uses
+        them instead of reading the file by path again.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
@@ -340,15 +346,27 @@ class Store:
             lock_timeout=lock_timeout,
             guard=guard,
         )
-        store._open(load == "all")
+        store._open(load == "all", config)
         return store
 
-    def _open(self, eager: bool) -> None:
+    def _open(self, eager: bool, config: bytes | None = None) -> None:
         for d in ("events", "tickets", ".state"):
             if os.path.islink(self.root / d):
                 raise StoreError("validation.path", f"{d} is a symlink")
             (self.root / d).mkdir(parents=True, exist_ok=True)
-        cfg = read_or_none(self.root / "config.json")
+        self._known_config = config
+        try:
+            self._open_checked(eager)
+        finally:
+            self._known_config = None
+
+    def _config_json(self) -> bytes | None:
+        """``config.json`` as it is now: the caller's bytes while opening (until the store installs a new one), else
+        read below the root."""
+        return self._known_config if self._known_config is not None else read_or_none(self.root / "config.json")
+
+    def _open_checked(self, eager: bool) -> None:
+        cfg = self._config_json()
         if cfg is not None:
             try:
                 have = loads(cfg)["workspace"]["id"]
@@ -1085,6 +1103,8 @@ class Store:
         ``check`` (recovery) a pending file is installed only if ``check(rel, data)``."""
         torn: list[str] = []
         for f in m["files"]:
+            if f["to"] == "config.json":
+                self._known_config = None  # from here on the file is the store's own
             dest, src = safe_join(self.root, target_ok(f["to"])), d / str(int(f["n"]))
             data = read_or_none(src, 256 * 1024 * 1024)
             if data is not None and _sha(data) == f["sha256"] and (check is None or check(f["to"], data)):
@@ -1859,7 +1879,7 @@ class Store:
         if g is None or state.workspace.genesis is None:
             return b""
         name, run_for = self._name or state.workspace.prefix, ["owner", "maintainer", "member"]
-        cur = read_or_none(self.root / "config.json")
+        cur = self._config_json()
         if cur is not None:  # `name` and `agents.run_for` are in no event: whatever the file says (if valid) stays
             with contextlib.suppress(ValueError, KeyError, TypeError, schema.SchemaError):
                 doc = loads(cur)
@@ -2368,7 +2388,7 @@ class Store:
             ("keys.jsonl", "keys_mismatch", lambda: self._keys_bytes()),
         ):
             want = produce()
-            if read_or_none(self.root / path) == want:
+            if (self._config_json() if path == "config.json" else read_or_none(self.root / path)) == want:
                 continue
             self._torn.discard(path)
             out.append(

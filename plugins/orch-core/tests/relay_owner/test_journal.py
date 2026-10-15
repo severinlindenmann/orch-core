@@ -323,3 +323,23 @@ def test_a_held_journal_times_out_busy(jdir):
         with pytest.raises(JournalError) as e, PrimaryJournal(jdir, mono=lambda: clock[0], sleep=sleep).transaction():
             pass
     assert e.value.code == "journal.busy"
+
+
+def test_room_is_never_made_by_evicting_a_decision_still_to_upload(jdir, monkeypatch):
+    """Opus delta D2 on #557: an expired ``decided`` record is still resent by finish_uploads, so capacity pressure
+    never deletes it; terminal records go first, and with only decisions left the journal is full."""
+    from orch.relay_owner import journal as jmod
+
+    monkeypatch.setattr(jmod, "MAX_ENTRIES", 2)
+    with PrimaryJournal(jdir).transaction() as v:
+        v.prune(5)
+        v.put(verified(rid="01" * 16, exp=10))
+        v.put(Entry("01" * 16, WS, 10, "decided", request_cj=REQ, decision="reject", decided_cj=DEC))
+        v.put(Entry("02" * 16, WS, 20, "refused"))
+    with PrimaryJournal(jdir).transaction() as v:
+        v.prune(30)  # both expired; the decision is older
+        v.put(Entry("03" * 16, WS, 40, "refused"))  # evicts the refused record, not the decision
+        assert v.get("01" * 16).state == "decided" and v.get("02" * 16) is None
+        with pytest.raises(JournalError) as e:  # only the decision and an unexpired record are left
+            v.put(Entry("04" * 16, WS, 50, "refused"))
+        assert e.value.code == "journal.full" and v.get("01" * 16) is not None

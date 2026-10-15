@@ -7823,15 +7823,16 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   bytes is `primary_request_conflict`; tombstones after expiry + 7 days. **Bounded, never a lockout** (orch-52's
   review of the first push): an unreadable record is treated as burned and replaced by a tombstone, never fatal;
   records ≤ 32 KiB; tombstones deleted after expiry + 14 days (`check_cert_request` refuses such an id as
-  `expired` anyway); only live or unexpired records count against the 4096 cap (a new id deletes the oldest expired
-  terminal record on demand; a journal full of live or unexpired requests refuses new ids only, `journal.full`); a
+  `expired` anyway); only live, unexpired or still-to-upload (`decided`) records count against the 4096 cap (a new id
+  deletes the oldest expired terminal record on demand, never a `decided` one, Opus delta D2; a journal full of live or unexpired requests refuses new ids only, `journal.full`); a
   live record past its expiry is written `expired` before any tombstone (never a live tombstone); the lock is
   released on every exit.
 - **`PrimaryQueue(client, journal, *, pk_pub, cards, unseal, max_scopes=("look","decide"))`** (shared with
   `tests/relay/owner.py`, N6): `poll(request_id, wait=)` works only the request R6 reported (DECIDED in #557's
   review; every other listed request is `other_open`, neither opened nor journaled): it resumes it from the journal
   if live, else checks, opens and records it in one transaction (step 2.4+ refusals burn the id; earlier ones burn
-  nothing; entries over 8 KiB or not protocol JSON are never checked). `Pending` is a display snapshot only:
+  nothing; entries over 8 KiB or not protocol JSON are never checked; a re-listed id the journal keeps only as a
+  tombstone is `closed`, Opus delta D1). `Pending` is a display snapshot only:
   `challenge(id, pk)`, `sign(id, pk)` (needs a stored challenge whose device and keys the re-opened inner must name)
   and `reject(id, pk)` take the id and re-check and re-open the stored request under the lock (review of #557, Opus
   Medium); they sign at most once with the person key (`ANSWER_LABELS` = challenge, rejection, certificate; the pinned owner key checked first; nothing after

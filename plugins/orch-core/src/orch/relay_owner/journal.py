@@ -296,12 +296,17 @@ class JournalView:
         return entry
 
     def _expired_terminal(self, now_ms: int) -> list[Entry]:
-        return sorted((e for e in self._entries.values() if not e.live and now_ms >= e.expires_ms),
-                      key=lambda e: (e.expires_ms, e.request_id))  # fmt: skip
+        """Records capacity pressure may delete: not live, expired, and not a ``decided`` record whose upload is
+        still pending (``finish_uploads`` resends it; Opus delta D2 on #557). Oldest first."""
+        return sorted(
+            (e for e in self._entries.values() if not e.live and e.state != "decided" and now_ms >= e.expires_ms),
+            key=lambda e: (e.expires_ms, e.request_id),
+        )
 
     def _make_room(self) -> None:
-        """Capacity for one new id (review of #557): only live or unexpired records count against
-        :data:`MAX_ENTRIES`; when the files reach it, the oldest expired terminal record is deleted on demand."""
+        """Capacity for one new id (review of #557): only live, unexpired or still-to-upload records
+        count against :data:`MAX_ENTRIES`; when the files reach it, the oldest evictable record is deleted on demand,
+        never a ``decided`` one (with nothing evictable: ``journal.full``)."""
         now = self._now
         old = self._expired_terminal(now) if now is not None else []
         if len(self._entries) - len(old) >= MAX_ENTRIES:

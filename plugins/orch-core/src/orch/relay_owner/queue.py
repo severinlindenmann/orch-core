@@ -198,7 +198,10 @@ class PrimaryQueue:
             v.prune(now)
             cur = v.get(target)
             p = None
-            if cur is not None:
+            if cur is not None and cur.tombstone:  # older than retention, no bytes kept (Opus delta D1)
+                if target in listed:
+                    skipped.append(Skipped(target, "closed"))
+            elif cur is not None:
                 if target in listed and (cur.request_cj is None or listed[target][1] != cur.request_cj):
                     skipped.append(Skipped(target, "primary_request_conflict"))
                 if cur.live:

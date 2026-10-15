@@ -426,6 +426,20 @@ def test_a_deeply_nested_copy_of_a_journaled_id_is_malformed_not_a_crash(relay, 
     assert codes(poll) == [(RID, "malformed")] and poll.get(RID) is not None  # resumed from the journal
 
 
+def test_a_re_listed_tombstone_is_closed_not_a_conflict(relay, fake, jdir):
+    """Opus delta D1 on #557: an id older than retention (a tombstone, no bytes kept) re-listed by the relay is
+    reported ``closed``, not a false ``primary_request_conflict``."""
+    fake.queue = [make_request(RID)]
+    q = queue(relay, jdir)
+    q.poll(RID)
+    q.reject(RID, VecPK())
+    late = queue(relay, jdir, now=T0 + RETENTION_MS + 700_000)
+    poll = late.poll(RID)
+    assert poll.pending == () and codes(poll) == [(RID, "closed")]
+    with late._journal.transaction() as v:
+        assert v.get(RID).tombstone
+
+
 def test_close_works_on_a_live_request_whose_card_is_gone(relay, fake, jdir):
     """Review of #557, item 6."""
     fake.queue = [make_request(RID)]

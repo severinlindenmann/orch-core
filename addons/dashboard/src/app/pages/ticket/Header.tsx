@@ -6,6 +6,8 @@ import { api } from '@/api/client'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction, type RunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
+import { hasFeature, isRealHost } from '@/api/features'
+import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
@@ -86,6 +88,21 @@ function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer:
   )
 }
 
+/** M7b, a real host: core's Start agent dialog (preview, runner grant, start), when the host serves `agent.start`. */
+function RealStartAgentItem({ ticket, onStart }: { ticket: TicketDocument; onStart: () => void }) {
+  const { workspace } = useWorkspace()
+  if (!isRealHost() || !workspace || !hasFeature('agent_start', workspace.id) || ticket.status === 'done') return null
+  return (
+    <>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={onStart} data-testid="real-start-agent">
+        <Bot />
+        Start agent
+      </DropdownMenuItem>
+    </>
+  )
+}
+
 export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
@@ -96,6 +113,8 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
   const empty = !approve.length && !av.requestChanges.length && !verdict && !answer.length
   // Core's start dialog lives outside the menu, which closes when an item is chosen.
   const r = useRunAddonAction(ticket.key)
+  const { workspace } = useWorkspace()
+  const [agent, setAgent] = useState(false)
   return (
     <>
     <DropdownMenu>
@@ -133,10 +152,11 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
             Request changes on {gateActionName(g)}
           </DropdownMenuItem>
         ))}
-        <StartAgentItem ticket={ticket} viewer={viewer} r={r} />
+        {isRealHost() ? <RealStartAgentItem ticket={ticket} onStart={() => setAgent(true)} /> : <StartAgentItem ticket={ticket} viewer={viewer} r={r} />}
       </DropdownMenuContent>
     </DropdownMenu>
     {r.dialog}
+    {agent && workspace && <StartAgentDialog ws={workspace.id} ticket={ticket.key} open onClose={() => setAgent(false)} />}
     </>
   )
 }

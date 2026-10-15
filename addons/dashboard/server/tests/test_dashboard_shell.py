@@ -48,6 +48,11 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/runs/{run}/stop",
         "/api/w/{ws}/runs/{run}/attach",
         "/term",
+        "/api/w/{ws}/agents/preview",
+        "/api/w/{ws}/agents/start",
+        "/api/w/{ws}/runner",
+        "/api/w/{ws}/runner/deposits/{deposit_id}",
+        "/api/w/{ws}/runner/forget",
         "/{path:path}",
     }
     assert {route.path for route in create_app(PORT).routes} == expected

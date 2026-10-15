@@ -1,0 +1,333 @@
+// M7b Start agent on a real host: the preview before anything starts, the approved texts verbatim, Start with the
+// previewed values and one idem, `launch.changed`, blocked reasons, and the runner grant card (gate, refusals, the three
+// deposit outcomes, Forget). The server and the signer are faked at the api boundary.
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { agentsApi, type AgentPreview, type Runner } from '@/api/agents'
+import { api } from '@/api/client'
+import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, type ClickViewAnswer } from '@/api/click'
+import { mergeRunItems, type Run, type RunList } from '@/api/runs'
+import { ApiError } from '@/api/types'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { EXECUTION_LINE } from './executionLine'
+import { StartAgentDialog } from './StartAgentDialog'
+
+const WS = 'a'.repeat(32)
+const T = { timeout: 5000 }
+const GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
+const REQ = 'hr_01M4Y46B485AXD4CBEJZ15Z1TV'
+const UNTIL = '2026-10-15T20:00:00Z'
+const WORD = `DEMO~${WS.slice(-8)}/GRANT`
+
+const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
+  spec: 'f'.repeat(64), ticket: 'DEMO-1', display: "claude 'Run orch status, then work on ticket DEMO-1.'", display_hidden: false,
+  cwd: { kind: 'worktree', repo: 'billing', ticket: 'DEMO-1' }, cwd_path: '/w/billing.worktrees/0a1b2c3d-DEMO-1', cwd_path_hidden: false,
+  will_create_worktree: true, login_shell: false, env: ['TERM', 'ORCH_GRANT', 'ORCH_SESSION'], grant: { id: GRANT, until: UNTIL, scope: 'workable' },
+  blocked: null, warnings: [], ...over,
+})
+const runner = (over: Partial<Runner> = {}): Runner => ({ connected: true, enabled: true, terminals: false, grant: null, ...over })
+const run = { run: 'r_01M4Y46B485AXD4CBEJZ15Z1TV', rev: 1, kind: 'agent', ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', model: null, as_person: false,
+  state: 'starting', started_at: UNTIL, viewers: 0, writer: false, cols: 120, rows: 40, replay_until: null, label: null, label_hidden: false,
+  cwd: { kind: 'worktree' }, exit: null, grant_state: 'ok' } as Run
+const grantView = (over: Partial<ClickViewAnswer['view']> = {}): ClickViewAnswer => ({
+  view_digest: 'sha256:' + 'c'.repeat(64),
+  view: {
+    risk: CLICK_RISK, op: 'grant', workspace: { id: WS, name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
+    lines: ['grant to agents, 8 hours, workable', '', DEPOSIT_RISK, DEPOSIT_LINE], checks: [], confirm: { kind: 'word', word: WORD },
+    expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
+    deposit: true, deposit_line: DEPOSIT_LINE, ...over,
+  },
+})
+
+let s: Record<string, ReturnType<typeof vi.spyOn>>
+beforeEach(() => {
+  s = {
+    preview: vi.spyOn(agentsApi, 'preview').mockResolvedValue(preview()),
+    start: vi.spyOn(agentsApi, 'start').mockResolvedValue({ run }),
+    runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner() }),
+    status: vi.spyOn(agentsApi, 'depositStatus').mockResolvedValue({ deposit: 'unknown' }),
+    forget: vi.spyOn(agentsApi, 'forget').mockResolvedValue({ forgotten: true }),
+    prepare: vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'grant', confirm: 'word' }),
+    view: vi.spyOn(api, 'viewClick').mockResolvedValue(grantView()),
+    sign: vi.spyOn(api, 'signClick').mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'confirmed', deposit_id: REQ.slice(3), grant: GRANT }),
+    cancel: vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ, state: 'cancelled' }),
+  }
+})
+afterEach(async () => {
+  cleanup()
+  await new Promise((r) => setTimeout(r, 20))
+  vi.restoreAllMocks()
+})
+
+function mount(onStarted = vi.fn(), onClose = vi.fn()) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}><TooltipProvider>
+      <StartAgentDialog ws={WS} ticket="DEMO-1" open onClose={onClose} onStarted={onStarted} />
+    </TooltipProvider></QueryClientProvider>,
+  )
+  return { qc, onStarted, onClose }
+}
+const card = () => screen.getByTestId('runner-grant-card')
+
+describe('the preview', () => {
+  it('previews first and shows the host values and the approved texts verbatim', async () => {
+    mount()
+    expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent('A worktree for DEMO-1 in billing will be created at /w/billing.worktrees/0a1b2c3d-DEMO-1.')
+    expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true })
+    expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
+    expect(screen.getByTestId('runner-grant-risk').textContent).toBe('Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours.')
+    expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
+  })
+
+  it('says "shared working copy" in the approved words for cwd.kind repo', async () => {
+    s.preview.mockResolvedValue(preview({ cwd: { kind: 'repo', repo: 'billing' }, will_create_worktree: false, cwd_path: '/w/billing' }))
+    mount()
+    expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent("the repository's shared working copy (not a separate worktree)")
+  })
+
+  it('shows hidden host text as withheld and a host message only as text', async () => {
+    s.preview.mockResolvedValue(preview({ display: null, display_hidden: true, blocked: { code: 'launch.claimed', message: '<b>claimed</b>', detail: {} } }))
+    mount()
+    const blocked = await screen.findByTestId('agent-blocked', {}, T)
+    expect(blocked).toHaveTextContent('An agent session already claims this ticket.')
+    expect(blocked.querySelector('b')).toBeNull()
+    expect(screen.getByText('Hidden: the command has invisible characters')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-start')).toBeDisabled()
+  })
+})
+
+describe('start', () => {
+  it('posts the previewed values, its spec and one idem; a retry keeps the idem', async () => {
+    const { onStarted } = mount()
+    await screen.findByTestId('agent-preview', {}, T)
+    s.start.mockRejectedValueOnce(new ApiError(503, { code: 'outcome.unknown', message: 'lost', retryable: true }))
+    fireEvent.click(screen.getByTestId('agent-start'))
+    expect(await screen.findByTestId('agent-error', {}, T)).toHaveTextContent('lost')
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), T)
+    const [a, b] = s.start.mock.calls
+    expect(a[1]).toEqual({ ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true })
+    expect(a[2]).toBe('f'.repeat(64))
+    expect(a[3]).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
+    expect(b[3]).toBe(a[3])
+  })
+
+  it('a changed choice must be previewed again before Start', async () => {
+    mount()
+    await screen.findByTestId('agent-preview', {}, T)
+    fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'fix' } })
+    expect(screen.getByTestId('agent-stale')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-start')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, expect.objectContaining({ mode: 'fix' })), T)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+  })
+
+  it('launch.changed previews again and asks for a new Start', async () => {
+    mount()
+    await screen.findByTestId('agent-preview', {}, T)
+    s.start.mockRejectedValueOnce(new ApiError(409, { code: 'launch.changed', message: 'changed', retryable: false }))
+    fireEvent.click(screen.getByTestId('agent-start'))
+    expect(await screen.findByTestId('agent-changed', {}, T)).toBeInTheDocument()
+    expect(s.preview).toHaveBeenCalledTimes(2)
+    expect(s.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('run.limit shows the host message as text', async () => {
+    mount()
+    await screen.findByTestId('agent-preview', {}, T)
+    s.start.mockRejectedValueOnce(new ApiError(409, { code: 'run.limit', message: '8 agent runs at most per workspace', retryable: true }))
+    fireEvent.click(screen.getByTestId('agent-start'))
+    expect(await screen.findByTestId('agent-error', {}, T)).toHaveTextContent('8 agent runs at most per workspace')
+  })
+})
+
+const noGrant = (reason: 'none' | 'expiring' | 'scope' | 'revoked' = 'none') =>
+  preview({ grant: null, blocked: { code: 'launch.no_grant', message: 'no runner grant', detail: { reason } } })
+
+async function issueAndSign() {
+  fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  fireEvent.change(within(panel).getByLabelText(/To confirm, type/), { target: { value: WORD } })
+  const sign = within(panel).getByRole('button', { name: 'Sign' })
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
+  fireEvent.pointerDown(sign)
+  fireEvent.click(sign)
+}
+
+describe('the runner grant', () => {
+  it('no grant: Issue is gated on dashboard execution', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.runner.mockResolvedValue({ runner: runner({ enabled: false }) })
+    mount()
+    expect(await screen.findByTestId('runner-grant-off', {}, T)).toHaveTextContent('Turn on dashboard execution (orch runner enable) or use the terminal.')
+    expect(screen.getByTestId('runner-grant-issue')).toBeDisabled()
+  })
+
+  it.each([
+    ['expiring', 'less than 15 minutes'],
+    ['scope', 'workable tickets'],
+    ['revoked', 'revoked or has expired'],
+  ] as const)('launch.no_grant %s says what to do', async (reason, text) => {
+    s.preview.mockResolvedValue(noGrant(reason))
+    mount()
+    expect(await screen.findByTestId('runner-grant-needed', {}, T)).toHaveTextContent(text)
+  })
+
+  it('issues a deposit grant with hours (at most 12) and scope; confirmed reads the grant and previews again', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    mount()
+    await screen.findByTestId('runner-grant-issue', {}, T)
+    expect(within(card()).getByLabelText('Hours').querySelectorAll('option')).toHaveLength(12)
+    fireEvent.change(within(card()).getByLabelText('Hours'), { target: { value: '12' } })
+    fireEvent.change(within(card()).getByLabelText('Tickets'), { target: { value: 'all' } })
+    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } }) })
+    await issueAndSign()
+    expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 12, scope: 'all' })
+    expect(s.sign.mock.calls[0][3]).toBe(WORD)
+    expect(await screen.findByTestId('runner-grant-confirmed', {}, T)).toBeInTheDocument()
+    await waitFor(() => expect(s.preview).toHaveBeenCalledTimes(2), T)
+  })
+
+  it('rejected: the reason sentence of the closed code, and Revoke', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'rejected', deposit_id: REQ.slice(3), grant: GRANT, deposit_reason: 'grant.expiring' })
+    mount()
+    await issueAndSign()
+    const box = await screen.findByTestId('runner-grant-rejected', {}, T)
+    expect(box).toHaveTextContent('The runner did not take the grant: The grant has less than 15 minutes left.')
+    expect(within(box).getByRole('button', { name: 'Revoke grant' })).toBeInTheDocument()
+  })
+
+  it('an unknown reason code reads as other', async () => {
+    const { depositReason } = await import('@/api/agents')
+    expect(depositReason('something.new')).toBe('The runner refused it.')
+    expect(depositReason(undefined)).toBe('The runner refused it.')
+  })
+
+  it('unknown: asks grant.deposit_status a bounded number of times, then says what to do', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'unknown', deposit_id: REQ.slice(3), grant: GRANT })
+    mount()
+    await issueAndSign()
+    expect(await screen.findByTestId('runner-grant-unknown', {}, { timeout: 15000 })).toHaveTextContent('The grant may or may not be with your runner. Revoke it to be sure.')
+    expect(s.status).toHaveBeenCalledTimes(5)
+    expect(s.status).toHaveBeenCalledWith(WS, REQ.slice(3))
+  }, 20000)
+
+  it('unknown that the host then confirms is confirmed', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'unknown', deposit_id: REQ.slice(3), grant: GRANT })
+    s.status.mockResolvedValueOnce({ deposit: 'unknown' }).mockResolvedValueOnce({ deposit: 'confirmed' })
+    mount()
+    await issueAndSign()
+    expect(await screen.findByTestId('runner-grant-confirmed', {}, { timeout: 8000 })).toBeInTheDocument()
+  }, 15000)
+
+  it('a View without the deposit line gets no Sign button', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.view.mockResolvedValue(grantView({ deposit_line: undefined, lines: ['grant', DEPOSIT_RISK] }))
+    mount()
+    fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
+    expect(await screen.findByTestId('runner-grant-bad-view', {}, T)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign' })).toBeNull()
+  })
+
+  it.each([
+    [{ code: 'human.click_refused', reason: 'terminal_only', why: 'update_orch' }, "This orch version can't hand a grant to the runner; update orch."],
+    [{ code: 'human.click_refused', reason: 'terminal_only' }, 'Turn on dashboard execution (orch runner enable) or use the terminal.'],
+    [{ code: 'sign.click_only' }, 'Run `orch grant --runner` in your terminal.'],
+    [{ code: 'click.unavailable' }, 'Run `orch grant --runner` in your terminal.'],
+  ])('refusal %o says %s', async (err, text) => {
+    s.preview.mockResolvedValue(noGrant())
+    s.prepare.mockRejectedValue(new ApiError(409, { message: 'x', retryable: false, ...err }))
+    mount()
+    fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
+    expect(await screen.findByTestId('runner-grant-refused', {}, T)).toHaveTextContent(text)
+  })
+
+  it('Forget runner grant asks first, then forgets with an idem', async () => {
+    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'workable' } }) })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Forget runner grant' }, T))
+    expect(s.forget).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Forget' }))
+    await waitFor(() => expect(s.forget).toHaveBeenCalledWith(WS, GRANT, expect.stringMatching(/^a_/)), T)
+  })
+})
+
+describe('review fixes', () => {
+  it.each([
+    [{ display: null, display_hidden: true }],
+    [{ cwd_path: null, cwd_path_hidden: true }],
+  ])('L2: Start stays off when the command or the folder is withheld (%o)', async (over) => {
+    s.preview.mockResolvedValue(preview(over))
+    mount()
+    expect(await screen.findByTestId('agent-unreadable', {}, T)).toBeInTheDocument()
+    expect(screen.getByTestId('agent-start')).toBeDisabled()
+  })
+
+  it.each([
+    [{ confirm: { kind: 'word' as const, word: 'DEMO~0a1b2c3d/GRANT' } }],
+    [{ workspace: { id: 'f'.repeat(32), name: 'other', prefix: 'DEMO' } }],
+  ])('L3: a grant View of another workspace gets no Sign button (%o)', async (over) => {
+    s.preview.mockResolvedValue(noGrant())
+    s.view.mockResolvedValue(grantView(over))
+    mount()
+    fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
+    expect(await screen.findByTestId('runner-grant-bad-view', {}, T)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign' })).toBeNull()
+  })
+
+  it('L1: a lost sign answer settled at the host still asks where the deposit went, by the request id', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockRejectedValue(new TypeError('network'))
+    vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'submitted' })
+    s.status.mockResolvedValue({ deposit: 'confirmed' })
+    mount()
+    await issueAndSign()
+    expect(await screen.findByTestId('runner-grant-confirmed', {}, { timeout: 8000 })).toBeInTheDocument()
+    expect(s.status).toHaveBeenCalledWith(WS, REQ.slice(3))
+  }, 15000)
+
+  it('L1: still unknown without a grant id says where to find it', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockRejectedValue(new TypeError('network'))
+    vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'submitted' })
+    mount()
+    await issueAndSign()
+    expect(await screen.findByTestId('runner-grant-find', {}, { timeout: 20000 })).toBeInTheDocument()
+  }, 25000)
+
+  it('I4: click switched off for the workspace says to use the terminal', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.prepare.mockRejectedValue(new ApiError(409, { code: 'human.click_refused', reason: 'disabled', message: 'x', retryable: false }))
+    mount()
+    fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
+    expect(await screen.findByTestId('runner-grant-refused', {}, T)).toHaveTextContent('Run `orch grant --runner` in your terminal.')
+  })
+})
+
+describe('the live stream', () => {
+  it('a resync (run.sub ended or reconnected) reads whoami.runner again', async () => {
+    const { invalidateLive } = await import('@/api/useLiveUpdates')
+    const qc = new QueryClient()
+    qc.setQueryData(['runner', WS], { runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'workable' } }) })
+    invalidateLive(qc, WS, 'resync', [])
+    expect(qc.getQueryState(['runner', WS])?.isInvalidated).toBe(true)
+  })
+
+  it('a runner item patches the runner card and never becomes a run', () => {
+    const qc = new QueryClient()
+    qc.setQueryData(['runs', WS], { runs: [], runner: null, truncated: false } satisfies RunList)
+    qc.setQueryData(['runner', WS], { runner: runner() })
+    mergeRunItems(qc, WS, [{ t: 'runner', grant: { id: GRANT, until: UNTIL, scope: 'workable' } }])
+    expect((qc.getQueryData(['runs', WS]) as RunList).runs).toEqual([])
+    expect((qc.getQueryData(['runner', WS]) as { runner: Runner }).runner.grant?.id).toBe(GRANT)
+    mergeRunItems(qc, WS, [{ t: 'runner', grant: null }])
+    expect((qc.getQueryData(['runner', WS]) as { runner: Runner }).runner.grant).toBeNull()
+  })
+})

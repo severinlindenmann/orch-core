@@ -37,12 +37,17 @@ export interface Run {
   label_hidden: boolean
   cwd: { kind?: string | null; repo?: string | null; ticket?: string | null }
   exit: RunExit | null
+  /** M7b, agents: `ended` once the runner grant ended (the host refuses its writes; Stop is offered). Not a run state. */
+  grant_state?: 'ok' | 'ended' | null
+  subagent_model?: string | null
 }
 
 export interface RunnerInfo {
   connected: boolean
   enabled: boolean
   terminals: boolean
+  /** M7b: the caller's runner grant (never its secret). */
+  grant?: { id: string; until: string; scope: 'all' | 'workable' } | null
 }
 
 export interface RunList {
@@ -71,9 +76,9 @@ export interface TermArgs {
   label?: string
 }
 
-export type RunItem = { t: 'run'; run: Run } | { t: 'gone'; run: string }
+export type RunItem = { t: 'run'; run: Run } | { t: 'gone'; run: string } | { t: 'runner'; grant: RunnerInfo['grant'] }
 
-async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+export async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   const token = getToken()
   const result = await createFetchTransport('', () => token).request(method, path, body)
   if (result.status === 401) {
@@ -113,10 +118,18 @@ export const runQueries = {
 
 /** A `runs` item of the live stream: merged into the list by `rev` (an older revision never wins); `gone` removes. */
 export function mergeRunItems(client: QueryClient, ws: string, items: RunItem[]) {
+  // H11c-2: the person's runner grant changed. The runner card is read again (and patched at once).
+  const runner = items.filter((i): i is Extract<RunItem, { t: 'runner' }> => i.t === 'runner')
+  if (runner.length) {
+    const grant = runner[runner.length - 1].grant ?? null
+    client.setQueryData<{ runner: RunnerInfo | null }>(['runner', ws], (old) => (old?.runner ? { runner: { ...old.runner, grant } } : old))
+    void client.invalidateQueries({ queryKey: ['runner', ws] })
+  }
   client.setQueryData<RunList>(['runs', ws], (list) => {
     if (!list) return list
     let runs = list.runs
     for (const item of items) {
+      if (item.t === 'runner') continue
       if (item.t === 'gone') runs = runs.filter((r) => r.run !== item.run)
       else {
         const at = runs.findIndex((r) => r.run === item.run.run)

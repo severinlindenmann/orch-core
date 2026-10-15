@@ -21,13 +21,22 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
-from .handoff import PrepareBody, RequestId, done_error, expected, plan, read_done, send_prepare
+from .handoff import (
+    PrepareBody,
+    RequestId,
+    RunnerGrant,
+    done_error,
+    expected,
+    plan,
+    read_done,
+    send_prepare,
+)
 from .reads import workspace
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
@@ -40,6 +49,73 @@ REMEMBERED = 256
 ENDED = {"expired", "not_prepared_here", "custody_changed", "human.request_expired", "human.request_state"}
 #: the signer says `the request is <state>` when an intent's idem returns a request that already ended
 TERMINAL = re.compile(r"^the request is (submitted|cancelled|expired)$")
+
+# M7b, the runner grant (D-P2-27, section 0.8.6 item 6): a click request of its own action. The texts are core's
+# constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
+DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
+DEPOSIT_RISK = (
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 "
+    "hours."
+)
+GRANT_WORD = re.compile(r"^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}/GRANT$")
+DEPOSITS = ("confirmed", "rejected", "unknown")
+#: H11c-2's closed set of `deposit_reason` codes (static codes, never host text); anything else reads `other`
+DEPOSIT_REASONS = (
+    "grant.forgotten",
+    "grant.not_runner",
+    "grant.verbs",
+    "grant.expiring",
+    "rate.limited",
+    "runner.unavailable",
+    "other",
+)
+ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
+
+#: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
+ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
+
+
+def deposit_view_ok(view: dict, ws: str) -> bool:
+    """A deposit grant's View (section 0.8.6 item 6): `deposit:true`, core's deposit line in `deposit_line` and in
+    `lines`, the owner's risk sentence in `lines`, this workspace, and the typed word `<PREFIX>~<WS8>/GRANT` of THIS
+    workspace (review L3: bound to `ws`, not any workspace's word)."""
+    confirm = view.get("confirm")
+    lines = view.get("lines")
+    workspace = view.get("workspace")
+    return (
+        isinstance(workspace, dict)
+        and workspace.get("id") == ws
+        and isinstance(confirm, dict)
+        and isinstance(confirm.get("word"), str)
+        and confirm["word"].endswith(f"~{ws[-8:]}/GRANT")
+        and view.get("deposit") is True
+        and view.get("deposit_line") == DEPOSIT_LINE
+        and isinstance(lines, list)
+        and DEPOSIT_LINE in lines
+        and DEPOSIT_RISK in lines
+        and isinstance(confirm, dict)
+        and confirm.get("kind") == "word"
+        and isinstance(confirm.get("word"), str)
+        and GRANT_WORD.fullmatch(confirm["word"]) is not None
+    )
+
+
+def deposit_answer(got: dict, request_id: str) -> dict:
+    """Of a deposit grant's `sign` answer, only `deposit` (enum), `deposit_id` (the request's ULID), `grant` (a `gr_`
+    id) and, when rejected, `deposit_reason` (the closed set). Never `result`, never anything else: the secret exists
+    only inside the signer, and nothing else of its answer is passed on."""
+    deposit = got.get("deposit") if got.get("deposit") in DEPOSITS else "unknown"
+    out: dict = {"deposit": deposit}
+    did = got.get("deposit_id")
+    out["deposit_id"] = did if isinstance(did, str) and ULID.fullmatch(did) and did == request_id[3:] else None
+    grant = got.get("grant")
+    out["grant"] = grant if isinstance(grant, str) and GRANT_ID.fullmatch(grant) else None
+    if deposit == "rejected":
+        reason = got.get("deposit_reason")
+        out["deposit_reason"] = reason if reason in DEPOSIT_REASONS else "other"
+    return out
 
 
 class Step(BaseModel):
@@ -134,7 +210,7 @@ def register(app: FastAPI, gateway: Gateway):
         }
 
     @app.post("/api/w/{ws}/click/prepare")
-    def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
+    def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         with handoffs.lock:
@@ -146,6 +222,19 @@ def register(app: FastAPI, gateway: Gateway):
             raise
 
     def _prepare(body, token, ws):
+        grant = isinstance(body, RunnerGrant)
+        if grant and not signer.deposits():
+            # A contract-1 signer reads every grant as terminal only: say so before anything is prepared (H11c-2).
+            raise HostError(
+                {
+                    "code": "human.click_refused",
+                    "message": UPDATE_ORCH,
+                    "retryable": False,
+                    "reason": "terminal_only",
+                    "why": "update_orch",
+                },
+                3,
+            )
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
         # is prepared beside it (the host refuses to flip the flag with one pending; this is defence in depth).
@@ -173,6 +262,8 @@ def register(app: FastAPI, gateway: Gateway):
             sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
             if files:
                 sent["files"] = files
+            if grant:
+                sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)
 
         try:
@@ -247,12 +338,12 @@ def register(app: FastAPI, gateway: Gateway):
         # events and values), read through OUR link. A host that prepared anything else is refused before it is shown.
         try:
             prepared = human(ws, "human.get", {"request_id": rid})
-            verify(
+            verified = verify(
                 prepared,
                 ws,
                 expect_op=op,
                 expect_key=getattr(wanted, "key", None),
-                expect_events=expected(wanted) if wanted is not None else None,
+                expect_events=expected(wanted, app.state.person_of(ws)) if wanted is not None else None,
             )
         except HostError as exc:
             if exc.error.get("code") != "internal":
@@ -266,6 +357,20 @@ def register(app: FastAPI, gateway: Gateway):
         shown = got.get("view") if isinstance(got, dict) else None
         if not isinstance(shown, dict) or shown.get("op") != op or shown.get("risk") != RISK:
             raise refusal_check("The review is not what was asked for, or lacks the risk line. Cancel it.")
+        # The runner grant asked for `deposit:true`; its View must say so (and carry the deposit and risk lines), and
+        # no other View may claim a deposit: the two must agree, or nothing is shown (no Sign button).
+        if isinstance(wanted, RunnerGrant) != (shown.get("deposit") is True) or (
+            isinstance(wanted, RunnerGrant) and not deposit_view_ok(shown, ws)
+        ):
+            raise refusal_check("The review does not say where the grant goes. Nothing was shown. Cancel it.")
+        # Review I1: the grant's View must be of the very record `expected()` checked (the host's fingerprint), so the
+        # hours and scope signed are the ones verified.
+        if isinstance(wanted, RunnerGrant) and (
+            not isinstance(verified, dict)
+            or not verified.get("fingerprint")
+            or shown.get("fingerprint") != verified["fingerprint"]
+        ):
+            raise refusal_check("The review is not of the request the host prepared. Nothing was shown. Cancel it.")
         return got
 
     def ended(ws: str, rid: str) -> None:
@@ -323,6 +428,7 @@ def register(app: FastAPI, gateway: Gateway):
     def sign(body: Sign, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
         rid = body.request_id
+        wanted = clicks.get(rid)[2]
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)
@@ -363,6 +469,9 @@ def register(app: FastAPI, gateway: Gateway):
         handoffs.settled(rid)
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
+        if isinstance(wanted, RunnerGrant) or "deposit" in got:
+            # Only the deposit's enum, its id and the grant id; never `result` (section 0.8.6 item 6).
+            return out | deposit_answer(got, rid)
         if isinstance(result.get("key"), str):
             out["key"] = result["key"]
         if isinstance(result.get("seq"), int):

@@ -534,6 +534,13 @@ async function run(send, close) {
               ['real-host-pair-cert', 'pair-cert', [['the cert code', '[data-testid="pair-cert-code"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
               ['real-host-pair-failed', 'pair-failed', [['the remove-the-device line', '[data-testid="pair-needs-remove"]']]],
               ['real-host-pair-devices', 'pair-devices', [['the device list', '[data-testid="device-row"]']]],
+              // Drop (proposed drop/1): Workspace → Drop from the fixture drop api.
+              ['real-host-drop-unavailable', 'drop-unavailable', [['the not-available line', '[data-testid="drop-unavailable"]']]],
+              ['real-host-drop-list', 'drop-list', [['the rows', '[data-testid="drop-row"]'], ['the upload zone', '[data-testid="drop-zone"]'], ['a disabled-download reason', '[data-testid="drop-download-reason"]'], ['the paging', '[data-testid="drop-next"]']]],
+              ['real-host-drop-long-names', 'drop-long-names', [['the names', '[data-testid="drop-name"]'], ['the hidden name', '[data-testid="drop-name-hidden"]'], ['the agent mark', '[data-testid="drop-agent"]']]],
+              ['real-host-drop-upload-progress', 'drop-upload-progress', [['the progress', '[data-testid="drop-progress"]'], ['Cancel', '[data-testid="drop-cancel"]']]],
+              ['real-host-drop-errors', 'drop-errors', [['the error texts', '[data-testid="drop-error-gallery"] [data-testid="drop-error"]']]],
+              ['real-host-drop-versions', 'drop-versions', [['the version list', '[data-testid="drop-version"]'], ['the cap line', '[data-testid="drop-version-cap"]']]],
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)
@@ -546,6 +553,13 @@ async function run(send, close) {
               const shown = created && (await present('[data-testid="pair-waiting"]')) && (await clickText('button', /^Show QR and link$/))
               await settle()
               await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR and link is missing'])
+            }
+            // Drop: the Delete confirmation open at 720 px.
+            if (!ONLY || ONLY.test('real-host-drop-delete')) {
+              await go('/__layout/drop-list')
+              const opened = (await present('[data-testid="drop-row"]')) && (await clickText('button', /^Delete$/))
+              await settle()
+              await check(config, 'real-host-drop-delete', opened ? await need([['the confirmation', '[data-testid="drop-confirm"]']]) : ['the Delete button is missing'])
             }
             // Removal is CLI only: the "Remove this device" disclosure open with its command.
             if (!ONLY || ONLY.test('real-host-pair-remove-command')) {

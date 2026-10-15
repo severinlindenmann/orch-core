@@ -16,6 +16,9 @@ import { HostRecords } from '@/app/pages/settings/host/Records'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
+import { DropError, dropError } from '@/api/drop'
+import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop'
+import { AGENT, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
@@ -49,6 +52,13 @@ export const LAYOUT_SCENARIOS = [
   'pair-cert',
   'pair-failed',
   'pair-devices',
+  // Drop (proposed drop/1): Workspace → Drop with the fixture drop api.
+  'drop-unavailable',
+  'drop-list',
+  'drop-long-names',
+  'drop-upload-progress',
+  'drop-errors',
+  'drop-versions',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -205,6 +215,83 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
       return { members }
   }
 }
+const DAY = 86_400_000
+const T0 = Date.parse('2026-10-09T11:30:00Z')
+/** Every Drop error the page explains, for the `drop-errors` scenario and the tests. */
+export const DROP_SAMPLE_ERRORS: DropError[] = [
+  new DropError(413, { code: 'drop.too_large', message: 'drop.too_large', retryable: false }, { limit_bytes: 25 * 1024 * 1024 }),
+  new DropError(429, { code: 'drop.quota', message: 'drop.quota', retryable: false }, { quota: 'drop_ws', limit: 512 * 1024 * 1024, used: 511 * 1024 * 1024 }),
+  new DropError(429, { code: 'drop.quota', message: 'drop.quota', retryable: false }, { quota: 'drop_device_documents', limit: 64, used: 64 }),
+  new DropError(429, { code: 'drop.quota', message: 'drop.quota', retryable: false }, { quota: `drop_new_${LONG_WORD}`, limit: 1, used: 1 }),
+  new DropError(429, { code: 'drop.version_cap', message: 'drop.version_cap', retryable: false }),
+  new DropError(409, { code: 'drop.version_conflict', message: 'drop.version_conflict', retryable: false }),
+  new DropError(410, { code: 'drop.expired', message: 'drop.expired', retryable: false }),
+  new DropError(410, { code: 'drop.pruned', message: 'drop.pruned', retryable: false }),
+  new DropError(503, { code: 'drop.unavailable', message: 'drop.unavailable', retryable: false }),
+  new DropError(403, { code: 'drop.not_visible', message: 'drop.not_visible', retryable: false }),
+  new DropError(503, { code: 'drop.overloaded', message: 'drop.overloaded', retryable: true, retry_after_ms: 4200 }),
+]
+const dropOptions = (scenario: LayoutScenario): DropFixtureOptions => {
+  const doc = (over: Parameters<typeof dropItem>[0] = {}) => dropItem({ kind: 'document', versions: over?.version ?? 1, expires_ms: null, ...over })
+  const mixed = () => [
+    dropItem({ name: 'quarterly-report.pdf' }),
+    dropItem({ name: 'build-log.txt', mime: 'text/plain', author: AGENT }),
+    dropItem({ name: 'scan-from-phone.jpg', mime: 'image/jpeg', claimed: false }),
+    doc({ object_id: 'demo-doc-notes', name: 'meeting-notes.md', mime: 'text/markdown', version: 37, versions: 37 }),
+    dropItem({ name: 'old-export.zip', mime: 'application/zip', state: 'pruned' }),
+    dropItem({ name: 'expired-photo.heic', mime: 'image/heic', state: 'expired', expires_ms: T0 - DAY }),
+    dropItem({ name: 'deleted-contract.pdf', state: 'retired' }),
+    ...Array.from({ length: 4 }, (_, i) => dropItem({ name: `invoice-${i + 1}.pdf` })),
+  ]
+  const sent = () => [dropItem({ name: 'handover.pdf', author: ME }), dropItem({ name: 'diagram.svg', mime: 'image/svg+xml', author: ME })]
+  switch (scenario) {
+    case 'drop-unavailable':
+      return { served: false }
+    case 'drop-list':
+      return { received: mixed(), sent: sent(), pageSize: 8 }
+    case 'drop-long-names':
+      return {
+        received: [
+          dropItem({ name: `${LONG_WORD}.pdf`, mime: `application/vnd.${LONG_WORD}` }),
+          dropItem({ name: '<img src=x onerror=alert(1)>.html', mime: 'text/html' }),
+          dropItem({ name: 'invoice\u202Efdp.exe', mime: 'application/octet-stream', author: AGENT }),
+          dropItem({ name: 'line one\nline two\u0000.txt', mime: 'text/plain' }),
+          dropItem({ name: null, name_hidden: true }),
+          dropItem({ name: `${'a very long file name with many words '.repeat(5)}.docx`, author: { ...PHONE, person_name: `Severin ${LONG_WORD}`, device: `d_${LONG_WORD.toLowerCase()}` } }),
+          dropItem({ name: `${LONG_URL}`, claimed: false }),
+        ],
+      }
+    case 'drop-upload-progress':
+      return { received: mixed().slice(0, 3), stallAfterChunks: 2 }
+    case 'drop-errors':
+      return { received: mixed().slice(0, 4), readError: { '*': DROP_SAMPLE_ERRORS[1] }, sendError: DROP_SAMPLE_ERRORS[1] }
+    case 'drop-versions':
+      return {
+        received: [doc({ object_id: 'demo-doc-full', name: 'shared-plan.md', mime: 'text/markdown', version: 1024, versions: 1024 }), doc({ object_id: 'demo-doc-notes', name: 'meeting-notes.md', version: 37, versions: 37 })],
+        versions: {
+          'demo-doc-full': Array.from({ length: 1024 }, (_, i) => dropVersion(1024 - i, { state: i < 8 ? 'live' : 'pruned', author: i % 5 === 0 ? AGENT : PHONE })),
+          'demo-doc-notes': Array.from({ length: 37 }, (_, i) => dropVersion(37 - i)),
+        },
+        pageSize: 12,
+      }
+    default:
+      return {}
+  }
+}
+const dropStart = (scenario: LayoutScenario): DropPreviewStart | undefined => {
+  if (scenario === 'drop-versions') return { openDoc: 'demo-doc-full' }
+  if (scenario === 'drop-upload-progress') return { upload: new File([new Uint8Array(3 * 1024 * 1024)], `quarterly-figures-${LONG_WORD}.xlsx`, { type: 'application/vnd.ms-excel' }) }
+  return undefined
+}
+let undoDrop: (() => void) | null = null
+let dropOverride: DropFixtureOptions | null = null
+let dropFixture: DropFixture | null = null
+/** Tests: options merged into the next drop scenario, and the fixture it installed. */
+export const dropPreviewForTests = {
+  set: (o: DropFixtureOptions | null) => void (dropOverride = o),
+  fixture: () => dropFixture,
+}
+
 let undoPair: (() => void) | null = null
 let pairOverride: PairFixtureOptions | null = null
 let pairFixture: PairFixture | null = null
@@ -232,6 +319,10 @@ export function resetLayoutPreview() {
   undoPair = null
   pairOverride = null
   pairFixture = null
+  undoDrop?.()
+  undoDrop = null
+  dropOverride = null
+  dropFixture = null
   installed = false
   current = 'quick-normal'
   serial = 0
@@ -309,14 +400,33 @@ export function LayoutPreview({ name }: { name: string }) {
       pairFixture = createPairFixture({ ...pairOptions(current), ...pairOverride })
       undoPair = installPairFixture(pairFixture)
     }
+    if (current.startsWith('drop-')) {
+      undoDrop?.()
+      dropFixture = createDropFixture({ ...dropOptions(current), ...dropOverride })
+      undoDrop = installDropFixture(dropFixture)
+    }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'drop']) qc.removeQueries({ queryKey: [key] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
+  if (scenario.startsWith('drop-'))
+    return (
+      <div className="min-w-0 space-y-6">
+        <DropView workspace={workspace} preview={dropStart(scenario)} />
+        {scenario === 'drop-errors' && (
+          <section aria-label="Every Drop error (layout preview)" data-testid="drop-error-gallery" className="max-w-4xl space-y-3">
+            <h2 className="text-base font-semibold">Every Drop error (layout preview)</h2>
+            {DROP_SAMPLE_ERRORS.map((e, i) => (
+              <DropErrorLine key={i} detail={dropError(e, { max_bytes: 25 * 1024 * 1024, version_cap: 1024 })} />
+            ))}
+          </section>
+        )}
+      </div>
+    )
   if (scenario.startsWith('pair-'))
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>

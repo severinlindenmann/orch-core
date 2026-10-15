@@ -343,3 +343,27 @@ def test_room_is_never_made_by_evicting_a_decision_still_to_upload(jdir, monkeyp
         with pytest.raises(JournalError) as e:  # only the decision and an unexpired record are left
             v.put(Entry("04" * 16, WS, 50, "refused"))
         assert e.value.code == "journal.full" and v.get("01" * 16) is not None
+
+
+def test_a_tombstoned_decision_is_evictable_a_pending_one_is_not(jdir, monkeypatch):
+    """Codex refinement of D2 on #557: past retention a decided record keeps no bytes (finish_uploads skips it), so
+    it is evictable like any expired terminal record; a decided record that still holds its bytes is not."""
+    from orch.relay_owner import journal as jmod
+
+    monkeypatch.setattr(jmod, "MAX_ENTRIES", 2)
+    old, pending = "01" * 16, "02" * 16
+    with PrimaryJournal(jdir).transaction() as v:
+        v.prune(5)
+        v.put(verified(rid=old, exp=10))
+        v.put(Entry(old, WS, 10, "decided", request_cj=REQ, decision="reject", decided_cj=DEC))
+        v.prune(11 + RETENTION_MS)  # old becomes a decided tombstone
+        assert v.get(old).tombstone and v.get(old).state == "decided"
+        v.put(verified(rid=pending, exp=20 + RETENTION_MS))
+        v.put(Entry(pending, WS, 20 + RETENTION_MS, "decided", request_cj=REQ, decision="reject", decided_cj=DEC))
+    with PrimaryJournal(jdir).transaction() as v:
+        v.prune(30 + RETENTION_MS)  # both expired; only the tombstone may go
+        v.put(Entry("03" * 16, WS, 40 + RETENTION_MS, "refused"))
+        assert v.get(old) is None and v.get(pending).state == "decided"
+        with pytest.raises(JournalError) as e:
+            v.put(Entry("04" * 16, WS, 50 + RETENTION_MS, "refused"))
+        assert e.value.code == "journal.full" and v.get(pending) is not None

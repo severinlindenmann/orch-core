@@ -297,9 +297,14 @@ class JournalView:
 
     def _expired_terminal(self, now_ms: int) -> list[Entry]:
         """Records capacity pressure may delete: not live, expired, and not a ``decided`` record whose upload is
-        still pending (``finish_uploads`` resends it; Opus delta D2 on #557). Oldest first."""
+        still pending (``finish_uploads`` resends it; Opus delta D2 on #557). A tombstoned ``decided`` record keeps no
+        bytes and is never resent, so it is evictable (Codex, same round). Oldest first."""
         return sorted(
-            (e for e in self._entries.values() if not e.live and e.state != "decided" and now_ms >= e.expires_ms),
+            (
+                e
+                for e in self._entries.values()
+                if not e.live and (e.state != "decided" or e.tombstone) and now_ms >= e.expires_ms
+            ),
             key=lambda e: (e.expires_ms, e.request_id),
         )
 

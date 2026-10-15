@@ -42,6 +42,13 @@ Each ticket follows the same path, with a gate before every next step:
 - **Evidence, not claims.** Acceptance criteria, a task list ticked off with proof, and artifacts (screenshots, test reports, PRs) per criterion, before a ticket reaches your verdict.
 - **Memory that survives a holiday.** Every change is an appended, signed event. The current-state note on each ticket tells you where it stands and what's next.
 
+### A checklist, and evidence for every item
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/evidence-dark.png">
+  <img src="docs/images/readme/evidence-light.png" alt="Left: an agent says 'Done, all tests green, ready to ship'. Right: the ticket's checklist of acceptance criteria, each with its evidence: row counts, a dbt test run, a reconciliation with zero difference, and one criterion still without evidence. The verdict unlocks only when every criterion is proven.">
+</picture>
+
 ## Mission Control
 
 The desktop dashboard is where you work through what's waiting for you: questions first, then approvals and verdicts. Each prompt shows exactly what you are about to sign.

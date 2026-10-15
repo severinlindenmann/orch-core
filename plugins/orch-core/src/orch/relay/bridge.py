@@ -177,9 +177,9 @@ class WorkerStop(BaseException):  # noqa: N818 - not an error of the item: the e
 
 
 class _FenceStops:
-    """A poster with N4-1's invariant: a ``SessionError`` from it is raised as :class:`WorkerStop`, and from then on
-    every POST through it is refused the same way without a request (no second request after a fence, whatever caught
-    the first)."""
+    """A poster with N4-1's invariant: a ``SessionError`` from it is raised as :class:`WorkerStop`, and once it is
+    recorded every POST through it is refused the same way without a request, whatever caught the first. A thread
+    already inside the poster may still send one (F5-2); after ``Fenced`` the session itself refuses it."""
 
     def __init__(self, fn: Poster) -> None:
         self._fn = fn

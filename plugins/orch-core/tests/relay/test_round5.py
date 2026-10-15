@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import secrets
 import threading
+import warnings
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ from orch.relay import rids, wire
 from orch.relay.bridge import Bridge, BridgeLoop, Item, WorkerStop
 from orch.relay.http import TransportError
 from orch.relay.retry import RelayRefused
-from orch.relay.session import Fenced, SessionError
+from orch.relay.session import Fenced, RelayMisbehaving, SessionError
 
 from .bridgekit import World, open_chunk
 from .helpers import WS
@@ -225,37 +226,98 @@ def _names(t: ast.expr | None) -> set[str]:
     return {"<expr>"}
 
 
-def _reraises(h: ast.ExceptHandler) -> bool:
+def _flow(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    """Every ``return``/``break``/``continue`` and every ``raise`` with an exception in ``stmts``, at any depth outside
+    nested defs and classes (a ``break``/``continue`` of a loop nested inside counts too: conservative)."""
+    out: list[ast.stmt] = []
+
+    def walk(node: ast.AST) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            return
+        if isinstance(node, ast.Return | ast.Break | ast.Continue) or (isinstance(node, ast.Raise) and node.exc):
+            out.append(node)  # type: ignore[arg-type]
+        for child in ast.iter_child_nodes(node):
+            walk(child)
+
+    for st in stmts:
+        walk(st)
+    return out
+
+
+def _only_reraises(h: ast.ExceptHandler) -> bool:
+    """The handler ends in a bare ``raise`` and cannot leave any other way: no ``return``/``break``/``continue`` and no
+    ``raise X`` anywhere in it (a dead ``raise`` after a ``continue`` is not a re-raise: delta 5 Y15)."""
     last = h.body[-1]
-    return isinstance(last, ast.Raise) and last.exc is None
+    return isinstance(last, ast.Raise) and last.exc is None and not _flow(h.body)
+
+
+ROOTS = {"BaseException", "WorkerStop"}
+
+
+def _aliases(tree: ast.AST) -> set[str]:
+    """Names bound (at any scope) to ``BaseException``/``WorkerStop`` or to a tuple holding one, transitively:
+    ``E = BaseException; except E`` is a stopper too."""
+    found = set(ROOTS)
+    while True:
+        more = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
+                v = node.value
+                if isinstance(v, ast.Name | ast.Attribute | ast.Tuple) and _names(v) & found:
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    more |= set().union(*(_names(t) for t in targets)) - {"<expr>"}
+            if isinstance(node, ast.NamedExpr) and _names(node.value) & found:
+                more |= _names(node.target)
+        if more <= found:
+            return found
+        found |= more
 
 
 GUARD = ("BridgeLoop", "_guard", "run")  # the one handler that ends the worker
-STOPPERS = {"BaseException", "WorkerStop", "<bare>", "<expr>"}
 SESSION = {"Fenced", "SessionError", "NotHolder", "TakeoverRefused", "RelayMisbehaving"}
+
+
+def _violations(src: str, name: str = "<src>") -> list[str]:
+    """N4-1's structural pin over one module (round 6, F5-1 hardened):
+
+    * a handler that can catch ``WorkerStop`` (``BaseException``, ``WorkerStop``, an alias of either, bare, or a
+      computed type) only re-raises (:func:`_only_reraises`), unless it is ``BridgeLoop._guard``'s;
+    * no ``return``/``break``/``continue`` in any ``finally`` (it would drop an exception in flight);
+    * no ``suppress(...)`` of a stopper (a context manager that swallows it).
+    """
+    with warnings.catch_warnings():  # a snippet's "return in finally" is a SyntaxWarning on 3.14: the point
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(src)
+    stoppers = _aliases(tree) | {"<bare>", "<expr>"}
+    bad = [
+        f"{name}:{h.lineno} handler in {'.'.join(where)}"
+        for h, where in _handlers(tree)
+        if _names(h.type) & stoppers and where != GUARD and not _only_reraises(h)
+    ]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try | ast.TryStar) and node.finalbody:
+            bad += [f"{name}:{x.lineno} {type(x).__name__.lower()} in finally" for x in _flow(node.finalbody)
+                    if not isinstance(x, ast.Raise)]  # fmt: skip
+        if isinstance(node, ast.Call) and "suppress" in _names(node.func):
+            if not node.args or set().union(*(_names(a) for a in node.args)) & stoppers:
+                bad.append(f"{name}:{node.lineno} suppress of a stopper")
+    return bad
 
 
 @pytest.mark.parametrize("path", sorted(RELAY_SRC.glob("*.py")), ids=lambda p: p.name)
 def test_n4_1_no_handler_can_swallow_workerstop(path):
-    """A handler that can catch ``WorkerStop`` (``BaseException``, bare, ``WorkerStop`` itself, or a computed
-    type) ends with a bare ``raise`` (cleanup, then on), unless it is ``BridgeLoop._guard``'s."""
-    bad = [
-        f"{path.name}:{h.lineno} in {'.'.join(where)}"
-        for h, where in _handlers(ast.parse(path.read_text()))
-        if _names(h.type) & STOPPERS and where != GUARD and not _reraises(h)
-    ]
-    assert bad == []
+    assert _violations(path.read_text(), path.name) == []
 
 
 def test_n4_1_bridge_handlers_of_the_session_errors_only_reraise():
-    """In bridge.py a handler naming a session error re-raises (a takeover is never one item's failure); only the
-    poster wrapper converts it, and only the guard ends the worker with it."""
+    """In bridge.py a handler naming a session error only re-raises (a takeover is never one item's failure); only
+    the poster wrapper converts it, and only the guard ends the worker with it."""
     tree = ast.parse((RELAY_SRC / "bridge.py").read_text())
     allowed = {("_FenceStops", "__call__"), GUARD}
     bad = [
         f"bridge.py:{h.lineno} in {'.'.join(where)}"
         for h, where in _handlers(tree)
-        if _names(h.type) & SESSION and where not in allowed and not _reraises(h)
+        if _names(h.type) & SESSION and where not in allowed and not _only_reraises(h)
     ]
     assert bad == []
 
@@ -278,11 +340,67 @@ def test_n4_1_the_poster_is_only_set_through_the_wrapping_property():
         assert "__dict__" not in path.read_text() and "object.__setattr__" not in path.read_text(), path.name
 
 
-def test_n4_1_the_structural_check_sees_a_swallowing_handler():
-    """The checker itself: a broad handler that does not re-raise is found (so the parametrized test can fail)."""
-    tree = ast.parse("def f():\n    try:\n        g()\n    except BaseException:\n        pass\n")
-    ((h, where),) = _handlers(tree)
-    assert _names(h.type) & STOPPERS and not _reraises(h) and where == ("f",)
+BAD_SNIPPETS = {
+    "pass": "def f():\n    try:\n        g()\n    except BaseException:\n        pass\n",
+    "dead raise after continue (delta 5 Y15)": (
+        "def f(xs):\n    for x in xs:\n        try:\n            g(x)\n        except BaseException:\n"
+        "            if True:\n                continue\n            raise\n"
+    ),
+    "return in a stopper handler": (
+        "def f():\n    try:\n        g()\n    except WorkerStop:\n"
+        "        if h():\n            return None\n        raise\n"
+    ),
+    "break in a stopper handler": (
+        "def f():\n    while True:\n        try:\n            g()\n"
+        "        except:\n            break\n            raise\n"
+    ),
+    "converted to an Exception": (
+        "def f():\n    try:\n        g()\n    except BaseException as e:\n        raise RuntimeError() from e\n"
+    ),
+    "alias of BaseException": "_Any = BaseException\ndef f():\n    try:\n        g()\n    except _Any:\n        pass\n",
+    "tuple alias, transitive": (
+        "_A = WorkerStop\n_T = (ValueError, _A)\ndef f():\n    try:\n        g()\n    except _T:\n        log()\n"
+    ),
+    "return in finally (delta 5 Y12)": "def f():\n    try:\n        g()\n    finally:\n        return 1\n",
+    "continue in finally": (
+        "def f(xs):\n    for x in xs:\n        try:\n            g(x)\n        finally:\n            continue\n"
+    ),
+    "suppress(BaseException)": (
+        "import contextlib\ndef f():\n    with contextlib.suppress(BaseException):\n        g()\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("label", sorted(BAD_SNIPPETS))
+def test_f5_1_the_structural_check_rejects_each_evasion(label):
+    """The checker itself (round 6, F5-1): every intentionally bad snippet is rejected."""
+    assert _violations(BAD_SNIPPETS[label]) != []
+
+
+def test_f5_1_the_structural_check_accepts_cleanup_then_reraise():
+    ok = (
+        "def f(xs):\n    for x in xs:\n        try:\n            g(x)\n        except BaseException:\n"
+        "            close()\n            raise\n        except Exception:\n            continue\n"
+        "        finally:\n            release()\n"
+    )
+    assert _violations(ok) == []
+
+
+# -- F5-1: the aux flush step meets a session error (the delta's R7, adopted) -----------------------------------------
+
+
+@pytest.mark.parametrize("exc", [Fenced("fenced"), RelayMisbehaving("relay misbehaving")])
+def test_f5_1_flush_stops_the_worker_at_the_first_session_error(w, exc):
+    for _ in range(2):
+        w.post.script = {0: "retry"}  # two rids with an attempted chunk: the aux flush posts them again
+        w.send(w.phone.request(w.wk, {"op": "whoami", "args": {}}))
+    w.clock.ms += 120_000  # past the POST backoff
+    fence = _Fence(exc)
+    w.bridge.post = fence
+    loop = _loop(w)
+    _aux(loop, "flush", w.bridge.flush)
+    assert loop.error is exc and loop._stop.is_set() and len(fence.calls) == 1  # noqa: SLF001
+    assert w.alarms == []
 
 
 # -- N4-2: the read age bound is pinned (X06, X07) and the host budget honours it (X08) --------------------------

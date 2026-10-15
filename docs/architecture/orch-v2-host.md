@@ -5778,9 +5778,12 @@ reachable from one device). A chunk POST answered "retry" waits 1 s doubling to 
   `Bridge.post` is a property whose setter wraps every poster, so a `SessionError` from a POST is raised as
   `WorkerStop`, a `BaseException` that no `except Exception` (one item, one rid, one aux step: `expire_reads`,
   `retry_stuck`/`_settle`, `rotate` swallowed it in round 4) can catch; only the thread guard catches it and stops
-  the worker with the original error, and the same poster then refuses every later POST without a request. AST tests
-  over `orch/relay/` pin it: a handler that can catch `WorkerStop` (`BaseException`, bare, computed) must end in a bare
-  `raise` unless it is the guard's, a `bridge.py` handler naming a session error only re-raises, and nothing writes
+  the worker with the original error; once the error is recorded, the same poster refuses every later POST without a
+  request (a thread already inside the poster may still send one; after `Fenced` the session refuses it itself, so
+  only a non-fence session error lets that one request out: round 6, F5-2). AST tests
+  over `orch/relay/` pin it: a handler that can catch `WorkerStop` (`BaseException`, an alias of it, bare, computed)
+  must end in a bare `raise` and contain no `return`/`break`/`continue` or `raise X` (round 6, F5-1) unless it is
+  the guard's, no `finally` holds a `return`/`break`/`continue`, no `suppress` takes a stopper, a `bridge.py` handler naming a session error only re-raises, and nothing writes
   the poster around the property.
 - J18 (round 3, D2-7) A refusal code outside the closed table becomes `internal` in the same context; a signer
   refusal is silence for that chunk; a settle whose `lookup` raises answers `already_done {status: unknown}`.

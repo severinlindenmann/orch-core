@@ -95,6 +95,9 @@ REPLAY_EVERY_MS, REPLAY_MAX, REPLAY_TRACKED = 10_000, 8, 4096
 #: after the last one it is answered ``already_done {status: unknown}`` (B: outcome.get settles it). 370 s in all,
 #: inside the pending bound (framing.PENDING_NO_RECORD_MS), so ``pending`` never outlives it.
 STUCK_BACKOFF_MS = (10_000, 60_000, 300_000)
+#: a chunk POST answered "retry" (429, 503, a transport error) waits before the aux flush posts it again: 1 s doubling
+#: to 60 s per rid (11A.7 backoff), so a relay answering 429 forever cannot make the host re-POST every second
+POST_BACKOFF_MS, POST_BACKOFF_MAX_MS = 1_000, 60_000
 
 
 class HostPort(submit.SubmitPort, Protocol):
@@ -168,6 +171,8 @@ class Bridge:
         #: (device, rid) -> (attempts made, due ms) of writes whose run failed without a refusal (R2-6)
         self._stuck: dict[tuple[str, str], tuple[int, int]] = {}
         self._stuck_lock = threading.Lock()
+        #: (device, rid) -> (delay ms, due ms) of a rid whose last POST was "retry"; one entry per open rid
+        self._post_wait: dict[tuple[str, str], tuple[int, int]] = {}
 
     # -- start-up (11A.4 recovery, start fence) -------------------------------------------------------------------
 
@@ -262,7 +267,7 @@ class Bridge:
         # 4. the device
         ml = self.r6.member_list()
         member = ml.members.get(device) if ml is not None else None
-        code, cert_o = self._device_check(device, member, hb, body, sig, now)
+        code, cert_o = self._device_check(device, member, hb, body, sig, now, rid=rid)
         if code in ("unavailable", "dropped") or (code is not None and burned):
             return None  # the store cannot say now (silence, the device resends); under a burned key only stale_epoch
         known = self.rids.get(device, rid)
@@ -351,7 +356,7 @@ class Bridge:
         return adm
 
     def _device_check(
-        self, device: str, member: Member | None, hb: bytes, body: bytes, sig: bytes, now: int
+        self, device: str, member: Member | None, hb: bytes, body: bytes, sig: bytes, now: int, *, rid: str = ""
     ) -> tuple[str | None, dict[str, Any] | None]:
         """Step 4 in its order: revoked, not_member, bad_signature. ``(None, cert)`` when it passes. The certificate
         and the signature (pure) come first; the host's standing (the store lock) is asked for an unsigned request
@@ -372,6 +377,8 @@ class Bridge:
                 signed = False
         if not signed and not self._budget_left(now):
             return "dropped", None  # nothing could be answered: the store is not asked for unsigned input
+        if signed and not self._room(device, now, verified=True) and self.rids.get(device, rid) is None:
+            return "dropped", None  # a signed device over its row caps: dropped at 5b anyway, never the store lock
         standing = self.job(lambda: self.port.standing("d_" + device, "p_" + member.person_id))
         if standing in ("revoked", "unavailable"):
             return standing, None
@@ -670,6 +677,11 @@ class Bridge:
             if c.state == "stored":
                 self.rids.mark(device, rid, c.idx, "attempted")  # committed before the first byte of the POST
             got = self.post(device, rid, c.data)
+            if got == "retry":
+                delay = min(self._post_wait.get((device, rid), (POST_BACKOFF_MS // 2, 0))[0] * 2, POST_BACKOFF_MAX_MS)
+                self._post_wait[(device, rid)] = (delay, self.now_ms() + delay)
+                return  # this one stays attempted: the same bytes again after the delay
+            self._post_wait.pop((device, rid), None)
             if got == "posted":
                 self.rids.mark(device, rid, c.idx, "posted")
                 continue
@@ -687,10 +699,13 @@ class Bridge:
 
     def flush(self) -> None:
         """POST every persisted chunk not yet posted (recovery first, then after transient failures)."""
-        seen: set[tuple[str, str]] = set()
-        for device, rid, _ in self.rids.unposted():
-            if (device, rid) not in seen:
-                seen.add((device, rid))
+        now, open_ = self.now_ms(), self.rids.unposted()
+        live = set(open_)
+        for k in [k for k in self._post_wait if k not in live]:  # bounded by the open rids
+            self._post_wait.pop(k, None)
+        for device, rid in open_:
+            wait = self._post_wait.get((device, rid))
+            if wait is None or wait[1] <= now:
                 self._post_rid(device, rid)
 
     def rotate(self) -> None:
@@ -999,10 +1014,11 @@ def classify_post(e: RelayRefused) -> PostResult:
 
 def _items(obj: dict[str, Any]) -> list[Item]:
     """The poll page's items, shape-checked; a malformed item is skipped (logged by class only)."""
-    out = []
+    out: list[Item] = []
     items = obj.get("items")
     if type(items) is not list:
         return out
+    skipped = 0
     for it in items:
         try:
             if type(it) is not dict or set(it) != {"n", "route", "device", "rid", "offer", "envelope"}:
@@ -1016,6 +1032,8 @@ def _items(obj: dict[str, Any]) -> list[Item]:
             env = wire.b64_field(it["envelope"], max_len=wire.MAX_REQUEST)
             out.append(Item(n, it["route"], it["device"], it["rid"], env))
         except (ValueError, wire.WireError, binascii.Error):
-            log.info("relay poll item skipped (malformed)")
+            skipped += 1
+    if skipped:  # one line per page, never one per item (a relay-sized log flood otherwise)
+        log.info("relay poll items skipped (malformed): %d", skipped)
     out.sort(key=lambda i: i.n)
     return out

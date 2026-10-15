@@ -99,6 +99,12 @@ def test_check_target_key_rule_carries_next_key_in_detail(served, impl):  # noqa
     with pytest.raises(HostError) as e:
         _on_worker(served, lambda: impl.check_target(store, log, ev))
     assert e.value.code == "ticket.key_not_next" and e.value.detail == {"next_key": want}
+    log3, ev3 = _new_ticket(served, owner)
+    other_owner = _event(served, owner, log3, "ticket.created", key=want, ticket_type="bug", title="t",
+                         owner="p_" + "9" * 32)  # fmt: skip
+    with pytest.raises(HostError) as e:
+        _on_worker(served, lambda: impl.check_target(store, log3, other_owner))
+    assert e.value.code == "invalid.input"
     uid, _ = served.ticket()
     log2, ev2 = _new_ticket(served, owner, log=uid)
     with pytest.raises(HostError) as e:

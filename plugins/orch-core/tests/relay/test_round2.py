@@ -232,6 +232,7 @@ def test_rids_sqlite_durability_and_vacuum_pragmas(w):
 
 def test_tombstones_are_capped_oldest_first_and_the_file_returns_pages(w, monkeypatch):
     monkeypatch.setattr(rids, "MAX_TOMBSTONES", 2)
+    w.send(w.phone.request(w.wk, {"op": "ticket.text", "args": {"size": 1 << 20}}))  # pages to give back later
     for _ in range(4):
         w.send(_whoami(w, ts_ms=w.clock.ms))
         w.clock.ms += 1000
@@ -434,7 +435,7 @@ def test_a_poll_page_stops_filling_the_queue_at_its_bound():
     ref[0] = loop
     loop._poll_main()  # noqa: SLF001 - in this thread, one page
     try:
-        assert loop._queue.qsize() <= B.QUEUE_ITEMS  # noqa: SLF001
+        assert B.QUEUE_ITEMS == 16 and loop._queue.qsize() <= 16  # noqa: SLF001 - the documented bound
     finally:
         loop.stop()
         gate.set()
@@ -563,3 +564,66 @@ def test_a_request_carrying_rd_is_served_and_rd_reaches_the_identity(w, monkeypa
 
 def test_ulid_helper_round_trip():
     assert framing.ulid_ms(ulid(T0)) == T0
+
+
+# -- the extra DoS pass on bridge.py (coordinator, 15 Oct) ------------------------------------------------------------
+
+
+def test_a_relay_answering_retry_forever_gets_exponentially_fewer_posts(w):
+    w.post.default = "retry"
+    env = _whoami(w)
+    w.send(env)
+    for _ in range(300):  # five minutes of aux flushes, one per second
+        w.clock.ms += 1_000
+        w.bridge.flush()
+    n = len(w.post.for_rid(_rid(env)))
+    assert 8 <= n <= 14  # 1, 2, 4, ... 60 s: not 300
+    assert set(w.post.for_rid(_rid(env))) == {w.post.for_rid(_rid(env))[0]}  # always the same bytes
+
+
+def test_malformed_poll_items_are_logged_once_per_page(caplog):
+    with caplog.at_level("INFO", logger="orch.relay.bridge"):
+        got = B._items({"items": [{"n": i} for i in range(500)]})  # noqa: SLF001
+    assert got == [] and len([r for r in caplog.records if "skipped" in r.getMessage()]) == 1
+
+
+def test_a_signed_device_over_its_caps_never_reaches_the_store_lock(w, monkeypatch):
+    monkeypatch.setattr(B, "PER_DEVICE", 1)
+    monkeypatch.setattr(B, "BUSY_ALLOWANCE", 1)
+    calls = []
+    real = w.host.standing
+    w.host.standing = lambda d, p: (calls.append(d), real(d, p))[1]  # type: ignore[method-assign]
+    for _ in range(10):
+        w.send(_whoami(w))
+    assert len(calls) == 3  # step 4 and the recheck of the admitted one, step 4 of the busy one; then none
+
+
+def test_an_admitted_idem_past_the_no_record_bound_is_still_pending(w):
+    m = w.new_ticket()
+    assert w.bridge.receive(w.item(w.phone.request(w.wk, m))) is not None  # admitted, nothing recorded on the host
+    w.clock.ms = framing.ulid_ms(m["idem"]) + framing.PENDING_NO_RECORD_MS + 1
+    meta, data = w.call({"op": "outcome.get", "args": {"idem": m["idem"]}}, ts_ms=w.clock.ms)
+    assert data["data"] == {"state": "pending"}  # this device's rid may still run: never "unknown" while admitted
+
+
+def test_step_4_failures_under_a_burned_key_spend_no_refusal_budget(w):
+    e = w.epochs.burn()
+    stranger = Phone()
+    for _ in range(B.BUDGET):
+        assert w.send(stranger.request(w.wk, {"op": "whoami", "args": {}}, epoch=e)) == []
+    assert _metas(w, w.send(stranger.request(w.wk, {"op": "whoami", "args": {}}))) == [{"refusal": "not_member"}]
+
+
+def test_the_envelope_budget_holds_for_any_chunk_room():
+    body = {"d": "x" * (framing.MAX_ANSWER - len('{"d":""}'))}
+    with pytest.raises(framing.Refusal) as e:
+        framing.answer_plaintexts(body, room=B.CHUNK_ROOM // 2)  # more chunks, more envelope overhead
+    assert e.value.code == "frame.too_large"
+
+
+def test_outcome_get_answers_a_committed_record_even_while_the_rid_is_admitted(w):
+    m = w.new_ticket()
+    adm = w.bridge.receive(w.item(w.phone.request(w.wk, m)))
+    w.host.submit(adm.identity, m["idem"], "new_ticket", m["args"]["log"], m["args"]["events"], lambda: True)
+    meta, data = w.call({"op": "outcome.get", "args": {"idem": m["idem"]}})  # crash before T2: committed already
+    assert data["data"]["state"] == "committed"

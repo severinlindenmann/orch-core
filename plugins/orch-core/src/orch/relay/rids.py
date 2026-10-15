@@ -357,15 +357,16 @@ class RidStore:
             ).fetchall()
         return [r for r in (self.get(d, i) for d, i in keys) if r is not None]
 
-    def unposted(self) -> list[tuple[str, str, Chunk]]:
-        """Chunks still to POST (``stored`` or ``attempted``, bytes kept), oldest rid first, by index."""
+    def unposted(self) -> list[tuple[str, str]]:
+        """``(device, rid)`` with a chunk still to POST (``stored`` or ``attempted``, bytes kept), oldest rid first.
+        Keys only: the bytes are read per rid when it is posted (never every stored answer at once)."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT c.device, c.rid, c.idx, c.epoch, c.bytes, c.state FROM chunk c JOIN rid r "
-                "ON r.device=c.device AND r.rid=c.rid WHERE c.state IN ('stored','attempted') AND c.bytes IS NOT NULL "
-                "ORDER BY r.first_ms, c.device, c.rid, c.idx"
+                "SELECT r.device, r.rid FROM rid r WHERE EXISTS (SELECT 1 FROM chunk c WHERE c.device=r.device AND "
+                "c.rid=r.rid AND c.state IN ('stored','attempted') AND c.bytes IS NOT NULL) ORDER BY r.first_ms, "
+                "r.device, r.rid"
             ).fetchall()
-        return [(d, r, Chunk(i, e, b, s)) for d, r, i, e, b, s in rows]
+        return [(d, r) for d, r in rows]
 
     def answered_open(self) -> list[Rid]:
         """Answered rids with a chunk still ``stored`` or ``attempted`` (the rotation rule works on these)."""

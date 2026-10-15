@@ -543,6 +543,9 @@ def test_a_lost_post_keeps_the_chunk_attempted_and_the_same_bytes_go_again(w):
     rid = env[40:56].hex()
     assert w.rids.get(w.phone.device, rid).chunks[0].state == "attempted"
     w.bridge.flush()
+    assert len(w.post.for_rid(rid)) == 1  # backoff: not before 1 s
+    w.clock.ms += 1_000
+    w.bridge.flush()
     first, second = w.post.for_rid(rid)
     assert first == second and w.rids.get(w.phone.device, rid).chunks[0].state == "posted"
 

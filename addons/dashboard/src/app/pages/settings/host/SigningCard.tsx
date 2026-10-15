@@ -7,7 +7,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { ClickCard, ClickSwitch } from '@/api/click'
 import { convenienceOffCommand, convenienceOnCommand, custodyPassphraseCommand } from '@/api/pairing'
@@ -77,11 +77,11 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const errorId = useId()
   const inFlight = useRef(false) // a second submit in the same tick, before `busy` re-renders, sends nothing
 
-  const reset = () => {
+  const reset = useCallback(() => {
     setMode('idle')
     setPass('')
     setError(null)
-  }
+  }, [])
   // The state the form was opened on. When the card's state changes under an open form (a "result unknown" outcome
   // whose reload found the switch did happen, or someone using the terminal), the form is stale: close it, clear its
   // message and show the new state. The passphrase goes with it (#580).
@@ -95,7 +95,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
     if (mode === 'idle' || !card) return
     if (openedOn.current === null) openedOn.current = cardState
     else if (openedOn.current !== cardState) reset()
-  }, [cardState, mode])
+  }, [card, cardState, mode, reset])
   // a key already in the key store with signing off: the dashboard has no passphrase to check (Opus H1 on #539)
   const terminalOn = !!card && !on && card.custody === 'convenience'
   const submit = async (body: ClickSwitch) => {

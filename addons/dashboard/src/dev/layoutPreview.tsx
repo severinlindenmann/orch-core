@@ -27,10 +27,9 @@ import { RealDock } from '@/app/terminal/real/RealDock'
 import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 import { agentsApi, type AgentPreview } from '@/api/agents'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
-import { clickProblem } from '@/api/click'
+import { clickProblem, type ClickCard } from '@/api/click'
 import { signerProblem } from '@/api/refusals'
 import type { RosterMember } from '@/api/settings'
-import type { ClickCard } from '@/api/click'
 import type { Workspace } from '@/api/types'
 import { ClickProblemBox } from '@/components/sign/RefusalDevices'
 import { readersOf, readersRoster, refusalSamples } from './readersFixture'
@@ -417,7 +416,7 @@ function install() {
   if (installed) return
   installed = true
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
-  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket }
+  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
     originals.set(name, a[name])
     a[name] = fn
@@ -464,8 +463,10 @@ function install() {
   set('recordsAutoOff', async () => ({ ok: true }))
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
   // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
-  set('clickStatus', async () => signingCard(current))
-  set('switchClick', async () => {
+  // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.
+  set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  set('switchClick', async (...args: never[]) => {
+    if (!current.startsWith('signing-')) return original.switchClick(...args)
     throw new TypeError('fixture: the connection was lost')
   })
   set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => request(action))

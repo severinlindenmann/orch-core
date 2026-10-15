@@ -1186,3 +1186,90 @@ def test_f6_a_plain_entry_on_another_branch_does_not_confirm_by_hash(kit, monkey
     k.publisher = k.make_publisher()
     assert k.publisher.step()[0] == "wait" and "relay_misbehaving" in k.alarms.codes()
     assert k.store.outbox_first().n == entry.n  # the relay still serves the entry by hash: not enough
+
+
+# -- the reviewer's delta-2 mutants (run in r3pub-mut6): the survivors that matter ------------------------------------
+
+
+def test_sync_tick_raises_a_fence(kit, monkeypatch):
+    from orch.relay.session import Fenced
+
+    k = kit
+    p = k.make_publisher(conn=None)
+    _count_holds(k, monkeypatch, [lambda: _err(409, "fenced")])
+    p._sync_renew, p._last_renew = True, k.clock.mono() - publish.RENEW_EVERY_S  # noqa: SLF001
+    with pytest.raises(Fenced):
+        p._tick()  # noqa: SLF001
+
+
+def test_first_check_raises_on_a_fenced_session(kit):
+    from orch.relay.session import Fenced
+
+    k = kit
+    k.session._fenced = True  # noqa: SLF001 - a fence seen by another thread
+    with pytest.raises(Fenced):
+        k.publisher._first_check()  # noqa: SLF001
+
+
+def test_sync_tick_retries_soon_after_a_failure(kit, monkeypatch):
+    k = kit
+    p = k.make_publisher(conn=None)
+    n = _count_holds(k, monkeypatch, [lambda: _err(503, "overloaded")])
+    p._sync_renew, p._last_renew = True, k.clock.mono() - publish.RENEW_EVERY_S  # noqa: SLF001
+    p._tick()  # noqa: SLF001 - fails
+    k.clock.advance(publish.RENEW_RETRY_S)
+    p._tick()  # noqa: SLF001 - retried after RENEW_RETRY_S, not a full period
+    assert n["c"] == 2
+
+
+def test_a_permanent_quota_during_the_first_link_is_held_not_slept(kit):
+    k = kit
+    k.sim.fault = lambda s: (json_reply(429, {"error": "quota_exceeded", "quota": "nodes"}, {"Retry-After": "1"})
+                             if _final(s) else None)  # fmt: skip
+    with pytest.raises(PublishHeld) as e:
+        k.publisher.publish_first(k.session, None)
+    assert e.value.code == "relay_publish_refused"
+
+
+def test_a_stale_renewal_error_does_not_outlive_its_first_link(kit):
+    from orch.relay.session import RelayMisbehaving
+
+    k = kit
+    k.publisher._renew_error = RelayMisbehaving("an earlier link")  # noqa: SLF001
+    k.publisher.publish_first(k.session, None)
+    assert k.store.outbox_entries() == []
+
+
+def test_stop_wakes_a_first_link_wait(kit):
+    k = kit
+    k.sim.fault = lambda s: _err(503, "overloaded", retry_after=30) if _final(s) else None
+    p = k.make_publisher(conn=None, mono=time.monotonic)
+    out = {}
+
+    def run():
+        try:
+            p.publish_first(k.session, None)
+        except PublishHeld as e:
+            out["e"] = e
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    time.sleep(0.5)
+    t0 = time.monotonic()
+    p.stop()
+    t.join(5)
+    assert not t.is_alive() and time.monotonic() - t0 < 2 and out["e"].code == "relay_stopped"
+
+
+def test_h12d3_a_stored_restores_republication_is_held_too(kit, tmp_path, monkeypatch):
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    k.drain()  # accepted at a good level (passphrase)
+    k.sim.roll_back_to(k.sim.accepted[0][1])
+    k.sim.restore_ids.clear()
+    _as_convenience(monkeypatch)
+    _level_kit(k, 0)
+    for _ in range(6):
+        k.publisher.step()
+    assert "relay_reader_old" in k.alarms.codes()
+    assert [h for _, h in k.sim.accepted].count(entry.hash) == 1  # the stored restore was not re-sent

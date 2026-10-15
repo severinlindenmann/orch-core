@@ -345,3 +345,61 @@ def test_ancestry_answers_are_cached_until_the_history_grows(grown, monkeypatch)
     assert first >= 1
     env.log(uid, "grow")
     assert s.relay_ancestor(older, newer) and len(walks) > first
+
+
+def test_every_component_of_the_abandoned_path_is_pinned(grown, tmp_path):
+    import os
+
+    env, uid = grown
+    s = env.store
+    rel = s._checkpoints.dir.relative_to(s.root) / "abandoned"  # noqa: SLF001
+    (s.root / rel).mkdir(parents=True, exist_ok=True)
+    parts = list(rel.parts)
+    for depth in range(len(parts)):
+        p = s.root.joinpath(*parts[: depth + 1])
+        bak = p.with_name(p.name + ".bak")
+        os.rename(p, bak)
+        os.symlink(bak, p)
+        try:
+            with pytest.raises(StoreError) as e:
+                list(s._abandoned_workspace_checkpoints())  # noqa: SLF001
+            assert e.value.code == "validation.path", depth
+        finally:
+            os.unlink(p)
+            os.rename(bak, p)
+
+
+def test_only_named_regular_files_within_4_mib_are_evidence(grown):
+    env, uid = grown
+    forked = _forked(env, uid)
+    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab.mkdir(parents=True, exist_ok=True)
+    (ab / "ticket-x-3.json").write_bytes(canon.cj_checked(forked))  # another name: not a workspace checkpoint
+    (ab / "workspace-big.json").write_bytes(b" " * (4 << 20) + canon.cj_checked(forked))  # above 4 MiB
+    assert list(env.store._abandoned_workspace_checkpoints()) == []  # noqa: SLF001
+
+
+def test_two_branches_paged_in_turn_each_get_their_own_heads(env, tmp_path):
+    s, uid, kept, lost = _branch_env(env, tmp_path)
+    heads = list(s.relay_segment(uid, kept, lost).heads)
+    acc = kept["acc"]
+    for h in heads[:3]:
+        acc = canon.log_acc(acc, h)
+    mid = {"seq": 5, "head": heads[2], "acc": acc}
+    a = s.relay_segment(uid, kept, lost, skip=0, limit=2)  # cached: not the run's last page
+    c = s.relay_segment(uid, mid, lost, skip=0, limit=2)  # another start: never the cached branch
+    assert a.heads == tuple(heads[:2]) and list(c.heads) == heads[3:5] and c.from_acc == mid["acc"]
+    b = s.relay_segment(uid, kept, mid, skip=0, limit=2)  # another upto
+    assert list(b.heads) == heads[:2] and b.after_seq == 2
+
+
+def test_the_branch_bound_is_inclusive_and_pinned(env, tmp_path, monkeypatch):
+    import orch.store.store as store_mod
+
+    assert store_mod.RELAY_BRANCH_MAX == (64 << 20) // 74
+    s, uid, kept, lost = _branch_env(env, tmp_path)
+    monkeypatch.setattr(store_mod, "RELAY_BRANCH_MAX", 6)  # exactly the span: allowed
+    assert len(s.relay_segment(uid, kept, lost).heads) == 6
+    monkeypatch.setattr(store_mod, "RELAY_BRANCH_MAX", 5)
+    with pytest.raises(StoreError):
+        s.relay_segment(uid, kept, lost)

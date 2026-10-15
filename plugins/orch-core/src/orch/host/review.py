@@ -64,6 +64,8 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "move": frozenset({"ticket.moved"}),
     "policy.set": frozenset({"policy.changed"}),
     "settings.set": frozenset({"settings.changed"}),
+    # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
+    "relay.pair_device": frozenset({"device.added"}),
 }
 _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
 

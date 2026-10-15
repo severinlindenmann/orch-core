@@ -1843,6 +1843,12 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Revert:** Restore the pass-through in `host_response`; the per-key checks are then unused.
 - **Follow-up (Opus review CHANGES, same day):** the response's `exit` is a plain int 1..9 (§0.6), else 1; `HostError` itself turns an error without a valid code (or not a dict) into `internal` (exit 1) and checks `exit`, so every reader of `exc.error["code"]` (hostlink, gateway `host_state`, live, terminals) sees a checked code; hostlink reads `error`/`exit` with `.get`. The terminal `end` frame uses the same `valid_code`/`retry_after` helpers. The server's own keys are bound to their codes: `summary`/`signed_at`/`op` to `intent.done`, `commit` to `records.*`, `request_id`/`why` to `human.click_refused`. `SUMMARY_MAX` is 65536 (a long review no longer loses its summary); a plain-text `fix` is capped at 400 like `hint`.
 
+## 2026-10-15 Cancel terminal and artifact work at teardown
+
+- **Decision:** Dispose both terminal implementations synchronously, cancel the mock terminal reveal frame and hint timers, retain and cancel transcript-download cleanup timers (revoking their URLs on unmount), and cancel artifact pane focus restoration. Disposed real views ignore stale input. A shared adapter cancels the pinned xterm 5.x viewport refresh and neutralizes `syncScrollArea` before disposing the renderer; its constructor timer and reset frame have no retained cancellation handles. No global animation-frame stub is added to the Vitest setup.
+- **Why:** The former write-drain → timer → two animation frames disposal chain scheduled new work after unmount, sometimes after jsdom removed `requestAnimationFrame`. Synchronous disposal alone exposes xterm's viewport callbacks to a destroyed renderer; the narrow adapter addresses that underlying dependency bug. Real-xterm and React regression tests exercise pending work at teardown and fail against the previous implementations.
+- **Revert:** Restore delayed terminal disposal and remove the frame/timer ownership changes. Revisit the private viewport adapter when upgrading xterm; remove it once upstream owns and cancels that work.
+
 ## 2026-10-15 No dashboard under an agent's environment; no launch code at rest (#542 items 1+3)
 
 - **Decision (item 1):** core's `orch dashboard` (`plugins/orch-core/src/orch/cli/dashboard.py`) and the addon's own

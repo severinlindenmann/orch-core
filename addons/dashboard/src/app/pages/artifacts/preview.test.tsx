@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 
@@ -242,4 +242,29 @@ describe('Artifacts preview: j and k', () => {
       document.removeEventListener('keydown', take, { capture: true })
     }
   })
+})
+
+
+it('cancels focus restoration when unmounted immediately after closing the pane', async () => {
+  wide(true)
+  const app = renderApp('/w/DEMO/artifacts')
+  await app.user.click(await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T))
+  await screen.findByRole('complementary', { name: 'Preview of tariff-export.log' }, T)
+  vi.useFakeTimers()
+  const ran = vi.fn()
+  const request = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) =>
+    window.setTimeout(() => { ran(); cb(performance.now()) }, 16))
+  const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => window.clearTimeout(id))
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Close the preview' }))
+    expect(request).toHaveBeenCalled()
+    const frame = request.mock.results.at(-1)!.value
+    app.unmount()
+    expect(cancel).toHaveBeenCalledWith(frame)
+    act(() => vi.advanceTimersByTime(1000))
+    expect(ran).not.toHaveBeenCalled()
+  } finally {
+    app.unmount()
+    vi.useRealTimers()
+  }
 })

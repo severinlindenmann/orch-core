@@ -85,7 +85,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
         "grant.list", "workspace.settings", "ticket.text", "reader.list",
     }  # fmt: skip
-    assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set"}
+    assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set", "relay.pair_device"}  # H12c-e
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus

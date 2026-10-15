@@ -17,7 +17,7 @@ The real host lists `human.*` ops without the `human/1` cap and serves no `diff`
 
 ## Install and build
 
-From the checkout (Node 24, uv, Python 3.11+):
+From the checkout (Node 24, uv, Python 3.14+):
 
 ```sh
 cd addons/dashboard

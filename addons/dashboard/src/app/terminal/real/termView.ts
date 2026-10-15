@@ -5,6 +5,7 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Terminal, type ITerminalInitOnlyOptions, type ITerminalOptions } from '@xterm/xterm'
+import { disposeTerminal } from '../disposeTerminal'
 import { POINTER_EVENTS, ReplyFilter, type Ready } from './termProtocol'
 import '@xterm/xterm/css/xterm.css' // the real view must not rely on the mock TerminalView having loaded it
 
@@ -104,6 +105,7 @@ export function createTermView(el: HTMLElement, options: ITerminalOptions & ITer
     search,
     get replaying() { return replaying },
     ready(r) {
+      if (disposed) return
       readyOffset = r.offset
       replaying = r.offset > r.start
       if (r.cols !== term.cols || r.rows !== term.rows) term.resize(r.cols, r.rows)
@@ -111,25 +113,29 @@ export function createTermView(el: HTMLElement, options: ITerminalOptions & ITer
       resetThen(r.start > 0 && replaying ? RING_MARKER : '')
     },
     output(off, bytes) {
+      if (disposed) return
       // Below ready.offset is replay; the write callback of the chunk that reaches it ends the replay (written in
       // order, so every replay chunk has been parsed by then).
       const reaches = off + bytes.length >= readyOffset
-      term.write(bytes, () => { if (reaches) replaying = false })
+      term.write(bytes, () => { if (!disposed && reaches) replaying = false })
     },
     gap(_from, to) {
+      if (disposed) return
       const ends = to >= readyOffset
-      resetThen(GAP_MARKER, () => { if (ends) replaying = false })
+      resetThen(GAP_MARKER, () => { if (!disposed && ends) replaying = false })
     },
     resize(cols, rows) {
+      if (disposed) return
       if (!writer && (cols !== term.cols || rows !== term.rows)) term.resize(cols, rows)
     },
     setWriter(next) {
+      if (disposed) return
       writer = next
       term.options.disableStdin = !next
       term.options.cursorBlink = next
     },
     fit() {
-      if (!writer) return null
+      if (disposed || !writer) return null
       const dims = fitAddon.proposeDimensions()
       if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) return null
       const cols = Math.min(500, Math.max(20, dims.cols))
@@ -138,16 +144,15 @@ export function createTermView(el: HTMLElement, options: ITerminalOptions & ITer
       term.resize(cols, rows)
       return { cols, rows }
     },
-    setSink(next) { sink = next },
+    setSink(next) { if (!disposed) sink = next },
     dispose() {
+      if (disposed) return
       disposed = true
       sink = null
       userInput.dispose()
       data.dispose()
       binary.dispose()
-      // xterm schedules frame work after open; disposing before it ran throws in StrictMode remounts.
-      const dying = term
-      dying.write('', () => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => dying.dispose())), 0))
+      disposeTerminal(term)
     },
   }
 }

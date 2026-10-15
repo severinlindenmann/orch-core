@@ -19,6 +19,7 @@ import { useRole } from '../useRole'
 import { useWorkspace } from '../workspace'
 import { clean } from './fakePty'
 import { screenDriver } from './harnessView'
+import { disposeTerminal } from './disposeTerminal'
 import { SessionList } from './SessionList'
 import { SessionStrip } from './SessionStrip'
 import { TerminalHeader } from './TerminalHeader'
@@ -130,12 +131,22 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
     clearTimeout(timer.current)
     timer.current = setTimeout(() => setNote(false), 4000)
   }
-  useEffect(() => () => { clearTimeout(timer.current); clearTimeout(escTimer.current) }, [])
+  const downloads = useRef(new Map<ReturnType<typeof setTimeout>, string>())
+  useEffect(() => {
+    const pending = downloads.current
+    return () => {
+      clearTimeout(timer.current)
+      clearTimeout(escTimer.current)
+      for (const [id, url] of pending) { clearTimeout(id); URL.revokeObjectURL(url) }
+      pending.clear()
+    }
+  }, [])
 
   useEffect(() => {
     const el = host.current
     if (!el || !attached) return
     let disposed = false
+    let revealFrame: number | undefined
     let term: Terminal | undefined
     let fit: FitAddon | undefined
     const id = Symbol(cacheKey)
@@ -156,6 +167,9 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
     const cleanup = () => {
       if (disposed) return
       disposed = true
+      if (revealFrame !== undefined) cancelAnimationFrame(revealFrame)
+      clearTimeout(timer.current)
+      clearTimeout(escTimer.current)
       ro.disconnect() // stop fits before xterm tears down its renderer
       stopLive()
       if (term) {
@@ -164,12 +178,7 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
         if (cache.size > 40) cache.delete(cache.keys().next().value!)
         preview.current = Array.from({ length: term.buffer.active.length }, (_, i) => term!.buffer.active.getLine(i)?.translateToString(true) ?? '').slice(-20).join('\n')
         subscriptions.forEach((s) => s.dispose())
-        // xterm schedules animation-frame work (viewport sync) when it opens; disposing before it runs throws
-        // "reading 'dimensions'" (hit by StrictMode's mount/unmount/mount). Dispose after those frames have run.
-        // Long screens (agent CLIs) are still being parsed and refresh the viewport on a timer: wait for the write
-        // queue to drain and that timer to run first.
-        const dying = term
-        dying.write('', () => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => dying.dispose())), 0))
+        disposeTerminal(term)
         terminal.current = null
         search.current = null
       }
@@ -221,22 +230,23 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
           const settled = !!v && v.height >= h.height / 2 && v.top >= h.top - 1 && v.bottom <= h.bottom + 1 && now === last
           last = now
           if (settled || ++frames > 30) drawn.style.visibility = ''
-          else requestAnimationFrame(reveal)
+          else revealFrame = requestAnimationFrame(reveal)
         }
-        requestAnimationFrame(reveal)
+        revealFrame = requestAnimationFrame(reveal)
       }
       if (cached === undefined) output.current = driver.first()
       term.textarea?.setAttribute('aria-label', `${session.label} input`)
       // The first time you are in your own terminal: say how to get out (Tab belongs to the shell here).
       if (interactive && term.textarea) {
         const ta = term.textarea
-        const hint = () => { ta.removeEventListener('focus', hint); setEscHint(true); clearTimeout(escTimer.current); escTimer.current = setTimeout(() => setEscHint(false), 3000) }
+        const hint = () => { if (disposed) return; ta.removeEventListener('focus', hint); setEscHint(true); clearTimeout(escTimer.current); escTimer.current = setTimeout(() => setEscHint(false), 3000) }
         ta.addEventListener('focus', hint)
         subscriptions.push({ dispose: () => ta.removeEventListener('focus', hint) })
       }
       if (!interactive) term.textarea?.setAttribute('aria-readonly', 'true')
       let lastEscape = -Infinity
       term.attachCustomKeyEventHandler((e) => {
+        if (disposed) return false
         if (e.type !== 'keydown') return true
         if (e.metaKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setFinding(true); return false }
         if (!interactive) {
@@ -254,6 +264,7 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
         return true
       })
       const write = (text: string) => {
+        if (disposed) return
         output.current += text
         const viewport = term!.buffer.active.viewportY
         term!.write(text, () => {
@@ -278,6 +289,7 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
         const feed = driver.feed
         let closed = false
         subscriptions.push(term.onData((d) => {
+          if (disposed) return
           const out = feed(d) // all data-derived output goes through fakePty.clean()
           if (out) write(out)
           if (driver.exited() && !closed) {
@@ -313,7 +325,15 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
     setFindResult(search.current?.findNext(query, { caseSensitive: false }) ? 'Match found' : 'No matches')
   }
   const copy = () => { void navigator.clipboard.writeText(terminal.current?.getSelection() || transcript()).then(() => setFeedback('Copied transcript'), () => setFeedback('Could not copy transcript')) }
-  const download = () => { const url = URL.createObjectURL(new Blob([transcript()], { type: 'text/plain' })); const a = document.createElement('a'); a.href = url; a.download = `${session.id}.txt`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 0) }
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([transcript()], { type: 'text/plain' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${session.id}.txt`
+    a.click()
+    const id = setTimeout(() => { downloads.current.delete(id); URL.revokeObjectURL(url) }, 0)
+    downloads.current.set(id, url)
+  }
   const fill = useFillHeight(host, placement === 'page' && attached, 360, 40)
   return <section ref={region} className={`min-w-0 overflow-hidden bg-bg ${dock ? 'flex h-full flex-col' : 'rounded-md border border-border'}`} onKeyDown={(e) => { if (e.metaKey && e.key.toLowerCase() === 'f' && attached) { e.preventDefault(); setFinding(true) } }}>
     {!dock && <TerminalHeader session={session} interactive={interactive} rail={rail} picker={picker} leaveRef={leave} canFind={attached} onLeave={leaveTerminal}

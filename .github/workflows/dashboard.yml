@@ -3,19 +3,48 @@ on:
   pull_request:
     branches: [develop]
     types: [opened, synchronize, reopened, ready_for_review]  # a draft is not tested until it is ready
-    paths: ['addons/dashboard/**', 'plugins/orch-core/**', 'docs/architecture/orch-v2-host.md', '.github/workflows/dashboard.yml']
   push:
     branches: [develop]  # a feature branch is tested once, through its PR
-    paths: ['addons/dashboard/**', 'plugins/orch-core/**', 'docs/architecture/orch-v2-host.md', '.github/workflows/dashboard.yml']
 permissions:
   contents: read
+  pull-requests: read  # the changed files of the PR, for the `changes` job
 concurrency:
   group: dashboard-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  changes:
+    # the workflow runs for every PR to develop (a ruleset needs its gate to report each time); the jobs below run only
+    # when a file they cover changed
+    name: dashboard changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.files.outputs.relevant }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = pull_request ]; then
+            files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          else
+            files="$(gh api --paginate "repos/$REPO/commits/$SHA" --jq '.files[].filename')"
+          fi
+          if grep -Eq '^(addons/dashboard/|plugins/orch-core/|docs/architecture/orch-v2-host\.md$|\.github/workflows/dashboard\.yml$)' <<<"$files"; then
+            relevant=true
+          else
+            relevant=false
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
   vitest:
     name: vitest (shard ${{ matrix.shard }}/3)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -38,7 +67,8 @@ jobs:
       - run: npx vitest run --maxWorkers=3 --shard=${{ matrix.shard }}/3
   node:
     name: node (layout check, typecheck, build)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -58,14 +88,11 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
   python:
-    name: dashboard tests (py${{ matrix.python }})
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: dashboard tests
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.11', '3.14']
     defaults:
       run:
         working-directory: addons/dashboard/server
@@ -75,10 +102,23 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
-          python-version: ${{ matrix.python }}
+          python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: addons/dashboard/server/uv.lock
       - run: uv sync --locked
       - run: uv run ruff check .
       # The realhost module starts a real orch host and a pty-driven signer: run it locally (see server/README.md).
       - run: uv run pytest -q -m "not realhost"
+  gate:
+    # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
+    name: dashboard gate
+    if: always()
+    needs: [changes, vitest, node, python]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*) exit 1 ;; esac  # skipped (draft, nothing relevant) is fine

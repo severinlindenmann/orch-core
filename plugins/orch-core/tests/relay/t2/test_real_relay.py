@@ -7,6 +7,7 @@ Every test gets its own relay process (fresh data directory, fresh rate windows)
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -16,9 +17,10 @@ from orch.relay.framing import MAX_ANSWER
 from orch.relay.retry import RelayRefused
 from orch.relay.session import Fenced, LoginHeldOff
 
-from ..helpers import OPEN_CONNS, WS, directory, make_card
+from ..bridgekit import ulid
+from ..helpers import OPEN_CONNS, directory, make_card
 from .harness import get_json
-from .kit import DEVICE, HostSide, Members, Owner, RefDevice, answer_of, publish_card, session, wait_for
+from .kit import DEVICE, HostSide, Members, Owner, RefDevice, answer_of, now_ms, publish_card, session, wait_for
 
 pytestmark = pytest.mark.relay_t2
 
@@ -44,8 +46,6 @@ def test_relay_runs_with_our_origin_instance_and_publication_cap(relay):
     r = conn.request("GET", "/v2/relay-info", route="GET /v2/relay-info", headers={}, body=None, deadline_s=10,
                      cap=4096)  # fmt: skip
     assert r.status == 200
-    import json
-
     info = json.loads(r.body)
     assert info["max_publication_bytes"] == relay.configured_cap
     assert info["reader"] >= 1
@@ -250,8 +250,4 @@ def test_a_takeover_fences_the_running_loop(bridged, relay):
 
 
 def _ulid() -> str:
-    from .kit import now_ms
-    from ..bridgekit import ulid
-
     return ulid(now_ms())
-

@@ -47,6 +47,7 @@ HOST = "127.0.0.1"
 START_ATTEMPTS = 3
 HEALTH_WAIT_S = 60.0  # a cold CI runner resolves the relay's environment on the first `uv run`
 STOP_GRACE_S = 10.0
+TEST_BUDGET_S = 20.0  # one test, from the relay answering to its teardown (11A.10: each T2 test < 20 s)
 FORCE_AFTER_S = 1.0
 # the child's environment is an allow-list: nothing else of the parent leaks in (no ORCH_RELAY_* of the caller, no
 # VIRTUAL_ENV of core's environment)
@@ -194,9 +195,9 @@ class RelayProcess:
         end = time.monotonic() + STOP_GRACE_S
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(FORCE_AFTER_S)
-        if group_alive(pgid):  # uvicorn waits for open long polls; a second SIGTERM is its forced exit
+        if group_alive(pgid):  # uvicorn waits for open connections; SIGINT while shutting down is its forced exit
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(pgid, signal.SIGTERM)
+                os.killpg(pgid, signal.SIGINT)
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(max(0.1, end - time.monotonic()))
         while group_alive(pgid) and time.monotonic() < end:

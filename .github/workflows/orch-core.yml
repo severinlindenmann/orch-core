@@ -31,7 +31,8 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
-      - run: uv run pytest -q -m "not slow" -n auto
+      # the T2 real-relay tests run in their own job (relay-t2), never here
+      - run: uv run pytest -q -m "not slow and not relay_t2" -n auto
         env:
           # The 3.14 leg must have Unicode 16.0, so the canon comparison tests can never skip silently there.
           ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}
@@ -58,3 +59,39 @@ jobs:
           ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}
       # the latency budgets run alone: nothing else on the machine while they measure
       - run: uv run pytest -q -m slow -p no:xdist tests/ops/test_perf.py tests/store/test_perf.py tests/model/test_perf.py
+  relay-t2:
+    # 11A.10 harness layer 2: core's relay client and bridge loop against the REAL orch-relay at the commit pinned in
+    # tests/relay/vectors/SOURCE, on loopback only (no deployed relay is ever contacted). Its own job, so the main
+    # matrix is not slowed; the tests fail (never skip) here if the relay checkout is missing.
+    name: relay T2 (real relay, py3.14)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: read the pinned relay commit from SOURCE
+        id: source
+        run: |
+          commit="$(sed -n 's/^relay_commit: *\([0-9a-f]\{40\}\)$/\1/p' tests/relay/vectors/SOURCE)"
+          test -n "$commit" || { echo "no 40-hex relay_commit in SOURCE" >&2; exit 1; }
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: severinlindenmann/orch-relay
+          ref: ${{ steps.source.outputs.commit }}
+          path: orch-relay
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: |
+            plugins/orch-core/uv.lock
+            orch-relay/uv.lock
+      - run: uv sync --locked
+      - run: uv sync --locked
+        working-directory: orch-relay
+      - run: uv run pytest -q -p no:xdist -m relay_t2 tests/relay/t2
+        timeout-minutes: 8
+        env:
+          ORCH_RELAY_DIR: ${{ github.workspace }}/orch-relay
+          ORCH_RELAY_T2_REQUIRED: "1"

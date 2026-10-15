@@ -26,6 +26,7 @@ __all__ = [
     "card_key",
     "ck_commit",
     "open_card_part",
+    "relay_url_ok",
     "seal_card_part",
     "sealed_hash",
     "signed_bytes",
@@ -51,6 +52,12 @@ class CardRefused(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(f"card refused: {code}")
         self.code = code
+
+
+def relay_url_ok(url: object) -> bool:
+    """The card's ``relay_url`` form (proto §7.1): https with a lower-case host and an optional port, no path; http
+    only for loopback."""
+    return type(url) is str and _RELAY_URL.fullmatch(url) is not None
 
 
 def signed_bytes(o: Mapping[str, Any]) -> bytes:
@@ -90,7 +97,7 @@ def verify_card(c: object, owner_pk_pub: bytes) -> dict[str, Any]:
         crypto.unhex(o["workspace_id"], 16)
         wsk = crypto.validate_public_key(crypto.unb64u(o["wsk_pub"], crypto.PUB_LEN))
         crypto.validate_public_key(crypto.unb64u(o["wxk_pub"], crypto.PUB_LEN))
-        if type(o["relay_url"]) is not str or not _RELAY_URL.fullmatch(o["relay_url"]):
+        if not relay_url_ok(o["relay_url"]):
             raise CardRefused("malformed")
         for key in ("wxk_version", "card_seq", "issued_ms"):
             low = 0 if key == "issued_ms" else 1

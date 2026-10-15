@@ -3874,15 +3874,6 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
     `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
     (§0.4), so no cap or op version changes.
-45. **Reader records, invariant I, `reader.declare`/`reader.list`, `signer` in the views (H12d-2, §0.8.6 item 9 "As
-    built in H12d-2"; the number may be renumbered when a parallel change lands first):** `member.add` takes
-    `reader_decl` (`--reader-decl PATH`, an `x-file`), and the review of a reader-adding event carries
-    `derived.reader` (a host attestation; a signer without it refuses: update orch). New ops `reader.declare` (P,
-    `person_write`, an idem) and `reader.list` (a read, P and R), cap `reader/1`; `member.list` devices gain `reader`,
-    `member.list` and `workspace.show` gain `required_reader`; `ticket.get` `questions[].answer` gains
-    `signer:{device, auth}`. New code `reader.decl_invalid`; `sign.convenience_readers` and
-    `sign.convenience_unavailable` gain `Error.detail` `{reason, devices}` (seven codes may carry `detail` now).
-    Additive for P clients while `required_reader` is 0.
 
 46. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10):**
     `orch.identity.answers` (the six exact §8.3 pair answers; a relayed challenge or rejection enters only as the
@@ -3896,6 +3887,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons` without the owner;
     `check_wk_grant` takes the device id; `check_cert_request` takes a `VerifiedCard`, `now_ms` and `me` as person and
     device ids; the `make_*` builders take `pk_pub`. No hash, contract or schema change.
+
+47. **Reader records, invariant I, `reader.declare`/`reader.list`, `signer` in the views (H12d-2, §0.8.6 item 9 "As
+    built in H12d-2"; the number may be renumbered when a parallel change lands first):** `member.add` takes
+    `reader_decl` (`--reader-decl PATH`, an `x-file`), and the review of a reader-adding event carries
+    `derived.reader` (a host attestation; a signer without it refuses: update orch). New ops `reader.declare` (P,
+    `person_write`, an idem) and `reader.list` (a read, P and R), cap `reader/1`; `member.list` devices gain `reader`,
+    `member.list` and `workspace.show` gain `required_reader`; `ticket.get` `questions[].answer` gains
+    `signer:{device, auth}`. New code `reader.decl_invalid`; `sign.convenience_readers` and
+    `sign.convenience_unavailable` gain `Error.detail` `{reason, devices}` (seven codes may carry `detail` now).
+    Additive for P clients while `required_reader` is 0.
 
 ---
 

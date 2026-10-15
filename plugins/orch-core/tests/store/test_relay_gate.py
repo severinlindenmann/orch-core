@@ -500,7 +500,7 @@ def test_every_gate_decision_uses_the_same_standing_function(env, tmp_path):
 
 
 def test_no_second_standing_implementation_in_the_relay_gate_paths():
-    """Structural: relayr6 decides standing only through Store.device_ok (device_standing_ok); R2's
+    """Structural: relayr6 decides standing only through device_standing_ok on one snapshot; R2's
     device_standing takes its "ok" from device_standing_ok; the chokepoint's per-device test is device_standing_ok.
     (Limit: host/auth.py and host/human.py judge local socket peers with their own removed/revoked checks; they are
     not relay gate decisions.)"""
@@ -508,9 +508,175 @@ def test_no_second_standing_implementation_in_the_relay_gate_paths():
 
     rr = Path(relayr6.__file__).read_text()
     assert "device_standing(" not in rr and ".removed" not in rr and ".revoked" not in rr
-    assert rr.count("store.device_ok(") >= 3
+    assert "device_ok(" not in rr  # round 6: no call that can re-enter (and reload) the store inside the span
+    assert rr.count("device_standing_ok(state, ") >= 3  # one snapshot, the one function
     adm = Path(admission.__file__).read_text()
     assert "device_standing_ok(state, device_id, person_id)" in adm
     src = Path(store_mod.__file__).read_text()
     assert "return device_standing_ok(state, device)" in src
     assert src.count("view.removed") == 1 and src.count("view.revoked") == 1  # only inside device_standing_ok
+
+
+# -- round 6 (Opus delta 4): the prune is atomic and monotone -------------------------------------------------
+
+
+def test_x1_a_prune_never_writes_a_stale_copy_over_a_raise_from_a_nested_reload(env, tmp_path):
+    """X1: a callback that re-enters the store reloads a foreign removal of d3, which raises and writes d3's reason;
+    the prune must then write NOTHING (compare-and-swap), so d3's reason survives and the gate stays up."""
+    d2, _ = env.add_device()
+    d3, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        mk.raise_gate(d2[2:], "f1_standing")  # stale: d2 ok
+        fired = []
+
+        def standing(d):
+            if not fired:
+                fired.append(1)
+                s2 = env.other()
+                try:
+                    s2.append(env.person_event(env.owner, "workspace", "device.removed", device=d3), log="workspace")
+                finally:
+                    s2.close()
+            return env.store.device_ok("d_" + d)  # re-enters, reloads, raises d3
+
+        with env.store.locked():
+            assert mk.prune_stale_reasons(standing) == 0
+        assert admission.device_standing(env.store, env.owner.ref, d3) == "removed"
+        reasons = mk.head()["gate"]["reasons"]
+        assert {"device": d3[2:], "reason": "f1_standing"} in reasons and mk.seal_state().gated
+    finally:
+        mk.close()
+
+
+def test_x2_the_rebuild_judges_the_store_after_its_reload(env, tmp_path):
+    """A stale reason for d2; another store then really removes d2: the rebuild's lock entry reloads first, so the
+    reason is kept (and raised again)."""
+    import types
+
+    from orch.host import relayr6
+
+    d2, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        mk.raise_gate(d2[2:], "f1_standing")
+        s2 = env.other()
+        try:
+            s2.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+        finally:
+            s2.close()
+        relayr6._rebuild_gate(types.SimpleNamespace(store=env.store), mk)  # noqa: SLF001
+        assert {"device": d2[2:], "reason": "f1_standing"} in mk.head()["gate"]["reasons"] and mk.seal_state().gated
+    finally:
+        mk.close()
+
+
+def test_x3_a_device_listed_as_another_persons_is_never_pruned(env, tmp_path, monkeypatch):
+    import types
+
+    from orch.host import relayr6
+
+    d2, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        mk.raise_gate(d2[2:], "f1_standing")
+        monkeypatch.setattr(mk, "listed_devices", lambda: [(d2[2:], "cd" * 16)])
+        relayr6._rebuild_gate(types.SimpleNamespace(store=env.store), mk)  # noqa: SLF001
+        assert mk.seal_state().gated and {"device": d2[2:], "reason": "f1_standing"} in mk.head()["gate"]["reasons"]
+    finally:
+        mk.close()
+
+
+def test_r03_listed_for_two_persons_is_pruned_only_if_ok_for_both(env, tmp_path, monkeypatch):
+    import types
+
+    from orch.host import relayr6
+
+    d2, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        mk.raise_gate(d2[2:], "f1_standing")
+        owner = env.owner.ref[2:]
+        monkeypatch.setattr(mk, "listed_devices", lambda: [(d2[2:], owner), (d2[2:], "cd" * 16)])
+        relayr6._rebuild_gate(types.SimpleNamespace(store=env.store), mk)  # noqa: SLF001
+        assert {"device": d2[2:], "reason": "f1_standing"} in mk.head()["gate"]["reasons"]
+        monkeypatch.setattr(mk, "listed_devices", lambda: [(d2[2:], owner)])
+        relayr6._rebuild_gate(types.SimpleNamespace(store=env.store), mk)  # noqa: SLF001
+        assert mk.head()["gate"] is None
+    finally:
+        mk.close()
+
+
+def test_a_raise_from_another_thread_between_judgement_and_write_stops_the_prune(env, tmp_path):
+    import threading
+
+    from orch.relay.r6.keystore import R6Gate
+    from tests.relay.r6kit import open_keys, rotate
+
+    d2, _ = env.add_device()
+    (tmp_path / "k").mkdir(mode=0o700)
+    queued = threading.Event()
+    other = {}
+
+    def fault(point):
+        if point == "before_prune_write":
+            t = threading.Thread(target=lambda: mk.raise_gate("cd" * 16, "held_evidence"))
+            other["t"] = t
+            t.start()
+            for _ in range(500):  # the raise queues under the seal lock, then waits for our writer lock
+                if mk._gate_queue:  # noqa: SLF001
+                    queued.set()
+                    break
+                threading.Event().wait(0.01)
+
+    mk = open_keys(tmp_path / "k", hooked=False, fault=fault)
+    try:
+        rotate(mk)
+        R6Gate(mk).install(lambda: env.store)
+        mk.raise_gate(d2[2:], "f1_standing")  # stale
+        assert mk.prune_stale_reasons(lambda d: True) == 0 and queued.is_set()
+        other["t"].join(10)
+        reasons = mk.head()["gate"]["reasons"]
+        assert {"device": "cd" * 16, "reason": "held_evidence"} in reasons and mk.seal_state().gated
+    finally:
+        mk.close()
+
+
+def test_p06_the_in_memory_gate_goes_down_only_after_the_durable_write(env, tmp_path):
+    from orch.relay.r6.keystore import R6Gate
+    from tests.relay.r6kit import open_keys, rotate
+
+    class Crash(Exception):
+        pass
+
+    def fault(point):
+        if point == "before_prune_write":
+            raise Crash(point)
+
+    (tmp_path / "k").mkdir(mode=0o700)
+    mk = open_keys(tmp_path / "k", hooked=False, fault=fault)
+    try:
+        rotate(mk)
+        R6Gate(mk).install(lambda: env.store)
+        mk.raise_gate("ab" * 16, "f1_standing")
+        with pytest.raises(Crash):
+            mk.prune_stale_reasons(lambda d: True)
+        assert mk.gate_up() and mk.seal_state().gated and mk.head()["gate"] is not None
+    finally:
+        mk.close()
+
+
+def test_the_prune_is_refused_while_unsafe(tmp_path):
+    from orch.relay.r6.keystore import MembershipUnsafe
+    from tests.relay.r6kit import open_keys, rotate
+
+    mk = open_keys(tmp_path)
+    rotate(mk)
+    mk.close()
+    (tmp_path / "membership" / "head.json").unlink()
+    mk = open_keys(tmp_path)
+    try:
+        with pytest.raises(MembershipUnsafe):
+            mk.prune_stale_reasons(lambda d: True)
+    finally:
+        mk.close()

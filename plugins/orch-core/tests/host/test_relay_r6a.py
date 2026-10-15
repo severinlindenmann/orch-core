@@ -194,18 +194,35 @@ def test_the_custody_check_walks_r6cs_subdirectories(lab):
 
 
 class _FakeLiveStore:
-    """locked() and device_ok() for the rebuild (``bad``: the devices whose standing is lost)."""
+    """locked() and a state snapshot for the rebuild (``bad``: the devices whose standing is lost; every other device
+    is the listed person's, ok). ``depth`` records whether the prune ran inside the lock span."""
 
-    def __init__(self, bad=()):
-        self.bad = {"d_" + b for b in bad}
+    def __init__(self, bad=(), persons=None):
+        import types
+
+        self.depth = 0
+        bad = {"d_" + b for b in bad}
+        self.persons = persons or {}
+
+        class Devices(dict):
+            def get(inner, dev, default=None):  # noqa: N805
+                person = self.persons.get(dev)
+                return types.SimpleNamespace(person=person, removed=dev in bad, revoked=False) if person else None
+
+        self.state = types.SimpleNamespace(workspace=types.SimpleNamespace(devices=Devices()))
 
     def locked(self):
         import contextlib
 
-        return contextlib.nullcontext()
+        @contextlib.contextmanager
+        def span():
+            self.depth += 1
+            try:
+                yield
+            finally:
+                self.depth -= 1
 
-    def device_ok(self, device, person=None):
-        return device not in self.bad
+        return span()
 
 
 def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path, monkeypatch):
@@ -219,7 +236,10 @@ def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path,
     try:
         rotate(mk, devices=[DEVICE])
         expose_rotation(mk, devices=[DEVICE, other])
-        relayr6._rebuild_gate(types.SimpleNamespace(store=_FakeLiveStore([other])), mk)  # noqa: SLF001
+        from tests.relay.r6kit import PERSON
+
+        live = _FakeLiveStore([other], persons={"d_" + d: "p_" + PERSON for d in (DEVICE, other)})
+        relayr6._rebuild_gate(types.SimpleNamespace(store=live), mk)  # noqa: SLF001
         assert mk.gate_up() and {"device": other, "reason": "f1_standing"} in mk.head()["gate"]["reasons"]
         calls = []
         fake = types.SimpleNamespace(
@@ -304,3 +324,26 @@ def test_r6_prunes_a_stale_reason_of_a_device_that_kept_its_standing(lab):
             assert mk.seal_state().gated
         finally:
             relayr6.close(service)
+
+
+def test_r01_the_rebuild_prunes_inside_its_one_lock_span(tmp_path):
+    import types
+
+    from tests.relay.r6kit import DEVICE, PERSON, open_keys, rotate
+
+    mk = open_keys(tmp_path)
+    try:
+        rotate(mk, devices=[DEVICE])
+        live = _FakeLiveStore(persons={"d_" + DEVICE: "p_" + PERSON})
+        depths = []
+        real = mk.prune_stale_reasons
+
+        def prune(ok):
+            depths.append(live.depth)
+            return real(ok)
+
+        mk.prune_stale_reasons = prune
+        relayr6._rebuild_gate(types.SimpleNamespace(store=live), mk)  # noqa: SLF001
+        assert depths == [1]
+    finally:
+        mk.close()

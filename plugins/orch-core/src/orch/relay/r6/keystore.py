@@ -668,35 +668,49 @@ class MembershipKeys:
             return self._gate_up
 
     def prune_stale_reasons(self, standing_ok: Callable[[str], bool]) -> int:
-        """Round 5 (F-1): drop every durable ``f1_standing`` gate reason whose device (32 hex) ``standing_ok`` says is
-        ``ok`` in the LIVE store, and lower the gate when no reason is left. The caller holds the live store's lock
-        across this call (so no removal can land in between) and passes the store's own standing. The reason came
-        from a raise made before an append that then failed before its commit point (crash, disk error): the device
-        never lost its standing. Nothing is pruned while a raise is queued (not yet durable), and no other reason
-        kind is touched (``device.removed`` etc. from the gate API, ``h7``, ``""`` for every device). Returns the
-        number of reasons dropped. Lowering is durable before the in-memory gate goes down."""
+        """Round 5/6 (F-1): drop every durable ``f1_standing`` gate reason whose device (32 hex) ``standing_ok`` says is
+        ``ok``, and lower the gate when no reason is left. A gate LOWERING, so atomic and monotone:
+
+        * ``standing_ok`` must be a pure function of ONE store state snapshot taken under the live store's lock after
+          its reload (``relayr6._rebuild_gate``: ``device_standing_ok(store.state, ...)``), never a call that can
+          re-enter the store and reload (round 6: a nested reload raised a new reason that the prune then overwrote);
+        * compare-and-swap: the head the prune started from is kept; if ``head.json`` changed meanwhile (a raise was
+          written, also from inside ``standing_ok``) or a raise is queued, nothing is written (``0``);
+        * the durable write comes first; the in-memory gate goes down only after it, and only if the head is still the
+          one just written and no raise is queued.
+
+        Never another reason kind (``device.removed`` etc., ``h7``, ``""``). Refused while unsafe or forked."""
+        self._require_safe()
         with self._write():
+            start = self._head
             with self._seal:
                 if self._gate_queue:
                     return 0
-            gate = self._head["gate"]
+            gate = start["gate"]
             if gate is None:
                 return 0
             keep, dropped = [], 0
             for r in gate["reasons"]:
-                if r["reason"] == "f1_standing" and r["device"] and standing_ok(r["device"]):
+                if r["reason"] == "f1_standing" and r["device"] and standing_ok(r["device"]) is True:
                     dropped += 1
                 else:
                     keep.append(r)
             if not dropped:
                 return 0
+            with self._seal:
+                if self._head is not start or self._gate_queue:  # changed while judging: never write a stale copy
+                    return 0
             new_gate = {**gate, "reasons": keep} if keep else None
-            new = {**self._head, "gate": new_gate}
+            new = {**start, "gate": new_gate}
+            self._fault("before_prune_write")
+            with self._seal:
+                if self._head is not start or self._gate_queue:  # a raise landed at the last moment
+                    return 0
             self._dir.write_json(HEAD, new)
             self._head = new
             self._fault("after_prune")
             with self._seal:
-                if new_gate is None and not self._gate_queue:
+                if new_gate is None and self._head is new and not self._gate_queue:
                     self._gate_up = False
             return dropped
 

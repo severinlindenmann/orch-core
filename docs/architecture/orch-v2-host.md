@@ -8933,6 +8933,16 @@ structurally: the invariant is named and enforced in one place.
   (`device.removed` etc., `h7`, `""`). The lowering is durable before the in-memory gate goes down. Called by
   `relayr6._rebuild_gate` (every `r6()`), and **R6b's planning must call it** (under the store lock) before it
   decides a rotation. A real removal is never pruned (the device is not `ok`).
+  **Round 6 (Opus delta 4, F-1): a lowering is atomic and monotone.** The first version judged each reason through
+  `Store.device_ok`, which re-enters the store and reloads; a nested reload could raise (and write) a new reason
+  that the prune then overwrote with its stale copy, lowering the gate for a really removed device. Now the rebuild
+  takes ONE state snapshot inside ONE store-lock span (whose entry reloads), and every raise and the prune judge that
+  snapshot through `device_standing_ok` (no call in the span re-enters the store); the prune is compare-and-swap:
+  it keeps the head it started from and writes nothing if `head.json` changed or a raise was queued meanwhile
+  (checked after judging and again right before the write); the in-memory gate goes down only after the durable
+  write and only if the head is still the one written and no raise is queued. The prune refuses while the store is
+  unsafe or in a forked child. A removal that a restore undoes makes the device `ok` again under F1, so the prune
+  then lowers its reason, as R2's standing serves it again (a lost phone must be REVOKED, 11A.4).
 - J-R6a-25 (round 5, an automated review's "validator differential" flag) **One standing function for every relay
   gate decision:** `orch.store.store.device_standing_ok(state, device, person=None)`. The store chokepoint (setter),
   `Store.device_ok` (relayr6's start-up raise and prune) and R2's `host.admission.device_standing` ("ok") all call

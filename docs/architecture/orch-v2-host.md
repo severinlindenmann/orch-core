@@ -4159,6 +4159,12 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (the same source as `host.status.relay.gate.r6_ready`; `false` while R6 is dormant). Columns P, G and N get no `relay`
     field. No secret, nothing per workspace beyond what `whoami` scopes. No vector change (the R2 vectors carry a
     fixed host answer).
+58. **H13-0: push and Drop crypto builders, host recovery envelope (§11A.16.14 "As built in H13-0"; the number may be
+    renumbered when a parallel change lands first):** pure `orch.crypto.push`, `orch.crypto.drop` and
+    `orch.crypto.recovery`; two planned host-local labels in `orch.crypto.labels.PLANNED_LABELS`
+    (`kdf_host_drop_recovery`, `sig_drop_handoff`, the latter on no signing role until H13b-4). The vendored relay
+    corpus moves to orch-relay `d84f706` (D39a1: `drop.upload_frame`, `drop.relay_put`, six Drop HTTP fixtures,
+    MANIFEST revision 13). Nothing served; no F1, wire or schema change.
 
 ---
 
@@ -9667,6 +9673,45 @@ also change custody and the signer, so they need an Opus review of the new label
 - `CardKeys` opens `wxk` wraps.
 - Label padding.
 - The storage numbers of D11.
+
+#### 11A.16.14 As built in H13-0
+
+Where the code differs from or adds to the design text above, the code is this. Pure functions, no key custody, no
+I/O; `BridgeKeys`, `CardKeys` and `RelaySigner` call them in H13-1.
+
+- **Labels.** `orch.crypto.labels.PLANNED_LABELS` holds `kdf_host_drop_recovery` = `orch/v2/host-drop-recovery|` and
+  `sig_drop_handoff` = `orch/v2/sig/drop-handoff|`; both are in `L`, neither in `LABELS` (which mirrors the relay
+  corpus) nor in `signature_labels()` or any custody role list (H13b-4 adds the hand-off label to
+  `DEVICE_KEY_LABELS`). `tests/crypto/test_h13_labels.py`: every `|`-terminated label of every source (protocol,
+  planned, canon, F1, the vendored corpus) is pairwise prefix-free, and each planned label is prefix-free against every
+  label, the unterminated HKDF `kdf_*` labels included. The unterminated `kdf_*` labels are prefixes of one another by
+  construction (`orch/v2/push` of `orch/v2/push-msg`); they are only used as `label|field|...` HKDF contexts.
+- **Push (`orch.crypto.push`).** `k_push`, `push_aad`, `push_signed_bytes` (what `RelaySigner.push` signs),
+  `push_payload` (D2 kinds only; `id` ASCII 1 to 128 bytes; `ts_ms` passed in, `0 <= ts_ms < 2^53`), `pad_label`
+  (a non-empty fixed point of `clean_label` not ending in U+0020, padded to exactly 80 code points), `seal_push`
+  (the caller's 64-byte signature in, `cj(outer)` out, a fresh salt, at most 3,072 bytes; it refuses an unpadded
+  label) and `open_push` (the §9 service-worker steps 1 to 6 with its drop reasons; replay memory is the caller's).
+- **Drop (`orch.crypto.drop`).** ORD2 `encrypt_blob` (fresh nonce prefix) / `decrypt_blob` / `decrypt_chunk` (for
+  streamed downloads), `seal_meta` / `open_meta`, `dek_commit`, `parent_hash`, `wrap_wk` / `wrap_sealed` (`wxk`,
+  `device`) and their openers, `open_wrap` (record names the descriptor's object and version, then `dek_commit` checked
+  in constant time), `check_wrap_record` (the closed §10.3 shape), `drop_object` / `check_drop_object` /
+  `drop_object_signed_bytes` / `verify_drop_object`, `drop_claim_object` / `drop_claim_signed_bytes`,
+  `rewrap_same_dek` (only the committed DEK, only a `[space_id]` or inbox object). Frames on two levels:
+  `encode_frame` / `parse_frame` / `reframe` are the protocol's §19.9 checks (they reproduce every accepted vector
+  frame; `parse_frame` also requires a canonical head, since the host parses only frames it built);
+  `build_host_frame` / `reframe_host` add D7: author this workspace, a `file` at version 1, never `inbox`; a
+  `[space_id]` frame carries exactly one `wk` wrap; a device-only frame carries only `device` wraps to listed devices.
+- **Recovery envelope (`orch.crypto.recovery`).** `RecoveryEnvelope` is a frozen slotted class (`object_id`, `epoch`,
+  `ct`; `v` 1 and `kind` `drop_recovery` as class constants), not a mapping. `ct = nonce (12) || AES-256-GCM(K, nonce,
+  DEK, aad = "")` with `K` as in 11A.16.2 (the info is the raw bytes `label || ws || u32(e) || object_id`).
+  **JUDGEMENT CALL:** an empty AAD, since the key derivation already binds workspace, epoch and object; the rejected
+  option repeated the context as AAD. Its storage form `to_host_bytes()` (canonical JSON, hex fields) has a field set
+  no wrap record has. `cj`, the wire dump and `check_wrap_record` refuse the envelope, so no frame builder accepts it;
+  tests pin each path and that its bytes never appear in a device-only frame.
+- **Vectors.** `tests/crypto/test_h13_push.py` and `test_h13_drop.py` reproduce every `push` and `drop` vector
+  byte-exact (fixed salts, prefixes and ephemeral keys through test-only seams, the relay reference's `fake` seeds),
+  including `upload_frame`, every 200/201 `relay_put` frame and the same-DEK rewrap case. They are hostile-tested:
+  truncation, a wrong label domain, a wrong epoch, oversized inputs, reordered chunks, foreign wraps.
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

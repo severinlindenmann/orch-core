@@ -501,3 +501,23 @@ def test_parse_frame_size_limits():
     spaced = body[8 : 8 + head_len].replace(b":", b": ", 1)  # not canonical: refused, the head is cj
     with pytest.raises(drop.DropError):
         drop.parse_frame(b"ODU2" + len(spaced).to_bytes(4, "big") + spaced + body[8 + head_len :])
+
+
+def test_a_host_reframing_keeps_d7():
+    devs = sorted([IDS["device_phone"], IDS["device_laptop"]])
+    signed, blob = _host_object(devs)
+    dev = drop.wrap_sealed("device", pub("phone.kx"), PHONE, 0, OBJ, 1, DEK)
+    body = drop.build_host_frame(signed, [dev], blob)
+    lap = drop.wrap_sealed("device", pub("laptop.kx"), LAPTOP, 0, OBJ, 1, DEK)
+    again = drop.reframe_host(body, [dev, lap])
+    assert drop.parse_frame(again)[0]["wraps"] == [dev, lap]
+    for extra in (
+        drop.wrap_wk(WK1, WS, 1, OBJ, 1, DEK),
+        drop.wrap_sealed("wxk", pub("wxk_a_1.kx"), WS, 1, OBJ, 1, DEK),
+    ):
+        with pytest.raises(drop.DropError):
+            drop.reframe_host(body, [dev, extra])
+    signed, blob = _host_object([WS.hex()])
+    body = drop.build_host_frame(signed, [drop.wrap_wk(WK1, WS, 1, OBJ, 1, DEK)], blob)
+    w2 = drop.rewrap_same_dek(signed["o"], DEK, bytes(32), 2)
+    assert drop.parse_frame(drop.reframe_host(body, [w2]))[0]["wraps"] == [w2]

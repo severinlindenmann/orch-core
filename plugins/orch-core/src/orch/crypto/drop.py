@@ -65,6 +65,7 @@ __all__ = [
     "parse_blob_header",
     "parse_frame",
     "reframe",
+    "reframe_host",
     "rewrap_same_dek",
     "seal_meta",
     "verify_drop_object",
@@ -692,3 +693,10 @@ def build_host_frame(signed: dict, wraps: list[dict], blob: bytes) -> bytes:
             if w["target_id"] not in r:
                 raise DropError("a device wrap to a device outside recipients")
     return encode_frame(signed, wraps, blob)
+
+
+def reframe_host(body: bytes, wraps: list[dict]) -> bytes:
+    """:func:`reframe` for a host frame: the new frame passes :func:`build_host_frame` again (D7 holds for every
+    re-framing: a device-only frame never gains a workspace wrap)."""
+    head, blob = parse_frame(body)
+    return build_host_frame(head["descriptor"], wraps, blob)

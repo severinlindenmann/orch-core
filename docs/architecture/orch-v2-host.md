@@ -7067,7 +7067,8 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   `primary-kx`; 0700 directories checked as convenience custody's, files 0600) under one passphrase. `init` writes
   both into a private temporary directory and renames it into place, so it is all or nothing; it first removes
   `.keys.tmp<pid>.<8 hex>` directories an interrupted init left (that name only, a real directory by `lstat`, owned
-  by this user). When the passphrase opens the signing key but not the kx key, the unlock reports damaged files, not
+  by this user, and not of a live other process: a concurrent init keeps its directory and the loser gets
+  `KeyExists`; a folder changed mid-sweep is a `CustodyError`). When the passphrase opens the signing key but not the kx key, the unlock reports damaged files, not
   a wrong passphrase. Any custody but
   passphrase is refused with `sign.convenience_unavailable`, reason `primary`, and the module reads no environment
   variable (11A.15.11 N8a). `unlocked(state, action=...)` is the one-command unlock;

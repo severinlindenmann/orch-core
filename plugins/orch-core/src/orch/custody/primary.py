@@ -143,20 +143,53 @@ def load(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
     return _info(_open(state_dir))
 
 
-_LEFTOVER = re.compile(r"\.keys\.tmp[0-9]+\.[0-9a-f]{8}")
+_LEFTOVER = re.compile(r"\.keys\.tmp([0-9]+)\.[0-9a-f]{8}")
+
+
+def _pid() -> int:
+    """This process's id (a seam: tests stand in for another process)."""
+    return os.getpid()
+
+
+def _alive(pid: int) -> bool:
+    """As :func:`orch.host.ownership._alive` (not imported: ``orch.host`` imports custody). ``PermissionError``
+    means the process exists under another user."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OverflowError, ValueError):
+        return False
+    return True
 
 
 def _remove_leftovers(root: Path) -> None:
     """Remove the temporary directories an interrupted :func:`init` left (``.keys.tmp<pid>.<8 hex>``: encrypted keys
     of a pair that was never put in place). Only that exact name, only a real directory (``lstat``, never through a
-    symbolic link) owned by this user; nothing else is touched."""
-    uid = os.getuid()
-    for entry in os.scandir(root):
-        if not _LEFTOVER.fullmatch(entry.name):
-            continue
-        st = os.lstat(entry.path)
-        if stat.S_ISDIR(st.st_mode) and st.st_uid == uid:
-            shutil.rmtree(entry.path)
+    symbolic link) owned by this user, and never one whose process is alive and not this one (an init still
+    running). An entry that vanished meanwhile is skipped; any other OS error is a :class:`CustodyError`."""
+    uid, me = os.getuid(), _pid()
+    try:
+        for entry in os.scandir(root):
+            m = _LEFTOVER.fullmatch(entry.name)
+            if m is None:
+                continue
+            pid = int(m.group(1))
+            if pid != me and _alive(pid):
+                continue
+            try:
+                st = os.lstat(entry.path)
+                if stat.S_ISDIR(st.st_mode) and st.st_uid == uid:
+                    shutil.rmtree(entry.path)
+            except FileNotFoundError:
+                continue
+    except OSError as exc:
+        raise CustodyError(
+            f"cannot remove a leftover temporary key directory in {root} ({exc.strerror or exc}); "
+            "the folder changed during `orch keys primary init`, run it again"
+        ) from None
 
 
 def init(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
@@ -169,7 +202,7 @@ def init(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
         raise KeyExists("a primary key pair exists on this machine (orch keys primary status)")
     _private(state_dir, ("primary",), create=True)
     _remove_leftovers(root)
-    tmp = root / f".keys.tmp{os.getpid()}.{os.urandom(4).hex()}"
+    tmp = root / f".keys.tmp{_pid()}.{os.urandom(4).hex()}"
     try:
         backend = _passphrase_only(open_backend(tmp))
         backend.create_primary(SIG_KEY, KX_KEY, purposes=PURPOSES)

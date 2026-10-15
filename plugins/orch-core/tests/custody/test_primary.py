@@ -331,7 +331,7 @@ def test_init_removes_leftover_temporary_key_dirs_only(tmp_path, prov):
     root = tmp_path / "person" / "primary"
     root.mkdir(parents=True, mode=0o700)
     (tmp_path / "person").chmod(0o700)
-    left = root / ".keys.tmp4242.0a1b2c3d"
+    left = root / ".keys.tmp999999.0a1b2c3d"  # a pid no process has
     left.mkdir()
     (left / "primary-sig.key.json").write_text("{}")
     outside = tmp_path / "outside"
@@ -370,3 +370,106 @@ def test_a_damaged_kx_file_is_not_a_wrong_passphrase(tmp_path, prov):
     with pytest.raises(WrongPassphrase):  # a wrong passphrase is still that
         with primary.unlocked(tmp_path, action="x"):
             pass
+
+
+# --- review of #512, round 2 (Opus delta) ---------------------------------------------------------------------------
+
+
+def _leftover_root(tmp_path):
+    root = tmp_path / "person" / "primary"
+    root.mkdir(parents=True, mode=0o700)
+    (tmp_path / "person").chmod(0o700)
+    return root
+
+
+def test_a_leftover_of_a_live_process_survives(tmp_path, prov):
+    root = _leftover_root(tmp_path)
+    live = root / f".keys.tmp{os.getppid()}.0a1b2c3d"  # the test runner's parent: alive, not us
+    live.mkdir()
+    dead = root / ".keys.tmp999999.0a1b2c3d"
+    dead.mkdir()
+    primary.init(tmp_path)
+    assert live.is_dir() and not dead.exists()
+
+
+def test_a_concurrent_init_loses_with_key_exists(tmp_path, monkeypatch, prov):
+    """A second init that starts while the first is creating keys leaves the first's temporary directory alone; the
+    first then loses the rename with KeyExists, never a raw FileNotFoundError."""
+    real_provider_call = prov.__call__
+    done = {}
+
+    def second_init_inside_the_first(req):
+        if "second" not in done:
+            done["second"] = True
+            monkeypatch.setattr(primary, "_pid", lambda: os.getpid() + 1)  # another process, as the sweep sees it
+            done["info"] = primary.init(tmp_path)
+            monkeypatch.setattr(primary, "_pid", os.getpid)
+        return real_provider_call(req)
+
+    monkeypatch.setattr(
+        primary,
+        "open_backend",
+        lambda d: PassphraseBackend(d, _passphrase_provider=second_init_inside_the_first, _kdf=FAST, _min_n=2**10),
+    )
+    with pytest.raises(KeyExists):
+        primary.init(tmp_path)
+    assert primary.load(tmp_path) == done["info"]
+    assert [p.name for p in (tmp_path / "person" / "primary").iterdir()] == ["keys"]
+
+
+def test_the_sweep_tolerates_a_vanished_entry_and_wraps_other_os_errors(tmp_path, monkeypatch, prov):
+    root = _leftover_root(tmp_path)
+    (root / ".keys.tmp999999.0a1b2c3d").mkdir()
+    real = primary.shutil.rmtree
+
+    def vanished(path, *a, **k):
+        if ".keys.tmp999999." in str(path):
+            real(path)
+            raise FileNotFoundError(path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(primary.shutil, "rmtree", vanished)
+    primary.init(tmp_path)  # another init removed it first: fine
+    other = tmp_path / "second"
+    root2 = _leftover_root(other)
+    (root2 / ".keys.tmp999999.0a1b2c3d").mkdir()
+
+    def busy(path, *a, **k):
+        if ".keys.tmp999999." in str(path):
+            raise OSError(16, "busy")
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(primary.shutil, "rmtree", busy)
+    with pytest.raises(CustodyError, match="leftover"):
+        primary.init(other)
+    assert not primary.keys_dir(other).exists()
+
+
+def test_only_create_and_create_primary_call_create_key():
+    """Production code makes keys through ``create`` (refuses primary and kx) or ``create_primary``; nothing else
+    reaches the private ``_create_key`` (tests excluded)."""
+    import ast
+
+    root = Path(primary.__file__).parents[1]
+    callers = set()
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if (isinstance(node, ast.Attribute) and node.attr == "_create_key") or (
+                    isinstance(node, ast.Name) and node.id == "_create_key"
+                ):
+                    callers.add(f"{rel}:{fn.name}")
+        for node in tree.body:  # module level: never
+            for sub in ast.walk(node):
+                if not isinstance(node, (ast.FunctionDef, ast.ClassDef)) and (
+                    (isinstance(sub, ast.Attribute) and sub.attr == "_create_key")
+                    or (isinstance(sub, ast.Name) and sub.id == "_create_key")
+                ):
+                    callers.add(f"{rel}:<module>")
+        if "_create_key" in path.read_text(encoding="utf-8") and rel != "custody/passphrase.py":
+            callers.add(f"{rel}:<text>")
+    assert callers == {"custody/passphrase.py:create", "custody/passphrase.py:create_primary"}

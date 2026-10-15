@@ -229,10 +229,25 @@ def test_no_person_repos_follow_the_visibility_now(w):
 # --- paging ----------------------------------------------------------------------------------------------------------
 
 
+def _settle_pins(w, timeout: float = 120) -> None:
+    """The first request after a change of the declared repos pins every one of them (F7, ``sync_git``), one fresh
+    git reader child each (~70 ms apiece on a laptop, several times that on a loaded CI runner: 40 repos took 3 s
+    here and overran the clients' 10 s read deadline on py3.11 runners, #468). That is a one-off setup cost, not
+    what the paging tests measure, so it is paid here under a deadline sized for it; the requests the tests then
+    time against the default deadline find the pins in place. A real hang still fails, after ``timeout``."""
+    warm = w.client()
+    try:
+        warm.ws.send("settle", "workspace.settings")
+        warm.ws.read(timeout)
+    finally:
+        warm.close()
+
+
 def many(w, n: int = 40) -> list[str]:
     names = [f"r{i:02d}" for i in range(n)]
     for chunk in (names[: n // 2], names[n // 2 :]):  # one settings.set carries at most 32
         repos(w, **{name: {"path": f"/srv/{name}", "default_branch": "main"} for name in chunk})
+    _settle_pins(w)
     return names
 
 

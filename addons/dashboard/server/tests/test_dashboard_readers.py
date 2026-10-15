@@ -23,7 +23,7 @@ def body(exc: HostError) -> dict:
     "code,reason",
     [
         ("sign.convenience_unavailable", r)
-        for r in ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
+        for r in ("disabled", "relay_paired", "other_member", "phone_device", "reader_version", "pair_device")
     ]
     + [
         ("sign.convenience_readers", r)

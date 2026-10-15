@@ -45,8 +45,21 @@ def home(tmp_path, monkeypatch):
     return path
 
 
+def pinned_env() -> dict[str, str]:
+    """The environment of this test's own git calls: HOME and the global config file pinned to the private HOME, the
+    system config off, so nothing here passes or fails by the developer's ``~/.gitconfig`` (#541)."""
+    home = os.environ["ORCH_RECORDS_TEST_HOME"]
+    return {
+        "HOME": home,
+        "PATH": os.environ["PATH"],
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.path.join(home, ".gitconfig"),
+        "XDG_CONFIG_HOME": os.path.join(home, ".config"),
+    }
+
+
 def git(cwd, *args, env=None, check=True) -> str:
-    e = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"}
+    e = pinned_env()
     e["LANG"] = "C"
     e.update(env or {})
     res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, env=e, check=False)
@@ -62,7 +75,7 @@ class Env:
         self.w = w
         self.root = Path(w.lab.root)
         self.home = home
-        self.env = {"HOME": str(self.home), "PATH": os.environ["PATH"]}
+        self.env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "XDG_CONFIG_HOME": str(self.home / ".config")}
         self.tips = rtool.ValidatedTips(tmp_path / "state" / "records.json")
         self.client = w.client()
         self.tmp = tmp_path
@@ -149,7 +162,7 @@ def test_the_real_index_is_untouched_when_it_differs(r):
     r.commit()
     staged = subprocess.run(
         ["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=b"staged by the person\n", capture_output=True,
-        env={"HOME": str(r.home), "PATH": os.environ["PATH"]}, check=True,
+        env=pinned_env(), check=True,
     ).stdout.decode().strip()  # fmt: skip
     git(r.root, "update-index", "--add", "--cacheinfo", f"100644,{staged},notes.txt")
     index = r.root / ".git" / "index"
@@ -470,8 +483,7 @@ def _forge_convenience_commit(
 ) -> str:
     """A records commit whose ``path`` carries ``line`` beyond what the store has (for an event log: a log file outside
     the merged view, as after an owner repair), made with plumbing only: the store is never touched."""
-    env = {"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1",
-           "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}  # fmt: skip
+    env = {**pinned_env(), "LANG": "C", "GIT_INDEX_FILE": str(r.tmp / "forge.index")}
     have = b"" if replace else git(r.root, "show", f"HEAD:{path}", check=False).encode()
     data = (have + b"\n" if have else b"") + line.encode() + b"\n"
     blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=r.root, input=data, capture_output=True,
@@ -749,6 +761,90 @@ def test_finding1_global_config_is_frozen_between_check_and_push(r):
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
 
 
+# --- #541: of the person's global config, local calls see an allow-list only ----------------------------------------
+
+_QUIET = {"GIT_CONFIG_GLOBAL": os.devnull}  # this test's own git calls once the hostile config is in place
+
+
+def _hostile_gitconfig(r) -> Path:
+    """Append to the private ``~/.gitconfig`` every key that names a program or changes what git reads (filters through
+    ``core.attributesFile``, ``diff.external``, ``core.alternateRefsCommand``, ``core.hooksPath``, an alias, an
+    unrelated ``url.insteadOf``, ``i18n.commitEncoding``): each program appends to the returned marker when run."""
+    marker = r.tmp / "f541-marker"
+    evil = r.tmp / "f541-evil.sh"
+    evil.write_text(f'#!/bin/sh\necho "$0 $*" >> "{marker}"\ncat\n')
+    evil.chmod(0o755)
+    hooks = r.tmp / "f541-hooks"
+    hooks.mkdir()
+    for name in ("pre-commit", "post-commit", "pre-push", "reference-transaction", "post-index-change"):
+        (hooks / name).symlink_to(evil)
+    attrs = r.tmp / "f541-attrs"
+    attrs.write_text("* filter=f541 diff=f541 merge=f541\n")
+    with open(r.home / ".gitconfig", "a") as fh:
+        fh.write(
+            f"[core]\n\tattributesFile = {attrs}\n\talternateRefsCommand = {evil}\n\thooksPath = {hooks}\n"
+            f"\tpager = {evil}\n\teditor = {evil}\n\tfsmonitor = {evil}\n"
+            f'[filter "f541"]\n\tclean = {evil}\n\tsmudge = {evil}\n\tprocess = {evil}\n\trequired = true\n'
+            f'[diff]\n\texternal = {evil}\n[diff "f541"]\n\tcommand = {evil}\n\ttextconv = {evil}\n'
+            f'[merge "f541"]\n\tdriver = {evil}\n[gpg]\n\tprogram = {evil}\n[commit]\n\tgpgSign = true\n'
+            f"[alias]\n\tf541 = !{evil}\n"
+            f'[url "file:///nonexistent/f541/"]\n\tinsteadOf = https://f541.invalid/\n'
+            f"[i18n]\n\tcommitEncoding = ISO-8859-1\n"
+        )
+    return marker
+
+
+def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
+    """``Git.env`` is the one place: a local call gets ``user.*`` and ``url.*.(push)insteadOf`` of the person's global
+    config, a call in the transport repo only the authentication and transport subset, nothing else."""
+    r.init()
+    git(r.root, "remote", "add", "origin", r.bare())
+    _hostile_gitconfig(r)
+    with open(r.home / ".gitconfig", "a") as fh:
+        fh.write("[credential]\n\thelper = f541-helper\n[http]\n\tsslVerify = true\n")
+    repo = r.repo()
+
+    def keys(env):
+        return {env[f"GIT_CONFIG_KEY_{i}"].lower() for i in range(int(env["GIT_CONFIG_COUNT"]))}
+
+    local = keys(repo.env())
+    assert local == {"user.name", "user.email", "url.file:///nonexistent/f541/.insteadof"}, local
+    seen = repo.out("config", "--list").lower()
+    for bad in ("filter.", "diff.", "merge.", "alias.", "core.attributesfile", "core.alternaterefscommand",
+                "core.pager", "core.editor", "gpg.", "commit.gpgsign", "i18n.", "credential.", "http."):  # fmt: skip
+        assert bad not in seen, bad
+    assert "core.hookspath=/dev/null" in seen and f"core.hookspath={r.tmp}" not in seen
+    with repo.transport() as net:
+        assert keys(net.env(network=True)) == {"credential.helper", "http.sslverify"}
+        assert keys(net.env()) == {"credential.helper", "http.sslverify"}  # never url.* in the transport repo
+
+
+def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit_nor_the_ff_check(r):
+    r.init()
+    first = r.commit()["commit"]  # R
+    url = r.bare()
+    bare = url[len("file://") :]
+    git(r.root, "remote", "add", "origin", url)
+    r.push(initial=True)
+    marker = _hostile_gitconfig(r)
+    r.w.ticket("one")
+    t = r.commit()["commit"]  # T, child of R
+    assert "encoding " not in git(r.root, "cat-file", "commit", t, env=_QUIET)
+    assert r.push()["from"] == first  # a fast-forward is still one
+    assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main", env=_QUIET) == t
+    git(r.root, "update-ref", "refs/heads/main", first, t, env=_QUIET)  # back to R, then a sibling S of T
+    git(r.root, "read-tree", first, env=_QUIET)
+    r.w.ticket("two")
+    s = r.commit()["commit"]
+    assert git(r.root, "rev-parse", f"{s}^", env=_QUIET) == first
+    with pytest.raises(RecordsError) as e:
+        r.push()
+    assert e.value.code == "records.push_rejected" and "never a non-fast-forward" in e.value.message
+    assert git(r.tmp, "--git-dir", bare, "rev-parse", "refs/heads/main", env=_QUIET) == t
+    r.cli("status")  # its diff-index runs under the hostile config too
+    assert not marker.exists(), marker.read_text()
+
+
 def test_finding2_a_url_with_a_password_is_refused_and_never_echoed(r):
     r.init()
     r.commit()
@@ -924,7 +1020,7 @@ def _forge_commit_graph(repo_root: Path, child: str, fake_parent: str) -> None:
     subprocess.run(
         ["git", "-c", "commitGraph.generationVersion=1", "commit-graph", "write", "--stdin-commits"],
         cwd=repo_root, input="\n".join(commits).encode(), capture_output=True, check=True,
-        env={"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"},
+        env=pinned_env(),
     )  # fmt: skip
     path = repo_root / ".git" / "objects" / "info" / "commit-graph"
     data = bytearray(path.read_bytes())
@@ -966,7 +1062,7 @@ def test_opus2_a_forged_commit_graph_never_lets_a_non_fast_forward_through(r):
     # the forgery works on plain git: with the graph, T looks like an ancestor of S
     plain = subprocess.run(
         ["git", "merge-base", "--is-ancestor", t, s], cwd=r.root, capture_output=True, check=False,
-        env={"HOME": os.environ["ORCH_RECORDS_TEST_HOME"], "PATH": os.environ["PATH"], "GIT_CONFIG_NOSYSTEM": "1"},
+        env=pinned_env(),
     )  # fmt: skip
     assert plain.returncode == 0
     with pytest.raises(RecordsError) as e:

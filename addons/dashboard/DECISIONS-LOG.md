@@ -1820,3 +1820,13 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Revert:** drop `closed_detail` (restore `error = {k: v … if k != "fix"}`), `reader.list`/`reader/1` in `hostlink.py`, the
   `readers` feature and route, the new `Device` fields; delete `src/api/refusals.ts`, `RefusalDevices.tsx`, `host/Readers.tsx`,
   `src/dev/readersFixture.ts` and the two scenarios; restore the `UNAVAILABLE` map in `click.ts`.
+- **Review fixes (Opus review, 15 Oct; APPROVE, 2 Low, 4 Info):**
+  - **L1:** the `other_member` sentence covers both of spec 9.9's cases (the other member's orch declaration or one of
+    their devices below level 1), and its fix is that member updating orch and declaring, on their computer and each device.
+  - **L2:** a device label in a refusal and in Reader levels is shown with `Inline` (an LF is escaped) inside a mono box, not
+    between bare quotes, so a label with quotes, `(named by the device)` or a line break cannot fake a second entry.
+  - **I1:** the `unknown_readers` sentence says "while click-to-sign is on or has been used here" (flag or history).
+  - **I2:** the sign panel looks devices up in the dialog's own workspace (`ws` prop), never the View's `workspace.id`.
+  - **Open (not here):** I3, the click signer drops `detail`, so the sign panel never names devices: a core follow-up
+    (`ClickError` has no detail). I4, the top-level keys of a host error pass as a deny-list (pre-existing): an allow-list is
+    a later slice.

@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { queries } from '@/api/queries'
 import type { RosterMember } from '@/api/settings'
-import { Inline, Prose, Raw } from './visible'
+import { Inline, Raw } from './visible'
 
 export interface NamedDevice {
   id: string
@@ -26,7 +26,11 @@ export function DeviceName({ device }: { device: NamedDevice }) {
   if (device.label)
     return (
       <span data-testid="refusal-device">
-        “<Prose inline>{device.label}</Prose>”<span className="text-text-muted"> (named by the device)</span>
+        {/* One line, in its own box: an LF or quotes in the label can't fake a second entry (review L2). */}
+        <span data-testid="device-label-box" className="rounded bg-surface-3 px-1 font-mono text-[12px] text-text">
+          <Inline>{device.label}</Inline>
+        </span>
+        <span className="text-text-muted"> (named by the device)</span>
         {device.member && (
           <>
             {' '}of <Inline>{device.member}</Inline>

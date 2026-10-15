@@ -46,6 +46,12 @@ describe('every reason is a plain sentence', () => {
     expect(p.devices).toEqual([OLD_PHONE])
   })
 
+  it('other_member covers the member’s core and their devices; unknown_readers the flag and the history (review L1, I1)', () => {
+    expect(UNAVAILABLE_SENTENCE.other_member).toMatch(/their orch, or one of their devices/)
+    expect(UNAVAILABLE_SENTENCE.other_member).toMatch(/updates orch and declares/)
+    expect(READERS_SENTENCE.unknown_readers).toMatch(/click-to-sign is on or has been used here/)
+  })
+
   it('the sentences say what the spec says', () => {
     expect(UNAVAILABLE_SENTENCE.relay_paired).toBe('Click-to-sign is off because this workspace is paired with a phone through the relay.')
     expect(READERS_SENTENCE.reader_too_old).toBe('A device’s orch app is too old to show what click-to-sign changes: update it, or sign in the terminal.')
@@ -103,14 +109,37 @@ describe('devices are named by label, never by id', () => {
     for (const id of [PHONE, LAPTOP]) expect(text).not.toContain(id)
   })
 
-  it('a label is text: markup is not drawn, an LF stays a line break inside isolated text', () => {
+  it('a label is text: markup is not drawn, an LF is escaped, and it stays one boxed entry', () => {
     render(<DeviceName device={{ id: PHONE, label: '<img src=x onerror=alert(1)>\nsecond line', member: 'Mara' }} />)
     const bdi = screen.getByTestId('refusal-device').querySelector('bdi')!
-    expect(bdi.textContent).toBe('<img src=x onerror=alert(1)>\nsecond line')
+    expect(bdi.textContent).toBe('<img src=x onerror=alert(1)>\\u{a}second line')
     expect(document.querySelector('img')).toBeNull()
     expect(screen.getByTestId('refusal-device')).toHaveTextContent('(named by the device)')
   })
+
+  it('a label that imitates the list stays one entry with no line break (review L2)', () => {
+    const fake = 'Mac” (named by the device) of Alice; “Phone\nsecond'
+    render(<RefusalList ids={[PHONE]} label={fake} />)
+    const entries = screen.getAllByTestId('refusal-device')
+    expect(entries.length).toBe(1)
+    const box = within(entries[0]).getByTestId('device-label-box')
+    expect(box.textContent).not.toContain('\n')
+    expect(box.textContent).toContain('(named by the device) of Alice; “Phone')
+    expect(box.className).toContain('font-mono') // a visual container, not bare quotes
+    expect(entries[0].textContent!.match(/\(named by the device\)/g)!.length).toBe(2) // the fake one sits inside the box
+    expect(entries[0].textContent!.endsWith(' of Mara')).toBe(true)
+  })
 })
+
+function RefusalList({ ids, label }: { ids: string[]; label: string }) {
+  return (
+    <p>
+      {nameDevices(ids, [{ person: 'p_m', name: 'Mara', role: 'member', devices: [{ id: ids[0], auth: null, scopes: [], valid: true, label }] }]).map((d) => (
+        <DeviceName key={d.id} device={d} />
+      ))}
+    </p>
+  )
+}
 
 describe('reader levels', () => {
   it('rows below the required level come first and are marked', () => {
@@ -137,7 +166,7 @@ describe('reader levels', () => {
     expect(screen.getByTestId('readers-below')).toHaveTextContent('4 devices are below the required level')
     const lf = rows.find((r) => r.textContent!.includes('Work phone'))!
     expect(within(lf).getByTestId('reader-level')).toHaveTextContent('0')
-    expect(lf.querySelector('bdi')!.textContent).toBe('Work phone\nsecond line')
+    expect(lf.querySelector('bdi')!.textContent).toBe('Work phone\\u{a}second line')
     expect(screen.getByTestId('reader-levels').textContent).not.toContain(MAC)
     expect(screen.getByTestId('pair-unavailable')).toBeInTheDocument() // pairing stays behind its own gate
   })

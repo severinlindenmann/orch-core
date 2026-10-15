@@ -226,6 +226,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
 
         {(click.phase === 'ready' || click.phase === 'signing') && click.view && (
           <ClickSignPanel
+            ws={p.ws}
             answer={click.view}
             problem={click.problem}
             signing={click.phase === 'signing'}

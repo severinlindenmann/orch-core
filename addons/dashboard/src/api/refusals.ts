@@ -18,7 +18,7 @@ export const UNAVAILABLE_SENTENCE: Record<UnavailableReason, string> = {
   disabled: 'Click-to-sign is switched off for this workspace.',
   relay_paired: 'Click-to-sign is off because this workspace is paired with a phone through the relay.',
   other_member:
-    'A device of another member of this workspace has an orch app that cannot yet read click-signed entries. Click-to-sign stays off until they update orch on it (it then declares what it reads), or until the device is removed.',
+    'This workspace has another member who cannot yet read click-signed entries (their orch, or one of their devices). Click-to-sign stays off until that member updates orch and declares what it reads, on their computer and on each of their devices; a removed device no longer counts.',
   phone_device:
     'You have another device in this workspace whose orch app cannot yet read click-signed entries. Update orch on it (it then declares what it reads), or remove it; until then, sign in the terminal.',
   reader_version: 'The host’s orch-core does not accept click-signed entries. Update orch-core on this Mac.',
@@ -35,7 +35,7 @@ export const READERS_SENTENCE: Record<ReadersReason, string> = {
   relay_too_old:
     'The relay is too old to carry click-signed entries, so this workspace cannot be linked to it while click-to-sign is on or has been used here.',
   unknown_readers:
-    'This would hand the workspace’s records to readers it does not know, and its history has click-signed entries they may not read. It was refused.',
+    'This would hand the workspace’s records to readers it does not know, while click-to-sign is on or has been used here, and they may not read click-signed entries. It was refused.',
 }
 
 /** `reader.decl_invalid`: a reader declaration that does not verify (it can appear when a device is added or paired). */

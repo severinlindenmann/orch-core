@@ -38,15 +38,17 @@ interface Props {
   onCancel: () => void
   /** Rate limit: the time (ms since epoch) before which Sign stays off. */
   waitUntil?: number
+  /** The dialog's own workspace: the devices a refusal names are looked up there, never in the View's (review I2). */
+  ws?: string
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0 }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, the typed word and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} />
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const activation = useActivation(armed)
   const [word, setWord] = useState('')
@@ -133,7 +135,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           />
         </div>
       )}
-      {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={view.workspace.id} />}
+      {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>

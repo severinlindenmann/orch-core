@@ -340,7 +340,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       )}
       {(click.phase === 'preparing' || click.phase === 'viewing') && <Skeleton className="h-16" />}
       {view && (click.phase === 'ready' || click.phase === 'signing') && (viewOk ? (
-        <ClickSignPanel answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
+        <ClickSignPanel ws={ws} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
       ) : (
         <p role="alert" className="text-danger" data-testid="runner-grant-bad-view">The review does not say where the grant goes. Nothing was signed. <Button size="xs" variant="ghost" onClick={() => void click.cancel().then(() => click.reset(true))}>Cancel</Button></p>
       ))}

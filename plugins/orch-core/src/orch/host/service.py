@@ -126,10 +126,16 @@ class Host:
         sweep_interval: float = SWEEP_SECONDS,
         journal_check_interval: float = JOURNAL_CHECK_SECONDS,
         runner_identity: Callable[[Any], bool] | None = None,
+        dev_runner: bool = False,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
         self.run_dir = Path(run_dir) if run_dir is not None else default_run_directory(self.host_uid)
+        if dev_runner:  # checked before anything is opened or created
+            from orch.runner.devmode import is_service_run_dir
+
+            if is_service_run_dir(self.run_dir):
+                raise HostError("invalid.input", f"--dev-runner is for a dev run directory only, never {self.run_dir}")
         self.backend_factory = backend or self._registry_backend
         self.pins = pins or AgentPins()
         self.clock = clock
@@ -171,6 +177,24 @@ class Host:
 
         self.runners = RunnerHub(self)
         self.runner_identity = runner_identity or default_identity
+        #: dev and tests only (``orch host run --foreground --dev-runner``): also admit a runner of this UID that
+        #: ``orch runner run --foreground`` announced in this run directory (:mod:`orch.runner.devmode`)
+        self.dev_runner = dev_runner
+        if dev_runner:
+            from orch.runner import devmode
+
+            service_identity, run, uid = self.runner_identity, self.run_dir, self.host_uid
+
+            def dev_identity(credentials: Any) -> bool:
+                return bool(service_identity(credentials)) or devmode.verify(run, uid, credentials)
+
+            self.runner_identity = dev_identity
+            LOG.warning(
+                "DEV RUNNER MODE: this host also admits a foreground runner of UID %s announced in %s "
+                "(dev and tests only; never use it for a real setup)",
+                uid,
+                devmode.path_for(run, uid),
+            )
 
     # -- identity and sockets
     def new_workspace_id(self) -> str:

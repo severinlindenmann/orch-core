@@ -120,11 +120,34 @@ describe('the real dock', () => {
     expect(screen.queryByTestId('term')).toBeNull()
   })
 
-  it('Start agent stays on the not-available path (the server never lists agent_start)', async () => {
+  it('Start agent is not available when the host does not serve agent_start', async () => {
     setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
     mount()
     await screen.findByText(/No terminal is open/)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
     expect(await screen.findByRole('menuitem', { name: /Start agent/ })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('Start agent opens core\'s dialog when the host serves agent_start', async () => {
+    const { agentsApi } = await import('@/api/agents')
+    setFeatures({ features: ['terminals', 'agent_start'], workspaces: { [WS]: ['terminals', 'agent_start'] } })
+    const pre = vi.spyOn(agentsApi, 'preview').mockResolvedValue({ spec: 'f'.repeat(64), ticket: null, display: 'codex', display_hidden: false, cwd: { kind: 'workspace' },
+      cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: null, blocked: null, warnings: [] })
+    vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: true, grant: null } })
+    mount()
+    await screen.findByText(/No terminal is open/)
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+    const item = await screen.findByRole('menuitem', { name: 'Start agent' })
+    expect(item).not.toHaveAttribute('aria-disabled')
+    fireEvent.click(item)
+    expect(await screen.findByTestId('agent-preview')).toBeInTheDocument()
+    expect(pre).toHaveBeenCalled()
+  })
+
+  it('an agent whose runner grant ended says so and keeps Stop', async () => {
+    list = { ...list, runs: [run('AG', { kind: 'agent', harness: 'codex', as_person: false, grant_state: 'ended' })] }
+    mount()
+    expect(await screen.findByText(/runner grant ended/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Stop/ })).toBeInTheDocument()
   })
 })

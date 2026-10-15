@@ -175,7 +175,7 @@ def issue_grant(aw, hours=8, scope="workable"):
     return rid, view, s
 
 
-def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch):
+def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch, caplog, capfd):
     from orch_dashboard import click_signer
 
     key = aw.w.ticket()[1]
@@ -231,3 +231,5 @@ def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch):
     assert aw.get("/runner").json()["runner"]["grant"] is None
     assert aw.post("/agents/preview", args).json()["blocked"]["code"] == "launch.no_grant"
     aw.post(f"/runs/{run['run']}/stop")
+    out, errs = capfd.readouterr()
+    assert tail not in caplog.text and tail not in out and tail not in errs  # never in a log of this process

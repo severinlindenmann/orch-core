@@ -260,6 +260,14 @@ describe('the runner grant', () => {
 })
 
 describe('the live stream', () => {
+  it('a resync (run.sub ended or reconnected) reads whoami.runner again', async () => {
+    const { invalidateLive } = await import('@/api/useLiveUpdates')
+    const qc = new QueryClient()
+    qc.setQueryData(['runner', WS], { runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'workable' } }) })
+    invalidateLive(qc, WS, 'resync', [])
+    expect(qc.getQueryState(['runner', WS])?.isInvalidated).toBe(true)
+  })
+
   it('a runner item patches the runner card and never becomes a run', () => {
     const qc = new QueryClient()
     qc.setQueryData(['runs', WS], { runs: [], runner: null, truncated: false } satisfies RunList)

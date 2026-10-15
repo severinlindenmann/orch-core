@@ -18,6 +18,15 @@ def invite(ws, tmp, name="newbie"):
     return p, crypto.b64u(p.pk_pub), str(cert)
 
 
+def reader_decl(ws, p, tmp, *, level=1, name="reader") -> str:
+    """The invitee's reader declaration file (``orch keys reader declare --enrol``, §0.8.6 item 9.4)."""
+    from tests.identity.reader_helpers import decl
+
+    path = tmp / f"{name}.{level}.decl.json"
+    path.write_text(json.dumps(decl(p, WS, level=level, via="enrol", created_ms=ws.clock[0] * 1000)))
+    return str(path)
+
+
 def roster(ws):
     return [e for e in ws.read_events("workspace") if e["type"] in ("member.added", "member.removed", "role.changed")]
 
@@ -181,9 +190,16 @@ def test_a_direct_convenience_append_sets_the_mark_first(hws, me, tmp_path, monk
     from orch.ops.readers import seen_path
 
     _as_convenience(monkeypatch)
-    _p, pk, cert = invite(hws, tmp_path)
+    p, pk, cert = invite(hws, tmp_path)
     assert not seen_path(hws.host_state, WS).exists()
-    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert)
+    # H12d-2: a convenience-signed member.added makes the new member a reader of convenience history: level 1 needed
+    assert me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json").err_code == (
+        "sign.convenience_readers"
+    )
+    assert not seen_path(hws.host_state, WS).exists()  # refused before the mark: nothing was appended
+    r = me(
+        "member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--reader-decl", reader_decl(hws, p, tmp_path)
+    )
     assert r.code == 0, r.err
     assert roster(hws)[-1]["auth"] == "convenience"
     assert seen_path(hws.host_state, WS).exists()
@@ -202,9 +218,10 @@ def test_a_direct_convenience_append_without_its_mark_writes_nothing(hws, me, tm
 
     _as_convenience(monkeypatch)
     monkeypatch.setattr(readers, "ensure_convenience_mark", boom)
-    _p, pk, cert = invite(hws, tmp_path)
+    p, pk, cert = invite(hws, tmp_path)
     n = len(roster(hws))
-    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    decl = reader_decl(hws, p, tmp_path)
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--reader-decl", decl, "--json")
     assert r.err_code == "internal" and "convenience_seen" in r.doc["error"]["message"], r.doc
     assert len(roster(hws)) == n
 
@@ -236,3 +253,56 @@ def test_persisting_the_mark_never_trusts_the_conservative_reader(tmp_path, monk
     with pytest.raises(Exception) as info:  # something else at the path: not the persisted mark
         readers.ensure_convenience_mark(state, wid, os.getuid())
     assert getattr(info.value, "code", "") == "custody.unsafe_mode"
+
+
+# --- H12d-2: the reader declaration in direct mode (§0.8.6 item 9.4) -------------------------------------------------
+
+
+def test_direct_member_add_with_a_declaration_writes_its_record(hws, me, tmp_path):
+    from orch.store.readerrecs import read_record
+
+    p, pk, cert = invite(hws, tmp_path)
+    r = me(
+        "member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--reader-decl", reader_decl(hws, p, tmp_path)
+    )
+    assert r.code == 0, r.err
+    rec = read_record(hws.host_state, WS, p.device[2:])
+    assert rec["source"] == "member.add" and rec["reader"] == 1 and rec["decl"]["o"]["bind"] == {"via": "enrol"}
+
+
+def test_direct_member_add_with_the_mark_needs_a_level_1_declaration(hws, me, tmp_path):
+    from orch.ops.readers import ensure_convenience_mark
+
+    ensure_convenience_mark(hws.host_state, WS, os.getuid())
+    p, pk, cert = invite(hws, tmp_path)
+    base = ("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert me(*base).err_code == "sign.convenience_readers"
+    old = me(*base, "--reader-decl", reader_decl(hws, p, tmp_path, level=0))
+    assert old.err_code == "sign.convenience_readers" and "reader_too_old" in old.doc["error"]["message"]
+    assert me(*base, "--reader-decl", reader_decl(hws, p, tmp_path)).code == 0
+
+
+def test_direct_member_add_refuses_a_declaration_that_does_not_verify(hws, me, tmp_path):
+    p, pk, cert = invite(hws, tmp_path)
+    q, _, _ = invite(hws, tmp_path, "other")
+    base = ("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    r = me(*base, "--reader-decl", reader_decl(hws, q, tmp_path))  # another device's declaration
+    assert r.err_code == "reader.decl_invalid" and r.doc["error"]["message"].startswith("signature")
+    big = tmp_path / "big.json"
+    big.write_text(" " * 5000)  # I2: capped before it is parsed
+    assert me(*base, "--reader-decl", str(big)).err_code == "invalid.input"
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"o": 1.5}')
+    assert me(*base, "--reader-decl", str(bad)).err_code == "reader.decl_invalid"
+    assert roster(hws) == []  # nothing was appended
+
+
+def test_a_direct_convenience_append_is_refused_while_another_member_is_below_level_1(hws, me, tmp_path, monkeypatch):
+    p, pk, cert = invite(hws, tmp_path)
+    assert me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert).code == 0  # no declaration: level 0
+    _as_convenience(monkeypatch)
+    q, qk, qcert = invite(hws, tmp_path, "other")
+    r = me("member", "add", "--name", "O", "--pk", qk, "--cert", qcert, "--reader-decl", reader_decl(hws, q, tmp_path),
+           "--json")  # fmt: skip
+    assert r.err_code == "sign.convenience_unavailable" and p.device in r.doc["error"]["message"], r.doc
+    assert "other_member" in r.doc["error"]["message"]

@@ -36,7 +36,14 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
 
     def run() -> list[health.Finding]:
         found, store = health.inspect(
-            root, wid, ws.state_dir, fast=False, instructions=stale_findings(root), caps=ctx.caps
+            root,
+            wid,
+            ws.state_dir,
+            fast=False,
+            instructions=stale_findings(root),
+            caps=ctx.caps,
+            ident=ws.ident,
+            config=ws.config_bytes,
         )
         if store is not None:
             store.close()

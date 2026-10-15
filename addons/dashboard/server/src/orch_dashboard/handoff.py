@@ -317,6 +317,16 @@ class Move(Action):
     reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 
+class RunnerGrant(Action):
+    """M7b, the runner grant (D-P2-27): a click request only, never a terminal hand-off of this server. It maps to the
+    signer's `prepare {op:"grant", args:{hours, scope}, deposit:true}`; the signer itself sets `label:"runner"` and
+    `verbs:"agent"` and hands the secret to the runner, so neither the label nor the verbs are the browser's to send."""
+
+    action: Literal["runner_grant"]
+    hours: Annotated[int, Field(ge=1, le=12)] = 8
+    scope: Literal["all", "workable"] = "workable"
+
+
 PrepareBody = Annotated[
     Approve
     | RequestChanges
@@ -391,6 +401,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "member.remove", {"person": action.person}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
+        case RunnerGrant():
+            return "grant", {"hours": action.hours, "scope": action.scope}
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
@@ -405,9 +417,10 @@ def host_files(action: Action) -> dict | None:
     return None
 
 
-def expected(action: Action):
+def expected(action: Action, person: str | None = None):
     """What the host's prepared events must be, for the actions that are not about a ticket. A host that prepares
-    anything else (another type, another person, other values) is refused before the person sees it."""
+    anything else (another type, another person, other values) is refused before the person sees it. `person` is the
+    caller (the runner grant must be the caller's own)."""
 
     def one(events: list, type_: str, **fields) -> bool:
         if len(events) != 1 or events[0].get("type") != type_:
@@ -429,6 +442,20 @@ def expected(action: Action):
             return lambda ev: one(ev, "member.removed", person=action.person)
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
+        case RunnerGrant():
+            # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (at most 12 h), and
+            # the caller as its person (the actor). Anything else is not shown, so it is never signed (M7b).
+            return lambda ev: (
+                one(ev, "grant.issued", label="runner", verbs="agent", hours=action.hours, scope=action.scope)
+                # Review I2: exactly the grant.issued payload (plus the envelope), nothing a future field could add.
+                and set(ev[0]) <= GRANT_ISSUED_KEYS
+                and type(ev[0].get("hours")) is int
+                and 1 <= ev[0]["hours"] <= 12
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
         case MemberAdd():
             cert = _strict_json_object(action.cert)
             return lambda ev: (
@@ -437,6 +464,13 @@ def expected(action: Action):
                 and ev[0]["person"].startswith("p_")
             )
     return None
+
+
+#: A prepared `grant.issued`: the envelope (adapters.handoff.ENVELOPE) and the event schema's payload fields.
+GRANT_ISSUED_KEYS = frozenset(
+    {"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig"}
+    | {"grant", "scope", "verbs", "issued_at", "hours", "expires_at", "secret_hash", "label"}
+)
 
 
 @dataclass(frozen=True)

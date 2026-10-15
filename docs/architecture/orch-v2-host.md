@@ -10299,7 +10299,8 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   and DEBUG; TestFlight and App Store builds have no such code path (they sign `secure-enclave-unlocked` only,
   11A.14.3). The key is a software P-256 key in the Simulator's keychain, no presence check.
 - **It signs only when the host says so, per workspace.** Before every review the Simulator reads the column-R
-  `whoami` of that workspace; it offers the sign sheet only when `relay.dev.sim_convenience` is `true`. Absent →
+  `whoami` of that workspace, never a cached copy (O6, DECIDED (orch-07)); it offers the sign sheet only when
+  `relay.dev.sim_convenience` is `true`. A failed read or an absent field →
   the Simulator signs nothing (today's rule) and shows "This host does not accept Simulator answers". The flag comes
   from the sealed, WSK-signed answer the phone already verifies, so the relay cannot fake it.
 - **That check is a UX guard only (DECIDED (orch-07), F8).** It keeps an honest Simulator from sending what will be
@@ -10362,7 +10363,7 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 | core D2 | orch-29 | `dev-pair up --sim-convenience`: `--prefix SBX`, the manifest's `person_id` and `workspaces`, the workspace marker, `dev.json` with `relay_origin`, `orch keys reader declare` for the sandbox device, a level-1 `reader_decl` for the sandbox primary (O4), the flag on `orch host run`, `ORCH_NO_CONVENIENCE` omitted for the host only; `down` unchanged | 0.5 day |
 | relay | orch-29 | none: the pinned relay and `relay.dev.severin.io` serve level 1 (O1, resolved) | 0 |
 | core follow-up | core | the F1 checkpoint vectors and `reader_kat_1` convenience cases (9.8 rollout step 2); not needed for the sandbox flow | separate |
-| phone | orch-f1 | Simulator-only `convenience` custody behind the compile-time switch, the `whoami.relay.dev` check per review (UX guard), the banner, tests that a Release Simulator build and a Debug device build have no convenience symbol | 1 day |
+| phone | orch-f1 | Simulator-only `convenience` custody behind the compile-time switch, the `whoami.relay.dev` read before every review, uncached (UX guard, O6), the banner, tests that a Release Simulator build and a Debug device build have no convenience symbol | 1 day |
 
 Order: D1, then D2, then the phone PR; the relay item before the first end-to-end run.
 
@@ -10400,7 +10401,7 @@ Tests (core unless marked):
 - phone (orch-f1): no convenience custody in a Release Simulator build **and** none in a Debug device build; no sign
   sheet without `whoami.relay.dev`; a modified client's convenience event refused by core (the R2 vector); the banner.
 
-#### 11A.17.9 Open items (only O6 open, for the mobile stream orch-b8; O1 resolved and O4 decided by orch-47; O2, O3, O5 decided by orch-52)
+#### 11A.17.9 Open items (none open: O1 resolved and O4 decided by orch-47; O2, O3, O5 decided by orch-52; O6 decided by orch-07)
 
 - **O1: RESOLVED (orch-47, 15 Oct 2026).** The pinned relay (`d84f7067`) and `relay.dev.severin.io` both serve
   `relay-info` reader level 1 (`relay.dev` answers `{"v":1,"reader":1,"max_publication_bytes":16777216}`), and
@@ -10420,8 +10421,9 @@ Tests (core unless marked):
   builders. The gate is exercised, not bypassed.
 - **O5: DECIDED (orch-52, 15 Oct 2026).** Keep the `SBX` prefix as an extra check (S3): cheap, and visible in every
   ticket id.
-- **O6 (open, mobile stream orch-b8):** does the phone check `whoami` before every review (one extra read) or cache it per session with a
-  refresh on `op.not_allowed`?
+- **O6: DECIDED (orch-07, 15 Oct 2026).** The phone reads the column-R `whoami` before **every** review, with no
+  caching, so a host that has left dev mode or restarted without the flag is noticed before signing. A failed read or
+  an absent `relay.dev` means no convenience signing.
 
 #### 11A.17.10 Owner notes (residual risks, in plain words)
 

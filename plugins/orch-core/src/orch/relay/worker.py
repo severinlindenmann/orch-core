@@ -301,8 +301,11 @@ class RelayWorker:
                 self.publisher.start()
         except WorkerStopped:
             return
-        except BaseException as e:  # noqa: BLE001 - the start failed: the worker stops, by class only
+        except Exception as e:  # noqa: BLE001 - the start failed: the worker stops, by class only
             self._fail("relay_start_failed", type(e).__name__)
+        except BaseException as e:  # R2's WorkerStop and the like (N4-1): stop, then never swallow it
+            self._fail("relay_start_failed", type(e).__name__)
+            raise
 
     def _fail(self, code: str, detail: str) -> None:
         if not self._stopping:

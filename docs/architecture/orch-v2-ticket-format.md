@@ -2283,12 +2283,12 @@ Vectors to add to orch-relay `vectors_v2.json` and to the core tests, before C1 
 | `question_id` | `qid` derivation and the question hash with it |
 | `checkpoint` | the §2.4 shape; lower `seq` refused, equal `seq` with another head refused, source-bound restores carrying revocations, accumulator ancestry and atomic oversize refusal |
 | `repo_identity` | https, ssh with and without a port, scp-like forms mapped to one canonical URL; an https URL with `user:token@` loses it; `file://` → `local:` |
-| `reader_kat_1` (H12d, core-owned) | the reader known-answer test of orch-v2-host §0.8.6 item 9.2: `log` (three complete workspace-log person events of the vector workspace that differ only in `auth`: `convenience`, `passphrase`, `bogus`; each re-signed and replayable on the fixture under a pinned context) and `view` (per `READER_VIEWS_1` entry, three objects differing only in `signer.auth`), with the expected digests |
+| `reader_kat_1` (H12d, core-owned) | the reader known-answer test of orch-v2-host §0.8.6 item 9.2: `log` (three complete workspace-log person events of the vector workspace that differ only in `auth`: `convenience`, `passphrase`, `bogus`; each re-signed and replayable on the fixture under a pinned context) and `view` (`READER_VIEWS_1` = the answer of a `ticket.get` question: three answered Questions differing only in `answer.signer.auth`), with the expected digests |
 | `checkpoint` convenience cases (H12d) | a restore line with `auth: "convenience"` accepted, one with an unknown `auth` refused (the relay's `AUTH_KINDS`) |
 
 **The KAT digest (normative, H12d).** A reader runs its production parser over each case of a surface of
 `reader_kat_1`, in corpus order, and records one result per case: for `log`, `{"head": head(e), "accepted": bool,
-"auth": <e.auth> | null}`; for `view`, `{"view": <view id>, "accepted": bool, "auth": <signer.auth> | null}`; `auth` is
+"auth": <e.auth> | null}`; for `view`, `{"view": <view id>, "accepted": bool, "auth": <the signer's auth> | null}`; `auth` is
 `null` exactly when `accepted` is false. The digest of the surface is `"sha256:" + hex(sha256(cj(results)))`, `results`
 the JSON array in corpus order, `hex` lower case. The expected results are accepted, accepted, refused with `auth:
 null` for each triple: an unknown `auth` is refused, never mapped to a known one. The expected digests are pinned by

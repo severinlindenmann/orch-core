@@ -28,9 +28,12 @@ it('never joins the token channel, ignores offers, clears inherited storage and 
     close() {}
   })
   foreign()
+  history.replaceState(null, '', '/w/DEMO/ticket/DEMO-0001?tab=history#attacker-fragment')
   sessionStorage.setItem('orch-session', 'demo-not-a-real-inherited')
   const fetcher = vi.fn()
-  expect(await bootstrap(fetcher)).toBeNull()
+  const boot = bootstrap(fetcher)
+  expect(location.pathname + location.search + location.hash).toBe('/')
+  expect(await boot).toBeNull()
   channels.forEach((channel) => channel.dispatchEvent(new MessageEvent('message', {
     data: { type: 'token', token: 'demo-not-a-real-offer' },
   })))
@@ -51,7 +54,7 @@ it('exchanges the private launcher fragment without opening the token channel', 
   vi.stubGlobal('BroadcastChannel', channel)
   history.replaceState(null, '', '/#launch=demo-not-a-real-code&to=%2Fw%2FDEMO')
   const fetcher = vi.fn(async (_input, init) => {
-    expect(location.hash).toBe('')
+    expect(location.pathname + location.search + location.hash).toBe('/') // the destination only after a redeemed code
     expect(init?.body).toBe(JSON.stringify({ code: 'demo-not-a-real-code' }))
     return Response.json({ token: 'demo-not-a-real-launched' })
   }) as unknown as typeof fetch
@@ -60,9 +63,23 @@ it('exchanges the private launcher fragment without opening the token channel', 
   expect(channel).not.toHaveBeenCalled()
 })
 
+it.each([
+  ['refused', async () => new Response(null, { status: 401 })],
+  ['unreachable', async () => { throw new TypeError('network') }],
+])('a foreign link with a made-up launch code stays on the root when the exchange is %s', async (_name, answer) => {
+  foreign()
+  vi.stubGlobal('BroadcastChannel', vi.fn())
+  history.replaceState(null, '', '/#launch=demo-not-a-real-bogus&to=%2Fw%2FDEMO%2Fticket%2FDEMO-0001%3Ftab%3Dhistory')
+  await bootstrap(vi.fn(answer) as unknown as typeof fetch).catch(() => null)
+  expect(location.pathname + location.search + location.hash).toBe('/')
+  expect(getToken()).toBeNull()
+})
+
 it('keeps the normal login screen for an untagged document', async () => {
   vi.stubGlobal('BroadcastChannel', undefined)
+  history.replaceState(null, '', '/w/DEMO/tickets?tab=history#fragment')
   await bootstrap(vi.fn())
+  expect(location.pathname + location.search + location.hash).toBe('/w/DEMO/tickets?tab=history')
   render(<Shell />)
   expect(screen.getByText('Open your dashboard')).toBeInTheDocument()
 })

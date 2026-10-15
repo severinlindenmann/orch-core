@@ -49,7 +49,17 @@ from referencing.jsonschema import DRAFT202012
 from orch.canon import TextError, canonical_policy, check_text, dumps, loads_strict, suspicious
 from orch.canon.text import has_forbidden_branch_character
 
-__all__ = ["LOG_TYPES", "SchemaError", "event_types", "load", "names", "parse_json", "validate", "validate_settings"]
+__all__ = [
+    "LOG_TYPES",
+    "SchemaError",
+    "event_types",
+    "load",
+    "names",
+    "parse_json",
+    "validate",
+    "validate_def",
+    "validate_settings",
+]
 
 BASE = "https://schemas.orch.dev/v2/"
 MAX_STR_BYTES = 4096
@@ -183,6 +193,14 @@ def _validator(ref: str) -> Draft202012Validator:
     if ref in _files() and ref not in _DEFINITIONS:
         return Draft202012Validator(_inline(_raw(ref)), registry=_registry())
     return Draft202012Validator({"$ref": BASE + ref}, registry=_registry())
+
+
+def validate_def(name: str, obj: Any) -> None:
+    """Validate ``obj`` against ``common#/$defs/<name>`` (for example ``deviceCert``, ``revocation``): the same shapes
+    the event schemas use. Raises :class:`SchemaError`."""
+    if name not in _raw("common").get("$defs", {}):
+        raise ValueError(f"unknown definition {name!r}")
+    _first_error(name, obj, "common#/$defs/" + name)
 
 
 def event_types(log: str | None = None) -> list[str]:

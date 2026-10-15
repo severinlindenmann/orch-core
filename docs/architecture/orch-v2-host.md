@@ -9708,6 +9708,14 @@ I/O; `BridgeKeys`, `CardKeys` and `RelaySigner` call them in H13-1.
   option repeated the context as AAD. Its storage form `to_host_bytes()` (canonical JSON, hex fields) has a field set
   no wrap record has. `cj`, the wire dump and `check_wrap_record` refuse the envelope, so no frame builder accepts it;
   tests pin each path and that its bytes never appear in a device-only frame.
+- **Fail closed (orch-52 scan, 15 Oct 2026).** Each module has one error type (`PushError` with its `why`;
+  `DropError` with `DropTagError` for failed authentication; `RecoveryError` with `RecoveryTagError`), none a
+  `ValueError` subclass. `orch.crypto._closed.close_module` wraps every public function at import: a raw `KeyError`,
+  `TypeError`, `ValueError`, `IndexError`, `RecursionError` or `InvalidTag` becomes the module's error, never escapes.
+  `verify_drop_object` raises instead of returning `None`. A frame carries at least one wrap, and a device-authored
+  non-inbox frame a `wk` wrap (§19.9). `tests/crypto/test_h13_closed.py` covers each malformation class (wrong types
+  per field, missing fields, bad encodings and lengths, truncation and bit flips of a frame, deep and oversized heads)
+  and checks that every public function is wrapped.
 - **Vectors.** `tests/crypto/test_h13_push.py` and `test_h13_drop.py` reproduce every `push` and `drop` vector
   byte-exact (fixed salts, prefixes and ephemeral keys through test-only seams, the relay reference's `fake` seeds),
   including `upload_frame`, every 200/201 `relay_put` frame and the same-DEK rewrap case. They are hostile-tested:

@@ -7,7 +7,6 @@ and it never appears in a device-only frame."""
 from __future__ import annotations
 
 import pytest
-from cryptography.exceptions import InvalidTag
 
 from orch import canon
 from orch.crypto import drop, recovery, suite
@@ -43,16 +42,16 @@ def test_deterministic_seam_matches_aes_gcm():
 
 def test_open_refuses_another_context():
     env = recovery.seal_recovery(WK, WS, 3, OBJ, DEK)
-    with pytest.raises(InvalidTag):  # another epoch's WK
+    with pytest.raises(recovery.RecoveryTagError):  # another epoch's WK
         recovery.open_recovery(env, bytes(32), WS, OBJ)
-    with pytest.raises(InvalidTag):  # another workspace
+    with pytest.raises(recovery.RecoveryTagError):  # another workspace
         recovery.open_recovery(env, WK, bytes(16), OBJ)
-    with pytest.raises(InvalidTag):  # another object (the envelope names OBJ)
+    with pytest.raises(recovery.RecoveryTagError):  # another object (the envelope names OBJ)
         recovery.open_recovery(env, WK, WS, bytes(16))
-    with pytest.raises(InvalidTag):  # the epoch field changed: the key differs
+    with pytest.raises(recovery.RecoveryTagError):  # the epoch field changed: the key differs
         recovery.open_recovery(recovery.RecoveryEnvelope(OBJ, 4, env.ct), WK, WS, OBJ)
     moved = recovery.RecoveryEnvelope(bytes(16), 3, env.ct)
-    with pytest.raises(InvalidTag):  # the object field changed and the caller asks for that object
+    with pytest.raises(recovery.RecoveryTagError):  # the object field changed and the caller asks for that object
         recovery.open_recovery(moved, WK, WS, bytes(16))
 
 
@@ -63,11 +62,11 @@ def test_open_refuses_truncation_and_tampering(cut):
     object.__setattr__(short, "object_id", OBJ)
     object.__setattr__(short, "epoch", 3)
     object.__setattr__(short, "ct", env.ct[:cut])
-    with pytest.raises((InvalidTag, recovery.RecoveryError)):
+    with pytest.raises(recovery.RecoveryError):
         recovery.open_recovery(short, WK, WS, OBJ)
     flipped = bytearray(env.ct)
     flipped[-1] ^= 1
-    with pytest.raises(InvalidTag):
+    with pytest.raises(recovery.RecoveryTagError):
         recovery.open_recovery(recovery.RecoveryEnvelope(OBJ, 3, bytes(flipped)), WK, WS, OBJ)
 
 

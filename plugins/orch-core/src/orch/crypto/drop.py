@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 from orch import canon
 
 from . import sealing, suite
+from ._closed import close_module
 from .encoding import EncodingError, b64u, unb64u, unhex
 from .labels import LABELS, L
 
@@ -44,6 +45,7 @@ __all__ = [
     "MAX_HEAD",
     "MAX_META",
     "DropError",
+    "DropTagError",
     "build_host_frame",
     "check_drop_object",
     "check_wrap_record",
@@ -99,8 +101,13 @@ WRAP_KINDS = ("wk", "sk", "wxk", "device")
 CLAIM_FIELDS = frozenset({"v", "suite", "kind", "object_id", "workspace_id", "wrap"})
 
 
-class DropError(ValueError):
-    """A malformed Drop input or object (never a decryption failure, which is ``InvalidTag``)."""
+class DropError(Exception):
+    """The one error of this module: malformed or hostile input, a failed check, or (as :class:`DropTagError`) a
+    failed authentication. Not a ``ValueError``, so no broad ``except ValueError`` swallows it."""
+
+
+class DropTagError(DropError):
+    """An AEAD tag failed: wrong key, epoch, label, object, version or target, or tampered bytes."""
 
 
 # --- small checks ---------------------------------------------------------------------------------------------------
@@ -236,7 +243,7 @@ def open_meta(dek: bytes, object_id: bytes, version: int, sealed: bytes) -> dict
     pt = suite.aes_gcm_open(k, suite.ZERO_NONCE, sealed, aad)
     try:
         meta = canon.loads_strict(pt)
-    except (canon.JcsError, ValueError, UnicodeDecodeError):
+    except canon.JcsError:
         raise DropError("meta is not strict JSON") from None
     if type(meta) is not dict:
         raise DropError("meta is an object")
@@ -476,11 +483,13 @@ def check_drop_object(o: object) -> dict:
     if r == "inbox":
         if o["object_kind"] != "file":
             raise DropError("inbox is for files only")
-    elif type(r) is not list or not r or r != sorted(set(r)) or len(r) > MAX_WRAPS:
-        raise DropError("recipients is inbox or a sorted unique non-empty list")
     else:
+        if type(r) is not list or not r or len(r) > MAX_WRAPS:
+            raise DropError("recipients is inbox or a non-empty list")
         for t in r:
-            _hexid(t, "recipient")
+            _hexid(t, "recipient")  # every entry a lower-case 32-hex string before any ordering is compared
+        if r != sorted(set(r)):
+            raise DropError("recipients is sorted and unique")
     for f in ("created_ms",):
         if type(o[f]) is not int or not 0 <= o[f] <= MAX_SAFE_INT:
             raise DropError(f)
@@ -557,17 +566,20 @@ def drop_object_signed_bytes(o: dict) -> bytes:
     return L["sig_drop_object"] + canon.dumps(check_drop_object(o))
 
 
-def verify_drop_object(signed: object, author_pub: bytes) -> dict | None:
+def verify_drop_object(signed: object, author_pub: bytes) -> dict:
     """The descriptor object of ``{"o", "sig"}`` if it is well formed and its signature verifies under
-    ``author_pub``; else ``None`` (§10.4 "Readers MUST" step 1; the author's standing is the caller's)."""
+    ``author_pub``; else :class:`DropError` (:class:`DropTagError` for a bad signature). §10.4 "Readers MUST" step 1;
+    the author's standing is the caller's."""
     if type(signed) is not dict or set(signed) != {"o", "sig"} or type(signed["sig"]) is not str:
-        return None
+        raise DropError("descriptor is a signed object")
+    o = check_drop_object(signed["o"])
     try:
-        o = check_drop_object(signed["o"])
         sig = unb64u(signed["sig"], suite.SIG_LEN)
-    except (DropError, EncodingError):
-        return None
-    return o if suite.verify(author_pub, sig, L["sig_drop_object"] + canon.dumps(o)) else None
+    except EncodingError:
+        raise DropError("descriptor signature encoding") from None
+    if not suite.verify(author_pub, sig, L["sig_drop_object"] + canon.dumps(o)):
+        raise DropTagError("bad descriptor signature")
+    return o
 
 
 def drop_claim_object(object_id: bytes, workspace_id: bytes, wrap: dict) -> dict:
@@ -616,6 +628,10 @@ def _check_frame(signed: object, wraps: object, blob: object) -> tuple[dict, lis
         if key in seen:
             raise DropError("duplicate wrap target")
         seen.add(key)
+    if not wraps:
+        raise DropError("a frame carries at least one wrap")
+    if o["recipients"] != "inbox" and o["author_kind"] == "device" and not any(w["target_kind"] == "wk" for w in wraps):
+        raise DropError("a device author includes a wk wrap on a non-inbox object")
     if o["recipients"] == "inbox":
         kinds = sorted(w["target_kind"] for w in wraps)
         if kinds not in (["wxk"], ["device", "wxk"]):
@@ -652,7 +668,7 @@ def parse_frame(body: bytes) -> tuple[dict, bytes]:
     raw = body[8 : 8 + head_len]
     try:
         head = canon.loads_strict(raw)
-    except (canon.JcsError, ValueError, UnicodeDecodeError):
+    except canon.JcsError:
         raise DropError("head is not strict JSON") from None
     if type(head) is not dict or set(head) != {"descriptor", "wraps"}:
         raise DropError("head is exactly {descriptor, wraps}")
@@ -700,3 +716,6 @@ def reframe_host(body: bytes, wraps: list[dict]) -> bytes:
     re-framing: a device-only frame never gains a workspace wrap)."""
     head, blob = parse_frame(body)
     return build_host_frame(head["descriptor"], wraps, blob)
+
+
+close_module(globals(), DropError, DropError, DropTagError)

@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from orch import canon, crypto
@@ -89,9 +88,9 @@ def test_blob_truncation_and_substitution_refused():
         hdr + body[step:] + body[:step],  # chunks reordered
     ]
     for bad in cases:
-        with pytest.raises((drop.DropError, InvalidTag)):
+        with pytest.raises(drop.DropError):
             drop.decrypt_blob(DEK, OBJ, 1, bad)
-    with pytest.raises((drop.DropError, InvalidTag)):
+    with pytest.raises(drop.DropError):
         drop.decrypt_blob(bytes(32), OBJ, 1, blob)  # another DEK
 
 
@@ -107,7 +106,7 @@ def test_chunk_level_decryption_matches():
         drop.decrypt_chunk(k, blob[: drop.HEADER_LEN], i, ct, i == len(parts) - 1) for i, ct in enumerate(parts)
     )
     assert out == bytes.fromhex(D["content"])
-    with pytest.raises(InvalidTag):
+    with pytest.raises(drop.DropTagError):
         drop.decrypt_chunk(k, blob[: drop.HEADER_LEN], 0, parts[0], True)  # is_last flipped
 
 
@@ -116,7 +115,7 @@ def test_meta_and_dek_commit_byte_exact():
     assert drop.open_meta(DEK, OBJ, 1, bytes.fromhex(D["meta_sealed"])) == D["meta"]
     assert b64u(drop.dek_commit(OBJ, 1, DEK)) == D["dek_commit"]
     for bad in ((DEK, OBJ, 2), (DEK, bytes(16), 1), (bytes(32), OBJ, 1)):
-        with pytest.raises(InvalidTag):
+        with pytest.raises(drop.DropTagError):
             drop.open_meta(*bad, bytes.fromhex(D["meta_sealed"]))
     with pytest.raises(drop.DropError):
         drop.open_meta(DEK, OBJ, 1, b"x" * (drop.MAX_META + 1))
@@ -159,17 +158,17 @@ def test_sealed_wraps_byte_exact(name, seed, kx):
 def test_wrap_negative(case):
     rec = case["record"]
     assert case["opens"] is False
-    with pytest.raises((InvalidTag, drop.DropError)):
+    with pytest.raises(drop.DropError):
         if rec["target_kind"] == "wk":
             drop.open_wrap_wk(rec, WK1, WS)
         else:
             for kx in ("wxk_a_1.kx", "wxk_b_1.kx", "phone.kx"):
                 try:
                     drop.open_wrap_sealed(rec, priv(kx))
-                except InvalidTag:
+                except drop.DropError:
                     continue
                 raise AssertionError("opened")
-            raise InvalidTag()
+            raise drop.DropTagError()
 
 
 def test_open_wrap_checks_the_descriptor_and_dek_commit():
@@ -215,12 +214,13 @@ def test_wrap_record_check_is_closed(mut):
 
 @pytest.mark.parametrize("case", D["descriptor_cases"], ids=lambda c: c["name"])
 def test_descriptor_cases(case):
-    got = drop.verify_drop_object(case["signed"], bytes.fromhex(case["author_pub"]))
     want = case["expect"]
     if "ok" in want:
-        assert got == want["ok"]
+        assert drop.verify_drop_object(case["signed"], bytes.fromhex(case["author_pub"])) == want["ok"]
     else:
-        assert got is None
+        err = drop.DropTagError if want["refuse"] == "bad_signature" else drop.DropError
+        with pytest.raises(err):
+            drop.verify_drop_object(case["signed"], bytes.fromhex(case["author_pub"]))
 
 
 def test_descriptor_builder_reproduces_the_vector_object():

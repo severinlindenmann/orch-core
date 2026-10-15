@@ -33,6 +33,7 @@ from cryptography.exceptions import InvalidTag
 from orch import canon
 
 from . import suite
+from ._closed import close_module
 from .encoding import EncodingError, b64u, unb64u, unhex
 from .labels import LABELS, L
 
@@ -66,9 +67,10 @@ _PAYLOAD = frozenset({"kind", "id", "label", "ts_ms"})
 _OUTER = frozenset({"v", "ws", "epoch", "c"})
 
 
-class PushError(ValueError):
+class PushError(Exception):
     """A refused push input or a dropped push. ``why`` is the closed class: for the opener the service worker's
-    ``size``, ``shape``, ``no_key``, ``tag``, ``payload``, ``signature``, ``stale``; for the builders ``input``."""
+    ``size``, ``shape``, ``no_key``, ``tag``, ``payload``, ``signature``, ``stale``; for the builders ``input``. The one
+    error of this module (every public function is a closed boundary); not a ``ValueError``."""
 
     def __init__(self, why: str, detail: str = "") -> None:
         super().__init__(f"{why}: {detail}" if detail else why)
@@ -196,9 +198,7 @@ def open_push(raw: bytes, keys: Mapping[str, PushKeys], now_ms: int) -> dict:
             raise PushError("shape")
         ws = unhex(m["ws"], 16)
         c = unb64u(m["c"])
-    except (canon.JcsError, EncodingError, UnicodeDecodeError, ValueError) as e:
-        if isinstance(e, PushError):
-            raise
+    except (canon.JcsError, EncodingError):
         raise PushError("shape") from None
     entry = keys.get(m["ws"])
     epoch = m["epoch"]
@@ -207,7 +207,7 @@ def open_push(raw: bytes, keys: Mapping[str, PushKeys], now_ms: int) -> dict:
     try:
         inner = canon.loads_strict(suite.salted_open(k_push(entry.wk[epoch], ws, epoch), L["kdf_push_msg"],
                                                      push_aad(ws, epoch), c))  # fmt: skip
-    except (InvalidTag, canon.JcsError, ValueError, UnicodeDecodeError):
+    except (InvalidTag, canon.JcsError):
         raise PushError("tag") from None
     if type(inner) is not dict or set(inner) != {"p", "sig"} or type(inner["p"]) is not dict:
         raise PushError("payload")
@@ -218,7 +218,7 @@ def open_push(raw: bytes, keys: Mapping[str, PushKeys], now_ms: int) -> dict:
     p = inner["p"]
     try:
         signed = L["sig_push"] + bytes([suite.SUITE_ID]) + ws + epoch.to_bytes(4, "big") + canon.dumps(p)
-    except (canon.JcsError, ValueError):
+    except canon.JcsError:
         raise PushError("payload") from None
     if not suite.verify(entry.wsk_pub, sig, signed):
         raise PushError("signature")  # a member device holds K_push, not WSK (§9 R3)
@@ -229,3 +229,12 @@ def open_push(raw: bytes, keys: Mapping[str, PushKeys], now_ms: int) -> dict:
     if not now_ms - MAX_AGE_MS <= p["ts_ms"] <= now_ms + SKEW_MS:
         raise PushError("stale")
     return p
+
+
+close_module(
+    globals(),
+    PushError,
+    lambda m: PushError("input", m),
+    lambda m: PushError("input", m),
+    overrides={"open_push": (lambda m: PushError("shape", m), lambda m: PushError("tag", m))},
+)

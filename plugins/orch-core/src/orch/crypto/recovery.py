@@ -26,9 +26,12 @@ from typing import ClassVar
 from orch import canon
 
 from . import suite
+from ._closed import close_module, closed
 from .labels import L
 
-__all__ = ["RecoveryEnvelope", "RecoveryError", "open_recovery", "recovery_key", "seal_recovery"]
+__all__ = [
+    "RecoveryEnvelope", "RecoveryError", "RecoveryTagError", "open_recovery", "recovery_key", "seal_recovery",
+]  # fmt: skip
 
 NONCE_LEN = 12
 CT_LEN = NONCE_LEN + 32 + 16
@@ -36,8 +39,13 @@ _FIELDS = frozenset({"v", "kind", "object_id", "epoch", "ct"})
 _MAX_HOST_BYTES = 512
 
 
-class RecoveryError(ValueError):
-    """A malformed recovery envelope or input (never a decryption failure, which is ``InvalidTag``)."""
+class RecoveryError(Exception):
+    """The one error of this module: a malformed envelope or input, or (as :class:`RecoveryTagError`) a failed
+    authentication. Not a ``ValueError``."""
+
+
+class RecoveryTagError(RecoveryError):
+    """The AEAD tag failed: another workspace, epoch, object or key, or a tampered or truncated envelope."""
 
 
 def _u32(epoch: object) -> int:
@@ -81,17 +89,22 @@ class RecoveryEnvelope:
 
     @classmethod
     def from_host_bytes(cls, raw: bytes) -> RecoveryEnvelope:
-        if type(raw) is not bytes or len(raw) > _MAX_HOST_BYTES:
-            raise RecoveryError("not a stored recovery envelope")
-        try:
-            o = canon.loads_strict(raw)
-        except (canon.JcsError, ValueError, UnicodeDecodeError):
-            raise RecoveryError("not a stored recovery envelope") from None
-        if type(o) is not dict or set(o) != _FIELDS or o["v"] != cls.v or o["kind"] != cls.kind:
-            raise RecoveryError("not a stored recovery envelope")
-        if canon.dumps(o) != raw:
-            raise RecoveryError("not canonical")
-        return cls(object_id=_unhex(o["object_id"], 16), epoch=o["epoch"], ct=_unhex(o["ct"], CT_LEN))
+        return _from_host_bytes(cls, raw)
+
+
+@closed(RecoveryError, RecoveryError, RecoveryTagError)
+def _from_host_bytes(cls: type[RecoveryEnvelope], raw: bytes) -> RecoveryEnvelope:
+    if type(raw) is not bytes or len(raw) > _MAX_HOST_BYTES:
+        raise RecoveryError("not a stored recovery envelope")
+    try:
+        o = canon.loads_strict(raw)
+    except canon.JcsError:
+        raise RecoveryError("not a stored recovery envelope") from None
+    if type(o) is not dict or set(o) != _FIELDS or o["v"] != cls.v or o["kind"] != cls.kind:
+        raise RecoveryError("not a stored recovery envelope")
+    if canon.dumps(o) != raw:
+        raise RecoveryError("not canonical")
+    return cls(object_id=_unhex(o["object_id"], 16), epoch=o["epoch"], ct=_unhex(o["ct"], CT_LEN))
 
 
 def _unhex(s: object, n: int) -> bytes:
@@ -126,12 +139,13 @@ def seal_recovery(wk: bytes, ws: bytes, epoch: int, object_id: bytes, dek: bytes
 
 def open_recovery(env: RecoveryEnvelope, wk: bytes, ws: bytes, object_id: bytes) -> bytes:
     """The DEK. ``object_id`` is the object the caller recovers for; an envelope of another object, workspace, epoch
-    or key, a truncated or tampered one, raises :class:`cryptography.exceptions.InvalidTag`."""
-    from cryptography.exceptions import InvalidTag
-
+    or key, a truncated or tampered one, raises :class:`RecoveryTagError`."""
     if type(env) is not RecoveryEnvelope:
         raise RecoveryError("not a recovery envelope")
     if type(env.ct) is not bytes or len(env.ct) != CT_LEN or env.object_id != object_id:
-        raise InvalidTag()
+        raise RecoveryTagError("not this object's envelope")
     k = recovery_key(wk, ws, env.epoch, object_id)
     return suite.aes_gcm_open(k, env.ct[:NONCE_LEN], env.ct[NONCE_LEN:], b"")
+
+
+close_module(globals(), RecoveryError, RecoveryError, RecoveryTagError)

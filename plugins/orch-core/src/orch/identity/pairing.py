@@ -1,5 +1,5 @@
 """Pure builders for R6 pairing (design 11A.15.10, H12c items 1-4): the epoch-key commitment, the two 6-character codes,
-the pairing links and the pair request's meta.
+the pairing links and the pair request's meta (the six answers of item 5 are ``orch.identity.answers``).
 
 Specs: orch-relay ``docs/protocol-v2.md`` §2.5 (labels), §4 (pins, SAS, ``cert_code``), §7.2 (``wk_commit``), §8.3
 (links, the pair meta), §8.4 (the challenge). Vectors: the relay corpus sections ``wk_commit``, ``bridge.sas``,
@@ -81,6 +81,33 @@ def _b64_pub(value: object, what: str) -> bytes:
     except crypto.EncodingError:
         raise _bad(what) from None
     return _pub(raw, what)
+
+
+_SIG_LABEL = {
+    "member_list": "sig_member_list",
+    "wk_grant": "sig_wk_grant",
+    "cert_request": "sig_cert_request",
+    "cert_challenge": "sig_cert_challenge",
+    "cert_rejection": "sig_cert_rejection",
+}
+
+
+def _verify_signed(pub: bytes, signed: object, kind: str) -> dict | None:
+    """The one signed-object verifier of the H12c builders: ``o`` if ``signed`` is exactly ``{o, sig}`` with ``v: 2``,
+    this suite and ``kind`` (integers, not bools), and ``sig`` verifies under ``pub`` over ``label(kind) || cj(o)``
+    (proto §2.4); ``None`` otherwise. The exact field set is the caller's check."""
+    try:
+        if type(signed) is not dict or set(signed) != {"o", "sig"}:
+            return None
+        o = signed["o"]
+        if type(o) is not dict or type(o.get("v")) is not int or type(o.get("suite")) is not int:
+            return None
+        if o["v"] != 2 or o["suite"] != crypto.SUITE_ID or o.get("kind") != kind:
+            return None
+        sig = crypto.unb64u(signed["sig"], crypto.SIG_LEN)
+        return o if crypto.verify(pub, sig, L[_SIG_LABEL[kind]] + canon.dumps(o)) else None
+    except (crypto.EncodingError, crypto.CryptoError, canon.JcsError, ValueError, KeyError, TypeError):
+        return None
 
 
 def _lp16(b: bytes) -> bytes:

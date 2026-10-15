@@ -20,6 +20,7 @@ from typing import Any
 from orch import canon, crypto
 from orch.relay import card as relay_card
 
+from . import _mint
 from .errors import Refused
 from .pairing import MAX_EPOCH, _bad, _id, _pub, _raw
 
@@ -27,13 +28,14 @@ __all__ = ["CARD_PART_FIELDS", "VerifiedCard", "card_o", "verify_card"]
 
 MAX_SAFE_INT = 2**53 - 1
 CARD_PART_FIELDS = frozenset({"name", "description", "capabilities", "hosted_by"})
-_MINT = object()  # only verify_card holds it
 
 
 @dataclass(frozen=True, slots=True)
 class VerifiedCard:
-    """A card that passed §7.1 checks 1 to 6 under the owner's ``PK``. Constructing one anywhere but
-    :func:`verify_card` is refused."""
+    """A card that passed §7.1 checks 1 to 6 under the owner's ``PK``. Its ``mint`` binds every field
+    (``orch.identity._mint``): constructing one anywhere but :func:`verify_card`, ``dataclasses.replace`` or any
+    field change is refused, and consumers re-check it. ``o`` is a fresh copy of the verified card object on every
+    read (stored as ``cj`` bytes, read-only)."""
 
     workspace_id: str
     owner_person_id: str
@@ -41,12 +43,18 @@ class VerifiedCard:
     card_seq: int
     relay_url: str
     client_hosted: bool
-    o: dict[str, Any] = field(repr=False, compare=False)
-    mint: object = field(default=None, repr=False, compare=False)
+    o_cj: bytes = field(repr=False)
+    mint: bytes = field(default=b"", repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if self.mint is not _MINT:
-            raise Refused("malformed", "a VerifiedCard comes only from verify_card")
+        _mint.check(self, VerifiedCard)
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _mint.no_subclass(cls)
+
+    @property
+    def o(self) -> dict[str, Any]:
+        return canon.loads_strict(self.o_cj)
 
 
 def verify_card(card: object, owner_pk_pub: bytes) -> VerifiedCard:
@@ -59,15 +67,15 @@ def verify_card(card: object, owner_pk_pub: bytes) -> VerifiedCard:
     except relay_card.CardRefused as e:
         raise Refused(e.code, "card") from None
     assert isinstance(card, dict)  # verify_card checked the shape
-    return VerifiedCard(
+    return _mint.make(
+        VerifiedCard,
         workspace_id=o["workspace_id"],
         owner_person_id=o["owner_person_id"],
         wsk_pub=crypto.unb64u(o["wsk_pub"], crypto.PUB_LEN),
         card_seq=o["card_seq"],
         relay_url=o["relay_url"],
         client_hosted=card["delegation"]["o"]["client_hosted"],
-        o=canon.loads_strict(canon.dumps(o)),
-        mint=_MINT,
+        o_cj=canon.dumps(o),
     )
 
 

@@ -30,6 +30,7 @@ from cryptography.exceptions import InvalidTag
 from orch import canon, crypto
 from orch.crypto.labels import L
 
+from . import _mint
 from .certs import SCOPE_ORDER, SKEW_MS, scopes_ok
 from .errors import Refused
 from .pairing import (
@@ -342,8 +343,7 @@ def check_cert_request(
         raise _bad("journal")
     if type(now_ms) is not int:
         raise _bad("now_ms")
-    if type(card) is not VerifiedCard:
-        raise _bad("card: a VerifiedCard from orch.identity.wscard.verify_card")
+    _mint.check(card, VerifiedCard)  # exactly a VerifiedCard, minted over this content (Opus M1, D1-1)
     ws, owner, wsk, hosted = card.workspace_id, card.owner_person_id, card.wsk_pub, card.client_hosted
     if owner != me_person:
         raise Refused("other_person", "the card is another person's")
@@ -514,7 +514,19 @@ class CertChallenge:
     expires_ms: int
     cert_code: str
     pk_pub: bytes
-    signed: dict[str, Any] = field(repr=False, compare=False)
+    signed_cj: bytes = field(repr=False)
+    mint: bytes = field(default=b"", repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _mint.check(self, CertChallenge)
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _mint.no_subclass(cls)
+
+    @property
+    def signed(self) -> dict[str, Any]:
+        """A fresh copy of the verified signed challenge, to relay unchanged."""
+        return canon.loads_strict(self.signed_cj)
 
 
 @dataclass(frozen=True, slots=True)
@@ -527,7 +539,19 @@ class CertRejection:
     dk_hash: bytes
     expires_ms: int
     pk_pub: bytes
-    signed: dict[str, Any] = field(repr=False, compare=False)
+    signed_cj: bytes = field(repr=False)
+    mint: bytes = field(default=b"", repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _mint.check(self, CertRejection)
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _mint.no_subclass(cls)
+
+    @property
+    def signed(self) -> dict[str, Any]:
+        """A fresh copy of the verified signed rejection, to relay unchanged."""
+        return canon.loads_strict(self.signed_cj)
 
 
 def _binding(o: Mapping[str, Any], req: Mapping[str, Any], keys_hash: str) -> None:
@@ -545,10 +569,6 @@ def _ids_of(o: Mapping[str, Any], req: Mapping[str, Any]) -> None:
         raise Refused("not_for_this_device", "request_id")
 
 
-def _copy(signed: object) -> dict[str, Any]:
-    return canon.loads_strict(canon.dumps(signed))
-
-
 def check_cert_challenge(signed: object, pk_pub: bytes, request_o: Mapping[str, Any]) -> CertChallenge:
     """The relay's G3b checks of a challenge, which the host repeats under the **pinned** ``PK`` against its **own**
     stored request before relaying it (11A.15.6 7c): ``PK``'s signature (``bad_signature``); the exact field set
@@ -562,7 +582,8 @@ def check_cert_challenge(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     if o is None:
         raise Refused("bad_signature", "cert_challenge")
     sig_pub, kx_pub = _challenge_body(o, pk, req)
-    return CertChallenge(
+    return _mint.make(
+        CertChallenge,
         request_id=o["request_id"],
         device_id=o["device_id"],
         dk_sig_pub=sig_pub,
@@ -570,7 +591,7 @@ def check_cert_challenge(signed: object, pk_pub: bytes, request_o: Mapping[str, 
         expires_ms=o["expires_ms"],
         cert_code=cert_code(o),
         pk_pub=pk,
-        signed=_copy(signed),
+        signed_cj=canon.dumps(signed),
     )
 
 
@@ -610,13 +631,14 @@ def check_cert_rejection(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     if o is None:
         raise Refused("bad_signature", "cert_rejection")
     dk_hash = _rejection_body(o, pk, req)
-    return CertRejection(
+    return _mint.make(
+        CertRejection,
         request_id=o["request_id"],
         device_id=o["device_id"],
         dk_hash=dk_hash,
         expires_ms=o["expires_ms"],
         pk_pub=pk,
-        signed=_copy(signed),
+        signed_cj=canon.dumps(signed),
     )
 
 

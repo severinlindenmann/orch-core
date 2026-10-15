@@ -151,7 +151,7 @@ def test_a_verified_card_cannot_be_constructed_directly():
             card_seq=v.card_seq,
             relay_url=v.relay_url,
             client_hosted=v.client_hosted,
-            o=v.o,
+            o_cj=v.o_cj,
         )
 
 

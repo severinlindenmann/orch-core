@@ -382,13 +382,19 @@ class Supervisor:
         thread releases everything itself as it ends, ``runner.lock`` last, so no other runner starts before."""
         with self._spawn_lock:
             self._closed = True
-            runs = list(self.live) if stop_runs else []
-        for run in runs:
-            self.stop(run, grace=grace)
-        self._closing = True
-        self._wake()
-        if self._thread is not None:
-            self._thread.join(timeout=JOIN_SECONDS)
+            with self.lock:
+                runs = list(self.live) if stop_runs else []
+        try:
+            for run in runs:
+                try:
+                    self.stop(run, grace=grace)
+                except Exception:  # noqa: BLE001 - one run (pruned, or a failed stop) never keeps close() half done
+                    LOG.exception("run %s: stop at close failed", run)
+        finally:
+            self._closing = True
+            self._wake()
+            if self._thread is not None:
+                self._thread.join(timeout=JOIN_SECONDS)
         with self.lock:
             if self._thread is not None and not self._io_done:
                 if not self._release_deferred:
@@ -411,7 +417,8 @@ class Supervisor:
                         os.close(live.master)
                     except OSError:
                         pass
-            self._sel.close()
+            with contextlib.suppress(OSError):
+                self._sel.close()
             wake, (self._wake_r, self._wake_w) = (self._wake_r, self._wake_w), (-1, -1)
             lock_fd, self._lock_fd = self._lock_fd, None
         for fd in wake:
@@ -421,7 +428,10 @@ class Supervisor:
                 except OSError:
                     pass
         if lock_fd is not None:
-            os.close(lock_fd)
+            try:
+                os.close(lock_fd)
+            except OSError:
+                LOG.error("runner.lock could not be released (fd %d)", lock_fd, exc_info=True)
 
     def _wake(self) -> None:
         with self.lock:  # never a write to a released (and perhaps reused) number

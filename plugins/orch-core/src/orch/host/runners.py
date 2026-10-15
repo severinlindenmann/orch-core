@@ -42,6 +42,7 @@ import base64
 import contextlib
 import hashlib
 import logging
+import math
 import re
 import secrets
 import sys
@@ -87,12 +88,15 @@ RUN_ID = r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
 RUNNER_CODES = frozenset(
     {
         "launch.cwd_changed", "harness.not_found", "harness.shell_unsupported", "run.spawn_failed", "invalid.input",
-        "not_found", "term.busy", "term.not_attachable",
+        "not_found", "term.busy", "term.not_attachable", "attach.limit",
         # H11d: worktree git (orch.runner.wtgit)
         "worktree.branch_in_use", "worktree.exists", "worktree.dirty", "worktree.git_failed",
         "observe.unavailable",  # the orch.gitsafe gate: the repo's own config could make git run a program
     }
 )  # fmt: skip
+#: ``retry_after_ms`` for the retryable codes a runner reports (§0.6: a retryable refusal says when to try again); the
+#: runner's pending capabilities expire 10 s after ``attach.allow`` at the latest, most of them far sooner
+RUNNER_RETRY_MS = {"attach.limit": 2000}
 #: how long an exited run's ring is kept by the runner (:data:`orch.runner.supervise.KEEP_RING_SECONDS`)
 REPLAY_SECONDS = 3600
 WATCH_SECONDS = 0.5
@@ -595,7 +599,8 @@ class RunnerHub:
         else:
             err = args.get("error") or {}
             code = err.get("code") if err.get("code") in RUNNER_CODES else "run.spawn_failed"
-            future.set_exception(HostError(code, str(err.get("message") or code)[:400]))
+            message = str(err.get("message") or code)[:400]
+            future.set_exception(HostError(code, message, retry_after_ms=RUNNER_RETRY_MS.get(code)))
         return {}
 
     async def exit(self, session: Session, args: dict[str, Any]) -> dict[str, Any]:
@@ -690,6 +695,14 @@ class RunnerHub:
     def take_start(self, person: str) -> bool:
         """The start rate of §0.11: 10 per minute per person, burst 5."""
         return _take(self._starts, person, 10 / 60, 5.0)
+
+    def start_retry_ms(self, person: str) -> int:
+        """After a refused :meth:`take_start`: the milliseconds until the person's next start token."""
+        return _retry_ms(self._starts, person, 10 / 60)
+
+    def mint_retry_ms(self, person: str) -> int:
+        """After a refused :meth:`take_mint`: the milliseconds until the person's next ``term.attach`` token."""
+        return _retry_ms(self._mints, person, MINT_RATE)
 
     def take_mint(self, person: str) -> bool:
         """The ``term.attach`` rate: 30 mints per minute per person, burst 10 (each one is an audit line, a host
@@ -1122,6 +1135,13 @@ def _take(buckets: dict[str, list[float]], key: str, rate: float, burst: float) 
         return False
     buckets[key] = [level - 1, now]
     return True
+
+
+def _retry_ms(buckets: dict[str, list[float]], key: str, rate: float) -> int:
+    """The milliseconds until bucket ``key`` holds one token again (``retry_after_ms``, §0.6: 1 .. 3 600 000)."""
+    level, at = buckets.get(key, (0.0, time.monotonic()))
+    level += (time.monotonic() - at) * rate
+    return max(1, min(3_600_000, math.ceil((1 - level) / rate * 1000)))
 
 
 def _ticket_visible(service: Any, sub: RunSub, key: str) -> bool:

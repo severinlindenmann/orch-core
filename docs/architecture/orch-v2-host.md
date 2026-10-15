@@ -6046,7 +6046,11 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   the event loop at `term.open` and `term.attach`; `run.stop` and `attach.cancel` never need it.
 - **Limits.** The host refuses `attach.limit` from the runner's `runner.term` counts (pending capabilities count
   toward none) and `run.limit` (16 shells per person, 64 runs per runner), `rate.limited` (10 starts per minute,
-  burst 5; 30 `term.attach` mints per minute per person, burst 10). The runner's connection cap is 96 (64 attachments
+  burst 5; 30 `term.attach` mints per minute per person, burst 10). Each of these refusals carries
+  `retry_after_ms` as the `Error` member of §0.2 (there is no `detail` field; terminal follow-ups after #469):
+  `rate.limited` the time until the person's next token in that bucket (at most 6 s for starts, 2 s for mints),
+  `attach.limit` 2 000, `run.limit` 5 000. The runner's own `attach.limit` (256 pending capabilities) reaches the
+  caller as `attach.limit` with `retry_after_ms` 2 000, not `run.spawn_failed`. The runner's connection cap is 96 (64 attachments
   plus handshakes); at most 256 capabilities wait to be presented (`attach.allow` beyond: `attach.limit`). Per
   attachment the runner queues at most 4 096 control frames and reads ahead at most 64 frames while a PTY write waits
   for room; beyond either the attachment is revoked, its write lease is released at once, and it ends with

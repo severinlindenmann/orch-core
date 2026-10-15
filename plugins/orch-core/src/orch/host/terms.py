@@ -14,7 +14,9 @@ found, also for what the viewer may not see), G and N are refused by the matrix 
 attachment by itself when the person leaves, the grant ends, the run's ticket becomes invisible, or a kill switch is
 pulled (the addon revoked or disabled, ``orch runner disable``, ``orch runner terminals off``: ``runner.disabled``)
 (:meth:`orch.host.runners.RunnerHub._watch`), and on ``attach.cancel``. ``term.attach`` is limited to 30 mints per
-minute per person (burst 10; ``rate.limited``).
+minute per person (burst 10; ``rate.limited``). Every retryable refusal (``rate.limited``, ``attach.limit``,
+``run.limit``, ``runner.unavailable``) carries ``error.retry_after_ms`` (§0.6); for the rate buckets it is the time
+until the person's next token.
 
 This is **harness ``shell`` only**: ``claude-code`` and ``codex`` as person-run harnesses come with H11c (their
 registry); asking for one is ``blocked: harness.not_found``. The working directory is the workspace root (worktrees
@@ -330,7 +332,7 @@ async def _open(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, A
     if sum(1 for r in live if r.get("runner_uid") == hub.uid) >= RUNS_PER_RUNNER:
         raise HostError("run.limit", "at most 64 runs per runner", retry_after_ms=5000)
     if not hub.take_start(person):
-        raise HostError("rate.limited", "at most 10 starts per minute", retry_after_ms=6000)
+        raise HostError("rate.limited", "at most 10 starts per minute", retry_after_ms=hub.start_retry_ms(person))
     launch = data["launch"]
     fields = {"run": run, "kind": "shell", "person": person, "ticket": launch["ticket"], "harness": "shell",
               "label": data.get("label"), "as_person": True, "cwd": {"kind": "workspace"}}  # fmt: skip
@@ -378,7 +380,9 @@ async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
     if mode == "write" and not data["take"] and any(a["writer"] for a in held["atts"]):
         raise HostError("term.writer_busy", "another attachment holds the write lease: take it or attach read-only")
     if not hub.take_mint(person):
-        raise HostError("rate.limited", "at most 30 terminal attaches per minute", retry_after_ms=2000)
+        raise HostError(
+            "rate.limited", "at most 30 terminal attaches per minute", retry_after_ms=hub.mint_retry_ms(person)
+        )
     got = await hub.attach_allow(run, person, mode, take=data["take"], lease_gen=held["lease_gen"],
                                  start_from=data["from"], who=data["who"])  # fmt: skip
     return got

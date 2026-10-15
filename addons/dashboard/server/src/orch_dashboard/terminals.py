@@ -342,8 +342,8 @@ class OutQueue:
 class SteadyWrites:
     """The TermClient's socket with a write timeout of its own (review M2, delta D-M1). Core's client sends input frame
     2.. from inside `recv` (after the previous frame's ack) and throttled resends from `pump`, all under whatever
-    timeout `recv` last set (10..50 ms): too short for a 64 KiB frame through an 8 KiB AF_UNIX buffer while the runner is
-    busy. Every `sendall` here runs under `WRITE_TIMEOUT`, and the read timeout is put back afterwards. (Core request:
+    timeout `recv` last set (10..50 ms): too short for a 64 KiB frame through an 8 KiB AF_UNIX buffer while the runner
+    is busy. Every `sendall` here runs under `WRITE_TIMEOUT`, and the read timeout is put back afterwards. (Core request:
     `TermClient.send` could do this itself.)"""
 
     def __init__(self, sock):

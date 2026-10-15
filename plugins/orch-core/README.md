@@ -1,6 +1,8 @@
-# orch-core (v2, in development)
+# orch-core (v2)
 
-The orch v2 core, rebuilt fresh on `develop` (see `docs/architecture/orch-v2-core.md`). orch v1 lives on `main`.
+The orch v2 core (see `docs/architecture/orch-v2-core.md`).
+
+`orch import v1 PATH` is the migration from v1: it is the only supported way to bring a v1 workspace into v2.
 
 ## Migration from v1
 

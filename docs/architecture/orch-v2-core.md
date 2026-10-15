@@ -118,7 +118,7 @@ Each group is one PR into `develop` (or a short stack), and ends with T2.
 | C7 Human operations | `approve`, `request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `member`, all with user presence | C2, C6 | Opus security |
 | C8 Instructions | `AGENTS.orch.md` generator, the three skills, session-start and pre-compact hooks, stale check, `init` | C6 | — |
 | C9 Addon mechanism | Manifest, out-of-process runner, signed capability grants, fields, sections, artifact kinds, needs rules, inactive data | C3, C4, C5 | Opus security |
-| C10 Import and doctor | `import v1` (tickets, history, artifacts), `doctor`, `check`, a commit check | C6 | — |
+| C10 Import and doctor | `import v1` (migration from v1: tickets, history, artifacts), `doctor`, `check`, a commit check | C6 | — |
 | C11 Core exit | The core e2e scenarios, context budget tests, and the owner's daily use on one real workspace | all | — |
 
 C1, C4 and C5 can start in parallel. C2 waits for spike S1, which tests Secure Enclave P-256 keys and their interop with the shared vectors.

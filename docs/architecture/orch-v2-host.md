@@ -9371,13 +9371,15 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     - `remote.<n>.{url,pushurl,fetch,push,tagopt,prune,mirror,…}`.
     - `branch.<n>.{remote,merge,rebase,pushremote,description}`.
     - `user.*`, `init.defaultBranch`, `extensions.{objectFormat,worktreeConfig,refStorage,preciousObjects,partialClone}`.
-    - The tuning keys of `gc`, `pack`, `fetch`, `pull`, `push`, `merge`, `rebase`, `submodule`, `status`, `diff`,
+    - The tuning keys of `gc`, `pack`, `fetch`, `pull`, `push`, `merge`, `rebase`, `submodule`, `status`,
       `color`, `column`, `advice`, `i18n`, `blame`, `maintenance`, `log`, `rerere`, `index`, `feature`, `checkout`,
       `worktree` and `transfer`.
     - The signing switches only: `commit.gpgSign`, `tag.gpgSign`, `gpg.format`.
     - LFS's own `lfs.repositoryformatversion` and `lfs.<url>.access`.
   - **What it never holds:** anything that names a program, a command, a driver, a hook or another config file. That
-    excludes `filter.*`, `diff.<driver>.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
+    excludes every `diff.*` key (since #546: `diff.submodule` or `diff.relative` would change what a read opens or
+    reports; an operation's fixed options are the only source of its behaviour), `status.submoduleSummary`,
+    `filter.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
     `credential.*`, `gc.recentObjectsHook`, `remote.<n>.{vcs,uploadpack,receivepack}`, `*.cmd` tools, editors, gpg
     programs, `core.attributesFile` and any unknown section. A non-boolean `core.fsmonitor` is refused.
   - **Why an allow-list.** The class "a config key that runs a program" is open-ended, and each git release can add

@@ -62,7 +62,7 @@ REAL_WORLD = [
     ("extensions.worktreeConfig", "true"), ("extensions.objectFormat", "sha256"), ("gc.auto", "0"),
     ("maintenance.auto", "false"), ("maintenance.gc.enabled", "true"), ("lfs.repositoryformatversion", "0"),
     ("lfs.https://github.com/o/r.git/info/lfs.access", "basic"), ("color.ui", "auto"), ("color.diff.meta", "blue"),
-    ("advice.detachedHead", "false"), ("status.showUntrackedFiles", "all"), ("diff.renames", "copies"),
+    ("advice.detachedHead", "false"), ("status.showUntrackedFiles", "all"),
     ("merge.conflictStyle", "zdiff3"), ("rebase.autoStash", "true"), ("fetch.prune", "true"),
     ("submodule.recurse", "false"), ("rerere.enabled", "true"),
 ]  # fmt: skip
@@ -281,3 +281,12 @@ def test_no_lazy_fetch_in_every_scrubbed_environment():
     # store/observe.git, ops/health._git and wtgit.read_git share orch.gitsafe's isolation (#546)
     assert gitsafe.isolated_env({})["GIT_NO_LAZY_FETCH"] == "1"
     assert "protocol.allow=never" in gitsafe._argv("/", ["status"])
+
+
+@pytest.mark.parametrize(
+    "key", ["diff.submodule", "diff.relative", "diff.renames", "diff.context", "diff.ignoreSubmodules",
+            "status.submoduleSummary"],
+)  # fmt: skip
+def test_keys_that_change_what_an_operation_opens_or_reports_are_refused(key):
+    """Codex on #561: an operation's fixed options are the only source of its behaviour."""
+    assert gitsafe.exec_risk([(L, key, "true")]) == key

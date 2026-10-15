@@ -218,14 +218,17 @@ ALLOWED: dict[str, frozenset[str] | str] = {
     "lfs": frozenset({"repositoryformatversion"}),
     "color": "*",
     "column": frozenset({"ui", "branch", "clean", "status", "tag"}),
+    # Codex on #561 (0a887514): an operation's fixed options are the only source of its behaviour, so no allowed key
+    # may change what an operation opens or reports. Gone: the whole ``diff`` section (``diff.submodule=diff`` made a
+    # diff between commits open a submodule and run a child diff; ``diff.relative`` hid changes outside a
+    # subdirectory; ``diff.context``, ``diff.algorithm`` ... shaped the patch) and ``status.submoduleSummary``.
+    # What stays is overridden by every operation's fixed options (``status.renames``, ``status.showUntrackedFiles``,
+    # ``submodule.<n>.ignore``, ``color.*``: ``--no-renames``, ``--untracked-files``, ``--ignore-submodules``,
+    # ``--no-color``), or describes the work tree itself (``core.autocrlf``, ``core.filemode``, ``core.ignoreCase``,
+    # as git init writes them).
     "status": frozenset({
         "short", "branch", "relativepaths", "showstash", "aheadbehind", "renames", "renamelimit",
-        "displaycommentprefix", "submodulesummary", "showuntrackedfiles",
-    }),
-    "diff": frozenset({
-        "renames", "renamelimit", "algorithm", "mnemonicprefix", "noprefix", "indentheuristic", "colormoved",
-        "colormovedws", "context", "interhunkcontext", "statgraphwidth", "statnamewidth", "suppressblankempty",
-        "ignoresubmodules", "relative", "dirstat", "autorefreshindex", "submodule",
+        "displaycommentprefix", "showuntrackedfiles",
     }),
     "advice": "*",
     "i18n": frozenset({"commitencoding", "logoutputencoding"}),
@@ -388,6 +391,10 @@ _SLOT = re.compile(r"<(rev|path|context)>")
 #: network. Submodules: ``status`` runs with ``--ignore-submodules=all`` (git never opens one) and refuses a populated
 #: one anyway (looked for in the whole repository); the diffs (``diff --cached``, index against ``HEAD``, and diffs
 #: between two commits) never open a submodule, so they keep ``=dirty`` and still show a gitlink (pointer) change.
+#: every diff between commits: never relative to a subdirectory, never a submodule opened for its log or its diff
+#: (``--submodule=short`` beats an allowed-looking ``diff.submodule``), no colour, pointer moves visible
+_DIFF_FIXED = ("--no-relative", "--submodule=short", "--no-color", "--ignore-submodules=dirty")
+
 OPS: dict[str, Op] = {
     "head": Op(("rev-parse", "--verify", "-q", "HEAD^{commit}")),
     "symbolic_head": Op(("symbolic-ref", "-q", "HEAD")),
@@ -396,18 +403,20 @@ OPS: dict[str, Op] = {
     "commit": Op(("rev-parse", "--verify", "-q", "--end-of-options", "<rev>^{commit}")),
     "parent": Op(("rev-parse", "--verify", "-q", "--end-of-options", "<rev>^1")),
     "merge_base": Op(("merge-base", "--end-of-options", "<rev>", "<rev>")),  # merge-base takes no "--"
-    "status": Op(("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all"),
+    "status": Op(("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all", "--no-renames"),
                  person=STATUS_KEYS, tree=True),
     "index_flags": Op(("ls-files", "-v")),
-    "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--relative", "--ignore-submodules=dirty")),
+    "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--no-color", "--relative",
+                      "--ignore-submodules=dirty")),
     # paths of staged_raw are relative to -C <repo> (--relative): ":0:./<path>" resolves them there, not at the top
-    "staged_tree": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--ignore-submodules=dirty")),
+    "staged_tree": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--no-color", "--no-relative",
+                       "--ignore-submodules=dirty")),
     "staged_blob": Op(("cat-file", "blob", ":0:./<path>")),
-    "diff_numstat": Op(("diff", "--numstat", "-M50%", "--ignore-submodules=dirty", "--end-of-options",
+    "diff_numstat": Op(("diff", "--numstat", "-M50%", *_DIFF_FIXED, "--end-of-options",
                          "<rev>", "<rev>", "--")),
-    "diff_names": Op(("diff", "--name-status", "-M50%", "--ignore-submodules=dirty", "--end-of-options",
+    "diff_names": Op(("diff", "--name-status", "-M50%", *_DIFF_FIXED, "--end-of-options",
                          "<rev>", "<rev>", "--")),
-    "diff_patch": Op(("diff", "-U<context>", "-M50%", "--ignore-submodules=dirty", "--end-of-options",
+    "diff_patch": Op(("diff", "-U<context>", "-M50%", *_DIFF_FIXED, "--end-of-options",
                          "<rev>", "<rev>", "--")),
 }  # fmt: skip
 #: a revision operand: ``HEAD``, a full commit id, or ``refs/heads/<name>`` with ``<name>`` checked by
@@ -419,15 +428,16 @@ _REF_BAD = re.compile(r"\.\.|@\{|//|[:\\~^?*\[]|\s")
 
 def _branch_ok(name: str) -> bool:
     """git's ref rules for a branch name (any non-control Unicode): no leading ``-``, no ``..``, ``@{``, ``//``,
-    ``: \\ ~ ^ ? * [``, whitespace or control character, no component starting with ``.``, no trailing ``/``, ``.``
-    or ``.lock``, not ``@``, at most 255 bytes."""
+    ``: \\ ~ ^ ? * [``, whitespace or control character, no component starting with ``.`` or ending in ``.lock``,
+    no trailing ``/`` or ``.``, not ``@``. Deliberately stricter than git: any Unicode whitespace (not only ASCII)
+    is refused, and the name is at most 255 bytes."""
     return (
         bool(name)
         and not name.startswith("-")
         and _REF_BAD.search(name) is None
         and not any(unicodedata.category(c) in ("Cc", "Cs") for c in name)
-        and not any(part.startswith(".") or not part for part in name.split("/"))
-        and not name.endswith(("/", ".", ".lock"))
+        and not any(part.startswith(".") or part.endswith(".lock") or not part for part in name.split("/"))
+        and not name.endswith(("/", "."))
         and name != "@"
         and len(name.encode("utf-8", "surrogatepass")) <= 255
     )

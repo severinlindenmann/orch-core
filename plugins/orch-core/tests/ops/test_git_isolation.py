@@ -740,3 +740,72 @@ def test_an_operand_of_the_wrong_type_is_refused_not_a_type_error(world, operand
     with pytest.raises(gitsafe.Unsafe):
         gitsafe.command(str(repo), "ref", os.environ, operand=operand)
     assert observe.git(repo, "ref", rev=operand) is None
+
+
+# ------------------------------ Codex on 0a887514: an operation's fixed options are the only source of its behaviour
+
+
+def _bumped_submodule(w) -> tuple[Path, str, str]:
+    """A superproject whose second commit only moves its submodule's pointer; the submodule's own config arms a
+    textconv, an external diff and an fsmonitor program."""
+    repo, sub = _super_with_armed_submodule(w)
+    (sub / ".gitattributes").write_text("*.g diff=x\n")
+    w.git(sub, "config", "diff.x.textconv", w.prog("sub-textconv"))
+    w.git(sub, "config", "diff.external", w.prog("sub-external"))
+    before = observe.git(repo, "commit", rev="refs/heads/main")
+    w.git(sub, "add", "-A")
+    w.git(sub, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "move")
+    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump sub")
+    after = observe.git(repo, "commit", rev="refs/heads/main")
+    w.clear()
+    return repo, before, after
+
+
+def test_an_allowed_looking_diff_submodule_never_opens_a_submodule(world, monkeypatch):
+    w = world
+    repo, before, after = _bumped_submodule(w)
+    w.git(repo, "-c", "diff.submodule=diff", "diff", before, after, check=False)
+    assert w.fired() & {"sub-external", "sub-textconv", "sub-fsmonitor"}  # positive control: a child diff ran
+    w.clear()
+    w.git(repo, "config", "diff.submodule", "diff")
+    assert observe.git(repo, "diff_patch", rev=("3", before, after)) is None  # the gate refuses the key
+    # and the operation shields by itself: --submodule=short beats the config even past the gate
+    monkeypatch.setattr(gitsafe, "gate", lambda *a, **k: None)
+    for op, operand in (("diff_patch", ("3", before, after)), ("diff_names", (before, after)),
+                        ("diff_numstat", (before, after))):  # fmt: skip
+        out = observe.git(repo, op, rev=operand)
+        assert out is not None and "sub" in out, op
+    assert "Subproject commit" in observe.git(repo, "diff_patch", rev=("3", before, after))
+    assert w.fired() == set()
+
+
+def test_diff_relative_never_hides_a_staged_gitlink_outside_the_subdirectory(world, monkeypatch):
+    w = world
+    repo, sub = _super_with_armed_submodule(w)
+    w.git(sub, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "move")
+    w.git(repo, "add", "sub")
+    shutil.rmtree(sub)
+    sub.mkdir()
+    w.git(repo, "config", "diff.relative", "true")
+    plain = w.git(repo / "d", "diff", "--cached", "--raw").stdout
+    assert "sub" not in plain  # positive control: the config hides it in plain git
+    w.clear()
+    assert observe.dirty(repo / "d") is None  # the gate refuses the key: unknown, never clean
+    monkeypatch.setattr(gitsafe, "gate", lambda *a, **k: None)
+    got = observe.dirty(repo / "d")  # past the gate, --no-relative still shows the whole repository
+    assert got is not None and "staged submodule change: sub" in got.splitlines()
+    assert w.fired() == set()
+
+
+@pytest.mark.parametrize("name", ["a.lock/b", "x/y.lock/z", "a.lock"])
+def test_lock_is_refused_at_the_end_of_every_component(world, name):
+    repo = make_repo(world, "r")
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.command(str(repo), "ref", os.environ, operand=f"refs/heads/{name}")
+
+
+def test_a_lock_inside_a_component_is_fine(world):
+    w = world
+    repo = make_repo(w, "r")
+    w.git(repo, "branch", "a.locks/b.lockx")
+    assert observe.git(repo, "ref", rev="refs/heads/a.locks/b.lockx") is not None

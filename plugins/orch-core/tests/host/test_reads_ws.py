@@ -139,7 +139,7 @@ def test_member_list_has_the_devices_with_their_validity(w):
     owner, quinn = by_person[w.lab.owner], by_person[w.quinn.ref]
     assert (owner["role"], owner["name"], quinn["role"]) == ("owner", "Owner", "member")
     (device,) = owner["devices"]
-    assert set(device) == {"id", "auth", "scopes", "valid"} and device["valid"] is True
+    assert set(device) == {"id", "auth", "scopes", "valid", *DEVICE_EXT} and device["valid"] is True
     assert device["auth"] == "passphrase"  # the genesis was signed with it: the custody label F1 records
     assert sorted(device["scopes"]) == ["decide", "look", "operate", "type"]
     assert quinn["devices"][0]["auth"] is None  # signed nothing in the workspace log: unknown, not guessed
@@ -154,6 +154,79 @@ def test_member_list_marks_a_revoked_device_invalid_and_is_open_to_g_and_n(w):
     assert ok(c.req("member.list", grant=w.grant, session=SESSION)) == ok(c.req("member.list"))
     as_agent_class(w)
     assert len(ok(c.req("member.list"))["members"]) == 2  # N reads it too (§0.5)
+
+
+#: the v1.9 ``read_ext/3`` device fields (§0.8.5)
+DEVICE_EXT = {"label", "paired_ms", "relay", "cert_expires", "reader"}
+
+
+def test_member_list_device_fields_without_r6_or_reader_records(w):
+    """read_ext/3 (v1.9): ``cert_expires`` is the F1 certificate's; the R6 relay record and the H12d reader record are
+    not built, so ``label``, ``paired_ms`` and ``reader`` are null and ``relay`` is false: never a guess."""
+    c = w.client()
+    assert "read_ext/3" in c.welcome["caps"] and "read_ext/2" in c.welcome["caps"]
+    ws = w.service.store.state.workspace
+    for member in ok(c.req("member.list"))["members"]:
+        for device in member["devices"]:
+            assert device["cert_expires"] == ws.devices[device["id"]].expires_ms
+            assert (device["label"], device["paired_ms"], device["reader"]) == (None, None, None)
+            assert device["relay"] is False
+    expires = (w.lab.ws.clock[0] + 3600) * 1000
+    store = w.lab.ws.other()
+    w.lab.ws.store = store
+    try:
+        ref, _ = w.lab.ws.add_device(expires_ms=expires)
+    finally:
+        store.close()
+        w.lab.ws.store = None
+    owner = next(m for m in ok(c.req("member.list"))["members"] if m["person"] == w.lab.owner)
+    added = next(d for d in owner["devices"] if d["id"] == ref)
+    assert (added["cert_expires"], added["valid"], added["relay"]) == (expires, True, False)
+
+
+def test_member_list_maps_a_relay_record_and_a_reader_record(w, monkeypatch):
+    """The seams R6 and H12d fill: a relay record gives the cleaned label (protocol §2.5), ``paired_ms`` and ``relay``;
+    a reader record gives the level. A record naming another person gives nothing; a label that cleans to nothing is
+    null."""
+    from orch.host import reads_ws
+
+    quinn_dev = next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.quinn.ref)
+    owner_dev = next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.lab.owner)
+    records = {
+        owner_dev: {"device_id": owner_dev, "person_id": w.lab.owner, "label": "Phone\u200b\x07 one", "paired_ms": 7},
+        quinn_dev: {"device_id": quinn_dev, "person_id": w.lab.owner, "label": "not quinn's", "paired_ms": 9},
+    }
+    monkeypatch.setattr(reads_ws, "relay_devices", lambda ctx: records)
+    monkeypatch.setattr(reads_ws, "reader_levels", lambda ctx: {owner_dev: 1})
+    c = w.client()
+    by_person = {m["person"]: m for m in ok(c.req("member.list"))["members"]}
+    (mine,) = by_person[w.lab.owner]["devices"]
+    assert (mine["label"], mine["paired_ms"], mine["relay"], mine["reader"]) == ("Phone one", 7, True, 1)
+    (theirs,) = by_person[w.quinn.ref]["devices"]
+    assert (theirs["label"], theirs["paired_ms"], theirs["relay"], theirs["reader"]) == (None, None, False, None)
+    records[owner_dev] = {**records[owner_dev], "label": "\u200b\u2060", "paired_ms": -1}
+    (mine,) = {m["person"]: m for m in ok(c.req("member.list"))["members"]}[w.lab.owner]["devices"]
+    assert (mine["label"], mine["paired_ms"], mine["relay"]) == (None, None, True)
+
+
+def test_member_list_device_fields_follow_the_viewer_filter_unchanged(w, monkeypatch):
+    """Viewer filtering stays as before read_ext/3: P, G and N get the same members and devices, now with the same
+    five fields."""
+    from orch.host import reads_ws
+
+    owner_dev = next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.lab.owner)
+    record = {"device_id": owner_dev, "person_id": w.lab.owner, "label": "Phone", "paired_ms": 7}
+    monkeypatch.setattr(reads_ws, "relay_devices", lambda ctx: {owner_dev: record})
+    c = w.client()
+    as_p = ok(c.req("member.list"))
+    as_g = ok(c.req("member.list", grant=w.grant, session=SESSION))
+    assert as_g == as_p
+    ids = sorted((m["person"], d["id"]) for m in as_p["members"] for d in m["devices"])
+    assert all(set(d) == {"id", "auth", "scopes", "valid", *DEVICE_EXT} for m in as_p["members"] for d in m["devices"])
+    as_agent_class(w)
+    as_n = ok(c.req("member.list"))
+    assert as_n == as_p
+    assert sorted((m["person"], d["id"]) for m in as_n["members"] for d in m["devices"]) == ids
 
 
 # --- grant.list ------------------------------------------------------------------------------------------------------

@@ -372,6 +372,9 @@ class RunSub:
     grant: str | None
     grant_id: str | None
     seen: set[str] = field(default_factory=set)
+    #: the caller person's runner grant view last sent (or at registration): a ``runner`` item goes out only on a change
+    last_grant: dict[str, Any] | None = None
+    grant_items: int = 0
     queue: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
     task: asyncio.Task[None] | None = None
     ended: bool = False
@@ -720,6 +723,8 @@ class RunnerHub:
             return
         self.session = None
         self.sub_id = None
+        for wid in {s.workspace_id for s in self.subs.values()}:
+            self.publish_grant(wid)  # no connected runner: every person's grant reads null now
         for future in self.pending.values():
             if not future.done():
                 future.set_exception(HostError("outcome.unknown", "the runner disconnected before it answered"))
@@ -1065,6 +1070,19 @@ class RunnerHub:
         return {"connected": self.connected, "enabled": state["enabled"], "terminals": state["terminals"],
                 "gen": self.generation if self.connected else None, "grant": grant}  # fmt: skip
 
+    def grant_view(self, workspace_id: str, person: str) -> dict[str, Any] | None:
+        """The person's runner grant as ``whoami.runner.grant`` shows it (never the secret); ``None`` without one or
+        without a connected runner."""
+        cur = self.grants.current(workspace_id, person)
+        return {"id": cur["grant"], "until": cur["until"], "scope": cur["scope"]} if cur else None
+
+    def publish_grant(self, workspace_id: str, person: str | None = None) -> None:
+        """A runner grant changed (or may have): wake the ``run.sub`` subscribers of that person (``None``: every
+        person) in the workspace; each delivery sends a ``runner`` item only if its own person's view differs."""
+        for sub in list(self.subs.values()):
+            if sub.workspace_id == workspace_id and not sub.ended and (person is None or sub.person == person):
+                sub.queue.put_nowait({"_runner": True})
+
     def publish(self, rec: dict[str, Any]) -> None:
         for sub in list(self.subs.values()):
             if sub.workspace_id == rec.get("workspace_id") and not sub.ended:
@@ -1110,6 +1128,7 @@ class RunnerHub:
             session.peer.uid, call.principal, grant,
             call.verified.grant.id if call.verified.grant is not None else None, seen,
         )  # fmt: skip
+        sub.last_grant = self.grant_view(sub.workspace_id, sub.person)
         self.subs[sub.id] = sub
         session.subscriptions += 1
         session.on_close.append(lambda: self.end_sub(sub, "closed"))
@@ -1139,6 +1158,17 @@ class RunnerHub:
                 if reason is not None:
                     self.end_sub(sub, reason)
                     return
+                if rec.get("_runner"):
+                    now = self.grant_view(sub.workspace_id, sub.person)
+                    if now == sub.last_grant:
+                        continue
+                    sub.last_grant = now
+                    sub.grant_items += 1
+                    item = {"id": f"{self.store.rev}.g{sub.grant_items}", "t": "runner", "grant": now}
+                    cursor = str(self.store.rev)
+                    if not await self._send_item(sub, item, cursor):
+                        return
+                    continue
                 shown = not rec.get("_gone") and self.visible(rec, sub.column, sub.person)
                 if shown and rec.get("ticket"):
                     shown = await asyncio.wrap_future(service.submit(_ticket_visible, service, sub, rec["ticket"]))
@@ -1150,16 +1180,22 @@ class RunnerHub:
                     item = {"id": f"{rec['rev']}.r", "t": "gone", "run": rec["run"]}
                 else:
                     continue
-                if sub.session.closed:
-                    self.end_sub(sub, "closed")
-                    return
-                try:
-                    sub.session.send({"t": "evt", "sub": sub.id, "cursor": str(rec["rev"]), "items": [item]})
-                except frames.FrameError:
-                    self.end_sub(sub, "overflow")
+                if not await self._send_item(sub, item, str(rec["rev"])):
                     return
         except asyncio.CancelledError:
             pass
+
+    async def _send_item(self, sub: RunSub, item: dict[str, Any], cursor: str) -> bool:
+        """Send one item; ``False`` when the subscription ended instead."""
+        if sub.session.closed:
+            self.end_sub(sub, "closed")
+            return False
+        try:
+            sub.session.send({"t": "evt", "sub": sub.id, "cursor": cursor, "items": [item]})
+        except frames.FrameError:
+            self.end_sub(sub, "overflow")
+            return False
+        return True
 
 
 class _Undecided(Exception):

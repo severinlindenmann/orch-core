@@ -449,3 +449,74 @@ def test_a_forget_after_a_deposit_timed_out_still_wins(ready):
     _time.sleep(2.0)
     assert w.runner.grants.report() == []
     assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+
+
+# -- run.sub: the runner item (H11c-2) ---------------------------------------------------------------------------------
+
+
+def _runner_items(c, sub, n=1, timeout=10):
+    """The next ``n`` items of ``sub`` (each evt carries one)."""
+    out = []
+    while len(out) < n:
+        frame = c.evt(sub, timeout)
+        assert "end" not in frame, frame.get("end")
+        out += frame["items"]
+    return out
+
+
+def test_run_sub_sends_a_runner_item_when_the_callers_grant_changes(ready):
+    w = ready
+    c = w.conn()
+    sub = ok(c.call("run.sub", {}))["data"]["sub"]
+    value = issue(w)
+    ok(deposit(c, value))  # confirmed
+    (item,) = _runner_items(c, sub)
+    assert item["t"] == "runner" and item["id"].endswith(".g1")
+    assert set(item["grant"]) == {"id", "until", "scope"} and item["grant"]["id"] == gid_of(value)
+    assert value.partition(".")[2] not in str(item)  # never the secret
+    ok(c.call("grant.forget", {"grant": gid_of(value)}))
+    (gone,) = _runner_items(c, sub)
+    assert gone["t"] == "runner" and gone["grant"] is None and gone["id"].endswith(".g2")
+    c.quiet(sub)
+
+
+def test_run_sub_runner_item_follows_a_runner_restart(ready, rstate):
+    w = ready
+    c = w.conn()
+    ok(deposit(c, issue(w)))
+    sub = ok(c.call("run.sub", {}))["data"]["sub"]
+    w.runner.close()
+    w.runner = Runner(w, rstate, gen=GEN2)  # a new process: an empty store
+    items = []
+    deadline = 0
+    while not any(i["t"] == "runner" and i["grant"] is None for i in items):
+        items += _runner_items(c, sub)
+        deadline += 1
+        assert deadline < 10, items
+
+
+def test_run_sub_sends_nothing_for_another_persons_grant_change(ready):
+    w = ready
+    c = w.conn()
+    sub = ok(c.call("run.sub", {}))["data"]["sub"]
+    hub = w.h.host.runners
+    gid = "gr_" + new_ulid()
+
+    async def theirs():  # quinn's runner grant is confirmed and then dropped: nothing for the owner's subscription
+        table = hub.grants.table(w.wid)
+        hub.grants._confirm(table, w.quinn.ref, gid, ts(w.lab.ws.clock[0] + 9999), "workable", new_ulid())
+        hub.grants._forget_current(table, w.quinn.ref, "test")
+
+    w.h.run(theirs())
+    c.quiet(sub)
+    ok(deposit(c, issue(w)))  # the owner's own change still arrives
+    (item,) = _runner_items(c, sub)
+    assert item["t"] == "runner" and item["grant"] is not None
+
+
+def test_run_sub_starts_from_the_current_grant_without_a_replay(ready):
+    w = ready
+    c = w.conn()
+    ok(deposit(c, issue(w)))
+    sub = ok(c.call("run.sub", {}))["data"]["sub"]
+    c.quiet(sub)  # the state at registration is read from whoami or the first change, not replayed

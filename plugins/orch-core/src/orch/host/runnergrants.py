@@ -239,6 +239,7 @@ class RunnerGrants:
             return None
         table.forgotten[cur["grant"]] = str(cur.get("until") or "")
         self._audit("grant.drop", workspace_id=table.workspace_id, grant=cur["grant"], person=person, reason=reason)
+        self.hub.publish_grant(table.workspace_id, person)
         return str(cur["grant"])
 
     def _confirm(self, table: GrantTable, person: str, gid: str, until: str, scope: str, did: str) -> None:
@@ -250,6 +251,7 @@ class RunnerGrants:
         if did in table.deposits:
             table.deposits[did].update(outcome="confirmed", reason=None)
         table.save()
+        self.hub.publish_grant(table.workspace_id, person)
         self._audit("grant.deposit", workspace_id=table.workspace_id, grant=gid, person=person, deposit_id=did,
                     outcome="confirmed")  # fmt: skip
         self.watch()
@@ -266,6 +268,8 @@ class RunnerGrants:
         if was:
             table.current.pop(person, None)
         table.save()
+        if was:
+            self.hub.publish_grant(workspace_id, person)
         self._audit("grant.forget", workspace_id=workspace_id, grant=gid, person=person, held=was)
         await self._drop(gid)
         return {"forgotten": was}
@@ -331,6 +335,8 @@ class RunnerGrants:
         for gid in drops:
             self._audit("grant.drop", grant=gid, reason="revalidated")
             await self._drop(gid)
+        for wid in sorted(set(self.hub.host.services)):
+            self.hub.publish_grant(wid)  # the runner (re)connected: every person's view may differ from before
         self.watch()
 
     def _scope(self, wid: str, gid: str) -> str:

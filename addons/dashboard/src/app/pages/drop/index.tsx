@@ -95,7 +95,8 @@ function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
     setRefreshed(false)
   }
   // H3: the cursor is opaque and can go stale. Reload from page 1, quietly, with one short notice; rows may disappear.
-  const reset = list.isError && list.error instanceof ApiError && list.error.code === 'drop.cursor_reset'
+  // Only when a cursor was sent: a cursor_reset on page 1 is a host fault and shows as the normal error (with Retry).
+  const reset = list.isError && after !== null && list.error instanceof ApiError && list.error.code === 'drop.cursor_reset'
   useEffect(() => {
     if (!reset) return
     setCursors([null])
@@ -253,13 +254,19 @@ export function downloadBlocked(item: Pick<DropItem, 'state' | 'claimed' | 'uncl
 
 /** H1: where a phone share came from. The label is untrusted text: no link, no HTML, cut short by CSS. */
 function SharedFrom({ item }: { item: DropItem }) {
-  const s = item.shared_from!
+  // Hosts are untrusted: a missing or non-string label is "your phone", a non-object shared_from is no share at all.
+  const s = item.shared_from as { label?: unknown }
+  const label = typeof s.label === 'string' && s.label !== '' ? s.label : null
   return (
     <p data-testid="drop-shared" className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[12px] text-text-muted">
       <span>Shared from</span>
-      <span data-testid="drop-shared-label" title={visible(s.label)} className="inline-block max-w-[16rem] truncate align-bottom text-text">
-        <Inline>{s.label}</Inline>
-      </span>
+      {label === null ? (
+        <span data-testid="drop-shared-label" className="text-text">your phone</span>
+      ) : (
+        <span data-testid="drop-shared-label" title={visible(label)} className="inline-block max-w-[16rem] min-w-0 truncate align-bottom text-text">
+          <Inline className="!whitespace-nowrap">{label}</Inline>
+        </span>
+      )}
       {typeof item.claimed_ms === 'number' && <span data-testid="drop-claimed">· claimed {when(item.claimed_ms)}</span>}
       {typeof item.shared_until_ms === 'number' && <span data-testid="drop-shared-until">· shared until {when(item.shared_until_ms)}</span>}
       {item.gestureless && (
@@ -349,7 +356,7 @@ function Row({ ws, item, info, sharedView, open, onToggle, onRetire, onChanged }
           </dd>
         </div>
       </dl>
-      {item.shared_from && <SharedFrom item={item} />}
+      {item.shared_from && typeof item.shared_from === 'object' && <SharedFrom item={item} />}
       {!tomb && retireMode(item) === 'handoff' && (
         <p data-testid="drop-handoff" className="text-[12px] text-text-muted">
           {HANDOFF_TEXT}

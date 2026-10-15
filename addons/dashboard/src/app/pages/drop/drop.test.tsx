@@ -603,6 +603,19 @@ describe('Drop A2: shared from your phone', () => {
     expect(denied.text).toBe(dropError(new DropError(403, { code: 'drop.not_eligible', message: 'x', retryable: false })).text)
   })
 
+  it('role.denied in the confirmation dialog shows the denied text', async () => {
+    const view = open('drop-list', {
+      received: [dropItem({ name: 'own.pdf' })],
+      retireError: new DropError(403, { code: 'role.denied', message: 'role.denied', retryable: false }),
+    })
+    await view.user.click(within(await rowOf('own.pdf')).getByTestId('drop-delete'))
+    await view.user.click(await screen.findByTestId('drop-confirm-delete', {}, T))
+    const err = await within(screen.getByTestId('drop-confirm')).findByTestId('drop-error', {}, T)
+    expect(err).toHaveAttribute('data-code', 'role.denied')
+    expect(err.textContent).toMatch(/You can't do this to this item/)
+    expect(screen.queryByTestId('drop-handoff')).toBeNull()
+  })
+
   it('drop.cursor_reset reloads page 1 quietly with one notice; no cursor is shown', async () => {
     const view = open('drop-list', { cursorResetOnSecondPage: true })
     await rowOf('quarterly-report.pdf')
@@ -622,5 +635,60 @@ describe('Drop A2: shared from your phone', () => {
     expect(within(await rowOf('old.pdf')).queryByTestId('drop-delete')).toBeNull()
     expect(within(await rowOf('older.pdf')).getByTestId('drop-delete')).toBeInTheDocument()
     expect(screen.queryByTestId('drop-shared')).toBeNull()
+  })
+
+  it('M1: a host that always answers cursor_reset ends in the error state with Retry, after at most one quiet reset', async () => {
+    const view = open('drop-list', { pageSize: 8 })
+    await rowOf('quarterly-report.pdf')
+    // From here the host is faulty: every list call (with or without a cursor) is a reset.
+    let n = 0
+    dropApi.list = async () => {
+      n += 1
+      throw new DropError(410, { code: 'drop.cursor_reset', message: 'drop.cursor_reset', retryable: false })
+    }
+    await view.user.click(screen.getByTestId('drop-next'))
+    const err = await screen.findByTestId('drop-error', {}, T)
+    expect(err).toHaveAttribute('data-code', 'drop.cursor_reset')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(screen.queryByText('Reading the list…')).toBeNull()
+    const settled = n
+    await new Promise((r) => setTimeout(r, 400))
+    expect(n).toBe(settled) // it stopped; nothing keeps reloading
+    expect(settled).toBeLessThanOrEqual(3) // the cursor call, then one quiet reset to page 1 (which may refetch once)
+  })
+
+  it('M1b: with the fixture option a page-1 reset is the normal error', async () => {
+    open('drop-list', { cursorResetAlways: true })
+    expect(await screen.findByTestId('drop-error', {}, T)).toHaveAttribute('data-code', 'drop.cursor_reset')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(ops('list')).toHaveLength(1)
+  })
+
+  it('M2: shared_from without a string label, or not an object, does not crash', async () => {
+    const odd = (name: string, shared_from: unknown) => dropItem({ name, shared_from: shared_from as never })
+    const view = open('drop-list', {
+      received: [odd('nolabel.pdf', { device: 'd_fixture_a' }), odd('numlabel.pdf', { device: 'd_fixture_b', label: 42 }), odd('nulllabel.pdf', { device: 'd_fixture_c', label: null }), odd('str.pdf', 'phone'), odd('num.pdf', 7)],
+    })
+    await view.user.click(await screen.findByTestId('drop-tab-shared'))
+    for (const n of ['nolabel.pdf', 'numlabel.pdf', 'nulllabel.pdf']) expect(within(await rowOf(n)).getByTestId('drop-shared-label')).toHaveTextContent('your phone')
+    expect(within(await rowOf('str.pdf')).queryByTestId('drop-shared')).toBeNull()
+    expect(within(await rowOf('num.pdf')).queryByTestId('drop-shared')).toBeNull()
+  })
+
+  it('L1/L2: a long label is one line; an RTL-override and control-character label is neutralized inside a bdi', async () => {
+    const view = open('drop-list', {
+      received: [
+        shared({ name: 'long.pdf', shared_from: { device: 'd_fixture_l', label: 'iPhone '.repeat(40) } }),
+        shared({ name: 'bidi.pdf', shared_from: { device: 'd_fixture_b', label: 'Pho\u202Eene\u0007\u200Bx' } }),
+      ],
+    })
+    await view.user.click(await screen.findByTestId('drop-tab-shared'))
+    const long = within(await rowOf('long.pdf')).getByTestId('drop-shared-label')
+    expect(long.className).toMatch(/truncate/)
+    expect(long.querySelector('bdi')!.className).toMatch(/!whitespace-nowrap/)
+    const bidi = within(await rowOf('bidi.pdf')).getByTestId('drop-shared-label')
+    expect(bidi.querySelector('bdi')).not.toBeNull()
+    expect(bidi.textContent).toBe('Pho\\u{202e}ene\\u{7}\\u{200b}x')
+    expect(bidi.textContent).not.toMatch(/[\u202e\u0007\u200b]/)
   })
 })

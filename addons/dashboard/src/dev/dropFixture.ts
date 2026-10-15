@@ -40,6 +40,8 @@ export interface DropFixtureOptions {
   pendingOthers?: number
   /** H3: the first request with a cursor (the second page) fails once with `drop.cursor_reset`; `onReset` runs first (rows may change). */
   cursorResetOnSecondPage?: boolean | (() => void)
+  /** A faulty host: EVERY `drop.list` answers `drop.cursor_reset`, with or without a cursor. */
+  cursorResetAlways?: boolean
 }
 
 export const ME: DropAuthor = { person: 'p_severin', person_name: 'Severin', device: 'd_mac', origin: 'person' }
@@ -123,6 +125,7 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
     list: async (_ws, { direction, view, after, limit }) => {
       log('list', direction, after ?? null, ...(view ? [view] : []))
       if (opts.listError) throw opts.listError
+      if (opts.cursorResetAlways) throw new DropError(410, { code: 'drop.cursor_reset', message: 'drop.cursor_reset', retryable: false })
       if (after && opts.cursorResetOnSecondPage && !cursorResetDone) {
         cursorResetDone = true
         if (typeof opts.cursorResetOnSecondPage === 'function') opts.cursorResetOnSecondPage()

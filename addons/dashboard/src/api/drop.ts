@@ -174,7 +174,8 @@ const unavailable = (): Promise<never> =>
 export const realDropApi: DropApi = {
   served: () => false,
   info: unavailable,
-  list: unavailable,
+  // `args.view` ('shared_from_phone') is forwarded as `view` in the `drop.list` args once the server routes exist.
+  list: (_ws, _args) => unavailable(),
   versions: unavailable,
   blobPut: unavailable,
   blobDrop: unavailable,

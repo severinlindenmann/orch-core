@@ -18,6 +18,8 @@ export const HOST_TABS = [
   { id: 'grants', label: 'Grants' },
   /** Only where the host serves `records/1` (M6). */
   { id: 'records', label: 'Records', feature: 'records' },
+  /** Pair a phone and the paired devices (proposed `pair/1`). Always listed: without the ops it says "not available". */
+  { id: 'devices', label: 'Devices' },
 ] as const
 
 /** The tabs this build shows: the mockup's, or the reduced ones on a real host. */

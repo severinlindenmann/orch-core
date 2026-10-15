@@ -1616,3 +1616,78 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** Dashboard and devhost reuse core's `run_dir_for` with `ORCH_HOST_RUN_DIR`, then `<state>/run`. Reject a differing legacy `ORCH_RUN_DIR` before dashboard startup; accept an identical absolute path silently.
 - **Why:** Discovery, signing, records and terminals must reach the same host as core. A stale override must not silently select another host.
 - **Revert:** Restore the old resolver and startup behavior in the dashboard and devhost, along with their tests and documentation.
+
+## 2026-10-15 Pair a phone: Settings → Devices, fixtures only, behind `pair/1` (PROPOSAL PENDING)
+
+- **Decision:** A real host's settings gain a **Devices** tab (`HOST_TABS`), always listed. It asks `pairServed(ws)`: the server lists
+  feature `pair` (host serves the proposed `pair/1` ops in `welcome.ops`) **and** this build's `pairingApi.served()`. The real
+  implementation (`realPairingApi` in `src/api/pairing.ts`) answers "not available" for every call and `served()` is false, so every real
+  host today shows "Pairing a phone is not available on this host yet." No server route and no `pair` feature were added. The mockup's
+  "Relay & devices" preview tab is unchanged; the new page is reachable in dev only through `/__layout/pair-*` (fixture api in
+  `src/dev/pairFixture.ts`).
+- **Why Devices, not Members:** phones are devices of the viewer, not people; Members is the roster and its hand-offs. Devices holds both
+  "Pair a phone" and the paired-device list, so the remove hand-off sits beside what it removes.
+- **Assumptions (the proposal `proposal-dashboard-pairing-ops.md` is not agreed; each is a guess to check):**
+  1. Op names and shapes as in the proposal: `pair.preview`, `pair.offer`, `pair.list`, `pair.answer`, `pair.cancel`, `sub.open
+     {topics:["pair"]}` items `{t:"pair", offer_id, state}`, devices `{device, label, paired_ms, relay, cert_expires, reader}`.
+  2. `blocked.history` (new, optional): for `sign.convenience_readers`, whether click-to-sign was ever used. Absent, the page explains
+     both cases (turn it off with `orch host convenience off --workspace <PREFIX>` if never used; otherwise no phone yet).
+  3. `pair.list` rows may carry `cert_ready: true` (certificate in, ready for the `relay.pair_device` signature) and `needs_remove`
+     (the host's "remove the device" text after a post-add failure). Without them: cert_pending shows only the primary step; failed
+     shows a core sentence about removing the device.
+  4. The primary command is shown as `orch host relay pair --resume --offer <offer_id>` (the CLI name is not fixed; `PRIMARY_COMMAND`).
+  5. Hand-off actions `pair_device {offer}` and `device_remove {device}` are new `HandoffAction`s for the server's `/handoff` route;
+     neither is click-eligible (terminal only). The server refuses them today (unknown action): they are only reachable behind the gate.
+  6. Offer TTL: always the host's `expires_ms` (5-minute class); nothing is hard-coded.
+  7. The label is the host's cleaned label (controls/bidi stripped, NFC, ≤80 code points). The page does no cleaning: it renders it
+     through `Inline` (visible.tsx: escapes, isolates) with "named by the device".
+- **Link rules (R6 §11A.15 relaxed as proposed; binding conditions from orch-29):** the link exists only in the answer to the person's own
+  `pair.offer` and in `Devices.tsx` component state. Not a query or a mutation (no cache entry), not storage, URL, history, toast or
+  log. The QR (native `orch://pair?…#v2.…` only) is drawn in the page by `uqr` 0.1.3 (MIT, unjs, zero dependencies, pinned) after an
+  explicit **Show QR**; **Copy link** copies the native link; the https link is selectable text "type this on the phone", never an anchor.
+  Dropped at the first state past `open`, at `expires_ms`, on cancel and on unmount; on blur it may stay but is never fetched again (a
+  page that finds a live `open` offer it has no link for says "cancel it and create a new one").
+- **SAS:** typed entry. The person types the phone's six characters; `checkSas` compares them with `pair.list`'s `sas` (case-insensitive,
+  spaces/dashes ignored). Approve is enabled only on a match; a full mismatch says "The codes differ: reject this phone." Reject is the
+  default and has the focus; Enter in the field does nothing. The host's SAS is never displayed.
+- **For the real server route (later):** `pair.offer`'s answer must not be logged (request/response body), must be `Cache-Control:
+  no-store`, must not go into idempotency/outcome records or any SSE item; `Referrer-Policy: no-referrer` on the page.
+- **Revert:** drop `devices` from `HOST_TABS` and its line in `settings/index.tsx`; delete `src/api/pairing.ts`,
+  `src/app/pages/settings/host/Devices.tsx`, `src/dev/pairFixture.ts`, the `pair-*` scenarios and guard entries, the two `HandoffAction`
+  members, the `summary` pass-through in `useSettingsHandoff`, and `uqr` from package.json.
+
+### 2026-10-15 Pairing: review fixes and orch-52's binding ops decisions (contract v1.9, cap `pair/1`, class P, human_only)
+
+- **Review (Opus, CHANGES) fixed:** M1: the QR, the typed https fallback and **Copy link** all wait for one explicit **Show QR and link**.
+  L1: a link this page copied is overwritten on the clipboard (`writeText('')`, best effort) when the link is dropped; a line says so.
+  L2: a test pins the QR payload to the native link. L3: expiry is also checked every second and on `visibilitychange`/`focus`.
+  I1: an offer-time refusal that the next preview reports as `blocked` shows only the dedicated screen. Not changed: I2 (the guard prints
+  50 characters of overflowing text; fixtures only) and I3 (React DevTools can read component state; accepted).
+- **orch-52:** the op names `pair.preview/offer/list/answer/cancel` and the `pair` sub topic are confirmed. Paired devices come from
+  `member.list` under a `read_ext` bump (`devices[]` gain `label`, `paired_ms`, `relay`, `cert_expires`, `reader`), not a new op; the page
+  lists the devices that carry `relay`, read only, under the gate. **Device removal is not in this round** (it needs the person key; the
+  recovery code is typed): the `device_remove` hand-off is gone, replaced by a "Remove this device" disclosure with the command as text.
+  **ASSUMPTION:** the R6 notes name no removal command; the page shows `orch device remove <device-id> --workspace <PREFIX>`
+  (`deviceRemoveCommand`). Convenience wording: see the correction below. Labels follow the protocol rule (no
+  normalisation, ≤80 code points, LF kept, default-ignorables removed): rendered with `Prose` (escaped, isolated, LF as a line break, never
+  markup); an empty label shows "phone". Assumptions 1 (op names) and 5 (`device_remove`) above are superseded.
+
+### 2026-10-15 Pairing: orch-52's correction of the convenience decision, SAS attempts, terminal steps
+
+- **Convenience:** `pair.preview` is `blocked` (`sign.convenience_readers`) only while the click-to-sign flag is on or the key is in
+  convenience custody. The page says "Turn click-to-sign off first: orch host convenience off --workspace <PREFIX>", plus a custody hint when
+  `blocked.cause` is `custody` (**ASSUMPTION:** `cause: 'flag' | 'custody'` replaces the earlier `history` field). History alone is not a
+  block: the host lists it in `warnings` (e.g. "This workspace used click-to-sign; only phones with an up-to-date orch app can pair."),
+  shown before **Create pairing link**.
+- **SAS attempts:** up to 3 per offer. Each distinct full-length mismatch counts one; the page shows the attempts left; the third calls
+  `pair.answer {approve:false}` and shows the host's `rejected` reason. **ASSUMPTION:** the page counts (per mounted offer) and passes
+  `mismatches` with the refusal so the host can give the reason; if the host counts itself, the page should read its count instead.
+- **Terminal steps:** cert_pending shows two numbered steps with copyable commands: the primary approval and `orch sign <CODE>` for the
+  `device.added` hand-off (**Get the signing code** opens the existing hand-off, which shows the real code). Not in the browser: a paired
+  workspace refuses click-to-sign. **ASSUMPTIONS:** R6 runs the primary step inline in `orch host relay pair` and names no command of its
+  own, so the page shows the placeholder `orch host relay pair --resume --offer <offer_id>`; `orch sign <CODE>` is the existing hand-off command.
+
+## 2026-10-15 Pairing commands: confirmed names, and only plain words from the host go into a shell command
+
+- **Decision:** the primary step is `orch host relay pair --resume --offer <offer_id>` and the hand-off is `orch sign <CODE>` (R6 #473 head a4b7bb0f, per orch-52). Offer ids are 32 lower-case hex characters, as in the contract; the fixtures use that format. Every command the page offers for pasting into a shell is built only from host values that pass `shellWord` (ASCII letters, digits, `._-`, at most 64, not starting with `-`) or, for the offer, exactly 32 lower-case hex characters. Anything else gives a warning and no command (Opus delta N1). The device id in the list is shown through `Inline`, so hidden and bidi characters are visible. `orch device remove <id> --workspace <ws>` is still an assumption: R6 names no removal command.
+- **Revert:** only with a host that guarantees these formats in the contract, and then the checks stay as defence in depth.

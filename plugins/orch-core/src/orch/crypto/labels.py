@@ -7,7 +7,7 @@ The vector table lists them too (relay sync), so the registry test compares this
 
 from __future__ import annotations
 
-__all__ = ["L", "LABELS", "SIGNATURE_LABEL_KEYS", "signature_labels"]
+__all__ = ["L", "LABELS", "PLANNED_LABELS", "SIGNATURE_LABEL_KEYS", "signature_labels"]
 
 LABELS: dict[str, str] = {
     "kdf_bridge": "orch/v2/bridge",
@@ -78,7 +78,14 @@ LABELS: dict[str, str] = {
     "mac_enroll": "orch/v2/enroll|",
 }
 
-L: dict[str, bytes] = {k: v.encode("ascii") for k, v in LABELS.items()}
+PLANNED_LABELS: dict[str, str] = {
+    # H13-0 (orch-v2-host 11A.16.2, 11A.16.6, 11A.16.11): host-local labels, no relay or phone format. Not in the relay
+    # corpus, so kept apart from LABELS (which mirrors it); tests/crypto/test_h13_labels.py keeps them prefix-free.
+    "kdf_host_drop_recovery": "orch/v2/host-drop-recovery|",  # the host-only Drop recovery envelope (D7, Q4)
+    "sig_drop_handoff": "orch/v2/sig/drop-handoff|",  # the terminal hand-off (O1); signable from H13b-4 only
+}
+
+L: dict[str, bytes] = {k: v.encode("ascii") for k, v in {**LABELS, **PLANNED_LABELS}.items()}
 
 SIGNATURE_LABEL_KEYS = tuple(k for k in LABELS if k.startswith("sig_"))
 

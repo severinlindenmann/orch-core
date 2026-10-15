@@ -98,8 +98,8 @@ keys (D37).
 
 Each of these needs a reason to come back:
 - **Guard hook:** C12, the deny-list version, parked rather than discarded.
-- **Plugins and pages:** P01 orch-session status line, D12 reports, D13 graph page, D15 schedules and recurring
-  tickets.
+- **Plugins and pages:** P01 orch-session status line (the v1 plugin was deleted on 2026-10-15; git history keeps it),
+  D12 reports, D13 graph page, D15 schedules and recurring tickets.
 - **Addons:** B06 model-routing, B01 github-reviews, B02 github-issues, B04 wiki.
 - **TIX features:** T15 agent messages (they fit ws→ws), T06 tags and short ids (tags must be sealed first).
 

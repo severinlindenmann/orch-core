@@ -4159,6 +4159,11 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (the same source as `host.status.relay.gate.r6_ready`; `false` while R6 is dormant). Columns P, G and N get no `relay`
     field. No secret, nothing per workspace beyond what `whoami` scopes. No vector change (the R2 vectors carry a
     fixed host answer).
+58. **H13-0: push and Drop crypto builders, host recovery envelope (§11A.16.14 "As built in H13-0"; the number may be
+    renumbered when a parallel change lands first):** pure `orch.crypto.push`, `orch.crypto.drop` and
+    `orch.crypto.recovery`; two planned host-local labels in `orch.crypto.labels.PLANNED_LABELS`
+    (`kdf_host_drop_recovery`, `sig_drop_handoff`, the latter on no signing role until H13b-4). The vectors it
+    reproduces (orch-relay `d84f706`, D39a1, MANIFEST revision 13) were vendored separately in #575. Nothing served; no F1, wire or schema change.
 
 ---
 
@@ -10028,6 +10033,72 @@ also change custody and the signer, so they need an Opus review of the new label
 - `CardKeys` opens `wxk` wraps.
 - Label padding.
 - The storage numbers of D11.
+
+#### 11A.16.14 As built in H13-0
+
+Where the code differs from or adds to the design text above, the code is this. Pure functions, no key custody, no
+I/O; `BridgeKeys`, `CardKeys` and `RelaySigner` call them in H13-1.
+
+- **Labels.** `orch.crypto.labels.PLANNED_LABELS` holds `kdf_host_drop_recovery` = `orch/v2/host-drop-recovery|` and
+  `sig_drop_handoff` = `orch/v2/sig/drop-handoff|`; both are in `L`, neither in `LABELS` (which mirrors the relay
+  corpus) nor in `signature_labels()` or any custody role list (H13b-4 adds the hand-off label to
+  `DEVICE_KEY_LABELS`). `tests/crypto/test_h13_labels.py`: every `|`-terminated label of every source (protocol,
+  planned, canon, F1, the vendored corpus) is pairwise prefix-free, and each planned label is prefix-free against every
+  label, the unterminated HKDF `kdf_*` labels included. The unterminated `kdf_*` labels are prefixes of one another by
+  construction (`orch/v2/push` of `orch/v2/push-msg`); they are only used as `label|field|...` HKDF contexts.
+- **Push (`orch.crypto.push`).** `k_push`, `push_aad`, `push_signed_bytes` (what `RelaySigner.push` signs),
+  `push_payload` (D2 kinds only; `id` ASCII 1 to 128 bytes; `ts_ms` passed in, `0 <= ts_ms < 2^53`), `pad_label`
+  (a non-empty fixed point of `clean_label` not ending in U+0020, padded to exactly 80 code points), `seal_push`
+  (the caller's 64-byte signature in, `cj(outer)` out, a fresh salt, at most 3,072 bytes; it refuses an unpadded
+  label) and `open_push` (the §9 service-worker steps 1 to 6 with its drop reasons; replay memory is the caller's).
+- **Drop (`orch.crypto.drop`).** ORD2 `encrypt_blob` (fresh nonce prefix) / `decrypt_blob` / `decrypt_chunk` (for
+  streamed downloads), `seal_meta` / `open_meta`, `dek_commit`, `parent_hash`, `wrap_wk` / `wrap_sealed` (`wxk`,
+  `device`) and their openers, `open_wrap` (record names the descriptor's object and version, then `dek_commit` checked
+  in constant time), `check_wrap_record` (the closed §10.3 shape), `drop_object` / `check_drop_object` /
+  `drop_object_signed_bytes` / `verify_drop_object`, `drop_claim_object` / `drop_claim_signed_bytes`,
+  `rewrap_same_dek` (only the committed DEK, only a `[space_id]` or inbox object). The review changed this API; the
+  entry below has the result. Frames on two levels:
+  `encode_frame` / `parse_frame` / `reframe` are the protocol's §19.9 checks (they reproduce every accepted vector
+  frame; `parse_frame` also requires a canonical head, since the host parses only frames it built);
+  `build_host_frame` / `reframe_host` add D7: author this workspace, a `file` at version 1, never `inbox`; a
+  `[space_id]` frame carries exactly one `wk` wrap; a device-only frame carries only `device` wraps to listed devices.
+- **Recovery envelope (`orch.crypto.recovery`).** `RecoveryEnvelope` is a frozen slotted class (`object_id`, `epoch`,
+  `ct`; `v` 1 and `kind` `drop_recovery` as class constants), not a mapping. `ct = nonce (12) || AES-256-GCM(K, nonce,
+  DEK, aad = "")` with `K` as in 11A.16.2 (the info is the raw bytes `label || ws || u32(e) || object_id`).
+  **JUDGEMENT CALL:** an empty AAD, since the key derivation already binds workspace, epoch and object; the rejected
+  option repeated the context as AAD. Its storage form `to_host_bytes()` (canonical JSON, hex fields) has a field set
+  no wrap record has. `cj`, the wire dump and `check_wrap_record` refuse the envelope, so no frame builder accepts it;
+  tests pin each path and that its bytes never appear in a device-only frame.
+- **Fail closed (orch-52 scan, 15 Oct 2026).** Each module has one error type (`PushError` with its `why`;
+  `DropError` with `DropTagError` for failed authentication; `RecoveryError` with `RecoveryTagError`), none a
+  `ValueError` subclass. `orch.crypto._closed.close_module` wraps every public function at import: a raw `KeyError`,
+  `TypeError`, `ValueError`, `IndexError`, `RecursionError` or `InvalidTag` becomes the module's error, never escapes.
+  `verify_drop_object` raises instead of returning `None`. A frame carries at least one wrap, and a device-authored
+  non-inbox frame a `wk` wrap (§19.9). `tests/crypto/test_h13_closed.py` covers each malformation class (wrong types
+  per field, missing fields, bad encodings and lengths, truncation and bit flips of a frame, deep and oversized heads)
+  and checks that every public function is wrapped.
+- **Opus review of #574 (F1 to F6), as built.**
+  - F1: `RecoveryEnvelope` and the new `SealedVersion` derive from `orch.crypto._secret.Secret`. `repr`, `str`,
+    `format` and `json.dumps(default=str)` show only a redacted marker. Pickle, `copy`, `deepcopy` and `__getstate__`
+    raise. Both are immutable, neither a dataclass nor a mapping.
+  - F2: `seal_version(object_id, version, content, meta)` is the only sealer. It draws the DEK and the nonce prefix and
+    seals the blob and the zero-nonce metadata once. `seal_meta`, `encrypt_blob` and `content_key` are private, and
+    `drop_object` takes the `SealedVersion`. A re-framing reuses the stored descriptor and blob.
+  - F3: `open_wrap(rec, o, me, *, wk | kx_priv)` is the only public wrap opener. It checks `target_id == me` (the
+    caller's device id, or the space id for `wk` and `wxk`), that a `wk` or `wxk` wrap names `o`'s space, and
+    `dek_commit`.
+  - F4: an AST test over `src` pins that no module reaches another module's `_with_salt`, `_with_prefix`,
+    `_with_nonce` or `_with_ephemeral` seam, or `suite._salted_seal`. Wraps and pushes use the public sealers, and the
+    vector tests fix the randomness inside `orch.crypto.suite`.
+  - F5: `NameError`, `AttributeError`, `AssertionError`, `MemoryError` and `RecursionError` cross the closed boundary
+    unchanged. The cause stays chained but never appears in the message.
+  - F6: the recovery key also binds `u32(version)` (`info = label || ws || u32(e) || object_id || u32(version)`), and
+    the envelope and its storage form carry `version`. `open_push` reports a malformed inner signature as
+    `signature`.
+- **Vectors.** `tests/crypto/test_h13_push.py` and `test_h13_drop.py` reproduce every `push` and `drop` vector
+  byte-exact (fixed salts, prefixes and ephemeral keys through test-only seams, the relay reference's `fake` seeds),
+  including `upload_frame`, every 200/201 `relay_put` frame and the same-DEK rewrap case. They are hostile-tested:
+  truncation, a wrong label domain, a wrong epoch, oversized inputs, reordered chunks, foreign wraps.
 
 ## 12. Phase 2: the addons on the host side (#307, #308)
 

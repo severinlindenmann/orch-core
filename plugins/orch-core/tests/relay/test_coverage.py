@@ -60,6 +60,12 @@ NOT_R1 = {
     "transitions": "devices and R3",
     "unpublished_get": "R4",
     "unpublished_ack": "R4",
+    "drop_put": "H13b-2 (the uploader); the ODU2 frame itself is H13-0's (tests/crypto/test_drop.py, upload_frame)",
+    "drop_list": "H13b-1 (the Drop thread's mirror)",
+    "drop_descriptors": "H13b-1",
+    "drop_descriptor_get": "H13b-1 and H13b-2 (read-back after a lost answer)",
+    "drop_wraps_get": "H13b-1",
+    "drop_blob_get": "H13b-1 (downloads)",
 }
 R1_SECTIONS = {
     "relay_auth": "test_wire (signed bytes, every case's signature layer), test_sign, test_adversarial",
@@ -89,8 +95,8 @@ NOT_R1_SECTIONS = {
     "question_hash": "canon tests",
     "decisions": "not served in v1.7 (11A.11)",
     "revocation_op": "owner client",
-    "push": "not in v1.7 host scope",
-    "drop": "Drop (later phase)",
+    "push": "H13-0 builders (tests/crypto/test_h13_push.py); the push worker is H13a",
+    "drop": "H13-0 builders (tests/crypto/test_h13_drop.py); the Drop thread is H13b",
     "ws_envelopes": "ws-to-ws (later phase)",
     "publish": "orch-publish (not the relay client)",
     "p3": "relay-side state machine cases; R2/R3/R6 consume the host-relevant ones",

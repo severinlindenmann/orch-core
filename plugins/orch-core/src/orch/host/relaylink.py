@@ -97,7 +97,9 @@ def linked_workspaces(state_dir: Path) -> list[str]:
 
 
 @contextlib.contextmanager
-def link_reservation(service: Any, *, relay_level: int | None = None, clock: Any = time.time) -> Iterator[None]:
+def link_reservation(
+    service: Any, *, relay_level: int | None = None, clock: Any = time.time, origin: str | None = None
+) -> Iterator[None]:
     """The guard of ``store.relay_link`` (§11A.6), the only writer of ``link.json``:
     ``store.relay_link(link, guard=lambda: relaylink.link_reservation(service, relay_level=info.reader))``, with the
     level R5 read from ``GET /v2/relay-info`` just before (:func:`orch.relay.session.fetch_relay_info`; ``None``: not
@@ -110,7 +112,9 @@ def link_reservation(service: Any, *, relay_level: int | None = None, clock: Any
     from orch.store.readerrecs import clear_relay_level, write_relay_level
 
     from .convenience import _flock, refuse_reader_op
+    from .devmode import refuse_link
 
+    refuse_link(service, origin)  # §11A.17.3 F5, F2: dev_origin on a dev host, sandbox_workspace on a normal one
     store = service.store
     if store is None:
         raise HostError("workspace.unavailable", "the workspace is not open")

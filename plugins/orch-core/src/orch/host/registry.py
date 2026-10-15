@@ -26,7 +26,7 @@ from .errors import HostError
 from .peer import Peer
 from .pins import AgentPins
 
-__all__ = ["Entry", "Registry", "host_dir", "registry_path", "validate_peers"]
+__all__ = ["Entry", "Registry", "admit", "host_dir", "registry_path", "validate_peers"]
 
 WS_ID = re.compile(r"[0-9a-f]{32}")
 PERSON = re.compile(r"p_[0-9a-f]{32}")
@@ -274,3 +274,16 @@ class Registry:
         if spec["class"] == "person":
             return Peer(uid, "person", self.mapping(uid, workspace_id))
         return None  # the worker never connects to a workspace socket
+
+
+def admit(host: Any, entry: Entry, view: Any) -> None:
+    """**The one registration choke point** (orch-v2-host §11A.17.3 R5, F5): every path that adds a workspace to a
+    host's registry (``host.register``, ``host.bootstrap`` and its start-up recovery; a restore or a relay adopt
+    reaches the registry only through ``host.register``) calls this, and nothing else calls :meth:`Registry.add`
+    (``registry_add_paths_table`` pins it). A dev host admits sandbox workspaces only; a normal host refuses every
+    ``SBX`` genesis and every workspace with the sandbox marker (``host.dev_refused``,
+    :func:`orch.host.devmode.check_admit`). ``view`` is the workspace's :class:`orch.host.devmode.View`."""
+    from .devmode import check_admit
+
+    check_admit(getattr(host, "dev", None), entry.workspace_id, entry.root, view)
+    host.registry.add(entry)

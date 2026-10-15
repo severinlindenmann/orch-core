@@ -304,9 +304,11 @@ def start_worker(
         def no_post(device: str, rid: str, envelope: bytes) -> str:
             raise RuntimeError("the loop installs the poster")  # replaced in the poll thread before any POST
 
+        from .devmode import gated
+
         bridge = Bridge(
             workspace_id=ws, rids=rids, keys=bkeys, signer=signer, r6=view, port=RelayEntry(service, backend),
-            job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms,
+            job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms, convenience_gate=lambda: gated(service),
         )  # fmt: skip
         worker.attach(BridgeLoop(bridge, session, conn=conn, workspace_id=ws), rids)
         service.relay = worker  # before the start thread exists (review R1); the caller holds relay_lock
@@ -397,7 +399,7 @@ def reserve_link(
         link["ca_file"] = ca_file
     if proxy is not None:
         link["proxy"] = proxy
-    store.relay_link(link, guard=lambda: link_reservation(service, relay_level=relay_level))
+    store.relay_link(link, guard=lambda: link_reservation(service, relay_level=relay_level, origin=origin))
     return {**link, "state": "linking"}
 
 

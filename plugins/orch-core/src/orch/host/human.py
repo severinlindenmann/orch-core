@@ -1187,7 +1187,7 @@ def _readers_refusal(
         return exc
     required = 0
     if adds:
-        flag = convenience.enabled(state_dir, service.workspace_id, service.host_uid)
+        flag = convenience.flag_or_gate(service)  # §11A.17.4: 1 while the dev gate passes, as while the flag is on
         required = rd.required_reader(store, state_dir, service.workspace_id, flag=flag, uid=service.host_uid)
     try:
         relay = relay_level(state_dir, service.workspace_id, service.host_uid)
@@ -1220,18 +1220,35 @@ def _readers_refusal(
     return None
 
 
-def _signed_by(events: list[dict[str, Any]], person: str, device: str) -> HostError | None:
+def _signed_by(
+    events: list[dict[str, Any]], person: str, device: str, *, service: Any = None, gate: Any = None
+) -> HostError | None:
     """The relay path's precondition of :func:`append_signed`: every event is a person event of exactly this
-    (person, device) pair, signed (``sig``), and never ``auth: "convenience"`` (§11A.4, §11A.6). Checked before
-    anything lands; the store still verifies every signature against the device's certificate when it appends."""
+    (person, device) pair, signed (``sig``), and never ``auth: "convenience"`` (§11A.4, §11A.6), **except** a
+    ``question.answered`` that carries the :class:`~orch.host.devmode.DevGate` of this job's L2 (``gate``) **and** for
+    which a fresh :func:`~orch.host.devmode.dev_gate` call now returns an equal gate (§11A.17.4 L8, F6). Checked
+    before anything lands; the store still verifies every signature against the device's certificate when it
+    appends."""
     for ev in events:
         actor = ev.get("actor") if isinstance(ev, dict) else None
         if actor != {"kind": "person", "id": person, "device": device}:
             return HostError("op.not_allowed", "column R appends only events signed by the requesting device")
         sig = ev.get("sig")
-        if not isinstance(sig, str) or not sig or ev.get("auth") == "convenience":
+        if not isinstance(sig, str) or not sig:
+            return HostError("op.not_allowed", "column R appends only device-signed events")
+        if ev.get("auth") == "convenience" and not _dev_gate_holds(service, gate, ev):
             return HostError("op.not_allowed", "column R appends only device-signed events")
     return None
+
+
+def _dev_gate_holds(service: Any, gate: Any, ev: dict[str, Any]) -> bool:
+    """F6: the token of L2 and a fresh dev gate for the same sandbox and workspace, for an answer only."""
+    from .devmode import GATED_TYPE, DevGate, dev_gate
+
+    if service is None or not isinstance(gate, DevGate) or ev.get("type") != GATED_TYPE:
+        return False
+    fresh = dev_gate(service)
+    return fresh is not None and fresh == gate and gate.workspace_id == service.workspace_id
 
 
 def append_signed(
@@ -1243,6 +1260,7 @@ def append_signed(
     signed_by: tuple[str, str] | None,
     readers: list[dict[str, Any]] | None = None,
     hooks: Any = None,
+    dev_gate: Any = None,
 ) -> tuple[list[int], HostError | None]:
     """**The single choke point for appending signed person events** (§0.8.1, §11A.4): ``human.finish`` and the relay
     path (through :func:`append_relay`, the relay's only entry) both append through it. The one documented exception
@@ -1262,7 +1280,8 @@ def append_signed(
 
     The durable ``convenience_seen`` mark (#441) is written here, under the store lock and before the first append,
     when any event carries ``auth: "convenience"``; if it cannot be written nothing is appended (fail closed). On the
-    relay path ``signed_by`` already refuses convenience events, so the mark is never needed there.
+    relay path ``signed_by`` refuses convenience events except a dev-gated answer (§11A.17.4, ``dev_gate``), which
+    writes the mark here like any other. On a dev host the person path refuses every convenience event (``dev_host``).
 
     **Invariant I (H12d-2, §0.8.6 item 9.4)** is checked here too, under the store lock and before the first append,
     for the events not in the log yet that add a reader (``member.added``, ``device.added``, ``restore``) or carry
@@ -1278,9 +1297,12 @@ def append_signed(
     from orch.store import StoreError
 
     if signed_by is not None:
-        refused = _signed_by(events, *signed_by)
+        refused = _signed_by(events, *signed_by, service=service, gate=dev_gate)
         if refused is not None:
             return [], refused
+    elif getattr(service, "dev", None) is not None and any(e.get("auth") == "convenience" for e in events):
+        # §11A.17.2 F3: a dev host has no click signer; its only convenience path is column R's dev gate
+        return [], convenience.unavailable("dev_host", [])
     store = service.store
     ids = {(log, e["id"]) for e in events}
     landed: list[int] = []
@@ -1335,12 +1357,15 @@ def append_relay(
     *,
     person_id: str,
     device_id: str,
+    dev_gate: Any = None,
 ) -> tuple[list[int], HostError | None]:
     """**The relay path's only append** (§11A.4, R2/R5): :func:`append_signed` with the device check always on.
-    ``orch/relay`` never calls ``append_signed`` itself (a test enforces it)."""
+    ``orch/relay`` never calls ``append_signed`` itself (a test enforces it). ``dev_gate``: the
+    :class:`~orch.host.devmode.DevGate` of this column-R job's L2 (§11A.17.4), else ``None`` (a roll forward has
+    none: a convenience event is then refused, fail closed)."""
     if not isinstance(person_id, str) or not isinstance(device_id, str) or not person_id or not device_id:
         return [], HostError("op.not_allowed", "a relay append needs the requesting device and its person")
-    return append_signed(service, log, events, extras, signed_by=(person_id, device_id))
+    return append_signed(service, log, events, extras, signed_by=(person_id, device_id), dev_gate=dev_gate)
 
 
 def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, Any]) -> dict[str, Any]:

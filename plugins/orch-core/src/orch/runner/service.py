@@ -30,20 +30,27 @@ LAUNCHD_LABEL = "io.orch.runner"
 SYSTEMD_NAME = "orch-runner.service"
 
 
-def program_arguments(python: Path, release: Path, state_dir: Path, run_dir: Path) -> list[str]:
+def program_arguments(
+    python: Path, release: Path, state_dir: Path, run_dir: Path, extra_args: tuple[str, ...] = ()
+) -> list[str]:
+    from orch.host.units import refuse_dev_flags
+
     args = [str(python), "-I", str(release / "bin" / "orch-runner"), "run", "--state", str(state_dir)]
-    args += ["--run", str(run_dir)]
+    args += ["--run", str(run_dir), *extra_args]
+    refuse_dev_flags(args)  # §11A.17.2: the runner unit never gets a dev flag either
     for arg in args:
         if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in arg):
             raise ValueError(f"a control character in a unit argument: {arg!r}")
     return args
 
 
-def launchd_plist(python: Path, release: Path, state_dir: Path, run_dir: Path) -> bytes:
+def launchd_plist(
+    python: Path, release: Path, state_dir: Path, run_dir: Path, extra_args: tuple[str, ...] = ()
+) -> bytes:
     log = str(Path(state_dir) / "runner" / "runner.out")
     doc: dict[str, object] = {
         "Label": LAUNCHD_LABEL,
-        "ProgramArguments": program_arguments(python, release, state_dir, run_dir),
+        "ProgramArguments": program_arguments(python, release, state_dir, run_dir, extra_args),
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Interactive",  # it parents the person's agents and shells: never throttled as background
@@ -53,8 +60,8 @@ def launchd_plist(python: Path, release: Path, state_dir: Path, run_dir: Path) -
     return plistlib.dumps(doc, sort_keys=True)
 
 
-def systemd_unit(python: Path, release: Path, state_dir: Path, run_dir: Path) -> str:
-    exec_start = " ".join(systemd_quote(a) for a in program_arguments(python, release, state_dir, run_dir))
+def systemd_unit(python: Path, release: Path, state_dir: Path, run_dir: Path, extra_args: tuple[str, ...] = ()) -> str:
+    exec_start = " ".join(systemd_quote(a) for a in program_arguments(python, release, state_dir, run_dir, extra_args))
     return "\n".join(
         [
             "[Unit]",

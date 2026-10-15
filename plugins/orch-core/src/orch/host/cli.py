@@ -34,6 +34,12 @@ def _parser() -> argparse.ArgumentParser:
         help="dev and tests only, with --foreground: also admit a runner of your UID started with orch runner run "
         "--foreground (no service manager needed); never with a service run directory",
     )
+    run.add_argument(
+        "--dev-sim-convenience",
+        action="store_true",
+        help="dev only, with --foreground, inside a dev-pair sandbox (orch-v2-host 11A.17): accept Simulator "
+        "convenience answers on throwaway SBX sandbox workspaces; never in a service unit",
+    )
     run.add_argument("--state", type=Path)
     run.add_argument("--run", type=Path)
     inst = sub.add_parser("install", help="install this code as an immutable release")
@@ -177,8 +183,18 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             run_dir = run_dir_for(state, args.run, env)  # tier A (phase 1); the units always pass --run
             if args.dev_runner:
                 _check_dev_runner(args.foreground, run_dir, env)
+            dev = None
+            if args.dev_sim_convenience:  # §11A.17.2: the proof runs before anything binds; a failure never falls back
+                from . import devmode
+
+                devmode.check_launch(args.foreground, env, run_dir, state)
+                dev = devmode.prove(state, env)
             preload()
-            host = Host(state, run_dir, dev_runner=args.dev_runner)
+            host = Host(state, run_dir, dev_runner=args.dev_runner, dev=dev)
+            if dev is not None:
+                from .devmode import status_line
+
+                sys.stderr.write(f"orch host: {status_line(dev)}\n")
             if args.dev_runner:
                 sys.stderr.write(
                     f"orch host: DEV RUNNER MODE: a foreground runner of UID {os.getuid()} announced in {run_dir} is "

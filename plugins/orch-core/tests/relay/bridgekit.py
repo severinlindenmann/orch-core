@@ -311,7 +311,7 @@ class FakeHost:
 
     def _fail(self, key: str, binding: str, code: str, **fields: Any) -> dict[str, Any]:
         outcomes = self._load("outcomes.json")
-        outcomes[key] = _fail_record(binding, code)
+        outcomes[key] = _fail_record(binding, code, **fields)
         self._save("outcomes.json", outcomes)
         raise Refusal(code, **fields)
 
@@ -324,8 +324,13 @@ class FakeHost:
         self._save("outcomes.json", outcomes)
 
 
-def _fail_record(binding: str, code: str) -> dict[str, Any]:
-    return {"binding": binding, "step": "failed", "error": {"code": code}, "exit": 5}
+def _fail_record(binding: str, code: str, **detail: Any) -> dict[str, Any]:
+    """A stored failed outcome as the host stores it: the socket ``Error`` with its closed per-code ``detail``
+    (contract v1.9, #499: ``ticket.key_not_next {next_key}``)."""
+    error: dict[str, Any] = {"code": code}
+    if detail:
+        error["detail"] = detail
+    return {"binding": binding, "step": "failed", "error": error, "exit": 5}
 
 
 def _ok(data: Any) -> dict[str, Any]:

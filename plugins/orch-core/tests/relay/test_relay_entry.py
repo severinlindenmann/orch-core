@@ -156,6 +156,58 @@ def test_a_key_that_is_not_next_is_key_not_next_with_the_advisory_key(served):  
     assert served.service.store.logged_event(log, ev["id"]) is None
 
 
+def _add_viewer(served):  # noqa: F811
+    from tests.identity.helpers import Person
+
+    ws, p = served.lab.ws, Person()
+    store = ws.other()
+    ws.store = store
+    try:
+        store.append(
+            ws.person_event(ws.owner, "workspace", "member.added", person=p.ref, name="vi", role="viewer",
+                            pk_pub=crypto.b64u(p.pk_pub), device_cert=p.cert(created=ws.clock[0] * 1000)),
+            log="workspace",
+        )  # fmt: skip
+    finally:
+        store.close()
+        ws.store = None
+    return p
+
+
+def test_499_a_non_creator_gets_role_denied_with_no_next_key(served):  # noqa: F811
+    """#499 (orch-52): one who may not create is refused ``role.denied`` before the uid and the key are compared, so
+    the advisory ``next_key`` never reaches it, whatever key it sent; the creator gets it."""
+    entry = _entry(served)
+    viewer = _add_viewer(served)
+    want = _next_key(served)
+    prefix, n = want.rsplit("-", 1)
+    for key in (f"{prefix}-{int(n) + 5}", want):  # a wrong key and the right one: the same answer, no detail
+        log, ev = _new_ticket(served, viewer, key=key)
+        with pytest.raises(Refusal) as e:
+            _submit(served, entry, viewer, log, ev)
+        assert e.value.code == "role.denied" and e.value.fields == {}
+        assert served.service.store.logged_event(log, ev["id"]) is None
+    owner = served.lab.ws.owner
+    log, ev = _new_ticket(served, owner, key=f"{prefix}-{int(n) + 5}")
+    with pytest.raises(Refusal) as e:
+        _submit(served, entry, owner, log, ev)
+    assert e.value.code == "ticket.key_not_next" and e.value.fields == {"next_key": want}
+
+
+def test_499_the_stored_key_not_next_outcome_carries_next_key_in_its_error_detail(served):  # noqa: F811
+    """What the bridge's settle reads (``error.detail.next_key``): the host's stored outcome of the refusal."""
+    entry = _entry(served)
+    owner = served.lab.ws.owner
+    want = _next_key(served)
+    prefix, n = want.rsplit("-", 1)
+    log, ev = _new_ticket(served, owner, key=f"{prefix}-{int(n) + 5}")
+    with pytest.raises(Refusal):
+        _submit(served, entry, owner, log, ev)
+    got = _on_worker(served, lambda: entry.lookup(_ident(served, owner), ev["id"]))
+    assert got["state"] == "failed" and got["error"]["code"] == "ticket.key_not_next"
+    assert got["error"]["detail"] == {"next_key": want}
+
+
 def test_a_new_ticket_in_an_existing_log_is_ticket_exists(served):  # noqa: F811
     entry = _entry(served)
     owner = served.lab.ws.owner

@@ -110,7 +110,7 @@ def test_one_alarm_per_class_of_failure_bounded(w, monkeypatch):
     monkeypatch.setattr(B, "ALARM_CLASSES", 4)
     for i in range(10):
         loop._item_failed(f"step{i}", KeyError())  # noqa: SLF001
-    assert len(br.alarms) == 4 and len(loop._alarmed) == 4  # noqa: SLF001 - bounded
+    assert len(br.alarms) == 5 and len(loop._alarmed) == 4  # noqa: SLF001 - bounded, plus one "exhausted" (N4-3)
 
 
 # -- N3-2: an admitted read never holds its reserve for ever -------------------------------------------------------

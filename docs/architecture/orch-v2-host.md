@@ -5702,7 +5702,9 @@ per host-wide count at the cap); the sweep runs in batches of 2 048 rows, one sh
 resuming from a cursor (the last row taken, in index order: `chunk_live` by `(device, rowid)`, the new
 `rid(state, first_ms)` index by `(first_ms, rowid)`), so a sweep reads each row once (round 4; round 3 re-scanned:
 the first full transition of 262 144 rows took 68 s with a 0.96 s lock hold, now about 13 s with a 0.17 s maximum
-hold, and 8 s with a 0.1 s hold for the 960 s byte drop of the same rows); a batch of the 24 h step deletes the
+hold, and 8 s with a 0.1 s hold for the 960 s byte drop of the same rows; review delta 4 on a 524 288-row file:
+maximum holds of 0.13 to 0.42 s, typical, growing with the tombstone over-cap delete, and once 2.7 s under laptop
+contention; the lease is renewed by the poll, 15 s apart, well clear of these holds); a batch of the 24 h step deletes the
 chunks of its rids and tombstones them in one transaction, and the vacuum
 returns 4 096 pages per sweep 256 at a time, each step its own lock hold. `auto_vacuum=INCREMENTAL`. Worst case at about 720 B per row and 250 B per tombstone: about 190 MB of rows + 65 MB of tombstones +
 128 MiB of answer bytes, about 0.4 GB in all (round 1: about 3.9 GB of rows plus unbounded answer bytes, all of it
@@ -5765,10 +5767,21 @@ reachable from one device). A chunk POST answered "retry" waits 1 s doubling to 
   stops the loop or the lease renewal. A job that raises leaves its rid admitted (recovered at the next start). The
   session's own errors (fenced, lost) still stop the worker. **Round 4 (N3-1):** from every thread: a `Fenced` or
   `SessionError` raised by a POST on the responder or a job thread is re-raised before the catch-all (as on the aux
-  thread), so the worker stops at once, the item is NOT acknowledged (the next holder polls it again) and the rid
-  stays admitted (recovered at the next start). The alarm is once per class of failure, `(step, exception class)`,
-  at most 64 classes (round 3 alarmed only on the first failure ever, so a harmless flush error hid a poisoned-item
-  loop).
+  thread), so the worker stops at once and the item is NOT acknowledged (the next holder polls it again). A rid whose
+  run had finished is then already `answered` with its chunk `attempted` (T2 precedes the POST): the next holder's
+  start flush re-posts the same bytes and the run never repeats; a rid whose POST never began stays admitted
+  (recovered at the next start). The alarm is once per class of failure, `(step, exception class)`, at most 64
+  classes, and the first new class past the cap raises one `relay_alarm_classes_exhausted` alarm (round 5, N4-3;
+  round 3 alarmed only on the first failure ever, so a harmless flush error hid a poisoned-item loop). **Round 5
+  (N4-1, the second finding of this class, so fixed structurally):** the invariant is *a fence or session error from
+  any relay POST stops the worker; it is never counted as an item failure*. It is enforced in one place:
+  `Bridge.post` is a property whose setter wraps every poster, so a `SessionError` from a POST is raised as
+  `WorkerStop`, a `BaseException` that no `except Exception` (one item, one rid, one aux step: `expire_reads`,
+  `retry_stuck`/`_settle`, `rotate` swallowed it in round 4) can catch; only the thread guard catches it and stops
+  the worker with the original error, and the same poster then refuses every later POST without a request. AST tests
+  over `orch/relay/` pin it: a handler that can catch `WorkerStop` (`BaseException`, bare, computed) must end in a bare
+  `raise` unless it is the guard's, a `bridge.py` handler naming a session error only re-raises, and nothing writes
+  the poster around the property.
 - J18 (round 3, D2-7) A refusal code outside the closed table becomes `internal` in the same context; a signer
   refusal is silence for that chunk; a settle whose `lookup` raises answers `already_done {status: unknown}`.
 - J19 (round 3, N1) The replay and POST-backoff maps are guarded by one lock, and one rid is POSTed by one thread at a
@@ -5782,11 +5795,21 @@ reachable from one device). A chunk POST answered "retry" waits 1 s doubling to 
   (`RidStore.abandon`: at the run, at the restart's settle, or at the expiry), so it never holds a reserve or an
   admitted row for ever; a resend is then silence (its relay deadline is long past). A late run of an expired read
   stores nothing (T2 needs `admitted`). **R6 precondition:** R6 may retire an epoch key at any time; admitted reads
-  are closed as above. Admitted WRITES under a retired key are not closed this way: they stay admitted until their
-  outcome settles them (`outcome.get` answers `pending`, then from the host record), which is conservative, never a
-  duplicate.
+  are closed as above. Admitted WRITES under a retired key are not closed this way: no answer can be sealed for them
+  any more, so they stay admitted for ever, re-settled at every start (two host lookups each); the device learns the
+  outcome through `outcome.get` (`pending`, then from the host record). Conservative, never a duplicate, and bounded
+  per retirement to the writes in flight or left at a crash when the key retires (about `JOBS` + `QUEUE_ITEMS`, plus
+  rows admitted at a crash), never by a device: they count toward no byte budget and leave the 24 h row caps after
+  24 h (the rid row, its submission row and one in-memory entry stay). Tombstoning them once the host record is
+  terminal is a possible follow-up. `READ_ADMITTED_MS` is pinned at 960 000 ms by a test (round 5, N4-2): halved, a
+  read still inside the relay's 900 s deadline would be closed and leave the budget.
 - J22 (round 4) The 24 h rid schema gains `reopens` (J7); an older `rids.sqlite` gets the column at open
   (`ALTER TABLE`), with 0 for every row. Nothing was deployed, so no other migration exists.
+- J23 (round 5, #499) The socket `Error` carries a closed per-code `detail` (contract v1.9). An answer rebuilt from a
+  stored failed outcome (settle, stuck retry) reads `error.detail.next_key` for `ticket.key_not_next` and seals it as
+  the advisory `next_key`; any other code's detail is dropped (`_refusal_fields`). A non-creator (a viewer, a
+  non-member, a device without `decide` or whose standing is not `ok`) gets `role.denied` with no detail, before the
+  uid and the key are compared, so no `next_key` and no ticket existence reach it (tested on a served workspace).
 
 **Deferred** (not R2): R3, R4, R5 (`RelayWorker`, the hook in `WorkspaceService.open`, `relay_columns` as a host
 function: today `RelayEntry` builds the recompute), R6 (pairing at epoch 0, member lists, `WK_e`, the real

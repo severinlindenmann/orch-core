@@ -45,7 +45,11 @@ Order (§8.6, with 11A.4/11A.5):
 
 Robustness (D2-1, D2-7): one poll item, one job or one aux step that raises is logged (bounded) and acknowledged;
 it never stops the loop, except the session's own ``Fenced``/``SessionError`` (a takeover, a lost lease), which stop
-the worker from any thread (N3-1). A refusal code outside the closed table is sealed as ``internal``; a signer
+the worker from any thread (N3-1). The invariant (N4-1): **a fence or session error from any relay POST stops the
+worker; it is never counted as an item failure.** It is enforced in one place, :attr:`Bridge.post`: every poster is
+wrapped so that a ``SessionError`` becomes :class:`WorkerStop`, a ``BaseException`` that no ``except Exception`` of
+an item, a rid or an aux step can catch (only :meth:`BridgeLoop._guard` does), and the poster refuses every later
+POST without a request. A refusal code outside the closed table is sealed as ``internal``; a signer
 refusal is silence for that chunk. An admitted read is bounded in age (:data:`READ_ADMITTED_MS`, N3-2).
 """
 
@@ -74,7 +78,7 @@ from .rids import Rid, RidStore, seq_accept
 from .session import Fenced, Session, SessionError
 from .sign import RelaySigner, SignerRefused
 
-__all__ = ["OPS", "PROTO_CODES", "Bridge", "BridgeLoop", "HostPort", "Item", "PostResult"]
+__all__ = ["OPS", "PROTO_CODES", "Bridge", "BridgeLoop", "HostPort", "Item", "PostResult", "WorkerStop"]
 
 log = logging.getLogger("orch.relay.bridge")
 
@@ -161,6 +165,41 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+class WorkerStop(BaseException):  # noqa: N818 - not an error of the item: the end of the worker
+    """The session ended during a relay POST (``Fenced``: a takeover; any ``SessionError``: a lost lease). N4-1's
+    invariant: a fence or session error from any relay POST stops the worker and is never counted as an item
+    failure. A ``BaseException``, so no ``except Exception`` (one item, one rid, one aux step) can swallow it; only
+    :meth:`BridgeLoop._guard` catches it, and stops the worker with :attr:`cause` as its error."""
+
+    def __init__(self, cause: SessionError) -> None:
+        super().__init__(cause)
+        self.cause = cause
+
+
+class _FenceStops:
+    """A poster with N4-1's invariant: a ``SessionError`` from it is raised as :class:`WorkerStop`, and from then on
+    every POST through it is refused the same way without a request (no second request after a fence, whatever caught
+    the first)."""
+
+    def __init__(self, fn: Poster) -> None:
+        self._fn = fn
+        self._ended: SessionError | None = None
+
+    def __call__(self, device: str, rid: str, envelope: bytes) -> PostResult:
+        if self._ended is not None:
+            raise WorkerStop(self._ended)
+        try:
+            return self._fn(device, rid, envelope)
+        except SessionError as e:
+            self._ended = e
+            raise WorkerStop(e) from e
+
+
+def _fence_stops(fn: Poster) -> Poster:
+    """``fn`` wrapped by :class:`_FenceStops` (once)."""
+    return fn if isinstance(fn, _FenceStops) else _FenceStops(fn)
+
+
 class Bridge:
     """The responder core. ``post(device_hex, rid_hex, envelope) -> PostResult``; ``job(fn)`` runs ``fn`` on the
     workspace worker thread and returns its result (R5: ``RelayWorker.submit``)."""
@@ -199,6 +238,15 @@ class Bridge:
         self._posting: set[tuple[str, str]] = set()
 
     # -- start-up (11A.4 recovery, start fence) -------------------------------------------------------------------
+
+    @property
+    def post(self) -> Poster:
+        """The chunk poster; whatever is assigned is wrapped by :func:`_fence_stops` (N4-1: the one place)."""
+        return self._post
+
+    @post.setter
+    def post(self, fn: Poster) -> None:
+        self._post = _fence_stops(fn)
 
     def start(self) -> None:
         """Record the start fence, replay persisted chunks first, then answer every admitted rid: a read gets
@@ -263,7 +311,12 @@ class Bridge:
         elif state in ("failed", "partial") and isinstance(got.get("error"), dict):
             err = got["error"]
             code = err.get("code") if isinstance(err.get("code"), str) else "internal"
-            self._answer_refusal(rec, h, **_refusal_fields(Refusal(code, seqs=got.get("seqs")), effects_possible=True))
+            # the stored socket Error's closed per-code detail (contract v1.9, #499): ticket.key_not_next {next_key};
+            # _refusal_fields keeps next_key for that code only, so no other code's detail reaches the device
+            detail = err.get("detail")
+            nk = detail.get("next_key") if isinstance(detail, dict) else None
+            r = Refusal(code, seqs=got.get("seqs"), next_key=nk)
+            self._answer_refusal(rec, h, **_refusal_fields(r, effects_possible=True))
         else:  # pending or unknown: the device reconciles through outcome.get (11A.4)
             self._answer_refusal(rec, h, "already_done", **_UNKNOWN)
 
@@ -931,6 +984,7 @@ class BridgeLoop:
         self._started = False
         self._failures = 0
         self._alarmed: set[tuple[str, str]] = set()
+        self._alarms_exhausted = False
         self.error: BaseException | None = None
 
     # -- lifecycle ----------------------------------------------------------------------------------------------
@@ -979,6 +1033,9 @@ class BridgeLoop:
         def run() -> None:
             try:
                 fn()
+            except WorkerStop as e:  # a POST met the session's end (N4-1), on whatever thread posted
+                self.error = e.cause
+                self.stop()
             except Fenced as e:
                 self.error = e
                 self.stop()
@@ -1121,10 +1178,16 @@ class BridgeLoop:
             first = cls not in self._alarmed and len(self._alarmed) < ALARM_CLASSES
             if first:
                 self._alarmed.add(cls)
-        if n <= 10 or n % 1000 == 0:
+            # the first new class past the cap raises one alarm of its own, so the cap never hides silently (N4-3)
+            exhausted = not first and cls not in self._alarmed and not self._alarms_exhausted
+            if exhausted:
+                self._alarms_exhausted = True
+        if n <= 10 or n % 1000 == 0 or exhausted:
             log.error("relay %s failed (%d so far): %s", what, n, type(e).__name__)
         if first:
             self.bridge.alarm("relay_item_failed", f"{what}: {type(e).__name__}")
+        elif exhausted:
+            self.bridge.alarm("relay_alarm_classes_exhausted", f"{what}: {type(e).__name__}")
 
     def _poster(self, conn: Transport) -> Poster:
         lock = threading.Lock()

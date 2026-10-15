@@ -41,7 +41,14 @@ def records(data):
         "last": fields(data.get("last"), "commit at by ws_seq pushed_at"),
         "last_noted": fields(data.get("last_noted"), "by at"),
         "auto": fields(data.get("auto"), "on every_min push"),
-        "remote": {**fields(remote, "private export"), **prose(remote, "url")} if remote else None,
+        "remote": {
+            **fields(remote, "private export"),
+            **prose(remote, "url"),
+            **prose(remote, "current_url"),
+            **{k: remote.get(k) if type(remote.get(k)) is bool else None for k in ("current_private", "matches_last")},
+        }
+        if remote
+        else None,
     }
 
 

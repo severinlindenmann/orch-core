@@ -551,6 +551,14 @@ async function run(send, close) {
               await escape()
             }
             // A failed push: Commit and push, confirmed, and the failure line with the commit that did land.
+            if (!ONLY || ONLY.test('real-host-records-push-mismatch')) {
+              await go('/__layout/records-push-mismatch')
+              await present('[data-testid="records-export-warning"]')
+              const asked = await clickText('button', /^Commit and push$/)
+              await present('[data-testid="records-push-mismatch"]')
+              await check(config, 'real-host-records-push-mismatch', asked ? await need([['the changed destination', '[role="dialog"] [data-testid="records-push-mismatch"]']]) : ['the Commit and push button is missing'])
+              await escape()
+            }
             if (!ONLY || ONLY.test('real-host-records-push')) {
               await go('/__layout/records-push-failed')
               await present('[data-testid="records-export-warning"]')

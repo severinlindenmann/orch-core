@@ -810,13 +810,16 @@ Errors: `invalid.input`, `page.expired`, `not_found` (`parent` or `epic`).
  artifacts?:[Artifact]{0..1000}, artifacts_more?:bool,
  claim?:ClaimFull | null,
  source?:[{name:str, repo:str, ref:str, sha:str}], pushes?:[Push]{0..50}, pushes_more?:bool,
- sections?:{str: [SectionRev]{0..20}}, sections_more?:{str:bool}}
+ sections?:{str: [SectionRev]{0..20}}, sections_more?:{str:bool},
+ // v1.7 (§11A.14, H12e), always sent:
+ members_v:int}
 
 LogItem  = {seq:int, type:str, at:Time, actor:Actor, summary:str{0..200}, data?:LogData}
 Question = {id:str, state:"open"|"answered"|"stale", to:[Person], blocking:bool, answered_by:Person | null, answered_seq:int | null,
             text?:str, why?:str, to_ref?:str, options?:[{key:str, label:str, cost?:str}], recommended?:str,
             asked_at?:Time, asked_by?:Actor, asked_seq?:int,
-            answer?:{by:Person, at:Time, seq:int, option:str | null, text:str | null, auth?:str},  // auth: v1.5
+            answer?:{by:Person, at:Time, seq:int, option:str | null, text:str | null, auth?:str,  // auth: v1.5
+                     id:ULID},                                                       // id: v1.7 (§11A.14)
             qid?:str/[0-9a-f]{32}/, hash?:Hash}                                          // v1.5, read_ext/2 (§0.8.5)
 Criterion = {id:str, text:str, evidence:[{artifact:str, digest:Hash, kind:str, attested_by:"agent"|"person"|"unattended"}],
              covered?:bool, tasks?:[{id:str, evidence:bool}]}
@@ -842,7 +845,12 @@ Push      = {seq:int, at:Time, repo_name:str, repo_id:str, ref:str, sha:str, bef
 SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"external", refs:[str]}
 ```
 
-- `TicketDoc` is the F1 §7 ticket document.
+- `TicketDoc` is the F1 §7 ticket document, plus (v1.7, §11A.14, H12e) `head:{seq:int, head:Hash}`: the `seq` and
+  event head of the ticket log's last event.
+- **One snapshot (v1.7, H12e).** `doc.head`, `questions[].answer.id` (the id of the answer event that counts) and
+  `members_v` (the roster version a person event signs as `roster_v`) are read under the same store lock as every
+  other field, so a phone review needs one `ticket.get`. They are viewer-filtered like the rest: an invisible
+  ticket is `not_found`, an answer appears only where `answer` already did (never for `open` or `stale`).
 - `summary` is host text, escaped as in F1 §10.4 item 11. The content itself is fetched with `show --log`.
 - **Closed and done tickets** are returned like any other (§0.8.4): `status` is `"done"` or `"closed"`, `settled` is `true` for
   both, and `closed` (present only when `status` is `"closed"`) is `Closed` of `ticket.query` plus the `text` of the
@@ -1170,8 +1178,14 @@ Errors: `not_found`, `invalid.input`.
 `workspace.show {}` (read; unchanged in v1.5, the settings and policies are read with `workspace.settings`, §0.8.5) →
 
 ```
-{id:str, prefix:str, name:str, genesis:Hash, epoch:int, wsk_fingerprint:str, members_v:int, state:"ok"|"degraded"}
+{id:str, prefix:str, name:str, genesis:Hash, epoch:int, wsk_fingerprint:str, members_v:int, state:"ok"|"degraded",
+ next_key:Key | null}                                                                // next_key: v1.7 (§11A.14)
 ```
+
+`next_key` (v1.7, H12e) is the store's exact next key (`_next_key()` after the directory scan, under the lock),
+advisory and never a reservation. It is `null` for a principal that may not create a ticket: a viewer, no-person,
+column G (judgement call of H12e: an agent's `new` allocates its own key), and a column-R device without a valid
+`decide` certificate on the replayed roster.
 
 `epoch` is the committed epoch, never the highest allocated one (§11, membership publication).
 

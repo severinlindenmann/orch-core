@@ -951,11 +951,12 @@ class RegistryBackend:
         from orch.cli.session import FileRecords
         from orch.cli.store_hooks import hooks_for
         from orch.ops.errors import OrchError
-        from orch.ops.runtime import records_dir
 
         store = call.service.store
         hooks = hooks_for(store)
-        records = ScopedRecords(FileRecords(records_dir(Path(call.service.entry.root))), call.principal)
+        records = ScopedRecords(
+            FileRecords(store.state_dir / "sessions", fs=store.fs), call.principal
+        )  # the store's pinned root (#564)
         parsed = Parsed(operation, dict(args), dry_run=ctx.dry_run)
         try:
             res = cli.run(parsed, ctx, records, hooks)  # type: ignore[arg-type]

@@ -42,6 +42,7 @@ class Fake:
 class Script:
     def __init__(self, ws):
         self.ws, self.enabled, self.available, self.contract = ws, True, True, 1
+        self.features: list | None = None  # `status.features`: ["custody"] for a signer with the switch
         self.refuse: dict[str, ClickError] = {}
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
@@ -65,7 +66,14 @@ class Script:
             }
             if not self.available:
                 row["problem"] = "disabled"
-            return {"core": "2.0.0.dev0", "contract": self.contract, "workspaces": [row]}
+            out = {"core": "2.0.0.dev0", "contract": self.contract, "workspaces": [row]}
+            if self.features is not None:
+                out["features"] = self.features
+            return out
+        if op in ("custody_on", "custody_off"):
+            self.enabled = self.available = op == "custody_on"
+            row = {"workspace_id": self.ws, "custody": "convenience", "enabled": self.enabled}
+            return {**row, "available": self.available, **({} if self.available else {"problem": "disabled"})}
         if op == "prepare":
             time.sleep(self.delay)
             binding = repr((args["op"], args["args"], args.get("files")))
@@ -519,7 +527,7 @@ def test_no_route_but_the_click_routes_calls_the_signer():
 
 def test_the_status_route_is_the_card_only(client, token, stub, script):
     res = client.get(url(stub, "status"), headers=hdr(token, False))
-    assert res.json() == {"custody": "convenience", "enabled": True, "available": True}
+    assert res.json() == {"custody": "convenience", "enabled": True, "available": True, "switchable": False}
     script.available = False
     assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["problem"] == "disabled"
 
@@ -1678,3 +1686,86 @@ def test_expected_admits_only_the_callers_runner_grant():
     assert not check([{**good, "extra": 1}])  # review I2: no field beyond the grant.issued shape
     twelve = expected(RunnerGrant(action="runner_grant", hours=12, scope="all"), me)
     assert twelve([{**good, "hours": 12, "scope": "all"}]) and not twelve([{**good, "hours": 13, "scope": "all"}])
+
+
+# -- the click-to-sign switch (section 0.8.6 item 3a) ----------------------------------------------------------------
+
+PASSPHRASE = "CANARY-passphrase-never-in-a-log"
+
+
+def switch(client, token, stub, body):
+    return client.post(url(stub, "custody"), json=body, headers=hdr(token))
+
+
+def test_an_older_signer_cannot_switch(client, token, stub, script):
+    assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["switchable"] is False
+
+
+def test_a_signer_with_the_custody_feature_can_switch(client, token, stub, script):
+    script.features = ["custody", 7]  # a non-string feature is ignored, not an error
+    assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["switchable"] is True
+
+
+def test_switching_on_sends_the_passphrase_to_the_signer_only(client, token, stub, script, caplog, capfd):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    caplog.set_level(logging.DEBUG)
+    res = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"custody": "convenience", "enabled": True, "available": True, "switchable": True}
+    calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
+    assert calls == [("custody_on", {"workspace_id": stub.ws, "passphrase": PASSPHRASE})]
+    out, err = capfd.readouterr()
+    assert PASSPHRASE not in caplog.text + out + err + res.text
+
+
+def test_switching_off_needs_no_passphrase_and_may_move_the_key_back(client, token, stub, script):
+    script.features = ["custody"]
+    res = switch(client, token, stub, {"on": False})
+    assert res.status_code == 200 and res.json()["enabled"] is False and res.json()["problem"] == "disabled"
+    switch(client, token, stub, {"on": False, "passphrase": "a new long passphrase"})
+    calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
+    assert calls == [
+        ("custody_off", {"workspace_id": stub.ws}),
+        ("custody_off", {"workspace_id": stub.ws, "passphrase": "a new long passphrase"}),
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"on": True}, {"on": "yes"}, {"on": True, "passphrase": ""}, {"on": True, "passphrase": "x" * 1025}, {}],
+)
+def test_switch_bodies_are_checked_and_never_echoed(client, token, stub, script, body):
+    script.features = ["custody"]
+    res = switch(client, token, stub, body)
+    assert res.status_code == 400 and "x" * 100 not in res.text
+    assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
+
+
+def test_a_signer_without_the_switch_says_update(client, token, stub, script):
+    res = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE})
+    assert res.json()["error"]["code"] == "click.contract"
+    assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
+
+
+def test_only_an_owner_switches(client, token, stub, script, monkeypatch):
+    script.features = ["custody"]
+    from orch_dashboard import adapters
+
+    real = adapters.members
+    monkeypatch.setattr(
+        adapters, "members", lambda data: [m.model_copy(update={"role": "maintainer"}) for m in real(data)]
+    )
+    res = switch(client, token, stub, {"on": False})
+    assert res.json()["error"]["code"] == "role.denied"
+    assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
+
+
+def test_a_wrong_passphrase_keeps_its_code(client, token, stub, script):
+    script.features = ["custody"]
+    script.refuse["custody_on"] = ClickError("custody.wrong_passphrase", "the passphrase was refused; nothing changed")
+    res = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE})
+    assert res.json()["error"]["code"] == "custody.wrong_passphrase"
+    script.refuse["custody_on"] = ClickError("rate.limited", "wait", retry_after_ms=5000, retryable=True)
+    err = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE}).json()["error"]
+    assert err["code"] == "rate.limited" and err["retry_after_ms"] == 5000

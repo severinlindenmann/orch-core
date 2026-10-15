@@ -38,7 +38,7 @@ import {
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
+import type { ClickAction, ClickCard, ClickHostState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
@@ -132,6 +132,8 @@ export function createApi(transport: Transport) {
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
     stateClick: (ws: string, requestId: string) => call<{ id: string; state: ClickHostState }>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
+    clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),
+    switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),

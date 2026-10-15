@@ -28,6 +28,7 @@ from .protocol import (
     CONTRACT,
     DEPOSIT_MAX_HOURS,
     DEPOSIT_REASONS,
+    FEATURES,
     HASH,
     IDEM,
     OP_NAME,
@@ -47,6 +48,10 @@ MAX_APPROVALS = 16
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
 PER_HOUR = 600
+#: the custody switch (§0.8.6 item 3a): wrong passphrases at ``custody_on`` per window, and a passphrase's length
+CUSTODY_TRIES = 5
+CUSTODY_WINDOW = 900.0
+PASSPHRASE_MAX = 1024
 REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
@@ -153,6 +158,8 @@ class ClickSigner:
         self.records.prune()  # retention runs at start and at prepare, never on the sign path
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
+        #: monotonic times of wrong passphrases at ``custody_on`` (:meth:`_custody_budget`)
+        self.custody_misses: deque[float] = deque()
 
     # -- seams ---------------------------------------------------------------------------------------------------------
     def _default_workspaces(self) -> list[dict[str, Any]]:
@@ -711,27 +718,132 @@ class ClickSigner:
         from orch import __version__ as core
         from orch.custody.select import status
 
-        out = []
-        for e in self._workspaces():
-            wid = e["workspace_id"]
-            st = status(self.state, wid)
-            row = {
-                "workspace_id": wid,
-                "prefix": str(e.get("prefix")),
-                "custody": st["custody"],
-                "device": st["device"],
-                "enabled": bool(self._enabled(e)),
-            }
-            problem = st.get("problem") or self.problems.get(wid)
-            if problem is None and st["custody"] != "convenience":
-                problem = "not_convenience"
-            if problem is None and not row["enabled"]:
-                problem = "disabled"
-            row["available"] = problem is None
-            if problem is not None:
-                row["problem"] = str(problem)[:200]
-            out.append(row)
-        return {"core": str(core), "contract": CONTRACT, "workspaces": out}
+        out = [self._row(e, status) for e in self._workspaces()]
+        return {"core": str(core), "contract": CONTRACT, "features": list(FEATURES), "workspaces": out}
+
+    def _row(self, e: dict[str, Any], status: Callable[[Path, str], dict[str, Any]] | None = None) -> dict[str, Any]:
+        if status is None:
+            from orch.custody.select import status
+        wid = e["workspace_id"]
+        st = status(self.state, wid)
+        row = {
+            "workspace_id": wid,
+            "prefix": str(e.get("prefix")),
+            "custody": st["custody"],
+            "device": st["device"],
+            "enabled": bool(self._enabled(e)),
+        }
+        problem = st.get("problem") or self.problems.get(wid)
+        if problem is None and st["custody"] != "convenience":
+            problem = "not_convenience"
+        if problem is None and not row["enabled"]:
+            problem = "disabled"
+        row["available"] = problem is None
+        if problem is not None:
+            row["problem"] = str(problem)[:200]
+        return row
+
+    # -- the custody switch (§0.8.6 item 3a, owner decision 15 Oct 2026) ---------------------------------------------
+    def _custody_budget(self) -> None:
+        """Wrong passphrases at :meth:`custody_on`: at most ``CUSTODY_TRIES`` per ``CUSTODY_WINDOW`` seconds in this
+        signer. It slows guessing through a stolen dashboard session; it is no bound against code running as the
+        person, which can read the passphrase key file itself."""
+        now = self.mono()
+        while self.custody_misses and self.custody_misses[0] <= now - CUSTODY_WINDOW:
+            self.custody_misses.popleft()
+        if len(self.custody_misses) >= CUSTODY_TRIES:
+            wait = self.custody_misses[0] + CUSTODY_WINDOW - now
+            raise ClickError(
+                "rate.limited",
+                f"at most {CUSTODY_TRIES} wrong passphrases per {int(CUSTODY_WINDOW)} s; wait, or use the terminal",
+                retry_after_ms=max(1, int(wait * 1000)),
+                retryable=True,
+            )
+
+    @staticmethod
+    def _passphrase(args: Mapping[str, Any], *, required: bool) -> str | None:
+        pw = args.get("passphrase")
+        if pw is None and not required:
+            return None
+        if type(pw) is not str or not 0 < len(pw) <= PASSPHRASE_MAX:
+            raise ClickError("invalid.input", "passphrase is text")
+        return pw
+
+    def custody_on(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Click-to-sign on, from the dashboard: the device key moves into convenience custody with the passphrase the
+        person typed (the one factor that someone who takes over the dashboard does not have), then the workspace's
+        flag is set, both under the flag lock (§0.8.6 item 8). The same refusals as ``orch host convenience on`` and
+        ``orch keys custody convenience``. The passphrase is never logged or returned."""
+        from orch.custody import select
+        from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound, WrongPassphrase
+        from orch.host import convenience
+        from orch.host.errors import HostError
+
+        entry = self._entry(args.get("workspace_id"))
+        pw = self._passphrase(args, required=True)
+        self._custody_budget()
+        wid, uid = entry["workspace_id"], int(entry["host_uid"])
+        try:
+            with convenience.workspace_lock(self.state, wid, uid):
+                waiting = convenience.pending_handoffs(self.state, wid, uid, clock=self.wall)
+                if waiting:
+                    raise ClickError(
+                        "sign.click_only",
+                        f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: let them expire "
+                        "(10 minutes), then switch click-to-sign on",
+                    )
+                if select.status(self.state, wid)["custody"] != "convenience":
+                    try:
+                        select.convert_to_convenience(
+                            self.state, wid, prefix=str(entry.get("prefix") or ""), passphrase=pw
+                        )
+                    except WrongPassphrase:
+                        self.custody_misses.append(self.mono())
+                        raise ClickError(
+                            "custody.wrong_passphrase", "the passphrase was refused; nothing changed"
+                        ) from None
+                convenience.set_enabled(self.state, wid, True, uid)
+        except HostError as exc:  # lock.busy, custody.unsafe_mode
+            raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
+        except KeyNotFound as exc:
+            raise ClickError("custody.no_key", str(exc)) from None
+        except (BackendUnavailable, CustodyError) as exc:
+            raise ClickError("custody.unavailable", str(exc)) from None
+        self.problems.pop(wid, None)
+        self._note("custody_on", workspace=wid)
+        return self._row(entry)
+
+    def custody_off(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Click-to-sign off, from the dashboard: the flag goes off at once (no factor: it only takes authority away).
+        With ``passphrase`` the key also moves back under that new passphrase (``orch keys custody passphrase
+        --in-place``; it must pass the strength rules); without it the key stays in the key store until then."""
+        from orch.custody import select
+        from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound
+        from orch.custody.strength import check_strength
+        from orch.host import convenience
+        from orch.host.errors import HostError
+
+        entry = self._entry(args.get("workspace_id"))
+        pw = self._passphrase(args, required=False)
+        wid, uid = entry["workspace_id"], int(entry["host_uid"])
+        if pw is not None:
+            try:
+                check_strength(pw, (str(entry.get("prefix") or ""),))
+            except CustodyError as exc:
+                raise ClickError("custody.weak_passphrase", str(exc)) from None
+        try:
+            with convenience.workspace_lock(self.state, wid, uid):
+                convenience.set_enabled(self.state, wid, False, uid)
+            if pw is not None:
+                select.downgrade_in_place(self.state, wid, passphrase=pw)
+        except HostError as exc:
+            raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
+        except KeyNotFound as exc:
+            raise ClickError("custody.no_key", str(exc)) from None
+        except (BackendUnavailable, CustodyError) as exc:  # e.g. another custody change is unfinished
+            raise ClickError("custody.unavailable", str(exc)) from None
+        self._note("custody_off", workspace=wid, moved_back=pw is not None)
+        return self._row(entry)
 
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
@@ -754,7 +866,14 @@ class ClickSigner:
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
-        fn = {"prepare": self.prepare, "view": self.view, "sign": self.sign, "cancel": self.cancel}.get(op)
+        fn = {
+            "prepare": self.prepare,
+            "view": self.view,
+            "sign": self.sign,
+            "cancel": self.cancel,
+            "custody_on": self.custody_on,
+            "custody_off": self.custody_off,
+        }.get(op)
         if op == "status":
             return self.status(args)
         if fn is None:

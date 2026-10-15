@@ -32,9 +32,12 @@ __all__ = [
     "convert_to_convenience",
     "device_backend",
     "downgrade_in_place",
+    "finish_convenience",
     "forget",
     "read_selection",
+    "stage_convenience",
     "status",
+    "undo_staged",
 ]
 
 KEY_ID = "dk"
@@ -59,9 +62,9 @@ def _legacy_dir(state_dir: Path, workspace_id: str) -> Path:
 
 
 def _legacy_backend(state_dir: Path, workspace_id: str, passphrase: str | None = None) -> Any:
-    """The passphrase backend of the workspace's device key, or ``None``. With ``passphrase`` its one prompt is answered
-    with that text instead of the terminal: the dashboard's custody switch (orch-v2-host §0.8.6 item 3a), where the
-    person types the passphrase into the dashboard and the click signer passes it here."""
+    """The passphrase backend of the workspace's device key, or ``None``. With ``passphrase``, a backend that can only
+    export the key for a custody change, its one prompt answered with that text (:meth:`PassphraseBackend.answering`):
+    the dashboard's custody switch (orch-v2-host §0.8.6 item 3a)."""
     from orch.ops import human
 
     from .passphrase import PassphraseBackend
@@ -170,64 +173,112 @@ def convert_to_convenience(
     prefix: str = "",
     store: Any = None,
     clock: Callable[[], float] = time.time,
+) -> Selection:
+    """Move the passphrase device key into convenience custody (one passphrase prompt on the terminal). Resumable: a
+    selection left at step ``written`` is finished without asking again. The device id and certificate do not change.
+    The dashboard's switch runs the same two steps itself (:func:`stage_convenience`, then :func:`finish_convenience`
+    under the flag lock)."""
+    store = store if store is not None else _store(state_dir)
+    staged = stage_convenience(state_dir, workspace_id, prefix=prefix, store=store, clock=clock)
+    return finish_convenience(state_dir, workspace_id, staged, store=store)
+
+
+def stage_convenience(
+    state_dir: Path,
+    workspace_id: str,
+    *,
+    prefix: str = "",
+    store: Any = None,
+    clock: Callable[[], float] = time.time,
     passphrase: str | None = None,
 ) -> Selection:
-    """Move the passphrase device key into convenience custody (one passphrase prompt, or ``passphrase`` when the
-    dashboard's switch passes it). Resumable: a selection left at step ``written`` is finished without asking again.
-    The device id and certificate do not change."""
+    """The slow first step of a conversion: the passphrase (prompted, or ``passphrase`` from the dashboard's switch,
+    which only the click signer passes) opens the key, the scalar goes into the key store, and the selection records
+    ``transition: {to: convenience, step: written}``. While that step is recorded nothing signs with this key
+    (:func:`device_backend` refuses), and the passphrase file is untouched, so :func:`undo_staged` can still put
+    everything back. An already staged selection is returned as it is (resume)."""
     from orch.identity import device_ref
-
-    from .convenience import ConvenienceBackend
 
     store = store if store is not None else _store(state_dir)
     sel = read_selection(state_dir, workspace_id)
     if sel is not None and sel["custody"] == "convenience" and sel["transition"] is None:
         raise KeyExists("this workspace's device key is already in convenience custody")
-    if sel is not None and sel["transition"] is not None and sel["transition"]["to"] != "convenience":
-        raise CustodyError("another custody change is unfinished; finish it first (orch keys custody status)")
+    if sel is not None and sel["transition"] is not None:
+        if sel["transition"]["to"] != "convenience":
+            raise CustodyError("another custody change is unfinished; finish it first (orch keys custody status)")
+        return sel
     legacy = _legacy_backend(state_dir, workspace_id, passphrase)
-    if sel is None or sel["transition"] is None:
-        if legacy is None:
-            raise KeyNotFound("this machine holds no passphrase device key of yours for this workspace")
-        pub = legacy.public_key(KEY_ID)
-        device = device_ref(pub)
-        gen = (sel.gen if sel is not None else 0) + 1
-        scalar = legacy.export_for_custody_change(KEY_ID, fields=_fields(workspace_id, device, "convenience"))
-        try:
-            if store.exists(workspace_id, device):
-                held = bytearray(store.get(workspace_id, device))
-                try:
-                    if bytes(held) != bytes(scalar):
-                        raise CustodyError("another key is stored for this device; remove it first (orch keys forget)")
-                finally:
-                    for i in range(len(held)):
-                        held[i] = 0
-            else:
-                store.put(workspace_id, device, bytes(scalar), prefix=prefix)
-        finally:
-            for i in range(len(scalar)):
-                scalar[i] = 0
-        doc = {
-            "v": 1,
-            "custody": "passphrase",
-            "device": device,
-            "pub": crypto.b64u(pub),
-            "gen": gen,
-            "transition": {"to": "convenience", "step": "written"},
-        }
-        _write_selection(state_dir, workspace_id, doc)
-        sel = Selection(doc)
-    pub = crypto.unb64u(sel["pub"], crypto.PUB_LEN)
-    backend = ConvenienceBackend(store, workspace_id, sel["device"], pub)
-    backend.verify_capability()  # read back: the public key matches and the key signs
-    done = {**sel, "custody": "convenience", "transition": None}
+    if legacy is None:
+        raise KeyNotFound("this machine holds no passphrase device key of yours for this workspace")
+    pub = legacy.public_key(KEY_ID)
+    device = device_ref(pub)
+    gen = (sel.gen if sel is not None else 0) + 1
+    scalar = legacy.export_for_custody_change(KEY_ID, fields=_fields(workspace_id, device, "convenience"))
+    try:
+        if store.exists(workspace_id, device):
+            held = bytearray(store.get(workspace_id, device))
+            try:
+                if bytes(held) != bytes(scalar):
+                    raise CustodyError("another key is stored for this device; remove it first (orch keys forget)")
+            finally:
+                for i in range(len(held)):
+                    held[i] = 0
+        else:
+            store.put(workspace_id, device, bytes(scalar), prefix=prefix)
+    finally:
+        for i in range(len(scalar)):
+            scalar[i] = 0
+    doc = {
+        "v": 1,
+        "custody": "passphrase",
+        "device": device,
+        "pub": crypto.b64u(pub),
+        "gen": gen,
+        "transition": {"to": "convenience", "step": "written"},
+    }
+    _write_selection(state_dir, workspace_id, doc)
+    return Selection(doc)
+
+
+def finish_convenience(state_dir: Path, workspace_id: str, staged: Selection, *, store: Any = None) -> Selection:
+    """The second step: the stored key is read back (public key and a test signature), the selection becomes
+    ``convenience``, then the passphrase file is removed (best effort). Refuses when the selection is no longer exactly
+    ``staged`` (another process changed custody in between)."""
+    from .convenience import ConvenienceBackend
+
+    store = store if store is not None else _store(state_dir)
+    if read_selection(state_dir, workspace_id) != staged:
+        raise CustodyError("the custody of this key changed meanwhile; nothing was finished (orch keys custody status)")
+    pub = crypto.unb64u(staged["pub"], crypto.PUB_LEN)
+    ConvenienceBackend(store, workspace_id, staged["device"], pub).verify_capability()
+    done = {**staged, "custody": "convenience", "transition": None}
     _write_selection(state_dir, workspace_id, done)
+    legacy = _legacy_backend(state_dir, workspace_id)
     if legacy is not None and legacy.public_key(KEY_ID) == pub:
         try:
             legacy.delete(KEY_ID)  # best effort: backups and snapshots keep old copies
         except KeyNotFound:
             pass
     return Selection(done)
+
+
+def undo_staged(
+    state_dir: Path, workspace_id: str, staged: Selection, before: Selection | None, *, store: Any = None
+) -> None:
+    """Put back what :func:`stage_convenience` changed: the stored copy is removed and the selection is what it was
+    (``before``; none means the P1 default). Only while the selection is still exactly ``staged``; the passphrase file
+    was never touched."""
+    store = store if store is not None else _store(state_dir)
+    if read_selection(state_dir, workspace_id) != staged:
+        raise CustodyError("the custody of this key changed meanwhile; nothing was undone (orch keys custody status)")
+    try:
+        store.delete(workspace_id, staged["device"])
+    except KeyNotFound:
+        pass
+    if before is None:
+        _drop_selection(state_dir, workspace_id)
+    else:
+        _write_selection(state_dir, workspace_id, dict(before))
 
 
 def downgrade_in_place(
@@ -252,8 +303,14 @@ def downgrade_in_place(
         backend = ConvenienceBackend(store, workspace_id, sel["device"], pub)
         backend.verify_capability()
         if legacy.exists(KEY_ID):
-            if legacy.public_key(KEY_ID) != pub:
-                raise CustodyError("another passphrase key is in the way; move it aside first")
+            # Opus L1 on #539: a file of this device (a best-effort delete that failed, a restored backup) still opens
+            # with the passphrase it had then. Keeping it would report a move back under a new passphrase that never
+            # happened, so refuse and say what to do.
+            what = "a key file of this device" if legacy.public_key(KEY_ID) == pub else "another passphrase key"
+            raise CustodyError(
+                f"{what} is already at {directory / (KEY_ID + '.key.json')} (it opens with the passphrase it had when "
+                "it was written); move it aside, then run this again"
+            )
         else:
             scalar = bytearray(store.get(workspace_id, sel["device"]))
             try:

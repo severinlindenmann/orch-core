@@ -39,7 +39,17 @@ from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, short
 from orch.store.render import thaw
 
-__all__ = ["KEY_ID", "Human", "iso", "keys_dir", "open_backend", "review_prompt", "show_secret", "source_sha"]
+__all__ = [
+    "KEY_ID",
+    "Human",
+    "iso",
+    "keys_dir",
+    "open_backend",
+    "review_prompt",
+    "secret_destination",
+    "show_secret",
+    "source_sha",
+]
 
 KEY_ID = "dk"
 KEY_FILE = KEY_ID + ".key.json"
@@ -122,6 +132,35 @@ def review_prompt(text: str, expect: str) -> bool:
         except (KeyboardInterrupt, OSError):
             return False
         return bytes(line).strip().decode("utf-8", "replace") == expect
+    finally:
+        os.close(fd)
+
+
+def secret_destination(prompt: str) -> str:
+    """``orch sign`` of a runner grant (H11c): ``r`` hands the secret to the orch runner, ``s`` shows it here. Asked on
+    the person's own terminal only (``/dev/tty``); anything but ``r`` is ``s``. Tests replace this."""
+    if os.name == "nt":  # pragma: no cover
+        raise NoPrompt("no terminal to ask on")
+    try:
+        fd = open_tty(os.O_RDWR)
+    except OSError:
+        raise NoPrompt("no controlling terminal to ask on") from None
+    try:
+        if not os.isatty(fd):
+            raise NoPrompt("/dev/tty is not a terminal")
+        os.write(fd, prompt.encode())
+        import termios
+
+        termios.tcflush(fd, termios.TCIFLUSH)
+        line = bytearray()
+        while True:
+            c = os.read(fd, 1)
+            if not c or c == b"\n":
+                break
+            line += c
+        return "r" if bytes(line).strip().lower() == b"r" else "s"
+    except (KeyboardInterrupt, OSError):
+        return "s"
     finally:
         os.close(fd)
 

@@ -12,13 +12,15 @@ import pytest
 
 import orch.ops as ops
 from orch.host import frames
-from orch.host.columns import refusal, resolve
+from orch.host.agents import AGENT_OPS
+from orch.host.columns import Column, refusal, resolve
 from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
+from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
 from orch.host.terms import TERM_OPS
 from orch.host.worktrees import WORKTREE_OPS
@@ -76,6 +78,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(RECORDS_OPS)
     host |= set(RUN_OPS) | set(TERM_OPS)  # H11a, H11b
     host |= set(WORKTREE_OPS)  # H11d
+    host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
@@ -126,7 +129,8 @@ ROWS = {
 }
 ALLOWED = {
     "P": {"read", "person_read", "pg_read", "person_write", "pg_write", "unattended"},
-    "G": {"read", "pg_read", "pg_write", "agent", "unattended"},
+    # deposit (H11c): column G at the matrix; the op itself requires the person class and the UID's mapping
+    "G": {"read", "pg_read", "pg_write", "agent", "unattended", "deposit"},
     "N": {"read", "unattended"},
 }
 
@@ -138,7 +142,7 @@ def expected(row: str, kind: str) -> str | None:
         if row == "P":
             return None
         return "human_only" if row.startswith(("G person", "N person")) else "op.not_allowed"
-    write = kind in {"agent", "unattended", "pg_write"}
+    write = kind in {"agent", "unattended", "pg_write", "deposit"}
     if write and "unverified" in row:
         return "grant.expired"
     if write and "malformed" in row:
@@ -173,6 +177,11 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("pg_read", "read")
         elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
             assert kind == (("pg_read", "read") if op == "worktree.list" else ("pg_write", "write"))
+        elif op in AGENT_OPS:  # H11c: P only
+            assert kind == (("person_read", "read") if op == "agent.preview" else ("person_write", "write"))
+        elif op in GRANT_OPS:  # H11c: deposit needs a grant; status and forget are P only
+            assert kind == {"grant.deposit": ("deposit", "write"), "grant.deposit_status": ("person_read", "read"),
+                            "grant.forget": ("person_write", "write")}[op]  # fmt: skip
         else:
             who = ops.get(op).who
             assert kind[0] == ("person_read" if op in PERSON_READS else who)
@@ -180,7 +189,18 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
             seen.add((kind[0], expected(row, kind[0])))
-    kinds = {"read", "person_read", "pg_read", "person_write", "pg_write", "agent", "unattended", "human", "human_api"}
+    kinds = {
+        "read",
+        "person_read",
+        "pg_read",
+        "person_write",
+        "pg_write",
+        "agent",
+        "unattended",
+        "human",
+        "human_api",
+        "deposit",
+    }
     assert kinds == {k for k, _ in seen}
     for op in NOT_SERVED:
         assert op_kind(op) is None
@@ -404,3 +424,20 @@ def test_errors_and_results_are_valid_frames(served):
 
 def test_the_design_doc_is_where_the_catalog_test_reads_it():
     assert Path(REPO / "docs" / "architecture" / "orch-v2-host.md").is_file()
+
+
+def test_grant_deposit_is_a_person_with_their_own_verified_grant():
+    """D-P2-27 as amended (#466 review, owner decision): at the matrix ``grant.deposit`` needs a verified
+    ``auth.grant`` (column G); the op itself then requires the person class, the UID's valid mapping to a member and
+    that the grant is that person's own runner grant (tests/host/test_runner_grants.py). Without a grant (P), with an
+    unverified or malformed one, and in every non-workspace column it is refused at the matrix."""
+    kind = op_kind("grant.deposit")
+    assert kind == ("deposit", "write")
+    for row, (peer, grant, valid) in ROWS.items():
+        got = refusal(resolve(peer, grant, valid), kind[0])
+        if grant == "verified":
+            assert got is None, row  # person or agent class: the op decides (an agent class peer is refused there)
+        else:
+            assert got is not None, row
+    for name in ("W", "C"):
+        assert refusal(Column(name, "none"), "deposit") == "op.not_allowed"

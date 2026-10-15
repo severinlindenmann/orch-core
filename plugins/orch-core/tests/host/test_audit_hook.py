@@ -39,7 +39,6 @@ MAIN = PRELUDE + textwrap.dedent(
         fs.append_durable("d/b.txt", b"y")
         assert fs.read_or_none("d/b.txt") == b"y" and sorted(fs.listdir("d")) == ["a.txt", "b.txt"]
         fs.replace("d/a.txt", "e/a.txt")
-        fs.real_dir(".state")
         fs.rmtree("e")
         fs.unlink("d/b.txt")
 

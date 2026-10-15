@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sqlite3
+import stat
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import fsio
+from .errors import StoreError
 from .logs import LogInfo
 
 if TYPE_CHECKING:
@@ -61,25 +65,68 @@ def _row(view: Any, seq: int) -> tuple[Any, ...]:
     )
 
 
+#: an index file larger than this is not loaded (it is rebuilt): derived data, and loading it costs memory
+MAX_INDEX_BYTES = 256 << 20
+_LEGACY = ("-journal", "-wal", "-shm")  # what a file-backed SQLite of an older orch may have left next to it
+
+
 class Index:
+    """The derived index (#564): an **in-memory** SQLite database. It is loaded from ``.state/index.sqlite`` with
+    :meth:`RootFS.read_or_none` + ``deserialize`` and saved with ``serialize`` + :meth:`RootFS.write_atomic` (temp
+    file, rename), both through the store's pinned root: SQLite never opens a file or a journal under the workspace,
+    so no symlink, swapped ``.state`` or reconnect can send a write elsewhere. Semantics as before: derived data,
+    checked against the logs' sizes, rebuilt when missing, stale or corrupt. Saved after every rebuild and every
+    update (not ``fsync``-ed: a crash only means a rebuild); another process's save is noticed by the file's
+    signature and reloaded at the next :meth:`is_current`."""
+
     def __init__(self, path: Path, fs: RootFS | None = None) -> None:
         self.path = path
-        #: the store's pinned root (#516): the file is checked and removed below it, and SQLite is handed the verified
-        #: real path of its directory (:meth:`RootFS.real_dir`), never the path through the workspace
         self._fs = fs
         self._db: sqlite3.Connection | None = None
         self._rows: dict[str, Any] = {}
+        self._sig: tuple[int, int, int] | None = None  # the file as loaded or last saved by this object
+
+    # -- the file, below the pinned root
+    def _file_sig(self) -> tuple[int, int, int] | None:
+        try:
+            st = self._fs.lstat(self.path) if self._fs is not None else os.lstat(self.path)
+        except (OSError, StoreError):
+            return None
+        return (st.st_ino, st.st_size, st.st_mtime_ns) if stat.S_ISREG(st.st_mode) else None
+
+    def _read(self) -> bytes | None:
+        try:
+            raw = (
+                self._fs.read_or_none(self.path, MAX_INDEX_BYTES)
+                if self._fs is not None
+                else fsio.read_or_none(self.path, MAX_INDEX_BYTES)
+            )
+        except (OSError, StoreError):
+            return None
+        return raw if raw is not None and len(raw) <= MAX_INDEX_BYTES else None
+
+    def _save(self) -> None:
+        assert self._db is not None
+        data = self._db.serialize()
+        if self._fs is not None:
+            self._fs.write_atomic(self.path, data, durable=False)
+        else:
+            fsio.write_atomic(self.path, data, durable=False)
+        self._sig = self._file_sig()
 
     # -- connection
     def _connect(self) -> sqlite3.Connection:
         if self._db is None:
-            if self._fs is not None:
-                where = self._fs.real_dir(self.path.parent) / self.path.name
-            else:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                where = self.path
-            db = sqlite3.connect(where, isolation_level=None, timeout=30)
-            db.execute("PRAGMA synchronous=OFF")  # derived data: a crash just means a rebuild
+            db = sqlite3.connect(":memory:", isolation_level=None)
+            raw = self._read()
+            if raw:
+                try:
+                    db.deserialize(raw)
+                except sqlite3.Error:  # not a database: an empty one, rebuilt by the caller
+                    db.close()
+                    db = sqlite3.connect(":memory:", isolation_level=None)
+            self._sig = self._file_sig()
+            self._rows = {}
             self._db = db
         return self._db
 
@@ -92,19 +139,24 @@ class Index:
         """Delete the file (the next append or open rebuilds it)."""
         self._rows = {}
         self.close()
-        for suffix in ("", "-journal", "-wal", "-shm"):
+        self._sig = None
+        for suffix in ("", *_LEGACY):
+            target = self.path.with_name(self.path.name + suffix)
             with contextlib.suppress(FileNotFoundError):
                 if self._fs is not None:
-                    self._fs.unlink(self.path.with_name(self.path.name + suffix))
+                    self._fs.unlink(target)
                 else:
-                    Path(str(self.path) + suffix).unlink()
+                    os.unlink(target)
 
     # -- freshness
     def is_current(self, sizes: Mapping[str, int], workspace_id: str, genesis: str | None) -> bool:
         """The index describes these logs: same version, workspace and genesis, and every log has the size the index
         recorded (a log that grew, shrank or appeared without the index being told is stale)."""
-        if not (self._fs.is_file(self.path) if self._fs is not None else self.path.exists()):
+        sig = self._file_sig()
+        if sig is None:
             return False
+        if self._db is not None and sig != self._sig:
+            self.close()  # another process saved it: load what is on disk now
         try:
             db = self._connect()
             meta = dict(db.execute("SELECT k, v FROM meta"))
@@ -132,6 +184,7 @@ class Index:
         self._rows = {}
         self._write(db, state, logs, set(state.tickets), full=True, sizes=sizes)
         db.execute("COMMIT")
+        self._save()
 
     def update(
         self,
@@ -151,6 +204,7 @@ class Index:
         except BaseException:
             db.execute("ROLLBACK")
             raise
+        self._save()
 
     def _write(
         self,

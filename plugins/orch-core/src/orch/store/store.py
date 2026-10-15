@@ -61,7 +61,7 @@ from orch.model import (
 from . import render
 from .checkpoints import WORKSPACE_EVERY, Checkpoints, Divergence, find_divergence
 from .errors import StoreError
-from .fsio import fsync_dir, loads, read_or_none, write_atomic
+from .fsio import NotRegularFile, fsync_dir, loads, read_or_none, write_atomic
 from .index import Index
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
@@ -73,6 +73,36 @@ from .rootfs import RootFS
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
 
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
+
+
+def _lock_opener(fs: RootFS) -> Callable[[], int]:
+    """The workspace lock's opener (#564): the cached directory fds are revalidated **first**, so the lock is opened
+    in the ``.state`` every operation of this lock period then uses. A FIFO or anything else that is not a regular
+    file there is ``validation.path``. Bound to ``fs``, not to the store: no reference cycle through the lock."""
+
+    def opener() -> int:
+        fs.revalidate()
+        try:
+            return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600, parents=True)
+        except (NotRegularFile, IsADirectoryError):
+            raise StoreError("validation.path", ".state/lock is not a regular file") from None
+
+    return opener
+
+
+def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
+    """After the ``flock``: the locked file is still ``.state/lock`` below the (revalidated) pinned ``.state``
+    (``fstat`` of the fd against an ``lstat`` of the name). Otherwise :class:`FileLock` retries once, then refuses."""
+
+    def verify(fd: int) -> bool:
+        fs.revalidate()
+        try:
+            a, b = os.fstat(fd), fs.lstat(".state/lock")
+        except (OSError, StoreError):
+            return False
+        return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+    return verify
 
 
 def _sig_of(st: os.stat_result) -> tuple[int, int, int, int]:
@@ -265,11 +295,8 @@ class Store:
         self._pins = HostPins(host_state_dir, workspace_id) if host_state_dir is not None else None
         #: the relay outbox (§11 P3-D21), active while ``<state>/hosts/<ws>/relay/link.json`` exists
         self._outbox = Outbox(self._pins.dir / "outbox") if self._pins is not None else None
-        fs_ = self.fs  # not ``self``: no reference cycle through the lock
         self._lock = FileLock(
-            self.state_dir / "lock",
-            timeout=lock_timeout,
-            opener=lambda: fs_.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600, parents=True),
+            self.state_dir / "lock", timeout=lock_timeout, opener=_lock_opener(self.fs), verify=_lock_verify(self.fs)
         )
         self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id, self.fs)
         self._index = Index(self.state_dir / "index.sqlite", self.fs)
@@ -401,7 +428,6 @@ class Store:
             if have is not None and have != self.workspace_id:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
         with self._guard(), self._lock:
-            self.fs.revalidate()  # a cached directory fd is used only while its name still names it (#516)
             check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
@@ -422,6 +448,7 @@ class Store:
         self._index.close()
         if self._pins is not None:
             self._pins.close()
+        self.fs.drop_cache()  # the cached directory fds; a later use (a closed store is still usable) reopens them
         # the root fd stays open: a closed store is still usable (it re-reads what changed); it is released with the
         # store (RootFS's finalizer), one fd per store
 
@@ -998,7 +1025,6 @@ class Store:
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         with self._guard(), self._lock:
-            self.fs.revalidate()  # a cached directory fd is used only while its name still names it (#516)
             check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()

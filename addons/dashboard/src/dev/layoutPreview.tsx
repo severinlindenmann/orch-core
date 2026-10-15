@@ -15,7 +15,7 @@ import { HostGeneral } from '@/app/pages/settings/host/General'
 import { HostRecords } from '@/app/pages/settings/host/Records'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
-import type { PairDevice, PairOfferStatus } from '@/api/pairing'
+import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
@@ -174,31 +174,35 @@ const LONG_LABEL = `Severin’s iPhone 17 Pro Max ${LONG_WORD}`.slice(0, 80)
 const pairOffer = (state: PairOfferStatus['state'], over: Partial<PairOfferStatus> = {}): PairOfferStatus => ({
   offer_id: 'of_' + '7'.repeat(32), state, created_ms: Date.now() - 60_000, expires_ms: Date.now() + 240_000, scopes: ['look', 'decide'], label: LONG_LABEL, ...over,
 })
-const pairDevice = (i: number, over: Partial<PairDevice> = {}): PairDevice => ({
-  device: 'd_' + String(i).repeat(32).slice(0, 32), label: `Phone ${i}`, paired_ms: Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000, relay: true,
+const pairDevice = (i: number, over: Partial<MemberDevice> = {}): MemberDevice => ({
+  id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`, paired_ms: Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000, relay: true,
   cert_expires: '2027-10-12T09:00:00Z', reader: 1, ...over,
 })
 const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
-  const devices = [pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0 })]
+  const member = (devices: MemberDevice[]): PairMember[] => [
+    // The Mac's own device has no pairing fields (no `relay`): it is not listed as a paired device.
+    { person: 'p_' + 'a'.repeat(32), name: 'Severin', role: 'owner', devices: [{ id: 'd_mac', auth: null, scopes: ['look', 'decide', 'operate'], valid: true }, ...devices] },
+  ]
+  const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
   switch (scenario) {
     case 'pair-unavailable':
       return { served: false }
     case 'pair-blocked-convenience':
       return {
         preview: { blocked: { code: 'sign.convenience_readers', message: `click-to-sign is on for this workspace; a phone cannot be added while it is on (${LONG_WORD})`, history: false } },
-        devices: [],
+        members: member([]),
       }
     case 'pair-pending':
-      return { offers: [pairOffer('pending', { sas: 'K7Q2MA' })], devices }
+      return { offers: [pairOffer('pending', { sas: 'K7Q2MA' })], members }
     case 'pair-cert':
-      return { offers: [pairOffer('cert_pending', { cert_code: 'H4WZ7P' })], devices }
+      return { offers: [pairOffer('cert_pending', { cert_code: 'H4WZ7P' })], members }
     case 'pair-failed':
       // A failed offer is not live: the scenario follows it as the page would right after the failure.
-      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: 'of_' + '7'.repeat(32) }, devices }
+      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: 'of_' + '7'.repeat(32) }, members }
     case 'pair-devices':
-      return { devices: [...devices, ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))] }
+      return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { relay: false, reader: 0, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
     default:
-      return { devices }
+      return { members }
   }
 }
 let undoPair: (() => void) | null = null

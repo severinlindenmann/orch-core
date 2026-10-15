@@ -8,10 +8,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { encode } from 'uqr'
-import { checkSas, convenienceOffCommand, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PRIMARY_COMMAND, type PairBlocked, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
+import { checkSas, convenienceOffCommand, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PRIMARY_COMMAND, type PairBlocked, deviceRemoveCommand, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
 import { ApiError, type Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
-import { Inline, plain } from '@/components/sign/visible'
+import { Inline, Prose } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fmtDateTime } from '@/lib/time'
@@ -57,7 +57,7 @@ function Pairing({ workspace }: { workspace: Workspace }) {
   const qc = useQueryClient()
   const preview = useQuery(pairQueries.preview(ws))
   const list = useQuery(pairQueries.list(ws))
-  const devices = useQuery(pairQueries.devices(ws))
+  const members = useQuery(pairQueries.members(ws))
   // The link: component state only.
   const [offer, setOffer] = useState<PairOffer | null>(null)
   const offerRef = useRef<PairOffer | null>(null)
@@ -187,7 +187,7 @@ function Pairing({ workspace }: { workspace: Workspace }) {
         )}
         {error && !(error instanceof ApiError && preview.data?.blocked?.code === error.code) ? <ErrorLine error={error} /> : null}
       </section>
-      <DeviceList workspace={workspace} devices={devices.data?.devices ?? null} failed={devices.isError} refresh={refresh} />
+      <DeviceList workspace={workspace} devices={members.data ? pairedDevices(members.data.members) : null} failed={members.isError} />
     </div>
   )
 }
@@ -205,22 +205,13 @@ function Blocked({ blocked, workspace }: { blocked: PairBlocked; workspace: Work
       </p>
       {convenience && (
         <div data-testid="pair-blocked-convenience" className="space-y-2">
-          <p>
-            A phone reads this workspace&apos;s log, and a phone app cannot check click-to-sign signatures yet, so the host refuses to add one where
-            click-to-sign could have signed.
-          </p>
+          {blocked.history === undefined && <p className="text-text-muted">The host does not say which of these applies:</p>}
           {blocked.history !== true && (
-            <div className="space-y-1">
-              <p>{blocked.history === false ? 'Click-to-sign is on but was never used here.' : 'If click-to-sign was never used here,'} Turn it off first in a terminal on this Mac, then come back:</p>
-              <CopyText label="Command to turn click-to-sign off">{convenienceOffCommand(workspace.prefix)}</CopyText>
-            </div>
-          )}
-          {blocked.history !== false && (
-            <p>
-              {blocked.history === true ? 'Click-to-sign was used on this workspace.' : 'If it was used here,'} A workspace that used click-to-sign can&apos;t get a phone
-              yet: turning it off does not change that.
+            <p data-testid="pair-convenience-off">
+              Turn click-to-sign off first: <code className="select-all break-all rounded bg-surface-3 px-1 font-mono text-[12px] text-text">{convenienceOffCommand(workspace.prefix)}</code>
             </p>
           )}
+          {blocked.history !== false && <p data-testid="pair-convenience-history">This workspace&apos;s click-to-sign history blocks phones.</p>}
         </div>
       )}
     </div>
@@ -358,13 +349,14 @@ function Scopes({ scopes }: { scopes: string[] }) {
   )
 }
 
-function Label({ label }: { label: string | null | undefined }) {
+/** The host's label as untrusted text: escaped and isolated, an LF shown as a line break (never markup). Empty: "phone". */
+export function DeviceLabel({ label, named = true }: { label: string | null | undefined; named?: boolean }) {
   return label ? (
     <span data-testid="pair-label">
-      “<Inline>{label}</Inline>” <span className="text-text-muted">(named by the device)</span>
+      “<Prose inline>{label}</Prose>”{named && <span className="text-text-muted"> (named by the device)</span>}
     </span>
   ) : (
-    <span className="text-text-muted">a device without a name</span>
+    <span data-testid="pair-label">phone</span>
   )
 }
 
@@ -388,7 +380,7 @@ function CompareCode({ ws, status, onCancel, refresh }: { ws: string; status: Pa
   return (
     <div className={box} data-testid="pair-compare">
       <p className="font-medium">
-        A phone connected: <Label label={status.label} />.
+        A phone connected: <DeviceLabel label={status.label} />.
       </p>
       <Scopes scopes={status.scopes} />
       <div className="space-y-1">
@@ -496,7 +488,7 @@ function OfferView(p: {
               {status?.cert_code ?? '……'}
             </p>
             <p className="text-text-muted">
-              For <Label label={status?.label} />.
+              For <DeviceLabel label={status?.label} />.
             </p>
           </>
         )}
@@ -519,7 +511,7 @@ function OfferView(p: {
       <p className={end?.tone === 'ok' ? 'font-medium text-success' : 'font-medium text-warning'}>{end?.title ?? `State ${state}.`}</p>
       {state === 'approved' && (
         <p>
-          <Label label={status?.label} /> is paired.
+          <DeviceLabel label={status?.label} /> is paired.
         </p>
       )}
       {status?.reason && (state === 'rejected' || state === 'failed') && (
@@ -533,7 +525,7 @@ function OfferView(p: {
             <Inline>{status.needs_remove}</Inline>
           ) : (
             <>
-              If the phone was already added (<Label label={status?.label} />), it stays in the workspace but cannot reach the relay: remove the device below.
+              If the phone was already added (<DeviceLabel label={status?.label} />), it stays in the workspace but cannot reach the relay: remove the device below.
             </>
           )}
         </p>
@@ -545,8 +537,7 @@ function OfferView(p: {
   )
 }
 
-function DeviceList({ workspace, devices, failed, refresh }: { workspace: Workspace; devices: PairDevice[] | null; failed: boolean; refresh: () => void }) {
-  const handoff = useSettingsHandoff(workspace.id, refresh)
+function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devices: PairDevice[] | null; failed: boolean }) {
   return (
     <section className="space-y-3" aria-labelledby="devices-heading">
       <h2 id="devices-heading" className="text-base font-semibold">
@@ -568,54 +559,44 @@ function DeviceList({ workspace, devices, failed, refresh }: { workspace: Worksp
             <TableHeader>
               <TableRow>
                 <TableHead>Device (named by the device)</TableHead>
+                <TableHead>Member</TableHead>
                 <TableHead>Paired</TableHead>
                 <TableHead>Relay</TableHead>
                 <TableHead>Certificate until</TableHead>
                 <TableHead>Reader</TableHead>
-                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
               {devices.map((d) => (
-                <TableRow key={d.device} data-testid="device-row">
+                <TableRow key={d.id} data-testid="device-row" className="align-top">
                   <TableCell className="max-w-64 whitespace-normal">
-                    {d.label ? <Inline>{d.label}</Inline> : <span className="text-text-muted">no name</span>}
+                    <DeviceLabel label={d.label} named={false} />
                     <div>
-                      <Mono className="break-all text-text-muted">{d.device}</Mono>
+                      <Mono className="break-all text-text-muted">{d.id}</Mono>
                     </div>
+                    <details data-testid="device-remove" className="mt-1 text-[12px]">
+                      <summary className="cursor-pointer text-text-muted">Remove this device</summary>
+                      <div className="mt-1 space-y-1">
+                        <p className="text-text-muted">Removing needs your person key, so it is done in a terminal on this Mac (you type your recovery code). It also rotates the relay keys.</p>
+                        <CopyText label="Command to remove this device" testId="device-remove-command">
+                          {deviceRemoveCommand(d.id, workspace.prefix)}
+                        </CopyText>
+                      </div>
+                    </details>
+                  </TableCell>
+                  <TableCell className="whitespace-normal">
+                    <Inline>{d.name}</Inline>
                   </TableCell>
                   <TableCell>{d.paired_ms ? fmtDateTime(new Date(d.paired_ms).toISOString()) : '—'}</TableCell>
                   <TableCell>{d.relay ? 'yes' : 'no'}</TableCell>
                   <TableCell>{d.cert_expires ? fmtDateTime(d.cert_expires) : '—'}</TableCell>
                   <TableCell>{d.reader ?? '—'}</TableCell>
-                  <TableCell>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
-                        handoff.ask({
-                          title: d.label ? `Remove ${plain(d.label)}` : 'Remove the device',
-                          action: { action: 'device_remove', device: d.device },
-                          autoStart: true,
-                          summary: (
-                            <p data-testid="device-remove-rotates" className="text-[13px] text-warning">
-                              This also rotates the relay keys.
-                            </p>
-                          ),
-                        })
-                      }
-                    >
-                      Remove
-                    </Button>
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
-      {devices && devices.length > 0 && <p className="text-[12px] text-text-muted">Removing a device also rotates the relay keys.</p>}
-      {handoff.dialog}
     </section>
   )
 }

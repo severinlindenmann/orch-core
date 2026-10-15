@@ -1,5 +1,6 @@
-// "Pair a phone" (Settings → Devices): the PROPOSED host ops of cap `pair/1` (proposal-dashboard-pairing-ops, 15 Oct
-// 2026, not agreed). This module is the one seam: the page calls `pairingApi` and nothing else. Until the ops are
+// "Pair a phone" (Settings → Devices): the host ops of cap `pair/1` (contract v1.9, class P, human_only; names and the `pair`
+// sub topic confirmed by orch-52 on 15 Oct 2026, no host serves them yet). Paired devices come from `member.list` under a
+// `read_ext` bump, not a new op. Device removal is CLI-only this round. This module is the one seam: the page calls `pairingApi` and nothing else. Until the ops are
 // agreed the real implementation answers "not available" for every call and no server route exists; the dev layout
 // preview and the tests swap in a fixture (src/dev/pairFixture.ts).
 //
@@ -77,16 +78,40 @@ export interface PairOfferStatus {
   needs_remove?: string | null
 }
 
-/** One paired device (`device.list`, or `member.list` under a `read_ext`, proposed). */
-export interface PairDevice {
-  device: string
-  /** The host's cleaned label, untrusted text. */
-  label: string | null
-  paired_ms: number | null
-  relay: boolean
-  cert_expires: string | null
-  reader: number | null
+/** A device as `member.list` serves it; the paired-phone fields come with a `read_ext` bump (orch-52), absent before. */
+export interface MemberDevice {
+  id: string
+  auth: string | null
+  scopes: string[]
+  valid: boolean
+  /** The host's label (protocol rule: no normalisation, ≤80 code points, LF kept, default-ignorables removed). Untrusted. */
+  label?: string | null
+  paired_ms?: number | null
+  relay?: boolean
+  cert_expires?: string | null
+  reader?: number | null
 }
+
+/** One member of `member.list` with its devices. */
+export interface PairMember {
+  person: string
+  name: string
+  role: string
+  devices: MemberDevice[]
+}
+
+/** One row of the "Paired devices" list: a device that carries the pairing fields, with its member. */
+export interface PairDevice extends MemberDevice {
+  person: string
+  name: string
+}
+
+/** The paired devices: those `member.list` serves with the pairing fields (`relay` present). Read only. */
+export const pairedDevices = (members: PairMember[]): PairDevice[] =>
+  members.flatMap((m) => m.devices.filter((d) => d.relay !== undefined).map((d) => ({ ...d, person: m.person, name: m.name })))
+
+/** CLI-only removal (needs the person key; the recovery code is typed). ASSUMPTION: R6 names no command; this one is a guess. */
+export const deviceRemoveCommand = (device: string, ws: string) => `orch device remove ${device} --workspace ${ws}`
 
 /** A `pair` sub item: no secrets, so the page doesn't poll. */
 export interface PairItem {
@@ -103,7 +128,8 @@ export interface PairingApi {
   list: (ws: string) => Promise<{ offers: PairOfferStatus[] }>
   answer: (ws: string, offer_id: string, approve: boolean) => Promise<{ state: PairState }>
   cancel: (ws: string, offer_id: string) => Promise<{ state: PairState }>
-  devices: (ws: string) => Promise<{ devices: PairDevice[] }>
+  /** `member.list {}` under the `read_ext` bump that adds the device fields. */
+  members: (ws: string) => Promise<{ members: PairMember[] }>
   /** `sub.open {topics:["pair"]}`; returns the close function. */
   subscribe: (ws: string, onItem: (item: PairItem) => void) => () => void
 }
@@ -121,7 +147,7 @@ export const realPairingApi: PairingApi = {
   list: unavailable,
   answer: unavailable,
   cancel: unavailable,
-  devices: unavailable,
+  members: unavailable,
   subscribe: () => () => {},
 }
 
@@ -135,7 +161,7 @@ export const pairServed = (ws: string): boolean => hasFeature('pair', ws) && pai
 export const pairQueries = {
   preview: (ws: string) => queryOptions({ queryKey: ['pair', ws, 'preview'], queryFn: () => pairingApi.preview(ws), staleTime: 0 }),
   list: (ws: string) => queryOptions({ queryKey: ['pair', ws, 'list'], queryFn: () => pairingApi.list(ws) }),
-  devices: (ws: string) => queryOptions({ queryKey: ['pair', ws, 'devices'], queryFn: () => pairingApi.devices(ws) }),
+  members: (ws: string) => queryOptions({ queryKey: ['pair', ws, 'members'], queryFn: () => pairingApi.members(ws) }),
 }
 
 /** The SAS as typed or served: base32, case-insensitive, spaces and dashes ignored. */

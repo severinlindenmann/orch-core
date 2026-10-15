@@ -727,36 +727,6 @@ describe('hand-off dialog', () => {
     for (const method of ['postAction', 'runAddonAction', 'issueGrant', 'revokeGrant', 'postAddonOp', 'postSettings'] as const) expect(vi.spyOn(api, method)).not.toHaveBeenCalled()
     setFeatures(null)
   })
-
-  it('device remove (proposed pair/1): core title, the host material and the key rotation, nothing signed here', async () => {
-    const { fakeRequest, spies, state } = await import('./handoffHarness')
-    const { resetLayoutPreview } = await import('@/dev/layoutPreview')
-    try {
-      const { user } = renderApp('/__layout/pair-devices')
-      const rows = await screen.findAllByTestId('device-row', {}, T)
-      const s = spies()
-      const { fingerprintOf, reviewDigestOf } = await import('@/api/handoff')
-      const id = '01J9ZP0000000000000000000B'
-      const events = [{ v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: 'p_sev', device: null }, auth: null, type: 'device.removed', device: 'HOST-MATERIAL device' }]
-      const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: 'device.removed', payload: { device: 'HOST-MATERIAL device' }, derived: {} }] }
-      const digest = reviewDigestOf(material)
-      const request = { ...fakeRequest(), op: 'device.remove', key: null, gate_hash: null, material, events, review_digest: digest, fingerprint: fingerprintOf(digest, events, 'device.remove') }
-      s.prepare.mockResolvedValue(request)
-      s.get.mockResolvedValue(state(request))
-      await user.click(within(rows[1]).getByRole('button', { name: 'Remove' }))
-      const dialog = await screen.findByRole('dialog', {}, T)
-      await within(dialog).findByTestId('handoff-command', {}, T)
-      expect(within(dialog).getByRole('heading', { name: 'Remove Phone 2' })).toBeInTheDocument()
-      expect(dialog.textContent).toContain('HOST-MATERIAL device')
-      expect(within(dialog).getByTestId('device-remove-rotates')).toHaveTextContent('This also rotates the relay keys.')
-      expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'device_remove', device: 'd_' + '2'.repeat(32) })
-      expect(within(dialog).queryByRole('button', { name: /^Sign/ })).toBeNull()
-      expect(s.postAction).not.toHaveBeenCalled()
-    } finally {
-      vi.restoreAllMocks()
-      resetLayoutPreview()
-    }
-  })
 })
 
 

@@ -1,14 +1,15 @@
 // DEV/TEST ONLY: an in-memory stand-in for the PROPOSED `pair/1` host ops (src/api/pairing.ts). It never talks to a
 // host. The layout preview and the tests install it over `pairingApi` and drive the offer through its states with
 // `emit`, the way `sub.open {topics:["pair"]}` items would arrive. Links use `*.example.test` and `demo-not-a-real-*`.
-import { pairingApi, realPairingApi, type PairDevice, type PairItem, type PairOfferStatus, type PairPreview, type PairState, type PairingApi } from '@/api/pairing'
+import { pairingApi, realPairingApi, type PairMember, type PairItem, type PairOfferStatus, type PairPreview, type PairState, type PairingApi } from '@/api/pairing'
 import { ApiError } from '@/api/types'
 
 export interface PairFixtureOptions {
   served?: boolean
   preview?: Partial<PairPreview>
   offers?: PairOfferStatus[]
-  devices?: PairDevice[]
+  /** `member.list` with the device fields of the `read_ext` bump. */
+  members?: PairMember[]
   /** Lifetime of a new offer (the host's `expires_ms` class: 5 minutes). */
   ttlMs?: number
   /** Make `offer()` fail with this code. */
@@ -42,7 +43,7 @@ export interface PairFixture {
 
 export function createPairFixture(opts: PairFixtureOptions = {}): PairFixture {
   let offers: PairOfferStatus[] = (opts.offers ?? []).map((o) => ({ ...o }))
-  const devices = (opts.devices ?? []).map((d) => ({ ...d }))
+  const members = structuredClone(opts.members ?? [])
   const subs = new Set<(item: PairItem) => void>()
   const calls: PairFixture['calls'] = []
   let n = 0
@@ -85,7 +86,7 @@ export function createPairFixture(opts: PairFixtureOptions = {}): PairFixture {
       emit(offer_id, 'cancelled')
       return { state: 'cancelled' }
     },
-    devices: async () => (log('devices'), { devices: devices.map((d) => ({ ...d })) }),
+    members: async () => (log('members'), { members: structuredClone(members) }),
     subscribe: (_ws, onItem) => {
       subs.add(onItem)
       return () => subs.delete(onItem)

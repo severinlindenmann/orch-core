@@ -1,5 +1,5 @@
 // Settings → Devices, "Pair a phone" (proposed pair/1, fixtures only): the gate, the blocked reasons, the link's
-// secrecy and lifetime, the typed SAS with Reject as the default, untrusted labels and the device remove hand-off.
+// secrecy and lifetime, the typed SAS with Reject as the default, untrusted labels and the paired devices from member.list (removal is CLI only).
 import { act, cleanup, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
@@ -68,28 +68,30 @@ describe('the gate', () => {
 })
 
 describe('before offering', () => {
-  it('convenience on but never used: the turn-off command, no Create button', async () => {
+  const OFF = 'Turn click-to-sign off first: orch host convenience off --workspace DEMO'
+  const HISTORY = "This workspace's click-to-sign history blocks phones."
+
+  it('convenience, turning it off helps: the exact turn-off line, no Create button', async () => {
     open('pair-blocked-convenience')
     const blocked = await screen.findByTestId('pair-blocked', {}, T)
     expect(blocked).toHaveAttribute('data-code', 'sign.convenience_readers')
-    expect(blocked).toHaveTextContent('click-to-sign is on, or was used, on this workspace')
-    expect(within(blocked).getByLabelText('Command to turn click-to-sign off')).toHaveTextContent('orch host convenience off --workspace DEMO')
-    expect(blocked).not.toHaveTextContent("can't get a phone")
+    expect(screen.getByTestId('pair-convenience-off').textContent).toBe(OFF)
+    expect(screen.queryByTestId('pair-convenience-history')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
   })
 
-  it('convenience used: no command, a workspace that used click-to-sign cannot get a phone yet', async () => {
+  it('convenience, history blocks it: the exact history line, no command', async () => {
     open('pair-blocked-convenience', { preview: { blocked: { code: 'sign.convenience_readers', message: 'click-to-sign was used here', history: true } } })
-    const blocked = await screen.findByTestId('pair-blocked', {}, T)
-    expect(blocked).toHaveTextContent("A workspace that used click-to-sign can't get a phone yet")
-    expect(within(blocked).queryByLabelText('Command to turn click-to-sign off')).toBeNull()
+    await screen.findByTestId('pair-blocked', {}, T)
+    expect(screen.getByTestId('pair-convenience-history').textContent).toBe(HISTORY)
+    expect(screen.queryByTestId('pair-convenience-off')).toBeNull()
   })
 
-  it('convenience, history unknown: both cases are explained', async () => {
+  it('convenience, history unknown: both exact lines', async () => {
     open('pair-blocked-convenience', { preview: { blocked: { code: 'sign.convenience_readers', message: 'no' } } })
-    const blocked = await screen.findByTestId('pair-blocked', {}, T)
-    expect(blocked).toHaveTextContent('If click-to-sign was never used here')
-    expect(blocked).toHaveTextContent('If it was used here')
+    await screen.findByTestId('pair-blocked', {}, T)
+    expect(screen.getByTestId('pair-convenience-off').textContent).toBe(OFF)
+    expect(screen.getByTestId('pair-convenience-history').textContent).toBe(HISTORY)
   })
 
   it.each([
@@ -268,7 +270,7 @@ describe('compare the code', () => {
   it('the device label is rendered as text, isolated, never as markup', async () => {
     const label = '<img src=x onerror=alert(1)>‮evil'
     open('pair-pending', { offers: [{ offer_id: 'of_l', state: 'pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'], sas: 'AAAAAA', label }] })
-    const shown = await screen.findByTestId('pair-label', {}, T)
+    const shown = within(await screen.findByTestId('pair-compare', {}, T)).getByTestId('pair-label')
     expect(shown.querySelector('img')).toBeNull()
     expect(shown.querySelector('bdi')).not.toBeNull()
     expect(shown).toHaveTextContent('<img src=x onerror=alert(1)>')
@@ -303,17 +305,38 @@ describe('after the code', () => {
 })
 
 describe('paired devices', () => {
-  it('lists label, relay, reader; Remove opens the device.remove hand-off that rotates the relay keys', async () => {
+  it('come from member.list devices with the read_ext fields; the Mac without them is not listed', async () => {
+    open('pair-devices')
+    const rows = await screen.findAllByTestId('device-row', {}, T)
+    expect(rows.length).toBe(10)
+    expect(document.body.textContent).not.toContain('d_mac')
+    expect(rows[1]).toHaveTextContent('Severin')
+    expect(rows[1].querySelectorAll('td')[3]).toHaveTextContent('no')
+    expect(pairPreviewForTests.fixture()!.calls.map((c) => c.op)).toContain('members')
+  })
+
+  it('removal is CLI only: a disclosure with the copyable command, no hand-off', async () => {
     const { user } = open('pair-devices')
     const rows = await screen.findAllByTestId('device-row', {}, T)
     const spy = vi.spyOn(api, 'prepareHandoff')
-    expect(rows.length).toBe(10)
-    expect(rows[1]).toHaveTextContent('Phone 2')
-    expect(rows[1]).toHaveTextContent('no')
-    await user.click(within(rows[1]).getByRole('button', { name: 'Remove' }))
-    const dialog = await screen.findByRole('dialog', {}, T)
-    expect(within(dialog).getByTestId('device-remove-rotates')).toHaveTextContent('This also rotates the relay keys.')
-    expect(spy.mock.calls[0][1]).toEqual({ action: 'device_remove', device: 'd_' + '2'.repeat(32) })
-    spy.mockRestore()
+    expect(within(rows[1]).queryByRole('button', { name: 'Remove' })).toBeNull()
+    await user.click(within(rows[1]).getByText('Remove this device'))
+    const command = within(rows[1]).getByTestId('device-remove-command')
+    expect(command.textContent).toBe('orch device remove d_' + '2'.repeat(32) + ' --workspace DEMO')
+    expect(command.closest('a')).toBeNull()
+    expect(rows[1]).toHaveTextContent('rotates the relay keys')
+    expect(spy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('a label with an LF shows a line break inside the isolated text, never markup; an empty label shows "phone"', async () => {
+    open('pair-offer')
+    const rows = await screen.findAllByTestId('device-row', {}, T)
+    const multi = within(rows[1]).getByTestId('pair-label')
+    const bdi = multi.querySelector('bdi')!
+    expect(bdi.textContent).toBe('Work phone\nsecond line')
+    expect(bdi.className).toContain('whitespace-pre-wrap')
+    expect(multi.querySelector('br')).toBeNull()
+    expect(within(rows[2]).getByTestId('pair-label').textContent).toBe('phone')
   })
 })

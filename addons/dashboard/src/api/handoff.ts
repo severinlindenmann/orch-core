@@ -35,10 +35,8 @@ export type HandoffAction =
   | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
   | { action: 'member_remove'; person: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
-  /** PROPOSED (pair/1, not agreed): sign `relay.pair_device` (F1 `device.added`) for an offer whose certificate is in. */
+  /** pair/1 (contract v1.9): sign `relay.pair_device` (F1 `device.added`) for an offer whose certificate is in. */
   | { action: 'pair_device'; offer: string }
-  /** PROPOSED: `human.prepare {op:"device.remove"}` (F1 `device.removed`); the host then rotates the relay keys. */
-  | { action: 'device_remove'; device: string }
 
 /** The hand-offs that follow a signed `new` for what it cannot carry. */
 export type FollowUpAction = Extract<HandoffAction, { action: 'details' | 'section' }>

@@ -13,8 +13,6 @@ export interface HandoffSpec {
   confirmLabel?: string
   hint?: string | null
   form?: ReactNode
-  /** Core's words kept visible while preparing and reviewing (e.g. "this also rotates the relay keys"). */
-  summary?: ReactNode
 }
 
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void): { ask: (spec: HandoffSpec) => void; dialog: ReactNode } {
@@ -28,7 +26,6 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       autoStart={spec.autoStart}
       confirmLabel={spec.confirmLabel}
       hint={spec.hint}
-      summary={spec.summary}
       onSettled={(phase) => phase === 'done' && onSettled?.()}
       onClose={() => setSpec(null)}
     >

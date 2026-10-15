@@ -91,6 +91,21 @@ def test_a_read_is_column_r_with_principal_r_device(served):  # noqa: F811
     assert got["data"]["peer"] == {"class": "relay", "uid": -1} and got["data"]["person"] == owner.ref
 
 
+def test_column_r_whoami_carries_relay_caps_with_the_live_r6_gate(served, monkeypatch):  # noqa: F811
+    from orch.relay import worker as relay_worker
+
+    entry = _entry(served)
+    owner = served.lab.ws.owner
+
+    def whoami():
+        return _on_worker(served, lambda: entry.read(_ident(served, owner), "whoami", {}, lambda: True))["data"]
+
+    monkeypatch.setattr(relay_worker, "R6_READY", False)
+    assert whoami()["relay"] == {"ops": {"answer": 1, "new_ticket": 1}, "r6_ready": False}
+    monkeypatch.setattr(relay_worker, "R6_READY", True)  # read at answer time, not cached
+    assert whoami()["relay"] == {"ops": {"answer": 1, "new_ticket": 1}, "r6_ready": True}
+
+
 def test_a_read_whose_identity_no_longer_holds_is_refused(served):  # noqa: F811
     entry = _entry(served)
     owner = served.lab.ws.owner

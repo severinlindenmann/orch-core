@@ -743,7 +743,17 @@ class RegistryBackend:
             },
             "session": session,
             **({"runner": terms.runner_info(call.service, call.viewer)} if call.column.name in ("P", "G") else {}),
+            **({"relay": self._relay_caps()} if call.column.name == "R" else {}),
         }
+
+    @staticmethod
+    def _relay_caps() -> dict[str, Any]:
+        """``whoami.relay`` (column R only): the person-event writes this host serves on R (the framing table's write
+        kinds) and the live R6 gate, read now (the same source as ``host.status.relay.gate``). Nothing else."""
+        from orch.relay import worker as relay_worker
+        from orch.relay.framing import WRITE_OP_VERSIONS
+
+        return {"ops": dict(WRITE_OP_VERSIONS), "r6_ready": relay_worker.r6_ready()}
 
     def status(self, call: Call) -> dict[str, Any]:
         from orch.cli.main import VERSION_LINE

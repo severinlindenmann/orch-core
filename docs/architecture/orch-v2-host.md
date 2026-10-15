@@ -771,6 +771,9 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
  grant:{id:str, until:Time, verbs:"agent" | [OpName], scope:"all"|"workable"} | null, session:str | null}
 ```
 
+Column R only (additive, changelog 56): `relay:{ops:{answer:1, new_ticket:1}, r6_ready:bool}`, the person-event write kinds
+this host serves over the relay with their versions and the live R6 gate. P, G and N get no `relay` field.
+
 Errors: none beyond any op.
 
 `ticket.query` (read) args:
@@ -4149,6 +4152,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (§11A.14.4); lost write answers are settled with `outcome.get`, then resent with the same bytes under a new rid
     inside the 840 s margin (§11A.14); the phone UI for O2 and the gestureless own-claim rule Q-H9 with the other
     relay A2 facts (§11A.16). Docs only; nothing served.
+57. **Column-R `whoami.relay` (additive, contract unchanged otherwise; the number may be renumbered when a parallel change
+    lands first):** `whoami` in column R (relay bridge, phone devices) gains `relay:{ops:{<kind>:int}, r6_ready:bool}`: `ops`
+    is the person-event write kinds the host serves on R with their versions (today `answer` 1 and `new_ticket` 1, derived
+    from the write rows of the R2 framing table `orch.relay.framing.OPS`), `r6_ready` the live R6 gate read at answer time
+    (the same source as `host.status.relay.gate.r6_ready`; `false` while R6 is dormant). Columns P, G and N get no `relay`
+    field. No secret, nothing per workspace beyond what `whoami` scopes. No vector change (the R2 vectors carry a
+    fixed host answer).
 
 ---
 

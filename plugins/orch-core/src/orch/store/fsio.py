@@ -22,10 +22,23 @@ import sys
 import time
 from pathlib import Path
 
-__all__ = ["append_durable", "fsync_dir", "loads", "read_or_none", "replace", "tail_bytes", "write_atomic"]
+__all__ = [
+    "NotRegularFile",
+    "append_durable",
+    "fsync_dir",
+    "loads",
+    "open_regular",
+    "read_or_none",
+    "replace",
+    "tail_bytes",
+    "write_atomic",
+]
 
 _BIN = getattr(os, "O_BINARY", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+_NOCTTY = getattr(os, "O_NOCTTY", 0)
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _RETRY = os.name == "nt"  # a busy target (a reader, an indexer) is retried only where that can happen
 
 
@@ -83,10 +96,34 @@ def write_atomic(path: Path, data: bytes, *, mode: int = 0o644, durable: bool = 
         fsync_dir(path.parent)
 
 
+class NotRegularFile(OSError):
+    """A FIFO, socket, device or directory where the store expects a regular file: refused, never read or written
+    (a FIFO would block the caller while it holds the store lock)."""
+
+
+def open_regular(path: str | os.PathLike[str], flags: int, mode: int = 0o644, *, dir_fd: int | None = None) -> int:
+    """The store's one file open (paths and the pinned root alike): ``O_NOFOLLOW | O_NONBLOCK | O_NOCTTY`` (a FIFO
+    or a terminal can neither block nor become ours), then ``fstat`` must show a regular file (else
+    :class:`NotRegularFile`; a directory is ``IsADirectoryError``), then the fd is made blocking again for the I/O."""
+    fd = os.open(path, flags | _BIN | _NOFOLLOW | _NONBLOCK | _NOCTTY | _CLOEXEC, mode, dir_fd=dir_fd)
+    try:
+        st = os.fstat(fd)
+        if stat.S_ISDIR(st.st_mode):
+            raise IsADirectoryError(errno.EISDIR, "is a directory", os.fspath(path))
+        if not stat.S_ISREG(st.st_mode):
+            raise NotRegularFile(errno.EINVAL, "not a regular file", os.fspath(path))
+        if _NONBLOCK and not flags & _NONBLOCK:
+            os.set_blocking(fd, True)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def open_nofollow(path: Path, flags: int, mode: int = 0o644) -> int:
-    """``os.open`` that never follows a symlink; where the platform has no ``O_NOFOLLOW`` the opened file must be the
-    file ``lstat`` sees (and not a link), else ``OSError(ELOOP)``."""
-    fd = os.open(path, flags | _BIN | _NOFOLLOW, mode)
+    """:func:`open_regular` by path; where the platform has no ``O_NOFOLLOW`` the opened file must be the file
+    ``lstat`` sees (and not a link), else ``OSError(ELOOP)``."""
+    fd = open_regular(path, flags, mode)
     if not _NOFOLLOW:  # pragma: no cover - Windows
         try:
             a, b = os.fstat(fd), os.lstat(path)
@@ -128,8 +165,8 @@ def read_or_none(path: Path, limit: int | None = MAX_READ) -> bytes | None:
     and an agent-written file cannot make the store allocate more (``limit=None`` reads all, for our own files)."""
     try:
         fd = open_nofollow(path, os.O_RDONLY)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
+    except (FileNotFoundError, NotADirectoryError, NotRegularFile):
+        return None  # a FIFO or a device counts as absent: never read (it could block or never end)
     except OSError as e:
         if e.errno in (errno.ELOOP, errno.EMLINK):
             return None

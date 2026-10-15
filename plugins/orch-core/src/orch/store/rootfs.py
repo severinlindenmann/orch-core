@@ -265,32 +265,22 @@ class RootFS:
     def open(self, p: Rel, flags: int, mode: int = 0o644, *, parents: bool = False) -> int:
         """``os.open`` of ``p`` below the root: every directory component ``O_NOFOLLOW``, the last one too."""
         with self._parent(p, create=parents) as (dfd, name):
-            return os.open(name, flags | _NOFOLLOW | _CLOEXEC, mode, dir_fd=dfd)
+            if flags & getattr(os, "O_DIRECTORY", 0):
+                return os.open(name, flags | _NOFOLLOW | _CLOEXEC, mode, dir_fd=dfd)
+            return fsio.open_regular(name, flags, mode, dir_fd=dfd)  # a FIFO never blocks: regular files only
 
     def read_or_none(self, p: Rel, limit: int | None = MAX_READ) -> bytes | None:
         """The bytes of ``p``; ``None`` if it is missing or a symlink (never followed). At most ``limit`` + 1 bytes
         are read (``fsio.read_or_none``'s contract). A symlinked directory on the way refuses (``validation.path``)."""
         try:
-            fd = self.open(p, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | _NOCTTY)
-        except (FileNotFoundError, NotADirectoryError):
-            return None
+            fd = self.open(p, os.O_RDONLY)  # fsio.open_regular: O_NONBLOCK, a regular file only, then blocking
+        except (FileNotFoundError, NotADirectoryError, fsio.NotRegularFile):
+            return None  # a FIFO or a device counts as absent: never read (it could block or never end)
         except OSError as e:
             if e.errno in (errno.ELOOP, errno.EMLINK):
                 return None
             raise
-        try:  # checked before fdopen: it refuses a directory itself, and the fd must not leak then
-            mode = os.fstat(fd).st_mode
-            if stat.S_ISDIR(mode):
-                raise IsADirectoryError(errno.EISDIR, "is a directory", os.fspath(p))
-            if not stat.S_ISREG(mode):
-                os.close(fd)
-                return None  # a FIFO or a device is never read (it could block or never end)
-            os.set_blocking(fd, True)
-            f = os.fdopen(fd, "rb")
-        except BaseException:
-            os.close(fd)
-            raise
-        with f:
+        with os.fdopen(fd, "rb") as f:
             return f.read() if limit is None else f.read(limit + 1)
 
     def tail_bytes(self, p: Rel, n: int) -> tuple[int, bytes]:
@@ -473,7 +463,7 @@ class RootFS:
                 new = False
             except FileNotFoundError:
                 new = True
-            fd = os.open(name, os.O_WRONLY | os.O_APPEND | os.O_CREAT | _NOFOLLOW | _CLOEXEC, 0o644, dir_fd=dfd)
+            fd = fsio.open_regular(name, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644, dir_fd=dfd)
             try:
                 view = memoryview(data)
                 while view:

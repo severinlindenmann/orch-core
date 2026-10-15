@@ -138,3 +138,74 @@ def test_open_refuses_a_root_that_is_not_the_one_discovery_saw(env, tmp_path):
     with pytest.raises(StoreError) as e:
         env.open(ident=ident)
     assert e.value.code == "validation.path"
+
+
+# -- a FIFO in place of a store file (R3 review): refused at open, never blocks the store while it holds the lock
+
+
+@pytest.fixture
+def deadline():
+    import signal
+
+    def boom(*_):
+        raise TimeoutError("blocked on a FIFO")
+
+    old = signal.signal(signal.SIGALRM, boom)
+    signal.alarm(20)
+    yield
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, old)
+
+
+def _fifo(p):
+    if p.exists() or p.is_symlink():
+        p.unlink()
+    os.mkfifo(p)
+
+
+def test_fsio_and_rootfs_refuse_a_fifo_without_blocking(tmp_path, deadline):
+    from orch.store import fsio
+    from orch.store.rootfs import RootFS
+
+    f = tmp_path / "f"
+    os.mkfifo(f)
+    assert fsio.read_or_none(f) is None
+    assert fsio.tail_bytes(f, 10) == (0, b"")
+    with pytest.raises(OSError):  # ENXIO (a FIFO without a reader) or NotRegularFile: refused, never blocked
+        fsio.append_durable(f, b"x")
+    fs = RootFS.at(tmp_path)
+    assert fs.read_or_none("f") is None
+    assert fs.tail_bytes("f", 10) == (0, b"")
+    for flags in (os.O_RDONLY, os.O_WRONLY, os.O_RDWR | os.O_CREAT):
+        with pytest.raises(OSError):
+            fs.open("f", flags)
+    with pytest.raises(OSError):
+        fs.append_durable("f", b"x")
+    fs.write_atomic("f", b"replaced")  # the FIFO itself is replaced, never opened
+    assert f.read_bytes() == b"replaced"
+    fs.close()
+
+
+def test_a_fifo_in_place_of_store_files_never_hangs_the_store(env, deadline):
+    s = env.bootstrap()
+    uid = env.new_ticket()
+    s.close()
+    env.store = None
+    for p in (
+        env.root / ".state" / "applied",
+        env.root / "keys.jsonl",
+        env.root / "tickets" / uid / "ticket.json",
+        env.root / "tickets" / uid / "body.md",
+        env.root / ".state" / "checkpoints" / "workspace.json",
+    ):
+        _fifo(p)
+    s = env.open()  # opens (and heals: load="all") without reading any FIFO
+    s.scan()  # external edits answered: the FIFOs are replaced by the projections, never read
+    assert (env.root / "tickets" / uid / "ticket.json").is_file()
+    s.close()
+    env.store = None
+    _fifo(env.root / "tickets" / uid / "events.jsonl")
+    s = env.open()
+    assert uid in s.diverged or uid not in s.state.tickets or any(log == uid for log, *_ in s.chain_errors())
+    s.close()
+    env.store = None

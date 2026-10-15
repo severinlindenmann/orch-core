@@ -17,7 +17,7 @@ from typing import Any
 from orch import canon, schema
 
 from .errors import StoreError
-from .fsio import open_nofollow
+from .fsio import NotRegularFile, open_nofollow
 from .rootfs import RootFS
 
 __all__ = ["LogInfo", "parse_line", "read_new_lines"]
@@ -92,6 +92,9 @@ def read_new_lines(info: LogInfo, *, validate: bool = True, fs: RootFS | None = 
             return []
         fd = _open_ro(info.path, fs)
     except FileNotFoundError:
+        return []
+    except (NotRegularFile, IsADirectoryError):  # a FIFO or a device is never read (it would block under the lock)
+        info.error, info.error_seq = "the log is not a regular file", info.seq + 1
         return []
     with os.fdopen(fd, "rb") as f:
         st = os.fstat(f.fileno())

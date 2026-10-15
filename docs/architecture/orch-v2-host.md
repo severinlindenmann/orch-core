@@ -3824,6 +3824,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons` without the owner;
     `check_wk_grant` takes the device id; `check_cert_request` takes a `VerifiedCard`, `now_ms` and `me` as person and
     device ids; the `make_*` builders take `pk_pub`. No hash, contract or schema change.
+47. **Primary key custody and minted cert requests (H12c-c, §11A.15.10 item 9, #501; the number may be renumbered when
+    a parallel change lands first):** the custody roles `primary` (signs `sig_relay_auth` only) and `kx` (purposes and
+    recipient in the authenticated header; `cert-request` only, epoch 0); `Backend.unseal`; the one-command unlock
+    `PassphraseBackend.primary_unlocked` and `orch.custody.primary` (`init`, `load`, `status`, `unlocked`,
+    `cert_request_unseal`, `backend_cert_request_unseal`; passphrase custody only, convenience refused with
+    `sign.convenience_unavailable`, reason `primary`); `orch keys primary init|status`. `CertRequest` and `CertInner`
+    are minted (the inner carries its `request_id`); `make_cert_challenge(pk_pub, sign, request, inner, nonce)` and
+    `make_cert_rejection(pk_pub, sign, request)` take them and refuse an inner from another request; a boundary test
+    keeps `_mint.make` to `wscard.py` and `certreq.py`. Details: §11A.15.10 "As built in H12c-c". No wire, hash,
+    contract or schema change; existing key files keep their shape.
 
 ---
 
@@ -7030,6 +7040,14 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   shows public facts only (device id, both public keys, purposes, custody) and never prompts. **Not yet:**
   `init`'s `--relay`/`--invite`, the certificate (needs the `PersonKeySource`, item 10), the relay registration
   (item 11) and `relay.primary_set`. `status` reports `certificate` and `relay` as `null` until they exist.
+- **Minted cert requests (#501, Opus D2-1, D2-2 on #495).** `CertRequest` (from `check_cert_request`) and
+  `CertInner` (from `open_cert_request`, carrying the `request_id` it was opened from) are minted like
+  `VerifiedCard`. `make_cert_challenge(pk_pub, sign, request, inner, primary_nonce)` takes both and refuses, with
+  `not_for_this_device` and before any person-key operation, an inner whose `request_id` or clear binding (offer,
+  attempt, device, `dk_hash`) is not the request's; `make_cert_rejection(pk_pub, sign, request)` takes the minted
+  request. A raw `request_o` or a hand-built inner is `malformed`. `tests/identity/test_mint_boundary.py` (AST over
+  `orch`) allows `_mint.make` only in `identity/wscard.py` and `identity/certreq.py`, and elsewhere only
+  `_mint.check`/`_mint.no_subclass` through a bound module name.
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 

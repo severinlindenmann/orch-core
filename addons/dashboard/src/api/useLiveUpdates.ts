@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { clearSession, getToken } from './bootstrap'
 import { readSSE } from './sse'
+import { mergeRunItems, type RunItem } from './runs'
 
 export type LiveItem = { id: string; uid?: string; key?: string | null; type?: string; gone?: boolean }
 type CloseView = (uid?: string, keys?: string[]) => void
@@ -24,6 +25,8 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
     void client.invalidateQueries({ queryKey: ['me'] })
   }
   if (event === 'revoked') { purgeWorkspace(); return }
+  // Runs (M7a): merged by revision; a reconnect or the stream's end comes as resync, which reads the full list again.
+  if (event === 'runs') { mergeRunItems(client, ws, items as unknown as RunItem[]); return }
   if (event === 'resync' || event === 'ready') { void client.invalidateQueries(scoped); return }
   for (const item of items) {
     if (item.gone) {

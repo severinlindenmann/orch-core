@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from starlette.responses import StreamingResponse
 
+from .adapters import runs as run_items
 from .errors import HostError, fail
 
 VISIBILITY_TTL = 1.0
@@ -67,6 +68,7 @@ class WorkspaceLive:
         self.serial = 0
         self.task = None
         self.sub = None
+        self.run_sub = None  # run.sub (M7a): the person's runs, opened before the page lists them
         self.link = None
         self.ready = False
         self.seen = set()
@@ -94,6 +96,9 @@ class WorkspaceLive:
     def snapshot_open(self):
         self.manager.invalidate(self.ws)
         self.link = self.manager.gateway.enabled(self.ws)
+        # Runs (D-P2-37): subscribe first; the page lists (`GET .../runs`, a full run.list) after `ready`/`resync`.
+        served = self.link.supports("run.sub", "run/1") is True
+        self.run_sub = self.link.call("run.sub")["sub"] if served else None
         # Use the earlier cursor so changes between the two snapshots are replayed.
         snapshot = self.link.call("ticket.query", {"limit": 200})
         # Remember which tickets this person can see, so a host `gone` is only forwarded for those.
@@ -125,10 +130,11 @@ class WorkspaceLive:
         return out
 
     def close_sub(self):
-        if self.sub and self.link:
-            with suppress(HostError, OSError):
-                self.link.call("sub.close", {"sub": self.sub})
-        self.sub = None
+        for sub in (self.sub, self.run_sub):
+            if sub and self.link:
+                with suppress(HostError, OSError):
+                    self.link.call("sub.close", {"sub": sub})
+        self.sub = self.run_sub = None
 
     async def open(self):
         # Cancelling to_thread does not stop its socket call. Finish opening before cleanup
@@ -162,6 +168,13 @@ class WorkspaceLive:
                             beat = time.monotonic()
                         frame = await asyncio.to_thread(self.link.next_event)
                         if frame is None:
+                            continue
+                        if self.run_sub is not None and frame.get("sub") == self.run_sub:
+                            if frame.get("end"):
+                                break  # resync: the page replaces its runs with a full run.list
+                            runs = run_items.items(frame.get("items", []))
+                            if runs:
+                                self.emit("runs", runs)
                             continue
                         if frame.get("sub", self.sub) != self.sub:
                             continue
@@ -201,12 +214,17 @@ class Live:
         self.workspaces = {}
         self.cache = {}
         self.vis_lock = threading.Lock()
+        self.terminals = None  # open terminal sockets of a session (terminals.Streams.open), counted with the tabs
 
     def invalidate(self, ws):
         self.cache.pop(ws, None)
 
+    def tabs_of(self, token):
+        return sum(t.token == token for w in self.workspaces.values() for t in w.tabs)
+
     def attach(self, ws, token, last=None):
-        if sum(t.token == token for w in self.workspaces.values() for t in w.tabs) >= 16:
+        # Open streams per session: SSE tabs and terminal sockets together (`terminals`, set by the app).
+        if self.tabs_of(token) + (self.terminals(token) if self.terminals else 0) >= 16:
             raise fail("quota.host")
         workspace = self.workspaces.setdefault(ws, WorkspaceLive(self, ws))
         tab = Tab(token)

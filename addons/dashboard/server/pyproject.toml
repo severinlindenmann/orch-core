@@ -3,7 +3,7 @@ name = "orch-dashboard"
 version = "0.1.0"
 description = "Local read-only orch dashboard addon"
 requires-python = ">=3.11"
-dependencies = ["fastapi==0.115.12", "starlette==0.46.2", "uvicorn==0.34.2", "orch-core>=2.0.0.dev0"]
+dependencies = ["fastapi==0.115.12", "starlette==0.46.2", "uvicorn==0.34.2", "websockets==13.1", "orch-core>=2.0.0.dev0"]
 
 [project.scripts]
 orch-dashboard = "orch_dashboard.__main__:main"

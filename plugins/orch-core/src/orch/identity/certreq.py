@@ -35,6 +35,7 @@ from .errors import Refused
 from .pairing import (
     _SIG_LABEL,
     CHALLENGE_FIELDS,
+    MAX_LABEL,
     _b64_pub,
     _bad,
     _id,
@@ -48,6 +49,7 @@ from .wscard import VerifiedCard
 
 __all__ = [
     "CERT_PENDING_MS",
+    "RequestRefused",
     "INNER_FIELDS",
     "REJECTION_FIELDS",
     "REQUEST_FIELDS",
@@ -136,6 +138,8 @@ def cert_request_o(
     (``offer_id``, ``attempt``, ``device_id = device_id(dk_sig_pub)``, ``dk_hash``), ``expires_ms = created_ms + 10
     min``, and ``sealed`` = ``seal_to(primary dk_kx, "cert-request", object = request_id, epoch 0, cj(inner))`` with
     ``inner = {device_id, dk_sig_pub, dk_kx_pub, label, scopes_max, offer_id, attempt}`` and no host nonce.
+    ``primary_kx_pub`` and ``primary_device_id`` come from the primary's **verified** certificate
+    (``membership/primary.json``, 11A.15.1): whoever holds that ``kx`` key reads the inner (keys and label).
 
     ``label`` must be :func:`clean_label`'s output (refused otherwise) and is sealed unchanged; ``scopes_max`` is a
     non-empty prefix of ``look, decide, operate, type``. The seal draws a fresh ephemeral key."""
@@ -185,12 +189,29 @@ def cert_request_o(
 # --- 8b. the primary (§8.4 step 2) ----------------------------------------------------------------------------------
 
 
+class RequestRefused(Refused):
+    """A refusal of a request whose ``request_id`` is known (from step 2.4 on: past the signature and the addressee).
+    The primary records ``request_id`` as seen (:meth:`CertJournal.with_seen`), so the id can never come back with
+    other content (it is then ``replayed``)."""
+
+    def __init__(self, code: str, detail: str, request_id: str) -> None:
+        super().__init__(code, detail)
+        self.request_id = request_id
+
+
 @dataclass(frozen=True, slots=True)
 class CertJournal:
     """The primary's durable memory of requests, as the §8.4 step 2 checks read it (the caller persists it):
-    ``seen``, every request id it ever opened (``replayed``); ``open``, ``(workspace_id, request_id, expires_ms)`` per
-    opened request; ``closed``, the request ids it signed or rejected. A request is open while it is unexpired and
-    neither signed nor rejected (``request_open``)."""
+    ``seen``, every request id it ever opened or refused from step 2.4 on (``replayed``); ``open``,
+    ``(workspace_id, request_id, expires_ms)`` per opened request; ``closed``, the request ids it signed or rejected.
+    A request is open while it is unexpired and neither signed nor rejected (``request_open``).
+
+    **One lock, record first (Opus L2).** "One open request per workspace" is the R1 defence, and these checks are
+    pure. So the primary runs :func:`check_cert_request`, :func:`open_cert_request` and the journal write
+    (:meth:`with_open`) under **one** lock or transaction, and persists the new journal **before** it draws
+    ``primary_nonce`` or posts the challenge. Two requests checked concurrently would otherwise both pass
+    ``request_open``. A request refused at step 2.4 or later (a :class:`RequestRefused`, or any refusal of
+    :func:`open_cert_request`) is recorded with :meth:`with_seen` under the same lock."""
 
     seen: frozenset[str] = frozenset()
     open: tuple[tuple[str, str, int], ...] = ()
@@ -201,6 +222,24 @@ class CertJournal:
             if ws == workspace_id and now_ms < expires and rid not in self.closed:
                 return rid
         return None
+
+    def with_seen(self, request_id: str) -> CertJournal:
+        """The journal after a refused request: its id is never judged fresh again."""
+        return CertJournal(seen=self.seen | {crypto.hex_id(_id(request_id, "request_id"))}, open=self.open,
+                           closed=self.closed)  # fmt: skip
+
+    def with_open(self, req: CertRequest) -> CertJournal:
+        """The journal after ``req`` passed both checks: seen, and the workspace's open request."""
+        if type(req) is not CertRequest:
+            raise _bad("req")
+        rest = tuple(e for e in self.open if e[0] != req.workspace_id)
+        return CertJournal(seen=self.seen | {req.request_id}, open=(*rest, (req.workspace_id, req.request_id,
+                           req.expires_ms)), closed=self.closed)  # fmt: skip
+
+    def with_closed(self, request_id: str) -> CertJournal:
+        """The journal after the request was signed or rejected: it no longer blocks the workspace."""
+        return CertJournal(seen=self.seen, open=self.open,
+                           closed=self.closed | {crypto.hex_id(_id(request_id, "request_id"))})  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,8 +263,9 @@ class CertRequest:
 
 @dataclass(frozen=True, slots=True)
 class CertInner:
-    """The opened inner of a request. ``label`` is as the host sealed it: display it only through
-    :func:`clean_label`, as named by the device."""
+    """The opened inner of a request. ``label`` is the raw sealed text (at most 80 code points, for the certificate's
+    ``label_sealed``); a screen shows :attr:`display_label` (``clean_label`` applied), as named by the device, never
+    ``label`` (Opus L5)."""
 
     device_id: str
     dk_sig_pub: bytes
@@ -234,6 +274,10 @@ class CertInner:
     scopes_max: tuple[str, ...]
     offer_id: str
     attempt: str
+
+    @property
+    def display_label(self) -> str:
+        return clean_label(self.label)
 
     def as_dict(self) -> dict[str, Any]:
         """The inner object as it was sealed (the ``cj`` field names and b64u keys)."""
@@ -254,6 +298,26 @@ def _int(value: object, what: str) -> int:
     return value
 
 
+def _request_steps(o: dict[str, Any], ws: str, journal: CertJournal, now_ms: int) -> tuple[int, int, bytes, bytes]:
+    """Steps 2.4 to 2.7 (clear part) of a request whose ``request_id`` is a valid id."""
+    created = _int(o.get("created_ms"), "created_ms")
+    expires = _int(o.get("expires_ms"), "expires_ms")
+    if not created - SKEW_MS <= now_ms < expires or expires - created > CERT_PENDING_MS:
+        raise Refused("expired", "cert_request")
+    if o["request_id"] in journal.seen:
+        raise Refused("replayed", "cert_request")
+    if journal.open_request(ws, now_ms) is not None:
+        raise Refused("request_open", "cert_request")
+    if set(o) != REQUEST_FIELDS:
+        raise Refused("malformed", "cert_request field set")
+    try:
+        for k in _REQUEST_IDS:
+            _id(o[k], k)
+        return created, expires, crypto.unb64u(o["dk_hash"], 32), crypto.unb64u(o["sealed"])
+    except (Refused, crypto.EncodingError):
+        raise Refused("malformed", "cert_request ids, dk_hash or sealed") from None
+
+
 def check_cert_request(
     signed: object,
     card: VerifiedCard,
@@ -268,8 +332,10 @@ def check_cert_request(
     ``me`` for ``me``'s person (``not_for_this_device``); ``created - 300 s <= now < expires`` and ``expires - created
     <= 10 min`` (``expired``); a new ``request_id`` (``replayed``); no other open request of the workspace
     (``request_open``); the exact field set and the clear binding's shape (``malformed``). Then
-    :func:`open_cert_request` finishes step 2.7 and runs 2.8. The caller records the request in its journal after
-    both pass."""
+    :func:`open_cert_request` finishes step 2.7 and runs 2.8.
+
+    From step 2.4 on the refusal is a :class:`RequestRefused` naming the id. The caller runs this, the opening and
+    the journal write under one lock and records before the challenge goes out (see :class:`CertJournal`)."""
     me_person = crypto.hex_id(_id(me_person_id, "me_person_id"))
     me = crypto.hex_id(_id(me_device_id, "me_device_id"))
     if type(journal) is not CertJournal:
@@ -288,23 +354,14 @@ def check_cert_request(
         raise Refused("malformed", "cert_request: an id is not a string")  # before any set or dict lookup (Opus L1)
     if o.get("primary_device_id") != me or o.get("person_id") != me_person:
         raise Refused("not_for_this_device", "cert_request")
-    created = _int(o.get("created_ms"), "created_ms")
-    expires = _int(o.get("expires_ms"), "expires_ms")
-    if not created - SKEW_MS <= now_ms < expires or expires - created > CERT_PENDING_MS:
-        raise Refused("expired", "cert_request")
-    if o.get("request_id") in journal.seen:
-        raise Refused("replayed", "cert_request")
-    if journal.open_request(ws, now_ms) is not None:
-        raise Refused("request_open", "cert_request")
-    if set(o) != REQUEST_FIELDS:
-        raise Refused("malformed", "cert_request field set")
     try:
-        for k in _REQUEST_IDS:
-            _id(o[k], k)
-        dk_hash = crypto.unb64u(o["dk_hash"], 32)
-        sealed = crypto.unb64u(o["sealed"])
-    except (Refused, crypto.EncodingError):
-        raise Refused("malformed", "cert_request ids, dk_hash or sealed") from None
+        rid = crypto.hex_id(_id(o.get("request_id"), "request_id"))
+    except Refused:
+        raise Refused("malformed", "cert_request request_id") from None
+    try:
+        created, expires, dk_hash, sealed = _request_steps(o, ws, journal, now_ms)
+    except Refused as e:
+        raise RequestRefused(e.code, e.detail, rid) from None
     return CertRequest(
         request_id=o["request_id"],
         workspace_id=o["workspace_id"],
@@ -348,8 +405,8 @@ def open_cert_request(req: CertRequest, unseal: Unseal) -> CertInner:
     scopes = inner["scopes_max"]
     if inner["device_id"] != crypto.hex_id(crypto.device_id(sig_pub)) or not scopes_ok(scopes):
         raise Refused("malformed", "inner device_id or scopes")
-    if type(inner["label"]) is not str:
-        raise Refused("malformed", "inner label")
+    if type(inner["label"]) is not str or len(inner["label"]) > MAX_LABEL:
+        raise Refused("malformed", "inner label: a string of at most 80 code points (§8.3)")
     clear = (req.offer_id, req.attempt, req.device_id, req.dk_hash)
     if clear != (inner["offer_id"], inner["attempt"], inner["device_id"], crypto.dk_hash(sig_pub, kx_pub)):
         raise Refused("malformed", "the clear binding differs from the sealed inner")
@@ -416,8 +473,10 @@ def make_cert_challenge(
         "primary_nonce": crypto.b64u(_raw(primary_nonce, 32, "primary_nonce")),
         "expires_ms": req["expires_ms"],
     }
+    pk = _pub(pk_pub, "pk_pub")
+    _challenge_body(o, pk, req)  # the binding and PK's person, before any person-key operation (Opus L6)
     signed = _sign(o, sign)
-    check_cert_challenge(signed, pk_pub, req)
+    check_cert_challenge(signed, pk, req)
     return signed
 
 
@@ -433,8 +492,10 @@ def make_cert_rejection(pk_pub: bytes, sign: Signer, request_o: Mapping[str, Any
         "dk_hash": req["dk_hash"],
         "expires_ms": req["expires_ms"],
     }
+    pk = _pub(pk_pub, "pk_pub")
+    _rejection_body(o, pk, req)  # before any person-key operation (Opus L6)
     signed = _sign(o, sign)
-    check_cert_rejection(signed, pk_pub, req)
+    check_cert_rejection(signed, pk, req)
     return signed
 
 
@@ -443,8 +504,8 @@ def make_cert_rejection(pk_pub: bytes, sign: Signer, request_o: Mapping[str, Any
 
 @dataclass(frozen=True, slots=True)
 class CertChallenge:
-    """A challenge bound to the host's request. ``signed`` is relayed unchanged; ``cert_code`` is what both screens
-    show."""
+    """A challenge verified under ``pk_pub`` and bound to the host's request. ``signed`` is relayed unchanged (only
+    this type reaches ``answers.answer_cert_pending``); ``cert_code`` is what both screens show."""
 
     request_id: str
     device_id: str
@@ -452,17 +513,20 @@ class CertChallenge:
     dk_kx_pub: bytes
     expires_ms: int
     cert_code: str
+    pk_pub: bytes
     signed: dict[str, Any] = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
 class CertRejection:
-    """A rejection bound to the host's request; ``signed`` is relayed unchanged in the long ``rejected`` answer."""
+    """A rejection verified under ``pk_pub`` and bound to the host's request; ``signed`` is relayed unchanged in the
+    long ``rejected`` answer (only this type reaches ``answers.answer_rejected_long``)."""
 
     request_id: str
     device_id: str
     dk_hash: bytes
     expires_ms: int
+    pk_pub: bytes
     signed: dict[str, Any] = field(repr=False, compare=False)
 
 
@@ -497,6 +561,21 @@ def check_cert_challenge(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     o = _verify_signed(pk, signed, "cert_challenge")
     if o is None:
         raise Refused("bad_signature", "cert_challenge")
+    sig_pub, kx_pub = _challenge_body(o, pk, req)
+    return CertChallenge(
+        request_id=o["request_id"],
+        device_id=o["device_id"],
+        dk_sig_pub=sig_pub,
+        dk_kx_pub=kx_pub,
+        expires_ms=o["expires_ms"],
+        cert_code=cert_code(o),
+        pk_pub=pk,
+        signed=_copy(signed),
+    )
+
+
+def _challenge_body(o: dict[str, Any], pk: bytes, req: dict[str, Any]) -> tuple[bytes, bytes]:
+    """Everything :func:`check_cert_challenge` checks after the signature; also run before signing."""
     if set(o) != CHALLENGE_FIELDS:
         raise Refused("malformed", "cert_challenge field set")
     _ids_of(o, req)
@@ -516,15 +595,7 @@ def check_cert_challenge(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     ):
         raise Refused("malformed", "cert_challenge device_id, expiry or person")
     _binding(o, req, _dk_hash(sig_pub, kx_pub))
-    return CertChallenge(
-        request_id=o["request_id"],
-        device_id=o["device_id"],
-        dk_sig_pub=sig_pub,
-        dk_kx_pub=kx_pub,
-        expires_ms=o["expires_ms"],
-        cert_code=cert_code(o),
-        signed=_copy(signed),
-    )
+    return sig_pub, kx_pub
 
 
 def check_cert_rejection(signed: object, pk_pub: bytes, request_o: Mapping[str, Any]) -> CertRejection:
@@ -538,6 +609,19 @@ def check_cert_rejection(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     o = _verify_signed(pk, signed, "cert_rejection")
     if o is None:
         raise Refused("bad_signature", "cert_rejection")
+    dk_hash = _rejection_body(o, pk, req)
+    return CertRejection(
+        request_id=o["request_id"],
+        device_id=o["device_id"],
+        dk_hash=dk_hash,
+        expires_ms=o["expires_ms"],
+        pk_pub=pk,
+        signed=_copy(signed),
+    )
+
+
+def _rejection_body(o: dict[str, Any], pk: bytes, req: dict[str, Any]) -> bytes:
+    """Everything :func:`check_cert_rejection` checks after the signature; also run before signing."""
     if set(o) != REJECTION_FIELDS:
         raise Refused("malformed", "cert_rejection field set")
     try:
@@ -554,10 +638,4 @@ def check_cert_rejection(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     if o["expires_ms"] != req["expires_ms"]:
         raise Refused("malformed", "cert_rejection expiry")
     _binding(o, req, o["dk_hash"])
-    return CertRejection(
-        request_id=o["request_id"],
-        device_id=o["device_id"],
-        dk_hash=dk_hash,
-        expires_ms=o["expires_ms"],
-        signed=_copy(signed),
-    )
+    return dk_hash

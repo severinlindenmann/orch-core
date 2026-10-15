@@ -314,23 +314,38 @@ def test_make_cert_rejection_rebuilds_the_vector():
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "code"),
     [
-        lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), REQ["o"], _inner(), bytes(31)),
-        lambda: certreq.make_cert_challenge(PK, _sign_with("wsk_a.sig"), REQ["o"], _inner(), bytes(32)),  # wrong key
-        lambda: certreq.make_cert_challenge(PK, lambda p: b"\0" * 63, REQ["o"], _inner(), bytes(32)),
-        lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), REQ["o"], INNER, bytes(32)),
-        lambda: certreq.make_cert_challenge(
-            PK, _sign_with("person_alice.sig"), {**REQ["o"], "attempt": "0" * 32}, _inner(), bytes(32)
+        (
+            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), REQ["o"], _inner(), bytes(31)),
+            "malformed",
         ),
-        lambda: certreq.make_cert_rejection(PK, _sign_with("wsk_a.sig"), REQ["o"]),
-        lambda: certreq.make_cert_rejection(PK, _sign_with("person_alice.sig"), {**REQ["o"], "extra": 1}),
+        (
+            lambda: certreq.make_cert_challenge(PK, _sign_with("wsk_a.sig"), REQ["o"], _inner(), bytes(32)),
+            "bad_signature",
+        ),
+        (lambda: certreq.make_cert_challenge(PK, lambda p: b"\0" * 63, REQ["o"], _inner(), bytes(32)), "malformed"),
+        (
+            lambda: certreq.make_cert_challenge(PK, _sign_with("person_alice.sig"), REQ["o"], INNER, bytes(32)),
+            "malformed",
+        ),
+        (
+            lambda: certreq.make_cert_challenge(
+                PK, _sign_with("person_alice.sig"), {**REQ["o"], "attempt": "0" * 32}, _inner(), bytes(32)
+            ),
+            "not_for_this_device",
+        ),
+        (lambda: certreq.make_cert_rejection(PK, _sign_with("wsk_a.sig"), REQ["o"]), "bad_signature"),
+        (
+            lambda: certreq.make_cert_rejection(PK, _sign_with("person_alice.sig"), {**REQ["o"], "extra": 1}),
+            "malformed",
+        ),
     ],
 )
-def test_make_refuses(call):
+def test_make_refuses(call, code):
     with pytest.raises(Refused) as e:
         call()
-    assert e.value.code in ("malformed", "bad_signature", "not_for_this_device")
+    assert e.value.code == code
 
 
 def test_open_cert_request_refuses_a_bad_unseal():
@@ -360,3 +375,139 @@ def test_check_cert_request_takes_only_a_verified_card():
             REQ, _OPEN_CARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_OPEN_ME
         )
     assert e.value.code == "malformed"
+
+
+# --- review round 1 of #495 ------------------------------------------------------------------------------------------
+
+
+def _pk_sign(name: str, label: str, o: dict) -> dict:
+    return {"o": o, "sig": crypto.b64u(crypto.sign(_key(name), crypto.L[label] + canon.dumps(o)))}
+
+
+def test_challenge_with_another_expiry_is_refused():
+    """Opus L3 (mutant M14): the challenge's expiry must be the request's."""
+    o = {**CR["challenge"]["o"], "expires_ms": REQ["o"]["expires_ms"] + 1}
+    with pytest.raises(Refused) as e:
+        certreq.check_cert_challenge(_pk_sign("person_alice.sig", "sig_cert_challenge", o), PK, REQ["o"])
+    assert e.value.code == "malformed"
+
+
+def test_challenge_signed_by_another_pk_naming_the_owner_is_refused():
+    """Opus L3 (mutant M1): person_id is the request's, but the signer (passed as pk_pub) is another person."""
+    bob = bytes.fromhex(KEYS["person_bob.sig"]["pub"])
+    signed = _pk_sign("person_bob.sig", "sig_cert_challenge", CR["challenge"]["o"])
+    with pytest.raises(Refused) as e:
+        certreq.check_cert_challenge(signed, bob, REQ["o"])
+    assert e.value.code == "malformed"
+
+
+def test_rejection_signed_by_another_pk_naming_the_owner_is_refused():
+    """Opus L3 (mutant M7)."""
+    obj = S2["rejected_forms"]["objects"]
+    bob = bytes.fromhex(KEYS["person_bob.sig"]["pub"])
+    signed = _pk_sign("person_bob.sig", "sig_cert_rejection", obj["rejection"]["o"])
+    with pytest.raises(Refused) as e:
+        certreq.check_cert_rejection(signed, bob, obj["request"]["o"])
+    assert e.value.code == "other_person"
+
+
+def test_request_living_longer_than_ten_minutes_is_expired():
+    """Opus L3 (mutant M8): expires - created <= 10 min."""
+    o = {**REQ["o"], "expires_ms": REQ["o"]["created_ms"] + certreq.CERT_PENDING_MS + 1}
+    with pytest.raises(Refused) as e:
+        certreq.check_cert_request(
+            _pk_sign("wsk_a.sig", "sig_cert_request", o),
+            _OPEN_VCARD,
+            journal=certreq.CertJournal(),
+            now_ms=REQ["o"]["created_ms"],
+            **_OPEN_ME,
+        )
+    assert e.value.code == "expired"
+
+
+def test_a_refused_request_id_is_recorded_and_cannot_come_back():
+    """Opus L2: a request refused at step 2.7/2.8 names its id (``RequestRefused.request_id``); the primary records it
+    as seen, so the same id with other content is ``replayed``."""
+    case = next(c for c in CR["cases"] if c["name"] == "inner_with_a_host_nonce_is_malformed")
+    step = case["steps"][0]
+    journal = certreq.CertJournal()
+    req = certreq.check_cert_request(step["signed"], _card(case), journal=journal, now_ms=step["now_ms"], **_me(case))
+    with pytest.raises(Refused):
+        certreq.open_cert_request(req, _unseal)
+    journal = journal.with_seen(req.request_id)
+    with pytest.raises(Refused) as e:
+        certreq.check_cert_request(REQ, _card(case), journal=journal, now_ms=step["now_ms"], **_me(case))
+    assert e.value.code == "replayed"
+    shape = next(c for c in CB["primary"] if c["name"] == "request_without_the_clear_binding_malformed")
+    with pytest.raises(certreq.RequestRefused) as e:
+        certreq.check_cert_request(
+            shape["steps"][0]["signed"],
+            _card(shape),
+            journal=certreq.CertJournal(),
+            now_ms=shape["steps"][0]["now_ms"],
+            **_me(shape),
+        )
+    assert (e.value.code, e.value.request_id) == ("malformed", REQ["o"]["request_id"])
+
+
+def test_journal_helpers_record_open_and_close():
+    req = certreq.check_cert_request(
+        REQ, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_OPEN_ME
+    )
+    j = certreq.CertJournal().with_open(req)
+    assert req.request_id in j.seen and j.open_request(req.workspace_id, req.created_ms) == req.request_id
+    assert j.with_closed(req.request_id).open_request(req.workspace_id, req.created_ms) is None
+
+
+def _inner_request(label: str) -> tuple[certreq.CertRequest, dict]:
+    o = dict(_build_request(label=pairing.clean_label(label)))
+    inner = {**INNER, "label": label}
+    rid = bytes.fromhex(o["request_id"])
+    o["sealed"] = crypto.b64u(
+        crypto.seal(
+            bytes.fromhex(KEYS["primary.kx"]["pub"]),
+            bytes.fromhex(IDS["device_primary"]),
+            "cert-request",
+            rid,
+            0,
+            canon.dumps(inner),
+        )
+    )
+    signed = _pk_sign("wsk_a.sig", "sig_cert_request", o)
+    req = certreq.check_cert_request(
+        signed, _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=o["created_ms"], **_OPEN_ME
+    )
+    return req, inner
+
+
+def test_open_cert_request_gives_a_display_label_and_bounds_the_label():
+    """Opus L5: the raw sealed label beside its ``clean_label`` display form; above 80 code points is refused."""
+    req, _ = _inner_request("Evil\u202ephone\u0000")
+    got = certreq.open_cert_request(req, _unseal)
+    assert got.label == "Evil\u202ephone\u0000" and got.display_label == "Evilphone"
+    req, _ = _inner_request("x" * 80)
+    assert certreq.open_cert_request(req, _unseal).display_label == "x" * 80
+    req, _ = _inner_request("x" * 81)
+    with pytest.raises(Refused) as e:
+        certreq.open_cert_request(req, _unseal)
+    assert e.value.code == "malformed"
+
+
+def test_make_cert_challenge_checks_the_binding_before_signing():
+    """Opus L6: a mismatched inner or request costs no person-key operation."""
+    calls = []
+
+    def sign(payload: bytes) -> bytes:
+        calls.append(payload)
+        return _sign_with("person_alice.sig")(payload)
+
+    with pytest.raises(Refused) as e:
+        certreq.make_cert_challenge(PK, sign, {**REQ["o"], "attempt": "0" * 32}, _inner(), bytes(32))
+    assert e.value.code == "not_for_this_device" and calls == []
+    bob = bytes.fromhex(KEYS["person_bob.sig"]["pub"])
+    with pytest.raises(Refused):
+        certreq.make_cert_challenge(bob, sign, REQ["o"], _inner(), bytes(32))  # PK is not the request's person
+    assert calls == []
+    with pytest.raises(Refused):
+        certreq.make_cert_rejection(bob, sign, REQ["o"])
+    assert calls == []

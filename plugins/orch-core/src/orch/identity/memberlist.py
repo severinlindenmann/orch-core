@@ -191,7 +191,13 @@ def check_member_list(signed: object, wsk_pub: bytes, workspace_id: str) -> Memb
     1024 members and each ``scopes`` a list of strings), then ``workspace_id`` (``other_workspace``).
 
     It does **not** decide currency (``stale_list``, ``bad_epoch``, ``rotation_required``, ``wk_commit_changed``, the
-    D2 alarms) or certificates and grants (checks 8 and 9): those need the caller's previous list and directory."""
+    D2 alarms) or certificates and grants (checks 8 and 9): those need the caller's previous list and directory.
+
+    **Unvalidated beyond shape (Opus L4):** ``MemberEntry.scopes`` is a list of strings, not checked as a scope
+    prefix (``[]``, a ``drop:`` scope or repeats pass); ``persons`` may name the owner or a person without a member, and
+    a member's person need not be the owner or listed. The relay owns those checks (8 and the persons rule). So R6
+    never takes ``answer_approved``'s ``scopes`` (or any authority) from a fetched list: it uses the offer's scopes and
+    its own exposed body (H2/H7)."""
     wsk = _pub(wsk_pub, "wsk_pub")
     ws = crypto.hex_id(_id(workspace_id, "workspace_id"))
     o = _verify_signed(wsk, signed, "member_list")

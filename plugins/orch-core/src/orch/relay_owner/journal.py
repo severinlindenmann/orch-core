@@ -20,6 +20,14 @@ one request; a second one waits up to ``lock_wait_s`` and then fails ``journal.b
 the directory's own ``flock`` (as every R1 state directory), not a separate ``.lock`` file: same exclusion, one fewer
 file to check.
 
+**Bounded, never a lockout (review of the first push, orch-52).** A hostile relay can at most make one request fail
+closed: an unreadable record is treated as burned and replaced by a tombstone, not fatal; every record is capped at
+:data:`MAX_RECORD`; :meth:`JournalView.prune` (run by every poll) deletes tombstones after expiry + 14 days and evicts
+expired terminal records above :data:`MAX_ENTRIES`; only unexpired records count against the cap (a full journal of
+unexpired requests refuses *new* ids, ``journal.full``, and recovers as they expire). The ``flock`` is released on
+every exit of a transaction (``finally``) and by the kernel when the process dies. Fatal only: the directory itself
+failing its checks (custody tampering, not relay-reachable).
+
 **Same request id with other bytes:** refused against the stored ``verified`` bytes with
 :class:`RequestConflict` (alarm ``primary_request_conflict``). **Retention:** a record is pruned to a tombstone
 (``{request_id, workspace_id, state, expires_ms}``) after its ``expires_ms`` plus 7 days, so the id stays terminal.
@@ -32,6 +40,7 @@ terminal ones.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import re
 import time
@@ -71,7 +80,12 @@ _FIELDS = frozenset(
 )  # fmt: skip
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _FILE = re.compile(r"([0-9a-f]{32})\.json")
-MAX_ENTRIES = 4096
+MAX_ENTRIES = 4096  # soft cap: prune evicts expired terminal records above it; a new id above it is journal.full
+HARD_MAX_FILES = 65_536  # only local tampering reaches this (the relay cannot mint WSK-signed ids)
+MAX_RECORD = 32 * 1024  # one record (request, challenge, decision) is about 4 KiB
+TOMBSTONE_MS = 2 * RETENTION_MS  # a tombstone is deleted after expiry + 14 days: check_cert_request refuses it anyway
+_UNKNOWN_WS = "00" * 16
+log = logging.getLogger("orch.relay_owner.journal")
 
 
 class JournalError(Exception):
@@ -192,28 +206,40 @@ def journal_dir(state_dir: str | os.PathLike[str]) -> Path:
 
 
 class JournalView:
-    """The journal inside one transaction (the ``flock`` is held). Reads see this transaction's writes."""
+    """The journal inside one transaction (the ``flock`` is held). Reads see this transaction's writes.
+
+    **One bad record never locks the owner out** (review of the pushed journal, orch-52): a record that does not read
+    (not canonical JSON, the wrong fields, over :data:`MAX_RECORD`, a symlink, a wider mode, another owner, another
+    request's id) is logged, counted in :attr:`corrupt` and treated as **burned** (seen and closed: that id is never
+    acted on), and :meth:`prune` replaces it with a ``refused`` tombstone. Only the directory itself failing its
+    checks (or more than :data:`HARD_MAX_FILES` names, local tampering) is fatal."""
 
     def __init__(self, state: StateDir) -> None:
         self._state = state
         self._entries: dict[str, Entry] = {}
+        self.corrupt: set[str] = set()
         names = sorted(os.listdir(state.path))
-        if len(names) > MAX_ENTRIES:
-            raise JournalError("journal.corrupt", "too many records; prune the journal")
+        if len(names) > HARD_MAX_FILES:
+            raise JournalError("journal.corrupt", "the journal directory holds too many files")
         for name in names:
             m = _FILE.fullmatch(name)
             if m is None:
                 continue
+            rid = m.group(1)
             try:
                 raw = state.read(name)
-            except StateError as e:
-                raise JournalError("journal.corrupt", f"record {m.group(1)}: {e}") from None
-            if raw is None:  # removed between the listing and the read: not ours to explain
+                if raw is None:  # removed between the listing and the read
+                    continue
+                if len(raw) > MAX_RECORD:
+                    raise JournalError("journal.corrupt", "record too large")
+                entry = Entry.from_json(raw)
+                if entry.request_id != rid:
+                    raise JournalError("journal.corrupt", "the record names another request")
+            except (StateError, JournalError):
+                log.warning("primary journal: record %s is unreadable; treated as burned", rid)
+                self.corrupt.add(rid)
                 continue
-            entry = Entry.from_json(raw)
-            if entry.request_id != m.group(1):
-                raise JournalError("journal.corrupt", f"record {m.group(1)} names another request")
-            self._entries[entry.request_id] = entry
+            self._entries[rid] = entry
 
     def get(self, request_id: str) -> Entry | None:
         return self._entries.get(request_id)
@@ -225,17 +251,24 @@ class JournalView:
         """The pure journal of the §8.4 step 2 checks; ``excluding`` leaves one id out (a resume re-checks a request
         the journal already holds, against everything else)."""
         es = [e for e in self._entries.values() if e.request_id != excluding]
+        bad = self.corrupt - {excluding}
         return certreq.CertJournal(
-            seen=frozenset(e.request_id for e in es),
+            seen=frozenset(e.request_id for e in es) | bad,
             open=tuple((e.workspace_id, e.request_id, e.expires_ms) for e in es if e.live),
-            closed=frozenset(e.request_id for e in es if not e.live and e.state != "refused"),
+            closed=frozenset(e.request_id for e in es if not e.live and e.state != "refused") | bad,
         )
 
     def put(self, entry: Entry) -> Entry:
         """Write ``entry`` durably, as a transition from the current record (or a creation). A ``verified`` record
         for an id the journal holds is :class:`RequestConflict` unless its bytes are the stored ones (then the stored
         record is returned and nothing is written). Immutable parts never change."""
+        if entry.request_id in self.corrupt:
+            raise RequestConflict(entry.request_id)
+        if len(entry.to_json()) > MAX_RECORD:
+            raise JournalError("journal.too_large", f"request {entry.request_id}: record over the cap")
         cur = self._entries.get(entry.request_id)
+        if cur is None and len(self._entries) >= MAX_ENTRIES:
+            raise JournalError("journal.full", "the primary journal is full of unexpired requests")
         if entry.state == "verified" and cur is not None:
             if cur.request_cj is None or cur.request_cj != entry.request_cj:
                 raise RequestConflict(entry.request_id)
@@ -255,13 +288,39 @@ class JournalView:
         return entry
 
     def prune(self, now_ms: int) -> int:
-        """Turn records past ``expires_ms + 7 days`` into tombstones (id, workspace, final state, expiry)."""
+        """Bound the journal (run at the start of every poll): an unreadable record becomes a ``refused`` tombstone
+        (expiry = now); records past ``expires_ms + 7 days`` become tombstones (id, workspace, final state, expiry);
+        tombstones past ``expires_ms + 14 days`` are deleted (``check_cert_request`` refuses such an id as
+        ``expired`` anyway); above :data:`MAX_ENTRIES`, expired terminal records are evicted oldest first. A live or
+        unexpired record is never evicted (it may still be re-presented). Returns the number of records changed."""
         n = 0
+        for rid in sorted(self.corrupt):
+            self.corrupt.discard(rid)
+            self._write(Entry(rid, _UNKNOWN_WS, now_ms, "refused", tombstone=True))
+            n += 1
         for e in list(self._entries.values()):
-            if not e.tombstone and now_ms > e.expires_ms + RETENTION_MS:
+            if e.tombstone and now_ms > e.expires_ms + TOMBSTONE_MS:
+                self._delete(e.request_id)
+                n += 1
+            elif not e.tombstone and now_ms > e.expires_ms + RETENTION_MS:
                 self._write(replace(e, request_cj=None, challenge_cj=None, decided_cj=None, tombstone=True))
                 n += 1
+        if len(self._entries) > MAX_ENTRIES:
+            old = sorted((e for e in self._entries.values() if not e.live and now_ms >= e.expires_ms),
+                         key=lambda e: (e.expires_ms, e.request_id))  # fmt: skip
+            for e in old[: len(self._entries) - MAX_ENTRIES]:
+                self._delete(e.request_id)
+                n += 1
         return n
+
+    def _delete(self, request_id: str) -> None:
+        try:
+            os.unlink(self._state.path / f"{request_id}.json")
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise JournalError("journal.corrupt", f"record {request_id}: cannot delete ({e.strerror})") from None
+        self._entries.pop(request_id, None)
 
     def _write(self, entry: Entry) -> None:
         try:

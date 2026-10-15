@@ -10,7 +10,9 @@ import pytest
 
 from orch import canon
 from orch.relay_owner.journal import (
+    MAX_RECORD,
     RETENTION_MS,
+    TOMBSTONE_MS,
     Entry,
     JournalError,
     PrimaryJournal,
@@ -138,31 +140,90 @@ def test_retention_prunes_to_tombstones_that_keep_the_id_terminal(jdir):
         Entry(RID2, WS, 1, "refused").to_json(),  # names another request than its file
         Entry(RID, WS, 1, "verified", request_cj=REQ).to_json().replace(b'"verified"', b'"signed!"'),
         Entry(RID, WS, 1, "verified", request_cj=REQ).to_json().replace(b'"request":{', b'"request":[{', 1),
+        b" " * (MAX_RECORD + 1),
     ],
 )
-def test_a_damaged_record_fails_closed(jdir, raw):
+def test_a_damaged_record_is_burned_not_fatal(jdir, raw):
+    """One unreadable record never locks the owner out: its id is seen and closed (never acted on), every other
+    request still works, and the next prune replaces it with a refused tombstone."""
     with PrimaryJournal(jdir).transaction() as v:
         v.put(verified())
     fd = os.open(jdir / f"{RID}.json", os.O_WRONLY | os.O_TRUNC)
     os.write(fd, raw)
     os.close(fd)
-    with pytest.raises(JournalError) as e, PrimaryJournal(jdir).transaction():
-        pass
-    assert e.value.code == "journal.corrupt"
+    with PrimaryJournal(jdir).transaction() as v:
+        assert v.corrupt == {RID} and v.get(RID) is None
+        cj = v.cert_journal()
+        assert RID in cj.seen and RID in cj.closed and cj.open == ()
+        with pytest.raises(RequestConflict):
+            v.put(verified())
+        v.put(verified(rid=RID2, ws=WS2))  # the rest of the journal is usable
+        assert v.prune(5) == 1
+    with PrimaryJournal(jdir).transaction() as v:
+        t = v.get(RID)
+        assert v.corrupt == set() and t.tombstone and t.state == "refused" and t.expires_ms == 5
+        assert v.get(RID2).state == "verified"
 
 
-def test_a_symlinked_or_wide_record_is_refused(jdir, tmp_path):
+def test_a_symlinked_or_wide_record_is_burned_and_replaced(jdir, tmp_path):
     with PrimaryJournal(jdir).transaction() as v:
         v.put(verified())
     os.chmod(jdir / f"{RID}.json", 0o644)
-    with pytest.raises(JournalError), PrimaryJournal(jdir).transaction():
-        pass
+    with PrimaryJournal(jdir).transaction() as v:
+        assert v.corrupt == {RID}
     os.unlink(jdir / f"{RID}.json")
     target = tmp_path / "elsewhere.json"
     target.write_bytes(verified().to_json())
     os.symlink(target, jdir / f"{RID}.json")
-    with pytest.raises(JournalError), PrimaryJournal(jdir).transaction():
-        pass
+    with PrimaryJournal(jdir).transaction() as v:
+        assert v.corrupt == {RID}
+        v.prune(1)
+    assert not os.path.islink(jdir / f"{RID}.json") and target.read_bytes() == verified().to_json()
+
+
+def test_tombstones_are_deleted_after_twice_the_retention(jdir):
+    with PrimaryJournal(jdir).transaction() as v:
+        v.put(Entry(RID, WS, 1000, "refused"))
+        v.prune(1001 + RETENTION_MS)
+        assert v.get(RID).tombstone
+        v.prune(1000 + TOMBSTONE_MS)
+        assert v.get(RID) is not None
+        v.prune(1001 + TOMBSTONE_MS)
+        assert v.get(RID) is None
+    assert not (jdir / f"{RID}.json").exists()
+
+
+def test_the_entry_cap_evicts_expired_records_and_never_live_ones(jdir, monkeypatch):
+    from orch.relay_owner import journal as jmod
+
+    monkeypatch.setattr(jmod, "MAX_ENTRIES", 3)
+    with PrimaryJournal(jdir).transaction() as v:
+        v.put(verified(rid="01" * 16, exp=10))  # live, expired: never evicted
+        v.put(Entry("02" * 16, WS, 10, "refused"))
+        v.put(Entry("03" * 16, WS, 20, "refused"))
+        with pytest.raises(JournalError) as e:  # full of records: a new id waits, nothing else breaks
+            v.put(Entry("04" * 16, WS, 30, "refused"))
+        assert e.value.code == "journal.full"
+        assert v.prune(15) == 0  # nothing over the cap yet
+    for i, rid in enumerate(("04" * 16, "05" * 16)):  # over the cap by local writes (simulated)
+        (jdir / f"{rid}.json").write_bytes(Entry(rid, WS, 30 + i, "refused").to_json())
+        os.chmod(jdir / f"{rid}.json", 0o600)
+    with PrimaryJournal(jdir).transaction() as v:
+        assert v.prune(25) == 2
+        assert {e.request_id for e in v.entries()} == {"01" * 16, "04" * 16, "05" * 16}
+
+
+def test_an_oversized_record_is_refused_before_it_is_written(jdir):
+    with PrimaryJournal(jdir).transaction() as v, pytest.raises(JournalError) as e:
+        v.put(verified(req=canon.dumps({"o": {"pad": "a" * MAX_RECORD}, "sig": "x"})))
+    assert e.value.code == "journal.too_large" and not (jdir / f"{RID}.json").exists()
+
+
+def test_an_exception_inside_a_transaction_releases_the_lock(jdir):
+    with pytest.raises(RuntimeError), PrimaryJournal(jdir).transaction():
+        raise RuntimeError("boom")
+    with PrimaryJournal(jdir, lock_wait_s=0.0).transaction() as v:
+        v.put(verified())
 
 
 def test_a_world_readable_directory_is_refused(jdir):

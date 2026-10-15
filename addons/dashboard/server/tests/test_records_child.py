@@ -52,7 +52,7 @@ def spawn(monkeypatch):
 
     monkeypatch.setattr(rc.subprocess, "Popen", factory)
     monkeypatch.setattr(rc.os, "killpg", lambda pid, sig: kills.append((pid, sig)))
-    monkeypatch.setattr(rc.os, "waitid", lambda kind, pid, flags: object())
+    monkeypatch.setattr(rc, "exited", lambda pid, timeout: True)
     return calls, processes, kills
 
 
@@ -308,7 +308,7 @@ def test_exit_wait_budget_keeps_leader_until_cleanup(spawn, monkeypatch, tmp_pat
     _, processes, kills = spawn
     proc = Process()
     processes.append(proc)
-    monkeypatch.setattr(rc.os, "waitid", lambda *args: None)
+    monkeypatch.setattr(rc, "exited", lambda pid, timeout: False)
     monkeypatch.setattr(rc, "BUDGET", 0.01)
     with pytest.raises(HostError) as error:
         rc.RecordsChild().run(WS, state=tmp_path)
@@ -329,6 +329,35 @@ def test_a_real_child_that_exits_normally_without_grandchildren_is_parsed_not_an
     env = {"PATH": "/usr/bin:/bin", "ORCH_STATE_DIR": str(tmp_path)}
     out = RecordsChild()._execute([sys.executable, "-c", f"print({line!r})"], env)
     assert out["ok"] is True
+
+
+def test_a_real_child_that_outlives_the_budget_is_killed_and_reaped(monkeypatch, tmp_path):
+    """The exit wait itself is bounded on every platform (waitid, or kqueue on macOS, which has no waitid)."""
+    import sys
+
+    from orch_dashboard.records_child import RecordsChild
+
+    monkeypatch.setattr(rc, "BUDGET", 0.5)
+    env = {"PATH": "/usr/bin:/bin", "ORCH_STATE_DIR": str(tmp_path)}
+    code = "import os, time; os.close(1); os.close(2); time.sleep(30)"
+    with pytest.raises(HostError) as error:
+        RecordsChild()._execute([sys.executable, "-c", code], env)
+    assert error.value.error["code"] == "records.budget"
+
+
+def test_exited_sees_an_exit_without_reaping():
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    try:
+        assert rc.exited(proc.pid, 10)
+        assert proc.returncode is None and rc.exited(proc.pid, 0)  # still a zombie: not reaped, seen again
+    finally:
+        assert proc.wait(timeout=10) == 0
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert not rc.exited(sleeper.pid, 0.1)
+    finally:
+        sleeper.kill()
+        sleeper.wait()
 
 
 def status_data():

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -144,3 +145,112 @@ def test_fds_stay_bounded(ws):
     assert _fds() == before
     fs.close()
     assert _fds() == before - 1
+
+
+# -- the automated scan's two classes: path traversal and resource bounds
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["..", "../x", "tickets/..", "tickets/../../x", "./tickets", "tickets/./T", "tickets//T", "tickets/", "/", "a\0b",
+     "tickets\\..\\x", "/etc/passwd"],
+)  # fmt: skip
+def test_every_api_validates_every_component(ws, bad):
+    fs, root, _ = ws
+    calls = (
+        lambda: fs.read_or_none(bad),
+        lambda: fs.open(bad, os.O_RDONLY),
+        lambda: fs.write_atomic(bad, b"x"),
+        lambda: fs.append_durable(bad, b"x"),
+        lambda: fs.listdir(bad),
+        lambda: fs.lstat(bad),
+        lambda: fs.mkdir(bad),
+        lambda: fs.unlink(bad),
+        lambda: fs.rmdir(bad),
+        lambda: fs.rmtree(bad),
+        lambda: fs.replace("tickets/T/a.txt", bad),
+        lambda: fs.replace(bad, "tickets/T/z.txt"),
+    )
+    for call in calls:
+        with pytest.raises(StoreError) as e:
+            call()
+        assert e.value.code == "validation.path"
+    assert (root / "tickets" / "T" / "a.txt").read_bytes() == b"inside"
+
+
+def test_rename_and_unlink_never_reach_outside(ws, tmp_path):
+    fs, root, outside = ws
+    os.symlink(outside, root / "link")
+    for call in (
+        lambda: fs.replace("tickets/T/a.txt", "link/T/a.txt"),
+        lambda: fs.replace("link/T/a.txt", "tickets/T/x.txt"),
+        lambda: fs.unlink("link/T/a.txt"),
+        lambda: fs.rmtree("link/T"),
+    ):
+        with pytest.raises(StoreError):
+            call()
+    fs.unlink("link")  # the link itself goes, never its target
+    fs.write_atomic("link", b"x")
+    assert (outside / "T" / "a.txt").read_bytes() == b"OUTSIDE"
+
+
+def test_rm_at_takes_single_names_only(ws):
+    from orch.store.rootfs import rm_at
+
+    fs, _, outside = ws
+    for bad in ("../outside", "a/b", ".", "..", ""):
+        with pytest.raises(OSError):
+            rm_at(fs.fd, bad)
+    assert (outside / "T" / "a.txt").exists()
+
+
+def test_paths_and_trees_are_bounded_in_depth(ws):
+    from orch.store.rootfs import MAX_DEPTH, MAX_RM_DEPTH
+
+    fs, root, _ = ws
+    with pytest.raises(StoreError):
+        fs.read_or_none("/".join(["d"] * (MAX_DEPTH + 1)))
+    deep = root / "deep"
+    p = deep
+    for _ in range(MAX_RM_DEPTH + 3):
+        p = p / "d"
+    p.mkdir(parents=True)
+    before = _fds()
+    with pytest.raises(OSError):
+        fs.rmtree("deep")
+    fs.rmtree("deep", ignore_errors=True)
+    assert _fds() == before
+    assert deep.exists()  # not removed, and no fd or stack spent on it beyond the cap
+
+
+def test_a_symlink_cycle_is_refused_not_looped(ws):
+    fs, root, _ = ws
+    os.symlink("loop", root / "loop")
+    os.symlink(".", root / "tickets" / "self")
+    assert fs.read_or_none("loop") is None
+    with pytest.raises(StoreError):
+        fs.read_or_none("tickets/self/self/self/T/a.txt")
+    with pytest.raises(StoreError):
+        fs.listdir("loop")
+
+
+def test_no_fd_leaks_on_failure_paths(ws, tmp_path):
+    fs, root, outside = ws
+    os.symlink(outside, root / "tickets" / "T" / "sub")
+    (root / "tickets" / "T" / "file").write_bytes(b"x")
+    os.mkfifo(root / "tickets" / "T" / "fifo")
+    before = _fds()
+    for _ in range(50):
+        for call in (
+            lambda: fs.read_or_none("tickets/T/sub/x"),
+            lambda: fs.write_atomic("tickets/T/sub/x", b"x"),
+            lambda: fs.read_or_none("tickets/T/file/x"),
+            lambda: fs.read_or_none("tickets/T"),
+            lambda: fs.open("tickets/T/nope", os.O_RDONLY),
+            lambda: fs.replace("tickets/T/nope", "tickets/T/n2"),
+            lambda: fs.mkdir("tickets/T/file/x"),
+        ):
+            with contextlib.suppress(OSError, StoreError):
+                call()
+        assert fs.read_or_none("tickets/T/fifo") is None  # a FIFO never blocks a read
+    assert _fds() == before

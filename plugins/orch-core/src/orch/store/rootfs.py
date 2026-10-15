@@ -35,9 +35,14 @@ from pathlib import Path
 
 from .errors import StoreError
 
-__all__ = ["MAX_READ", "RootFS", "rm_at"]
+__all__ = ["MAX_DEPTH", "MAX_READ", "MAX_RM_DEPTH", "RootFS", "rm_at"]
 
 MAX_READ = 16 * 1024 * 1024
+#: the deepest path below the root a call may name (the store's deepest is ``tickets/<uid>/artifacts/<name>``)
+MAX_DEPTH = 16
+#: the deepest tree :func:`rm_at` removes: it holds one fd per level, so an agent-made deep tree cannot exhaust fds
+#: or the stack (the store removes only its own shallow pending directories)
+MAX_RM_DEPTH = 8
 
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -59,9 +64,11 @@ def _full_fsync(fd: int) -> None:
     os.fsync(fd)
 
 
-def rm_at(dir_fd: int, name: str) -> None:
+def rm_at(dir_fd: int, name: str, depth: int = 0) -> None:
     """Remove ``name`` below ``dir_fd``: a directory by its children first (each opened ``O_NOFOLLOW``), anything
-    else (a symlink too) unlinked, never followed."""
+    else (a symlink too) unlinked, never followed. A tree deeper than :data:`MAX_RM_DEPTH` refuses (``OSError``)."""
+    if "/" in name or name in ("", ".", "..") or "\0" in name:
+        raise OSError(errno.EINVAL, "not a single name", name)
     try:
         fd = os.open(name, _DIR | _NOFOLLOW | _NOCTTY, dir_fd=dir_fd)
     except OSError as e:
@@ -71,7 +78,9 @@ def rm_at(dir_fd: int, name: str) -> None:
         return
     try:
         for child in os.listdir(fd):
-            rm_at(fd, child)
+            if depth >= MAX_RM_DEPTH:
+                raise OSError(errno.ELOOP, f"a tree deeper than {MAX_RM_DEPTH} levels is not removed", name)
+            rm_at(fd, child, depth + 1)
     finally:
         os.close(fd)
     os.rmdir(name, dir_fd=dir_fd)
@@ -155,6 +164,8 @@ class RootFS:
             parts = whole[n:]
         if any(c in ("", ".", "..") for c in parts):
             raise StoreError("validation.path", f"{s!r} escapes the workspace")
+        if len(parts) > MAX_DEPTH:
+            raise StoreError("validation.path", f"{s!r} is deeper than {MAX_DEPTH} components")
         return parts
 
     def _refuse(self, parts: tuple[str, ...], i: int, dfd: int, e: OSError) -> BaseException:
@@ -223,12 +234,19 @@ class RootFS:
             if e.errno in (errno.ELOOP, errno.EMLINK):
                 return None
             raise
-        with os.fdopen(fd, "rb") as f:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                if stat.S_ISDIR(os.fstat(fd).st_mode):
-                    raise IsADirectoryError(errno.EISDIR, "is a directory", os.fspath(p))
+        try:  # checked before fdopen: it refuses a directory itself, and the fd must not leak then
+            mode = os.fstat(fd).st_mode
+            if stat.S_ISDIR(mode):
+                raise IsADirectoryError(errno.EISDIR, "is a directory", os.fspath(p))
+            if not stat.S_ISREG(mode):
+                os.close(fd)
                 return None  # a FIFO or a device is never read (it could block or never end)
             os.set_blocking(fd, True)
+            f = os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
             return f.read() if limit is None else f.read(limit + 1)
 
     def tail_bytes(self, p: Rel, n: int) -> tuple[int, bytes]:

@@ -179,9 +179,11 @@ def test_expose_refuses_a_body_that_is_not_the_list_at_this_seq_epoch_and_key(tm
                      canon.dumps(list_for(1, 1, crypto.b64u(bytes(32))))):  # fmt: skip
             with pytest.raises(CustodyRefused):
                 mk.expose(list_seq=1, epoch=1, body=body, digest="d", adds=[DEVICE])
-        put_body = canon.dumps({"member_list": {"o": good, "sig": "x"}, "grants": []})  # the PUT body form
-        mk.expose(list_seq=1, epoch=1, body=put_body, digest=digest(good), adds=[DEVICE])
-        assert mk.commit(list_seq=1, epoch=1, list_hash=digest(good), list_obj=good, at_ms=1)
+        signed = {"o": good, "sig": "x"}
+        put_body = canon.dumps({"member_list": signed, "grants": []})  # the PUT body form: list_hash of the SIGNED list
+        h = "sha256:" + crypto.sha256(canon.dumps(signed)).hex()
+        mk.expose(list_seq=1, epoch=1, body=put_body, digest=h, adds=[DEVICE])
+        assert mk.commit(list_seq=1, epoch=1, list_hash=h, list_obj=good, at_ms=1)
     finally:
         mk.close()
 
@@ -223,31 +225,56 @@ class _FakeStore:
     relay_gate = None
 
 
-def test_the_store_is_gated_until_the_hook_is_installed(tmp_path):
+def test_the_key_store_is_gated_unless_the_live_store_carries_its_hook(tmp_path):
+    """Round 3 R3: bound to the live store at every decision, never a latch. A replaced or closed store (no hook)
+    gates; a rebuild that raises leaves it unbound (gated)."""
     mk = open_keys(tmp_path, hooked=False)
     try:
         rotate(mk)
-        assert mk.seal_state() == SealState(1, True, 2)
-        store = _FakeStore()
-        R6Gate(mk).install(store)
-        assert store.relay_gate is not None and not mk.seal_state().gated
-        store.relay_gate(DEVICE, "device.revoked")
+        assert mk.seal_state() == SealState(1, True, 2)  # never installed
+        holder = {"store": _FakeStore()}
+        R6Gate(mk).install(lambda: holder["store"])
+        assert holder["store"].relay_gate is not None and not mk.seal_state().gated
+        holder["store"] = _FakeStore()  # the workspace reopened: a new store without the hook
+        assert mk.seal_state().gated
+        R6Gate(mk).install(lambda: holder["store"])
+        assert not mk.seal_state().gated
+        holder["store"].relay_gate = None  # Store.close clears it
+        assert mk.seal_state().gated
+        holder["store"] = None
         assert mk.seal_state().gated
         with pytest.raises(MembershipUnsafe):
-            R6Gate(mk).install(None)
+            R6Gate(mk).install(lambda: None)
     finally:
         mk.close()
 
 
-def test_the_real_store_calls_the_gate_for_device_removals_only():
-    calls = []
-    s = Store.__new__(Store)
-    s.relay_gate = lambda dev, why: calls.append((dev, why))
-    s._relay_gate_for("workspace", {"type": "device.removed", "device": "d_" + DEVICE})  # noqa: SLF001
-    s._relay_gate_for("workspace", {"type": "device.revoked", "device": "d_x"})  # noqa: SLF001
-    s._relay_gate_for("workspace", {"type": "member.added", "device": "d_" + DEVICE})  # noqa: SLF001
-    s._relay_gate_for("t_" + "1" * 26, {"type": "device.removed", "device": "d_" + DEVICE})  # noqa: SLF001
-    assert calls == [(DEVICE, "device.removed"), ("", "device.revoked")]
+def test_a_rebuild_that_raises_leaves_the_key_store_gated(tmp_path):
+    mk = open_keys(tmp_path, hooked=False)
+    try:
+        rotate(mk)
+        store = _FakeStore()
+
+        def boom():
+            raise RuntimeError("store unavailable")
+
+        with pytest.raises(RuntimeError):
+            R6Gate(mk).install(lambda: store, rebuild=boom)
+        assert store.relay_gate is not None and mk.seal_state().gated  # hooked for events, not bound
+    finally:
+        mk.close()
+
+
+def test_expose_refuses_a_digest_that_is_not_the_bodys(tmp_path):
+    mk = open_keys(tmp_path)
+    try:
+        c = mk.new_epoch_key(1)
+        o = list_for(1, 1, c)
+        with pytest.raises(CustodyRefused, match="digest"):
+            mk.expose(list_seq=1, epoch=1, body=canon.dumps(o), digest="sha256:" + "0" * 64, adds=[DEVICE])
+        mk.expose(list_seq=1, epoch=1, body=canon.dumps(o), digest=digest(o), adds=[DEVICE])
+    finally:
+        mk.close()
 
 
 # -- F5: one lock order; refused, never deadlocked ---------------------------------------------------------------
@@ -504,3 +531,78 @@ def test_m58_genesis_event_is_a_copy():
     g = s.genesis_event()
     g["delegation"]["o"]["a"] = 2
     assert s.genesis_event()["delegation"]["o"]["a"] == 1
+
+
+# -- round 3 (Opus delta review) -------------------------------------------------------------------------------
+
+
+def _signed_rotate(mk, devices=None):
+    """rotate() with the ledger's wk_commit recorded, as the R6 signer does."""
+    lhw, ehw = mk.high_water()
+    e = ehw + 1
+    c = mk.new_epoch_key(e)
+    mk.ledger.record("wk_commit", str(e), c, "")
+    o = list_for(e, lhw + 1, c, devices)
+    mk.expose(list_seq=lhw + 1, epoch=e, body=canon.dumps(o), digest=digest(o), adds=devices or [DEVICE])
+    assert mk.commit(list_seq=lhw + 1, epoch=e, list_hash=digest(o), list_obj=o, at_ms=1)
+    return e
+
+
+def test_r2_head_and_ledger_restored_together_with_newer_keys_start_gated(tmp_path):
+    """X3: the orphan key above e_c (the newer keys/) gates the store (h7), as an unaccounted ledger entry does."""
+    mk = open_keys(tmp_path)
+    _signed_rotate(mk, [DEVICE, OTHER])
+    old = {n: (tmp_path / "membership" / n).read_bytes() for n in ("head.json", "sign-ledger.json")}
+    _signed_rotate(mk, [DEVICE])
+    mk.close()
+    for n, data in old.items():
+        _replace(tmp_path / "membership" / n, data)
+    mk = open_keys(tmp_path)
+    try:
+        assert mk.current_epoch() == 1 and mk.seal_state().gated and mk.is_burned(2)
+        assert {"device": "", "reason": "h7"} in _head(tmp_path)["gate"]["reasons"]
+    finally:
+        mk.close()
+
+
+def test_n33_a_clean_restart_with_the_signer_ledger_is_not_gated(tmp_path):
+    mk = open_keys(tmp_path)
+    _signed_rotate(mk)
+    _signed_rotate(mk)
+    mk.close()
+    mk = open_keys(tmp_path)
+    try:
+        assert not mk.seal_state().gated
+    finally:
+        mk.close()
+
+
+def test_n32_a_restart_while_a_signed_rotation_is_exposed_is_not_gated(tmp_path):
+    mk = open_keys(tmp_path)
+    _signed_rotate(mk)
+    lhw, ehw = mk.high_water()
+    c = mk.new_epoch_key(ehw + 1)
+    mk.ledger.record("wk_commit", str(ehw + 1), c, "")
+    o = list_for(ehw + 1, lhw + 1, c)
+    mk.expose(list_seq=lhw + 1, epoch=ehw + 1, body=canon.dumps(o), digest=digest(o), adds=[DEVICE])
+    mk.ledger.record("member_list", str(lhw + 1), "00" * 32, "s")
+    mk.close()
+    mk = open_keys(tmp_path)
+    try:
+        assert not mk.seal_state().gated and mk.seal_state().stale_target == ehw + 1
+    finally:
+        mk.close()
+
+
+def test_listed_devices_include_the_exposed_rotation(tmp_path):
+    """X6 (R4): a device added in an exposed rotation is listed for the start-up rebuild."""
+    from .r6kit import PERSON
+
+    mk = open_keys(tmp_path)
+    try:
+        rotate(mk, devices=[DEVICE])
+        assert mk.listed_devices() == [(DEVICE, PERSON)]
+        expose_rotation(mk, devices=[DEVICE, OTHER])
+        assert set(mk.listed_devices()) == {(DEVICE, PERSON), (OTHER, PERSON)}
+    finally:
+        mk.close()

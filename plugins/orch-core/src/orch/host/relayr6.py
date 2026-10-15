@@ -86,35 +86,33 @@ class _NoView:
 
 
 def _rebuild_gate(service: Any, mk: Any) -> None:
-    """F4, before the worker starts: a crash between the store's commit of ``device.removed``/``device.revoked`` (or
-    held evidence) and the durable gate write left no gate; every member of the committed list whose F1 standing is
-    not ``ok`` raises it now. (Forwarded ``HostPins`` evidence of a device F1 still holds is R6b's ``desired()``.)"""
+    """The relay gate invariant at start (round 3): a loss of standing the running store could not report (a crash
+    between its state change and the durable gate write, a change made while no R6 hook was installed) is found
+    here. Every device of the committed list AND of the exposed body (a late 2xx would commit it, R4) whose F1
+    standing is not ``ok`` raises the gate; a malformed entry raises it for every device. Runs after the store hook
+    is set and before the key store is bound, so a failure here leaves the key store gated (R3). (Forwarded
+    ``HostPins`` evidence of a device F1 still holds is R6b's ``desired()``.)"""
     from .admission import device_standing
 
-    committed = mk.head()["committed"]
-    if committed is None:
-        return
-    for m in committed["list"].get("members", []):
-        dev, person = m.get("device_id"), m.get("person_id")
-        if not isinstance(dev, str) or not isinstance(person, str):
+    for dev, person in mk.listed_devices():
+        if not dev or not person:
             mk.raise_gate("", "h7")
-            continue
-        if device_standing(service.store, "p_" + person, "d_" + dev) != "ok":
-            mk.raise_gate(dev, "device.removed")
+        elif device_standing(service.store, "p_" + person, "d_" + dev) != "ok":
+            mk.raise_gate(dev, "f1_standing")
 
 
 def r6(service: Any) -> tuple[Any, Any]:
-    """R5's ``r6`` seam: the key store as R2's ``EpochKeySource`` (one seal lock), and the view. Checked (H7),
-    its gate rebuilt from the store, and the store hook installed (``Store.relay_gate``); without a store: refused."""
+    """R5's ``r6`` seam: the key store as R2's ``EpochKeySource`` (one seal lock), and the view. Checked (H7); the
+    store hook installed, the gate rebuilt from the store, THEN the key store bound to the live ``service.store``
+    (a rebuild failure leaves it gated; a reopened store has no hook: gated until ``r6`` runs again). Without a
+    store: refused."""
     from orch.relay.r6.keystore import MembershipUnsafe, R6Gate
 
     mk = keys_for(service)
     mk.check_start()
-    store = service.store
-    if store is None:
+    if service.store is None:
         raise MembershipUnsafe("no store to hook")
-    R6Gate(mk).install(store)
-    _rebuild_gate(service, mk)
+    R6Gate(mk).install(lambda: service.store, rebuild=lambda: _rebuild_gate(service, mk))
     return mk, _NoView()
 
 

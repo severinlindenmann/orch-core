@@ -8856,7 +8856,9 @@ R2's `relay/keys.py`).
   durably (reason `h7`, device `""` = all), and R6b's verified `GET members` resolves it (H7 rotation). The epoch is
   burned as before and never re-activated. **Honest limit:** a whole-directory restore (head, keys and ledger
   together) is not detectable locally; `membership/` has no instance/inode binding like R1's `FileHolderStore`
-  (R1's preflight reporting a copied or restored relay directory is the H7 trigger R6b must wire).
+  (R1's preflight reporting a copied or restored relay directory is the H7 trigger R6b must wire). **Corrected in
+  round 3:** this round-2 rule missed `head.json` and the ledger restored together while `keys/` is newer (the newer
+  key looked like a plain orphan, and the old epoch was served ungated); J-R6a-19 closes it.
 - J-R6a-14 (F2) **A lost `membership/` of a linked workspace is H7.** `MembershipKeys(previously_linked=True)` (passed
   by `relayr6` when `relay/link.json` is `linked`, `relay/link-card.json` exists, or the link state is unreadable)
   never creates a fresh head: `head_lost`, so no second `WK_1`. `StateDir` now fsyncs the parent after creating a
@@ -8873,6 +8875,9 @@ R2's `relay/keys.py`).
   rebuilds the gate: every committed-list member whose F1 `device_standing` is not `ok` raises it (the crash window
   between the store's commit and the durable write). Forwarded `HostPins` evidence of a device F1 still holds is
   R6b's `desired()`. Cost: the store lock waits for one `head.json` write per removal (availability, not safety).
+  **Corrected in round 3:** keyed on two event types, this hook did NOT cover `member.removed`, a `restore` carrying a
+  new revocation, or a foreign append the store reloads; the "binding" was a one-time latch that a replaced store
+  did not reset; the rebuild ignored the exposed rotation. J-R6a-20 to 22 replace it.
 - J-R6a-17 (F5) **One lock order: store, writer, seal, RidStore.** A writer method (`commit`, `expose`, `flush_gate`,
   the durable part of `raise_gate`, ...) inside a seal-lock hold of the same thread is refused with `RuntimeError`,
   never a deadlock; R6 updates its in-memory seal state under `serialised()` only after its own durable write. The
@@ -8887,6 +8892,35 @@ R2's `relay/keys.py`).
   `primary.json` and `alarms.json` are checked by the same rule. Honest limits kept: symmetric keys
   (`secrets.token_bytes`) are not covered by `KEYGEN_ALLOWED`; keys live in Python `bytes` for the process lifetime
   (no zeroisation claim); `recover_h7` cannot recover from `ledger_unreadable` (owner repair).
+**Round 3 (Opus delta review of f6edb15e: PASS WITH REQUIRED CHANGES; fixed 15 Oct 2026, orch-29).** The main
+finding is the second occurrence of the class "the gate is not raised on some path" (round 1 F4), so it is fixed
+structurally (CLAUDE rule: name the invariant, enforce it in one place).
+- J-R6a-20 **THE RELAY GATE INVARIANT: a device whose F1 standing goes from `ok` to not `ok`, by any means, raises
+  the gate before the store lock is released.** Enforced in ONE place: the `Store._state` setter, the only way the
+  model state changes (`_load`: open, reload of a foreign append, recovered pending appends; `_commit`: every append
+  path). It diffs the standing of every device of the old and the new state (`device_standing`'s `ok`: known, not
+  removed, not revoked) and calls `relay_gate(device, "f1_standing")` for each loss, whatever the event type
+  (`device.removed`, `device.revoked`, `member.removed`, a restore's revocations, any future one). An AST test pins
+  that `_state_v` is written only by `__init__` and the setter and `_state` only by `_load`/`_commit`. `HostPins`
+  evidence is not model state: a `held` forwarded revocation calls the same `_raise_relay_gate`; a `pending` one that
+  becomes effective later (the device associated afterwards) is R6b's `desired()`. A gate error is logged and never
+  undoes the state change (R6's in-memory gate is up before anything can fail). The event-type `R6Gate.on_commit` is
+  removed. First load (old state `None`) is covered by the start-up rebuild.
+- J-R6a-21 **The key store is bound to the LIVE store, never a latch.** `R6Gate.install(live, rebuild=...)` sets
+  `relay_gate` on `live()`, runs the start-up rebuild, and only then binds; `seal_state` is gated unless `live()` (the
+  host's `service.store`, re-read at every decision) carries exactly that hook. A reopened (replaced) store, a closed
+  one (`Store.close` clears the hook) or a rebuild that raised: gated until `relayr6.r6` runs again.
+- J-R6a-22 **The start-up rebuild walks the committed list and the exposed body** (a device added by an exposed
+  rotation would be committed by a late 2xx); a malformed entry gates every device.
+- J-R6a-19 **An orphan key above `e_c` also starts the store gated** (`h7`): it closes `head.json` + ledger restored
+  together with a newer `keys/`, and costs nothing in the legitimate crash window (R6b rotates next).
+- J-R6a-23 `expose` recomputes the digest from the body (`list_hash` of the signed list for a `PUT membership` body,
+  of `cj(o)` for a bare list) and refuses another.
+- Tests: `tests/store/test_relay_gate.py` (end to end through the real store: `device.removed`, `device.revoked`,
+  `member.removed`, a restore's revocation, a foreign append, a held and a pending forwarded revocation, unrelated
+  appends, a failing gate, close, the AST chokepoint), the review's X3/X5/X6 and survivors N02, N04, N11, N16, N17, N32,
+  N33. Equivalent: N14, N19, N22; N18 (parent fsync) needs a crash harness.
+
 - Mutation, round 2: the review's 60 mutants left 6 required survivors (M16, M18, M27, M36, M51, M57) and M58: each has
   a test now. 30 new mutants of the round-2 code on a `git archive` copy: 27 killed at first, one survivor closed by
   a test, 2 equivalent (the durable gate write at load always coincides with a raised high-water mark; the gate

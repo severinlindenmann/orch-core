@@ -16,10 +16,10 @@ from orch.identity.memberlist import member_list_o, wk_grant_o
 from orch.relay import card as relay_card
 from orch.relay import sign
 from orch.relay.r6.firstcard import R6LinkSource, default_part
-from orch.relay.r6.keystore import MembershipKeys
+from orch.relay.r6.keystore import MembershipKeys, R6Gate
 
 from ..helpers import OWNER_PK, WS, Key, directory
-from ..r6kit import DELEGATION, ck_of, digest
+from ..r6kit import DELEGATION, KitStore, ck_of, digest
 from .kit import CERTS, DEVICE, PERSON, SCOPES, HostSide, Owner, RefDevice, answer_of, now_ms, session
 
 pytestmark = pytest.mark.relay_t2
@@ -60,7 +60,8 @@ class _Epochs:
 @pytest.fixture
 def mk(tmp_path):
     m = MembershipKeys(tmp_path / "membership", WS, now_ms=now_ms)
-    m.confirm_gate_hooks()  # no store here: the test stands in for R6Gate.install
+    store = KitStore()  # no store here: a stand-in for the host's
+    R6Gate(m).install(lambda: store)
     yield m
     m.close()
 

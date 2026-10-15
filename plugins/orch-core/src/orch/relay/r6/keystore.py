@@ -89,7 +89,7 @@ HEAD = "head.json"
 log = logging.getLogger("orch.relay.r6")
 GATE_REASONS = frozenset(
     {"device.removed", "device.revoked", "held_evidence", "relay_revocation", "revoked_refusal", "rotation_due",
-     "h7", "rotate"}
+     "h7", "rotate", "f1_standing"}
 )  # fmt: skip
 
 _WK = re.compile(r"wk-([1-9][0-9]{0,9})\.json")
@@ -241,6 +241,15 @@ def _list_of(body: bytes) -> dict[str, Any]:
     return obj
 
 
+def _list_digest(body: bytes) -> str:
+    """``list_hash`` of an exposed body: ``"sha256:" + hex(sha256(cj(signed list)))`` for a ``PUT membership`` body,
+    ``"sha256:" + hex(sha256(cj(o)))`` for a bare list ``o``."""
+    obj = canon.loads_strict(body)
+    if type(obj) is dict and type(obj.get("member_list")) is dict:
+        obj = obj["member_list"]
+    return "sha256:" + crypto.sha256(canon.dumps(obj)).hex()
+
+
 class _SealLock:
     """The seal lock: an ``RLock`` that knows whether the current thread holds it (the lock-order check of the
     writer methods, F5)."""
@@ -296,7 +305,10 @@ class MembershipKeys:
         self._fault = fault or (lambda point: None)
         self._seal = _SealLock()  # the seal lock (11A.15.2)
         self._writer = threading.RLock()  # R6's one head.json writer (taken before the seal lock, never inside it)
-        self._hooked = False  # R6Gate.install ran: until then the store is gated (F4, fail closed)
+        # the store hook, bound to the LIVE store (round 3, R3): gated unless live() is a store whose relay_gate is
+        # exactly the callable R6Gate.install put there; checked at every seal_state, never a latch
+        self._live: Callable[[], Any] = lambda: None
+        self._hook: object = None
         self._dir = StateDir(root)
         try:
             self._keys = StateDir(Path(root) / "keys")
@@ -432,7 +444,7 @@ class MembershipKeys:
         for e in orphans:  # the orphan rule: claimed, never exposed: burned, never activated or generated again
             burned[e] = min(ehw + 1, MAX_EPOCH)
         gate = head["gate"]
-        if unaccounted:
+        if unaccounted or orphans:  # an orphan key above e_c too (round 3, R2: head + ledger restored, keys newer)
             reason = {"device": "", "reason": "h7"}
             old = gate or {"up": True, "reasons": [], "since_ms": self._now_ms(), "target": None}
             reasons = old["reasons"] if reason in old["reasons"] else [*old["reasons"], reason]
@@ -577,7 +589,7 @@ class MembershipKeys:
         if self._forked():
             return SealState(0, True, 1)
         with self._seal:
-            gated = self._gate_up or self._ec < 1 or self._unsafe is not None or not self._hooked
+            gated = self._gate_up or self._ec < 1 or self._unsafe is not None or not self._hooked()
             return SealState(self._ec, gated, self._target())
 
     @contextlib.contextmanager
@@ -629,11 +641,22 @@ class MembershipKeys:
                 "membership gate raise not yet durable (%s); it stays up in memory and queued", type(exc).__name__
             )
 
-    def confirm_gate_hooks(self) -> None:
-        """The store's hook is installed (:meth:`R6Gate.install`): data may be sealed once the rest allows it.
-        Until then the store is gated (F4, fail closed)."""
+    def bind_gate(self, live: Callable[[], Any], hook: object) -> None:
+        """Bind the gate to the live store (:meth:`R6Gate.install`): ``live()`` returns the store now in use (the
+        host's ``service.store``), ``hook`` is the exact callable installed as its ``relay_gate``."""
         with self._seal:
-            self._hooked = True
+            self._live, self._hook = live, hook
+
+    def _hooked(self) -> bool:
+        """Data may be sealed only while the store now in use carries our hook (a reopened, replaced or closed store
+        does not: gated until :meth:`R6Gate.install` runs on it). Fail closed on any error."""
+        if self._hook is None:
+            return False
+        try:
+            store = self._live()
+            return store is not None and store.relay_gate is self._hook
+        except Exception:  # noqa: BLE001 - any doubt is "not hooked"
+            return False
 
     def gate_up(self) -> bool:
         if self._forked():
@@ -701,6 +724,21 @@ class MembershipKeys:
                 self._ehw = max(self._ehw, epoch)
             return pairing.wk_commit(self.workspace_id, epoch, wk)
 
+    def listed_devices(self) -> list[tuple[str, str]]:
+        """``(device_id, person_id)`` of every member of the committed list and of the exposed body (a removed
+        device may hold the exposed epoch's key once a late 2xx commits it, round 3 R4); a malformed entry is
+        ``("", "")`` (the caller gates every device)."""
+        with self._write():
+            lists = [self._head["committed"]["list"]] if self._head["committed"] else []
+            if self._head["exposed"] is not None:
+                lists.append(_list_of(crypto.unb64u(self._head["exposed"]["body"])))
+        out = []
+        for o in lists:
+            for m in o.get("members", []) if isinstance(o, dict) else [None]:
+                ok = isinstance(m, dict) and type(m.get("device_id")) is str and type(m.get("person_id")) is str
+                out.append((m["device_id"], m["person_id"]) if ok else ("", ""))
+        return out
+
     def wk_commit_of(self, epoch: int) -> str | None:
         """``wk_commit`` of a held epoch (any), for R6b's planner; never the key."""
         with self._seal:
@@ -737,6 +775,8 @@ class MembershipKeys:
             if not rotation and ec < 1:
                 raise CustodyRefused("the first list is a rotation")
             o = _list_of(body)
+            if digest != _list_digest(body):
+                raise CustodyRefused("the digest is not the exposed list's")
             if (
                 o.get("epoch") != epoch
                 or o.get("list_seq") != list_seq
@@ -984,7 +1024,8 @@ class R6Gate:
     F1 ``device.removed``/``device.revoked`` or holds forwarded evidence, before the store lock is released. The
     in-memory gate goes up under the seal lock (a seal that began first finishes first), then the raise is written
     durably (writer lock) before it returns. It never takes the store lock. :meth:`install` sets ``Store.relay_gate``
-    (which the host's journal never replaces) and confirms the hook to the key store, which is gated until then."""
+    (which the host's journal never replaces; the store calls it on every loss of F1 standing, whatever its cause)
+    and binds the key store to the live store, which is gated whenever that store does not carry this hook."""
 
     __slots__ = ("_keys",)
 
@@ -994,22 +1035,15 @@ class R6Gate:
     def raise_for(self, device: str, reason: str) -> None:
         self._keys.raise_gate(device, reason)
 
-    def install(self, store: Any) -> None:
-        """``store.relay_gate = raise_for`` (``orch.store.Store`` calls it inside the critical sections of a
-        ``device.removed``/``device.revoked`` append and of a held forwarded revocation), then confirm the hook."""
+    def install(self, live: Callable[[], Any], *, rebuild: Callable[[], None] | None = None) -> None:
+        """``live()`` is the store now in use (re-read at every seal decision): set its ``relay_gate`` to this gate
+        (from now on no loss of standing is missed), run ``rebuild()`` (the start-up gate rebuild), and only then bind
+        the key store to it. A ``rebuild`` that raises leaves the key store unbound, so gated (round 3, R3)."""
+        store = live()
         if store is None:
             raise MembershipUnsafe("no store to hook")
-        store.relay_gate = self.raise_for
-        self._keys.confirm_gate_hooks()
-
-    def on_commit(self, log: str, event: Mapping[str, Any]) -> None:
-        """A ``Store.on_commit``-shaped hook: ``device.removed``/``device.revoked`` of the workspace log raise the gate
-        for that device (its id without the ``d_`` prefix). Every other event is ignored."""
-        typ = event.get("type") if isinstance(event, Mapping) else None
-        if typ not in ("device.removed", "device.revoked"):
-            return
-        dev = event.get("device")
-        if type(dev) is str and dev.startswith("d_") and _HEX32.fullmatch(dev[2:]):
-            self.raise_for(dev[2:], typ)
-        else:
-            self.raise_for("", typ)  # unparseable: fail closed, the gate goes up for every device
+        hook = self.raise_for
+        store.relay_gate = hook
+        if rebuild is not None:
+            rebuild()
+        self._keys.bind_gate(live, hook)

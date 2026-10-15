@@ -125,8 +125,9 @@ def _commit_list(mk, wid, devices, person):
     o = member_list_o(wid, e, seq, 1, mk.new_epoch_key(e),
                       [{"device_id": d, "person_id": person, "scopes": ["look", "decide"]} for d in devices],
                       owner_person_id=person, first=seq == 1)  # fmt: skip
-    mk.expose(list_seq=seq, epoch=e, body=canon.dumps(o), digest="sha256:x", adds=devices)
-    assert mk.commit(list_seq=seq, epoch=e, list_hash="sha256:x", list_obj=o, at_ms=1)
+    h = "sha256:" + crypto.sha256(canon.dumps(o)).hex()
+    mk.expose(list_seq=seq, epoch=e, body=canon.dumps(o), digest=h, adds=devices)
+    assert mk.commit(list_seq=seq, epoch=e, list_hash=h, list_obj=o, at_ms=1)
     return e
 
 
@@ -185,5 +186,71 @@ def test_the_custody_check_walks_r6cs_subdirectories(lab):
             (root / "grants" / "1" / "deeper").mkdir(mode=0o700)
             with pytest.raises(HostError):
                 custody.check_workspace_files(lab.state, wid, lab.root, UID)
+        finally:
+            relayr6.close(service)
+
+
+# -- round 3 (Opus delta review) ----------------------------------------------------------------------------------
+
+
+def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path, monkeypatch):
+    """X6 / N11: an exposed rotation's member whose standing is lost, and a malformed entry, raise the gate."""
+    import types
+
+    from orch.host import admission
+    from tests.relay.r6kit import DEVICE, expose_rotation, open_keys, rotate
+
+    other = "ab" * 16
+    mk = open_keys(tmp_path)
+    try:
+        rotate(mk, devices=[DEVICE])
+        expose_rotation(mk, devices=[DEVICE, other])
+        monkeypatch.setattr(admission, "device_standing", lambda st, p, d: "removed" if d == "d_" + other else "ok")
+        relayr6._rebuild_gate(types.SimpleNamespace(store=object()), mk)  # noqa: SLF001
+        assert mk.gate_up() and {"device": other, "reason": "f1_standing"} in mk.head()["gate"]["reasons"]
+        calls = []
+        fake = types.SimpleNamespace(listed_devices=lambda: [("", "")], raise_gate=lambda d, r: calls.append((d, r)))
+        relayr6._rebuild_gate(types.SimpleNamespace(store=object()), fake)  # noqa: SLF001
+        assert calls == [("", "h7")]
+    finally:
+        mk.close()
+
+
+def test_previously_linked_reads_link_card_and_fails_closed(tmp_path):
+    """N16 / N17."""
+    import types
+
+    ws = "a" * 32
+    relay = tmp_path / "hosts" / ws / "relay"
+    relay.mkdir(parents=True, mode=0o700)
+    svc = types.SimpleNamespace(state_dir=tmp_path, workspace_id=ws, host_uid=UID)
+    assert relayr6._previously_linked(svc) is False  # noqa: SLF001 - nothing linked
+    (relay / "link-card.json").write_text("{}")
+    assert relayr6._previously_linked(svc) is True  # noqa: SLF001 - a first card may be at the relay
+    (relay / "link-card.json").unlink()
+    (relay / "link.json").write_text("{}")
+    os.chmod(relay / "link.json", 0o644)  # unsafe mode: the checked read refuses
+    assert relayr6._previously_linked(svc) is True  # noqa: SLF001 - fail closed
+    os.chmod(relay / "link.json", 0o600)
+    write_private(relay / "link.json", {"v": 1, "state": "linked"})
+    assert relayr6._previously_linked(svc) is True  # noqa: SLF001
+
+
+def test_r6_rebinds_after_the_store_is_replaced(lab):
+    """X5 (R3): the key store follows the live service.store; a replaced store (reopen) gates until r6 runs again."""
+    with lab.host() as h, h.client() as c:
+        wid, service = _linked(lab, h, c)
+        try:
+            mk = relayr6.keys_for(service)
+            person = members.check_genesis(service.store.genesis_event())["delegation"]["owner_person_id"]
+            dev = members.check_genesis(service.store.genesis_event())["device_cert"]["device_id"]
+            _commit_list(mk, wid, [dev], person)
+            relayr6.r6(service)
+            assert not mk.seal_state().gated
+            old = service.store
+            service.submit(service.open).result(30)  # replaces service.store (on the worker thread)
+            assert service.store is not old and mk.seal_state().gated
+            relayr6.r6(service)
+            assert not mk.seal_state().gated
         finally:
             relayr6.close(service)

@@ -244,9 +244,12 @@ class Store:
         #: subscription journal). ``None``: no hook (direct mode).
         self.before_append: Callable[[], None] | None = None
         self.on_commit: Callable[[str, dict[str, Any]], None] | None = None
-        #: R6a (11A.15.2): ``relay_gate(device_hex, reason)`` raises R6's seal gate inside the critical section of a
-        #: ``device.removed``/``device.revoked`` append to the workspace log and of a ``held`` forwarded revocation,
-        #: before the lock is released. Set by ``R6Gate.install``; the host's journal never replaces it.
+        #: R6a (11A.15.2) THE RELAY GATE INVARIANT: a device whose F1 standing goes from ``ok`` to not ``ok``, by any
+        #: means (an append of any event type, a restore, a foreign append or a recovered pending append that a reload
+        #: picks up), raises R6's seal gate before the store lock is released. Enforced in one place: the ``_state``
+        #: setter (:meth:`_gate_lost_standing`), the only way the model state changes; a ``held`` forwarded
+        #: revocation (``HostPins``, not model state) calls the same :meth:`_raise_relay_gate`. Set by
+        #: ``R6Gate.install``; the host's journal never replaces it; :meth:`close` clears it (R6 is then gated).
         self.relay_gate: Callable[[str, str], None] | None = None
         #: how often a lock found a log changed on disk that this store did not write (or a crashed append to
         #: finish): the host's cheap foreign-append signal (F11)
@@ -270,7 +273,7 @@ class Store:
         self._logs: dict[str, LogInfo] = {}
         self._loaded: set[str] = set()
         self._load_budget: int | None = None
-        self._state: State | None = None
+        self._state_v: State | None = None
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
         self._genesis_event: dict[str, Any] | None = None
@@ -401,7 +404,50 @@ class Store:
                 self._after_open_heal(eager)
             self._maybe_index()
 
+    @property
+    def _state(self) -> State | None:
+        return self._state_v
+
+    @_state.setter
+    def _state(self, new: State | None) -> None:
+        """The ONE place the model state changes (``_load`` and ``_commit``), so the relay gate invariant is enforced
+        here: assign, then raise the gate for every device whose standing was lost. Always under the store lock."""
+        old, self._state_v = self._state_v, new
+        if self.relay_gate is not None and old is not None and new is not None and old is not new:
+            self._gate_lost_standing(old, new)
+
+    @staticmethod
+    def _standing_ok(state: State, device: str) -> bool:
+        """``host.admission.device_standing``'s ``ok``: known, neither removed (also by ``member.removed``) nor
+        revoked (also by a restore's revocations)."""
+        view = state.workspace.devices.get(device)
+        return view is not None and not view.removed and not view.revoked
+
+    def _gate_lost_standing(self, old: State, new: State) -> None:
+        for device in list(old.workspace.devices):
+            if self._standing_ok(old, device) and not self._standing_ok(new, device):
+                self._raise_relay_gate(device, "f1_standing")
+
+    def _raise_relay_gate(self, device: str, reason: str) -> None:
+        """Call ``relay_gate`` with the 32-hex id (``""``, every device, for an unparseable one). R6 raises its
+        in-memory gate before anything can fail; an error here is logged (by class) and never undoes the store's
+        state change."""
+        gate = self.relay_gate
+        if gate is None:
+            return
+        ok = (
+            type(device) is str
+            and len(device) == 34
+            and device.startswith("d_")
+            and all(c in "0123456789abcdef" for c in device[2:])
+        )
+        try:
+            gate(device[2:] if ok else "", reason)
+        except Exception as exc:  # noqa: BLE001 - the state change stands; R6's in-memory gate is already up
+            _log.error("relay gate raise failed (%s)", type(exc).__name__)
+
     def close(self) -> None:
+        self.relay_gate = None  # a closed store's hook is gone: R6 (bound to the live store) is gated
         self._index.close()
         if self._pins is not None:
             self._pins.close()
@@ -1729,25 +1775,9 @@ class Store:
             self._needs_reload = True  # finish a committed transition before the next call, even without reopening
             raise
         finally:
-            try:
-                self._relay_gate_for(log, ev)  # R6a: the gate goes up where the cause is written (fail closed)
-            finally:
-                if self.on_commit is not None:  # the event is in the log whatever the bookkeeping above did
-                    self.on_commit(log, ev)
+            if self.on_commit is not None:  # the event is in the log whatever the bookkeeping above did
+                self.on_commit(log, ev)
         return Appended(ev, new_state)
-
-    def _relay_gate_for(self, log: str, ev: Mapping[str, Any]) -> None:
-        typ = ev.get("type")
-        if self.relay_gate is None or log != "workspace" or typ not in ("device.removed", "device.revoked"):
-            return
-        dev = ev.get("device")
-        ok = (
-            type(dev) is str
-            and len(dev) == 34
-            and dev.startswith("d_")
-            and all(c in "0123456789abcdef" for c in dev[2:])
-        )
-        self.relay_gate(dev[2:] if ok else "", str(typ))  # an unparseable device: the gate goes up for every device
 
     def _host_sign(self, ev: dict[str, Any], log: str) -> None:
         assert self._host is not None
@@ -3529,9 +3559,8 @@ class Store:
             if not kept:
                 _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
                 return "dropped"
-            if result == "held" and self.relay_gate is not None:  # R6a: under the store lock, before release
-                ok = device.startswith("d_") and len(device) == 34
-                self.relay_gate(device[2:] if ok else "", "held_evidence")
+            if result == "held":  # R6a: the relay gate invariant for HostPins evidence, under the store lock
+                self._raise_relay_gate(device, "held_evidence")
             return result
 
 

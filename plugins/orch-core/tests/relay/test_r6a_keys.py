@@ -166,7 +166,7 @@ def test_orphan_wk_key_file_counts_as_burned(tmp_path):
         assert m.wk(2) is None and m.refusal_key(2) is not None  # held for a refusal only (G2b)
         with pytest.raises(CustodyRefused):
             m.new_epoch_key(2)  # never generated again
-        assert m.seal_state() == SealState(1, False, 3)
+        assert m.seal_state() == SealState(1, True, 3)  # an orphan above e_c starts gated (round 3, R2)
         with pytest.raises(CustodyRefused):  # never activated
             m.expose(list_seq=2, epoch=2, body=b"x", digest="d", adds=[])
     finally:
@@ -304,22 +304,13 @@ def test_gate_raised_inside_store_append_before_lock_release(tmp_path, mk):
     store_lock = threading.Lock()
     seen = []
     with store_lock:
-        gate.on_commit("workspace", {"type": "device.removed", "device": "d_" + DEVICE})
+        gate.raise_for(DEVICE, "device.removed")
         seen.append(mk.seal_state().gated)
         seen.append(_head(tmp_path)["gate"] is not None)
     assert seen == [True, True]
     g = _head(tmp_path)["gate"]
     assert g["up"] and g["reasons"] == [{"device": DEVICE, "reason": "device.removed"}] and g["target"] == 2
     assert mk.flush_gate() is False
-
-
-def test_other_events_do_not_raise_the_gate_and_an_unparseable_device_raises_it_for_all(mk):
-    rotate(mk)
-    gate = R6Gate(mk)
-    gate.on_commit("workspace", {"type": "member.added", "device": "d_" + DEVICE})
-    assert not mk.gate_up()
-    gate.on_commit("workspace", {"type": "device.revoked", "device": 7})
-    assert mk.gate_up()
 
 
 def test_the_gate_survives_a_restart_and_is_lowered_only_by_a_rotation_without_the_device(tmp_path):

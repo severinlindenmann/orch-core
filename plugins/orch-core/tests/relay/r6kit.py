@@ -11,7 +11,7 @@ from typing import Any
 from orch import canon
 from orch.identity.memberlist import member_list_o
 from orch.relay import sign
-from orch.relay.r6.keystore import MembershipKeys
+from orch.relay.r6.keystore import MembershipKeys, R6Gate
 
 from . import corpus
 from .bridgekit import T0
@@ -42,8 +42,15 @@ def open_keys(
     mk = MembershipKeys(tmp / "membership", WS, now_ms=clock or Clock(), fault=fault,
                         previously_linked=previously_linked)  # fmt: skip
     if hooked:
-        mk.confirm_gate_hooks()
+        store = KitStore()
+        R6Gate(mk).install(lambda: store)
     return mk
+
+
+class KitStore:
+    """A store stand-in for ``R6Gate.install`` (only ``relay_gate``)."""
+
+    relay_gate = None
 
 
 def list_for(epoch: int, list_seq: int, commit: str, devices: list[str] | None = None) -> dict[str, Any]:

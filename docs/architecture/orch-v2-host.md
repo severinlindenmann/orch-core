@@ -2826,9 +2826,10 @@ room; JUDGEMENT CALLS marked:
   `PairDeviceFacts(decl=, decl_who=)` at step 9. Refusals: `HostError` `sign.convenience_readers` (`no_declaration`,
   `reader_too_old`; `detail.devices` the phone; the hint is the 9.15 Q4 screen text) or `reader.decl_invalid`; R6
   answers the short `rejected` and moves the offer to `rejected`.
-- **The `pk_pin` check at the allocation** (9.3): `recheck_readers` (prepare, binding, submit, the append) refuses a
-  pair declaration signed for a `pk_pin` that does not name the person key of the certificate's person
-  (`reader.decl_invalid` reason `who`; `State.person_key`). Records keep the H12d-2 read rule (a `pk_pin` record counts
+- **`who` at the allocation** (9.3): `recheck_readers` (prepare, binding, submit, the append) admits a pair
+  declaration only with `who` `{person_id: the certificate's person}` or `{pk_pin: the pin of that person's key}`
+  (`State.person_key`), else `reader.decl_invalid` reason `who` (#555 review F3; `pair_entry` refuses a `person_id` of
+  another person up front). Records keep the H12d-2 read rule (a `pk_pin` record counts
   only under the pin of the device's person key).
 - **The relay's level** (9.8): `orch.relay.session.fetch_relay_info(conn)` reads `GET /v2/relay-info` (exact `{v:1,
   reader, max_publication_bytes?}`; 404 = 0; anything else malformed is `RelayMisbehaving`, never a level). R5 reads it
@@ -2841,9 +2842,11 @@ room; JUDGEMENT CALLS marked:
   (an unlinked relay counts with its last level) and a relink overwrites it (the former relay held no convenience
   event while it was below level 1, and gets nothing more). `Session(…, relay_info=hook)`: every successful R1 login
   reads relay-info again (on the session's own connection, outside the store lock) and calls the hook;
-  **`relaylink.observe_relay_level(state_dir, ws, host_uid, level, alarm)`** is that hook for R5: it stores the level of
-  a linked relay and alarms **`relay_reader_old`** when it is below `required_reader` (flag or mark; no history scan, no
-  store lock). A failed read at login keeps the last level and never fails the login. `readerrecs.relay_level` reads
+  **`relaylink.observe_relay_level(state_dir, ws, host_uid, level, alarm, origin=<the session's link origin>)`** is that
+  hook for R5: under the host-wide `relay-link.lock` it stores the level only while `link.json` is still that link (a
+  stale login of a former relay after a relink writes nothing; #555 review F2) and alarms **`relay_reader_old`** when it
+  is below `required_reader` (flag or mark; no history scan, no store lock). A failed read at login, or a hook that
+  raises (#555 review F5), keeps the last level and never fails the login. `readerrecs.relay_level` reads
   the stored level (0 when linked and unread or unsafe, `None` without a relay), so `relay_paired` and invariant I
   count only a relay below level 1. **`orch.ops.readers.restore_held(relay_level, evidence)`** is R3's hold predicate (a
   restore whose evidence carries a convenience event, relay below 1; the alarm is `relay_reader_old`); R3 wires it.
@@ -2871,7 +2874,8 @@ room; JUDGEMENT CALLS marked:
   `rd_declaration_unknown` and `rd_reader_too_old` (regenerated: signatures and salts are random, the checks are
   semantic).
 - **`orch host readers reset --workspace W`** (9.10): removes every record file (`<32 hex>.json`) of the workspace;
-  `human_only` under `ORCH_GRANT`; a linked `readers/` directory is refused; it works with the host up or down
+  `human_only` under `ORCH_GRANT`; a linked or unreadable `readers/` directory is refused (`custody.unsafe_mode`, #555
+  review F4); it works with the host up or down
   (removing a record only lowers a level). Answers `{ok, data:{workspace_id, dropped:[device]}}`.
 - **#514:** N2 done (`reader.list` uses the error-catching level wrapper). N1 (bind a record to the adding event) is
   left open: F1 has no same-id re-add, so the remaining case is a `restore` that revives a device, whose add event is

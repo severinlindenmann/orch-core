@@ -6077,7 +6077,11 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   the client's own run directory, directory owner and mode, peer UID and PID, `hello.gen`), owns `input_id` and
   `lease_gen`, keeps one input frame in flight, resends on `throttle` with the same id and reports unacknowledged ids
   as `lost`. A runner frame of the wrong shape ends the stream with `protocol`; a stream that closes without `end`
-  ends with `closed`; `send`/`resize` after the end raise `TermEnded`.
+  ends with `closed`; `send`/`resize` after the end raise `TermEnded`. `send` writes non-blocking under its own
+  deadline (`send_timeout`, default 5 s per frame), independent of `recv`'s timeout, so the next input frame that an
+  `ack` puts on the wire from inside `recv` is never cut by a short read timeout; a runner that takes no input for that
+  long ends the stream with `send_timeout` (socket closed; the unacknowledged ids are `lost`). The dashboard server
+  may treat `send_timeout` like `runner.lost` (4503, retry with backoff). Terminal follow-ups after #469.
 - **Terminals addon.** `addons/terminals/orch-addon.json` (capability `pty`, no fields); the host requires it granted
   and enabled. `orch runner terminals on|off --workspace W`: `on` needs the person's own terminal and the prefix (never
   under `ORCH_GRANT`), `off` needs none; both only with dashboard execution already on.

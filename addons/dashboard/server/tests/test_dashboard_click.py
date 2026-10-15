@@ -129,6 +129,7 @@ class HostCheck:
         self.mismatch = False
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
         self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
+        self.verified: dict = {}  # what `adapters.handoff.request` answers (the verified record)
 
     def human(self, ws, op, args, **kw):
         if op == "human.prepare" and self.replay_error:
@@ -161,7 +162,7 @@ class HostCheck:
             from orch_dashboard.errors import fail
 
             raise fail("internal", "x")
-        return {}
+        return self.verified
 
 
 @pytest.fixture(autouse=True)
@@ -1476,22 +1477,30 @@ def runner_grant(**kw):
     return {"action": "runner_grant", **kw}
 
 
+GRANT_WS = "0" * 32  # set by the `deposits` fixture: the stub's workspace id
+
+
 def grant_view(**over):
     view = {
         "risk": RISK,
         "op": "grant",
+        "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
+        "fingerprint": "0123456789ab",
         "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
         "deposit": True,
         "deposit_line": DEPOSIT_LINE,
-        "confirm": {"kind": "word", "word": "DEMO~0a1b2c3d/GRANT"},
+        "confirm": {"kind": "word", "word": f"DEMO~{GRANT_WS[-8:]}/GRANT"},
     }
     return {"view": {**view, **over}, "view_digest": HASH}
 
 
 @pytest.fixture
-def deposits(script, monkeypatch):
+def deposits(script, monkeypatch, host_check):
     """A contract-2 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
     leave this server (the host's `result` with a secret in it, and an unknown field)."""
+    global GRANT_WS
+    GRANT_WS = script.ws
+    host_check.verified = {"fingerprint": "0123456789ab"}
     script.contract = 2  # accepted since #489
     script.sign_answer = {
         "result": {"data": {"grant": GRANT, "secret": f"{GRANT}.{SECRET}"}, "seq": 9},
@@ -1577,6 +1586,11 @@ def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, s
         {"lines": ["grant", DEPOSIT_RISK]},  # no deposit line in the lines
         {"confirm": {"kind": "click"}},
         {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d"}},
+        # review L3: another workspace's word, or another workspace
+        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d/GRANT"}},
+        {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
+        # review I1: a View of another record than the one verified
+        {"fingerprint": "ffffffffffff"},
     ],
 )
 def test_a_grant_view_without_the_deposit_parts_is_not_shown(client, token, stub, deposits, over):
@@ -1661,5 +1675,6 @@ def test_expected_admits_only_the_callers_runner_grant():
         assert not check([{**good, **bad}]), bad
     assert not check([good, good])
     assert not expected(RunnerGrant(action="runner_grant"), None)([good])
+    assert not check([{**good, "extra": 1}])  # review I2: no field beyond the grant.issued shape
     twelve = expected(RunnerGrant(action="runner_grant", hours=12, scope="all"), me)
     assert twelve([{**good, "hours": 12, "scope": "all"}]) and not twelve([{**good, "hours": 13, "scope": "all"}])

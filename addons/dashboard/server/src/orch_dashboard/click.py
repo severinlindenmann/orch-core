@@ -77,13 +77,20 @@ UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
 ClickBody = Annotated[PrepareBody | RunnerGrant, Field(discriminator="action")]
 
 
-def deposit_view_ok(view: dict) -> bool:
+def deposit_view_ok(view: dict, ws: str) -> bool:
     """A deposit grant's View (section 0.8.6 item 6): `deposit:true`, core's deposit line in `deposit_line` and in
-    `lines`, the owner's risk sentence in `lines`, and the typed word `<PREFIX>~<WS8>/GRANT`."""
+    `lines`, the owner's risk sentence in `lines`, this workspace, and the typed word `<PREFIX>~<WS8>/GRANT` of THIS
+    workspace (review L3: bound to `ws`, not any workspace's word)."""
     confirm = view.get("confirm")
     lines = view.get("lines")
+    workspace = view.get("workspace")
     return (
-        view.get("deposit") is True
+        isinstance(workspace, dict)
+        and workspace.get("id") == ws
+        and isinstance(confirm, dict)
+        and isinstance(confirm.get("word"), str)
+        and confirm["word"].endswith(f"~{ws[-8:]}/GRANT")
+        and view.get("deposit") is True
         and view.get("deposit_line") == DEPOSIT_LINE
         and isinstance(lines, list)
         and DEPOSIT_LINE in lines
@@ -331,7 +338,7 @@ def register(app: FastAPI, gateway: Gateway):
         # events and values), read through OUR link. A host that prepared anything else is refused before it is shown.
         try:
             prepared = human(ws, "human.get", {"request_id": rid})
-            verify(
+            verified = verify(
                 prepared,
                 ws,
                 expect_op=op,
@@ -353,9 +360,17 @@ def register(app: FastAPI, gateway: Gateway):
         # The runner grant asked for `deposit:true`; its View must say so (and carry the deposit and risk lines), and
         # no other View may claim a deposit: the two must agree, or nothing is shown (no Sign button).
         if isinstance(wanted, RunnerGrant) != (shown.get("deposit") is True) or (
-            isinstance(wanted, RunnerGrant) and not deposit_view_ok(shown)
+            isinstance(wanted, RunnerGrant) and not deposit_view_ok(shown, ws)
         ):
             raise refusal_check("The review does not say where the grant goes. Nothing was shown. Cancel it.")
+        # Review I1: the grant's View must be of the very record `expected()` checked (the host's fingerprint), so the
+        # hours and scope signed are the ones verified.
+        if isinstance(wanted, RunnerGrant) and (
+            not isinstance(verified, dict)
+            or not verified.get("fingerprint")
+            or shown.get("fingerprint") != verified["fingerprint"]
+        ):
+            raise refusal_check("The review is not of the request the host prepared. Nothing was shown. Cancel it.")
         return got
 
     def ended(ws: str, rid: str) -> None:

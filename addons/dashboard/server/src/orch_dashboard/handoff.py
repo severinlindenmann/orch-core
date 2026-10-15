@@ -447,6 +447,8 @@ def expected(action: Action, person: str | None = None):
             # the caller as its person (the actor). Anything else is not shown, so it is never signed (M7b).
             return lambda ev: (
                 one(ev, "grant.issued", label="runner", verbs="agent", hours=action.hours, scope=action.scope)
+                # Review I2: exactly the grant.issued payload (plus the envelope), nothing a future field could add.
+                and set(ev[0]) <= GRANT_ISSUED_KEYS
                 and type(ev[0].get("hours")) is int
                 and 1 <= ev[0]["hours"] <= 12
                 and person is not None
@@ -462,6 +464,13 @@ def expected(action: Action, person: str | None = None):
                 and ev[0]["person"].startswith("p_")
             )
     return None
+
+
+#: A prepared `grant.issued`: the envelope (adapters.handoff.ENVELOPE) and the event schema's payload fields.
+GRANT_ISSUED_KEYS = frozenset(
+    {"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig"}
+    | {"grant", "scope", "verbs", "issued_at", "hours", "expires_at", "secret_hash", "label"}
+)
 
 
 @dataclass(frozen=True)

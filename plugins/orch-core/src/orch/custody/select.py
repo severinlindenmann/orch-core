@@ -58,20 +58,13 @@ def _legacy_dir(state_dir: Path, workspace_id: str) -> Path:
     return Path(state_dir) / "hosts" / workspace_id / "person"
 
 
-def _legacy_backend(state_dir: Path, workspace_id: str, passphrase: str | None = None) -> Any:
-    """The passphrase backend of the workspace's device key, or ``None``. With ``passphrase`` its one prompt is answered
-    with that text instead of the terminal: the dashboard's custody switch (orch-v2-host §0.8.6 item 3a), where the
-    person types the passphrase into the dashboard and the click signer passes it here."""
+def _legacy_backend(state_dir: Path, workspace_id: str) -> Any:
     from orch.ops import human
-
-    from .passphrase import PassphraseBackend
 
     directory = human.keys_dir(Path(state_dir), workspace_id)
     if not (directory / human.KEY_FILE).is_file():
         return None
-    if passphrase is None:
-        return human.open_backend(directory)
-    return PassphraseBackend.answering(directory, passphrase)
+    return human.open_backend(directory)
 
 
 def read_selection(state_dir: Path, workspace_id: str) -> Selection | None:
@@ -164,17 +157,10 @@ def _fields(workspace_id: str, device: str, to: str) -> tuple[tuple[str, str], .
 
 
 def convert_to_convenience(
-    state_dir: Path,
-    workspace_id: str,
-    *,
-    prefix: str = "",
-    store: Any = None,
-    clock: Callable[[], float] = time.time,
-    passphrase: str | None = None,
+    state_dir: Path, workspace_id: str, *, prefix: str = "", store: Any = None, clock: Callable[[], float] = time.time
 ) -> Selection:
-    """Move the passphrase device key into convenience custody (one passphrase prompt, or ``passphrase`` when the
-    dashboard's switch passes it). Resumable: a selection left at step ``written`` is finished without asking again.
-    The device id and certificate do not change."""
+    """Move the passphrase device key into convenience custody (one passphrase prompt). Resumable: a selection left
+    at step ``written`` is finished without asking again. The device id and certificate do not change."""
     from orch.identity import device_ref
 
     from .convenience import ConvenienceBackend
@@ -185,7 +171,7 @@ def convert_to_convenience(
         raise KeyExists("this workspace's device key is already in convenience custody")
     if sel is not None and sel["transition"] is not None and sel["transition"]["to"] != "convenience":
         raise CustodyError("another custody change is unfinished; finish it first (orch keys custody status)")
-    legacy = _legacy_backend(state_dir, workspace_id, passphrase)
+    legacy = _legacy_backend(state_dir, workspace_id)
     if sel is None or sel["transition"] is None:
         if legacy is None:
             raise KeyNotFound("this machine holds no passphrase device key of yours for this workspace")

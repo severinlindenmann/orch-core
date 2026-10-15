@@ -2264,9 +2264,8 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
 
 - Click-to-sign is enabled per workspace by the host-state file `<state>/host/convenience.json` (0600, host UID, in
   the D-P2-17 custody list): `{"v":1, "workspaces":{"<ws id>":{"enabled":true, "at":Time}}}`, written by
-  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op), or by the click signer's
-  custody switch (item 3a, amended 15 Oct 2026). **It is off for every workspace until switched on**: the
-  compatibility gate (item 6) is met first.
+  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op). **It is off for every
+  workspace until switched on**: the compatibility gate (item 6) is met first.
 - **The condition.** Convenience signing is allowed only while every reader of the workspace's log is local and
   updated: no relay pairing, no phone device, no other member's devices or cores, and a model that knows the value. The
   host checks it wherever `auth: "convenience"` enters a request: `human.prepare` with that signer, `human.get` binding
@@ -2366,8 +2365,8 @@ imported by `orch.custody`'s package init, the host or the dashboard's HTTP proc
   `orch.custody.keychain`, `orch.custody.select` or `orch.custody.cli`. In tier A this is not an OS security
   boundary. In tier B, permissions separate the host UID from person custody.
 
-**3. Lifecycle** (`orch keys`, terminal CLI). Creation and custody changes are terminal CLI workflows and are not
-exposed through host APIs; the one dashboard path is the click signer's switch of item 3a. `ORCH_GRANT` refuses every `orch keys` subcommand but `status`, and the changing
+**3. Lifecycle** (`orch keys`, terminal CLI only). Creation and custody changes are terminal CLI workflows and are not
+exposed through dashboard or host APIs. `ORCH_GRANT` refuses every `orch keys` subcommand but `status`, and the changing
 ones (`custody convenience|passphrase`, `forget`) also need the person's terminal (`/dev/tty`, `custody.no_prompt`
 otherwise). These checks prevent accidental use through supported agent workflows; they do not authenticate human
 presence against a same-UID process. `orch keys` and `orch host convenience` report errors in the CLI's catalog
@@ -2395,24 +2394,6 @@ envelope.
   per-workspace completion and supports retry after interruption. The clean break applies only to workspaces whose
   authoritative history includes the old device's removal; previous signatures and their effects remain. The command
   does not report complete revocation while any workspace remains outstanding.
-
-**3a. The dashboard's switch** (owner decision 15 Oct 2026, amending item 3 and D-P2-23). The click signer (item 5)
-has two more channel ops, advertised as `features: ["custody"]` in its `status` (no contract change):
-
-- `custody_on {workspace_id, passphrase}`: the person types their passphrase into the dashboard; the dashboard server
-  passes it to the signer, which runs the conversion of item 3 (`orch keys custody convenience`) with that text in
-  place of the `/dev/tty` prompt, then sets the workspace's flag, both under the flag lock (item 8) and with the same
-  refusal as `orch host convenience on` while terminal hand-offs are pending (`sign.click_only`). **The passphrase is
-  the factor that keeps a takeover of the dashboard (a stolen bearer token, an XSS) from switching one-click signing
-  on by itself.** A wrong passphrase is `custody.wrong_passphrase`; after 5 of them in 15 minutes the signer answers
-  `rate.limited` (per signer process: it slows guessing through a dashboard session and is no bound against code
-  running as the person, who can read the passphrase key file anyway). The passphrase is never logged, stored or
-  returned.
-- `custody_off {workspace_id, passphrase?}`: the flag goes off at once, with no factor (it only takes authority away).
-  With `passphrase`, the key also moves back under that new passphrase (`--in-place` above; the strength check first,
-  `custody.weak_passphrase`); without it the key stays in the convenience store until then.
-- Both answer the workspace's `status` row. The dashboard shows them in its workspace settings, owner only, with the
-  risk line of item 0.
 
 **4. `auth: "convenience"` and F1** (amended in H5c, F1 §5.3, §11.4, T16, §13).
 

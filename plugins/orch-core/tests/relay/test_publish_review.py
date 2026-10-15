@@ -530,3 +530,127 @@ def test_r3s_own_classification_holds_a_fork(kit):
     with pytest.raises(PublishHeld) as e:
         k.publisher.classify(H, pos)
     assert e.value.code == "chain.diverged" and len(k.diverged) == 1
+
+
+# -- review round 2 (orch-52/Codex): every deletion goes through a confirmation; the H12d-3 seam --------------------
+
+
+def test_every_delete_path_goes_through_a_confirmation():
+    """``_accepted`` (history, then delete) is reached only from ``_publish`` (after ``_final`` and ``_confirm``) and
+    from ``_finish_held`` (its fresh verified read is the confirmation)."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(publish.__file__).read_text())
+    callers = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, ast.FunctionDef):
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Attribute) and node.attr == "_accepted" and isinstance(node.ctx, ast.Load):
+                    callers.add(fn.name)
+    assert callers == {"_publish", "_finish_held"}, callers
+    text = Path(publish.__file__).read_text()
+    node = next(f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef) and f.name == "_publish")
+    src = ast.get_source_segment(text, node)
+    assert src.index("_final(") < src.index("_confirm(") < src.index("_accepted(")
+
+
+def _moved_past(k, tmp_path):
+    _, entry = _restored(k, tmp_path)
+    k.drain()
+    k.env.log(k.uids[1], "after")
+    k.drain()
+    k.store._outbox.write(entry)  # noqa: SLF001 - the entry's delete was lost
+    return entry
+
+
+def test_an_ancestry_claim_without_the_entry_itself_deletes_nothing(kit, tmp_path):
+    k = kit
+    entry = _moved_past(k, tmp_path)
+    k.sim.fault = lambda s: _err(404, "not_found") if s.method == "GET" and s.query.get("hash") == entry.hash else None
+    assert k.publisher.step() == ("wait", publish.HELD_RECHECK_S)
+    assert k.alarms.codes() == ["relay_restore_unconfirmed"] and k.store.outbox_first().n == entry.n
+
+
+def test_a_gone_entry_is_unconfirmed_not_deleted(kit, tmp_path):
+    k = kit
+    entry = _moved_past(k, tmp_path)
+    k.sim.fault = lambda s: (
+        _err(410, "checkpoint_gone") if s.method == "GET" and s.query.get("hash") == entry.hash else None
+    )
+    assert k.publisher.step() == ("wait", publish.HELD_RECHECK_S)
+    assert k.store.outbox_first().n == entry.n
+
+
+def test_a_relay_that_switches_branch_between_the_reads_deletes_nothing(kit, tmp_path):
+    """H equals the restore target at the step's read; the confirmation read serves another branch."""
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    k.sim.after = lambda s, r: json_reply(503, {"error": "overloaded"}) if _final(s) else r
+    k.publisher.step()  # the relay holds T; the answer is lost
+    k.sim.after = None
+    o = json.loads(json.dumps(k.sim.held["o"]))
+    o["n"] += 3
+    o["tickets"][k.uids[1]]["head"] = "sha256:" + "5" * 64
+    forked = sign_object(k.env.signer.sign, o)
+    reads = {"n": 0}
+    real_get = k.sim._get
+
+    def get(s):
+        reads["n"] += 1
+        if reads["n"] >= 2 and not s.query.get("hash"):
+            k.sim.held = forked
+        return real_get(s)
+
+    k.sim._get = get
+    k.publisher.step()
+    assert k.store.outbox_first().n == entry.n and "restore_source_mismatch" in k.alarms.codes()
+
+
+def test_a_plain_entry_held_at_the_step_but_gone_at_the_confirmation_is_kept(kit, monkeypatch):
+    k = kit
+
+    def boom(self, **kw):
+        raise Crash()
+
+    monkeypatch.setattr(History, "append", boom)
+    with pytest.raises(Crash):
+        k.drain()
+    monkeypatch.undo()
+    entry = k.store.outbox_first()
+    reads = {"n": 0}
+    real_get = k.sim._get
+
+    def get(s):
+        reads["n"] += 1
+        if reads["n"] >= 2:
+            k.sim.held = None
+        return real_get(s)
+
+    k.sim._get = get
+    k.publisher = k.make_publisher()
+    assert k.publisher.step()[0] == "wait" and "relay_misbehaving" in k.alarms.codes()
+    assert k.store.outbox_first().n == entry.n and k.publisher.history.lines() == []
+
+
+def test_every_restore_publication_is_built_in_restore_pub(kit, tmp_path, monkeypatch):
+    """The H12d-3 hook point (#555: `readers.restore_held(...)`): both the outbox restore and the stored record go
+    through `_restore_pub`."""
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    seen = []
+    real = publish.Publisher._restore_pub
+
+    def spy(self, H, target, *a, **kw):
+        seen.append(target["o"]["n"])
+        return real(self, H, target, *a, **kw)
+
+    monkeypatch.setattr(publish.Publisher, "_restore_pub", spy)
+    k.drain()
+    assert seen and seen[0] == entry.n
+    k.sim.roll_back_to(k.sim.accepted[0][1])
+    k.sim.restore_ids.clear()
+    seen.clear()
+    k.publisher = k.make_publisher()
+    k.drain()
+    assert entry.n in seen  # the stored record's republication

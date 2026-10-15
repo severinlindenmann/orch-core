@@ -42,6 +42,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
+from stat import S_ISREG as _S_ISREG
 from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
@@ -79,6 +80,7 @@ _EMPTY = canon.section_hash("")
 _PLACEHOLDER_SIG = "A" * 85 + "A"
 _TICKET_HOST_EVENTS = frozenset({"edit.external", "projection.repaired"})
 _ZERO_ACC = "sha256:" + "0" * 64
+RELAY_BRANCH_MAX = (64 << 20) // 74  # heads: the relay's largest staging set (64 MiB at 74 bytes a head, P3-D20)
 _NOPLAN = object()  # no outbox plan: the append writes its workspace checkpoint by the P1 rule (every 50)
 _log = logging.getLogger("orch.store")
 MAX_FORWARDED_ITEM_BYTES = 4096  # a forwarded revocation item (cj) above this is dropped (H12b review, Opus F2)
@@ -253,6 +255,7 @@ class Store:
         self._pins = HostPins(host_state_dir, workspace_id) if host_state_dir is not None else None
         #: the relay outbox (§11 P3-D21), active while ``<state>/hosts/<ws>/relay/link.json`` exists
         self._outbox = Outbox(self._pins.dir / "outbox") if self._pins is not None else None
+        self._relay_branch: tuple[tuple[Any, ...], tuple[str, ...], tuple[str, ...]] | None = None  # R3 paging
         self._lock = FileLock(self.state_dir / "lock", timeout=lock_timeout)
         self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id)
         self._index = Index(self.state_dir / "index.sqlite")
@@ -2965,8 +2968,12 @@ class Store:
         branch, for a republication across an accepted restore), checked whole: exactly ``upto.seq - after.seq`` heads
         folding from ``after.acc`` to ``upto.acc`` and ending at ``upto.head``. Returns the part ``skip`` heads in, at
         most ``limit`` heads, with the accumulator before it. Takes the lock. Refuses ``validation.relay`` for a
-        malformed range, ``chain.broken`` for an unreadable or unverified log, ``chain.diverged`` when no verified
-        path joins the two entries."""
+        malformed range or a branch above :data:`RELAY_BRANCH_MAX`, ``chain.broken`` for an unreadable or unverified
+        log, ``chain.diverged`` when no verified path joins the two entries. One verified branch is cached, so paging
+        through it costs one walk.
+
+        Not side-effect-free: taking the lock runs the store's recovery (pending appends, a catch-up journal) and may
+        load and replay ticket logs, which can write projections; call it as a worker job like every store method."""
         try:
             a_seq, a_acc = after["seq"], after["acc"]
             u_seq, u_head, u_acc = upto["seq"], upto["head"], upto["acc"]
@@ -3006,21 +3013,33 @@ class Store:
                 return Segment(log, start, acc, heads)
             from .checkpoints import _extension
 
-            old = {"seq": a_seq, "head": after.get("head"), "acc": a_acc}
-            path = [] if u_seq == a_seq else (self._pins.branch(u_head, a_seq) if self._pins else None)
-            if path is None or not _extension(old, {"seq": u_seq, "head": u_head, "acc": u_acc}, path):
-                raise StoreError("chain.diverged", f"{log}: no verified path between the two entries")
-            acc = a_acc
-            for head in path[:skip]:
-                acc = canon.log_acc(acc, head)
-            return Segment(log, a_seq + skip, acc, tuple(path[skip : skip + take]))
+            if u_seq - a_seq > RELAY_BRANCH_MAX:  # review round 2, P2: the walk is bounded by the largest set
+                raise StoreError("validation.relay", f"{log}: a branch of {u_seq - a_seq} heads is above the bound")
+            key = (log, a_seq, a_acc, u_seq, u_head, u_acc)
+            cached = self._relay_branch
+            if cached is None or cached[0] != key:
+                old = {"seq": a_seq, "head": after.get("head"), "acc": a_acc}
+                path = [] if u_seq == a_seq else (self._pins.branch(u_head, a_seq) if self._pins else None)
+                if path is None or not _extension(old, {"seq": u_seq, "head": u_head, "acc": u_acc}, path):
+                    raise StoreError("chain.diverged", f"{log}: no verified path between the two entries")
+                accs, acc = [a_acc], a_acc
+                for head in path:
+                    acc = canon.log_acc(acc, head)
+                    accs.append(acc)
+                # one verified branch is kept (the publisher pages through one run at a time): every later page of it
+                # is a slice, not a second walk and fold under the lock
+                cached = self._relay_branch = (key, tuple(path), tuple(accs))
+            _, path, accs = cached
+            return Segment(log, a_seq + skip, accs[skip], tuple(path[skip : skip + take]))
 
     def relay_position(self, checkpoint: Mapping[str, Any] | None) -> RelayPosition:
         """Classify the relay's held checkpoint H (already verified by R1's reader) against this host, for R3's
         startup classification (§11A.5): whether the current logs contain it, the host's numbering high-water mark,
         the newest local workspace checkpoint, and whether H is an abandoned workspace checkpoint. Takes the lock and
         loads every ticket log. Refuses ``checkpoint.prefix_invalid`` for an H that is not this workspace's WSK
-        checkpoint."""
+        checkpoint; reads ``abandoned/`` through pinned directory fds (a symlinked component is ``validation.path``).
+
+        Not side-effect-free: the lock runs recovery and loading every ticket log may write projections."""
         with self._locked():
             if self._pins is None or self._outbox is None:
                 raise StoreError("validation.host_state", "the relay position needs the host state dir")
@@ -3053,21 +3072,66 @@ class Store:
             abandoned = False
             if not contained:
                 h = canon.checkpoint_hash(o)
-                ab = self._checkpoints.dir / "abandoned"
-                for p in sorted(ab.glob("workspace-*.json")) if ab.is_dir() else []:
-                    try:
-                        cp = loads(read_or_none(p, 4 << 20))
-                        abandoned = canon.checkpoint_hash(cp["o"]) == h
-                    except (ValueError, KeyError, TypeError, canon.HashError):
-                        continue
-                    if abandoned:
-                        break
+                with contextlib.closing(self._abandoned_workspace_checkpoints()) as found:
+                    for raw in found:
+                        try:
+                            cp = loads(raw)
+                            abandoned = canon.checkpoint_hash(cp["o"]) == h
+                        except (ValueError, KeyError, TypeError, canon.HashError):
+                            continue
+                        if abandoned:
+                            break
             return RelayPosition(contained, numbering, current, abandoned)
+
+    def _abandoned_workspace_checkpoints(self) -> Iterator[bytes]:
+        """The bytes of each ``.state/checkpoints/abandoned/workspace-*.json``, read through directory fds pinned from
+        the workspace root one component at a time (``O_DIRECTORY | O_NOFOLLOW``), each file opened relative to its
+        directory with ``O_NOFOLLOW`` and checked to be a regular file (review round 2, P1): a symlinked component
+        anywhere on the path is refused (``validation.path``), never followed outside the store; a missing one means
+        none. At most 4 MiB per file."""
+        rel = self._checkpoints.dir.relative_to(self.root) / "abandoned"
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        fds: list[int] = []
+        try:
+            fds.append(os.open(self.root, flags))
+            for part in rel.parts:
+                try:
+                    fds.append(os.open(part, flags, dir_fd=fds[-1]))
+                except FileNotFoundError:
+                    return
+                except OSError:  # ELOOP or ENOTDIR: a symlink or not a directory
+                    raise StoreError("validation.path", f"{rel}: a component is a symlink or not a directory") from None
+            dfd = fds[-1]
+            for name in sorted(os.listdir(dfd)):
+                if not (name.startswith("workspace-") and name.endswith(".json")):
+                    continue
+                try:
+                    ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), dir_fd=dfd)
+                except OSError:
+                    continue  # a symlinked entry is not evidence
+                try:
+                    st = os.fstat(ffd)
+                    if not _S_ISREG(st.st_mode) or st.st_size > 4 << 20:
+                        continue
+                    chunks, size = [], 0
+                    while piece := os.read(ffd, 1 << 16):
+                        size += len(piece)
+                        if size > 4 << 20:
+                            break
+                        chunks.append(piece)
+                    else:
+                        yield b"".join(chunks)
+                finally:
+                    os.close(ffd)
+        finally:
+            for fd in reversed(fds):
+                os.close(fd)
 
     def relay_ancestor(self, older: Mapping[str, Any], newer: Mapping[str, Any]) -> bool:
         """Whether checkpoint ``older`` is ``newer`` or an ancestor of it: every log of ``older`` is in ``newer`` at or
         past its ``seq``, with a verified path between (the current log, or the recorded ancestry of an abandoned
-        branch). R3 uses it to explain a relay H that a restore abandoned (§11A.5). Takes the lock."""
+        branch). R3 uses it to explain a relay H that a restore abandoned (§11A.5). Takes the lock (which runs recovery:
+        not side-effect-free). A walk above :data:`RELAY_BRANCH_MAX` heads is refused ``validation.relay``."""
         from .checkpoints import _extension
 
         with self._locked():
@@ -3079,6 +3143,8 @@ class Store:
                 en = new.get(log)
                 if en is None or en["seq"] < eo["seq"]:
                     return False
+                if en["seq"] - eo["seq"] > RELAY_BRANCH_MAX:  # review round 2, P2: a bounded walk, refused above it
+                    raise StoreError("validation.relay", f"{log}: an ancestry walk above the bound")
                 if en["seq"] == eo["seq"]:
                     if en != eo:
                         return False

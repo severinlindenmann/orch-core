@@ -127,3 +127,98 @@ def test_a_checkpoint_with_the_logs_heads_but_another_accumulator_is_not_contain
     o = json.loads(json.dumps(workspace_cp(env)["o"]))
     o["tickets"][uid]["acc"] = "sha256:" + "6" * 64
     assert not s.relay_position(sign_object(env.signer.sign, o)).contained
+
+
+# -- review round 2 (P1, P2): abandoned/ through pinned fds; bounded, cached branch walks ----------------------------
+
+
+def _forked(env, uid):
+    o = json.loads(json.dumps(workspace_cp(env)["o"]))
+    o["tickets"][uid]["head"] = "sha256:" + "3" * 64
+    return sign_object(env.signer.sign, o)
+
+
+def test_a_symlinked_abandoned_directory_is_refused_not_followed(grown, tmp_path):
+    env, uid = grown
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    forked = _forked(env, uid)
+    (outside / "workspace-1.json").write_bytes(canon.cj_checked(forked))
+    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    shutil.rmtree(ab, ignore_errors=True)
+    ab.symlink_to(outside)
+    with pytest.raises(StoreError) as e:
+        env.store.relay_position(forked)
+    assert e.value.code == "validation.path"
+
+
+def test_a_symlinked_checkpoints_component_is_refused(grown, tmp_path):
+    env, uid = grown
+    forked = _forked(env, uid)
+    cps = env.root / ".state" / "checkpoints"
+    moved = tmp_path / "moved"
+    shutil.move(str(cps), str(moved))
+    cps.symlink_to(moved)
+    with pytest.raises(StoreError) as e:
+        env.store.relay_position(forked)
+    assert e.value.code == "validation.path"
+
+
+def test_a_symlinked_abandoned_entry_is_not_evidence_and_a_real_one_is(grown, tmp_path):
+    env, uid = grown
+    forked = _forked(env, uid)
+    ab = env.root / ".state" / "checkpoints" / "abandoned"
+    ab.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "elsewhere.json"
+    target.write_bytes(canon.cj_checked(forked))
+    (ab / "workspace-1.json").symlink_to(target)
+    assert not env.store.relay_position(forked).abandoned
+    (ab / "workspace-2.json").write_bytes(canon.cj_checked(forked))
+    assert env.store.relay_position(forked).abandoned
+
+
+def test_paging_an_abandoned_branch_walks_it_once(env, tmp_path, monkeypatch):
+    env.bootstrap()
+    link(env)
+    uid = env.new_ticket()
+    env.log(uid, "kept")
+    env.store.close()
+    backup = tmp_path / "backup"
+    shutil.copytree(env.root, backup)
+    s = env.open()
+    for i in range(6):
+        env.log(uid, f"lost-{i}")
+    lost, kept = _entry(env, uid, 8), _entry(env, uid, 2)
+    s.close()
+    rollback(env, backup)
+    s = env.open()
+    walks = []
+    real = s._pins.branch  # noqa: SLF001
+
+    def branch(*a):
+        walks.append(a)
+        return real(*a)
+
+    monkeypatch.setattr(s._pins, "branch", branch)  # noqa: SLF001
+    pages = [s.relay_segment(uid, kept, lost, skip=i, limit=2) for i in (0, 2, 4)]
+    assert len(walks) == 1
+    assert pages[1].from_acc == canon.log_acc(canon.log_acc(kept["acc"], pages[0].heads[0]), pages[0].heads[1])
+    import orch.store.store as store_mod
+
+    monkeypatch.setattr(store_mod, "RELAY_BRANCH_MAX", 3)
+    with pytest.raises(StoreError) as e:
+        s.relay_segment(uid, kept, lost)
+    assert e.value.code == "validation.relay"
+
+
+def test_an_ancestry_walk_above_the_bound_is_refused(grown, monkeypatch):
+    env, uid = grown
+    s = env.store
+    import orch.store.store as store_mod
+
+    older = s.outbox_entries()[0].checkpoint
+    newer = workspace_cp(env)
+    monkeypatch.setattr(store_mod, "RELAY_BRANCH_MAX", 0)
+    with pytest.raises(StoreError) as e:
+        s.relay_ancestor(older, newer)
+    assert e.value.code == "validation.relay"

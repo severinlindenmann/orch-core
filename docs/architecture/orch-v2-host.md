@@ -6513,6 +6513,28 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   once) and a 413 without a code is `too_large`; store codes are alarmed as `relay_store_<code>` (a store
   `chain.diverged` is not R3's fork alarm).
 
+**Review round 2 (orch-52 / Codex, 15 Oct 2026).**
+- P1 Every deletion goes through a confirmation, recovery included: `_accepted` (history, then delete) is reached
+  only from `_publish` (after `_final` and `_confirm`) and from `_finish_held` (an AST test pins it). For an entry the
+  relay already holds with no acknowledgement to read, `_finish_held` makes a second fresh verified read. That read
+  must prove one of two things. Either the held checkpoint is exactly the entry. Or it is a later one that descends
+  from the entry by the host's own logs and recorded ancestry, AND the relay serves the entry itself by its hash
+  (`GET checkpoint?hash=`, verified). An ancestry claim alone, a 404 or a 410 holds `relay_restore_unconfirmed`
+  (plain: `relay_unconfirmed`). Another branch holds `restore_source_mismatch` (plain: `relay_misbehaving`).
+  Nothing is deleted in either case.
+- P1 `Store.relay_position` reads `.state/checkpoints/abandoned/` through directory fds pinned from the workspace
+  root, one component at a time (`O_DIRECTORY | O_NOFOLLOW`), and opens each file `O_NOFOLLOW` relative to its
+  directory. A symlinked component is `validation.path`; a symlinked entry is not evidence.
+- P2 Paging an abandoned branch walks and folds it once: the store keeps one verified branch for its pages. On this
+  laptop a 200 000-head branch takes 1.8 s to walk plus 0.4 s to fold, once instead of once per page. Branch and
+  ancestry walks are bounded at `RELAY_BRANCH_MAX` (64 MiB / 74 heads, the relay's largest set); above it the store
+  refuses `validation.relay`.
+- The three store reads are not side-effect-free. The lock runs recovery, and lazy loading replays logs and can write
+  projections. Their docstrings say so.
+- H12d-3 (#555): `_restore_pub` is the one place every restore publication is built. A TODO marks where
+  `readers.restore_held(readerrecs.relay_level(...), evidence)` will go once #555 merges; a seam test pins that both
+  restore paths pass through it.
+
 **Design inconsistencies found.**
 - `docs/architecture/orch-v2-host.md` 11A.7 table (staging and final answers 16 KiB) vs orch-relay
   `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.

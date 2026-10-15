@@ -711,13 +711,13 @@ class Publisher:
                 if entry.hash == H.hash or self._job(
                     lambda: self._store.relay_ancestor(entry.checkpoint, H.checkpoint)
                 ):
-                    self._accepted(self._restore_done(entry))
+                    self._finish_held(self._restore_done(entry))
                     raise _Again()
                 raise PublishHeld("restore_source_mismatch", f"restore n {entry.n} is at or below the relay's n {H.n}")
             return self._restore(H, entry, cap)
         if H is not None and entry.n <= H.n:
             if entry.hash == H.hash:
-                self._accepted(_Pub("plain", entry.checkpoint, entry.n, entry.hash, H, entry=entry, direct=True))
+                self._finish_held(_Pub("plain", entry.checkpoint, entry.n, entry.hash, H, entry=entry, direct=True))
                 raise _Again()
             return _Pub("plain", entry.checkpoint, entry.n, entry.hash, H, entry=entry, direct=True)
         return self._plain(H, entry.checkpoint, cap, entry, anchor=False)
@@ -818,6 +818,9 @@ class Publisher:
         size = wire.set_bytes(_layout(runs))
         if size > cap:  # a restore cannot be split (P3-D37): never sent
             raise PublishHeld("relay.too_large", f"restore n {n}: its set is {size} > {cap} bytes")
+        # TODO(H12d-3, #555): once merged, hold through `readers.restore_held(readerrecs.relay_level(...), evidence)`
+        # here, the one place every restore publication is built (outbox and stored records alike); until then the
+        # line's own `auth` is checked against relay-info's level (P14).
         if line.get("auth") == "convenience" and self.reader_level < 1:
             raise PublishHeld("relay_reader_old", f"restore n {n} carries a convenience event; relay reader level "
                               f"{self.reader_level}")  # fmt: skip
@@ -977,6 +980,43 @@ class Publisher:
             raise RelayMisbehaving("acknowledged, but the relay holds another checkpoint")
         if ack["result"] == "ignored" and H.n < pub.n:
             raise RelayMisbehaving("ignored, but the relay holds a lower checkpoint")
+
+    def _finish_held(self, pub: _Pub) -> None:
+        """An entry the relay already holds, with no acknowledgement to read (it was lost, or the host stopped before
+        the delete; review round 1 R1 and round 2 P1). It goes through the same order as a publication: the fresh
+        verified read here IS the confirmation, then the history, then the delete. What the read must prove:
+
+        * the relay's held checkpoint, read again now and verified (WSK signature, workspace, pinned genesis, the
+          genesis pin), is exactly this entry's checkpoint; or
+        * it is a later checkpoint that descends from this entry (``Store.relay_ancestor`` over the host's own
+          logs and recorded ancestry), AND the relay serves this entry itself by its hash, verified (``GET
+          checkpoint?hash=``): the relay must show it holds the entry, an ancestry claim alone is not enough.
+
+        Anything else deletes nothing: an unprovable restore holds ``relay_restore_unconfirmed``, a held checkpoint on
+        another branch holds ``restore_source_mismatch`` (a plain entry: ``relay_misbehaving``). The relay can only
+        show checkpoints this host signed; that it keeps them afterwards is the threat model's limit (11A.9), as
+        after an acknowledged publication."""
+        genesis = self._job(lambda: self._store.genesis) or ""
+        reader = self._reader()
+        H = reader.get_checkpoint(genesis=genesis)
+        if H is None:
+            raise RelayMisbehaving("the relay holds no checkpoint after it held this entry")
+        if H.hash != pub.hash:
+            descends = H.n > pub.n and self._job(lambda: self._store.relay_ancestor(pub.target, H.checkpoint))
+            if not descends:
+                if pub.kind == "restore":
+                    raise PublishHeld("restore_source_mismatch", f"restore n {pub.n}: the relay holds another branch")
+                raise RelayMisbehaving("the relay no longer holds this entry or a checkpoint descending from it")
+            try:
+                own = reader.get_checkpoint(genesis=genesis, hash=pub.hash)
+            except RelayRefused as e:
+                if e.status != 410:
+                    raise
+                own = None  # checkpoint_gone: not provable from the relay any more
+            if own is None or own.hash != pub.hash:
+                raise PublishHeld("relay_restore_unconfirmed" if pub.kind == "restore" else "relay_unconfirmed",
+                                  f"n {pub.n}: the relay does not serve this entry by its hash")  # fmt: skip
+        self._accepted(pub)
 
     def _accepted(self, pub: _Pub) -> None:
         """The relay's acknowledgement is verified: the history first, then the outbox entry (11A.3, 11A.5)."""

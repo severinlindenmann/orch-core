@@ -200,8 +200,9 @@ def refuse_reader_op(
     history: bool = False,
     events: list[dict[str, Any]] | None = None,
     readers: list[dict[str, Any]] | None = None,
+    relay_level: int | None = None,
 ) -> None:
-    """The early reader checks of an op that adds a reader (§0.8.6 item 1, H12d-2 item 9.4).
+    """The early reader checks of an op that adds a reader (§0.8.6 item 1, H12d-2 and H12d-3 item 9.4).
 
     ``member.add`` with its prepared ``events`` (H12d-2): the new reader's declaration (``readers``, verified again
     here without the clock, 9.3) against ``required_reader``: 1 while the flag is on, the durable mark is set or, with
@@ -212,16 +213,39 @@ def refuse_reader_op(
 
     ``relay.pair_device`` (H12c-e) with its events: the same as ``member.add``, with the phone's pair declaration.
 
-    ``relay.link`` and ``relay.pair`` (and ``member.add`` without its events): unchanged until H12d-3 brings their
-    declarations (relay-info, the pair meta): refused while the mark is set, the history (``history``) holds a
-    convenience event or the flag is on."""
+    ``relay.link`` (H12d-3, the relaxed rule of 9.4): the relay's level from ``GET /v2/relay-info`` (``relay_level``,
+    read at link step 1; ``None``, not read, counts as 0) against ``required_reader``; below it is
+    ``sign.convenience_readers`` reason ``relay_too_old``. A relay of level 1 is linked with convenience history and
+    while the flag is on.
+
+    ``relay.pair`` (H12d-3): no early refusal at the offer (it carries no declaration yet). The phone's pair
+    declaration is gated when the host opens the pair request (:func:`pair_gate`, 11A.15.6 step 4) and,
+    authoritatively, in the R6 allocation's append (``relay.pair_device``).
+
+    ``member.add`` without its events (the early call before its handler ran): refused while the mark is set, the
+    history (``history``) holds a convenience event or the flag is on; the handler's own check follows."""
     if op not in READER_OPS:
         return
     if op in ("member.add", "relay.pair_device") and events is not None:
         _check_new_readers(service, events, readers or [], history=history)
         return
+    if op == "relay.pair":
+        return
+    if op == "relay.link":
+        required = _required(service, history=history)
+        level = 0 if relay_level is None else relay_level
+        if required >= 1 and level < required:
+            raise HostError(
+                "sign.convenience_readers",
+                f"relay_too_old: the relay declares reader level {level} (GET /v2/relay-info), this workspace "
+                f"requires {required}",
+                hint="the relay must be updated to a release that knows convenience signatures (relay-info reader 1)"
+                ", or link this workspace before it has convenience signatures with convenience off",
+                detail={"reason": "relay_too_old", "devices": []},
+            )
+        return
     seen = convenience_seen(service.state_dir, service.workspace_id)  # #441: the durable mark, in every check
-    reason = "relay_too_old" if op == "relay.link" else "no_declaration"
+    reason = "no_declaration"
     if seen or (history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid)):
         raise HostError(
             "sign.convenience_readers",
@@ -237,6 +261,18 @@ def refuse_reader_op(
             fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
             detail={"reason": reason, "devices": []},
         )
+
+
+def _required(service: Any, *, history: bool) -> int:
+    """``required_reader`` (9.4) for an early check: the flag or the durable mark, and with ``history`` a scan of the
+    merged history (which sets the mark when it finds one)."""
+    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+        return 1
+    if convenience_seen(service.state_dir, service.workspace_id):
+        return 1
+    if history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid):
+        return 1
+    return 0
 
 
 def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]]) -> dict[str, int]:
@@ -287,14 +323,7 @@ def readers_error(exc: Any) -> HostError:
 def _check_new_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]], *, history: bool):
     from orch.ops.readers import ReadersRefused, check_readers
 
-    flag = enabled(service.state_dir, service.workspace_id, service.host_uid)
-    seen = convenience_seen(service.state_dir, service.workspace_id)
-    if flag or seen:
-        required = 1
-    elif history:
-        required = 1 if seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid) else 0
-    else:
-        required = 0
+    required = _required(service, history=history)
     lv: dict[str, int | None] = dict(recheck_readers(service, events, readers))
     try:
         check_readers(service.store.state.workspace, lv, [_no_auth(e) for e in events], required=required,
@@ -309,8 +338,8 @@ def _no_auth(e: dict[str, Any]) -> dict[str, Any]:
 
 
 READER_UPGRADE = (
-    " A member's core declares with orch keys reader declare --enrol (member.add --reader-decl); relay links and phone"
-    " pairings declare with the relay and phone releases of H12d-3."
+    " A member's core declares with orch keys reader declare --enrol (member.add --reader-decl); a relay declares its"
+    " level in GET /v2/relay-info and a phone in its pair request (H12d-3)."
 )
 
 

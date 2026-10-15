@@ -1190,7 +1190,8 @@ def _readers_refusal(
         flag = convenience.enabled(state_dir, service.workspace_id, service.host_uid)
         required = rd.required_reader(store, state_dir, service.workspace_id, flag=flag, uid=service.host_uid)
     try:
-        rd.check_readers(ws, lv, new, required=required, relay_level=relay_level(state_dir, service.workspace_id))
+        relay = relay_level(state_dir, service.workspace_id, service.host_uid)
+        rd.check_readers(ws, lv, new, required=required, relay_level=relay)
     except rd.ReadersRefused as exc:
         return convenience.readers_error(exc)
     stamp = _iso(service.clock())

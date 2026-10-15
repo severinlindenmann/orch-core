@@ -30,10 +30,15 @@ __all__ = [
     "device_ids",
     "read_record",
     "readers_dir",
+    "LEVEL_FILE",
+    "clear_relay_level",
+    "read_relay_level",
     "relay_level",
+    "relay_level_path",
     "record_path",
     "remove_record",
     "write_record",
+    "write_relay_level",
 ]
 
 #: bytes of one record file (a declaration is at most 2 KiB; the record adds a few short fields)
@@ -113,21 +118,87 @@ def remove_record(state_dir: Path, workspace_id: str, device_hex: str) -> bool:
     return True
 
 
-def relay_level(state_dir: Path | None, workspace_id: str) -> int | None:
-    """The relay's last verified reader level (9.8), ``None`` when the workspace never had a relay. Until H12d-3 checks
-    ``GET /v2/relay-info``, every pairing counts as level 0: ``hosts/<ws>/relay/link.json`` (``linking`` or
-    ``linked``), any ``relay/unlinked-*.json`` (a former link: the reservation of 11A.6 is permanent) or the R6
-    membership state ``hosts/<ws>/membership/``. A dangling link counts, and so does a ``relay/`` directory that
-    cannot be listed (fail closed). **H12d-3 hook:** read the level stored with the link here."""
+#: the relay's last verified reader level (H12d-3, §0.8.6 item 9.8), next to ``link.json``: ``{"v":1, "reader":N,
+#: "at_ms":T}`` (0600). Written at link step 1 (in the reservation's critical section, only while no ``link.json``
+#: exists) and at every R1 login (:func:`orch.host.relaylink.observe_relay_level`). It survives an unlink (the
+#: renamed ``unlinked-*.json`` keeps counting with its last level); a relink writes the new relay's level.
+LEVEL_FILE = "reader.json"
+_LEVEL_MAX = 2**31 - 1
+
+
+def relay_level_path(state_dir: Path, workspace_id: str) -> Path:
+    return Path(state_dir) / "hosts" / workspace_id / "relay" / LEVEL_FILE
+
+
+def read_relay_level(state_dir: Path | None, workspace_id: str, uid: int | None = None) -> int | None:
+    """The stored level, or ``None``: missing, a link, not a private regular file of ``uid``, or any other shape than
+    ``{"v":1, "reader":uint31, "at_ms":uint}``. ``None`` makes a linked relay count as 0 (fail closed)."""
+    if state_dir is None:
+        return None
+    from orch import canon
+
+    try:
+        fd = os.open(
+            relay_level_path(state_dir, workspace_id), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+        )
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as fh:
+            info = os.fstat(fh.fileno())
+            want = os.getuid() if uid is None else uid
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != want or stat.S_IMODE(info.st_mode) & 0o077:
+                return None
+            raw = fh.read(4097)
+        doc = canon.loads_strict(raw) if len(raw) <= 4096 else None
+    except (OSError, canon.JcsError, ValueError, RecursionError):
+        return None
+    if type(doc) is not dict or set(doc) != {"v", "reader", "at_ms"} or type(doc["v"]) is not int or doc["v"] != 1:
+        return None
+    reader, at = doc["reader"], doc["at_ms"]
+    if type(reader) is not int or not 0 <= reader <= _LEVEL_MAX or type(at) is not int or at < 0:
+        return None
+    return reader
+
+
+def write_relay_level(state_dir: Path, workspace_id: str, uid: int, level: int, at_ms: int) -> None:
+    """Write (replace) the relay's level atomically, 0600 under 0700 directories of ``uid``. Raises on any error."""
+    from orch.host.custody import ensure_private_dir, write_private
+
+    if type(level) is not int or not 0 <= level <= _LEVEL_MAX or type(at_ms) is not int or at_ms < 0:
+        raise ValueError("a relay reader level is a uint31 with a time")
+    hosts = Path(state_dir) / "hosts"
+    ensure_private_dir(hosts, uid)
+    ensure_private_dir(hosts / workspace_id, uid)
+    ensure_private_dir(hosts / workspace_id / "relay", uid)
+    write_private(relay_level_path(state_dir, workspace_id), {"v": 1, "reader": level, "at_ms": at_ms})
+
+
+def clear_relay_level(state_dir: Path, workspace_id: str) -> None:
+    """Remove a stored level (a link whose relay-info was not read: it counts as 0). Raises unless it is gone."""
+    try:
+        os.unlink(relay_level_path(state_dir, workspace_id))
+    except FileNotFoundError:
+        pass
+
+
+def relay_level(state_dir: Path | None, workspace_id: str, uid: int | None = None) -> int | None:
+    """The relay's last verified reader level (9.8), ``None`` when the workspace never had a relay. A relay exists
+    while ``hosts/<ws>/relay/link.json`` (``linking`` or ``linked``), any ``relay/unlinked-*.json`` (a former link:
+    the reservation of 11A.6 is permanent) or the R6 membership state ``hosts/<ws>/membership/`` exists; a dangling
+    link counts, and so does a ``relay/`` directory that cannot be listed (fail closed). Its level is the stored one
+    (:data:`LEVEL_FILE`, H12d-3: ``GET /v2/relay-info`` at link step 1 and every R1 login), 0 when there is none or
+    it cannot be read (fail closed)."""
     if state_dir is None:
         return None
     base = Path(state_dir) / "hosts" / workspace_id
-    if os.path.lexists(base / "membership") or os.path.lexists(base / "relay" / "link.json"):
-        return 0
-    try:
-        names = os.listdir(base / "relay")
-    except FileNotFoundError:
-        return None
-    except OSError:
-        return 0  # cannot tell: a reader may exist
-    return 0 if any(n.startswith("unlinked-") and n.endswith(".json") for n in names) else None
+    if not (os.path.lexists(base / "membership") or os.path.lexists(base / "relay" / "link.json")):
+        try:
+            names = os.listdir(base / "relay")
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return 0  # cannot tell: a reader may exist
+        if not any(n.startswith("unlinked-") and n.endswith(".json") for n in names):
+            return None
+    return read_relay_level(state_dir, workspace_id, uid) or 0

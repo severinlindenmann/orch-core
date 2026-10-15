@@ -7,6 +7,7 @@ Another user cannot be made without root, so "owned by another uid" is simulated
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
 from pathlib import Path
@@ -139,3 +140,71 @@ def test_an_explicit_orch_workspace_skips_the_ownership_rule(ws, tmp_path, monke
     lnk.mkdir()
     (lnk / "config.json").symlink_to(ws.root / "config.json")
     assert runtime.find_workspace({"ORCH_WORKSPACE": str(lnk)}, None, FILES) is None
+
+
+def test_config_json_swapped_between_the_check_and_the_read_is_not_read(ws, tmp_path, monkeypatch):
+    """The ownership check and the read are on the same fd: a ``config.json`` replaced right after its ``fstat`` (by
+    one another uid would own and could rewrite) is not what is read; no path lookup sits in between."""
+    import stat as _stat
+
+    proj = _v2(tmp_path / "proj" / "orchestrator", ws)
+    original = json.loads((proj / "config.json").read_text())
+    evil = dict(original, workspace=dict(original["workspace"], id="ws_evil"))
+    real_fstat = os.fstat
+    swaps = []
+
+    def fstat(fd):
+        st = real_fstat(fd)
+        if _stat.S_ISREG(st.st_mode) and not swaps:  # config.json was just checked: replace it on disk
+            tmp = proj / "evil.json"
+            tmp.write_text(json.dumps(evil))
+            os.chmod(tmp, 0o666)
+            os.replace(tmp, proj / "config.json")
+            swaps.append(fd)
+        return st
+
+    with monkeypatch.context() as m:
+        m.setattr(discovery.os, "fstat", fstat)
+        found = discovery.locate(proj.parent, explicit=False)
+    assert swaps and json.loads((proj / "config.json").read_text())["workspace"]["id"] == "ws_evil"
+    assert found is not None and found.path == proj and found.config["workspace"]["id"] == original["workspace"]["id"]
+
+
+def test_an_ancestor_swapped_for_a_symlink_after_the_resolve_is_never_entered(ws, tmp_path, monkeypatch):
+    """The walk goes up through ``..`` from the open start: an ancestor renamed away and replaced by a symlink to a
+    workspace after the start was resolved and opened is not followed (by path it would be found)."""
+    start = tmp_path / "a" / "b" / "c"
+    start.mkdir(parents=True)
+    evil = _v2(tmp_path / "evil", ws)
+    real_open = os.open
+    swapped = []
+
+    def hooked(path, flags, mode=0o777, *, dir_fd=None):
+        if path == ".." and dir_fd is not None and not swapped:
+            (tmp_path / "a" / "b").rename(tmp_path / "a" / "was")
+            (tmp_path / "a" / "b").symlink_to(evil, target_is_directory=True)
+            swapped.append(True)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    with monkeypatch.context() as m:
+        m.setattr(discovery.os, "open", hooked)
+        found = discovery.locate(start, explicit=False)
+    assert swapped and (tmp_path / "a" / "b").is_symlink()
+    assert found is None
+    # the same layout without the race: by the symlink the start resolves into evil's tree and that is found
+    assert runtime.find_workspace({}, str(tmp_path / "a" / "b"), FILES) == evil
+
+
+@pytest.mark.parametrize("mode", [0o1111, 0o111])
+def test_an_ancestor_that_cannot_be_opened_stops_the_walk(ws, tmp_path, mode):
+    """Fail closed: when a directory on the way up cannot be opened (sticky but unreadable ``0o1111``, or just
+    unreadable), its boundary cannot be established, so the walk stops instead of climbing above it."""
+    _v2(tmp_path / "top" / "orchestrator", ws)
+    shut = tmp_path / "top" / "shut"
+    (shut / "x").mkdir(parents=True)
+    os.chmod(shut, mode)
+    try:
+        assert runtime.locate_workspace({}, str(shut / "x"), FILES) is None
+    finally:
+        os.chmod(shut, 0o755)
+    assert runtime.find_workspace({}, str(shut / "x"), FILES) == tmp_path / "top" / "orchestrator"

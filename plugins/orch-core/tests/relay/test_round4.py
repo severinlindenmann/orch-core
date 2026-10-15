@@ -225,6 +225,7 @@ def test_an_older_file_gets_the_reopens_column(tmp_path):
         db.execute("INSERT INTO rid VALUES('d','r',1,'x',2,1,'answered',NULL,NULL,'refusal')")
         w.reopen(start=False)
         assert w.rids.get("d", "r").reopens == 0
+        assert w.rids.note_reopen("d", "r", B.REPLAY_MAX) and w.rids.get("d", "r").reopens == 1
     finally:
         w.close()
 

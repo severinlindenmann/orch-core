@@ -5657,11 +5657,14 @@ exception that is not a refusal (an event the model cannot judge) is `validation
 (round 3, I3b). Every core helper of these steps is reached through ONE seam, `orch/host/relayadmit.py`: **round 3:
 core's real H12e helpers** (#474: `known_or_fresh` with `event.abandoned`, `check_target` with the visibility filter
 and the uniform `not_found`, `check_window`, `next_key`, `signed_digest`, `judge_events`, `COLUMN_R_AUTH`; D2-5
-closed) plus ONE stand-in, `device_standing(store, person_id, device_id) -> "ok" | "removed" | "unknown"` with
-H12e-2's exact signature (#482; TODO: import it once merged). `tests/relay/test_relayadmit_seam.py` runs the contract
-against both. `RelayEntry.standing` refreshes the store and answers `not_member` unless the person is a current member
-and `device_standing` is `ok` (a removed device, a removed member's device; round 3, I2, tested with a real F1
-`device.removed` for a read and a write).
+closed) and, **round 4, core's real `device_standing(store, person_id, device_id) -> "ok" | "removed" | "unknown"`**
+(H12e-2, #482, merged; the stand-in is gone). `tests/relay/test_relayadmit_seam.py` runs the contract against the seam
+and against `orch.host.admission` itself. `RelayEntry.standing` refreshes the store and answers `revoked` for F1 or
+HostPins evidence for exactly this pair (a HostPins-only revocation tested since round 4), else `not_member` unless the
+person is a current member and `device_standing` is `ok` (a removed device, a removed member's device; round 3, I2,
+tested with a real F1 `device.removed` for a read and a write). **A removal is not durable across a restore** (orch-52,
+#482): a restore that abandons a `device.removed` revives the device, so its standing is `ok` again; only a revocation
+survives a restore. A lost phone must therefore be REVOKED, not just removed (R6's UI and runbook must say so).
 
 **Epochs and the seal gate (G1, C5).** Every chunk is sealed inside `BridgeKeys.sealing()`: the seal lock and ONE
 snapshot (`SealState`: the committed epoch, the rotation gate, the epoch a `stale_epoch` names). The bytes are
@@ -5674,7 +5677,10 @@ its own snapshot (pinned by an AST test). **Lock order** (round 3, D2-4): the wo
 seal lock, then the RidStore lock (innermost; it never calls out). Inside a `sealing()` span the bridge never takes the
 store lock and never calls `job()`; no `EpochKeySource` method (`current_epoch`, `wk`, `seal_state`, `refusal_key`)
 may take the store lock or wait for the worker, because R6 commits a rotation under the store lock inside
-`serialised()`. A lock-tracking test runs reads, writes, refusals, replays and a rotation against that rule. A burned epoch above the committed one
+`serialised()`. A lock-tracking test runs reads, writes, refusals, replays and a rotation against that rule, and
+since round 4 every `_answer_refusal` path too (settle, a refusal after a run, a read's `internal`, the read expiry;
+review V15). The R5 host-wide guard lock, when R5 adds it, sits outside all three (taken before the store lock, never
+inside a seal span). A burned epoch above the committed one
 (`EpochKeySource.refusal_key(e)`, proto §7.2 H4 / §8.5 G2b) is opened only to answer, after steps 3 to 8, a signed
 `stale_epoch` naming the pending epoch (else `EHW + 1`); every other outcome under it is silence. Vector
 `stale_epoch_under_a_burned_key`; core test `test_request_under_burned_epoch_key_gets_signed_stale_epoch` (the relay
@@ -5692,7 +5698,12 @@ the host therefore takes at least 6 heavy (96 MiB / 16 MiB) plus 8 light (32 MiB
 (round 2: 8, and writes too); filling the row caps takes at least 16 (16 × 1 088 per 15 min, 16 × 16 384 per day).
 The host-wide live-row count and the stored bytes (host-wide and per device) are kept in memory, loaded at open and
 updated with every transaction, so the per-request caps never scan the table (round 3, D2-6; round 2 measured 167 ms
-per host-wide count at the cap); the sweep runs in batches of 2 048 rows, one short transaction each, and the vacuum
+per host-wide count at the cap); the sweep runs in batches of 2 048 rows, one short transaction each, each batch
+resuming from a cursor (the last row taken, in index order: `chunk_live` by `(device, rowid)`, the new
+`rid(state, first_ms)` index by `(first_ms, rowid)`), so a sweep reads each row once (round 4; round 3 re-scanned:
+the first full transition of 262 144 rows took 68 s with a 0.96 s lock hold, now about 13 s with a 0.17 s maximum
+hold, and 8 s with a 0.1 s hold for the 960 s byte drop of the same rows); a batch of the 24 h step deletes the
+chunks of its rids and tombstones them in one transaction, and the vacuum
 returns 4 096 pages per sweep 256 at a time, each step its own lock hold. `auto_vacuum=INCREMENTAL`. Worst case at about 720 B per row and 250 B per tombstone: about 190 MB of rows + 65 MB of tombstones +
 128 MiB of answer bytes, about 0.4 GB in all (round 1: about 3.9 GB of rows plus unbounded answer bytes, all of it
 reachable from one device). A chunk POST answered "retry" waits 1 s doubling to 60 s per rid.
@@ -5719,10 +5730,14 @@ reachable from one device). A chunk POST answered "retry" waits 1 s doubling to 
 - J7 Replays of a stored answer are re-posted at most once per 10 s and 8 times per rid (P3-D27), so a replaying relay
   cannot make the host post without end; a poll page stops filling the queue once it is full. **Round 2:** a
   same-rid resend after the bytes were swept (960 s to 24 h) gets `already_done {status: unknown}` at the next unused
-  index, within the same bounds (ruling D), never silence.
+  index, within the same bounds (ruling D), never silence. **Round 4 (N3-3):** the 8 per rid are counted in the rid
+  row (`reopens`), not in the in-memory tracker, which only spaces them (10 s; a bounded LRU whose eviction can only
+  loosen the spacing). A hostile relay cycling more than 4 096 rids, or a restart, no longer re-opens a rid past 8:
+  at most 8 appended `already_done` rows per rid in its 24 h.
 - J8 **Changed in round 2 (R2-6).** A write whose run fails with anything but a refusal is retried by the aux thread
   (`submit.recover_one`) after 10 s, 60 s and 300 s, then answered `already_done {status: unknown}` (B): an idem is
-  never admitted (`pending`) longer than about 370 s plus the run, inside the pending bound. A read that fails so gets
+  never admitted (`pending`) longer than about 370 s plus the run, inside the pending bound (pinned since round 4:
+  answered within 1 200 s − 300 s of admission, so even an event id stamped 300 s early is settled before its bound). A read that fails so gets
   `internal` (D). A request whose answer may not be sealed as data (rotated or gated while it ran, or answered after a
   restart under an older epoch) gets `already_done {status: unknown}` (G1).
 - J9 Start-up recovery (`Bridge.start`, on the poll thread; orch-52's M5: accepted, so R5 does NOT call it in
@@ -5748,18 +5763,35 @@ reachable from one device). A chunk POST answered "retry" waits 1 s doubling to 
 - J17 (round 3, D2-1/D2-7) One poll item, one job or one aux step (sweep, stuck retry, flush) that raises is logged
   (the first 10, then every 1 000th, by class only), alarmed once (`relay_item_failed`) and acknowledged; it never
   stops the loop or the lease renewal. A job that raises leaves its rid admitted (recovered at the next start). The
-  session's own errors (fenced, lost) still stop the worker.
+  session's own errors (fenced, lost) still stop the worker. **Round 4 (N3-1):** from every thread: a `Fenced` or
+  `SessionError` raised by a POST on the responder or a job thread is re-raised before the catch-all (as on the aux
+  thread), so the worker stops at once, the item is NOT acknowledged (the next holder polls it again) and the rid
+  stays admitted (recovered at the next start). The alarm is once per class of failure, `(step, exception class)`,
+  at most 64 classes (round 3 alarmed only on the first failure ever, so a harmless flush error hid a poisoned-item
+  loop).
 - J18 (round 3, D2-7) A refusal code outside the closed table becomes `internal` in the same context; a signer
   refusal is silence for that chunk; a settle whose `lookup` raises answers `already_done {status: unknown}`.
 - J19 (round 3, N1) The replay and POST-backoff maps are guarded by one lock, and one rid is POSTed by one thread at a
   time (a second caller leaves it to the next aux flush): no double POST of the same bytes.
 - J20 (round 3, M4) The O6 identity check stays in the result builder (`relaybuild.rebuild_relay_submit`), not in
   `Planned`; the builder keeps no state: the workspace is the record's `namespace`.
+- J21 (round 4, N3-2) An admitted READ is bounded in age: `READ_ADMITTED_MS` = 900 s + 60 s (the relay takes no
+  answer for it after 900 s). Past it, it no longer counts against the byte budgets (no 2 MiB reserve), and the aux
+  sweep (`Bridge.expire_reads`) answers it `already_done {status: unknown}` (B: re-issue). When nothing can be sealed
+  for an admitted read any more (its epoch key retired by R6, or the signer refuses), it becomes a tombstone at once
+  (`RidStore.abandon`: at the run, at the restart's settle, or at the expiry), so it never holds a reserve or an
+  admitted row for ever; a resend is then silence (its relay deadline is long past). A late run of an expired read
+  stores nothing (T2 needs `admitted`). **R6 precondition:** R6 may retire an epoch key at any time; admitted reads
+  are closed as above. Admitted WRITES under a retired key are not closed this way: they stay admitted until their
+  outcome settles them (`outcome.get` answers `pending`, then from the host record), which is conservative, never a
+  duplicate.
+- J22 (round 4) The 24 h rid schema gains `reopens` (J7); an older `rids.sqlite` gets the column at open
+  (`ALTER TABLE`), with 0 for every row. Nothing was deployed, so no other migration exists.
 
 **Deferred** (not R2): R3, R4, R5 (`RelayWorker`, the hook in `WorkspaceService.open`, `relay_columns` as a host
 function: today `RelayEntry` builds the recompute), R6 (pairing at epoch 0, member lists, `WK_e`, the real
 `EpochKeySource` with `seal_state()` and `refusal_key()`), `decision`, streams, the registry and git reads, ticket
-bodies, the `device_standing` import from #482 (H12e-2), the T2 real-relay job.
+bodies, the T2 real-relay job.
 
 **For R3/R5/R6.** One `Session` and one `StateDir` per state directory: the `RidStore` opens `rids.sqlite` through the
 same `StateDir` the holder store uses. R5 builds `RelayEntry(service, backend)` with the socket backend, calls

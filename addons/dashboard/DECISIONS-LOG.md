@@ -1893,3 +1893,9 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Revert:** drop `refuse_agent()` and the `AgentRefused` branch in `orch_dashboard/__main__.py`, `agent_refusal` in
   core's `cli/dashboard.py`; set `CODE_TTL` timer and sweep back to 60 s; restore `remove_redirect` (file only) in
   place of `_forget`/`expire`; drop the `expires_at` checks and the `webbrowser.open` result check.
+
+## 2026-10-15 Changes tab: no function context in hunk headers; "Diff unavailable" instead of an empty diff (core #546/#561)
+
+- **Decision:** Hunk headers in the Changes tab show only the line ranges (`@@ -12,4 +12,5 @@`), no longer the function context git prints after them. A diff that git cannot produce (it failed, was refused or ran past its 30 s limit) is an error the tab shows as "Diff unavailable", never counts with an empty patch.
+- **Why:** The function context comes from the repository's own `diff.<driver>.xfuncname`/`funcname`, which orch now pins (a backtracking regex stalled the diff until the timeout) and strips: a person reviewing the diff must not read repo-chosen text as orch's. The empty patch hid that failure.
+- **Revert:** Drop `plain_hunk_headers` in `plugins/orch-core/src/orch/store/observe.py` and the `xfuncname`/`funcname` pins in `gitsafe._driver_pins`; in `devhost/reads.py` map `None` to `""` again (not recommended).

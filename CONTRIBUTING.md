@@ -16,7 +16,7 @@ uv run pytest -q -m "not slow" tests/store && uv run ruff check   # T1: the touc
 uv run pytest -q -n auto                           # T2: the whole core with slow tests (CI skips slow)
 ```
 
-The shared protocol vectors in `tests/vectors/` come from orch-relay. Refresh them (and `SOURCE`, the orch-relay commit) with `scripts/sync-vectors.sh [ref]`; the default ref is `origin/develop` and the clone is `~/orch-dev/orch-relay` (override with `ORCH_RELAY_DIR`). Commit the result.
+The shared protocol vectors and HTTP fixtures in `plugins/orch-core/tests/relay/vectors/` come from orch-relay. The vector file is stored xz-compressed (`vectors_v2.json.xz`; `SOURCE` pins the sha256 of the decompressed bytes); never commit the raw `vectors_v2.json`. Refresh them (and `SOURCE`) with `scripts/sync-vectors.sh [ref]`; the default ref is `origin/develop` and the clone is `~/orch-dev/orch-relay` (override with `ORCH_RELAY_DIR`). Then bump `PINNED_RELAY_COMMIT` in `tests/relay/test_corpus.py` and commit the result as one PR.
 
 ## Before you push (v1, `main`)
 

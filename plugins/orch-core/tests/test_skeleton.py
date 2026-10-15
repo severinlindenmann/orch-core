@@ -1,5 +1,4 @@
 import importlib
-import json
 import shutil
 import subprocess
 import sys
@@ -65,5 +64,6 @@ def test_unimplemented_exits_1_with_the_error_envelope(monkeypatch):
 
 
 def test_shared_vectors_parse():
-    data = json.loads((Path(__file__).parent / "vectors" / "vectors_v2.json").read_text())
+    from .relay.corpus import VECTORS as data  # the one vendored copy, stored xz-compressed
+
     assert "2" in data["suites"]

@@ -25,7 +25,8 @@ alternates included (finding 2).
 
 Every call: argv only, no shell, stdin closed unless input is given, ``LANG=C``, ``GIT_TERMINAL_PROMPT=0``,
 ``GIT_NO_REPLACE_OBJECTS=1``, ``GIT_ALLOW_PROTOCOL`` (https and ssh), hooks off (``core.hooksPath=/dev/null``),
-``core.fsmonitor=false``, ssh in batch mode when no ssh command is configured, and a timeout (10 s local, 20 s network).
+``core.fsmonitor=false``, ``core.attributesFile=/dev/null``, ``i18n.commitEncoding=UTF-8``, ssh in batch mode
+when no ssh command is configured, and a timeout (10 s local, 20 s network).
 """
 
 from __future__ import annotations
@@ -61,6 +62,8 @@ _HARDEN = (
     "-c", "maintenance.auto=false",
     "-c", "core.commitGraph=false",  # a forged commit-graph could lie about ancestry (Opus #430 finding 2)
     "-c", "fetch.writeCommitGraph=false",
+    "-c", "core.attributesFile=/dev/null",  # not even git's default $XDG_CONFIG_HOME/git/attributes (#541)
+    "-c", "i18n.commitEncoding=UTF-8",  # the repo's own config may set it (it runs nothing): commits stay records-only
 )  # fmt: skip
 HARDEN = _HARDEN
 #: the only sections of the person's frozen configuration a network call keeps: authentication and transport

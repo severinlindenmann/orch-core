@@ -833,9 +833,9 @@ def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
     assert all(local_ok(k) for k in local), local
     assert {"user.name", "user.email", "url.file:///nonexistent/f541/.insteadof"} <= local, local
     seen = repo.out("config", "--list").lower()
-    for bad in ("filter.", "diff.", "merge.", "alias.", "core.attributesfile", "core.alternaterefscommand",
-                "core.pager", "core.editor", "gpg.", "commit.gpgsign", "i18n.", "credential.", "http.",
-                "core.fsmonitor=/"):  # fmt: skip
+    for bad in ("filter.", "diff.", "merge.", "alias.", "core.attributesfile=/nonexistent", "core.alternaterefscommand",
+                "core.pager", "core.editor", "gpg.", "commit.gpgsign", "i18n.commitencoding=iso", "credential.",
+                "http.", "core.fsmonitor=/"):  # fmt: skip
         assert bad not in seen, bad
     assert "core.hookspath=/dev/null" in seen and f"core.hookspath={r.tmp}" not in seen
     with repo.transport() as net:

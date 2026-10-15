@@ -512,18 +512,21 @@ def _gate(root: Path, caps: Capabilities) -> str | None:
     return None
 
 
-def _git(root: Path, *args: str, caps: Capabilities) -> bytes | None:
-    """One read-only git command, isolated (:mod:`orch.gitsafe`, #546): the caller ran :func:`_gate` on ``root``;
-    system and global configuration off and none of the person's configuration kept (``diff --cached --raw`` and
-    ``show :<path>`` need none), :func:`orch.gitsafe.argv` (hooks, fsmonitor, network, pager, external diff and
-    textconv off), an environment built from scratch, through ``caps.exec``."""
-    repo = os.path.abspath(root)
+def _git(root: Path, op: str, *, caps: Capabilities, path: str | None = None) -> bytes | None:
+    """Operation ``op`` of :data:`orch.gitsafe.OPS` (``staged_raw``, ``staged_blob`` of ``path``), isolated
+    (:func:`orch.gitsafe.command`, #546: the gate again, no free argv, system and global configuration off, none of
+    the person's configuration, hooks, fsmonitor, network, pager, external diff and textconv off, an environment built
+    from scratch), spawned through ``caps.exec``. ``None`` when it is refused or fails; with no process capability
+    (host mode) nothing runs."""
+    if not caps.exec.enabled:
+        return None
     try:
+        argv, env = gitsafe.command(os.path.abspath(root), op, caps.env, operand=path)
         done = caps.exec.run(
-            gitsafe.argv(repo, args), capture_output=True, timeout=30, check=False, start_new_session=True,
-            env=gitsafe.isolated_env(caps.env), cwd="/", stdin=DEVNULL,
+            argv, capture_output=True, timeout=30, check=False, start_new_session=True, env=env, cwd="/",
+            stdin=DEVNULL,
         )  # fmt: skip
-    except (OSError, SubprocessError):
+    except (gitsafe.Unsafe, OSError, SubprocessError):
         return None
     return done.stdout if done.returncode == 0 else None
 
@@ -538,7 +541,7 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
     refused = _gate(root, caps)
     if refused is not None:
         return [Finding("error", "git", "git.unavailable", f"orch does not run git here: {refused}")]
-    raw = _git(root, "diff", "--cached", "--raw", "-z", "--no-renames", "--relative", caps=caps)
+    raw = _git(root, "staged_raw", caps=caps)
     if raw is None:
         return [Finding("error", "git", "git.unavailable", "git cannot list the staged files here")]
     st = s.state
@@ -575,7 +578,7 @@ def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Findin
         if mode in ("120000", "160000") and guarded.search(rel):
             out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
             continue
-        blob = _git(root, "show", f":{rel}", caps=caps)
+        blob = _git(root, "staged_blob", caps=caps, path=rel)
         if blob is None:
             out.append(Finding("error", rel, "git.unavailable", "git cannot read the staged file"))
             continue

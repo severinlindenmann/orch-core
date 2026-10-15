@@ -497,7 +497,7 @@ class Git:
             return got["head_ref"] if got else None
         from orch.store import observe
 
-        return observe.git(path, "symbolic-ref", "-q", "HEAD")
+        return observe.symbolic_head(path)
 
     def dirty(self, path: Path, name: str | None = None) -> str | None:
         """What is uncommitted in the working copy at ``path``: ``""`` when clean, lines when not, ``None`` when it
@@ -529,14 +529,6 @@ class Git:
 
         got = self.tree_check(path, name)
         return None if got is None else render(got)
-
-    def run(self, path: Path, *args: str, strip: bool = True) -> str | None:
-        self._need()
-        if self.reader is not None:
-            raise CapabilityDenied("git", "git: no git process runs in the host")
-        from orch.store import observe
-
-        return observe.git(path, *args, strip=strip)
 
     def identity(self, path: Path, name: str) -> str:
         self._need()

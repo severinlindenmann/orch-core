@@ -37,38 +37,47 @@ person's half is ONE mechanism here, used by every read-only caller (the gate it
   ``LOGNAME``, ``XDG_CONFIG_HOME``; never a ``GIT_*`` variable, token or ``ORCH_*`` of the caller), with
   ``GIT_CONFIG_NOSYSTEM=1``, ``GIT_CONFIG_GLOBAL=/dev/null``, no system attributes, no replace objects, no prompt, no
   network protocol, no lazy fetch, ``GIT_PAGER=cat`` and ``GIT_EDITOR=true``;
-* :func:`config_env`: the person's configuration the caller allows, passed explicitly as command-scope entries
+* :func:`config_env`: the person's configuration an operation allows, passed explicitly as command-scope entries
   (``GIT_CONFIG_COUNT``), never by reading their files; :func:`person_entries` reads those files once (reading
-  configuration executes nothing) and keeps only the keys of the caller's own allow-list (``section.name``, no
-  subsection). Each caller names its own list: observe's ``status`` keeps ``core.excludesFile``, ``core.autocrlf``
-  and ``core.eol`` (the person's own idea of "clean"), every other read keeps nothing; the records tool keeps its
-  lists in :func:`orch.records.git.person_config`;
-* :func:`argv`: :data:`HARDEN` (:data:`NEUTRAL` plus :data:`PINNED`: ``core.attributesFile=/dev/null``, git's default
-  ``$XDG_CONFIG_HOME/git/attributes`` is not read, and ``i18n.commitEncoding=UTF-8``), ``--no-pager``,
-  ``--no-optional-locks``, ``-C <repo>``, and ``--no-ext-diff --no-textconv`` on ``diff``, ``show`` and ``log``.
+  configuration executes nothing) and keeps only the operation's own allow-list (``section.name``, no subsection):
+  ``status`` keeps :data:`STATUS_KEYS` (``core.excludesFile``, ``core.autocrlf``, ``core.eol``: the person's own idea
+  of "clean"), every other operation nothing; the records tool keeps its lists in
+  :func:`orch.records.git.person_config`;
+* :func:`command`: **a closed set of operations** (:data:`OPS`, Codex P1 on #561), never free argv. Each has fixed
+  arguments and at most one validated operand (a revision: ``HEAD`` or ``refs/heads/<name>``; an index path, given
+  as the object name ``:0:<path>``), so no caller can add a global option (``-c``, ``-C``, ``--git-dir``,
+  ``--work-tree``, ``--exec-path``, ``--namespace``, ``-p``, ``--config-env``), an option or a subcommand; no
+  operation can reach the network. It runs :func:`gate` before every operation (and :func:`submodules` before
+  ``status``, which also never opens a submodule) and builds the argv: :data:`HARDEN` (:data:`NEUTRAL` plus
+  :data:`PINNED`: ``core.attributesFile=/dev/null``, git's default ``$XDG_CONFIG_HOME/git/attributes`` is not read,
+  and ``i18n.commitEncoding=UTF-8``), ``--no-pager``, ``--no-optional-locks``, ``-C <repo>``, and ``--no-ext-diff
+  --no-textconv`` on ``diff``.
 
 **Every git invocation site** and how it meets the invariant:
 
 ======================================================  ===========================================================
 Site                                                    Isolation
 ======================================================  ===========================================================
-``gitsafe._run`` (the gate's own reads)                 :func:`argv`, :func:`isolated_env`, no person keys
-``store/observe.git`` (``head``, ``porcelain``,         :func:`gate` (and :func:`submodules` for ``status``), then
-``dirty``, ``repo_identity``, ``ops/caps.Git`` and      :func:`argv`, :func:`isolated_env`; person keys only for
-``hostclient`` in direct mode)                          ``status`` (``core.excludesFile``, ``core.autocrlf``,
-                                                        ``core.eol``); the identity's ``remote.origin.url`` comes
-                                                        from :func:`local_config`, the gate's own listing (#546)
-``ops/health._git`` (``check --staged``: ``diff         :func:`gate` once per check, then :func:`argv`,
---cached --raw``, ``show :path``)                       :func:`isolated_env`, no person keys, through ``caps.exec``
-                                                        (#546)
-``runner/wtgit.read_git``, ``tree_dirty``               :func:`gate` (and :func:`submodules`), :func:`argv`,
-                                                        :func:`isolated_env`, no person keys
+``gitsafe._run`` (the gate's own reads)                 its fixed reads, :func:`isolated_env`, no person keys
+``store/observe.git`` (``head``, ``symbolic_head``,     :func:`command` (operations of :data:`OPS` only, gate
+``toplevel``, ``porcelain``, ``dirty``; ``ops/caps.Git``  every time); person keys only for ``status``; the
+and ``hostclient`` in direct mode)                      identity's ``remote.origin.url`` comes from
+                                                        :func:`local_config`, the gate's own listing (#546).
+                                                        ``ops/caps.Git.run`` (free argv) is removed
+``ops/health._git`` (``check --staged``: ``staged_raw``,  :func:`gate` once per check for its message, then
+``staged_blob``)                                        :func:`command` (gate again), through ``caps.exec`` (#546)
+``runner/wtgit.read_git``, ``tree_dirty``,              :func:`command`: ``commit``, ``status``, ``staged_raw``,
+``worktree_cli`` revisions                              ``index_flags``
 ``records/git.Git.run``, ``records/tool`` fast-import   :func:`config_env` with ``person_config``'s lists, the
                                                         records ``HARDEN`` (incl. :data:`PINNED`), ``check_local``
                                                         on top of :func:`exec_risk` (#541)
 ``records`` ``git init --template=`` (repo and          system and global config off, no frozen config (#541)
 transport)
 ``records/git.open_repo`` probe                         reads configuration only (executes nothing)
+``gitsafe.person_entries`` (``config --list --show-     reads the person's system and global configuration as
+scope --includes -z``, ``GIT_DIR=/dev/null/none``)      data, outside any repository, keeps only the operation's
+                                                        allow-list (:data:`STATUS_KEYS`); executes nothing
+``gitsafe.git_version`` (``git --version``)             :func:`isolated_env`; once per ``PATH``, refuses git < 2.32
 ``runner/wtgit.run_git`` (``worktree add/remove/        **The one exception.** :func:`gate` on the repo (and the
 prune``)                                                worktree) plus :data:`NEUTRAL`, but the person's system and
                                                         global configuration stays on **by design**: a checkout
@@ -92,14 +101,17 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import signal
 import stat
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 
 __all__ = [
-    "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "NEUTRAL", "PINNED", "Unsafe", "argv",
-    "config_env", "config_files", "exec_risk", "gate", "isolated_env", "local_config", "person_entries", "submodules",
+    "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "NEUTRAL", "OPS", "PINNED",
+    "STATUS_KEYS", "Op", "Unsafe", "command", "config_env", "config_files", "exec_risk", "gate", "gitlinks",
+    "isolated_env", "local_config", "person_entries", "submodules",
 ]  # fmt: skip
 
 INVARIANT = (
@@ -124,7 +136,7 @@ PINNED = (
     "-c", "core.attributesFile=/dev/null",
     "-c", "i18n.commitEncoding=UTF-8",
 )  # fmt: skip
-#: every isolated command (:func:`argv`)
+#: every isolated command (:func:`command`)
 HARDEN = (*NEUTRAL, *PINNED)
 #: subcommands that take ``--no-ext-diff --no-textconv`` (no diff program, no textconv program)
 _NO_PROGRAMS = frozenset({"diff", "show", "log"})
@@ -327,13 +339,105 @@ def config_env(entries: Sequence[tuple[str, str]]) -> dict[str, str]:
     return env
 
 
-def argv(repo: str, args: Sequence[str]) -> list[str]:
+def _argv(repo: str, args: Sequence[str]) -> list[str]:
     """The argv of one isolated git command against ``repo`` (absolute): :data:`HARDEN`, no pager, no optional locks,
-    and ``--no-ext-diff --no-textconv`` right after ``diff``, ``show`` or ``log``."""
+    and ``--no-ext-diff --no-textconv`` right after ``diff``, ``show`` or ``log``. Private: ``args`` are only ever the
+    gate's own fixed reads or an operation of :data:`OPS` (:func:`command`)."""
     rest = list(args)
     if rest and rest[0] in _NO_PROGRAMS:
         rest[1:1] = ["--no-ext-diff", "--no-textconv"]
     return ["git", *HARDEN, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
+
+
+#: the person's (system and global) configuration ``status`` keeps, so that "clean" means what it means in their own
+#: terminal: their global ignore file and their line-ending conversion. Each names a file of patterns or a setting,
+#: never a program. No other operation keeps any of the person's configuration.
+STATUS_KEYS = frozenset({"core.excludesfile", "core.autocrlf", "core.eol"})
+#: Not a key but the same idea: git's *default* global ignore file (``$XDG_CONFIG_HOME/git/ignore``, else
+#: ``~/.config/git/ignore``) is still read by every isolated ``status`` (``HOME`` and ``XDG_CONFIG_HOME`` are kept).
+#: It is a pattern file and runs nothing (Opus delta on #561, Info 5).
+
+
+@dataclass(frozen=True)
+class Op:
+    """One read-only git operation: fixed arguments, at most one validated operand (``rev``: a revision; ``path``: a
+    path in the index), the person keys it keeps, and whether it reads the working tree (then a populated submodule
+    is refused first, :func:`submodules`)."""
+
+    args: tuple[str, ...]
+    operand: str | None = None
+    suffix: str = ""
+    person: frozenset[str] = frozenset()
+    tree: bool = False
+
+
+#: The CLOSED set of git operations orch's read-only callers may run (#546, Codex P1 on #561): ``store/observe``
+#: (and through it ``ops/caps.Git`` and ``hostclient``), ``ops/health`` and ``runner/wtgit.read_git``. There is no
+#: free argv: no caller can add a global option (``-c``, ``-C``, ``--git-dir``, ``--work-tree``, ``--exec-path``,
+#: ``--namespace``, ``-p``, ``--config-env``), an option of its own or a subcommand. No operation can reach the
+#: network. Submodules: ``status`` hides them entirely (``--ignore-submodules=all``: git never opens one) and a
+#: populated one is refused anyway; ``diff --cached`` never opens a submodule (it compares the index with ``HEAD``
+#: only) and keeps ``=dirty`` so a staged gitlink still shows.
+OPS: dict[str, Op] = {
+    "head": Op(("rev-parse", "--verify", "-q", "HEAD^{commit}")),
+    "symbolic_head": Op(("symbolic-ref", "-q", "HEAD")),
+    "toplevel": Op(("rev-parse", "--show-toplevel")),
+    "ref": Op(("rev-parse", "--verify", "-q"), operand="rev"),
+    "commit": Op(("rev-parse", "--verify", "-q"), operand="rev", suffix="^{commit}"),
+    "status": Op(("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all"),
+                 person=STATUS_KEYS, tree=True),
+    "index_flags": Op(("ls-files", "-v")),
+    "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--relative", "--ignore-submodules=dirty")),
+    "staged_blob": Op(("cat-file", "blob"), operand="path"),
+}  # fmt: skip
+#: a revision operand: ``HEAD`` or a branch ref; never a leading ``-``, ``..``, ``@{``, ``//`` or a trailing ``/``
+#: or ``.``: what ``rev-parse --verify`` can only read as one ref name
+_REV = re.compile(r"HEAD|refs/heads/(?!.*\.\.)(?!.*@\{)(?!.*//)[A-Za-z0-9_+@][A-Za-z0-9._+@/-]{0,199}(?<![/.])")
+
+
+def _operand(op: Op, value: str | None) -> list[str]:
+    if op.operand is None:
+        if value is not None:
+            raise Unsafe("this git operation takes no operand")
+        return []
+    if not isinstance(value, str) or not value or "\0" in value or "\n" in value:
+        raise Unsafe("invalid git operand")
+    if op.operand == "rev":
+        if not _REV.fullmatch(value) or value.endswith(".lock"):
+            raise Unsafe("invalid revision")
+        return [value + op.suffix]
+    if value.startswith("/") or len(value) > 4096:  # a path of the index, relative to the top
+        raise Unsafe("invalid path")
+    return [":0:" + value]  # an object name (stage 0 of that path): never an option, never a stage or :/ search
+
+
+def command(
+    repo: str, op: str, own: Mapping[str, str], *, operand: str | None = None, timeout: float = GATE_SECONDS
+) -> tuple[list[str], dict[str, str]]:
+    """The argv and environment of operation ``op`` of :data:`OPS` against ``repo`` (absolute), for the caller to
+    spawn (``cwd="/"``, stdin closed). Runs :func:`gate` first, every time, and :func:`submodules` for an operation
+    that reads the working tree; the person keys come from the operation, never from the caller. Raises
+    :class:`Unsafe` (git must not run) for an unknown operation, an invalid operand or a refusal."""
+    spec = OPS.get(op)
+    if spec is None:
+        raise Unsafe("unknown git operation")
+    tail = _operand(spec, operand)
+    gate(repo, own, timeout=timeout)
+    if spec.tree:
+        submodules(repo, own, timeout=timeout)
+    entries = person_entries(own, spec.person, timeout=timeout)
+    return _argv(repo, [*spec.args, *tail]), isolated_env(own, entries)
+
+
+def gitlinks(raw: bytes) -> list[str]:
+    """The paths of ``staged_raw`` output (``-z``) whose old or new mode is a gitlink (``160000``)."""
+    fields = raw.split(b"\0")
+    out: list[str] = []
+    for i in range(0, len(fields) - 1, 2):
+        meta = fields[i].lstrip(b":").split()
+        if len(meta) >= 2 and b"160000" in (meta[0], meta[1]):
+            out.append(fields[i + 1].decode("utf-8", "surrogateescape"))
+    return out
 
 
 def person_entries(
@@ -382,7 +486,7 @@ def _run(repo: str, args: list[str], own: Mapping[str, str], timeout: float, wha
     Raises :class:`Unsafe` when it cannot run or fails."""
     try:
         proc = subprocess.Popen(  # noqa: S603 - fixed argv
-            argv(repo, args),
+            _argv(repo, args),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=isolated_env(own), cwd="/",
             start_new_session=True, close_fds=True,
         )  # fmt: skip
@@ -447,12 +551,42 @@ def local_config(repo: str, own: Mapping[str, str], *, timeout: float = GATE_SEC
     return [e for e in _parse(out) if e[0] in ("local", "worktree")]
 
 
+#: the oldest git whose isolation holds: ``GIT_CONFIG_GLOBAL`` came in 2.32 (``GIT_CONFIG_COUNT`` in 2.31); an older
+#: git ignores both silently and would read the person's global configuration again (Opus delta on #561, Info 6)
+MIN_GIT = (2, 32)
+_VERSIONS: dict[str, tuple[int, int]] = {}
+
+
+def git_version(own: Mapping[str, str], *, timeout: float = GATE_SECONDS) -> tuple[int, int]:
+    """The ``(major, minor)`` of the git on ``own``'s ``PATH`` (asked once per ``PATH``); :class:`Unsafe` when it is
+    older than :data:`MIN_GIT` or cannot be told."""
+    key = isolated_env(own)["PATH"]
+    got = _VERSIONS.get(key)
+    if got is None:
+        try:
+            done = subprocess.run(  # noqa: S603 - fixed argv
+                ["git", "--version"], stdin=subprocess.DEVNULL, capture_output=True, env=isolated_env(own), cwd="/",
+                timeout=timeout, check=False, start_new_session=True,
+            )  # fmt: skip
+        except (OSError, subprocess.SubprocessError):
+            raise Unsafe("git cannot be started to check its version") from None
+        m = re.match(rb"git version (\d+)\.(\d+)", done.stdout)
+        if done.returncode != 0 or m is None:
+            raise Unsafe("git's version cannot be told")
+        got = (int(m.group(1)), int(m.group(2)))
+        _VERSIONS[key] = got
+    if got < MIN_GIT:
+        raise Unsafe(f"git {got[0]}.{got[1]} is too old: orch needs git 2.32 or newer to keep its configuration out")
+    return got
+
+
 def gate(repo: str, own: Mapping[str, str], *, timeout: float = GATE_SECONDS) -> None:
     """Refuse (:class:`Unsafe`) to let git near ``repo`` when its own configuration sets a key outside the allow-list
     (:func:`exec_risk`, :data:`INVARIANT`) or its config files could be changed by another account
     (:func:`config_files`)."""
     if not repo.startswith("/") or "\0" in repo:
         raise Unsafe("the repository path is not absolute")
+    git_version(own, timeout=timeout)
     config_files(repo, own, timeout=timeout)
     key = exec_risk(local_config(repo, own, timeout=timeout))
     if key is not None:

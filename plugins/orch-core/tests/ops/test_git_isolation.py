@@ -1,16 +1,18 @@
-"""#546: ``store/observe.git`` and ``ops/health._git`` meet the invariant of :mod:`orch.gitsafe`
+"""#546: ``store/observe`` and ``ops/health`` meet the invariant of :mod:`orch.gitsafe`
 (:data:`orch.gitsafe.ISOLATION`): no configuration the person or a repo controls is read except through an explicit
-allow-list.
+allow-list, and git runs only the closed set of operations of :data:`orch.gitsafe.OPS` (no caller-chosen argument
+reaches git as an option).
 
-Every vector is checked twice on identical fresh repositories: **plain git** runs the command with the hostile
-configuration and the vector's program fires (the positive control: the test would catch a regression), then the
-**same command through orch's isolation** runs no program, and its result equals the result under an empty ``HOME``.
+Every vector has a **positive control**: plain git with the hostile configuration runs the vector's program, so the
+test would catch a regression. Then every operation of the caller runs on an identical fresh repository: no program
+runs, and each result equals the result under an empty ``HOME``.
 """
 
 from __future__ import annotations
 
 import os
 import pty
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -20,6 +22,8 @@ from orch import gitsafe
 from orch.ops import health
 from orch.ops.caps import Capabilities
 from orch.store import observe
+
+FIXED_DATE = "2026-01-01T00:00:00+00:00"
 
 
 def _prog(bin_dir: Path, mark: Path, name: str) -> str:
@@ -50,28 +54,22 @@ def world(tmp_path, monkeypatch):
 
     def env(home: Path) -> dict[str, str]:
         return {"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C", "LC_ALL": "C",
-                "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"}  # fmt: skip
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "GIT_AUTHOR_DATE": FIXED_DATE,
+                "GIT_COMMITTER_DATE": FIXED_DATE}  # fmt: skip
 
     w.env = env
 
     def git(repo: Path, *args: str, home: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
         """Plain git (no isolation), under ``home`` (default: the empty one, for setup)."""
         return subprocess.run(
-            ["git", "-c", "credential.helper=", "-C", str(repo), *args], capture_output=True, text=True,
-            env=env(home or w.empty), stdin=subprocess.DEVNULL, check=check, timeout=60,
+            ["git", "-c", "credential.helper=", "-c", "protocol.file.allow=always", "-C", str(repo), *args],
+            capture_output=True, text=True, env=env(home or w.empty), stdin=subprocess.DEVNULL, check=check,
+            timeout=60,
         )  # fmt: skip
 
     w.git = git
-
-    def prog(name: str) -> str:
-        return _prog(w.bin, w.mark, name)
-
-    w.prog = prog
-
-    def fired() -> set[str]:
-        return {p.name for p in w.mark.iterdir()}
-
-    w.fired = fired
+    w.prog = lambda name: _prog(w.bin, w.mark, name)
+    w.fired = lambda: {p.name for p in w.mark.iterdir()}
 
     def clear() -> None:
         for p in w.mark.iterdir():
@@ -95,11 +93,13 @@ def world(tmp_path, monkeypatch):
     return w
 
 
-def make_repo(w, name: str, *, attrs: str | None = None) -> Path:
-    """A committed repo (``a.g``, ``b.txt``, optional ``.gitattributes``) with ``a.g`` changed in the work tree (same
-    size, newer mtime: git must read it), a staged change of ``b.txt`` (newer mtime too), and a bare
-    ``<name>-dst.git`` that borrows its objects (``objects/info/alternates``)."""
-    repo = w.tmp / name
+def make_repo(w, where: str, *, attrs: str | None = None) -> Path:
+    """``<where>/r``: a committed repo (``a.g``, ``b.txt``, optional ``.gitattributes``; fixed dates, so the same
+    commit ids everywhere) with ``a.g`` changed in the work tree (same size, newer mtime: git must read it), a staged
+    change of ``b.txt`` (newer mtime too), and a bare ``<where>/dst.git`` that borrows its objects."""
+    base = w.tmp / where
+    base.mkdir()
+    repo = base / "r"
     repo.mkdir()
     w.git(repo, "init", "-q", "-b", "main")
     (repo / "a.g").write_text("one\n")
@@ -111,17 +111,42 @@ def make_repo(w, name: str, *, attrs: str | None = None) -> Path:
     (repo / "b.txt").write_text("bee2\n")
     w.git(repo, "add", "b.txt")
     (repo / "a.g").write_text("two\n")
-    for f in ("a.g", "b.txt"):  # b.txt: same content, newer stat, so a refresh always writes the index
+    for f in ("a.g", "b.txt"):  # b.txt: same content, newer stat, so a plain refresh always writes the index
         st = (repo / f).stat()
         os.utime(repo / f, (st.st_atime + 10, st.st_mtime + 10))
-    dst = w.tmp / f"{name}-dst.git"
-    w.git(w.tmp, "init", "-q", "--bare", str(dst))
+    dst = base / "dst.git"
+    w.git(base, "init", "-q", "--bare", str(dst))
     (dst / "objects" / "info" / "alternates").write_text(str(repo / ".git" / "objects") + "\n")
     w.clear()
     return repo
 
 
-#: (vector, its global config, the core.attributesFile content or None, the git command that runs it in plain git)
+def run_all(caller: str, repo: Path) -> dict:
+    """Every operation the caller has, on ``repo`` (paths of the repo replaced, so results compare across repos)."""
+    if caller == "observe":
+        out = {
+            "head": observe.head(repo),
+            "symbolic_head": observe.symbolic_head(repo),
+            "toplevel": observe.toplevel(repo),
+            "porcelain": observe.porcelain(repo),
+            "dirty": observe.dirty(repo),
+            "ref": observe.git(repo, "ref", rev="refs/heads/main"),
+            "commit": observe.git(repo, "commit", rev="refs/heads/main"),
+            "identity": observe.repo_identity(repo, "r"),
+        }
+        if out["toplevel"] is not None:
+            out["toplevel"] = out["toplevel"].replace(os.path.realpath(repo), "<repo>")
+        return out
+    caps = Capabilities.direct()
+    return {
+        "gate": health._gate(repo, caps),
+        "staged_raw": health._git(repo, "staged_raw", caps=caps),
+        "blob_b": health._git(repo, "staged_blob", caps=caps, path="b.txt"),
+        "blob_a": health._git(repo, "staged_blob", caps=caps, path="a.g"),
+    }
+
+
+#: (vector, its global config, the core.attributesFile content or None, the plain git command that runs it)
 GLOBAL_VECTORS = [
     ("filter-clean", {"filter.evil.clean": "{filter-clean}"}, "*.g filter=evil\n", ["status", "--porcelain"]),
     ("filter-smudge", {"filter.evil.smudge": "{filter-smudge}"}, "*.g filter=evil\n",
@@ -131,8 +156,7 @@ GLOBAL_VECTORS = [
     ("diff-textconv", {"diff.evil.textconv": "{diff-textconv}"}, "*.g diff=evil\n", ["diff"]),
     ("fsmonitor", {"core.fsmonitor": "{fsmonitor}"}, None, ["status", "--porcelain"]),
     ("post-index-change", {"core.hooksPath": "{hooks}"}, None, ["update-index", "--refresh"]),
-    ("alternate-refs", {"core.alternateRefsCommand": "{alternate-refs}"}, None,
-     ["push", "{dst}", "HEAD:refs/heads/x"]),
+    ("alternate-refs", {"core.alternateRefsCommand": "{alternate-refs}"}, None, ["push", "{dst}", "HEAD:refs/heads/x"]),
 ]  # fmt: skip
 
 
@@ -153,14 +177,6 @@ def _hostile(w, entries: dict[str, str]) -> dict[str, str]:
     return out
 
 
-def _isolated(caller: str, repo: Path, args: list[str]):
-    if caller == "observe":
-        return observe.git(repo, *args, strip=False)
-    caps = Capabilities.direct()
-    assert health._gate(repo, caps) is None  # the repo's own config is ordinary: the gate lets it through
-    return health._git(repo, *args, caps=caps)
-
-
 @pytest.mark.parametrize("caller", ["observe", "health"])
 @pytest.mark.parametrize("vector,entries,attrs,trigger", GLOBAL_VECTORS, ids=[v[0] for v in GLOBAL_VECTORS])
 def test_a_hostile_global_config_runs_nothing_and_changes_no_result(world, caller, vector, entries, attrs, trigger):
@@ -168,26 +184,19 @@ def test_a_hostile_global_config_runs_nothing_and_changes_no_result(world, calle
     w.gitconfig(_hostile(w, entries), attrs)
     # positive control: plain git with this HOME runs the vector's program
     plain = make_repo(w, "plain")
-    w.git(plain, *[a.replace("{dst}", str(w.tmp / "plain-dst.git")) for a in trigger], home=w.home, check=False)
+    w.git(plain, *[a.replace("{dst}", str(plain.parent / "dst.git")) for a in trigger], home=w.home, check=False)
     assert vector in w.fired(), f"positive control: plain git did not run {vector}"
-    # the same command, isolated: nothing runs
-    hostile = make_repo(w, "hostile")
-    got = _isolated(caller, hostile, [a.replace("{dst}", str(w.tmp / "hostile-dst.git")) for a in trigger])
+    w.clear()
+    # every operation of the caller: nothing runs
+    got = run_all(caller, make_repo(w, "hostile"))
     assert w.fired() == set(), f"{caller} ran {w.fired()}"
-    # and the result is what it is with no person config at all
+    # and every result is what it is with no person config at all
     w.monkeypatch.setenv("HOME", str(w.empty))
-    base = make_repo(w, "base")
-    want = _isolated(caller, base, [a.replace("{dst}", str(w.tmp / "base-dst.git")) for a in trigger])
-    assert got == want
-    assert (hostile / "a.g").read_bytes() == (base / "a.g").read_bytes()
-
-
-#: every key of the hostile global config the tests write (none may reach an isolated command)
-ALL_HOSTILE = {
-    "core.attributesfile", "filter.evil.clean", "filter.evil.smudge", "filter.evil.process", "diff.external",
-    "diff.evil.textconv", "core.pager", "pager.log", "core.alternaterefscommand", "core.fsmonitor", "core.hookspath",
-    "core.editor", "alias.st", "include.path",
-}  # fmt: skip
+    assert got == run_all(caller, make_repo(w, "base"))
+    if caller == "observe":
+        assert got["head"] is not None and got["porcelain"] is not None and got["commit"] == got["head"]
+    else:
+        assert got["staged_raw"] is not None and got["blob_b"] == b"bee2\n"
 
 
 def _all_hostile(w) -> None:
@@ -204,42 +213,52 @@ def _all_hostile(w) -> None:
     )  # fmt: skip
 
 
-@pytest.mark.parametrize("caller", ["observe", "health"])
-def test_no_key_of_the_persons_config_reaches_an_isolated_command(world, caller):
+#: every key of the hostile global config the tests write
+ALL_HOSTILE = {
+    "core.attributesfile", "filter.evil.clean", "filter.evil.smudge", "filter.evil.process", "diff.external",
+    "diff.evil.textconv", "core.pager", "pager.log", "core.alternaterefscommand", "core.fsmonitor", "core.hookspath",
+    "core.editor", "alias.st", "include.path", "core.sshcommand", "core.excludesfile",
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("op", sorted(gitsafe.OPS))
+def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
     w = world
     _all_hostile(w)
     repo = make_repo(w, "r")
     plain = w.git(repo, "config", "--list", "--show-scope", home=w.home).stdout.lower()
-    assert all(k in plain for k in ALL_HOSTILE) and "core.sshcommand" in plain  # positive control
-    got = _isolated(caller, repo, ["config", "--list", "--show-scope"])
-    text = got.decode() if isinstance(got, bytes) else got
-    assert text is not None
-    scopes = {line.split("\t", 1)[0] for line in text.splitlines()}
+    assert all(k in plain for k in ALL_HOSTILE)  # positive control
+    operand = {"rev": "refs/heads/main", "path": "b.txt"}.get(gitsafe.OPS[op].operand or "")
+    argv, env = gitsafe.command(str(repo), op, os.environ, operand=operand)
+    # the configuration that operation's environment and global options give git, listed by git itself
+    listing = subprocess.run(
+        [*argv[: argv.index("-C") + 2], "config", "--list", "--show-scope"], env=env, capture_output=True,
+        text=True, check=True, cwd="/",
+    ).stdout.lower()  # fmt: skip
+    scopes = {line.split("\t", 1)[0] for line in listing.splitlines()}
     assert scopes <= {"local", "command"}, scopes
-    keys = {line.split("\t", 1)[1].split("=", 1)[0] for line in text.splitlines() if line.startswith("command")}
+    keys = {line.split("\t", 1)[1].split("=", 1)[0] for line in listing.splitlines() if line.startswith("command")}
+    person = {"core.excludesfile"} if op == "status" else set()
     assert keys == {"core.hookspath", "core.fsmonitor", "protocol.allow", "submodule.recurse", "core.attributesfile",
-                    "i18n.commitencoding"}  # fmt: skip
-    assert "core.attributesfile=/dev/null" in text.lower() and "core.hookspath=/dev/null" in text.lower()
+                    "i18n.commitencoding"} | person  # fmt: skip
+    assert "core.attributesfile=/dev/null" in listing and "core.hookspath=/dev/null" in listing
     assert w.fired() == set()
 
 
-def test_observes_status_keeps_only_its_own_allow_list_of_the_persons_config(world):
+def test_status_keeps_only_its_own_allow_list_and_the_global_ignore_still_counts(world):
     w = world
     _all_hostile(w)
     (w.home / "ignore").write_text("*.ignored\n")
     repo = make_repo(w, "r")
     (repo / "x.ignored").write_text("x\n")
-    got = observe.git(repo, "config", "--list", "--show-scope", person=observe.STATUS_KEYS)
-    person = [ln for ln in got.splitlines() if ln.startswith("command\tcore.excludesfile")]
-    assert person == [f"command\tcore.excludesfile={w.home / 'ignore'}"]
     status = observe.porcelain(repo)
-    assert status is not None and "x.ignored" not in status  # the person's global ignore file still counts
+    assert status is not None and "x.ignored" not in status and "a.g" in status
     assert w.fired() == set()
 
 
-def test_the_isolated_mechanism_runs_no_pager_even_on_a_terminal(world):
+def test_no_operation_runs_a_pager_even_on_a_terminal(world):
     w = world
-    w.gitconfig(_hostile(w, {"core.pager": "{pager}", "pager.log": "{pager-log}"}))
+    w.gitconfig(_hostile(w, {"core.pager": "{pager}", "pager.status": "{pager-status}"}))
     repo = make_repo(w, "r")
 
     def on_tty(argv: list[str], env: dict[str, str]) -> None:
@@ -250,24 +269,141 @@ def test_the_isolated_mechanism_runs_no_pager_even_on_a_terminal(world):
             os.close(slave)
             os.close(master)
 
-    on_tty(["git", "-C", str(repo), "log"], w.env(w.home))  # positive control
-    assert w.fired() == {"pager-log"}
+    on_tty(["git", "-C", str(repo), "-c", "pager.status=true", "status"], w.env(w.home))  # positive control
+    assert w.fired() & {"pager", "pager-status"}
     w.clear()
-    on_tty(["git", "-C", str(repo), "-c", "pager.log=false", "show"], w.env(w.home))
-    assert w.fired() == {"pager"}
+    for op, spec in gitsafe.OPS.items():
+        operand = {"rev": "refs/heads/main", "path": "b.txt"}.get(spec.operand or "")
+        on_tty(*gitsafe.command(str(repo), op, os.environ, operand=operand))
+    assert w.fired() == set()
+
+
+# ----------------------------------------------------------------------- the closed set: no argument injection
+
+
+def test_operations_are_a_closed_set_with_no_network_subcommand():
+    allowed = {"rev-parse", "symbolic-ref", "status", "ls-files", "diff", "cat-file"}
+    assert {op.args[0] for op in gitsafe.OPS.values()} <= allowed
+    assert not hasattr(gitsafe, "argv")  # the free-argv builder is gone
+    from orch.ops.caps import Git
+
+    assert not hasattr(Git, "run")  # ops/caps.Git.run (free argv) is gone
+
+
+INJECTED_REVS = [
+    "-c", "-ccore.fsmonitor=/tmp/x", "-C/tmp/hostile", "--git-dir=/tmp/x", "--work-tree=/tmp/x", "--exec-path=/tmp",
+    "--namespace=x", "--config-env=core.pager=X", "-p", "--upload-pack=/tmp/x", "--output=/tmp/x", "refs/heads/-x",
+    "refs/heads/a..b", "refs/heads/x@{1}", "refs/heads/x/", "refs/heads/x.lock", "HEAD:a", "x", "refs/tags/v1",
+    "refs/heads/x\n--all", "",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("rev", INJECTED_REVS)
+def test_an_injected_revision_never_reaches_git(world, monkeypatch, rev):
+    repo = make_repo(world, "r")
+    ran: list = []
+    real = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: ran.append(a) or real(*a, **k))
+    for op in ("ref", "commit"):
+        with pytest.raises(gitsafe.Unsafe):
+            gitsafe.command(str(repo), op, os.environ, operand=rev)
+        assert observe.git(repo, op, rev=rev) is None
+    assert ran == []  # refused before the gate: not even the gate's git ran
+
+
+@pytest.mark.parametrize("op,operand", [("-c", None), ("status", "-c"), ("head", "x"), ("push", None),
+                                        ("staged_blob", "/etc/passwd"), ("staged_blob", "a\nb")])  # fmt: skip
+def test_an_unknown_operation_or_an_operand_where_none_belongs_is_refused(world, op, operand):
+    repo = make_repo(world, "r")
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.command(str(repo), op, os.environ, operand=operand)
+
+
+@pytest.mark.parametrize("path", ["--upload-pack=/tmp/x", "-c", "--git-dir=/x", "-", ":/x", "1:b.txt"])
+def test_a_leading_dash_or_special_path_is_only_ever_an_index_path(world, path):
+    w = world
+    repo = make_repo(w, "r")
+    argv, _env = gitsafe.command(str(repo), "staged_blob", os.environ, operand=path)
+    assert argv[-1] == f":0:{path}"  # an object name: stage 0 of that path, never an option, never :/ search
+    caps = Capabilities.direct()
+    assert health._git(repo, "staged_blob", caps=caps, path=path) is None  # no such file in the index
+    (repo / path.replace("/", "_")).write_text("dash\n")
+    w.git(repo, "--literal-pathspecs", "add", "--", path.replace("/", "_"))
+    assert health._git(repo, "staged_blob", caps=caps, path=path.replace("/", "_")) == b"dash\n"
+    assert w.fired() == set()
+
+
+def test_the_repository_is_always_the_one_named_never_one_an_argument_names(world):
+    w = world
+    hostile = make_repo(w, "hostile")
+    w.git(hostile, "config", "filter.r.clean", w.prog("repo-clean"))  # would be refused by the gate
+    repo = make_repo(w, "plain")
+    for rev in (f"-C{hostile}", f"--git-dir={hostile}/.git"):
+        assert observe.git(repo, "ref", rev=rev) is None
+    assert observe.head(repo) is not None  # the named repo still reads
+    assert w.fired() == set()
+
+
+# ---------------------------------------------------------------------------------------------------- submodules
+
+
+def _populated_submodule(w, repo: Path) -> Path:
+    """``repo/sub``: a checked-out submodule whose OWN config defines a clean filter and an fsmonitor program."""
+    src = repo.parent / "subsrc"
+    src.mkdir()
+    w.git(src, "init", "-q", "-b", "main")
+    (src / "s.g").write_text("one\n")
+    (src / ".gitattributes").write_text("*.g filter=sub\n")
+    w.git(src, "add", "-A")
+    w.git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "s")
+    w.git(repo, "submodule", "-q", "add", str(src), "sub")
+    sub = repo / "sub"
+    w.git(sub, "config", "filter.sub.clean", w.prog("sub-clean"))
+    w.git(sub, "config", "core.fsmonitor", w.prog("sub-fsmonitor"))
+    (sub / "s.g").write_text("two\n")
+    st = (sub / "s.g").stat()
+    os.utime(sub / "s.g", (st.st_atime + 10, st.st_mtime + 10))
     w.clear()
-    for cmd in (["log"], ["show"], ["diff"]):
-        on_tty(gitsafe.argv(str(repo), cmd), gitsafe.isolated_env(os.environ))
+    return sub
+
+
+def test_a_populated_submodule_with_a_hostile_filter_runs_nothing(world, monkeypatch):
+    w = world
+    plain = make_repo(w, "plain")
+    _populated_submodule(w, plain)
+    w.git(plain, "status", "--porcelain")
+    assert {"sub-clean", "sub-fsmonitor"} & w.fired(), "positive control: the submodule's own config must run"
+    w.clear()
+    repo = make_repo(w, "repo")
+    _populated_submodule(w, repo)
+    assert observe.porcelain(repo) is None and observe.dirty(repo) is None  # refused: unknown, never clean
+    raw = health._git(repo, "staged_raw", caps=Capabilities.direct())  # diff --cached never opens a submodule
+    assert raw is not None and gitsafe.gitlinks(raw) == ["sub"]
+    assert w.fired() == set()
+    # the operation itself shields: even with the refusal switched off, status never opens the submodule
+    monkeypatch.setattr(gitsafe, "submodules", lambda *a, **k: None)
+    assert observe.porcelain(repo) is not None
+    assert w.fired() == set()
+
+
+def test_a_staged_gitlink_change_is_still_uncommitted_work(world):
+    w = world
+    repo = make_repo(w, "r")
+    sub = _populated_submodule(w, repo)  # the gitlink is staged, not committed
+    shutil.rmtree(sub)
+    sub.mkdir()  # unpopulated, as after a clone without --recurse-submodules
+    got = observe.dirty(repo)
+    assert got is not None and "staged submodule change: sub" in got.splitlines()
     assert w.fired() == set()
 
 
 # ------------------------------------------------------------------------------------------- the repo's own config
 
 
-def _hostile_repo(w, name: str) -> Path:
+def _hostile_repo(w, where: str) -> Path:
     """The PoC-439 class: a committed ``.gitattributes`` selects a driver that the repo's own ``.git/config``
     defines (``filter.r.clean``, ``diff.r.textconv``)."""
-    repo = make_repo(w, name, attrs="*.g filter=r diff=r\n*.txt diff=r\n")
+    repo = make_repo(w, where, attrs="*.g filter=r diff=r\n*.txt diff=r\n")
     w.git(repo, "config", "filter.r.clean", w.prog("repo-clean"))
     w.git(repo, "config", "diff.r.textconv", w.prog("repo-textconv"))
     return repo
@@ -277,14 +413,12 @@ def test_observe_runs_no_program_of_a_hostile_repo_config(world):
     w = world
     plain = _hostile_repo(w, "plain")
     w.git(plain, "status", "--porcelain")
-    assert w.fired() == {"repo-clean"}  # positive control: the command observe runs, in plain git
+    assert w.fired() == {"repo-clean"}  # positive control: the command observe's status runs, in plain git
     w.clear()
     repo = _hostile_repo(w, "repo")
-    assert observe.porcelain(repo) is None  # refused by the gate: unknown, never "clean"
-    assert observe.dirty(repo) is None
-    assert observe.head(repo) is None
-    assert observe.git(repo, "diff") is None
-    # reading the repo's config as data (F1 5.7's identity) is no git command that runs anything: not gated
+    got = run_all("observe", repo)
+    assert {k: v for k, v in got.items() if k != "identity"} == dict.fromkeys(got.keys() - {"identity"})
+    # reading the repo's config as data (F1 5.7's identity) is the gate's own listing: it runs nothing
     w.git(repo, "remote", "add", "origin", "https://github.com/acme/x")
     assert observe.repo_identity(repo, "x") == "https://github.com/acme/x"
     assert w.fired() == set()
@@ -302,7 +436,7 @@ def test_a_local_hookspath_or_fsmonitor_program_never_runs_through_observe(world
     w.clear()
     repo = make_repo(w, "repo")
     w.git(repo, "config", "core.hooksPath", str(hooks))  # on the allow-list (husky): -c overrides it
-    observe.git(repo, "update-index", "--refresh")  # writes the index: post-index-change would run
+    assert run_all("observe", repo)["head"] is not None
     assert w.fired() == set()
     w.git(repo, "config", "core.fsmonitor", w.prog("fsmonitor"))
     w.git(plain, "config", "core.fsmonitor", str(w.bin / "fsmonitor"))
@@ -322,12 +456,9 @@ def test_health_runs_no_program_of_a_hostile_repo_config(world):
     assert "repo-clean" in w.fired()
     w.clear()
     repo = _hostile_repo(w, "repo")
-    caps = Capabilities.direct()
-    reason = health._gate(repo, caps)
-    assert reason is not None and "filter.r.clean" in reason
-    # even ungated, health's own commands carry --no-ext-diff --no-textconv
-    assert health._git(repo, "diff", "--cached", caps=caps) is not None
-    assert health._git(repo, "show", ":b.txt", caps=caps) == b"bee2\n"
+    got = run_all("health", repo)
+    assert got["gate"] is not None and "filter.r.clean" in got["gate"]
+    assert got["staged_raw"] is None and got["blob_b"] is None  # _git gates itself too
     assert w.fired() == set()
 
 
@@ -357,10 +488,6 @@ def test_the_isolated_environment_is_built_from_scratch():
     assert env["GIT_CONFIG_COUNT"] == "1" and env["GIT_CONFIG_KEY_0"] == "core.excludesFile"
     assert "GIT_DIR" not in env and "GIT_CONFIG_PARAMETERS" not in env and "GITHUB_TOKEN" not in env
     assert "ORCH_GRANT" not in env and env["GIT_ALLOW_PROTOCOL"] == "" and env["GIT_NO_LAZY_FETCH"] == "1"
-    argv = gitsafe.argv("/r", ["show", ":x"])
-    assert argv[-4:] == ["show", "--no-ext-diff", "--no-textconv", ":x"]
-    assert "--no-pager" in argv and "core.attributesFile=/dev/null" in argv and "i18n.commitEncoding=UTF-8" in argv
-    assert gitsafe.argv("/r", ["status"])[-1] == "status"
 
 
 # ----------------------------------------------------------------------------- the gate fails closed, on every path
@@ -380,18 +507,13 @@ def _no_git_after_a_failed_gate(monkeypatch, exc: BaseException) -> list:
 
 
 @pytest.mark.parametrize("exc", [gitsafe.Unsafe("refused"), gitsafe.Unsafe("checking the config timed out")])
-def test_observe_never_runs_git_when_the_gate_refuses(world, monkeypatch, exc):
+def test_no_operation_runs_git_when_the_gate_refuses(world, monkeypatch, exc):
     repo = make_repo(world, "r")
     ran = _no_git_after_a_failed_gate(monkeypatch, exc)
-    for call in (
-        lambda: observe.git(repo, "rev-parse", "HEAD"),
-        lambda: observe.git(repo, "config", "--no-includes", "--get-all", "remote.origin.url"),  # no exempt prefix
-        lambda: observe.git(repo, "config", "--list"),
-        lambda: observe.head(repo),
-        lambda: observe.porcelain(repo),
-        lambda: observe.dirty(repo),
-    ):
-        assert call() is None
+    got = run_all("observe", repo)
+    assert {k: v for k, v in got.items() if k != "identity"} == dict.fromkeys(got.keys() - {"identity"})
+    got = run_all("health", repo)
+    assert got == {"gate": exc.reason, "staged_raw": None, "blob_b": None, "blob_a": None}
     assert ran == []  # git itself was never started
 
 
@@ -399,7 +521,7 @@ def test_an_unexpected_gate_error_propagates_and_never_falls_through_to_git(worl
     repo = make_repo(world, "r")
     ran = _no_git_after_a_failed_gate(monkeypatch, RuntimeError("boom"))
     with pytest.raises(RuntimeError):
-        observe.git(repo, "status")
+        observe.porcelain(repo)
     assert ran == []
 
 
@@ -416,11 +538,10 @@ def test_a_config_that_cannot_be_listed_is_refused(world):
     assert observe.head(repo) is not None  # the same repo, readable again
 
 
-def test_health_never_runs_git_when_the_gate_refuses(world, monkeypatch, ws):
+def test_health_check_staged_never_runs_git_when_the_gate_refuses(world, monkeypatch, ws):
     repo = make_repo(world, "r")
     caps = Capabilities.direct()
     _no_git_after_a_failed_gate(monkeypatch, gitsafe.Unsafe("refused"))
-    assert health._gate(repo, caps) == "refused"
     ran = []
     monkeypatch.setattr(health, "_git", lambda *a, **k: ran.append(a))
     store = ws.other()
@@ -430,3 +551,24 @@ def test_health_never_runs_git_when_the_gate_refuses(world, monkeypatch, ws):
         store.close()
     assert [f.code for f in found] == ["git.unavailable"] and "refused" in found[0].what
     assert ran == []
+
+
+def test_a_git_too_old_for_the_isolation_is_refused(world, monkeypatch):
+    repo = make_repo(world, "r")
+    path = gitsafe.isolated_env(os.environ)["PATH"]
+    monkeypatch.setitem(gitsafe._VERSIONS, path, (2, 31))  # GIT_CONFIG_GLOBAL would be ignored silently
+    with pytest.raises(gitsafe.Unsafe, match="too old"):
+        gitsafe.gate(str(repo), os.environ)
+    assert observe.head(repo) is None
+    monkeypatch.setitem(gitsafe._VERSIONS, path, (2, 32))
+    assert observe.head(repo) is not None
+
+
+def test_refusal_names_the_gates_reason_only_for_a_repository(world, tmp_path):
+    w = world
+    repo = _hostile_repo(w, "r")
+    assert "filter.r.clean" in observe.refusal(repo)
+    assert observe.refusal(make_repo(w, "ok")) is None
+    (tmp_path / "nogit").mkdir()
+    assert observe.refusal(tmp_path / "nogit") is None
+    assert w.fired() == set()

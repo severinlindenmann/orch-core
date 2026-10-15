@@ -139,11 +139,7 @@ HOST = textwrap.dedent(
     out["head"] = caps.git.head(Path(args["worktree"]))
     d = caps.git.diff(Path(args["worktree"]), name="r", branch="feat", default_branch=None, remote=None)
     out["files"] = [f["path"] for f in d["files"]]
-    try:
-        caps.git.run(Path(args["worktree"]), "status")
-        out["run"] = "ok"
-    except PermissionError:
-        out["run"] = "denied"
+    out["run"] = "absent" if not hasattr(caps.git, "run") else "present"  # no free-argv git at all (#546)
     out["dirty"] = caps.git.dirty(Path(args["worktree"]))
     print(json.dumps(out))
     """
@@ -164,4 +160,4 @@ def test_the_host_reads_git_only_through_reader_children(make_repo, tmp_path):  
     res = _run(HOST, {"root": str(base / "ws"), "state": str(base / "state"), "worktree": str(r.path)})
     assert res["host_open_repo"] == "denied"  # the host itself never opens a repo file
     assert res["sync"] == {str(r.path): None} and res["head"] == head and res["files"] == ["a.txt"]
-    assert res["run"] == "denied" and res["dirty"] is None
+    assert res["run"] == "absent" and res["dirty"] is None

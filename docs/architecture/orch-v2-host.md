@@ -4120,13 +4120,20 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     No CLI, op, code, wire, hash or schema change.
 55. **Git isolation for every read-only git call (#546, follow-up to #541; §12.7 "Isolation"; the number may be
     renumbered when a parallel change lands first):** `orch.gitsafe` holds the one mechanism of the invariant "no git
-    invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list"
-    (`isolated_env`, `config_env`, `person_entries`, `argv`). `store/observe.git` now runs the gitsafe gate before
-    every command (a repository whose own config sets a key outside the allow-list, such as a filter its
-    `.gitattributes` selects, gives `None`: D58's "git cannot be asked", never clean) and refuses a populated
-    submodule for `status`; `ops/health._git` (`orch check --staged`) gates once and answers `git.unavailable` naming
-    the key. Both run with system and global config off; observe's `status` keeps only the person's
-    `core.excludesFile`, `core.autocrlf` and `core.eol`. `wtgit.run_git` stays the documented exception. No CLI, op,
+    invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list":
+    `isolated_env`, `config_env`, `person_entries`, and `command`, a **closed set of operations** (`gitsafe.OPS`:
+    `head`, `symbolic_head`, `toplevel`, `ref`, `commit`, `status`, `index_flags`, `staged_raw`, `staged_blob`) with
+    validated operands and no free argv. `ops/caps.Git.run` (free argv) is removed. Every operation runs the gitsafe
+    gate first: a repository whose own config sets a key outside the allow-list, such as a filter its
+    `.gitattributes` selects, gives `None` in `store/observe` (D58's "git cannot be asked", never clean) and
+    `git.unavailable` naming the key in `orch check --staged`. `status` never opens a submodule
+    (`--ignore-submodules=all`) and refuses a populated one; a staged gitlink change still counts as uncommitted work.
+    System and global config are off; `status` keeps only the person's `core.excludesFile`, `core.autocrlf` and
+    `core.eol`. The gate refuses git older than 2.32. `wtgit.run_git` stays the documented exception. **Behaviour
+    changes:** the repository identity (F1 5.7) reads `remote.origin.url` from the repository's own local and
+    worktree config only, without includes (a URL set globally or in an included file is now `local:<name>`, so a
+    declared `remote` reports `repo.remote_mismatch`); a host-mode `task done --run` with a verify command refuses
+    (`verify.failed`, with the gate's reason) before running it when the working tree's state cannot be told. No op,
     code, wire, hash or schema change.
 
 ---
@@ -9377,17 +9384,21 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   - **Isolation (#541, #546).** The invariant's second half: *no git invocation by orch reads configuration the
     person or a repo controls, except through an explicit allow-list.* The repo's half is the gate above. The person's
     half is one mechanism in `orch.gitsafe`: `isolated_env` (built from scratch, no `GIT_*` of the caller,
-    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (the caller's own allow-list of the person's
-    keys, passed as command-scope config; `person_entries` reads them, which executes nothing) and `argv` (`NEUTRAL`
-    plus `core.attributesFile=/dev/null` and `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff
-    --no-textconv` on `diff`, `show` and `log`). Every invocation site:
+    `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`), `config_env` (an operation's own allow-list of the
+    person's keys, passed as command-scope config; `person_entries` reads them, which executes nothing) and `command`
+    (a closed set of operations, `gitsafe.OPS`, each with fixed arguments and at most one validated operand: no
+    caller can pass `-c`, `-C`, `--git-dir` or any option; the argv is `NEUTRAL` plus `core.attributesFile=/dev/null`
+    and `i18n.commitEncoding=UTF-8`, `--no-pager`, and `--no-ext-diff --no-textconv` on `diff`). Every invocation
+    site:
 
     | Site | Isolation |
     |---|---|
-    | `gitsafe` gate's own reads | `argv`, `isolated_env`, no person keys |
-    | `store/observe.git` (`head`, `porcelain`, `dirty`, `repo_identity`; `ops/caps.Git` and `hostclient` in direct mode) | gate before every command, `submodules` for `status`; `argv`, `isolated_env`; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (the person's own idea of clean; a pattern file and line-ending settings, no program). The identity's `remote.origin.url` (F1 5.7) comes from `gitsafe.local_config`, the gate's own listing, not from a second git command (#546) |
-    | `ops/health._git` (`check --staged`: `diff --cached --raw`, `show :<path>`) | gate once per check (`git.unavailable` naming the key), `argv`, `isolated_env`, no person keys, through `caps.exec` (#546) |
-    | `runner/wtgit.read_git`, `tree_dirty` | gate (and `submodules`), `argv`, `isolated_env`, no person keys |
+    | `gitsafe` gate's own reads | its fixed reads, `isolated_env`, no person keys |
+    | `gitsafe.person_entries` (`config --list --show-scope --includes -z`, no repository) | reads the person's system and global config as data, keeps only the operation's allow-list, executes nothing |
+    | `gitsafe.git_version` (`git --version`) | `isolated_env`; once per `PATH`; the gate refuses git older than 2.32 |
+    | `store/observe.git` (`head`, `symbolic_head`, `toplevel`, `porcelain`, `dirty`, `ref`, `commit`; `ops/caps.Git` and `hostclient` in direct mode) | `gitsafe.command`: operations of `gitsafe.OPS` only, the gate before every one, `submodules` and `--ignore-submodules=all` for `status`; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (and git's default global ignore file). The identity's `remote.origin.url` (F1 5.7) comes from `gitsafe.local_config`, the gate's own listing. `ops/caps.Git.run` (free argv) is removed (#546) |
+    | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546) |
+    | `runner/wtgit.read_git`, `tree_dirty`, `worktree_cli` revisions | `gitsafe.command`: `commit`, `status`, `staged_raw`, `index_flags` |
     | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
     | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |
     | `records/git.open_repo` probe | reads configuration only |

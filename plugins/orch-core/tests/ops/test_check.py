@@ -182,7 +182,7 @@ def test_staged_paths_are_guarded_without_case_or_ascii_aliases(ws, cli, monkeyp
     cli("new", "one")
     rel = rel.format(uid=ws.uid("1"))
     raw = f":100644 100644 {'0' * 40} {'1' * 40} {status}\0{rel}\0".encode()
-    monkeypatch.setattr(health, "_git", lambda root, *args, **kw: raw if args[0] == "diff" else b"innocent")
+    monkeypatch.setattr(health, "_git", lambda root, op, **kw: raw if op == "staged_raw" else b"innocent")
     monkeypatch.setattr(health, "_gate", lambda root, caps: None)  # git is stubbed out: no repository to gate (#546)
     store = ws.other()
     try:

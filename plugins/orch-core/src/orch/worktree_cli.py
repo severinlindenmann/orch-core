@@ -237,7 +237,7 @@ class Direct:
 
     def _rev(self, repo: str, rev: str) -> str | None:
         """A commit id through the hardened reader (never ``observe.git``: the repo's own config must run nothing)."""
-        got = read_git(repo, ["rev-parse", "--verify", "-q", rev + "^{commit}"], self._own())
+        got = read_git(repo, "commit", self._own(), rev=rev)
         return got if got and len(got) in (40, 64) else None
 
     def _git(self, args: dict[str, Any]) -> None:

@@ -280,4 +280,4 @@ def test_no_lazy_fetch_in_every_scrubbed_environment():
     assert wtgit.git_env({})["GIT_NO_LAZY_FETCH"] == "1"
     # store/observe.git, ops/health._git and wtgit.read_git share orch.gitsafe's isolation (#546)
     assert gitsafe.isolated_env({})["GIT_NO_LAZY_FETCH"] == "1"
-    assert "protocol.allow=never" in gitsafe.argv("/", ["status"])
+    assert "protocol.allow=never" in gitsafe._argv("/", ["status"])

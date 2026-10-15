@@ -78,8 +78,12 @@ export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine
 /** The owner's risk sentence for the runner grant (D-P2-27), verbatim. */
 export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours.'
 
-/** A deposit View is shown with a Sign button only when it says so and carries both constants (the server checks too). */
-export const depositViewOk = (view: ClickView): boolean =>
+/**
+ * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace
+ * with this workspace's word (`<PREFIX>~<ws[-8:]>/GRANT`, review L3). The server checks too.
+ */
+export const depositViewOk = (view: ClickView, ws: string): boolean =>
+  view.workspace?.id === ws && view.confirm.kind === 'word' && view.confirm.word.endsWith(`~${ws.slice(-8)}/GRANT`) &&
   view.deposit === true && view.deposit_line === DEPOSIT_LINE && view.lines.includes(DEPOSIT_LINE) && view.lines.includes(DEPOSIT_RISK) &&
   view.confirm.kind === 'word' && /^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}\/GRANT$/.test(view.confirm.word)
 

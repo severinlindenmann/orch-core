@@ -19,7 +19,7 @@ const T = { timeout: 5000 }
 const GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const REQ = 'hr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const UNTIL = '2026-10-15T20:00:00Z'
-const WORD = 'DEMO~0a1b2c3d/GRANT'
+const WORD = `DEMO~${WS.slice(-8)}/GRANT`
 
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
   spec: 'f'.repeat(64), ticket: 'DEMO-1', display: "claude 'Run orch status, then work on ticket DEMO-1.'", display_hidden: false,
@@ -256,6 +256,58 @@ describe('the runner grant', () => {
     expect(s.forget).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Forget' }))
     await waitFor(() => expect(s.forget).toHaveBeenCalledWith(WS, GRANT, expect.stringMatching(/^a_/)), T)
+  })
+})
+
+describe('review fixes', () => {
+  it.each([
+    [{ display: null, display_hidden: true }],
+    [{ cwd_path: null, cwd_path_hidden: true }],
+  ])('L2: Start stays off when the command or the folder is withheld (%o)', async (over) => {
+    s.preview.mockResolvedValue(preview(over))
+    mount()
+    expect(await screen.findByTestId('agent-unreadable', {}, T)).toBeInTheDocument()
+    expect(screen.getByTestId('agent-start')).toBeDisabled()
+  })
+
+  it.each([
+    [{ confirm: { kind: 'word' as const, word: 'DEMO~0a1b2c3d/GRANT' } }],
+    [{ workspace: { id: 'f'.repeat(32), name: 'other', prefix: 'DEMO' } }],
+  ])('L3: a grant View of another workspace gets no Sign button (%o)', async (over) => {
+    s.preview.mockResolvedValue(noGrant())
+    s.view.mockResolvedValue(grantView(over))
+    mount()
+    fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
+    expect(await screen.findByTestId('runner-grant-bad-view', {}, T)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign' })).toBeNull()
+  })
+
+  it('L1: a lost sign answer settled at the host still asks where the deposit went, by the request id', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockRejectedValue(new TypeError('network'))
+    vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'submitted' })
+    s.status.mockResolvedValue({ deposit: 'confirmed' })
+    mount()
+    await issueAndSign()
+    expect(await screen.findByTestId('runner-grant-confirmed', {}, { timeout: 8000 })).toBeInTheDocument()
+    expect(s.status).toHaveBeenCalledWith(WS, REQ.slice(3))
+  }, 15000)
+
+  it('L1: still unknown without a grant id says where to find it', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.sign.mockRejectedValue(new TypeError('network'))
+    vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'submitted' })
+    mount()
+    await issueAndSign()
+    expect(await screen.findByTestId('runner-grant-find', {}, { timeout: 20000 })).toBeInTheDocument()
+  }, 25000)
+
+  it('I4: click switched off for the workspace says to use the terminal', async () => {
+    s.preview.mockResolvedValue(noGrant())
+    s.prepare.mockRejectedValue(new ApiError(409, { code: 'human.click_refused', reason: 'disabled', message: 'x', retryable: false }))
+    mount()
+    fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
+    expect(await screen.findByTestId('runner-grant-refused', {}, T)).toHaveTextContent('Run `orch grant --runner` in your terminal.')
   })
 })
 

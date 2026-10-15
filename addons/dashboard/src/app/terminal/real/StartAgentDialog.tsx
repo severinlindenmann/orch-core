@@ -12,7 +12,7 @@ import {
   AGENT_MODES, agentsApi, blockedText, cwdText, DEPOSIT_UNKNOWN, depositReason, HARNESSES, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
   TERMINAL_ONLY, UPDATE_ORCH, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
-import { DEPOSIT_RISK, depositViewOk, type ClickAction, type ClickSigned } from '@/api/click'
+import { DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
 import { newIdem, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
@@ -123,6 +123,8 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
     }
   }
   const noGrant = data?.blocked?.code === 'launch.no_grant'
+  // Review L2: nothing starts that the person could not read (a command or a folder withheld for invisible characters).
+  const unreadable = !!data && (data.display_hidden || data.cwd_path_hidden || data.display === null || data.cwd_path === null)
 
   return (
     <>
@@ -167,10 +169,11 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep }: { ws: string;
       )}
       <RunnerGrantCard initial={grantStep} ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={noGrant ? data?.blocked ?? null : null}
         onChanged={() => { void runner.refetch(); void preview(shown?.args ?? form) }} />
+      {unreadable && !data?.blocked && <p role="alert" className="text-xs text-danger" data-testid="agent-unreadable">The command or the folder cannot be shown here, so it cannot be started from the dashboard. Fix it in the terminal (runner.json or the path), then preview again.</p>}
       {error && <p role="alert" className="text-xs text-danger" data-testid="agent-error"><Inline>{error}</Inline></p>}
       <DialogFooter>
         <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-        <Button size="sm" disabled={!data || !data.spec || !!data.blocked || stale || busy || loading} onClick={() => void start()} data-testid="agent-start">
+        <Button size="sm" disabled={!data || !data.spec || !!data.blocked || unreadable || stale || busy || loading} onClick={() => void start()} data-testid="agent-start">
           {busy ? <><Loader2 className="size-4 animate-spin" aria-hidden /> Starting…</> : 'Start agent'}
         </Button>
       </DialogFooter>
@@ -210,7 +213,7 @@ function PreviewLines({ data, ticket }: { data: AgentPreview; ticket?: string })
 
 export type GrantStep =
   | { kind: 'idle' }
-  | { kind: 'polling'; signed: ClickSigned }
+  | { kind: 'polling'; depositId: string | null; grant: string | null }
   | { kind: 'confirmed'; until: string | null }
   | { kind: 'rejected'; reason: string; grant: string | null }
   | { kind: 'unknown'; grant: string | null }
@@ -242,13 +245,15 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
     if (click.phase !== 'done' || !signed) return
     if (signed.deposit === 'confirmed') { setStep({ kind: 'confirmed', until: null }); changed.current() }
     else if (signed.deposit === 'rejected') setStep({ kind: 'rejected', reason: depositReason(signed.deposit_reason), grant: signed.grant ?? null })
-    else setStep({ kind: 'polling', signed })
-  }, [click.phase, click.signed])
+    // `unknown`, or a lost sign answer the hook settled from the host's state (no deposit fields at all, review L1): the
+    // deposit id is the request's ULID either way, so the host can still be asked where the secret went.
+    else setStep({ kind: 'polling', depositId: signed.deposit_id ?? depositIdOf(click.prepared?.request_id), grant: signed.grant ?? null })
+  }, [click.phase, click.signed, click.prepared])
 
   // `unknown`: ask where the deposit stands a few times, bounded; then say what to do.
   useEffect(() => {
     if (step.kind !== 'polling') return
-    const { deposit_id: id, grant: gid } = step.signed
+    const { depositId: id, grant: gid } = step
     let stopped = false
     let n = 0
     const tick = async () => {
@@ -298,7 +303,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   }
 
   const view = click.view
-  const viewOk = view ? depositViewOk(view.view) : false
+  const viewOk = view ? depositViewOk(view.view, ws) : false
   return (
     <section aria-label="Runner grant" data-testid="runner-grant-card" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2 text-xs">
       <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Runner grant</p>
@@ -352,7 +357,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       {step.kind === 'unknown' && (
         <div role="alert" className="text-warning" data-testid="runner-grant-unknown">
           <p>{DEPOSIT_UNKNOWN}</p>
-          {step.grant && <RevokeStep grant={step.grant} click={revoke} />}
+          {step.grant ? <RevokeStep grant={step.grant} click={revoke} /> : <p className="text-text-muted" data-testid="runner-grant-find">{FIND_GRANT}</p>}
         </div>
       )}
       {step.kind === 'refused' && <p role="alert" className="text-danger" data-testid="runner-grant-refused">{step.text}</p>}
@@ -375,10 +380,18 @@ function RevokeStep({ grant, click }: { grant: string; click: ReturnType<typeof 
   )
 }
 
+/** The deposit id of a click request: its ULID (`hr_` stripped), or null when it is not one. */
+export const depositIdOf = (requestId: string | undefined | null): string | null =>
+  requestId && /^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(requestId) ? requestId.slice(3) : null
+
+/** When the grant's id is not known here (a lost sign answer): where to find it. */
+export const FIND_GRANT = 'Its id did not reach this page: revoke your newest runner grant under Settings → Grants, or run `orch grant --runner` in your terminal for a new one.'
+
 /** The grant's refusals before signing, in the approved words. */
 export function refusalText(e: unknown): string | null {
   if (!(e instanceof ApiError)) return null
   if (e.code === 'human.click_refused' && e.reason === 'terminal_only') return e.why === 'update_orch' ? UPDATE_ORCH : TERMINAL_ONLY
+  if (e.code === 'human.click_refused' && e.reason === 'disabled') return TERMINAL_GRANT // review I4: click is off here
   if (e.code === 'sign.click_only' || e.code === 'click.unavailable' || e.code === 'click.contract' || e.code === 'sign.convenience_unavailable') return TERMINAL_GRANT
   return null
 }

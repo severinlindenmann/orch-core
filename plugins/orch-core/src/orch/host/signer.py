@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.identity import pairdevice
 
 from . import review
 
@@ -91,6 +92,8 @@ def check(
 ) -> None:
     """Refuse (:class:`SignerRefused`) anything the signer cannot vouch for, **before any prompt**. ``device`` and
     ``auth``, when given, must be what the events carry (a bound request)."""
+    if prepared.get("op") == pairdevice.OP and auth == "convenience":  # H12c-e (11A.15.6): the terminal signer only
+        _refuse("relay.pair_device is never signed with convenience custody: sign it with orch sign CODE")
     _shape(prepared, workspace_id=workspace_id, person=person, device=device, auth=auth)
     _formats(prepared)
     _hashes(prepared, workspace_id)
@@ -300,6 +303,8 @@ _MATERIAL_KEYS = {
     ),
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+    # H12c-e (11A.15.10 item 12): exactly the bound fields and the review, nothing else
+    pairdevice.MATERIAL_KIND: (pairdevice.MATERIAL_FIELDS | {"review"}, pairdevice.MATERIAL_FIELDS | {"review"}),
 }
 
 
@@ -319,6 +324,8 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     gate_event = len(events) == 1 and events[0]["type"] in _GATE_TYPES
     question_event = len(events) == 1 and events[0]["type"] == "question.answered"
     want = "gate" if gate_event else ("question" if question_event else "payload")
+    if op == pairdevice.OP:  # H12c-e: the op and its kind belong together, both ways (no cross-kind substitution)
+        want = pairdevice.MATERIAL_KIND
     if kind != want:
         _refuse(f"material of kind {kind!r} for {op}")
     if log == "workspace":
@@ -330,7 +337,21 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
         _gate(material, events[0], workspace_id, log)
     elif kind == "question":
         _question(material, events[0], workspace_id, log)
+    elif kind == pairdevice.MATERIAL_KIND:
+        _pair_device(material, events, workspace_id, log)
     _before(material, events)
+
+
+def _pair_device(material: Mapping[str, Any], events: list[Mapping[str, Any]], workspace_id: str, log: str) -> None:
+    """H12c-e: the binding of the ``relay.pair_device`` material (:func:`orch.identity.pairdevice.check_material`):
+    the workspace, the device id, the cleaned label, the scopes, the certificate digest and the SAS or ``cert_code``,
+    against the one ``device.added`` on the workspace log; any extra field is refused."""
+    if log != "workspace" or len(events) != 1:
+        _refuse("relay.pair_device signs one device.added on the workspace log")
+    try:
+        pairdevice.check_material(material, events[0], workspace_id=workspace_id, person=events[0]["actor"]["id"])
+    except pairdevice.PairDeviceInvalid as exc:
+        _refuse(f"relay.pair_device: {exc}")
 
 
 def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:
@@ -428,6 +449,7 @@ _PLAIN = {
     "move": "move {ticket} to {to}",
     "policy.set": "set the gate policies {gates} of {ticket}",
     "settings.set": "change the workspace settings {set}",
+    "relay.pair_device": "add the paired device {device} to your devices",
 }
 
 
@@ -455,6 +477,8 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
         return _clean(ev.get("person"))
     if op in _ADDON_OPS:
         return _clean(ev.get("name"))
+    if op == pairdevice.OP:  # H12c-e: the last eight hex of the device id being added (shown in the review)
+        return _clean(ev.get("device"))[-8:]
     if ticket is not None:
         return ticket_word(prepared)
     return op.upper()
@@ -573,6 +597,8 @@ def render(
                 out.append(f"{_clean(key)}: {_clean(value)}")
     if material.get("kind") == "gate":
         out += _gate_content(material)
+    if material.get("kind") == pairdevice.MATERIAL_KIND:
+        out += _pair_content(material)
     if material.get("kind") == "question":
         q = material["question"]
         out.append(f"question {_clean(q['id'])}:")
@@ -591,6 +617,24 @@ def render(
     if any(unicodedata.category(c) in ("Cc", "Cf") and c != "\n" for c in text):  # every value went through _clean
         _refuse("the review would carry a control character")
     return text
+
+
+def _pair_content(material: Mapping[str, Any]) -> list[str]:
+    """H12c-e (11A.15.6 step 9): what the ``relay.pair_device`` review binds, every field on its own line. The label
+    is the cleaned label exactly as recorded, shown "named by the device": it is not signed (``device.added`` carries
+    none) and not authenticated."""
+    comparison = material["comparison"]
+    what = "the SAS you compared (path 7a)" if comparison["kind"] == "sas" else "cert_code you compared (path 7b)"
+    return [
+        "=== relay pairing: this signature adds a phone as your device ===",
+        f"workspace: {_clean(material['workspace_id'])} (bound)",
+        f"offer: {_clean(material['offer_id'])} attempt {_clean(material['attempt'])} (host attestation)",
+        f"device: {_clean(material['device'])} (you type its last eight: {_clean(material['device'])[-8:]})",
+        f"label: {_clean(material['label']) or '(none)'} (named by the device; not signed, not authenticated)",
+        f"scopes: {', '.join(_clean(s) for s in material['scopes'])} (the relay list scopes of this offer)",
+        f"certificate: {_clean(material['cert_digest'])} (the digest of the certificate this event embeds)",
+        f"{_clean(comparison['kind'])}: {_clean(comparison['code'])} ({what})",
+    ]
 
 
 def _gate_content(material: Mapping[str, Any]) -> list[str]:

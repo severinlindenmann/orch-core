@@ -40,12 +40,14 @@ __all__ = [
     "SOURCES",
     "ReadersRefused",
     "added_readers",
+    "admission_context",
     "below_level",
     "check_readers",
     "current_devices",
     "drop_stale",
     "levels",
     "make_record",
+    "pair_entry",
     "prune",
     "record_level",
     "required_reader",
@@ -67,8 +69,9 @@ __all__ = [
 
 #: ops that add a reader of the workspace's log; the host (:mod:`orch.host.convenience`) and the op handlers use this
 #: one set. ``relay.link`` (a relay link) and ``relay.pair`` (the host's ``approved`` answer to a pairing, and any
-#: member list that adds a device) are host ops of the relay bridge (orch-v2-host §11A.6)
-READER_OPS = frozenset({"member.add", "relay.link", "relay.pair"})
+#: member list that adds a device) are host ops of the relay bridge (orch-v2-host §11A.6); ``relay.pair_device`` is the
+#: person op that signs the paired phone's ``device.added`` (H12c-e, 11A.15.6 step 9)
+READER_OPS = frozenset({"member.add", "relay.link", "relay.pair", "relay.pair_device"})
 
 
 def has_convenience_events(store: Any) -> bool:
@@ -226,10 +229,13 @@ def verify_admission(
     via: str,
     surfaces: tuple[str, ...],
     now_ms: int | None,
+    who: dict[str, str] | None = None,
+    bind: dict[str, str] | None = None,
 ) -> Any:
     """``verify_decl`` for a declaration that comes with a device certificate (``member.add``: ``via:"enrol"``;
-    ``reader.declare``: ``via:"declare"``): the certificate's keys, ``who`` its person. ``now_ms=None`` is a recheck
-    (a binding, a submit: no clock, 9.3). Returns :class:`orch.identity.reader.Declared`; raises ``DeclInvalid``."""
+    ``reader.declare``: ``via:"declare"``; ``relay.pair_device``: ``via:"pair"`` with the offer's ``bind`` and the
+    ``who`` of step 4): the certificate's keys, ``who`` its person unless given. ``now_ms=None`` is a recheck (a
+    binding, a submit: no clock, 9.3). Returns :class:`orch.identity.reader.Declared`; raises ``DeclInvalid``."""
     from orch.identity import reader
 
     keys = _cert_keys(cert)
@@ -240,12 +246,62 @@ def verify_admission(
         workspace_id=workspace_id,
         dk_sig_pub=keys[0],
         dk_kx_pub=keys[1],
-        who={"person_id": _bare(person)},
-        bind={"via": via},
+        who=who if who is not None else {"person_id": _bare(person)},
+        bind=bind if bind is not None else {"via": via},
         surfaces=surfaces,
         now_ms=now_ms,
         recheck=now_ms is None,
     )
+
+
+def admission_context(entry: dict[str, Any]) -> dict[str, Any]:
+    """The ``via``, ``surfaces``, ``who`` and ``bind`` an admitted reader entry (``Capture.readers``) is verified with
+    again at a binding and at the append: its source's (:data:`SOURCES`), and for a pairing (``source:"pair"``,
+    H12c-e) the ``who`` and ``bind`` the entry recorded at step 4."""
+    source = entry.get("source")
+    if source not in SOURCES:
+        raise ValueError(f"an admitted reader entry of an unknown source {source!r}")
+    via, surface_sets = SOURCES[source]
+    out: dict[str, Any] = {"via": via, "surfaces": surface_sets[0]}
+    if source == "pair":
+        out["who"], out["bind"] = dict(entry["who"]), dict(entry["bind"])
+    return out
+
+
+def pair_entry(facts: Any, workspace_id: str) -> dict[str, Any] | None:
+    """The admitted reader of a ``relay.pair_device`` request (H12c-e, 11A.15.6 step 9 (v)): the phone's stored
+    declaration (``via:"pair"``, this offer and attempt, the ``view`` KAT, the ``who`` of step 4) verified again
+    against the certificate's keys, as a recheck (freshness was checked once, at step 4: 9.3), or ``None`` without
+    a declaration (level 0). Raises ``DeclInvalid``."""
+    decl = facts.decl
+    if decl is None:
+        return None
+    entry: dict[str, Any] = {
+        "source": "pair",
+        "who": facts.decl_who,
+        "bind": {"via": "pair", "offer_id": facts.offer_id, "attempt": facts.attempt},
+    }
+    ctx = admission_context(entry)
+    got = verify_admission(
+        decl,
+        workspace_id=workspace_id,
+        cert=facts.cert,
+        person=facts.person,
+        via=ctx["via"],
+        surfaces=ctx["surfaces"],
+        now_ms=None,
+        who=ctx["who"],
+        bind=ctx["bind"],
+    )
+    return {
+        "device": "d_" + got.device_id,
+        "person": facts.person,
+        "decl": decl,
+        **entry,
+        "reader": got.reader,
+        "level": got.level,
+        "digest": got.digest,
+    }
 
 
 def make_record(declared: Any, decl: dict[str, Any], person: str, source: str, at: str) -> dict[str, Any]:

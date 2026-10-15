@@ -35,7 +35,21 @@ from orch.store.convmark import (  # the file side lives in the store (D-P2-9); 
 )
 
 __all__ = [
+    "READER_EVENTS",
     "READER_OPS",
+    "SOURCES",
+    "ReadersRefused",
+    "added_readers",
+    "below_level",
+    "check_readers",
+    "current_devices",
+    "levels",
+    "make_record",
+    "prune",
+    "record_level",
+    "required_reader",
+    "store_record",
+    "verify_admission",
     "SEEN_FILE",
     "abandoned_have_convenience",
     "canonical_lines_have_convenience",
@@ -124,3 +138,359 @@ def refuse_new_reader(store: Any, what: str, state_dir: Path | None = None) -> N
             "Until it exists, use click-to-sign only on workspaces that won't get a phone, relay link or other "
             "member yet",
         )
+
+
+# --- H12d-2: reader records, levels and the one check at the append choke point (§0.8.6 item 9.4, 9.10) ---------------
+
+#: event types that add a reader (the device their certificate names); a ``restore`` revives readers (9.4): until a
+#: path emits one through an appending writer (R3), :func:`check_readers` counts every current device for it
+READER_EVENTS = {"member.added": "device_cert", "device.added": "cert"}
+#: how a record was admitted (9.10), with the ``bind.via`` its declaration must carry and the KAT surfaces it was
+#: checked for (9.2: ``log`` from a core, ``view`` from a phone). ``declare`` is a core's (P, ``log``) or, with
+#: H12d-3, a phone's (column R, ``view``): its record verifies for either, the admitting op checked the right one
+SOURCES: dict[str, tuple[str, tuple[tuple[str, ...], ...]]] = {
+    "pair": ("pair", (("view",),)),
+    "member.add": ("enrol", (("log",),)),
+    "device.added": ("enrol", (("log",),)),
+    "declare": ("declare", (("log",), ("view",))),
+}
+_RECORD_FIELDS = frozenset({"v", "device_id", "person_id", "dk_hash", "reader", "digest", "decl", "source", "at"})
+
+
+class ReadersRefused(Exception):
+    """A reader below the required level (``sign.convenience_readers``) or a convenience signature a reader below
+    level 1 would read (``sign.convenience_unavailable``). ``reason`` is the closed reason (§0.8.6 item 9.9, 9.11),
+    ``devices`` the readers below the level, ``required``/``declared`` for ``reader_too_old``. The host turns it into
+    a :class:`~orch.host.errors.HostError`, direct mode into an :class:`OrchError` (:meth:`orch_error`)."""
+
+    def __init__(
+        self,
+        code: str,
+        reason: str,
+        message: str,
+        *,
+        devices: Iterable[str] = (),
+        required: int | None = None,
+        declared: int | None = None,
+    ) -> None:
+        super().__init__(f"{code}: {reason}: {message}")
+        self.code, self.reason, self.message = code, reason, f"{reason}: {message}"
+        self.devices = list(devices)
+        self.required, self.declared = required, declared
+
+    @property
+    def hint(self) -> str:
+        if self.code == "sign.convenience_unavailable":
+            return (
+                "every other reader must declare that it understands convenience signing (orch keys reader declare "
+                "on a core; a current phone build declares itself), or be removed; meanwhile sign in your terminal "
+                "with orch sign CODE"
+            )
+        return (
+            "the new reader must declare and prove that it understands convenience signing: its orch writes a "
+            "reader declaration next to its device certificate (orch keys reader declare --enrol), passed with "
+            "--reader-decl (orch-v2-host §0.8.6 item 9)"
+        )
+
+    @property
+    def detail(self) -> dict[str, Any]:
+        return {"reason": self.reason, "devices": list(self.devices)}
+
+    def orch_error(self) -> OrchError:
+        return OrchError(self.code, self.message, hint=self.hint)
+
+
+def _bare(ref: str) -> str:
+    return ref[2:] if isinstance(ref, str) and ref[:2] in ("p_", "d_") else ref
+
+
+def _cert_keys(cert: Any) -> tuple[bytes, bytes] | None:
+    from orch import crypto
+
+    o = cert.get("o") if isinstance(cert, dict) else None
+    try:
+        return crypto.unb64u(o["dk_sig_pub"], crypto.PUB_LEN), crypto.unb64u(o["dk_kx_pub"], crypto.PUB_LEN)
+    except (KeyError, TypeError, crypto.CryptoError, ValueError):
+        return None
+
+
+def verify_admission(
+    decl: Any,
+    *,
+    workspace_id: str,
+    cert: Any,
+    person: str,
+    via: str,
+    surfaces: tuple[str, ...],
+    now_ms: int | None,
+) -> Any:
+    """``verify_decl`` for a declaration that comes with a device certificate (``member.add``: ``via:"enrol"``;
+    ``reader.declare``: ``via:"declare"``): the certificate's keys, ``who`` its person. ``now_ms=None`` is a recheck
+    (a binding, a submit: no clock, 9.3). Returns :class:`orch.identity.reader.Declared`; raises ``DeclInvalid``."""
+    from orch.identity import reader
+
+    keys = _cert_keys(cert)
+    if keys is None:
+        raise reader.DeclInvalid("keys", "the device certificate carries no usable keys")
+    return reader.verify_decl(
+        decl,
+        workspace_id=workspace_id,
+        dk_sig_pub=keys[0],
+        dk_kx_pub=keys[1],
+        who={"person_id": _bare(person)},
+        bind={"via": via},
+        surfaces=surfaces,
+        now_ms=now_ms,
+        recheck=now_ms is None,
+    )
+
+
+def make_record(declared: Any, decl: dict[str, Any], person: str, source: str, at: str) -> dict[str, Any]:
+    """A reader record (9.10) for a verified declaration."""
+    if source not in SOURCES:
+        raise ValueError(f"source must be one of {sorted(SOURCES)}")
+    return {
+        "v": 1,
+        "device_id": declared.device_id,
+        "person_id": _bare(person),
+        "dk_hash": decl["o"]["dk_hash"],
+        "reader": declared.reader,
+        "digest": declared.digest,
+        "decl": decl,
+        "source": source,
+        "at": at,
+    }
+
+
+def current_devices(ws: Any) -> list[Any]:
+    """The workspace's current readers among its devices: every device pair that is not removed and not revoked
+    (an expired certificate still counts: it may hold what it read, and counting it is the safe side)."""
+    return [d for _, d in sorted(ws.devices.items()) if not d.removed and not d.revoked]
+
+
+def record_level(record: Any, workspace_id: str, dev: Any, ws: Any = None) -> int | None:
+    """The level ``record`` counts as for the device ``dev`` (a model ``Device``) now, or ``None`` when it does not
+    verify: every field against the device's certificate and person, the declaration verified again (``recheck``: no
+    clock) with the ``via`` and surfaces of its source. A ``pk_pin`` declaration (a pairing without a certificate,
+    H12d-3) counts only under the pin of the device's person key (``ws``: the member list)."""
+    from orch import crypto
+    from orch.identity import reader
+
+    if not isinstance(record, dict) or set(record) != _RECORD_FIELDS or record.get("v") != 1:
+        return None
+    source = record.get("source")
+    if source not in SOURCES or not isinstance(record.get("decl"), dict):
+        return None
+    if record["device_id"] != _bare(dev.id) or record["person_id"] != _bare(dev.person):
+        return None
+    keys = _cert_keys(dev.cert)
+    o = record["decl"].get("o")
+    if keys is None or not isinstance(o, dict) or not isinstance(o.get("who"), dict):
+        return None
+    who = o["who"]
+    if who != {"person_id": _bare(dev.person)}:
+        member = None if ws is None else (ws.members.get(dev.person) or getattr(ws, "former", {}).get(dev.person))
+        try:
+            pin = crypto.b64u(crypto.pk_pin(crypto.unb64u(member.pk_pub, crypto.PUB_LEN))) if member else None
+        except (crypto.CryptoError, ValueError, TypeError):
+            pin = None
+        if source != "pair" or pin is None or who != {"pk_pin": pin}:
+            return None
+    via, surface_sets = SOURCES[source]
+    bind = o.get("bind")
+    if not isinstance(bind, dict) or bind.get("via") != via:
+        return None
+    for surfaces in surface_sets:
+        try:
+            declared = reader.verify_decl(
+                record["decl"],
+                workspace_id=workspace_id,
+                dk_sig_pub=keys[0],
+                dk_kx_pub=keys[1],
+                who=who,
+                bind=bind,
+                surfaces=surfaces,
+                now_ms=None,
+                recheck=True,
+            )
+        except (reader.DeclInvalid, ValueError, TypeError):
+            continue
+        if declared.reader != record["reader"] or declared.digest != record["digest"]:
+            return None
+        if record["dk_hash"] != o["dk_hash"]:
+            return None
+        return int(declared.level)
+    return None
+
+
+def levels(state_dir: Path | None, workspace_id: str, ws: Any, uid: int | None = None) -> dict[str, int | None]:
+    """device ref -> the level its record counts as, for every current device (:func:`current_devices`); ``None``
+    means no record that verifies (a missing, unreadable or foreign record: level 0, "no declaration")."""
+    from orch.store.readerrecs import read_record
+
+    out: dict[str, int | None] = {}
+    for dev in current_devices(ws):
+        rec = read_record(state_dir, workspace_id, _bare(dev.id), uid)
+        out[dev.id] = None if rec is None else record_level(rec, workspace_id, dev, ws)
+    return out
+
+
+def _o_key(decl: Any) -> str | None:
+    """I1 (#463 review): declarations are compared on ``sha256(cj(o))``, never on ``rd`` (ECDSA is malleable)."""
+    import hashlib
+
+    from orch import canon
+
+    try:
+        return hashlib.sha256(canon.cj_checked(decl["o"])).hexdigest()
+    except (KeyError, TypeError, canon.HashError, RecursionError):
+        return None
+
+
+def store_record(state_dir: Path, workspace_id: str, uid: int, record: dict[str, Any]) -> dict[str, Any]:
+    """Write ``record`` unless the stored one wins (9.3 "Latest wins", I1), and return the record now current: the
+    same declaration (equal ``sha256(cj(o))``, whatever its ``sig``) keeps the stored bytes; a stored declaration with
+    a later ``created_ms`` that is still a well-formed record of this device wins over an older newcomer (a lower
+    declaration lowers the level only when it is newer). Raises when the write fails (the caller refuses its op)."""
+    from orch.store.readerrecs import read_record, write_record
+
+    old = read_record(state_dir, workspace_id, record["device_id"], uid)
+    if isinstance(old, dict) and set(old) == _RECORD_FIELDS and old.get("person_id") == record["person_id"]:
+        old_o, new_o = (old.get("decl") or {}).get("o"), record["decl"]["o"]
+        if _o_key(old.get("decl")) == _o_key(record["decl"]) and old.get("dk_hash") == record["dk_hash"]:
+            return old
+        if (
+            isinstance(old_o, dict)
+            and old.get("dk_hash") == record["dk_hash"]
+            and type(old_o.get("created_ms")) is int
+            and old_o["created_ms"] > new_o["created_ms"]
+        ):
+            return old
+    write_record(state_dir, workspace_id, uid, record)
+    return record
+
+
+def prune(state_dir: Path, workspace_id: str, ws: Any, uid: int | None = None) -> dict[str, list[str]]:
+    """``register``'s import (9.4 "Direct mode"): every record file is verified against the replayed log; one that
+    does not verify for a current device of its id is removed (its device counts as 0 anyway). Returns
+    ``{"kept": [...], "dropped": [...]}`` (device refs). A removal that fails keeps the file (it still counts 0)."""
+    import contextlib
+
+    from orch.store.readerrecs import device_ids, read_record, remove_record
+
+    kept, dropped = [], []
+    for hexid in device_ids(state_dir, workspace_id):
+        dev = ws.devices.get("d_" + hexid)
+        current = dev is not None and not dev.removed and not dev.revoked
+        rec = read_record(state_dir, workspace_id, hexid, uid)
+        if current and rec is not None and record_level(rec, workspace_id, dev, ws) is not None:
+            kept.append("d_" + hexid)
+            continue
+        with contextlib.suppress(OSError):
+            remove_record(state_dir, workspace_id, hexid)
+        dropped.append("d_" + hexid)
+    return {"kept": kept, "dropped": dropped}
+
+
+def required_reader(
+    store: Any, state_dir: Path | None, workspace_id: str, *, flag: bool = False, uid: int | None = None
+) -> int:
+    """9.4: 1 while the per-workspace flag is on (the host's), the merged history holds a convenience event or the
+    durable mark is set; else 0. Computed, never trusted from a client. Scans the history only when the flag and the
+    mark leave it open (rare ops)."""
+    if flag:
+        return 1
+    return 1 if seen_or_history(store, state_dir, workspace_id, uid) else 0
+
+
+def added_readers(events: Iterable[dict[str, Any]], ws: Any = None) -> list[str]:
+    """The device refs the events add as readers (:data:`READER_EVENTS`); a ``restore`` counts every current device
+    of ``ws`` (conservative until the revived set is computed where a restore is emitted)."""
+    out: list[str] = []
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        field = READER_EVENTS.get(str(e.get("type")))
+        if field is not None:
+            o = (e.get(field) or {}).get("o") if isinstance(e.get(field), dict) else None
+            dev = o.get("device_id") if isinstance(o, dict) else None
+            out.append("d_" + dev if isinstance(dev, str) else "d_?")
+        elif e.get("type") == "restore" and ws is not None:
+            out.extend(d.id for d in current_devices(ws))
+    return list(dict.fromkeys(out))
+
+
+def below_level(
+    ws: Any, lv: dict[str, int | None], person: str, device: str, relay_level: int | None
+) -> tuple[str, list[str]] | None:
+    """The relaxed readers condition (9.9) for a convenience signature of ``device`` (``person``'s): the first reason
+    and the readers below level 1, or ``None``. ``relay_level`` is the relay's last verified level, ``None`` when the
+    workspace never had a relay (H12d-3 fills it from ``GET /v2/relay-info``; until then a pairing counts as 0)."""
+    if relay_level is not None and relay_level < 1:
+        return "relay_paired", []
+    others, mine = [], []
+    for dev in current_devices(ws):
+        if dev.id == device or (lv.get(dev.id) or 0) >= 1:
+            continue
+        (mine if dev.person == person else others).append(dev.id)
+    if others:
+        return "other_member", others
+    if mine:
+        return "phone_device", mine
+    return None
+
+
+_TEXT = {
+    "relay_paired": "the workspace is paired with a relay that has not declared it knows convenience signatures",
+    "other_member": "another member's reader is below level 1 (it may not know convenience signatures)",
+    "phone_device": "another device of yours is below level 1 (it may not know convenience signatures)",
+}
+
+
+def check_readers(
+    ws: Any,
+    lv: dict[str, int | None],
+    events: list[dict[str, Any]],
+    *,
+    required: int,
+    relay_level: int | None,
+) -> None:
+    """**Invariant I** (9.4), checked at the append choke point under the store lock: raise :class:`ReadersRefused`
+    when an event adds a reader below ``required`` (``sign.convenience_readers``: ``no_declaration`` or
+    ``reader_too_old``), or carries ``auth: "convenience"`` while a current reader other than its signing device is
+    below level 1 (``sign.convenience_unavailable``: ``relay_paired``, ``other_member``, ``phone_device``).
+    ``lv`` holds the levels of the current devices and of the readers the request admits (:func:`levels` plus the
+    pending declarations). Pure."""
+    if required >= 1:
+        for dev in added_readers(events, ws):
+            got = lv.get(dev)
+            if got is None:
+                raise ReadersRefused(
+                    "sign.convenience_readers",
+                    "no_declaration",
+                    f"{dev} would read a workspace with convenience signatures and has not declared that it "
+                    "understands them",
+                    devices=[dev],
+                    required=required,
+                    declared=0,
+                )
+            if got < required:
+                raise ReadersRefused(
+                    "sign.convenience_readers",
+                    "reader_too_old",
+                    f"{dev} declared reader level {got}, this workspace requires {required}",
+                    devices=[dev],
+                    required=required,
+                    declared=got,
+                )
+    for e in events:
+        if not isinstance(e, dict) or e.get("auth") != "convenience":
+            continue
+        actor = e.get("actor") if isinstance(e.get("actor"), dict) else {}
+        why = below_level(ws, lv, str(actor.get("id")), str(actor.get("device")), relay_level)
+        if why is not None:
+            reason, devices = why
+            named = f" ({', '.join(devices)})" if devices else ""
+            raise ReadersRefused(
+                "sign.convenience_unavailable", reason, _TEXT[reason] + named, devices=devices, required=1
+            )

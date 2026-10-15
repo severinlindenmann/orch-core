@@ -25,7 +25,7 @@ from orch.canon import clean_line
 
 from . import yamlsub
 
-__all__ = ["V1Problem", "V1Ticket", "V1Workspace", "find_v1", "is_v1_home", "read_v1"]
+__all__ = ["V1Problem", "V1Ticket", "V1Workspace", "find_v1", "read_v1"]
 
 STATUS_DIRS = ("backlog", "open", "in-progress", "waiting", "testing", "done")
 MAX_TICKET_BYTES = 1 << 20
@@ -149,32 +149,6 @@ def _is_home(p: Path) -> bool:
     except (OSError, ValueError, RecursionError):
         return False
     return isinstance(doc, dict) and doc.get("schema") == 1 and isinstance(doc.get("id"), dict)
-
-
-def is_v1_home(path: str) -> bool:
-    """Detection only (a v2 command run in a v1 workspace refuses): is the folder at the absolute, clean ``path`` a v1
-    ``orchestrator`` folder by the importer's layout (:func:`_is_home`: a ``tickets/`` directory and ``config.json``
-    with ``"schema": 1`` and an ``id`` object)? Stricter than :func:`find_v1`, which trusts the folder the person
-    named: ``path`` is opened from ``/`` one component at a time with ``O_NOFOLLOW`` (a symlink anywhere in it, an
-    agent's or ``/var`` on macOS, means "not v1"), ``tickets`` must be a real directory by ``lstat`` below that fd, and
-    only then is ``config.json`` read through the same fd (``O_NOFOLLOW``, a regular file, capped): there is no
-    check-then-open step for a swap to land in. No ticket is read."""
-    from orch.gitread.errors import Unavailable
-    from orch.gitread.fs import open_walk
-
-    try:
-        d, _ = open_walk(path)
-    except (Unavailable, OSError):
-        return False
-    with d:
-        try:
-            if d.kind("tickets") != "dir" or d.kind("config.json") != "file":
-                return False
-            doc = json.loads(d.read("config.json", MAX_TICKET_BYTES))
-        except (Unavailable, OSError, ValueError, RecursionError):
-            return False
-    schema = doc.get("schema") if isinstance(doc, dict) else None
-    return schema == 1 and not isinstance(schema, bool) and isinstance(doc.get("id"), dict)
 
 
 def find_v1(path: str | os.PathLike[str]) -> Path | None:

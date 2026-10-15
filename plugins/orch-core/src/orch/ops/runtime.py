@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from orch import canon
+from orch import canon, discovery
 from orch.canon.text import TextError, normalize_text
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
@@ -59,7 +59,7 @@ __all__ = [
     "state_dir",
 ]
 
-CONFIG_SCHEMA = "orch.workspace/2"
+CONFIG_SCHEMA = discovery.CONFIG_SCHEMA
 GRANT_SHAPE = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
 _AGENT_ID = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _TASK_ONLY = re.compile(r"T[1-9][0-9]*")
@@ -85,66 +85,41 @@ def state_dir(env: Mapping[str, str], files: Files | None = None) -> Path:
 
 
 def _config(path: Path, files: Files) -> dict[str, Any] | None:
-    """``config.json`` of a workspace directory, or ``None`` if ``path`` is not one (a symlink is not read)."""
-    cfg = path / "config.json"
+    """``config.json`` of a workspace directory, or ``None`` if ``path`` is not one. Direct mode reads it through
+    :func:`orch.discovery.read_config` (``O_NOFOLLOW`` fds below the root); host mode through the host ``Files``,
+    itself an ``O_NOFOLLOW`` fd walk from the host's roots."""
+    if files.roots is None:
+        return discovery.read_config(path)
     try:
-        if cfg.is_symlink() or not cfg.is_file():
-            return None
-        raw = files.read_bytes(cfg) if cfg.stat().st_size <= (1 << 20) else b""
-        doc = json.loads(raw)
-    except (OSError, ValueError, RecursionError):
+        doc = json.loads(files.read_bytes(path / "config.json"))
+    except (OSError, ValueError, RecursionError, CapabilityDenied):
         return None
-    ws = doc.get("workspace") if isinstance(doc, dict) else None
-    if doc.get("schema") != CONFIG_SCHEMA or not isinstance(ws, dict) or not isinstance(ws.get("id"), str):
-        return None
-    return doc
-
-
-def _no_link(path: Path) -> bool:
-    """No component of the absolute ``path`` is a symlink (a v2 candidate found by walking up is checked so before its
-    ``config.json`` is read: a planted ``orchestrator -> /elsewhere`` is not followed)."""
-    return os.path.realpath(path) == os.fspath(path)
-
-
-def _is_v1(path: Path) -> bool:
-    from orch.importer.v1 import is_v1_home
-
-    return is_v1_home(os.fspath(path))
+    return discovery.v2_config(doc if isinstance(doc, dict) else None)
 
 
 def locate_workspace(
     env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files
 ) -> tuple[Path, bool] | None:
-    """The nearest workspace: ``(path, is_v1)``, or ``None``. ``ORCH_WORKSPACE`` if set (a v2 workspace, else a v1 one
-    there or in its ``orchestrator/``, else ``None``: no fallback); otherwise walking up from ``cwd``, the **first**
-    directory that is (or holds in ``orchestrator/``) a v2 or a v1 workspace wins, v2 first at the same level. A v1
-    workspace nested under a v2 one is therefore never opened as the v2 ancestor. v1 detection never follows a
-    symlink in any component and reads only ``config.json`` (:func:`orch.importer.v1.is_v1_home`); host mode (files
-    with roots) never detects v1."""
-    v1_ok = files.roots is None
+    """The nearest workspace: ``(path, is_v1)``, or ``None``. The invariant and the rules are
+    :mod:`orch.discovery`'s: the start (``ORCH_WORKSPACE``, else ``cwd``) is resolved and trusted; with
+    ``ORCH_WORKSPACE`` only that path is a v2 workspace (no fallback), a v1 one there or in its ``orchestrator/`` is
+    reported; walking up, the first directory that is a v2 or a v1 workspace wins, so a v1 workspace nested under a
+    v2 one is never opened as the v2 ancestor. Host mode (files with roots) never detects v1 and reads only through
+    the host ``Files``."""
     explicit = env.get("ORCH_WORKSPACE")
-    if explicit:
-        p = Path(explicit)
-        if _config(p, files):
-            return p, False
-        if v1_ok and p.is_absolute():
-            p = Path(os.path.normpath(p))
-            for cand in (p, p / "orchestrator"):
-                if _is_v1(cand):
-                    return cand, True
+    if files.roots is not None:
+        if explicit:
+            p = Path(explicit)
+            return (p, False) if _config(p, files) else None
+        here = Path(files.getcwd() if cwd is None else cwd).resolve()
+        for d in (here, *here.parents):
+            for cand in (d, d / "orchestrator"):
+                if _config(cand, files):
+                    return cand, False
         return None
-    raw = os.fspath(cwd) if cwd is not None else files.getcwd()
-    here = Path(os.path.normpath(raw if os.path.isabs(raw) else os.path.join(files.getcwd(), raw)))
-    for d in (here, *here.parents):
-        cands = (d, d / "orchestrator")
-        for cand in cands:
-            if _no_link(cand) and _config(cand, files):
-                return cand, False
-        if v1_ok:
-            for cand in cands:
-                if _is_v1(cand):
-                    return cand, True
-    return None
+    start = explicit if explicit else (files.getcwd() if cwd is None else cwd)
+    found = discovery.locate(start, explicit=bool(explicit))
+    return (found.path, found.v1) if found is not None else None
 
 
 def find_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, files: Files) -> Path | None:

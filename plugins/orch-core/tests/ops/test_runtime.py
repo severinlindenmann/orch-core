@@ -219,85 +219,146 @@ def _refusal(cwd, env, monkeypatch):
     return err.getvalue()
 
 
-def test_v1_detection_never_follows_a_symlink_and_never_opens_a_file_outside(tmp_path, monkeypatch):
-    """P1 (review of #509): ``orchestrator``, ``config.json``, ``tickets`` or a parent that is a symlink to a valid
-    v1 layout elsewhere is not a v1 workspace, and nothing under that elsewhere is opened (sentinel on every open)."""
-    import builtins
-    import io as _io
+class _Sentinel:
+    """Fails the test on any open of a file or directory under ``outside`` (``os.open`` with or without ``dir_fd``,
+    matched by the directory's inode, ``open`` and ``io.open``)."""
 
-    outside = _v1_copy(tmp_path / "outside")
-    real_out = os.path.realpath(outside)
-    out_dirs = {(st.st_dev, st.st_ino) for st in (os.stat(p) for p, _, _ in os.walk(outside))}
+    def __init__(self, outside, monkeypatch):
+        import builtins
+        import io as _io
 
-    def is_outside(path, dir_fd=None):
+        self.real_out = os.path.realpath(outside)
+        self.dirs = {(st.st_dev, st.st_ino) for st in (os.stat(p) for p, _, _ in os.walk(outside))}
+        self.real_os_open, real_open, real_io_open = os.open, builtins.open, _io.open
+        self.before_open = None  # a hook run before each os.open (the race tests swap a directory here)
+
+        def os_open(path, flags, mode=0o777, *, dir_fd=None):
+            if self.before_open is not None:
+                self.before_open(path, dir_fd)
+            assert not self.outside(path, dir_fd), f"opened outside: {path}"
+            return self.real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+        def guard(real):
+            def g(file, *a, **kw):
+                if isinstance(file, (str, bytes, os.PathLike)):
+                    assert not self.outside(file), f"opened outside: {file}"
+                return real(file, *a, **kw)
+
+            return g
+
+        monkeypatch.setattr(os, "open", os_open)
+        monkeypatch.setattr(builtins, "open", guard(real_open))
+        monkeypatch.setattr(_io, "open", guard(real_io_open))
+
+    def outside(self, path, dir_fd=None):
         if dir_fd is not None:
             st = os.fstat(dir_fd)
-            if (st.st_dev, st.st_ino) in out_dirs:
+            if (st.st_dev, st.st_ino) in self.dirs:
                 return True
             if not os.path.isabs(os.fspath(path)):
                 return False
         rp = os.path.realpath(os.fspath(path))
-        return rp == real_out or rp.startswith(real_out + os.sep)
+        return rp == self.real_out or rp.startswith(self.real_out + os.sep)
 
-    real_os_open, real_open, real_io_open = os.open, builtins.open, _io.open
 
-    def guard_os_open(path, flags, mode=0o777, *, dir_fd=None):
-        assert not is_outside(path, dir_fd), f"opened outside: {path}"
-        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+def _v2_copy(ws, dest):
+    dest.mkdir(parents=True)
+    (dest / "config.json").write_text((ws.root / "config.json").read_text())
+    return dest
 
-    def guard_open(file, *a, **kw):
-        if isinstance(file, (str, bytes, os.PathLike)):
-            assert not is_outside(file), f"opened outside: {file}"
-        return real_open(file, *a, **kw)
 
-    def guard_io_open(file, *a, **kw):
-        if isinstance(file, (str, bytes, os.PathLike)):
-            assert not is_outside(file), f"opened outside: {file}"
-        return real_io_open(file, *a, **kw)
-
-    # the four shapes, each next to (not inside) the outside layout
-    a = tmp_path / "a"
-    a.mkdir()
-    (a / "orchestrator").symlink_to(outside / "orchestrator", target_is_directory=True)
-    b = tmp_path / "b" / "orchestrator"
-    (b / "tickets").mkdir(parents=True)
-    (b / "config.json").symlink_to(outside / "orchestrator" / "config.json")
-    c = tmp_path / "c" / "orchestrator"
-    c.mkdir(parents=True)
-    (c / "config.json").write_bytes((outside / "orchestrator" / "config.json").read_bytes())
-    (c / "tickets").symlink_to(outside / "orchestrator" / "tickets", target_is_directory=True)
-    link = tmp_path / "d"
-    link.symlink_to(outside, target_is_directory=True)
-
-    monkeypatch.setattr(os, "open", guard_os_open)
-    monkeypatch.setattr(builtins, "open", guard_open)
-    monkeypatch.setattr(_io, "open", guard_io_open)
+def test_a_symlinked_start_is_resolved_and_trusted_for_v2_and_v1(ws, tmp_path):
+    """The start (cwd or ORCH_WORKSPACE) is resolved first: a symlinked ancestor (``/tmp`` on macOS, a symlinked
+    home) still finds the workspace, v2 and v1, and ORCH_WORKSPACE through a symlinked path works."""
+    real = tmp_path / "real"
+    v2 = _v2_copy(ws, real / "proj" / "orchestrator")
+    (real / "proj" / "sub").mkdir()
+    v1 = _v1_copy(real / "old")
+    lnk = tmp_path / "lnk"
+    lnk.symlink_to(real, target_is_directory=True)
     files = Files.direct()
-    cwds = [a, a / "orchestrator", b.parent, b, b / "tickets", c.parent, c, link, link / "orchestrator"]
-    cwds.append(link / "orchestrator" / "tickets")
-    for cwd in cwds:
+    assert runtime.find_workspace({}, str(lnk / "proj" / "sub"), files) == v2
+    assert runtime.find_workspace({}, str(lnk / "proj"), files) == v2
+    assert runtime.locate_workspace({}, str(lnk / "old" / "orchestrator" / "tickets"), files) == (
+        v1 / "orchestrator",
+        True,
+    )
+    assert runtime.find_workspace({"ORCH_WORKSPACE": str(lnk / "proj" / "orchestrator")}, None, files) == v2
+    assert runtime.find_v1_workspace({"ORCH_WORKSPACE": str(lnk / "old")}, None, files) == v1 / "orchestrator"
+    assert runtime._config(lnk / "proj" / "orchestrator", files) is not None  # a symlinked ancestor of the root
+
+
+def test_inside_the_start_nothing_is_followed_and_nothing_outside_is_opened(ws, tmp_path, monkeypatch):
+    """Below the trusted start, ``orchestrator``, ``config.json`` and ``tickets`` are opened only through
+    ``O_NOFOLLOW`` fds: a symlink to a valid v1 or v2 layout elsewhere is no workspace, and nothing there is opened."""
+    outside = tmp_path / "outside"
+    _v1_copy(outside / "v1")
+    _v2_copy(ws, outside / "v2" / "orchestrator")
+    a = tmp_path / "a"  # orchestrator -> a v1 layout
+    a.mkdir()
+    (a / "orchestrator").symlink_to(outside / "v1" / "orchestrator", target_is_directory=True)
+    a2 = tmp_path / "a2"  # orchestrator -> a v2 workspace
+    a2.mkdir()
+    (a2 / "orchestrator").symlink_to(outside / "v2" / "orchestrator", target_is_directory=True)
+    b = tmp_path / "b" / "orchestrator"  # config.json -> outside
+    (b / "tickets").mkdir(parents=True)
+    (b / "config.json").symlink_to(outside / "v1" / "orchestrator" / "config.json")
+    b2 = tmp_path / "b2" / "orchestrator"
+    b2.mkdir(parents=True)
+    (b2 / "config.json").symlink_to(outside / "v2" / "orchestrator" / "config.json")
+    c = tmp_path / "c" / "orchestrator"  # tickets -> outside
+    c.mkdir(parents=True)
+    (c / "config.json").write_bytes((outside / "v1" / "orchestrator" / "config.json").read_bytes())
+    (c / "tickets").symlink_to(outside / "v1" / "orchestrator" / "tickets", target_is_directory=True)
+    files = Files.direct()
+    _Sentinel(outside, monkeypatch)
+    for cwd in (a, a2, b.parent, b, b2.parent, b / "tickets", c.parent):
         assert runtime.locate_workspace({}, str(cwd), files) is None, cwd
-        ws_ = runtime.Workspace({}, cwd=str(cwd), files=files)
         try:
-            ws_.require_root()
+            runtime.Workspace({}, cwd=str(cwd), files=files).require_root()
         except runtime.OrchError as e:
-            assert "v1" not in e.message and "no orch workspace here" in e.message, (cwd, e.message)
+            assert "no orch workspace here" in e.message, (cwd, e.message)
         else:  # pragma: no cover
             raise AssertionError(cwd)
-    for p in (a / "orchestrator", b, c, link / "orchestrator"):
-        from orch.importer.v1 import is_v1_home
-
-        assert not is_v1_home(str(p)), p
-    # ORCH_WORKSPACE through a symlink: not v1 either. The v2 check of a named path reads ``<path>/config.json`` as
-    # before (the person named that path; a link there redirects nothing a plain name could not), so here only the v1
-    # detector's opens (all ``os.open``) are guarded.
-    monkeypatch.setattr(builtins, "open", real_open)
-    monkeypatch.setattr(_io, "open", real_io_open)
-    for named in (a / "orchestrator", a, b, c, link / "orchestrator", link):
+    for named in (a, a2, b.parent, b2.parent, c.parent, b, b2):  # ORCH_WORKSPACE naming the project folder
         assert runtime.locate_workspace({"ORCH_WORKSPACE": str(named)}, None, files) is None, named
     monkeypatch.undo()
-    # the outside layout itself, by its real path, is v1: the refusals above were the symlinks, not the layout
-    assert runtime.locate_workspace({}, str(outside), files) == (outside / "orchestrator", True)
+    assert runtime.locate_workspace({}, str(outside / "v1"), files) == (outside / "v1" / "orchestrator", True)
+    assert runtime.find_workspace({}, str(outside / "v2"), files) == outside / "v2" / "orchestrator"
+
+
+def test_orchestrator_swapped_for_a_symlink_mid_discovery_never_reads_outside(ws, tmp_path, monkeypatch):
+    """The race the review found: the probe checked, then read by path. Now a swap between any two steps lands on
+    an ``O_NOFOLLOW`` open and is refused; nothing outside is opened."""
+    outside = tmp_path / "outside"
+    _v1_copy(outside / "v1")
+    _v2_copy(ws, outside / "v2" / "orchestrator")
+    files = Files.direct()
+    for target in (outside / "v1" / "orchestrator", outside / "v2" / "orchestrator"):
+        proj = tmp_path / ("p-" + target.parent.name)
+        (proj / "orchestrator").mkdir(parents=True)  # a plain folder when the walk starts
+        sentinel = _Sentinel(outside, monkeypatch)
+
+        def swap(path, dir_fd, proj=proj, target=target, sentinel=sentinel):
+            if path == "orchestrator" and dir_fd is not None and not (proj / "orchestrator").is_symlink():
+                (proj / "orchestrator").rename(proj / "was")
+                (proj / "orchestrator").symlink_to(target, target_is_directory=True)
+                sentinel.before_open = None
+
+        sentinel.before_open = swap
+        assert runtime.locate_workspace({}, str(proj), files) is None, target
+        assert (proj / "orchestrator").is_symlink()  # the swap happened
+        monkeypatch.undo()
+    # after discovery: the root found, then its orchestrator swapped before the config is read again (Workspace._open)
+    proj = tmp_path / "late"
+    _v2_copy(ws, proj / "orchestrator")
+    root = runtime.find_workspace({}, str(proj), files)
+    assert root == proj / "orchestrator"
+    (proj / "orchestrator").rename(proj / "was")
+    (proj / "orchestrator").symlink_to(outside / "v2" / "orchestrator", target_is_directory=True)
+    _Sentinel(outside, monkeypatch)
+    assert runtime._config(root, files) is None
+    monkeypatch.undo()
 
 
 def test_a_loose_schema_1_config_without_the_v1_layout_is_not_v1(tmp_path, monkeypatch):

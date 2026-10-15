@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from orch import canon, crypto
-from orch.identity import Refused, certreq, pairing
+from orch.identity import Refused, certreq, pairing, wscard
 
 from ..relay import corpus
 
@@ -121,6 +121,14 @@ def test_cert_request_o_refuses(kw):
 # --- 8b. check_cert_request / open_cert_request (primary, §8.4 step 2) ----------------------------------------------
 
 
+_PERSON_PK = {IDS["person_alice"]: PK, IDS["person_bob"]: bytes.fromhex(KEYS["person_bob.sig"]["pub"])}
+
+
+def _card(case: dict) -> wscard.VerifiedCard:
+    """The primary verifies the card under its own person's PK (Opus M1): another person's card is other_person."""
+    return wscard.verify_card(case["card"], _PERSON_PK[case["person_id"]])
+
+
 def _me(case: dict) -> dict:
     return {"me_person_id": case["person_id"], "me_device_id": IDS[f"device_{case['me']}"]}
 
@@ -130,7 +138,7 @@ def _primary(case: dict, step: dict, journal: certreq.CertJournal) -> dict:
     reference's ``{"ok": inner, "warning"} | {"refuse": code}`` form."""
     try:
         req = certreq.check_cert_request(
-            step["signed"], case["card"], journal=journal, now_ms=step["now_ms"], **_me(case)
+            step["signed"], _card(case), journal=journal, now_ms=step["now_ms"], **_me(case)
         )
         inner = certreq.open_cert_request(req, _unseal)
     except Refused as e:
@@ -166,6 +174,7 @@ def test_check_and_open_cert_request_vectors(case):
 
 OPEN_CASES = CR["open_cases"]
 _OPEN_CARD = CR["cases"][0]["card"]
+_OPEN_VCARD = wscard.verify_card(_OPEN_CARD, PK)
 _OPEN_ME = {"me_person_id": CR["cases"][0]["person_id"], "me_device_id": IDS["device_primary"]}
 
 
@@ -220,7 +229,7 @@ def test_relay_request_cases_through_the_primary_shape_check(case):
     args = case["args"]
     want = case["expect"]["result"]
     call = lambda: certreq.check_cert_request(  # noqa: E731
-        args["signed"], _OPEN_CARD, journal=certreq.CertJournal(), now_ms=args["now_ms"], **_OPEN_ME
+        args["signed"], _OPEN_VCARD, journal=certreq.CertJournal(), now_ms=args["now_ms"], **_OPEN_ME
     )
     if "refuse" in want:
         with pytest.raises(Refused) as e:
@@ -282,7 +291,7 @@ def test_the_corpus_challenge_attack_challenge_and_rejection_against_their_reque
 def _inner() -> certreq.CertInner:
     case = CR["cases"][0]
     req = certreq.check_cert_request(
-        REQ, case["card"], journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_me(case)
+        REQ, _card(case), journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_me(case)
     )
     return certreq.open_cert_request(req, _unseal)
 
@@ -326,7 +335,7 @@ def test_make_refuses(call):
 
 def test_open_cert_request_refuses_a_bad_unseal():
     req = certreq.check_cert_request(
-        REQ, CR["cases"][0]["card"], journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_me(CR["cases"][0])
+        REQ, _card(CR["cases"][0]), journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_me(CR["cases"][0])
     )
 
     def wrong(object_id: bytes, sealed: bytes) -> bytes:
@@ -342,3 +351,12 @@ def test_open_cert_request_refuses_a_bad_unseal():
 def test_the_seal_is_fresh_per_call():
     a, b = _build_request(), _build_request()
     assert a["sealed"] != b["sealed"]
+
+
+def test_check_cert_request_takes_only_a_verified_card():
+    """Opus M1: a card dict (verified or not) is refused; the attacker-WSK card never becomes a VerifiedCard."""
+    with pytest.raises(Refused) as e:
+        certreq.check_cert_request(
+            REQ, _OPEN_CARD, journal=certreq.CertJournal(), now_ms=REQ["o"]["created_ms"], **_OPEN_ME
+        )
+    assert e.value.code == "malformed"

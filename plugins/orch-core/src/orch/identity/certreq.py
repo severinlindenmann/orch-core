@@ -33,6 +33,7 @@ from orch.crypto.labels import L
 from .certs import SCOPE_ORDER, SKEW_MS, scopes_ok
 from .errors import Refused
 from .pairing import CHALLENGE_FIELDS, _b64_pub, _bad, _id, _pub, _raw, cert_code, clean_label
+from .wscard import VerifiedCard
 
 __all__ = [
     "CERT_PENDING_MS",
@@ -258,22 +259,6 @@ class CertInner:
         }
 
 
-def _card(card: object) -> tuple[str, str, bytes, bool]:
-    """``(workspace_id, owner_person_id, wsk_pub, client_hosted)`` of a card the caller already verified
-    (``orch.relay.card.verify_card`` under the owner's ``PK``); only the shape is checked here."""
-    try:
-        o, deleg = card["o"], card["delegation"]["o"]  # type: ignore[index]
-        ws = crypto.hex_id(_id(o["workspace_id"], "card workspace_id"))
-        owner = crypto.hex_id(_id(o["owner_person_id"], "card owner_person_id"))
-        wsk = _b64_pub(o["wsk_pub"], "card wsk_pub")
-        hosted = deleg["client_hosted"]
-    except (KeyError, TypeError):
-        raise _bad("card") from None
-    if type(hosted) is not bool:
-        raise _bad("card client_hosted")
-    return ws, owner, wsk, hosted
-
-
 def _int(value: object, what: str) -> int:
     if type(value) is not int:
         raise Refused("malformed", what)
@@ -282,7 +267,7 @@ def _int(value: object, what: str) -> int:
 
 def check_cert_request(
     signed: object,
-    card: Mapping[str, Any],
+    card: VerifiedCard,
     *,
     me_person_id: str,
     me_device_id: str,
@@ -302,7 +287,9 @@ def check_cert_request(
         raise _bad("journal")
     if type(now_ms) is not int:
         raise _bad("now_ms")
-    ws, owner, wsk, hosted = _card(card)
+    if type(card) is not VerifiedCard:
+        raise _bad("card: a VerifiedCard from orch.identity.wscard.verify_card")
+    ws, owner, wsk, hosted = card.workspace_id, card.owner_person_id, card.wsk_pub, card.client_hosted
     if owner != me_person:
         raise Refused("other_person", "the card is another person's")
     o = _verify(wsk, signed, "cert_request")

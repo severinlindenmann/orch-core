@@ -7,6 +7,9 @@ from typing import Any
 
 __all__ = [
     "CLICK_OPS",
+    "DEPOSIT_LINE",
+    "DEPOSIT_MAX_HOURS",
+    "DEPOSIT_RISK",
     "OPS",
     "REASONS",
     "REFUSALS",
@@ -19,6 +22,15 @@ __all__ = [
 
 CONTRACT = 1
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
+#: v1.6 (D-P2-27, §0.8.6 item 6): the View of a deposit-only grant carries this line (and in ``lines``)
+DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
+#: the owner's plain-language risk of a click-issued runner grant (D-P2-27), the tier-A sentence of its View
+DEPOSIT_RISK = (
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to "
+    "12 hours."
+)
+#: a deposit grant lasts at most this many hours (D-P2-27)
+DEPOSIT_MAX_HOURS = 12
 OPS = ("prepare", "view", "sign", "cancel", "status")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1)
 REASONS = ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")

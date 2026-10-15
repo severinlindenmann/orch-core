@@ -24,7 +24,19 @@ from typing import Any
 from orch import canon
 
 from . import view as views
-from .protocol import CONTRACT, HASH, IDEM, OP_NAME, REASONS, REQ, WS_ID, ClickError, op_class, refused
+from .protocol import (
+    CONTRACT,
+    DEPOSIT_MAX_HOURS,
+    HASH,
+    IDEM,
+    OP_NAME,
+    REASONS,
+    REQ,
+    WS_ID,
+    ClickError,
+    op_class,
+    refused,
+)
 from .records import RecordError, Records, is_claim
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
@@ -82,6 +94,9 @@ class Approval:
     idem: str | None = None
     result: dict[str, Any] | None = None
     log: list[str] = field(default_factory=list)
+    #: v1.6: prepared in deposit-only grant mode (D-P2-27); the hand-over's settled outcome once known
+    deposit: bool = False
+    deposit_result: dict[str, Any] | None = None
 
 
 def _new_idem() -> str:
@@ -103,6 +118,7 @@ class ClickSigner:
         custody: Callable[[Path, str], tuple[Any, Any]] | None = None,
         workspaces: Callable[[], list[dict[str, Any]]] | None = None,
         enabled: Callable[[dict[str, Any]], bool] | None = None,
+        execution: Callable[[dict[str, Any]], bool] | None = None,
         mono: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
         log: Any = None,
@@ -114,6 +130,8 @@ class ClickSigner:
         self._custody = custody or self._default_custody
         self._workspaces = workspaces or self._default_workspaces
         self._enabled = enabled or self._default_enabled
+        #: v1.6: this machine has dashboard execution on for the workspace (the deposit grant's precondition)
+        self._execution = execution or self._default_execution
         self.mono, self.wall = mono, wall
         self.budget = Budget(mono)
         self.approvals: dict[tuple[str, str], Approval] = {}
@@ -154,6 +172,11 @@ class ClickSigner:
         from orch.host.convenience import enabled
 
         return enabled(self.state, entry["workspace_id"], int(entry["host_uid"]))
+
+    def _default_execution(self, entry: dict[str, Any]) -> bool:
+        from orch.runner import enablement
+
+        return bool(enablement.state_of(self.state, entry["workspace_id"], int(entry["host_uid"]))["enabled"])
 
     # -- helpers -------------------------------------------------------------------------------------------------------
     def _note(self, what: str, **kw: Any) -> None:
@@ -279,6 +302,7 @@ class ClickSigner:
             person=self._person(entry),
             device=device,
             files=approval.files,
+            deposit=approval.deposit,
         )
         return prepared
 
@@ -294,7 +318,14 @@ class ClickSigner:
             not isinstance(files, dict) or any(not isinstance(v, dict) or set(v) != {"b64"} for v in files.values())
         ):
             raise ClickError("invalid.input", "files are {name: {b64}}")
-        if op_class(op) == "terminal":
+        deposit = args.get("deposit", False)
+        if type(deposit) is not bool:
+            raise ClickError("invalid.input", "deposit is true or false")
+        if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
+            if op != "grant":
+                raise ClickError("invalid.input", "deposit is for grant only")
+            inner = self._deposit_args(entry, inner)
+        elif op_class(op) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
             self._sweep()
@@ -315,7 +346,12 @@ class ClickSigner:
         if request.get("state") != "bound":
             raise ClickError("human.request_state", f"the request is {request.get('state')}")
         kind = views.check_prepared(
-            prepared, workspace_id=entry["workspace_id"], person=self._person(entry), device=device, files=files
+            prepared,
+            workspace_id=entry["workspace_id"],
+            person=self._person(entry),
+            device=device,
+            files=files,
+            deposit=deposit,
         )
         key = (entry["workspace_id"], rid)
         if key not in self.approvals:  # an idem retry returns the same request: keep its record
@@ -332,8 +368,11 @@ class ClickSigner:
                 deadline=self.mono() + left,
                 expires_at=expires_at,
                 files=files or None,
+                deposit=deposit,
             )
         approval = self.approvals[key]
+        if approval.deposit != deposit:
+            raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
 
@@ -365,6 +404,7 @@ class ClickSigner:
             device=device,
             expires_at=approval.expires_at,
             artifacts=artifacts,
+            deposit=approval.deposit,
         )
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -392,15 +432,16 @@ class ClickSigner:
             raise ClickError("invalid.input", "view_digest is a sha256 hash")
         rec = self._record(entry["workspace_id"], rid)  # first, before the registry: it survives a restart
         if rec is not None:
-            return self._replay(entry, rec, vd)
+            return self._deposited(entry, rec["op"], rid, self._replay(entry, rec, vd))
         entry, approval = self._approval(args)
         if approval.signed is not None:  # the in-memory guard stays, also when the record was lost
             if vd != approval.view_digest:
                 raise refused("already_signed", "this request was already signed for another review")
             if approval.result is not None:
-                return {"result": approval.result, "duplicate": True}
+                return self._deposited(entry, approval.op, rid, {"result": approval.result, "duplicate": True})
             self._rerecord(approval)
-            return self._submit(entry, approval, None)  # the identical events and idem, never a new signature
+            # the identical events and idem, never a new signature
+            return self._deposited(entry, approval.op, rid, self._submit(entry, approval, None))
         if (approval.workspace_id, approval.request_id) in self._attempted:
             # signing started here, and neither a record nor cached events exist: the claim was removed from outside
             raise refused(
@@ -443,21 +484,88 @@ class ClickSigner:
             raise refused("record_unavailable", f"{exc}; nothing was signed") from None
         if claim["idem"] != idem:  # another signer process claimed or recorded it first: never a second signature
             self._note("adopted", workspace=approval.workspace_id, request=approval.request_id)
-            return self._replay(entry, claim, approval.view_digest)
+            return self._deposited(entry, approval.op, rid, self._replay(entry, claim, approval.view_digest))
         # From here the claim is never released: an exception does not prove that no signature exists (the host signer
         # signs event by event), so any failure leaves the claim and that request fails closed.
         # before any signature can exist
         self._attempted.add((approval.workspace_id, approval.request_id))
         signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
-        if signed.secret is not None:  # grant is refused earlier; never let a secret near the channel
+        # the secret (a deposit grant only) stays in this frame: never in the approval, a record, a log or a result
+        secret = signed.secret
+        if secret is not None and not approval.deposit:  # a grant is refused earlier; never near the channel
             raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
         approval.signed, approval.idem = signed.events, idem  # in memory at once: a retry resends, never re-signs
-        try:  # durable before the signature leaves: a crash after this resends these events, never signs again
-            rec = self.records.complete(claim, signed.events)
-        except RecordError as exc:  # nothing left the signer; a sign in this process retries the completion
-            raise refused("record_unavailable", f"{exc}; nothing was submitted") from None
-        self._note("signed", workspace=approval.workspace_id, request=approval.request_id)
-        return self._replay(entry, rec, approval.view_digest)
+        try:
+            try:  # durable before the signature leaves: a crash after this resends these events, never signs again
+                rec = self.records.complete(claim, signed.events)
+            except RecordError as exc:  # nothing left the signer; a sign in this process retries the completion
+                raise refused("record_unavailable", f"{exc}; nothing was submitted") from None
+            self._note("signed", workspace=approval.workspace_id, request=approval.request_id)
+            res = self._replay(entry, rec, approval.view_digest)  # the commit first, then the hand-over
+            return self._deposited(entry, approval.op, rid, res, secret)
+        finally:
+            del secret, signed  # best effort: Python cannot wipe a str; nothing keeps a reference to it
+
+    def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
+        """A deposit grant's arguments: ``hours`` 1..12 (default 8) and ``scope``; the signer sets ``label:"runner"``
+        and ``verbs:"agent"`` itself. Refused (``terminal_only``) unless this machine has dashboard execution on."""
+        unknown = set(inner) - {"hours", "scope", "label", "verbs"}
+        hours, scope = inner.get("hours", 8), inner.get("scope", "workable")
+        if unknown or inner.get("label", "runner") != "runner" or inner.get("verbs", "agent") != "agent":
+            raise ClickError("invalid.input", "a deposit grant takes hours and scope only")
+        if type(hours) is not int or scope not in ("all", "workable"):
+            raise ClickError("invalid.input", "hours is a whole number, scope is all or workable")
+        if not 1 <= hours <= DEPOSIT_MAX_HOURS:
+            raise refused("terminal_only", f"a click grant lasts at most {DEPOSIT_MAX_HOURS} hours; use the terminal")
+        if not self._execution(entry):
+            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        return {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner"}
+
+    def _deposited(
+        self, entry: dict[str, Any], op: str, rid: str, res: dict[str, Any], secret: str | None = None
+    ) -> dict[str, Any]:
+        """A deposit grant's answer gains ``deposit``, ``deposit_id`` (the request's ULID) and ``grant``. With the
+        secret (this very signature): ``grant.deposit`` on the signer's own connection, after the commit. Without
+        it (a repeated ``sign``, a restart): the settled outcome, else ``grant.deposit_status`` once."""
+        if op != "grant":
+            return res
+        wid = entry["workspace_id"]
+        approval = self.approvals.get((wid, rid))
+        if approval is not None and approval.deposit_result is not None:
+            return {**res, **approval.deposit_result}
+        did = rid[3:]
+        data = (res.get("result") or {}).get("data") or {}
+        gid = data.get("grant") if isinstance(data.get("grant"), str) else None
+        outcome = "unknown"
+        if secret is not None:
+            gid = gid or secret.partition(".")[0]
+            outcome = self._hand_over(entry, did, secret)
+        if outcome == "unknown":
+            outcome = self._deposit_status(entry, did)
+        self._note("deposit", workspace=wid, request=rid, code=outcome)
+        out = {"deposit": outcome, "deposit_id": did, "grant": gid}
+        if approval is not None and outcome in ("confirmed", "rejected"):
+            approval.deposit_result = out
+        return {**res, **out}
+
+    def _hand_over(self, entry: dict[str, Any], deposit_id: str, secret: str) -> str:
+        try:
+            got = self._call(entry, "grant.deposit", {"deposit_id": deposit_id}, auth={"grant": secret})["data"]
+        except ClickError as exc:
+            if exc.code in ("host.unavailable", "outcome.unknown", "timeout"):
+                return "unknown"
+            self._note("deposit", workspace=entry["workspace_id"], code=exc.code)
+            return "rejected"
+        outcome = got.get("deposit")
+        return outcome if outcome in ("confirmed", "rejected", "unknown") else "unknown"
+
+    def _deposit_status(self, entry: dict[str, Any], deposit_id: str) -> str:
+        try:
+            got = self._call(entry, "grant.deposit_status", {"deposit_id": deposit_id})["data"]
+        except ClickError:
+            return "unknown"
+        outcome = got.get("deposit")
+        return outcome if outcome in ("confirmed", "rejected") else "unknown"
 
     def _replay(self, entry: dict[str, Any], rec: dict[str, Any], view_digest: str) -> dict[str, Any]:
         """Answer from a durable record: the cached result, or the identical events and idem resent. Another

@@ -318,6 +318,14 @@ class RecoveryCodeSource:
         self._close()
         return False
 
+    def __del__(self) -> None:
+        """A source entered by hand and never closed is closed when it is collected (best effort)."""
+        try:
+            if self._live:
+                self._close()
+        except Exception:  # noqa: BLE001, S110 - never raise from a finaliser
+            pass
+
     def _close(self) -> None:
         live, self._live = self._live, []
         self._state = "closed"

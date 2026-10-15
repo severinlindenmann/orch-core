@@ -371,6 +371,18 @@ def test_an_exception_in_the_block_zeroises_and_propagates(fast, no_grant, tty, 
         signer(L["sig_revocation"] + b"{}")
 
 
+def test_a_source_entered_by_hand_and_dropped_is_zeroised_when_collected(fast, no_grant, tty, spy):
+    import gc
+
+    code = rec.generate_recovery_code()
+    tty(code)
+    src = personkey.RecoveryCodeSource(person_id=_person(code)[1], action="x")
+    src.__enter__()
+    del src
+    gc.collect()
+    assert _all_zero(spy) and spy["restored"] == 1
+
+
 def test_a_keyboard_interrupt_at_the_prompt_closes_the_terminal_and_restores(fast, no_grant, tty, spy):
     t = tty(None, interrupt=True)
     with pytest.raises(KeyboardInterrupt):

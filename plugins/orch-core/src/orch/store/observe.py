@@ -32,21 +32,25 @@ from typing import Any
 from orch import canon, gitsafe
 
 __all__ = [
-    "dirty", "git", "head", "observe", "porcelain", "refusal", "repo_identity", "repo_path", "symbolic_head",
-    "toplevel",
+    "NoAnswer", "dirty", "git", "head", "lookup", "observe", "porcelain", "refusal", "repo_identity", "repo_path",
+    "symbolic_head", "toplevel",
 ]  # fmt: skip
 
 _HEX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _TIMEOUT = 30
 
 
-def git(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None, strip: bool = True) -> str | None:
-    """Operation ``op`` of :data:`orch.gitsafe.OPS` against the repository at ``path``, isolated
-    (:func:`orch.gitsafe.command`: the gate first, every time; a populated submodule refused for ``status``; system
-    and global configuration off). ``rev``: the operation's operands, in order (revisions: ``HEAD``, a full commit id
-    or ``refs/heads/<name>``; ``diff_patch``'s context first), each validated. Stdout stripped (unless ``strip`` is
-    off). ``None`` if the operation or an operand is refused, the gate refuses, git fails or is missing: git is never
-    started after a refusal (fail closed)."""
+class NoAnswer(Exception):
+    """git gave no answer (a refusal, a timeout, a failure to start, or an exit other than "no such thing"): unlike
+    ``None`` from :func:`lookup`, which is git's honest "no result"."""
+
+
+#: the operations whose exit 1 is git's honest "no result" (a missing ref, no common ancestor), not a failure
+_LOOKUPS = frozenset({"ref", "commit", "parent", "merge_base"})
+
+
+def _run(path: Path, op: str, rev: str | tuple[str, ...] | None, strip: bool) -> tuple[int, str]:
+    """``(returncode, stdout)`` of operation ``op``; raises :class:`NoAnswer` when git gives no answer at all."""
     own = os.environ
     try:
         argv, env = gitsafe.command(os.path.abspath(path), op, own, operand=rev)
@@ -62,12 +66,39 @@ def git(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None, strip:
             stdin=subprocess.DEVNULL,
             start_new_session=True,  # no controlling terminal: nothing git starts can reach the person's tty
         )
-    except (gitsafe.Unsafe, OSError, subprocess.SubprocessError):
-        return None
-    if done.returncode != 0:
-        return None
+    except (gitsafe.Unsafe, OSError, subprocess.SubprocessError) as exc:
+        raise NoAnswer(type(exc).__name__) from None
     out = gitsafe.plain_hunk_headers(done.stdout) if op == "diff_patch" else done.stdout  # repo-chosen text, #561
-    return out.strip() if strip else out
+    return done.returncode, (out.strip() if strip else out)
+
+
+def git(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None, strip: bool = True) -> str | None:
+    """Operation ``op`` of :data:`orch.gitsafe.OPS` against the repository at ``path``, isolated
+    (:func:`orch.gitsafe.command`: the gate first, every time; a populated submodule refused for ``status``; system
+    and global configuration off). ``rev``: the operation's operands, in order (revisions: ``HEAD``, a full commit id
+    or ``refs/heads/<name>``; ``diff_patch``'s context first), each validated. Stdout stripped (unless ``strip`` is
+    off). ``None`` if the operation or an operand is refused, the gate refuses, git fails or is missing: git is never
+    started after a refusal (fail closed). :func:`lookup` tells "no result" from "no answer"."""
+    try:
+        rc, out = _run(path, op, rev, strip)
+    except NoAnswer:
+        return None
+    return out if rc == 0 else None
+
+
+def lookup(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None) -> str | None:
+    """A revision lookup (``ref``, ``commit``, ``parent``, ``merge_base``): its answer, or ``None`` when git answered
+    "no such thing" (exit 1: a missing ref, no common ancestor). Raises :class:`NoAnswer` when git gave no answer
+    (a refusal, a timeout, a failure), so a caller never mistakes a failed lookup for an honest empty one (Opus R8-L2
+    on #561)."""
+    if op not in _LOOKUPS:
+        raise ValueError(f"not a lookup: {op}")
+    rc, out = _run(path, op, rev, True)
+    if rc == 0:
+        return out
+    if rc == 1:
+        return None
+    raise NoAnswer(f"exit {rc}")
 
 
 def head(path: Path) -> str | None:

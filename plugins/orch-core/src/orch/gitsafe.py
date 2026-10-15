@@ -560,8 +560,18 @@ def command(
     return _argv(repo, args), isolated_env(own, entries)
 
 
+#: git's built-in diff drivers (userdiff.c, git 2.54): an attribute can select them with no repo config at all. Their
+#: regexes are git's own (no backreferences), but the rule is simpler when it covers every driver git can select
+#: (Opus R8 I1): they are pinned like the repo's own.
+BUILTIN_DRIVERS = (
+    "ada", "bash", "bibtex", "cpp", "csharp", "css", "dts", "elixir", "fortran", "fountain", "golang", "html", "java",
+    "kotlin", "markdown", "matlab", "objc", "pascal", "perl", "php", "python", "r", "ruby", "rust", "scheme", "tex",
+)  # fmt: skip
+
+
 def _driver_pins(local: Iterable[tuple[str, str, str]]) -> list[tuple[str, str]]:
-    """For every diff driver the repository's own config defines (``diff.<driver>.*``, tolerated by the gate), as
+    """For every diff driver the repository's own config defines (``diff.<driver>.*``, tolerated by the gate) and every
+    built-in one (:data:`BUILTIN_DRIVERS`), as
     command-scope configuration passed through ``GIT_CONFIG_COUNT`` (no parsing of the driver's name):
 
     * ``diff.<driver>.binary=false``: a repo-forced binary driver changes neither ``diff_numstat``'s counts nor
@@ -570,7 +580,8 @@ def _driver_pins(local: Iterable[tuple[str, str, str]]) -> list[tuple[str, str]]
     * ``diff.<driver>.xfuncname=^$`` and ``diff.<driver>.funcname=^$``: the repo's regex never runs (a backtracking
       one stalled ``diff_patch`` until the timeout, Opus R7-M1), and the hunk-header text it would choose is stripped
       anyway (:func:`plain_hunk_headers`)."""
-    drivers = sorted({sub for _scope, key, _v in local if (s := _split(key))[0] == "diff" and (sub := s[1])})
+    own = {sub for _scope, key, _v in local if (s := _split(key))[0] == "diff" and (sub := s[1])}
+    drivers = sorted(own | set(BUILTIN_DRIVERS))
     return [(f"diff.{d}.{name}", value) for d in drivers
             for name, value in (("binary", "false"), ("xfuncname", "^$"), ("funcname", "^$"))]  # fmt: skip
 

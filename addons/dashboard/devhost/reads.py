@@ -871,6 +871,16 @@ def _diff_part(name: str, out: str | None) -> str:
     return out
 
 
+def _lookup(name: str, path, op: str, rev):
+    """A revision lookup of ``observe.lookup``: its answer, or ``None`` for git's honest "no result"; no answer at all
+    (a refusal, a timeout, a failure) is "diff unavailable"."""
+    try:
+        return observe.lookup(path, op, rev=rev)
+    except observe.NoAnswer as exc:
+        _LOG.warning("%s: no answer from the %s lookup (%s)", DIFF_UNAVAILABLE, op, exc)
+        raise fail("observe.unavailable", f"{name}: {DIFF_UNAVAILABLE}: git did not answer ({op})", exit=3) from None
+
+
 def diff(store, views, args):
     if set(args) - {"ref", "repo", "context", "max_bytes"}:
         raise bad("unknown argument")
@@ -894,23 +904,22 @@ def diff(store, views, args):
         recorded = next((e for e in v.source_list if e["repo"] == identity), None)
         if recorded is None:
             raise fail("observe.unavailable", f"{name}: the host has not observed a branch head", exit=3)
-        # operations of orch.gitsafe.OPS only (#546): no free git arguments
-        head = observe.git(path, "commit", rev=f"refs/heads/{branch}")
+        # operations of orch.gitsafe.OPS only (#546): no free git arguments. The revision lookups tell git's honest
+        # "no result" (None) from no answer at all (a refusal, a timeout, a failure: NoAnswer), which is "diff
+        # unavailable", never a diff against some other base (Opus R8-L2 on #561).
+        head = _lookup(name, path, "commit", f"refs/heads/{branch}")
         # Bound to D58: the head shown is the source_sha a verdict would sign. A branch that moved since the host
         # observed it is refused, never shown as if it were that commit.
         if head != recorded["sha"]:
             raise fail("observe.unavailable", f"{name}: the branch moved since it was observed", exit=3)
         default = next(
-            (f"refs/heads/{b}" for b in ("main", "master") if observe.git(path, "ref", rev=f"refs/heads/{b}")), None
+            (f"refs/heads/{b}" for b in ("main", "master") if _lookup(name, path, "ref", f"refs/heads/{b}")), None
         )
-        base = observe.git(path, "merge_base", rev=(head, default)) if head and default else None
-        if not base and head:  # never silently: a broken operation once hid here (#546)
-            code = (
-                "observe.unavailable" if observe.refusal(path) else "git.no_default_branch" if not default
-                else "git.merge_base_failed"
-            )  # fmt: skip
+        base = _lookup(name, path, "merge_base", (head, default)) if head and default else None
+        if not base and head:  # git answered: no default branch, or no common ancestor; never silently (#546)
+            code = "git.no_default_branch" if not default else "git.no_merge_base"
             _LOG.warning("merge base unavailable, using the parent commit (%s)", code)
-            base = observe.git(path, "parent", rev=head)
+            base = _lookup(name, path, "parent", head)
         if not base:
             raise fail("observe.unavailable", f"{name}: no base to compare with", exit=3)
         sources.append({"repo": name, "branch": branch, "base_sha": base, "head_sha": head})

@@ -10958,14 +10958,16 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     - `diff.<driver>.binary`: `diff.<driver>.binary=false` for every driver the repository defines, plus `--text` on
       the patch;
     - `diff.<driver>.xfuncname`, `.funcname`: pinned to `^$` for every driver the repository defines, so its regex
-      never runs (a backtracking one stalled the patch until the timeout); the text it would choose after a hunk
+      never runs (a backtracking one stalled the patch until the timeout), and for git's built-in drivers too; the text it would choose after a hunk
       header's second `@@` is shown in the dashboard's diff (it draws whole hunk lines), so `store/observe` also
       strips it from `diff_patch` (`gitsafe.plain_hunk_headers`);
     - `diff.<driver>.wordRegex`: only `--word-diff`, which no operation uses.
 
     An empty driver name (`[diff ""]`, which an empty `diff=` attribute selects) is never read as a top-level key:
     it is refused, and every diff passes `--diff-algorithm=default`. A diff git cannot produce (it fails, is refused
-    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch.
+    or runs past its limit) is "diff unavailable" (`observe.unavailable`) in the dashboard, never an empty patch; so
+    is a revision lookup (head, default branch, merge base, parent) git gives no answer to (`observe.lookup` tells
+    git's honest "no result" from no answer).
     Any other `diff.*` key is refused, naming it: "this repo sets diff.X, which orch doesn't support yet; remove it
     or tell us". A key a future git adds is therefore refused by default. No other operation reads diff config, and
     the runner's `worktree add`/`remove` run no diff. A test sets every tolerated key to a hostile value and gets

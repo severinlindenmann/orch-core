@@ -305,6 +305,7 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
     person = {"core.excludesfile"} if op == "status" else set()
     if gitsafe.OPS[op].args[0] == "diff":  # orch's own pins of every diff knob (orch-52 on #561)
         person |= {kv.split("=", 1)[0].lower() for kv in gitsafe._DIFF_PINS[1::2]}
+        person |= {f"diff.{d}.{n}" for d in gitsafe.BUILTIN_DRIVERS for n in ("binary", "xfuncname", "funcname")}
     assert keys == {
         "core.hookspath", "core.fsmonitor", "protocol.allow", "submodule.recurse", "core.attributesfile",
         "i18n.commitencoding", "core.commitgraph", "core.trustctime", "core.checkstat", "advice.graftfiledeprecated",
@@ -1153,25 +1154,57 @@ def _redos_repo(w, where: str) -> tuple[Path, str, str]:
     return repo, w.git(repo, "rev-parse", "HEAD~1").stdout.strip(), c2
 
 
+def _raw_hunk_headers(repo: Path, c1: str, c2: str) -> list[str]:
+    """The hunk headers of orch's OWN ``diff_patch`` argv and environment, run raw: no ``plain_hunk_headers``, so
+    what git itself honoured is visible."""
+    argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", c1, c2))
+    done = subprocess.run(argv, env=env, cwd="/", capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+    assert done.returncode == 0, done.stderr
+    return [ln for ln in done.stdout.splitlines() if ln.startswith("@@")]
+
+
+def test_the_funcname_pins_are_honoured_by_git_itself(world, monkeypatch):
+    """R7-M1 / Opus R8-L1, platform-independent: with a benign repo funcname ``^\\(a*b\\)$``, plain git puts its
+    match in the hunk header; orch's own argv and environment, run WITHOUT the header stripping, give bare headers
+    (the pins are honoured by git); with the funcname pins removed, the same raw run carries the match again."""
+    w = world
+    repo, h1, h2 = _redos_repo(w, "r")
+    w.git(repo, "config", "diff.x.funcname", r"^\(a*b\)$")
+    match = "a" * 28 + "b"
+    plain = [ln for ln in w.git(repo, "diff", h1, h2).stdout.splitlines() if ln.startswith("@@")]
+    assert plain and all(ln.endswith(match) for ln in plain), plain  # positive control
+    pinned = _raw_hunk_headers(repo, h1, h2)
+    assert pinned and all(ln.endswith("@@") for ln in pinned), pinned
+    real = gitsafe._driver_pins
+    monkeypatch.setattr(gitsafe, "_driver_pins", lambda local: [(k, v) for k, v in real(local) if "funcname" not in k])
+    assert all(ln.endswith(match) for ln in _raw_hunk_headers(repo, h1, h2))  # the mutant shows the match
+
+
+def test_a_builtin_driver_is_pinned_too(world):
+    """Opus R8 I1: a built-in driver (selected by an attribute, no repo config) is pinned like the repo's own."""
+    w = world
+    repo, h1, h2 = _redos_repo(w, "r")
+    (repo / ".gitattributes").write_text("*.g diff=cpp\n")
+    _argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", h1, h2))
+    pins = {(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(int(env["GIT_CONFIG_COUNT"]))}
+    assert {("diff.cpp.xfuncname", "^$"), ("diff.cpp.funcname", "^$"), ("diff.cpp.binary", "false")} <= pins
+    assert all(ln.endswith("@@") for ln in _raw_hunk_headers(repo, h1, h2))
+
+
 def test_a_backtracking_funcname_never_stalls_the_review_patch(world):
-    """R7-M1 (probe 14): every driver the repo defines gets ``xfuncname``/``funcname`` pinned to ``^$``, so the
-    repo's regex never runs; the patch comes back at once and equals a clean repo's."""
+    """R7-M1 (probe 14): the repo's backtracking funcname never runs; the patch comes back at once and equals a clean
+    repo's. On macOS plain git stalls on it (positive control); glibc's regex does not stall on this pattern."""
+    import sys
     import time
 
     w = world
     clean, c1, c2 = _redos_repo(w, "clean")
     repo, h1, h2 = _redos_repo(w, "hostile")
     assert (c1, c2) == (h1, h2)
-    # positive control: plain git runs the repo's funcname regex (its match lands in the hunk header)
-    w.git(repo, "config", "diff.x.funcname", r"^\(a*b\)$")
-    hunks = [ln for ln in w.git(repo, "diff", h1, h2).stdout.splitlines() if ln.startswith("@@")]
-    assert hunks and all(ln.endswith("a" * 28 + "b") for ln in hunks), hunks
-    # the backtracking one: plain git may stall on it (macOS's regex engine does, until a 30 s kill; glibc's does
-    # not), orch never runs it
     w.git(repo, "config", "diff.x.funcname", REDOS)
-    _argv, env = gitsafe.command(str(repo), "diff_patch", os.environ, operand=("3", h1, h2))
-    pins = {(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(int(env["GIT_CONFIG_COUNT"]))}
-    assert {("diff.x.funcname", "^$"), ("diff.x.xfuncname", "^$")} <= pins  # on every platform
+    if sys.platform == "darwin":
+        with pytest.raises(subprocess.TimeoutExpired):
+            subprocess.run(["git", "-C", str(repo), "diff", h1, h2], env=w.env(w.empty), capture_output=True, timeout=5)
     started = time.monotonic()
     got = observe.git(repo, "diff_patch", rev=("3", h1, h2))
     assert time.monotonic() - started < 5
@@ -1224,33 +1257,43 @@ def test_an_empty_driver_name_is_refused_and_the_algorithm_is_pinned(world, monk
     assert observe.git(repo, "diff_patch", rev=("3", h1, h2)) == observe.git(clean, "diff_patch", rev=("3", c1, c2))
 
 
-def _refs_and_objects(w, repo: Path) -> tuple[str, str, str]:
-    packed = repo / ".git" / "packed-refs"
-    return (
-        w.git(repo, "for-each-ref", "--format=%(refname) %(objectname)").stdout,
-        packed.read_text() if packed.exists() else "",
-        w.git(repo, "count-objects", "-v").stdout,
-    )
+def _snapshot(repo: Path) -> dict[str, tuple[int, int, str]]:
+    """Every file under ``.git``: size, mtime (ns) and sha256 (Opus R8 I2: an index or reflog write shows too)."""
+    import hashlib
+
+    out = {}
+    for p in sorted((repo / ".git").rglob("*")):
+        if p.is_file() and not p.is_symlink():
+            st = p.stat()
+            out[str(p.relative_to(repo))] = (st.st_size, st.st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
+    return out
 
 
 def test_cachetextconv_never_makes_an_orch_read_write_a_notes_commit(world):
     """``diff.<d>.cachetextconv=true`` makes git WRITE a notes commit (refs/notes/textconv/<d>) during a diff. Every
-    orch diff runs with --no-textconv, so no textconv and no cache: no ref and no object changes."""
+    orch diff runs with --no-textconv, so no textconv and no cache, and no orch read writes anything: every file
+    under ``.git`` (refs, objects, index, logs) is byte- and mtime-identical afterwards."""
     w = world
     repo, c1, c2 = _diff_repo(w, "r")
     w.git(repo, "config", "diff.x.textconv", w.prog("diff-textconv"))
     w.git(repo, "config", "diff.x.cachetextconv", "true")
-    before = _refs_and_objects(w, repo)
+    for f in ("b.txt", "d/x"):  # stat-dirty, same content: a refreshing status would rewrite the index
+        st = (repo / f).stat()
+        os.utime(repo / f, ns=(st.st_atime_ns, st.st_mtime_ns + 5 * 10**9))
+    before = _snapshot(repo)
     _every_operation_bytes(repo, c1, c2)
     for op in ("diff_patch", "diff_numstat", "diff_names"):
         operand = ("3", c1, c2) if op == "diff_patch" else (c1, c2)
         assert observe.git(repo, op, rev=operand) is not None
     assert observe.dirty(repo) is not None and run_all("health", repo)["staged_raw"] is not None
-    assert _refs_and_objects(w, repo) == before and w.count("diff-textconv") == 0
-    # positive control: the same diff in plain git runs the textconv and writes the notes commit
+    assert _snapshot(repo) == before and w.count("diff-textconv") == 0
+    # positive controls: plain status rewrites the index; the same diff in plain git runs the textconv and writes
+    # the notes commit
+    w.control(repo, "status", "--porcelain", fires=[])
+    assert _snapshot(repo) != before
+    before = _snapshot(repo)
     w.control(repo, "diff", c1, c2, "--", "a.g", fires=["diff-textconv"])
-    after = _refs_and_objects(w, repo)
-    assert "refs/notes/textconv/x" in after[0] and after != before
+    assert "refs/notes/textconv/x" in w.git(repo, "for-each-ref").stdout and _snapshot(repo) != before
 
 
 # ------------------------------------------------- R7-M1: a diff git cannot produce is "unavailable", never empty

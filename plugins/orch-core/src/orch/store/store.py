@@ -36,13 +36,11 @@ import json
 import logging
 import os
 import re
-import shutil
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
-from stat import S_ISREG as _S_ISREG
 from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
@@ -63,17 +61,57 @@ from orch.model import (
 from . import render
 from .checkpoints import WORKSPACE_EVERY, Checkpoints, Divergence, find_divergence
 from .errors import StoreError
-from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none, replace, tail_bytes, write_atomic
-from .index import Index
+from .fsio import NotRegularFile, fsync_dir, loads, open_regular, read_or_none, write_atomic
+from .index import Index, StaleIndex
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
 from .outbox import Outbox, OutboxEntry, RelayPosition, Segment, make_entry, parse_entry
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins, is_forwarded, pair
+from .rootfs import RootFS
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
 
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
+
+
+def _lock_opener(fs: RootFS) -> Callable[[], int]:
+    """The workspace lock's opener (#564): the cached directory fds are revalidated **first**, so the lock is opened
+    in the ``.state`` every operation of this lock period then uses. A FIFO or anything else that is not a regular
+    file there is ``validation.path``. Bound to ``fs``, not to the store: no reference cycle through the lock."""
+
+    def opener() -> int:
+        fs.revalidate()
+        try:
+            return fs.open(".state/lock", os.O_RDWR | os.O_CREAT, 0o600, parents=True)
+        except (NotRegularFile, IsADirectoryError):
+            raise StoreError("validation.path", ".state/lock is not a regular file") from None
+
+    return opener
+
+
+def _lock_verify(fs: RootFS) -> Callable[[int], bool]:
+    """After the ``flock``: the locked file is still ``.state/lock`` below the (revalidated) pinned ``.state``
+    (``fstat`` of the fd against an ``lstat`` of the name). Otherwise :class:`FileLock` retries once, then refuses."""
+
+    def verify(fd: int) -> bool:
+        fs.revalidate()
+        try:
+            a, b = os.fstat(fd), fs.lstat(".state/lock")
+        except (OSError, StoreError):
+            return False
+        return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+    return verify
+
+
+def _sig_of(st: os.stat_result) -> tuple[int, int, int, int]:
+    """:func:`~orch.store.logs.stat_sig` of an ``lstat`` result (a symlink has its own signature)."""
+    if _S_ISLNK(st.st_mode):
+        return (-1, -1, -1, -1)
+    return (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+
+
 _KEY_NUM = re.compile(r"[A-Z][A-Z0-9]{0,15}-([0-9]+)")
 _HOST_FIELDS = ("seq", "at", "prev", "ws_seq", "host_sig")
 _EMPTY = canon.section_hash("")
@@ -231,8 +269,11 @@ class Store:
         workspace_name: str | None,
         lock_timeout: float | None,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
+        fs: RootFS | None = None,
     ) -> None:
         self.root = root
+        #: the pinned root (#516): every file under the workspace is reached through it, never by path
+        self.fs = fs if fs is not None else RootFS.at(root, create=True)
         self._guard = guard or contextlib.nullcontext
         #: Host mode (H4a1): called as ``append_check(log, event)`` right before a caller's event (any actor but the
         #: host) is committed, after its id is final; it raises :class:`StoreError` to refuse. The host uses it to make
@@ -258,9 +299,11 @@ class Store:
         self._outbox = Outbox(self._pins.dir / "outbox") if self._pins is not None else None
         self._relay_branch: tuple[tuple[Any, ...], bytes, bytes] | None = None  # R3 paging (raw digests)
         self._relay_ancestry: dict[tuple[Any, ...], bool] = {}  # R3 classify: (older, newer, Store.revision())
-        self._lock = FileLock(self.state_dir / "lock", timeout=lock_timeout)
-        self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id)
-        self._index = Index(self.state_dir / "index.sqlite")
+        self._lock = FileLock(
+            self.state_dir / "lock", timeout=lock_timeout, opener=_lock_opener(self.fs), verify=_lock_verify(self.fs)
+        )
+        self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id, self.fs)
+        self._index = Index(self.state_dir / "index.sqlite", self.fs)
         self.reports: list[Report] = []
         self._logs: dict[str, LogInfo] = {}
         self._loaded: set[str] = set()
@@ -316,6 +359,7 @@ class Store:
         lock_timeout: float | None = LOCK_TIMEOUT,
         guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
         config: bytes | None = None,
+        ident: tuple[int, int] | None = None,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -332,33 +376,41 @@ class Store:
         CLI passes :class:`orch.host.ownership.DirectGuard` (D-P2-18), which holds the ownership lock shared and
         answers ``host.required`` for a workspace the host has adopted. ``config``: the ``config.json`` bytes the
         caller already read (direct-mode discovery, :mod:`orch.discovery`); the open-time workspace id check uses
-        them instead of reading the file by path again.
+        them instead of reading the file by path again. ``ident``: the root's ``(st_dev, st_ino)`` as discovery saw
+        it; the root is opened once (``O_NOFOLLOW``) and must be that directory (``validation.path``), and every file
+        below it is reached through that fd (:class:`~orch.store.rootfs.RootFS`, #516).
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
         if load not in ("lazy", "all"):
             raise StoreError("validation.load", "load is 'lazy' or 'all'")
         root = Path(path)
-        store = cls(
-            root,
-            workspace_id=expected_workspace_id,
-            expected_genesis=expected_genesis,
-            host=host,
-            host_state_dir=Path(host_state_dir) if host_state_dir is not None else None,
-            verifier=_default_verifier(),
-            clock=clock,
-            workspace_name=workspace_name,
-            lock_timeout=lock_timeout,
-            guard=guard,
-        )
-        store._open(load == "all", config)
+        fs = RootFS.at(root, ident=ident, create=ident is None)
+        try:
+            store = cls(
+                root,
+                workspace_id=expected_workspace_id,
+                expected_genesis=expected_genesis,
+                host=host,
+                host_state_dir=Path(host_state_dir) if host_state_dir is not None else None,
+                verifier=_default_verifier(),
+                clock=clock,
+                workspace_name=workspace_name,
+                lock_timeout=lock_timeout,
+                guard=guard,
+                fs=fs,
+            )
+            store._open(load == "all", config)
+        except BaseException:
+            fs.close()
+            raise
         return store
 
     def _open(self, eager: bool, config: bytes | None = None) -> None:
         for d in ("events", "tickets", ".state"):
-            if os.path.islink(self.root / d):
+            if self.fs.is_link(d):
                 raise StoreError("validation.path", f"{d} is a symlink")
-            (self.root / d).mkdir(parents=True, exist_ok=True)
+            self.fs.mkdir(d)
         self._known_config = config
         try:
             self._open_checked(eager)
@@ -368,7 +420,7 @@ class Store:
     def _config_json(self) -> bytes | None:
         """``config.json`` as it is now: the caller's bytes while opening (until the store installs a new one), else
         read below the root."""
-        return self._known_config if self._known_config is not None else read_or_none(self.root / "config.json")
+        return self._known_config if self._known_config is not None else self.fs.read_or_none("config.json")
 
     def _open_checked(self, eager: bool) -> None:
         cfg = self._config_json()
@@ -380,7 +432,7 @@ class Store:
             if have is not None and have != self.workspace_id:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
         with self._guard(), self._lock:
-            check_state_dirs(self.root)
+            check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
             self._scan_dirs()
@@ -400,6 +452,9 @@ class Store:
         self._index.close()
         if self._pins is not None:
             self._pins.close()
+        self.fs.drop_cache()  # the cached directory fds; a later use (a closed store is still usable) reopens them
+        # the root fd stays open: a closed store is still usable (it re-reads what changed); it is released with the
+        # store (RootFS's finalizer), one fd per store
 
     def refresh(self) -> None:
         """Take the lock and re-read what changed on disk since the last call: what a long-lived caller does before it
@@ -591,7 +646,7 @@ class Store:
             out = []
             for uid in sorted(self._exists):
                 for name in ("ticket.json", "body.md"):
-                    raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/{name}"))
+                    raw = self.fs.read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/{name}"))
                     if raw and want in raw.decode("utf-8", "ignore").lower():
                         out.append(uid)
                         break
@@ -669,18 +724,9 @@ class Store:
         tdir = self.root / "tickets"
         seen: dict[str, _Hint] = {}
         sizes: dict[str, int] = {}
-        try:
-            entries = list(os.scandir(tdir))
-        except FileNotFoundError:
-            entries = []
-        for ent in entries:
-            uid = ent.name
-            if not _ULID.fullmatch(uid) or ent.is_symlink():
-                continue
-            try:  # one lstat per ticket
-                st = os.lstat(ent.path + "/events.jsonl")
-            except OSError:
-                continue
+        names = [n for n in self.fs.listdir_or_empty("tickets") if _ULID.fullmatch(n)]
+        sigs = self.fs.leaf_stats("tickets", names, "events.jsonl")  # one lstat pair per ticket, below the pinned root
+        for uid, st in sigs.items():
             if _S_ISLNK(st.st_mode):
                 continue
             sig = (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
@@ -689,12 +735,12 @@ class Store:
             if old is not None and old.sig == sig:
                 seen[uid] = old
                 continue
-            path = Path(ent.path) / "events.jsonl"
+            path = tdir / uid / "events.jsonl"
             key = created = None
             if old is not None and old.ino == sig[1]:
                 key, created = old.key, old.created_at
             else:
-                first = first_line(path)
+                first = first_line(path, self.fs)
                 try:
                     f = loads(first) if first else {}
                     if isinstance(f, dict) and f.get("type") == "ticket.created":
@@ -726,7 +772,7 @@ class Store:
             hit = self._last_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 pos = None
-                line = last_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
+                line = last_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"), self.fs)
                 try:
                     e = canon.parse_event_line(line) if line else None
                     if (
@@ -773,7 +819,7 @@ class Store:
         self._scan_dirs()  # who exists now (a stat per ticket); a reload is not the hot path
         self._logs = {WORKSPACE: LogInfo(WORKSPACE, self._path_of(WORKSPACE))}
         self._read_errors = {}
-        ws_events = read_new_lines(self._logs[WORKSPACE])
+        ws_events = read_new_lines(self._logs[WORKSPACE], fs=self.fs)
         tickets: dict[str, list[dict[str, Any]]] = {}
         todo = sorted(u for u in self._loaded if u in self._exists)
         while todo:
@@ -782,7 +828,7 @@ class Store:
                 continue
             self._spend_load()
             info = LogInfo(uid, safe_join(self.root, f"tickets/{uid}/events.jsonl"))
-            tickets[uid] = read_new_lines(info)
+            tickets[uid] = read_new_lines(info, fs=self.fs)
             self._logs[uid] = info
             refs = self._read_refs(tickets[uid])
             if not refs:
@@ -830,7 +876,7 @@ class Store:
                 self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
         self._json_cache = {}
         try:
-            applied = loads(read_or_none(self.state_dir / "applied") or b"{}")
+            applied = loads(self.fs.read_or_none(self.state_dir / "applied") or b"{}")
             self._applied_n = int(applied.get("n", 0))
         except (ValueError, TypeError, AttributeError):
             self._applied_n = 0
@@ -862,7 +908,7 @@ class Store:
 
     def _sizes_now(self) -> dict[str, int]:
         sizes = dict(self._sizes)
-        ws = stat_sig(self._path_of(WORKSPACE))
+        ws = stat_sig(self._path_of(WORKSPACE), self.fs)
         sizes[WORKSPACE] = ws[0] if ws else 0
         return sizes
 
@@ -874,8 +920,15 @@ class Store:
     def _fresh(self) -> bool:
         """Do the files still say what was read? Compared under the lock: size and inode of the workspace log and of
         every loaded ticket log. ``.state/applied`` plays no part (it is a record, not a signal)."""
-        for info in self._logs.values():
-            if stat_sig(info.path) != info_sig(info):
+        ws = self._logs.get(WORKSPACE)
+        if ws is not None and stat_sig(ws.path, self.fs) != info_sig(ws):
+            return False
+        tickets = [u for u in self._logs if u != WORKSPACE]
+        sigs = self.fs.leaf_stats("tickets", tickets, "events.jsonl") if tickets else {}
+        for uid in tickets:
+            st = sigs.get(uid)
+            have = None if st is None else _sig_of(st)
+            if have != info_sig(self._logs[uid]):
                 return False
         return True
 
@@ -938,7 +991,10 @@ class Store:
         not, every ticket is loaded and it is rebuilt."""
         with self._locked():
             ws = self._state.workspace if self._state else None
+            if self._index_ok and self._index.stale():
+                self._index_ok = False  # another store saved it (or it was closed): reload and check it again
             if ws is not None and ws.genesis is not None and not self._index_ok:
+                self._scan_dirs()  # tickets another store created since (the index file may already list them)
                 if self._index.is_current(self._sizes_now(), self.workspace_id, ws.genesis):
                     self._index_ok = True
                 else:
@@ -976,7 +1032,7 @@ class Store:
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         with self._guard(), self._lock:
-            check_state_dirs(self.root)
+            check_state_dirs(self.fs)
             self._load_transition_logs()
             pend = self._recover_pending()
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
@@ -1008,9 +1064,9 @@ class Store:
         event is deleted; a torn prefix of its line is cut off the log; a manifest whose line is the last line of its
         log (and that ``.state/applied`` does not name yet) is returned, to be finished once the log is replayed."""
         pdir = self.state_dir / "pending"
-        if not pdir.is_dir():
+        if not self.fs.is_dir(pdir):
             return []
-        found = sorted(pdir.iterdir())
+        found = [pdir / n for n in sorted(self.fs.listdir(pdir))]
         if not found:
             return []  # the common case costs one directory listing
         out: list[tuple[Path, dict[str, Any]]] = []
@@ -1018,16 +1074,15 @@ class Store:
             m = self._recover_one(d)
             if m is not None:
                 out.append((d, m))
-        tdir = self.root / "tickets"
-        for p in tdir.iterdir() if tdir.is_dir() else []:  # a ticket directory whose event never landed
-            with contextlib.suppress(OSError):
-                if p.is_dir() and not p.is_symlink() and not (p / "events.jsonl").exists() and not any(p.iterdir()):
-                    p.rmdir()
+        for n in self.fs.listdir_or_empty("tickets"):  # a ticket directory whose event never landed
+            with contextlib.suppress(OSError, StoreError):
+                if self.fs.is_dir(f"tickets/{n}") and not self.fs.listdir(f"tickets/{n}"):
+                    self.fs.rmdir(f"tickets/{n}")  # rmdir refuses a non-empty one: no events.jsonl in it
         return out
 
     def _recover_one(self, d: Path) -> dict[str, Any] | None:
         try:
-            m = loads(read_or_none(d / "manifest.json", 2_000_000) or b"")
+            m = loads(self.fs.read_or_none(d / "manifest.json", 2_000_000) or b"")
             line = m["line"].encode("utf-8")
             log = m["log"]
             path = self._path_of(log)
@@ -1036,29 +1091,32 @@ class Store:
             if e.get("id") != m["id"] or e.get("seq") != m["seq"] or not isinstance(m["files"], list):
                 raise ValueError("the manifest does not describe its own event")
         except (OSError, ValueError, KeyError, StoreError, TypeError, canon.HashError):
-            shutil.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
+            self.fs.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
             return None
-        size, tail = tail_bytes(path, len(line) + 1)
+        size, tail = self.fs.tail_bytes(path, len(line) + 1)
         if tail.endswith(line):
             applied = self._read_applied()
             if applied.get("id") == m["id"]:
-                shutil.rmtree(d, ignore_errors=True)  # already installed (§5.5: recovery runs only for an event that
+                self.fs.rmtree(d, ignore_errors=True)  # already installed (§5.5: recovery runs only for an event that
                 return None  # `.state/applied` does not name)
             self._needs_reload = True
             return m
         for k in range(min(len(line) - 1, size), 0, -1):  # a torn prefix of our own line: cut it off
             if tail[-k:] == line[:k] and (size == k or tail[-k - 1] == 0x0A):
-                with open(path, "r+b") as f:
-                    f.truncate(size - k)
-                    os.fsync(f.fileno())
+                fd = self.fs.open(path, os.O_RDWR)
+                try:
+                    os.ftruncate(fd, size - k)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
                 self._needs_reload = True
                 break
-        shutil.rmtree(d, ignore_errors=True)
+        self.fs.rmtree(d, ignore_errors=True)
         return None
 
     def _read_applied(self) -> dict[str, Any]:
         try:
-            a = loads(read_or_none(self.state_dir / "applied") or b"{}")
+            a = loads(self.fs.read_or_none(self.state_dir / "applied") or b"{}")
             return a if isinstance(a, dict) else {}
         except ValueError:
             return {}
@@ -1079,14 +1137,14 @@ class Store:
             )
             if not ok:  # the log up to that line did not verify: nothing to finish
                 self._report("store.torn_write", f"event {m['id']} is not in the verified part of {log}", log)
-                shutil.rmtree(d, ignore_errors=True)
+                self.fs.rmtree(d, ignore_errors=True)
                 continue
             self._finish_applied_checkpoint()
             torn = self._install(m, d, check=self._expected_bytes)
             for rel in torn:
                 self._torn.add(rel)
                 self._report("store.torn_write", f"{rel} did not survive the crash of event {m['id']}", log)
-            shutil.rmtree(d, ignore_errors=True)
+            self.fs.rmtree(d, ignore_errors=True)
 
     def _expected_bytes(self, rel: str, data: bytes) -> bool:
         """Is ``data`` what the replayed log says the file ``rel`` holds (recovery only)?"""
@@ -1123,21 +1181,20 @@ class Store:
             if f["to"] == "config.json":
                 self._known_config = None  # from here on the file is the store's own
             dest, src = safe_join(self.root, target_ok(f["to"])), d / str(int(f["n"]))
-            data = read_or_none(src, 256 * 1024 * 1024)
+            data = self.fs.read_or_none(src, 256 * 1024 * 1024)
             if data is not None and _sha(data) == f["sha256"] and (check is None or check(f["to"], data)):
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                replace(src, dest)
-                fsync_dir(dest.parent)
+                self.fs.replace(src, dest)
+                self.fs.fsync_dir(dest.parent)
             else:
-                now = read_or_none(dest)
+                now = self.fs.read_or_none(dest)
                 if now is None or _sha(now) != f["sha256"] or (check is not None and not check(f["to"], now)):
                     torn.append(f["to"])
         uid = m.get("body_copy")
         if uid:
             check_uid(uid)
-            body = read_or_none(safe_join(self.root, f"tickets/{uid}/body.md"))
+            body = self.fs.read_or_none(safe_join(self.root, f"tickets/{uid}/body.md"))
             if body is not None and f"tickets/{uid}/body.md" not in torn:
-                write_atomic(self.state_dir / "body" / f"{uid}.md", body)
+                self.fs.write_atomic(self.state_dir / "body" / f"{uid}.md", body)
         if m.get("outbox") is not None:
             self._install_outbox(m, d, recovering=check is not None)
         self._write_applied(m["id"], m["log"], m["seq"])
@@ -1157,7 +1214,7 @@ class Store:
                 "the next host open finishes it (open with the host state dir)",
             )
         pending = d / "outbox"
-        data = None if pending.is_symlink() else read_or_none(pending, 16 * 1024 * 1024)
+        data = self.fs.read_or_none(pending, 16 * 1024 * 1024)  # a symlink reads as absent
         try:
             if data is None or _sha(data) != m["outbox"]:
                 raise StoreError("store.torn_write", "the pending outbox entry is missing or changed")
@@ -1220,7 +1277,7 @@ class Store:
     def _write_applied(self, event_id: str, log: str, seq: int) -> None:
         self._applied_n += 1
         raw = canon.cj_checked({"id": event_id, "log": log, "n": self._applied_n, "seq": seq}) + b"\n"
-        write_atomic(self.state_dir / "applied", raw)
+        self.fs.write_atomic(self.state_dir / "applied", raw)
 
     # ------------------------------------------------------------------ reading projections
 
@@ -1236,7 +1293,7 @@ class Store:
 
     def ticket_json(self, uid: str) -> bytes | None:
         """The ``ticket.json`` on disk (None if there is none)."""
-        return read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/ticket.json"))
+        return self.fs.read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/ticket.json"))
 
     def body_sections(self, uid: str) -> dict[str, str]:
         """The section texts of the ticket's ``body.md`` as on disk, **checked against the log**: every section's hash
@@ -1249,7 +1306,7 @@ class Store:
     def _body_sections(self, uid: str) -> dict[str, str]:
         assert self._state is not None
         view = self._state.tickets[uid]
-        raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md"))
+        raw = self.fs.read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md"))
         if raw is None:
             texts: dict[str, str] = {}
         else:
@@ -1271,7 +1328,7 @@ class Store:
         for key in (*self._verified_keys(), *self._key_uid, *(t.key for t in self._state.tickets.values())):
             m = _KEY_NUM.fullmatch(key)
             best = max(best, int(m.group(1)) if m else 0)
-        for line in (read_or_none(self.root / "keys.jsonl") or b"").splitlines():
+        for line in (self.fs.read_or_none("keys.jsonl") or b"").splitlines():
             with contextlib.suppress(ValueError, KeyError, TypeError):
                 m = _KEY_NUM.fullmatch(loads(line)["key"])
                 best = max(best, int(m.group(1)) if m else 0)
@@ -1293,7 +1350,7 @@ class Store:
             hit = self._created_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 hit = None
-                line = first_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
+                line = first_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"), self.fs)
                 try:
                     e = canon.parse_event_line(line) if line else None
                     if (
@@ -1693,10 +1750,10 @@ class Store:
         info = self._logs.get(log)
         path = self._path_of(log)
         wsi = self._logs[WORKSPACE]  # last look, right before the write: the logs this event rests on are unchanged
-        if stat_sig(wsi.path) != info_sig(wsi):
+        if stat_sig(wsi.path, self.fs) != info_sig(wsi):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the workspace log changed on disk while the store held the lock")
-        if stat_sig(path) != info_sig(info):
+        if stat_sig(path, self.fs) != info_sig(info):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         try:
@@ -1705,7 +1762,7 @@ class Store:
                 if linked:
                     outbox = make_entry(transition["T"], restore=_restore_evidence(transition)).to_bytes()
             manifest = self._write_pending(ev, log, line, writes, outbox=outbox)
-            append_durable(path, line, commit=True)  # the commit
+            self.fs.append_durable(path, line, commit=True)  # the commit
             self._finish(manifest, ev, log, line)
         except BaseException:
             self._needs_reload = True  # whatever got half done, the next lock recovers from disk
@@ -1923,10 +1980,10 @@ class Store:
         """Step 2 of the write order. ``outbox`` is the relay outbox entry of this append (H12b): it rides in the
         pending directory, so the commit (the log line) decides it with the event: neither or both."""
         pdir = self.state_dir / "pending" / ev["id"]
-        pdir.mkdir(parents=True, exist_ok=True)
+        self.fs.mkdir(pdir)
         files = []
         for n, w in enumerate(writes):
-            fd = os.open(pdir / str(n), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd = self.fs.open(pdir / str(n), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "wb") as f:
                 f.write(w.data)
                 f.flush()
@@ -1942,16 +1999,17 @@ class Store:
             "body_copy": next((w.body_copy for w in writes if w.body_copy), None),
         }
         if outbox is not None:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(pdir / "outbox")  # a retried event id: start clean, never write through a link
-            fd = os.open(pdir / "outbox", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            self.fs.unlink(pdir / "outbox", missing_ok=True)  # a retried event id: start clean, never through a link
+            fd = self.fs.open(pdir / "outbox", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as f:
                 f.write(outbox)
                 f.flush()
                 os.fsync(f.fileno())
             manifest["outbox"] = _sha(outbox)
-        write_atomic(pdir / "manifest.json", json.dumps(manifest, separators=(",", ":")).encode("utf-8"), mode=0o600)
-        fsync_dir(pdir.parent)
+        self.fs.write_atomic(
+            pdir / "manifest.json", json.dumps(manifest, separators=(",", ":")).encode("utf-8"), mode=0o600
+        )
+        self.fs.fsync_dir(pdir.parent)
         return manifest
 
     def _finish(self, manifest: dict[str, Any], ev: dict[str, Any], log: str, line: bytes) -> None:
@@ -1959,7 +2017,7 @@ class Store:
         torn = self._install(manifest, pdir)
         if torn:  # we just wrote them: this is a disk fault, not a crash
             raise StoreError("store.torn_write", f"could not install {', '.join(torn)}")
-        shutil.rmtree(pdir, ignore_errors=True)
+        self.fs.rmtree(pdir, ignore_errors=True)
         info = self._logs.setdefault(log, LogInfo(log, self._path_of(log)))
         info.starts.append(info.offset)
         info.offset += len(line)
@@ -1967,7 +2025,7 @@ class Store:
         info.seq = ev["seq"]
         info.accs.append(canon.log_acc(info.acc, canon.event_head(ev)))
         info.heads.append(canon.event_head(ev))
-        sig = stat_sig(info.path)
+        sig = stat_sig(info.path, self.fs)
         info.ino = sig[1] if sig else None
         info.seen_times = (sig[2], sig[3]) if sig else (0, 0)
         if log != WORKSPACE:
@@ -2016,6 +2074,8 @@ class Store:
         if new.workspace.genesis is not None and self._index_ok:
             try:
                 self._index.update(new, self._logs, [log], changed, self._sizes_now() | {log: self._logs[log].offset})
+            except StaleIndex:  # another store saved it since: re-checked (reloaded or rebuilt) at the next use
+                self._index_ok = False
             except Exception:  # noqa: BLE001 - derived data: never fail an append for it
                 self._index.drop()
                 self._index_ok = False
@@ -2230,7 +2290,7 @@ class Store:
 
     def _read_intent(self, idem: str) -> dict[str, Any] | None:
         try:
-            rec = loads(read_or_none(self._intent_path(idem)) or b"null")
+            rec = loads(self.fs.read_or_none(self._intent_path(idem)) or b"null")
         except ValueError:
             return None
         if isinstance(rec, dict) and isinstance(rec.get("log"), str) and isinstance(rec.get("id"), str):
@@ -2293,8 +2353,8 @@ class Store:
             return None
         needle = b'"id":"' + event_id.encode() + b'"'
         try:
-            fd = open_nofollow(self._path_of(log), os.O_RDONLY)
-        except OSError:
+            fd = self.fs.open(self._path_of(log), os.O_RDONLY)
+        except (OSError, StoreError):
             return None
         with os.fdopen(fd, "rb") as f:  # line by line, at most one line's limit at a time
             for i in range(1, info.seq + 1):
@@ -2314,7 +2374,7 @@ class Store:
         if first > last:
             return []
         info = self._logs[log]
-        fd = open_nofollow(self._path_of(log), os.O_RDONLY)
+        fd = self.fs.open(self._path_of(log), os.O_RDONLY)
         out = []
         with os.fdopen(fd, "rb") as f:
             for seq in range(first, last + 1):
@@ -2323,11 +2383,13 @@ class Store:
         return out
 
     def _idem_intent(self, idem: str, log: str, event_id: str) -> None:
-        write_atomic(self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600)
+        self.fs.write_atomic(
+            self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600
+        )
 
     def _idem_done(self, idem: str, log: str, ev: dict[str, Any]) -> None:
         rec = {"log": log, "id": ev["id"], "seq": ev["seq"], "head": canon.event_head(ev)}
-        write_atomic(self._intent_path(idem), json.dumps(rec).encode("utf-8"), mode=0o600, durable=False)
+        self.fs.write_atomic(self._intent_path(idem), json.dumps(rec).encode("utf-8"), mode=0o600, durable=False)
 
     # ------------------------------------------------------------------ external edits (§5.8)
 
@@ -2405,7 +2467,7 @@ class Store:
             ("keys.jsonl", "keys_mismatch", lambda: self._keys_bytes()),
         ):
             want = produce()
-            if (self._config_json() if path == "config.json" else read_or_none(self.root / path)) == want:
+            if (self._config_json() if path == "config.json" else self.fs.read_or_none(path)) == want:
                 continue
             self._torn.discard(path)
             out.append(
@@ -2422,7 +2484,7 @@ class Store:
         self._bad_projection.pop(uid, None)
         tpath = f"tickets/{uid}/ticket.json"
         want = self._ticket_bytes(uid)
-        have = read_or_none(self.root / tpath)
+        have = self.fs.read_or_none(tpath)
         if have != want:
             cause = "projection_mismatch" if tpath in self._torn else "external_edit"
             self._torn.discard(tpath)
@@ -2450,7 +2512,7 @@ class Store:
 
     def _copy_texts(self, uid: str, view: Any) -> dict[str, str] | None:
         """The host's copy of the installed body.md, only if its section hashes are the log's (§5.5)."""
-        raw = read_or_none(self.state_dir / "body" / f"{uid}.md")
+        raw = self.fs.read_or_none(self.state_dir / "body" / f"{uid}.md")
         if raw is None:
             return None
         try:
@@ -2470,7 +2532,7 @@ class Store:
     def _heal_body(self, uid: str, view: Any) -> list[dict[str, Any]]:
         assert self._state is not None
         bpath = f"tickets/{uid}/body.md"
-        raw = read_or_none(self.root / bpath)
+        raw = self.fs.read_or_none(bpath)
         torn = bpath in self._torn
         if raw is None:
             texts: dict[str, str] | None = {}
@@ -2546,10 +2608,10 @@ class Store:
         d = self.state_dir / "rejected"
         stem = f"{uid}-{self._now().replace(':', '')}"
         p, n = d / f"{stem}.md", 0
-        while os.path.lexists(p):
+        while self.fs.lexists(p):
             n += 1
             p = d / f"{stem}.{n}.md"
-        write_atomic(p, raw, mode=0o600)
+        self.fs.write_atomic(p, raw, mode=0o600)
         self._report(
             "store.rejected_body", f"body.md was not a body; the file is kept as .state/rejected/{p.name}", uid
         )
@@ -2612,12 +2674,11 @@ class Store:
                 if abandoned is None or candidate["seq"] > abandoned["seq"]:
                     abandoned = candidate
         decisions: list[str] = []
-        for p in (
-            sorted((self.state_dir / "abandoned").glob(f"{log}-*.jsonl"))
-            if (self.state_dir / "abandoned").is_dir()
-            else []
-        ):
-            for line in p.read_bytes().splitlines():
+        ab = self.state_dir / "abandoned"
+        for n in sorted(self.fs.listdir_or_empty(ab)):
+            if not (n.startswith(f"{log}-") and n.endswith(".jsonl")):
+                continue
+            for line in (self.fs.read_or_none(ab / n, None) or b"").splitlines():
                 with contextlib.suppress(canon.HashError, KeyError):
                     e = canon.parse_event_line(line + b"\n")
                     if e["actor"]["kind"] == "person":  # §5.10: every person-signed event of the given-up part
@@ -2655,20 +2716,20 @@ class Store:
         with self._locked():
             self._ensure({log} if log != WORKSPACE else set())
             path = self._path_of(log)
-            raw = read_or_none(path, None) or b""  # an owner's explicit repair: the whole file
+            raw = self.fs.read_or_none(path, None) or b""  # an owner's explicit repair: the whole file
             lines = raw.splitlines(keepends=True)
             if from_seq >= len(lines):
                 return 0
             keep, cut = b"".join(lines[:from_seq]), b"".join(lines[from_seq:])
             self._mark_cut_convenience(cut)  # #441: before the events leave the merged view (fail closed)
             ab = self.state_dir / "abandoned"
-            ab.mkdir(parents=True, exist_ok=True)
+            self.fs.mkdir(ab)
             target, n = ab / f"{log}-{from_seq + 1}.jsonl", 0
-            while os.path.lexists(target):  # an earlier archive is never overwritten
+            while self.fs.lexists(target):  # an earlier archive is never overwritten
                 n += 1
                 target = ab / f"{log}-{from_seq + 1}.{n}.jsonl"
-            write_atomic(target, cut, mode=0o600)
-            write_atomic(path, keep, mode=0o644)
+            self.fs.write_atomic(target, cut, mode=0o600)
+            self.fs.write_atomic(path, keep, mode=0o644)
             self._needs_reload = True
             self._load()
             return len(lines) - from_seq
@@ -2716,7 +2777,7 @@ class Store:
         if cp is None:
             if (
                 self._checkpoints.ticket_uids()
-                or any((self._checkpoints.dir / "abandoned").glob("workspace-*.json"))
+                or self._checkpoints.abandoned_workspace()
                 or (self._pins and any((self._pins.dir / "transitions").glob("*.json")))
             ):
                 raise StoreError(
@@ -3100,39 +3161,34 @@ class Store:
             return RelayPosition(contained, numbering, current, abandoned)
 
     def _abandoned_workspace_checkpoints(self) -> Iterator[bytes]:
-        """The bytes of each ``.state/checkpoints/abandoned/workspace-*.json``, read through directory fds pinned from
-        the workspace root one component at a time (``O_DIRECTORY | O_NOFOLLOW``), each file opened relative to its
-        directory with ``O_NOFOLLOW`` and checked to be a regular file (review round 2, P1): a symlinked component
-        anywhere on the path is refused (``validation.path``), never followed outside the store; a missing one means
-        none. At most 4 MiB per file."""
-        rel = self._checkpoints.dir.relative_to(self.root) / "abandoned"
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-        fds: list[int] = []
+        """The bytes of each ``.state/checkpoints/abandoned/workspace-*.json``, read below the store's pinned root
+        (:class:`~orch.store.rootfs.RootFS`, #516): every directory component ``O_DIRECTORY | O_NOFOLLOW`` from the
+        root fd, each file opened relative to its directory with :func:`~orch.store.fsio.open_regular` (``O_NOFOLLOW |
+        O_NONBLOCK``, a regular file only; review round 2, P1): a symlinked component anywhere on the path is refused
+        (``validation.path``), never followed outside the store; a missing one means none. At most 4 MiB per file.
+        The root is the directory the store opened, wherever it is now: a symlink later put at its path is never
+        followed."""
+        rel = self._checkpoints.dir / "abandoned"
+        self.fs.revalidate()  # a cached .state fd counts only while the name still names it
         try:
-            try:
-                fds.append(os.open(self.root, flags))
-            except OSError:  # review delta 2, F2: a root swapped for a symlink is refused, never a raw OSError
-                raise StoreError("validation.path", "the workspace root is a symlink or not a directory") from None
-            for part in rel.parts:
-                try:
-                    fds.append(os.open(part, flags, dir_fd=fds[-1]))
-                except FileNotFoundError:
-                    return
-                except OSError:  # ELOOP or ENOTDIR: a symlink or not a directory
-                    raise StoreError("validation.path", f"{rel}: a component is a symlink or not a directory") from None
-            dfd = fds[-1]
+            cm = self.fs.dir(rel)  # the store's pinned root (#516): every component O_NOFOLLOW from its fd
+            dfd = cm.__enter__()
+        except FileNotFoundError:
+            return  # no abandoned checkpoints
+        except NotADirectoryError:  # a component that is not a directory (a symlink is validation.path already)
+            raise StoreError("validation.path", f"{rel.name}: a component is a symlink or not a directory") from None
+        except OSError:
+            raise StoreError("validation.path", f"{rel.name}: a component cannot be opened as a directory") from None
+        try:
             for name in sorted(os.listdir(dfd)):
                 if not (name.startswith("workspace-") and name.endswith(".json")):
                     continue
-                try:
-                    ffd = os.open(  # O_NONBLOCK: a FIFO never blocks the store lock (review delta 2, F2)
-                        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0), dir_fd=dfd
-                    )
+                try:  # O_NOFOLLOW | O_NONBLOCK, a regular file only: a FIFO never blocks the store lock
+                    ffd = open_regular(name, os.O_RDONLY, dir_fd=dfd)
                 except OSError:
-                    continue  # a symlinked entry is not evidence
+                    continue  # a symlinked or non-regular entry is not evidence
                 try:
-                    st = os.fstat(ffd)
-                    if not _S_ISREG(st.st_mode) or st.st_size > 4 << 20:
+                    if os.fstat(ffd).st_size > 4 << 20:
                         continue
                     chunks, size = [], 0
                     while piece := os.read(ffd, 1 << 16):
@@ -3145,8 +3201,7 @@ class Store:
                 finally:
                     os.close(ffd)
         finally:
-            for fd in reversed(fds):
-                os.close(fd)
+            cm.__exit__(None, None, None)
 
     def relay_ancestor(self, older: Mapping[str, Any], newer: Mapping[str, Any]) -> bool:
         """Whether checkpoint ``older`` is ``newer`` or an ancestor of it: every log of ``older`` is in ``newer`` at or

@@ -37,7 +37,14 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
             raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
         wid = cfg["workspace"]["id"]
         findings, store = health.inspect(
-            root, wid, ws.state_dir, fast=True, instructions=stale_findings(root), caps=ctx.caps
+            root,
+            wid,
+            ws.state_dir,
+            fast=True,
+            instructions=stale_findings(root),
+            caps=ctx.caps,
+            ident=ws.ident,
+            config=ws.config_bytes,
         )
         try:
             if args.get("staged") and store is not None:

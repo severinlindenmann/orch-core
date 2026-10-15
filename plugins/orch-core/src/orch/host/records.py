@@ -344,7 +344,7 @@ def _take(ctx: Ctx) -> dict[str, Any]:
     st = _state(ctx.holder)
     with store.locked():
         store.load_all()  # the chain heads of every ticket log, verified
-        root_fd = rec.open_root(Path(store.root))
+        root_fd = os.dup(store.fs.fd)  # the store's pinned root (#516), never the root re-opened by path
         try:
             paths = rec.list_records(root_fd)
             entries = rec.hash_records(root_fd, paths, st["hashes"])

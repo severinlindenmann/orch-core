@@ -30,7 +30,19 @@ MAIN = PRELUDE + textwrap.dedent(
     """
     caps = Capabilities.host((root,))
     import ctypes  # preloaded, as the host would
+    from orch.store.rootfs import RootFS
+    fs = RootFS.at(root)
     audit.install([root])
+
+    def rootfs_ops():  # the store's pinned root (#516): every call below works under the hook
+        fs.write_atomic("d/a.txt", b"x")
+        fs.append_durable("d/b.txt", b"y")
+        assert fs.read_or_none("d/b.txt") == b"y" and sorted(fs.listdir("d")) == ["a.txt", "b.txt"]
+        fs.replace("d/a.txt", "e/a.txt")
+        fs.rmtree("e")
+        fs.unlink("d/b.txt")
+
+    t("rootfs_in_root", rootfs_ops)
     t("cwd_is_root", lambda: os.getcwd() == root or (_ for _ in ()).throw(PermissionError()))
     t("open_in_root", lambda: open(root + "/in.txt").close())
     t("open_in_root_write", lambda: open(root + "/new.txt", "w").close())
@@ -150,6 +162,7 @@ def test_hook_in_host_mode(tmp_path):
         "rename_in",
         "listdir_in",
         "launcher",
+        "rootfs_in_root",
     ):
         assert r[ok] == "ok", (ok, r)
     for refused in (

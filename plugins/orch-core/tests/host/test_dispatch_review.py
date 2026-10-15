@@ -226,17 +226,23 @@ def test_a_person_in_column_p_is_the_viewer_of_list_and_status(served):
 
 
 def test_host_mode_doctor_reads_files_only_through_the_capability(served, monkeypatch):
-    """Health's file reads in host mode go through caps.files (roots, fd walk, no links), never read_or_none."""
+    """Health's file reads in host mode go through caps.files (roots, fd walk, no links). Since #516 health has no
+    path read at all (direct mode reads below the store's pinned root), so there is no read_or_none left to refuse."""
     import orch.ops.health as health
 
     uid, _ = served.ticket("x")
     edit_ticket_json(served, uid)
+    assert not hasattr(health, "read_or_none")
+    seen = []
+    real = health._read
 
-    def refuse(*a, **k):
-        raise AssertionError("direct file I/O in host mode")
+    def spy(files, path, limit=None):
+        seen.append(type(files).__name__)
+        return real(files, path, limit)
 
-    monkeypatch.setattr(health, "read_or_none", refuse)
+    monkeypatch.setattr(health, "_read", spy)
     res = ok(served.client().req("doctor"))
+    assert seen and set(seen) == {"Files"}  # the host's capability, never the direct-mode root
     assert "projection.ticket" in json.dumps(res)
 
 

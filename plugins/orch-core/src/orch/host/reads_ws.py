@@ -62,16 +62,16 @@ def committed_epoch(ctx: ReadCtx) -> int:
 
 def _name(ctx: ReadCtx, prefix: str) -> str:
     from orch import schema
-    from orch.store import fsio
+    from orch.store import StoreError, fsio
 
-    try:  # the store's own rules: no symlink, size limit, bounded nesting, schema-valid
-        raw = fsio.read_or_none(ctx.store.root / "config.json")
+    try:  # the store's own rules: below its pinned root (#516), no symlink, size limit, bounded nesting, schema-valid
+        raw = ctx.store.fs.read_or_none("config.json")
         if raw is None:
             return prefix
         doc = fsio.loads(raw)
         schema.validate("workspace", doc)
         name = doc["workspace"]["name"]  # type: ignore[index]
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, schema.SchemaError):
+    except (OSError, ValueError, KeyError, TypeError, RecursionError, schema.SchemaError, StoreError):
         return prefix
     return name if isinstance(name, str) and name else prefix
 

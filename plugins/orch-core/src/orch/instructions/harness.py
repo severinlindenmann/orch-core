@@ -100,12 +100,14 @@ def _check_chain(root: Path, rel: str) -> Path:
 def safe_read(root: Path, rel: str) -> str | None:
     """The text of ``root / rel``, or ``None`` if there is no such file. Never follows a link (``UnsafePath``)."""
     path = _check_chain(root, rel)
-    try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    from orch.store.fsio import open_regular
+
+    try:  # O_NOFOLLOW | O_NONBLOCK, a regular file only (a FIFO swapped in after the check never blocks, #564)
+        fd = open_regular(path, os.O_RDONLY)
     except FileNotFoundError:
         return None
-    except OSError as e:  # ELOOP: it became a link between the check and the open
-        raise UnsafePath(f"{rel}: {e.strerror}") from None
+    except OSError as e:  # ELOOP: it became a link between the check and the open; or not a regular file now
+        raise UnsafePath(f"{rel}: {e.strerror or 'not a regular file'}") from None
     with os.fdopen(fd, "rb") as f:
         st = os.fstat(f.fileno())
         if not stat.S_ISREG(st.st_mode):

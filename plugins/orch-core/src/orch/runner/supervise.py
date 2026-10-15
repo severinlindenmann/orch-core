@@ -330,6 +330,8 @@ class Supervisor:
         self._sel.register(self._wake_r, selectors.EVENT_READ, None)
         self._thread: threading.Thread | None = None
         self._closing = False
+        #: set by :meth:`close`: no spawn after it, and the wake pipe is -1 once released (never touched again)
+        self._closed = False
 
     # -- life cycle
     def open(self) -> list[dict[str, Any]]:
@@ -370,11 +372,21 @@ class Supervisor:
         if stop_runs:
             for run in list(self.live):
                 self.stop(run, grace=grace)
+        with self._spawn_lock:  # a spawn in progress finishes first; later ones are refused
+            self._closed = True
         self._closing = True
         self._wake()
         if self._thread is not None:
             self._thread.join(timeout=5)
         with self.lock:
+            if self._lock_fd is not None:
+                os.close(self._lock_fd)
+                self._lock_fd = None
+            if self._thread is not None and self._thread.is_alive():
+                # Its PTYs, selector and wake pipe stay open: closing them under the thread would let it read from,
+                # write to or close numbers the process reuses (#522). A later close() releases them.
+                LOG.error("runner I/O thread still running after close: its fds stay open")
+                return
             for live in self.live.values():
                 if not live.pty_closed:
                     live.pty_closed = True
@@ -382,21 +394,24 @@ class Supervisor:
                         os.close(live.master)
                     except OSError:
                         pass
-        self._sel.close()
-        if self._lock_fd is not None:
-            os.close(self._lock_fd)
-            self._lock_fd = None
-        for fd in (self._wake_r, self._wake_w):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            self._sel.close()
+            # Each wake fd is released exactly once: the attribute is -1 before the number is closed.
+            wake, (self._wake_r, self._wake_w) = (self._wake_r, self._wake_w), (-1, -1)
+        for fd in wake:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
     def _wake(self) -> None:
-        try:
-            os.write(self._wake_w, b"x")
-        except OSError:
-            pass
+        with self.lock:  # never a write to a released (and perhaps reused) number
+            if self._wake_w < 0:
+                return
+            try:
+                os.write(self._wake_w, b"x")
+            except OSError:
+                pass
 
     def _emit(self, kind: str, run: str, payload: dict[str, Any]) -> None:
         if self.on_event is not None:
@@ -411,6 +426,8 @@ class Supervisor:
         nothing. Raises :class:`SpawnError` (``launch.cwd_changed``, ``harness.not_found``, ``run.spawn_failed``)."""
         spec.check()
         with self._spawn_lock:
+            if self._closed:
+                raise SpawnError("run.spawn_failed", "the runner is closed", "complete")
             have = self.table.get(spec.run)
             if have is not None:
                 return self._summary(spec.run, have) | {"duplicate": True}
@@ -998,8 +1015,11 @@ class Supervisor:
             events = []
         for key, _ in events:
             if key.data is None:
+                fd = self._wake_r
+                if fd < 0 or self._closing:  # released, or about to be: never read a reused number
+                    continue
                 try:
-                    while os.read(self._wake_r, 4096):
+                    while os.read(fd, 4096):
                         pass
                 except BlockingIOError:
                     pass

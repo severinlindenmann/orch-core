@@ -3654,6 +3654,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     and `relay/unlinked-*.json`; `READER_OPS` gains `relay.link` and `relay.pair`; at most 8 relay-linked workspaces per
     host (new code `host.limit`); control ops `host.relay_stop`, `host.relay_start` and `orch host relay stop|start`. No
     socket-visible change for P, G or N; no F1 log or certificate change ("As built in H12a", §11A.4).
+37. **Start agent and the runner grant (H11c, contract v1.6, cap `run/1`; numbered 37 because 36 is H12d-1's, #463;
+    renumber if that changes):** ops `agent.preview`, `agent.start` (P only), `grant.deposit` (a person-class caller
+    with a verified `auth.grant` of their own `label:"runner"` grant; `OpKind "deposit"`, column G at the matrix),
+    `grant.deposit_status` and `grant.forget` (P only); `whoami.runner.grant` and `run.list.runner.grant` carry the
+    caller person's runner grant; `term.preview`/`term.open` take `harness:"claude-code"|"codex"` (person-run, kind
+    `shell`) and `cwd`; `GrantView` gains `label` and `issued_at`; the click signer's `prepare {deposit:true}` and the
+    `sign` answer's `deposit`, `deposit_id`, `grant` (§0.8.6 item 6); `orch grant --runner`; `orch sign CODE` asks
+    show or hand to the runner; the runner commands `grant.put`, `grant.drop` and the `spawn` fields `grant`,
+    `session`, `person`; `<state>/runner.json` (`login_shell`, `programs`, `pass_env`); first-party manifest
+    `addons/start-agent`. No F1 log or certificate change ("As built in H11c", §12.4).
 
 ---
 
@@ -5737,8 +5747,8 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   as ended (`runner_restarted`), never `running`. A successful command result is validated before it is stored.
 - **`run.sub`** answers `{sub, rev}`: it is registered first, then the visible runs are taken, so no change falls
   between them. `rev` is one counter for the whole host (persisted, so monotonic per workspace too). Every delivery
-  revalidates the principal on a fresh authentication snapshot. Evicted records (7 days, 1 000 ended) publish `gone`. `grants` is accepted by the
-  schema and ignored until H11c. A spawn that is half-done while the hello is built cannot happen (the runner holds its
+  revalidates the principal on a fresh authentication snapshot. Evicted records (7 days, 1 000 ended) publish `gone`. `grants` is
+  revalidated since H11c (§12.4 "As built in H11c"). A spawn that is half-done while the hello is built cannot happen (the runner holds its
   spawn lock); a spawn that failed after the fork is in the table with its pid and birth time.
 - **Trampoline.** The runner starts `python -I <release>/orch/runner/exec.py SPEC_FD STATUS_FD`, not `-m`: under `-I`
   a release's `orch` is not importable, and `-I` implies `-P`, so the file imports only the standard library. The status
@@ -5918,6 +5928,80 @@ ticket has a branch for it), the declared working copy (labelled "shared working
 pin `{path, dev, ino}`; the trampoline opens it component-wise with `O_NOFOLLOW`, compares, and `fchdir`s
 (`launch.cwd_changed` on a mismatch). `ORCH_WORKTREES` lists the other repos' worktrees as `repo=path` pairs separated
 by `:` (a path containing `:` is left out and named in `warnings`).
+
+#### As built in H11c (start agent, runner grant)
+
+Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the code is this:
+
+- **Modules.** `orch.host.launch` (the closed registry and argv, pure), `orch.host.agents` (`agent.preview`,
+  `agent.start` and the launch plan `term.*` shares), `orch.host.runnergrants` (deposit, status, forget, the hello
+  revalidation and the watcher), `orch.runner.config` (`runner.json`), `orch.runner.grants` (the runner's in-memory
+  store and its log redaction filter).
+- **Prompts.** The `/orch:<mode>` skills do not exist, so `claude-code` gets the codex text too: `Run orch status, then
+  <mode text> ticket KEY. Follow AGENTS.orch.md.` with mode texts `refine`, `work on`, `fix the requested changes
+  on`, `continue`; `context` as §12.4.1. The prompt is one argv element built from the host's key lookup only.
+- **The login shell** runs only the fixed script `exec "$0" "$@"`. The runner accepts a `spawn` argv only in a registry
+  form: `["$SHELL","-l"]`, `["$SHELL","-l","-c",'exec "$0" "$@"',"claude"|"codex",…]` (only while `runner.json`
+  leaves `login_shell` on) or an absolute program `runner.json` names in `programs`; anything else is
+  `invalid.input`. `$SHELL` is the runner's own and must be an executable POSIX shell (`sh`, `bash`, `zsh`, `dash`,
+  `ksh`, `mksh`, `ash`), else `harness.shell_unsupported` at spawn. The preview checks the host's own `SHELL` as a
+  hint only (when it is set); the runner is authoritative. With `login_shell:false` the preview checks that the
+  program is executable (`harness.not_found`).
+- **`runner.json`** (`<state>/runner.json`, 0600 of the person, terminal-only): `{v:1, login_shell, programs,
+  pass_env}`, every key optional. A `pass_env` name on the deny-list (§12.4.3, plus `BASH_FUNC_*`, `TERM`,
+  `COLORTERM`, `CLAUDE_CODE_SUBAGENT_MODEL`), an unknown key or a bad path makes the **whole file invalid**: every
+  launch is `launch.invalid` until it is fixed (never a fallback to defaults). The host reads it for the plan, the
+  runner again at every spawn.
+- **Run ids and sessions.** `agent.start` needs `opts.idem`; the run id is `r_` + the idem's ULID, so a retry with the
+  same idem answers the recorded run without recomputing or starting anything (another person's, workspace's or
+  kind's run under that id is `idem.conflict`). The **host** draws the agent's `s_<ULID>` session and sends it in
+  `spawn` (§12.3.3 lists it; §12.4.3's "drawn by the runner" is read as "set by the runner"), so `Run.session` is
+  known at the intent.
+- **Intent first.** `agent.start` persists the intent (state `starting`, audit `run.intent` with idem and spec), then
+  creates the ticket's worktree when the plan says so (H11d's create under the per-repo lock; a failure ends the run
+  `spawn_failed` with the code), then sends `spawn` (`run.dispatch`, `run.outcome`). A host restart in between
+  reconciles at `runner.hello` (`lost`, never spawned).
+- **Working directory.** The primary repo is the first of `links.repos`. A worktree is created only when `worktree`
+  is true, the ticket links a branch for it **and the `worktrees` addon is granted**; without the addon the plan uses
+  the shared working copy and says so in `warnings`. A ticket that links a repo while git cannot be read is
+  `observe.unavailable` (no silent root). `term.*` with a ticket uses its registered worktree when there is one and
+  never creates one; `cwd:{kind:"worktree"}` needs a registration (`worktree.none`), `{kind:"repo"}` a declared repo.
+- **The digest** (64 hex digits, `v:2`) covers kind, harness, mode, model, subagent model, argv, `login_shell`, the
+  cwd and its pin (or, for a worktree to be created, its path, generation, branch and base), the environment names and
+  fixed values and the grant id. `label` is not in it.
+- **Order of `blocked`** (agent): visibility, `runner.disabled` (`detail.missing` `addon` for `start-agent`, then
+  `machine`; the terminals switch is not asked), `runner.unavailable`, `launch.claimed`, `launch.invalid`
+  (`runner.json`, model, subagent model), harness and shell, cwd, `launch.no_grant` (`detail.reason`: `none`, no
+  current runner grant or no runner; `expiring`, under 15 minutes left; `scope`, a `member`'s grant that says `all`;
+  `revoked`, revoked, expired or its person may no longer run agents). `agent.start` refuses `launch.changed` also
+  when the runner grant changed since the preview. Limits: 8 agent runs per person per workspace, 16 in all, 64 per
+  runner, 10 starts a minute (§0.11).
+- **`grant.deposit`** refuses with `op.not_allowed` a caller that is not person class, a UID without a valid mapping
+  or mapped to another person than the grant's, a grant without `label:"runner"`, with `verbs` other than `"agent"`,
+  longer than 12 hours or with under 15 minutes left; `grant.forgotten`; `runner.disabled` (machine switch);
+  `runner.unavailable`. The outcome per `deposit_id` is kept in `<state>/hosts/<ws>/runner-grants.json` (0600; never a
+  secret): `pending` is written before `grant.put` is sent and reads as `unknown`; a runner refusal is `rejected`
+  with its code; the next `runner.hello` settles `pending` (reported: `confirmed`; not reported: `rejected`,
+  `runner_restarted`). The same `deposit_id` again answers the recorded outcome. Dashboard execution switched off for
+  the workspace drops its runner grants at the runner (fail closed; §12.4.2 names revocation, removal and expiry).
+- **The click signer** derives `deposit_id` from the request (`hr_<ULID>` → the ULID), so it is stable across
+  restarts without a new record field; the secret lives only in the `sign` call's frame (never in the approval, the
+  durable record, the log or a result). The signer sets `label:"runner"` and `verbs:"agent"` itself (a dashboard
+  `label` or `verbs` is `invalid.input`); more than 12 hours or no dashboard execution is `terminal_only`. The View's
+  `lines` end with the tier-A sentence ("Anything that takes over the dashboard can give agents standing authority to
+  act for you on tickets for up to 12 hours.") and the deposit line. A repeated `sign` answers the settled outcome or
+  asks `grant.deposit_status` once (after a restart the secret is gone: `unknown` unless the host says `confirmed` or
+  `rejected`).
+- **Terminal.** `orch grant --runner` (host mode only; direct mode is `invalid.input`) prepares a grant with
+  `runner:true` (label `runner`, at most 12 h, verbs `agent`) and hands the secret over after the commit; `orch sign
+  CODE` asks `[r] hand to the orch runner  [s] show ORCH_GRANT here` on `/dev/tty` only for a grant whose
+  `grant.issued` says `label:"runner"` (any other grant is shown as before; no terminal to ask on shows it).
+- **Runner side.** One grant per (workspace, person) in memory (at most 64), replaced by a newer `grant.put`; an
+  expired one is never handed out and is dropped from `runner.hello`'s `grants`. A shell `spawn` with a grant or a
+  session is `invalid.input`; an agent's needs its person's current grant (`launch.no_grant`). The runner's log
+  handlers carry a filter that redacts every held secret and any grant-shaped string.
+- **Not built here.** The e2e `start_agent.spec` (dashboard, orch-fa). The H11a/H11b mechanics tests now spawn
+  `/bin/sh` through a test `runner.json` that names it as a program.
 
 ### 12.5 Supervision in the runner (D-P2-29)
 

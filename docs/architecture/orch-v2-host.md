@@ -8908,7 +8908,8 @@ structurally: the invariant is named and enforced in one place.
   removed. First load (old state `None`) is covered by the start-up rebuild. **Precisely (round 4):** an append on the
   live store raises the gate BEFORE the event can become durable (`_commit` diffs `old_state`/`new_state` before
   `_write_pending`; a failure after the commit point, in `_finish` or after `append_durable`'s write, therefore never
-  releases the lock ungated; a write that fails before the commit point gated for nothing: a rotation); the setter
+  releases the lock ungated; a write that fails before the commit point leaves a durable `f1_standing` reason for a
+  device that keeps its standing: see J-R6a-24, a rotation that lists it does NOT clear it); the setter
   does not raise it twice. A **foreign** append (another process, a stale `Store` object) is gated at the live
   store's next lock entry (its reload), not at the foreign commit; R2's data path always enters the live store lock
   (the job's recheck) before its seal span, so the residual is the job-to-seal latency. `load_budget`'s rollback
@@ -8922,6 +8923,16 @@ structurally: the invariant is named and enforced in one place.
   expired device that still holds `WK_e` raises no gate; `desired()` must drop it (a rotation), as it must a
   `pending` forwarded revocation that later becomes effective. Every F1 device loss gates, listed or not
   (availability: one rotation per removal).
+- J-R6a-24 (round 5, F-1) **The stale-reason prune, the one lowering path besides a rotation.** An append that fails
+  before its commit point (crash, ENOSPC, EIO, an interrupt after the gate write) leaves a durable `f1_standing`
+  reason naming a device that keeps F1 standing; `commit` lowers the gate only for a rotation that leaves that device
+  out, so without a prune sealing would stay blocked until the device is really removed (or R6b drops a legitimate
+  device). `MembershipKeys.prune_stale_reasons(standing_ok)` drops exactly the `f1_standing` reasons whose device is
+  `ok` in the LIVE store, the caller holding that store's lock across the check and the write (`Store.device_ok`;
+  no removal can land in between), never while a raise is queued (not yet durable), and never another reason kind
+  (`device.removed` etc., `h7`, `""`). The lowering is durable before the in-memory gate goes down. Called by
+  `relayr6._rebuild_gate` (every `r6()`), and **R6b's planning must call it** (under the store lock) before it
+  decides a rotation. A real removal is never pruned (the device is not `ok`).
 - Mutation, round 4: 16 new mutants of the round-4 code on a `git archive` copy (the pre-write gate, the pregated
   skip, the per-device loop, the fallback, the gate-first raise, the hook identity and live-error checks, the
   `load_budget` hook, close, a vanished device, held evidence): 16 killed; one malformed mutant definition discarded.

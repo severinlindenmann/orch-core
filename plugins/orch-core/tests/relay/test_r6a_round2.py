@@ -664,3 +664,27 @@ def test_k04_a_live_callable_that_raises_is_gated(tmp_path):
         assert mk.seal_state().gated
     finally:
         mk.close()
+
+
+def test_n21_commit_never_lowers_the_durable_gate_while_a_raise_is_queued(tmp_path, monkeypatch):
+    """A raise whose durable write failed is queued; a rotation without the gated devices commits: the durable
+    gate must stay (the in-memory one too)."""
+    mk = open_keys(tmp_path)
+    try:
+        rotate(mk)
+        mk.raise_gate(DEVICE, "device.removed")
+        others = [OTHER]
+        seq, e = expose_rotation(mk, devices=others)
+        real = mk._dir.write_json  # noqa: SLF001
+
+        def once(name, obj):
+            monkeypatch.setattr(mk._dir, "write_json", real)  # noqa: SLF001
+            raise OSError("disk")
+
+        monkeypatch.setattr(mk._dir, "write_json", once)  # noqa: SLF001
+        mk.raise_gate("cd" * 16, "held_evidence")  # its flush fails: queued
+        o = list_for(e, seq, mk.wk_commit_of(e), devices=others)
+        assert mk.commit(list_seq=seq, epoch=e, list_hash=digest(o), list_obj=o, at_ms=0)
+        assert mk.head()["gate"] is not None and mk.gate_up()
+    finally:
+        mk.close()

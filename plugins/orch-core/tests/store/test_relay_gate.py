@@ -331,3 +331,89 @@ def test_dict_writes_only_in_load_budget():
                 if isinstance(n, ast.Attribute) and n.attr == "__dict__":
                     users.add(fn.name)
     assert users == {"load_budget"}, users
+
+
+# -- round 5 (Opus delta 3): a gate reason left by an append that failed before its commit point --------------
+
+
+def _keys_bound_to(env, tmp_path):
+    from orch.relay.r6.keystore import R6Gate
+    from tests.relay.r6kit import open_keys, rotate
+
+    (tmp_path / "k").mkdir(mode=0o700)
+    mk = open_keys(tmp_path / "k", hooked=False)
+    rotate(mk)
+    R6Gate(mk).install(lambda: env.store)
+    return mk
+
+
+def test_e1_a_failed_append_before_the_commit_point_leaves_a_reason_the_live_prune_clears(env, tmp_path, monkeypatch):
+    """F-1: the gate was written, the event line never was: the device keeps its standing. A restart keeps the
+    reason (durable); the live-store prune (under the store lock) drops it and lowers the gate."""
+    d2, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        monkeypatch.setattr(store_mod.Store, "_write_pending", _boom)
+        with pytest.raises(OSError):
+            env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+        monkeypatch.undo()
+        assert admission.device_standing(env.store, env.owner.ref, d2) == "ok"
+        assert {"device": d2[2:], "reason": "f1_standing"} in mk.head()["gate"]["reasons"] and mk.seal_state().gated
+        with env.store.locked():
+            assert mk.prune_stale_reasons(lambda d: env.store.device_ok("d_" + d)) == 1
+        assert mk.head()["gate"] is None and not mk.seal_state().gated
+    finally:
+        mk.close()
+
+
+def test_a_real_removal_is_never_pruned(env, tmp_path):
+    d2, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+        with env.store.locked():
+            assert mk.prune_stale_reasons(lambda d: env.store.device_ok("d_" + d)) == 0
+        assert mk.seal_state().gated and mk.head()["gate"]["reasons"] == [{"device": d2[2:], "reason": "f1_standing"}]
+    finally:
+        mk.close()
+
+
+def test_the_prune_keeps_other_reasons_and_waits_for_queued_raises(env, tmp_path, monkeypatch):
+    d2, _ = env.add_device()
+    mk = _keys_bound_to(env, tmp_path)
+    try:
+        mk.raise_gate(d2[2:], "f1_standing")  # stale: d2 is ok
+        mk.raise_gate("", "h7")
+        mk.raise_gate(d2[2:], "device.removed")  # another kind: never pruned
+        with env.store.locked():
+            assert mk.prune_stale_reasons(lambda d: env.store.device_ok("d_" + d)) == 1
+        assert mk.seal_state().gated and len(mk.head()["gate"]["reasons"]) == 2
+        real = mk._dir.write_json  # noqa: SLF001
+        monkeypatch.setattr(mk._dir, "write_json", _boom)  # noqa: SLF001
+        mk.raise_gate(d2[2:], "f1_standing")  # queued: its durable write failed
+        monkeypatch.setattr(mk._dir, "write_json", real)  # noqa: SLF001
+        assert mk.prune_stale_reasons(lambda d: True) == 0  # nothing pruned while a raise is queued
+    finally:
+        mk.close()
+
+
+def test_a_refusal_before_the_write_never_gates(env, monkeypatch):
+    """N19: the freshness check (chain.broken) refuses before the raise: no gate call."""
+    d2, _ = env.add_device()
+    rec = Recorder(env.store)
+    monkeypatch.setattr(store_mod, "info_sig", lambda info: ("changed",))
+    with pytest.raises(store_mod.StoreError):
+        env.store.append(env.person_event(env.owner, "workspace", "device.removed", device=d2), log="workspace")
+    assert rec.calls == []
+
+
+def test_no_setattr_or_vars_writes_on_the_store():
+    """F-3: besides ``__dict__`` (load_budget only), no ``setattr(self, ...)``, ``vars(self)`` or
+    ``object.__setattr__`` in store.py can change the state behind the setter."""
+    src = Path(store_mod.__file__).read_text()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Call):
+            f = n.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
+            if name in ("setattr", "vars", "__setattr__"):
+                raise AssertionError(f"{name} at line {n.lineno}")

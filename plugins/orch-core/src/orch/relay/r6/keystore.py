@@ -667,6 +667,39 @@ class MembershipKeys:
         with self._seal:
             return self._gate_up
 
+    def prune_stale_reasons(self, standing_ok: Callable[[str], bool]) -> int:
+        """Round 5 (F-1): drop every durable ``f1_standing`` gate reason whose device (32 hex) ``standing_ok`` says is
+        ``ok`` in the LIVE store, and lower the gate when no reason is left. The caller holds the live store's lock
+        across this call (so no removal can land in between) and passes the store's own standing. The reason came
+        from a raise made before an append that then failed before its commit point (crash, disk error): the device
+        never lost its standing. Nothing is pruned while a raise is queued (not yet durable), and no other reason
+        kind is touched (``device.removed`` etc. from the gate API, ``h7``, ``""`` for every device). Returns the
+        number of reasons dropped. Lowering is durable before the in-memory gate goes down."""
+        with self._write():
+            with self._seal:
+                if self._gate_queue:
+                    return 0
+            gate = self._head["gate"]
+            if gate is None:
+                return 0
+            keep, dropped = [], 0
+            for r in gate["reasons"]:
+                if r["reason"] == "f1_standing" and r["device"] and standing_ok(r["device"]):
+                    dropped += 1
+                else:
+                    keep.append(r)
+            if not dropped:
+                return 0
+            new_gate = {**gate, "reasons": keep} if keep else None
+            new = {**self._head, "gate": new_gate}
+            self._dir.write_json(HEAD, new)
+            self._head = new
+            self._fault("after_prune")
+            with self._seal:
+                if new_gate is None and not self._gate_queue:
+                    self._gate_up = False
+            return dropped
+
     def flush_gate(self) -> bool:
         """R6's thread, before any publication work: write every queued gate reason into ``head.json`` (atomic).
         ``True`` when something was written. The in-memory gate stays up whatever happens here."""

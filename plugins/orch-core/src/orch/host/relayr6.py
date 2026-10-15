@@ -90,15 +90,23 @@ def _rebuild_gate(service: Any, mk: Any) -> None:
     between its state change and the durable gate write, a change made while no R6 hook was installed) is found
     here. Every device of the committed list AND of the exposed body (a late 2xx would commit it, R4) whose F1
     standing is not ``ok`` raises the gate; a malformed entry raises it for every device. Runs after the store hook
-    is set and before the key store is bound, so a failure here leaves the key store gated (R3). (Forwarded
-    ``HostPins`` evidence of a device F1 still holds is R6b's ``desired()``.)"""
+    is set and before the key store is bound, so a failure here leaves the key store gated (R3). Then (round 5,
+    F-1) every durable ``f1_standing`` reason whose device is ``ok`` in the live store is pruned, under the store
+    lock: the one lowering path besides a rotation. (Forwarded ``HostPins`` evidence of a device F1 still holds is
+    R6b's ``desired()``.)"""
     from .admission import device_standing
 
+    store = service.store
     for dev, person in mk.listed_devices():
         if not dev or not person:
             mk.raise_gate("", "h7")
-        elif device_standing(service.store, "p_" + person, "d_" + dev) != "ok":
+        elif device_standing(store, "p_" + person, "d_" + dev) != "ok":
             mk.raise_gate(dev, "f1_standing")
+    # round 5 (F-1): a durable f1_standing reason for a device that is ok in the live store (an append that failed
+    # before its commit point after the gate was written) is dropped, under the store lock, so no removal lands
+    # between the standing check and the prune
+    with store.locked():
+        mk.prune_stale_reasons(lambda dev: store.device_ok("d_" + dev))
 
 
 def r6(service: Any) -> tuple[Any, Any]:

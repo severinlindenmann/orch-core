@@ -193,6 +193,18 @@ def test_the_custody_check_walks_r6cs_subdirectories(lab):
 # -- round 3 (Opus delta review) ----------------------------------------------------------------------------------
 
 
+class _FakeLiveStore:
+    """locked() and device_ok() for the rebuild's prune (nothing is ok: nothing pruned)."""
+
+    def locked(self):
+        import contextlib
+
+        return contextlib.nullcontext()
+
+    def device_ok(self, device):
+        return False
+
+
 def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path, monkeypatch):
     """X6 / N11: an exposed rotation's member whose standing is lost, and a malformed entry, raise the gate."""
     import types
@@ -206,11 +218,14 @@ def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path,
         rotate(mk, devices=[DEVICE])
         expose_rotation(mk, devices=[DEVICE, other])
         monkeypatch.setattr(admission, "device_standing", lambda st, p, d: "removed" if d == "d_" + other else "ok")
-        relayr6._rebuild_gate(types.SimpleNamespace(store=object()), mk)  # noqa: SLF001
+        relayr6._rebuild_gate(types.SimpleNamespace(store=_FakeLiveStore()), mk)  # noqa: SLF001
         assert mk.gate_up() and {"device": other, "reason": "f1_standing"} in mk.head()["gate"]["reasons"]
         calls = []
-        fake = types.SimpleNamespace(listed_devices=lambda: [("", "")], raise_gate=lambda d, r: calls.append((d, r)))
-        relayr6._rebuild_gate(types.SimpleNamespace(store=object()), fake)  # noqa: SLF001
+        fake = types.SimpleNamespace(
+            listed_devices=lambda: [("", "")], raise_gate=lambda d, r: calls.append((d, r)),
+            prune_stale_reasons=lambda ok: 0,
+        )  # fmt: skip
+        relayr6._rebuild_gate(types.SimpleNamespace(store=_FakeLiveStore()), fake)  # noqa: SLF001
         assert calls == [("", "h7")]
     finally:
         mk.close()
@@ -261,5 +276,30 @@ def test_r6_rebinds_after_the_store_is_replaced(lab):
             finally:
                 service.store = live
             assert not mk.seal_state().gated
+        finally:
+            relayr6.close(service)
+
+
+# -- round 5 (Opus delta 3) -----------------------------------------------------------------------------------
+
+
+def test_r6_prunes_a_stale_reason_of_a_device_that_kept_its_standing(lab):
+    """F-1 end to end: a durable f1_standing reason for a listed device that is ok in the live store (an append that
+    failed before its commit point) is dropped by the start-up rebuild; a reason for a device F1 does not hold as ok
+    stays."""
+    with lab.host() as h, h.client() as c:
+        wid, service = _linked(lab, h, c)
+        try:
+            mk = relayr6.keys_for(service)
+            g = members.check_genesis(service.store.genesis_event())
+            dev = g["device_cert"]["device_id"]
+            _commit_list(mk, wid, [dev], g["delegation"]["owner_person_id"])
+            mk.raise_gate(dev, "f1_standing")
+            assert mk.seal_state().gated
+            relayr6.r6(service)
+            assert mk.head()["gate"] is None and not mk.seal_state().gated
+            mk.raise_gate("ab" * 16, "f1_standing")  # not an F1 device of this workspace: never ok
+            relayr6.r6(service)
+            assert mk.seal_state().gated
         finally:
             relayr6.close(service)

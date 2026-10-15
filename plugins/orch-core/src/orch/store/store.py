@@ -426,6 +426,13 @@ class Store:
         view = state.workspace.devices.get(device)
         return view is not None and not view.removed and not view.revoked
 
+    def device_ok(self, device: str) -> bool:
+        """``device`` (``d_<hex>``) has F1 standing ``ok`` now (known, not removed, not revoked). Call it inside
+        :meth:`locked` when the answer drives a decision (R6's stale gate-reason prune)."""
+        with self._locked():
+            assert self._state is not None
+            return self._standing_ok(self._state, device)
+
     def _gate_lost_standing(self, old: State, new: State) -> None:
         for device in list(old.workspace.devices):
             if self._standing_ok(old, device) and not self._standing_ok(new, device):
@@ -1769,8 +1776,10 @@ class Store:
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         # R6a round 4 (F-A): the relay gate goes up BEFORE the event can become durable, so no failure after the commit
-        # point (``_finish``, ``append_durable`` after its write) releases the lock with a lost standing ungated. A
-        # write that then fails gated for nothing: a rotation (fail closed). The setter does not raise it twice.
+        # point (``_finish``, ``append_durable`` after its write) releases the lock with a lost standing ungated. The
+        # setter does not raise it twice. A write that fails before the commit point leaves a durable gate reason for
+        # a device that keeps its standing (fail closed); only the live-store prune (``relayr6._rebuild_gate``, R6b's
+        # planning: ``MembershipKeys.prune_stale_reasons``) or a real removal ends it, never a rotation that lists it.
         if self.relay_gate is not None:
             self._gate_lost_standing(old_state, new_state)
             self._relay_pregated = new_state

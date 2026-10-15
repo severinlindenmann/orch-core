@@ -473,8 +473,8 @@ def entry_view(state_dir: Path, workspace_id: str, root: str, host_uid: int) -> 
 
 def check_registry(dev: DevHost | None, state_dir: Path, entries: Iterable[Any], host_uid: int) -> list[str]:
     """At start, before anything is served. On a dev host every registered workspace must pass S1 to S5, else the
-    start is refused (``not_sandbox``). On a normal host an ``SBX`` workspace (verified genesis, the unverified first
-    line or the registry's prefix: any of them) is skipped, never served; returns those ids for the alarm
+    start is refused (``not_sandbox``). On a normal host an ``SBX`` workspace (the unverified first
+    line or the registry's prefix: either of them) is skipped, never served; returns those ids for the alarm
     ``sandbox_workspace_registered``."""
     skipped: list[str] = []
     for entry in entries:
@@ -492,12 +492,9 @@ def check_registry(dev: DevHost | None, state_dir: Path, entries: Iterable[Any],
                     f"({reason})",
                 )
             continue
-        prefixes = {entry.prefix, _raw_prefix(entry.root)}
-        if RESERVED_PREFIX not in prefixes:
-            view = entry_view(state_dir, entry.workspace_id, entry.root, host_uid)
-            if view is not None:
-                prefixes.add(view.genesis.get("prefix"))
-        if RESERVED_PREFIX in prefixes:
+        # narrowing only, and cheap at every start: the prefix register recorded from the verified genesis, and the
+        # genesis line itself (a tampered first line breaks the chain, so the workspace is unavailable anyway)
+        if RESERVED_PREFIX in {entry.prefix, _raw_prefix(entry.root)}:
             LOG.warning(
                 "alarm sandbox_workspace_registered: workspace %s is a dev-pair sandbox (SBX); not served",
                 entry.workspace_id,

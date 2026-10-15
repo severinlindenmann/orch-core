@@ -759,6 +759,8 @@ class RegistryBackend:
 
         out: dict[str, Any] = {"ops": dict(WRITE_OP_VERSIONS), "r6_ready": relay_worker.r6_ready()}
         gate = dev_gate(service)
+        if getattr(service, "dev", None) is not None:
+            service.dev_ok = gate is not None  # the phone reads whoami before every review: P5's cache follows it
         if gate is not None:
             out["dev"] = {"sim_convenience": True, "sandbox": gate.sandbox_id[:8]}
         return out

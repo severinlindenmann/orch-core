@@ -10575,8 +10575,10 @@ that is core's), the R2 vector `answer_convenience_refused`.
    level-1 relay. Level 0 (or none) still refuses.
 6. **The start-time registry check** of a dev host opens each registered workspace read-only against its pinned
    genesis; one that cannot be opened counts as not a sandbox (the start is refused). A normal host skips a
-   workspace when the registry prefix, the unverified first log line or the verified genesis says `SBX` (narrowing
-   only) and lists the alarm in `host.list.alarms` and `orch host status`.
+   workspace when the registry prefix (recorded from the verified genesis at registration) or the unverified genesis
+   line says `SBX` (narrowing only, no store opened at start; a tampered first line breaks the chain anyway) and lists
+   the alarm in `host.list.alarms` and `orch host status`. Column-R `whoami` (fresh `dev_gate`) also refreshes the
+   cached gate P5 reads, so a sandbox that failed a check once is admitted again after the phone's next `whoami`.
 7. **Detail.** `host.dev_refused` carries `detail.reason` (closed, §0.3); `sign.convenience_unavailable` gains the
    reason `dev_host`. `invalid.input` for `SBX` and for a dev flag in a unit carries no detail (the §0.3 envelope has
    no `prefix`/`flag` key): the message says it. The unit writers refuse `--dev-sim-convenience`, `--dev-runner`

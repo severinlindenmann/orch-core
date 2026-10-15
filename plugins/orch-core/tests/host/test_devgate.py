@@ -9,6 +9,7 @@ import ast
 import io
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -700,3 +701,21 @@ def test_r2_vector_convenience_refused_on_a_normal_host():
     doc = json.loads((SRC.parents[1] / "tests" / "relay" / "r2_vectors" / "r2_framing.json").read_text())
     (case,) = [c for c in doc["cases"] if c["name"] == "answer_convenience_refused"]
     assert case["answer"][0]["meta"]["refusal"] == "op.not_allowed" and case["retry_class"] == "D"
+
+
+def test_dev_host_logs_its_line_at_start(sbx, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="orch.host.devmode")
+    served = Served(sbx, dev=sbx.dev())
+    try:
+        line = (
+            f"DEV HOST: Simulator convenience answers ON for sandbox {sbx.sandbox_id[:8]} (throwaway workspaces only)"
+        )
+        deadline = time.monotonic() + 10
+        while line not in caplog.text and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert line in caplog.text
+        assert devmode.status_line(sbx.dev()) == line
+    finally:
+        served.close()

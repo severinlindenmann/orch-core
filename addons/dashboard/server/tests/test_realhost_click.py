@@ -80,7 +80,7 @@ def world(tmp_path_factory):
         parent, child = socket.socketpair()
         n = child.fileno()
         own = {**env, "HOME": str(ws.home), "XDG_CONFIG_HOME": str(ws.home / ".config")}
-        own["ORCH_HOST_RUN_DIR"], own["ORCH_RUN_DIR"] = str(ws.run), str(ws.run)
+        own["ORCH_HOST_RUN_DIR"] = str(ws.run)
         proc = subprocess.Popen(
             [sys.executable, "-I", CHILD, "signer", "--fd", str(n)],
             pass_fds=(n,),
@@ -97,8 +97,8 @@ def world(tmp_path_factory):
     static = tmp_path_factory.mktemp("static")
     (static / "assets").mkdir()
     (static / "index.html").write_text("<html></html>")
-    old = os.environ.get("ORCH_RUN_DIR")
-    os.environ["ORCH_RUN_DIR"] = str(ws.run)
+    old = os.environ.get("ORCH_HOST_RUN_DIR")
+    os.environ["ORCH_HOST_RUN_DIR"] = str(ws.run)
     gateway = Gateway(ws.state, click=Signer(ws.state, start=start))
     auth = Auth()
     with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
@@ -111,7 +111,9 @@ def world(tmp_path_factory):
     for proc in children:
         assert proc.poll() is not None  # the signer exits with the server
     if old is None:
-        os.environ.pop("ORCH_RUN_DIR", None)
+        os.environ.pop("ORCH_HOST_RUN_DIR", None)
+    else:
+        os.environ["ORCH_HOST_RUN_DIR"] = old
     ws.stop_host()
     shutil.rmtree(root, ignore_errors=True)
 

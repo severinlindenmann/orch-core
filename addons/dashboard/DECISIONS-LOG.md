@@ -1610,3 +1610,9 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - Delta D-I2: a `term.attach` answer lost in transit (the host minted, the dashboard never read `att`) cannot be cancelled by id; it
   relies on the host's 10 s capability expiry and on the link closing. Delta D-I3: if the person moves to another run before the list
   shows the run they opened, that run's first later mount still asks `write` (never `take`): still one-shot and still their Open.
+
+## 2026-10-15 Canonical host run directory
+
+- **Decision:** Dashboard and devhost reuse core's `run_dir_for` with `ORCH_HOST_RUN_DIR`, then `<state>/run`. Reject a differing legacy `ORCH_RUN_DIR` before dashboard startup; accept an identical absolute path silently.
+- **Why:** Discovery, signing, records and terminals must reach the same host as core. A stale override must not silently select another host.
+- **Revert:** Restore the old resolver and startup behavior in the dashboard and devhost, along with their tests and documentation.

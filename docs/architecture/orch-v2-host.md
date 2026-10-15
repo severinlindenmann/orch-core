@@ -8945,6 +8945,10 @@ structurally: the invariant is named and enforced in one place.
   `host/human.py` keep their own removed/revoked checks for local socket peers (not relay decisions). No relayr6 path
   returns a usable key source with a stale or unbound gate: `r6()` binds only after the rebuild and prune, and
   `seal_state` re-checks the live binding; the link source signs only the card, which no gate governs.
+- Mutation, round 5: 20 new mutants of the round-5 code (the prune's queue, kind, `""`, standing, durability and
+  lowering; the rebuild's prune; the unified standing function and the person-aware questions; R2's standing copy;
+  the freshness-check order; the queued-raise commit): 17 killed at first, 2 survivors closed by tests (the queue,
+  the every-device reason), 1 equivalent (skipping the "nothing dropped" early return rewrites the same gate).
 - Mutation, round 4: 16 new mutants of the round-4 code on a `git archive` copy (the pre-write gate, the pregated
   skip, the per-device loop, the fallback, the gate-first raise, the hook identity and live-error checks, the
   `load_budget` hook, close, a vanished device, held evidence): 16 killed; one malformed mutant definition discarded.

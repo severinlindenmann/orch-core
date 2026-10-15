@@ -607,15 +607,15 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                   <TableCell className="max-w-64 whitespace-normal">
                     <DeviceLabel label={d.label} named={false} />
                     <div>
-                      <Mono className="break-all text-text-muted"><Inline>{d.id}</Inline></Mono>
+                      <Mono className="break-all text-text-muted"><Inline>{String(d.id)}</Inline></Mono>
                     </div>
                     <details data-testid="device-remove" className="mt-1 text-[12px]">
                       <summary className="cursor-pointer text-text-muted">Remove this device</summary>
                       <div className="mt-1 space-y-1">
                         <p className="text-text-muted">Removing needs your person key, so it is done in a terminal on this Mac (you type your recovery code). It also rotates the relay keys.</p>
-                        {deviceRemoveCommand(d.id, workspace.prefix) !== null ? (
+                        {deviceRemoveCommand(String(d.id), workspace.prefix) !== null ? (
                           <CopyText label="Command to remove this device" testId="device-remove-command">
-                            {deviceRemoveCommand(d.id, workspace.prefix)!}
+                            {deviceRemoveCommand(String(d.id), workspace.prefix)!}
                           </CopyText>
                         ) : (
                           <p role="alert" data-testid="device-remove-unsafe" className="text-warning">This device&apos;s id has characters that can&apos;t be put in a command safely. Don&apos;t remove it from here; ask for help.</p>

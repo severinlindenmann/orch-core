@@ -298,5 +298,5 @@ def test_the_detail_table_matches_cores_per_code_table():
             else:
                 assert mine == allowed, (code, key)
     assert dash.DEVICES_MAX == core.DEVICES_MAX
-    assert dash.DEVICE.pattern == core._DEVICE.pattern
+    assert dash.DEVICE.pattern == core.DEVICE_ID.pattern
     assert dash.TICKET_KEY.pattern == core._KEY.pattern

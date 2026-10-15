@@ -345,7 +345,7 @@ treated like a line with a bad `host_sig` (§5.5).
 | Field | Type | Rule |
 |---|---|---|
 | `v` | int | the envelope version, always `2` |
-| `id` | ULID | chosen by whoever builds the event. In P1 the signer makes a person event id when signing. In P2 the host prepares it; the signer never chooses or changes it. It is covered by `sig` but never checked against `at` or any clock, and no rule orders, accepts or refuses events by it. A repeated `id` in the same log is refused. |
+| `id` | ULID | chosen by whoever builds the event. In P1 the signer makes a person event id when signing. In P2 the host prepares it on the person path; the signer never chooses or changes it. On `relay.submit` the signing device makes it (CSPRNG, 80 random bits), and the host admits it only within the window of host §11A.14. It is covered by `sig`. Replay and readers never check the ULID time against `at` or any clock, and no rule orders, accepts or refuses logged events by it. A repeated `id` in the same log is refused. |
 | `seq` | int | `1` for the first event of a log, then +1, no gaps |
 | `at` | timestamp | the host's clock when it appends |
 | `type` | string | a type from §5.4; from P2 also `<addon>.<verb>` |
@@ -407,7 +407,7 @@ field is refused. Payload fields never reuse an envelope name.
   only device certificates, revocations and the workspace delegation (protocol §6, §7.1).
 - **Custody of `dk_sig`** (§12 O2). `dk_sig` is held by the custody backend named in `auth` (D64). In P1
   (`passphrase`) the device signing key is encrypted under the passphrase exactly like the person key (D65), is
-  decrypted only for one signature on a TTY, and is never cached. A device key that can sign without the factor its
+  decrypted only for one signature at the signer's prompt (a TTY or the phone's sign sheet), and is never cached. A device key that can sign without the factor its
   `auth` names is a `file`-tier key and never signs person events. `convenience` names no factor: its device key
   signs whenever a process of the person's OS user asks (orch-v2-host §0.8.6, D-P2-23, owner decision of 12 Oct
   2026); it is a device-key custody, not the `file` tier.

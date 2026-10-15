@@ -688,3 +688,14 @@ def test_n21_commit_never_lowers_the_durable_gate_while_a_raise_is_queued(tmp_pa
         assert mk.head()["gate"] is not None and mk.gate_up()
     finally:
         mk.close()
+
+
+def test_the_prune_never_drops_the_every_device_reason(tmp_path):
+    mk = open_keys(tmp_path)
+    try:
+        rotate(mk)
+        mk.raise_gate("", "f1_standing")  # the store's raise for an unparseable device id
+        assert mk.prune_stale_reasons(lambda d: True) == 0
+        assert mk.seal_state().gated and mk.head()["gate"]["reasons"] == [{"device": "", "reason": "f1_standing"}]
+    finally:
+        mk.close()

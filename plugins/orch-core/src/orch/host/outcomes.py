@@ -656,6 +656,8 @@ class OutcomeStore(IntentStore):
         if found and len(landed) == len(found):
             try:
                 result = self.reconciler.rebuild(record, landed)  # type: ignore[union-attr]
+            except HostError as exc:  # a builder's own verdict (relay.submit: event.duplicate_id, §11A.4 R2)
+                return {"step": "failed", "error": exc.error(), "exit": exc.exit}
             except Exception:  # noqa: BLE001 - a builder bug: the write landed, so it must not run again
                 LOG.exception("cannot rebuild the result of %s from the log", record["op"])
                 error = HostError("internal", f"{record['op']} landed but its result could not be rebuilt")

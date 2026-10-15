@@ -1,0 +1,366 @@
+"""R2 test kit: a phone that builds and reads ORB2 bridge envelopes, the R6 fixtures (epoch keys, member list), a
+durable fake host (outcome store + log, with crash points) and a recording poster. No network."""
+
+from __future__ import annotations
+
+import json
+import secrets
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from orch import canon, crypto
+from orch.identity import certs
+from orch.relay import framing, sign, wire
+from orch.relay.bridge import Bridge, Item
+from orch.relay.framing import Identity, Refusal
+from orch.relay.keys import BridgeKeys, Member, MemberList
+from orch.relay.rids import RidStore
+from orch.relay.state import StateDir
+
+from .helpers import WS, Key
+
+T0 = 1_790_000_000_000
+LIST_HASH = "sha256:" + "4" * 64
+
+
+_B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def ulid(ms: int = T0) -> str:
+    """A ULID with time ``ms`` (fresh against the kit's clock by default)."""
+    t = "".join(_B32[(ms >> (5 * i)) & 31] for i in reversed(range(10)))
+    return t + "".join(secrets.choice(_B32) for _ in range(16))
+
+
+def idem() -> str:
+    return ulid()
+
+
+class Clock:
+    def __init__(self, ms: int = T0) -> None:
+        self.ms = ms
+
+    def __call__(self) -> int:
+        return self.ms
+
+
+class Phone:
+    """A member device: a person key, a device key, its certificate; builds requests and opens answers."""
+
+    def __init__(self, scopes: tuple[str, ...] = ("look", "decide", "operate"), *, expires_ms: int | None = None):
+        self.pk = crypto.generate_private_key()
+        self.dk = crypto.generate_private_key()
+        self.pk_pub, self.dk_pub = crypto.public_bytes(self.pk), crypto.public_bytes(self.dk)
+        self.cert = certs.make_device_cert(
+            self.pk_pub, lambda b: crypto.sign(self.pk, b), dk_sig_pub=self.dk_pub,
+            dk_kx_pub=crypto.public_bytes(crypto.generate_private_key()), label_sealed=bytes(32),
+            created_ms=T0 - 3_600_000, expires_ms=expires_ms, scopes_max=list(scopes),
+        )  # fmt: skip
+        self.device = self.cert["o"]["device_id"]
+        self.person = self.cert["o"]["person_id"]
+        self.seq = 0
+
+    def member(self, scopes: tuple[str, ...] | None = None) -> Member:
+        return Member(self.device, self.person, tuple(scopes or self.cert["o"]["scopes_max"]), self.cert, self.pk_pub)
+
+    def request(
+        self,
+        keys: dict[int, bytes],
+        meta: dict[str, Any] | bytes,
+        *,
+        epoch: int = 2,
+        seq: int | None = None,
+        ts_ms: int = T0,
+        rid: bytes | None = None,
+        data: bytes = b"",
+        flags: int = 0,
+        stream: bytes = bytes(16),
+        signer: Any = None,
+        ws: str = WS,
+    ) -> bytes:
+        if seq is None:
+            self.seq += 1
+            seq = self.seq
+        h = wire.Header(
+            2, 1, flags, wire.SUITE, bytes.fromhex(ws), bytes.fromhex(self.device), rid or secrets.token_bytes(16),
+            stream, seq, ts_ms, epoch, secrets.token_bytes(16),
+        )  # fmt: skip
+        hb = h.pack()
+        pt = meta if isinstance(meta, bytes) else wire.build_plaintext(meta, data)
+        body = wire.seal_body(wire.k_bridge(keys[epoch], bytes.fromhex(ws), epoch), hb, pt)
+        sig = crypto.sign(signer or self.dk, wire.bridge_signed_bytes(hb, body))
+        return hb + body + sig
+
+    def event(self, log: str, typ: str, *, eid: str | None = None, **fields: Any) -> dict[str, Any]:
+        e = {
+            "v": 2, "id": eid or ulid(), "type": typ, "actor": {"kind": "person", "id": "p_" + self.person,
+            "device": "d_" + self.device}, "auth": "passphrase", "hash_v": 1, "roster_v": 1, "based_on": None,
+            **fields,
+        }  # fmt: skip
+        e["sig"] = crypto.b64u(crypto.sign(self.dk, canon.person_signing_bytes(WS, log, e)))
+        return e
+
+
+def open_chunk(env: bytes, keys: dict[int, bytes], wsk_pub: bytes) -> tuple[wire.Header, dict[str, Any], bytes]:
+    """What the phone does with a chunk (proto §8.8, the parts a test needs): WSK signature, then the tag."""
+    h, body, sig = wire.parse_envelope(env, direction=2)
+    hb = env[: wire.HEADER_LEN]
+    assert crypto.verify(wsk_pub, sig, wire.bridge_signed_bytes(hb, body)), "WSK signature"
+    pt = wire.open_body(wire.k_bridge(keys[h.epoch], h.workspace, h.epoch), hb, body)
+    meta, data = wire.parse_plaintext(pt)
+    return h, meta, data
+
+
+class Epochs:
+    def __init__(self, current: int = 2) -> None:
+        self.cur = current
+        self.keys = {e: secrets.token_bytes(32) for e in range(1, current + 1)}
+
+    def current_epoch(self) -> int:
+        return self.cur
+
+    def wk(self, epoch: int) -> bytes | None:
+        return self.keys.get(epoch)
+
+    def rotate(self) -> None:
+        self.cur += 1
+        self.keys[self.cur] = secrets.token_bytes(32)
+
+
+class R6:
+    def __init__(self, epochs: Epochs) -> None:
+        self.epochs = epochs
+        self.members: dict[str, Member] = {}
+        self.hash = LIST_HASH
+
+    def add(self, phone: Phone, scopes: tuple[str, ...] | None = None) -> None:
+        self.members[phone.device] = phone.member(scopes)
+
+    def member_list(self) -> MemberList | None:
+        return MemberList(self.epochs.cur, self.hash, dict(self.members))
+
+
+class FakeHost:
+    """A durable fake of the host side of the relay entry (``HostPort``): an outcome store (``outcomes.json``) and a
+    log (``log.json``), each written atomically, with crash points: ``after_begin`` (pending record durable, nothing
+    appended) and ``after_append`` (the event landed, the record still pending). Semantics mirror
+    ``OutcomeStore.execute`` + ``relay.submit``: a duplicate idem with the same binding replays ``duplicate: true``,
+    another binding is ``idem.conflict``; a pending record reconciles from the log."""
+
+    def __init__(self, root: Path, *, fault: Callable[[str], None] | None = None) -> None:
+        self.root, self.fault = root, fault or (lambda p: None)
+        self.standings: dict[tuple[str, str], str] = {}
+        self.runs: list[tuple[str, str]] = []  # (op, idem) each time an op body ran
+        self.reads: list[str] = []
+
+    def _load(self, name: str) -> Any:
+        p = self.root / name
+        return json.loads(p.read_text()) if p.exists() else {}
+
+    def _save(self, name: str, obj: Any) -> None:
+        tmp = self.root / (name + ".tmp")
+        tmp.write_text(json.dumps(obj, sort_keys=True))
+        tmp.replace(self.root / name)
+
+    @property
+    def log(self) -> dict[str, Any]:
+        return self._load("log.json")
+
+    def standing(self, device_id: str, person_id: str) -> str:
+        return self.standings.get((device_id, person_id), "ok")
+
+    def read(self, identity: Identity, op: str, args: dict[str, Any], recheck: Callable[[], bool]) -> dict:
+        if not recheck():
+            raise Refusal("op.not_allowed", retryable=False)
+        self.reads.append(op)
+        if op == "outcome.get":
+            return _ok(self.lookup(identity, args.get("idem", "")))
+        if op == "ticket.get" and args.get("ref") == "missing":
+            raise Refusal("not_found", retryable=False)
+        if op == "ticket.text" and "size" in args:
+            return _ok({"text": "x" * args["size"]})
+        return _ok({"op": op, "viewer": identity.person_id, "principal": identity.principal})
+
+    def lookup(self, identity: Identity, idem: str) -> dict[str, Any]:
+        rec = self._load("outcomes.json").get(f"{identity.principal}|{idem}")
+        if rec is None:
+            raise Refusal("outcome.unknown_idem", retryable=False)
+        if rec["step"] == "pending":
+            rec = self._reconcile(f"{identity.principal}|{idem}", rec)
+            if rec is None:
+                raise Refusal("outcome.unknown_idem", retryable=False)
+        if rec["step"] == "pending":
+            return {"state": "pending"}
+        out = {"state": rec["step"], "exit": rec.get("exit", 0)}
+        for k in ("result", "error"):
+            if k in rec:
+                out[k] = rec[k]
+        return out
+
+    def _reconcile(self, key: str, rec: dict[str, Any]) -> dict[str, Any] | None:
+        outcomes = self._load("outcomes.json")
+        ev = rec["events"][0]
+        logged = self.log.get(ev["id"])
+        if logged is None:
+            outcomes.pop(key, None)
+            self._save("outcomes.json", outcomes)
+            return None
+        rec = {**rec, "step": "committed", "result": _submit_result(rec["log"], [logged["seq"]])}
+        outcomes[key] = rec
+        self._save("outcomes.json", outcomes)
+        return rec
+
+    def submit(
+        self, identity: Identity, idem: str, op: str, log: str, events: list[dict], recheck: Callable[[], bool]
+    ) -> dict[str, Any]:
+        if not recheck():
+            raise Refusal("op.not_allowed", retryable=False)
+        key = f"{identity.principal}|{idem}"
+        binding = canon.dumps({"log": log, "events": events}).decode()
+        outcomes = self._load("outcomes.json")
+        rec = outcomes.get(key)
+        if rec is not None:
+            if rec["binding"] != binding:
+                raise Refusal("idem.conflict", retryable=False)
+            if rec["step"] == "pending":
+                rec = self._reconcile(key, rec)
+            if rec is not None:
+                if rec["step"] == "committed":
+                    return {**rec["result"], "duplicate": True}
+                raise Refusal(rec["error"]["code"], retryable=False)
+            outcomes = self._load("outcomes.json")
+        outcomes[key] = {"binding": binding, "step": "pending", "log": log, "events": events}
+        self._save("outcomes.json", outcomes)
+        self.fault("after_begin")
+        self.runs.append((op, idem))
+        logd = self.log
+        ev = events[0]
+        if ev.get("title") == "refuse me":
+            outcomes.pop(key)
+            outcomes[key] = {"binding": binding, "step": "failed", "error": {"code": "ticket.exists"}, "exit": 5}
+            self._save("outcomes.json", outcomes)
+            raise Refusal("ticket.exists", retryable=False)
+        logd[ev["id"]] = {"seq": len(logd) + 1, "type": ev["type"]}
+        self._save("log.json", logd)
+        self.fault("after_append")
+        result = _submit_result(log, [logd[ev["id"]]["seq"]])
+        outcomes[key] = {**outcomes[key], "step": "committed", "result": result}
+        self._save("outcomes.json", outcomes)
+        return result
+
+
+def _ok(data: Any) -> dict[str, Any]:
+    return {"data": data, "key": None, "seq": 0, "cursor": 0, "hints": [], "lines": [], "duplicate": False, "exit": 0,
+            "head": None}  # fmt: skip
+
+
+def _submit_result(log: str, seqs: list[int]) -> dict[str, Any]:
+    from orch.relay.submit import result
+
+    return result(log, seqs)
+
+
+class Poster:
+    """Records every POST; ``script`` maps a call number (0-based) to a :data:`PostResult` (default ``posted``)."""
+
+    def __init__(self) -> None:
+        self.posts: list[tuple[str, str, bytes]] = []
+        self.script: dict[int, str] = {}
+        self.default = "posted"
+
+    def __call__(self, device: str, rid: str, env: bytes) -> str:
+        n = len(self.posts)
+        self.posts.append((device, rid, env))
+        return self.script.get(n, self.default)
+
+    def for_rid(self, rid: bytes | str) -> list[bytes]:
+        r = rid if isinstance(rid, str) else rid.hex()
+        return [e for _, x, e in self.posts if x == r]
+
+
+class World:
+    """One bridge over a fresh state directory, with its fakes; :meth:`reopen` simulates a restart."""
+
+    def __init__(self, tmp: Path, *, fault: Callable[[str], None] | None = None, start: bool = True) -> None:
+        self.tmp = tmp
+        self.epochs = Epochs()
+        self.r6 = R6(self.epochs)
+        self.phone = Phone()
+        self.r6.add(self.phone)
+        self.clock = Clock()
+        self.key = Key()
+        self.alarms: list[tuple[str, str]] = []
+        (tmp / "host").mkdir(exist_ok=True)
+        self.host = FakeHost(tmp / "host", fault=fault)
+        self.post = Poster()
+        self.fault = fault
+        self.state: StateDir | None = None
+        self.rids: RidStore | None = None
+        self.n = 0
+        self._open(fault)
+        if start:
+            self.bridge.start()
+
+    def _open(self, fault: Callable[[str], None] | None) -> None:
+        self.state = StateDir(self.tmp / "relay")
+        self.rids = RidStore(self.state, fault=fault)
+        keys = BridgeKeys(self.epochs, bytes.fromhex(WS))
+        signer = sign.RelaySigner(self.key, sign.LinkContext(WS, "https://relay.example"), epochs=keys)
+        self.bridge = Bridge(
+            workspace_id=WS, rids=self.rids, keys=keys, signer=signer, r6=self.r6, port=self.host,
+            job=lambda fn: fn(), post=self.post, now_ms=self.clock, alarm=lambda c, d: self.alarms.append((c, d)),
+        )  # fmt: skip
+
+    def close(self) -> None:
+        if self.rids is not None:
+            self.rids.close()
+        if self.state is not None:
+            self.state.close()
+
+    def reopen(self, *, fault: Callable[[str], None] | None = None, start: bool = True) -> None:
+        self.close()
+        self.host.fault = fault or (lambda p: None)
+        self._open(fault)
+        if start:
+            self.bridge.start()
+
+    @property
+    def wk(self) -> dict[int, bytes]:
+        return self.epochs.keys
+
+    def item(self, env: bytes, *, device: str | None = None) -> Item:
+        self.n += 1
+        h = wire.parse_header(env[: wire.HEADER_LEN])
+        return Item(self.n, "bridge", device if device is not None else h.device.hex(), h.rid.hex(), env)
+
+    def send(self, env: bytes, *, run: bool = True) -> list[bytes]:
+        """Deliver one request; run it if admitted; return the chunks POSTed for its rid during this call."""
+        h = wire.parse_header(env[: wire.HEADER_LEN])
+        before = len(self.post.posts)
+        adm = self.bridge.receive(self.item(env))
+        if adm is not None and run:
+            self.bridge.run(adm)
+        return [e for _, r, e in self.post.posts[before:] if r == h.rid.hex()]
+
+    def answer(self, chunks: list[bytes]) -> tuple[dict[str, Any], Any]:
+        """``(meta of chunk 0, decoded data)`` of a complete answer."""
+        metas, data = [], b""
+        for c in chunks:
+            h, meta, d = open_chunk(c, self.wk, self.key.public_key)
+            metas.append((h, meta))
+            data += d
+        return metas[0][1], (json.loads(data) if data else None)
+
+    def call(self, meta: dict[str, Any], **kw: Any) -> tuple[dict[str, Any], Any]:
+        return self.answer(self.send(self.phone.request(self.wk, meta, **kw)))
+
+    def new_ticket(self, *, key: str | None = None, title: str = "From the phone", **kw: Any) -> dict[str, Any]:
+        log = ulid(self.clock.ms)
+        ev = self.phone.event(log, "ticket.created", eid=ulid(self.clock.ms),
+                              key=key or f"DEMO-{secrets.randbelow(10**6) + 1}", ticket_type="task", title=title,
+                              owner="p_" + self.phone.person)  # fmt: skip
+        return {"op": "new_ticket", "args": {"log": log, "events": [ev]}, "idem": kw.pop("idem", None) or ev["id"], **kw}
+
+
+__all__ = ["Clock", "Epochs", "FakeHost", "Phone", "Poster", "R6", "World", "framing", "idem", "open_chunk", "ulid"]

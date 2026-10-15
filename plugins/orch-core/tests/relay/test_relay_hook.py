@@ -482,3 +482,32 @@ def test_orch_host_status_names_the_dormant_relay_worker(served, monkeypatch):  
                         "relay": {"linked": True, "blocker": "stopped", "outbox_pending": 2}}],
     }  # fmt: skip
     assert "  relay linked=yes worker=stopped outbox=2" in host_status.render(rep)
+
+
+def test_the_unlink_job_itself_refuses_while_a_worker_runs(served):  # noqa: F811
+    """The race guard: a worker started between ``relay_unlink``'s stop and its job is refused in the job, under
+    ``relay_cond`` and the store lock, and nothing is renamed."""
+    svc = served.service
+    _reserve(served)
+    svc.relay = FakeWorker()
+    with pytest.raises(HostError) as e:
+        _on_worker(served, lambda: relayhook.unlink_job(svc))
+    assert e.value.code == "lock.busy"
+    assert relaylink.link_path(svc.state_dir, served.wid).exists()
+    svc.relay = None
+
+
+def test_the_open_hook_never_starts_beside_a_stuck_worker(served, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(relay_worker, "R6_READY", True)
+    svc = served.service
+    _reserve(served)
+    starts: list[int] = []
+    svc.relay_starter = lambda s: starts.append(1)
+    stuck = FakeWorker(stuck=True)
+    with svc.relay_cond:
+        svc._relay_stuck = stuck  # noqa: SLF001 - a worker whose threads outlived an earlier stop
+    _on_worker(served, svc._relay_open)  # noqa: SLF001
+    assert starts == [] and svc.relay_reason == "relay_thread_stuck"
+    stuck.release.set()
+    with svc.relay_cond:
+        svc._relay_stuck = None  # noqa: SLF001

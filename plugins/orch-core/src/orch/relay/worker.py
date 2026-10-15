@@ -25,8 +25,9 @@ What flipping it requires is listed in 11A.4 "As built in R5".
 
 **Fork and exec.** The state directory's lock fd is close-on-exec and its fork hook closes a child's copy (R1); the
 relay sockets are not inheritable (Python's default). A worker records its pid: in a forked child :meth:`submit`
-and :meth:`start` refuse, and :meth:`join` never logs out or closes anything (the parent's token and lock stay the
-parent's).
+and :meth:`start` refuse, :meth:`stop` does nothing and :meth:`join` never logs out or closes anything (the parent's
+token and lock stay the parent's). The pid is checked BEFORE the worker's lock: a lock another parent thread held at
+the fork stays locked in the child for ever, so the child never takes it.
 """
 
 from __future__ import annotations
@@ -241,8 +242,10 @@ class RelayWorker:
     def submit(self, fn: Callable[[], Any]) -> Future[Any]:
         """``service.submit(fn)``, refused (:class:`WorkerStopped`) once :meth:`stop` began or in a forked child: no
         relay thread queues a store job after the stop (11A.7 step 1)."""
+        if os.getpid() != self._pid:  # before the lock (a parent thread may have held it at the fork)
+            raise WorkerStopped("a forked child never uses the parent's worker")
         with self._lock:
-            if self._stopping or os.getpid() != self._pid:
+            if self._stopping:
                 raise WorkerStopped("the relay worker is stopping")
             return self._submit(fn)
 
@@ -309,7 +312,10 @@ class RelayWorker:
 
     def stop(self) -> None:
         """11A.7 shutdown, without blocking: from now on :meth:`submit` refuses; the stop event wakes every wait; the
-        loop shuts its connections down and wakes its queues; the publisher is told to stop. Idempotent."""
+        loop shuts its connections down and wakes its queues; the publisher is told to stop. Idempotent; nothing in a
+        forked child (the threads and sockets are the parent's)."""
+        if os.getpid() != self._pid:
+            return
         with self._lock:
             if self._stopping:
                 return
@@ -326,6 +332,8 @@ class RelayWorker:
         threads the poll thread spawned after a first snapshot are caught by the second) and the publisher. Once all
         ended (in the owning process only): a best-effort logout, then the rid store and the state directory are
         closed (the lock is released for the next worker) and ``on_ended`` runs, once."""
+        if os.getpid() != self._pid:
+            return True  # a forked child has none of the parent's threads; it releases nothing
         end = self._mono() + timeout
 
         def left() -> float:
@@ -351,12 +359,12 @@ class RelayWorker:
         return self.loop is not None and any(th.is_alive() for th in self.loop.threads())
 
     def _finish(self) -> None:
+        if os.getpid() != self._pid:
+            return  # a forked child: the token, the database and the lock are the parent's
         with self._lock:
             if self._ended or not self._stopping:
                 return
             self._ended = True
-        if os.getpid() != self._pid:
-            return  # a forked child: the token, the database and the lock are the parent's
         if self.loop is not None and self.loop.error is not None and self.error is None:
             self.error = type(self.loop.error).__name__
         self.alarm.save()

@@ -360,13 +360,32 @@ def test_alarms_survive_a_failing_write():
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork")
-def test_a_forked_child_cannot_use_or_release_the_parents_worker(tmp_path, gate):
+@pytest.mark.parametrize("held", [False, True])
+def test_a_forked_child_cannot_use_or_release_the_parents_worker(tmp_path, gate, held):
+    """In the child: no store job, no start, no stop effect, no logout, no close; it never takes the worker's lock (a
+    parent thread may hold it at the fork: ``held`` forks while another thread holds it). Bounded: the parent waits
+    at most 10 s for the child's answer and kills it otherwise."""
+    import select
+    import signal
+
     r = Rig(tmp_path)
     r.w.start()
     r.wait_started()
+    assert _wait(lambda: not any(t.name.startswith("orch-relay-start-") for t in threading.enumerate()))
+    holding, release = threading.Event(), threading.Event()
+    if held:
+
+        def hold():
+            with r.w._lock:  # noqa: SLF001 - the parent thread that holds the worker's lock at the fork
+                holding.set()
+                release.wait(10)
+
+        threading.Thread(target=hold, daemon=True).start()
+        assert holding.wait(5)
     rfd, wfd = os.pipe()
     pid = os.fork()
     if pid == 0:  # pragma: no cover - the child
+        signal.alarm(8)
         code = 0
         try:
             try:
@@ -380,7 +399,7 @@ def test_a_forked_child_cannot_use_or_release_the_parents_worker(tmp_path, gate)
             except (W.WorkerStopped, RuntimeError):
                 pass
             r.w.stop()
-            r.w.join(0.5)
+            assert r.w.join(0.5) is True
             if r.session.logouts or r.rids.closed:
                 code |= 4
         except BaseException:  # noqa: BLE001
@@ -388,9 +407,15 @@ def test_a_forked_child_cannot_use_or_release_the_parents_worker(tmp_path, gate)
         os.write(wfd, bytes([code]))
         os._exit(0)
     os.close(wfd)
-    got = os.read(rfd, 1)
-    os.close(rfd)
-    os.waitpid(pid, 0)
+    try:
+        ready, _, _ = select.select([rfd], [], [], 10)
+        got = os.read(rfd, 1) if ready else b"hang"
+    finally:
+        os.close(rfd)
+        if not ready:
+            os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        release.set()
     assert got == b"\x00"
     # the parent's worker and its directory lock are intact
     assert r.w.submit(lambda: 41 + 1).result(5) == 42

@@ -188,7 +188,7 @@ _REPORTED = _obj(
     },
     ("run", "workspace_id", "state"),
 )
-#: reserved for H11c (the runner's deposited grants, revalidated at hello); H11a accepts and ignores them
+#: the runner's deposited grants (ids and times, never a secret), revalidated at hello (H11c)
 _GRANT = _obj(
     {
         "workspace_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
@@ -412,6 +412,11 @@ class RunnerHub:
         self._mints: dict[str, list[float]] = {}
         self._save_lock = asyncio.Lock()
         self.ignored = 0
+        from .runnergrants import RunnerGrants
+
+        #: the runner grants (H11c): one per (workspace, person), the deposits and the forgotten ids
+        self.grants = RunnerGrants(self)
+        self._reported_grants: list[dict[str, Any]] = []
 
     # -- state
     @property
@@ -548,14 +553,24 @@ class RunnerHub:
         unknown = sum(1 for run in reported if run not in self.store.records)
         if unknown:
             LOG.warning("runner.hello reported %d run(s) this host does not know; not adopted", unknown)
-        # grants (§12.3.3) are H11c's: accepted by the schema, never stored or acted on here
+        # grants (§12.3.3): revalidated right after the answer (_after_hello), never adopted as they are
+        self._reported_grants = list(args.get("grants") or [])
         LOG.info(
             "runner connected: uid %s gen %s epoch %s (previous gen %s)", uid, self.generation, self.epoch, previous
         )
         return {"sub": self.sub_id, "epoch": f"{self.instance}.{self.epoch}"}
 
     def _after_hello(self) -> None:
-        """After the hello's answer is queued: H11c revalidates the reported grants here (none in H11a)."""
+        """After the hello's answer is queued: the reported grants are revalidated (H11c): what the host no longer
+        allows is dropped at the runner, and the runner's word settles ``current`` and pending deposits."""
+        reported, self._reported_grants = self._reported_grants, []
+        asyncio.get_running_loop().create_task(self._reconcile_grants(reported))
+
+    async def _reconcile_grants(self, reported: list[dict[str, Any]]) -> None:
+        try:
+            await self.grants.reconcile(reported)
+        except Exception as exc:  # noqa: BLE001 - logged by type only; the watcher and the next hello retry
+            LOG.warning("runner grant reconciliation failed: %s", type(exc).__name__)
 
     async def _apply(self, rec: dict[str, Any], rep: dict[str, Any] | None) -> None:
         """Reconcile one live record with the runner's report of it (``None``: not reported)."""
@@ -1004,12 +1019,14 @@ class RunnerHub:
             return True
         return column == "G" and rec.get("kind") == "agent" and bool(rec.get("ticket"))
 
-    def runner_state(self, workspace_id: str) -> dict[str, Any]:
+    def runner_state(self, workspace_id: str, person: str | None = None) -> dict[str, Any]:
         from orch.runner import enablement
 
         state = enablement.state_of(self.host.state_dir, workspace_id, self.host.host_uid)
+        cur = self.grants.current(workspace_id, person) if person else None
+        grant = {"id": cur["grant"], "until": cur["until"], "scope": cur["scope"]} if cur else None
         return {"connected": self.connected, "enabled": state["enabled"], "terminals": state["terminals"],
-                "gen": self.generation if self.connected else None, "grant": None}  # grant: H11c  # fmt: skip
+                "gen": self.generation if self.connected else None, "grant": grant}  # fmt: skip
 
     def publish(self, rec: dict[str, Any]) -> None:
         for sub in list(self.subs.values()):
@@ -1217,8 +1234,8 @@ def serve(call: Call) -> dict[str, Any]:
         offset = int(page[1:])
     window = shown[offset : offset + 256]
     more = offset + 256 < len(shown)
-    runner = hub.runner_state(service.workspace_id) if hub is not None else {"connected": False, "enabled": False,
-                                                                              "terminals": False, "gen": None,
-                                                                              "grant": None}  # fmt: skip
+    from .terms import runner_info
+
+    runner = runner_info(service, person)
     runs = [view(r) | {"out_bytes": int(r.get("out") or 0)} for r in window]
     return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})

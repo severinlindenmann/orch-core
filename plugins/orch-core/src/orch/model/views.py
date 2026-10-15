@@ -163,6 +163,9 @@ class GrantView:
     expires_at: str
     revoked: bool
     active: bool  # not revoked and not expired at ``now``
+    #: the ``grant.issued`` label (H11c: only ``"runner"`` can be handed to the runner) and issue time
+    label: str | None = None
+    issued_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -337,6 +340,8 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                     g.expires_at,
                     g.revoked,
                     not g.revoked and ts(g.expires_at) > now,
+                    g.label,
+                    g.issued_at,
                 )
                 for i, g in ws.grants.items()
             }

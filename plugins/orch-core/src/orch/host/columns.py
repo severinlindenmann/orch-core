@@ -42,6 +42,8 @@ PeerClass = Literal["person", "agent", "worker", "control"]  # "relay" is refuse
 #: person_write: a host-side write only a person-class caller makes (``records.remote_private``, H11e).
 #: pg_write: a host-side side effect of P and G (``worktree.create``/``remove``, H11d; the op narrows G further).
 #: device_signed: device-signed person events through the relay entry (``relay.submit``, column R only, §11A.4).
+#: deposit: ``grant.deposit`` (H11c, D-P2-27): a person-class caller **with** a verified grant of their own, so column G
+#: at the matrix; the op itself requires the person class, the UID's valid mapping and the grant's ``label:"runner"``.
 OpKind = Literal[
     "read",
     "person_read",
@@ -55,6 +57,7 @@ OpKind = Literal[
     "job",
     "control",
     "device_signed",
+    "deposit",
 ]
 
 
@@ -132,7 +135,7 @@ _SOCKET_PEERS = frozenset({"person", "agent", "worker", "control"})
 # The permission matrix (§0.5) for each column.
 _MATRIX: dict[str, set[str]] = {
     "P": {"read", "person_read", "pg_read", "person_write", "pg_write", "unattended", "human_api"},
-    "G": {"read", "pg_read", "pg_write", "agent", "unattended"},
+    "G": {"read", "pg_read", "pg_write", "agent", "unattended", "deposit"},
     "N": {"read", "unattended"},
     "W": {"job"},
     "C": {"control"},
@@ -143,6 +146,7 @@ _WRITES = {
     "unattended",
     "human",
     "pg_write",
+    "deposit",
 }  # person_write is outside every column but P: op.not_allowed there
 
 

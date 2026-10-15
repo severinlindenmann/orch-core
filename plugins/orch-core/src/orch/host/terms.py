@@ -139,12 +139,12 @@ def missing(service: WorkspaceService, hub: RunnerHub, *, addon: bool = True) ->
     return None
 
 
-def runner_info(service: WorkspaceService) -> dict[str, Any]:
-    """``whoami.runner`` (``RunnerInfo``)."""
+def runner_info(service: WorkspaceService, person: str | None = None) -> dict[str, Any]:
+    """``whoami.runner`` (``RunnerInfo``): ``grant`` is the caller person's runner grant (H11c), never another's."""
     hub = getattr(service, "runners", None)
     if hub is None:
         return {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None}
-    return hub.runner_state(service.workspace_id)
+    return hub.runner_state(service.workspace_id, person)
 
 
 def _require_ready(service: WorkspaceService, hub: RunnerHub | None) -> RunnerHub:

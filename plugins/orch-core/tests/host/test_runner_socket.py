@@ -23,6 +23,7 @@ from orch.host.errors import HostError
 from orch.host.runners import main_pid, new_run_id
 from orch.runner import enablement, procs
 from orch.runner.config import RunnerConfig
+from orch.runner.grants import GrantStore
 from orch.runner.link import HostLink, build_env
 from orch.runner.supervise import SpawnError, Supervisor
 from orch.runner.term import TermListener
@@ -65,6 +66,7 @@ class Runner:
             term=self.term,
             backoff=(0.05, 0.2),
             config=config if config is not None else RunnerConfig(programs={"codex": "/bin/sh"}),
+            grants=GrantStore(clock=lambda: w.lab.ws.clock[0]),  # the lab's clock, as the host's
         )
         self.grants = self.link.grants
         self.link.start()

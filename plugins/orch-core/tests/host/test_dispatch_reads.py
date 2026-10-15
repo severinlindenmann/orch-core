@@ -120,6 +120,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"blob": "b_" + "A" * 26}
     if op in RECORDS_ARGS:  # H11e: the records ops name no ticket
         return RECORDS_ARGS[op]
+    if op == "grant.deposit_status":  # H11c: names a deposit, never a ticket
+        return {"deposit_id": "01J9ZP0000000000000000000C"}
     schema = ops.get(op).input
     props = schema.get("properties", {})
     out: dict = {}

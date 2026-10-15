@@ -1,0 +1,233 @@
+"""H11c: the runner grant on the host (D-P2-27, §12.4.2): grant.deposit, grant.deposit_status, grant.forget, the
+hello revalidation, the watcher, ``whoami.runner.grant``, and the canary: the secret goes only to the runner.
+
+The runner runs in this process (as in test_runner_socket); its grant store is inspected directly.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+from orch import canon, crypto
+from orch.identity import new_ulid
+from tests.host.dispatch_helpers import err, ok
+from tests.host.lifecycle_helpers import UID
+from tests.host.live_helpers import world
+from tests.host.test_runner_socket import GEN2, Runner, wait_for
+from tests.store.helpers import GRANT_SECRET, ts
+
+pytestmark = pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the runner is POSIX only")
+SECRET_TAIL = crypto.b64u(GRANT_SECRET)
+
+
+@pytest.fixture
+def w(tmp_path):
+    w = world(tmp_path, runner_identity=lambda cred: cred.pid == os.getpid())
+    yield w
+    w.h.stop()
+    w.lab.close()
+
+
+@pytest.fixture
+def rstate(tmp_path):
+    d = tmp_path / "runner-state"
+    d.mkdir(mode=0o700)
+    return d
+
+
+def enable(w, on: bool = True) -> None:
+    from orch.runner import enablement
+
+    enablement.set_enabled(Path(w.lab.state), w.wid, on, UID, terminals=True, text="t")
+
+
+@pytest.fixture
+def ready(w, rstate):
+    enable(w)
+    r = Runner(w, rstate)
+    w.runner = r
+    try:
+        yield w
+    finally:
+        r.close()
+
+
+def issue(w, *, label: str | None = "runner", hours: int = 8, verbs="agent", who=None, issued_at=None) -> str:
+    """A grant issued in the workspace log; returns its ``auth.grant`` value (the test secret)."""
+    gid = "gr_" + new_ulid()
+    issued = issued_at if issued_at is not None else w.lab.ws.clock[0] + 1
+    payload = {"grant": gid, "scope": "workable", "verbs": verbs, "issued_at": ts(issued), "hours": hours,
+               "expires_at": ts(issued + 3600 * hours),
+               "secret_hash": canon.grant_secret_hash(GRANT_SECRET)}  # fmt: skip
+    if label is not None:
+        payload["label"] = label
+    w.person_event("grant.issued", who=who, **payload)
+    return f"{gid}.{SECRET_TAIL}"
+
+
+def deposit(c, value: str, deposit_id: str | None = None) -> dict:
+    return c.call("grant.deposit", {"deposit_id": deposit_id or new_ulid()}, grant=value)
+
+
+def gid_of(value: str) -> str:
+    return value.partition(".")[0]
+
+
+# -- deposit ---------------------------------------------------------------------------------------------------------
+
+
+def test_a_runner_grant_is_deposited_once_and_shows_in_whoami(ready):
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    did = new_ulid()
+    res = ok(deposit(c, value, did))["data"]
+    assert res["deposit"] == "confirmed" and res["grant"] == gid_of(value) and res["scope"] == "workable"
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(value)]
+    me = ok(c.call("whoami", {}))["data"]["runner"]
+    assert me["grant"]["id"] == gid_of(value) and me["grant"]["scope"] == "workable"
+    assert ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["deposit"] == "confirmed"
+    assert ok(c.call("grant.deposit_status", {"deposit_id": new_ulid()}))["data"]["deposit"] == "none"
+    again = ok(deposit(c, value, did))["data"]  # the same deposit_id: the recorded outcome, nothing sent again
+    assert again["deposit"] == "confirmed"
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [{"label": None}, {"label": "quinn"}, {"verbs": ["log"]}, {"hours": 13}],
+    ids=["no-label", "other-label", "verbs", "too-long"],
+)
+def test_only_a_runner_labelled_agent_grant_of_at_most_12_hours_can_be_deposited(ready, kw):
+    w = ready
+    c = w.conn()
+    value = issue(w, **kw)
+    assert err(deposit(c, value)) == "op.not_allowed"
+    assert w.runner.grants.report() == []
+
+
+def test_a_grant_with_under_15_minutes_left_is_refused(ready):
+    w = ready
+    c = w.conn()
+    value = issue(w, hours=1)
+    w.lab.ws.clock[0] += 3000  # ten minutes left
+    assert err(deposit(c, value)) == "op.not_allowed"
+
+
+def test_deposit_needs_a_person_and_their_own_verified_grant(ready):
+    w = ready
+    c = w.conn()
+    assert err(c.call("grant.deposit", {"deposit_id": new_ulid()})) == "op.not_allowed"  # no grant: P
+    value = issue(w)
+    wrong = gid_of(value) + "." + "A" * 43
+    assert err(deposit(c, wrong)) == "grant.expired"  # unverified
+    theirs = issue(w, who=w.quinn)  # quinn's own runner grant, presented by the owner's UID
+    assert err(deposit(c, theirs)) == "op.not_allowed"
+    assert err(c.call("grant.deposit", {"deposit_id": "x"}, grant=value)) == "invalid.input"
+    assert w.runner.grants.report() == []
+
+
+def test_the_switch_and_the_runner_are_required(w, rstate):
+    c = w.conn()
+    value = issue(w)
+    assert err(deposit(c, value)) == "runner.disabled"
+    enable(w)
+    assert err(deposit(c, value)) == "runner.unavailable"
+
+
+def test_a_newer_runner_grant_replaces_the_old_which_is_forgotten(ready):
+    w = ready
+    c = w.conn()
+    first, second = issue(w), issue(w)
+    assert ok(deposit(c, first))["data"]["deposit"] == "confirmed"
+    assert ok(deposit(c, second))["data"]["deposit"] == "confirmed"
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(second)]
+    assert err(deposit(c, first)) == "grant.forgotten"
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(second)]
+
+
+def test_forget_drops_it_and_it_can_never_be_deposited_again(ready):
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    assert err(c.call("grant.forget", {"grant": gid_of(value)}, grant=value)) == "op.not_allowed"  # G never
+    assert ok(c.call("grant.forget", {"grant": gid_of(value)}))["data"]["forgotten"] is True
+    wait_for(lambda: w.runner.grants.report() == [])
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+    assert err(deposit(c, value)) == "grant.forgotten"
+    other = issue(w, who=w.quinn)
+    assert err(c.call("grant.forget", {"grant": gid_of(other)})) == "not_found"  # another person's grant
+
+
+def test_a_lost_ack_is_unknown_never_a_false_failure_and_hello_settles_it(ready):
+    w = ready
+    c = w.conn()
+    hub = w.h.host.runners
+    hub.command_timeout = 1.0
+    w.runner.link.drop_reports.add("grant.put")
+    value = issue(w)
+    did = new_ulid()
+    assert ok(deposit(c, value, did))["data"]["deposit"] == "unknown"
+    assert ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["deposit"] == "unknown"
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(value)]  # the runner did take it
+    w.runner.link.drop_reports.clear()
+    hub.drop_session(hub.session)  # the next hello reports what the runner holds
+    wait_for(lambda: ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["deposit"] == "confirmed")
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"]["id"] == gid_of(value)
+
+
+def test_a_runner_restart_loses_the_grant_and_whoami_says_so(ready, rstate):
+    w = ready
+    c = w.conn()
+    ok(deposit(c, issue(w)))
+    w.runner.close()
+    w.runner = Runner(w, rstate, gen=GEN2)  # a new process: an empty store
+    wait_for(lambda: ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None)
+
+
+def test_a_revoked_grant_is_dropped_at_the_runner(ready):
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    w.person_event("grant.revoked", grant=gid_of(value))
+    wait_for(lambda: w.runner.grants.report() == [])
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+
+
+def test_hello_drops_a_grant_the_host_does_not_allow(ready):
+    w = ready
+    value = issue(w)
+    stray = issue(w)
+    until = ts(w.lab.ws.clock[0] + 3600)
+    # the runner holds a grant the host never confirmed (a same-UID process put it there): dropped at the next hello
+    w.runner.grants.put({"deposit_id": new_ulid(), "workspace_id": w.wid, "person": w.lab.owner,
+                         "grant": gid_of(stray), "secret": stray, "until": until})  # fmt: skip
+    hub = w.h.host.runners
+    hub.drop_session(hub.session)
+    wait_for(lambda: w.runner.grants.report() == [])
+    c = w.conn()
+    assert ok(deposit(c, value))["data"]["deposit"] == "confirmed"
+
+
+def test_the_secret_reaches_no_frame_log_or_file(ready, caplog, tmp_path):
+    w = ready
+    caplog.set_level(logging.DEBUG)
+    c = w.conn()
+    value = issue(w)
+    res = deposit(c, value)
+    ok(c.call("whoami", {}))
+    ok(c.call("run.list", {}))
+    assert ok(res)["data"]["deposit"] == "confirmed"
+    seen = repr(c.frames) + repr(res)
+    assert SECRET_TAIL not in seen
+    assert SECRET_TAIL not in caplog.text
+    for path in Path(tmp_path).rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            with open(path, "rb") as fh:
+                assert SECRET_TAIL.encode() not in fh.read(), path

@@ -95,6 +95,7 @@ from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
+from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
 from .terms import TERM_CAPS, TERM_OPS
 from .visibility import Viewer
@@ -211,6 +212,7 @@ def served_ops() -> dict[str, int]:
     out.update(RUN_OPS)  # H11a: run.list, run.sub; H11b: run.stop
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
+    out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     return out
 
 
@@ -232,6 +234,12 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("read", "read")
     if name in records_ops.RECORDS_OPS:  # H11e: column P only; the role is checked by the op
         return ("person_write", "write") if name in records_ops.WRITE_OPS else ("person_read", "read")
+    if name == "grant.deposit":  # H11c: a person with their own verified runner grant (checked by the op)
+        return ("deposit", "write")
+    if name == "grant.deposit_status":  # H11c: P only, own deposits
+        return ("person_read", "read")
+    if name == "grant.forget":  # H11c: P only, own grants
+        return ("person_write", "write")
     if name == "term.preview":  # H11b: column P only
         return ("person_read", "read")
     if name in TERM_OPS or name == "run.stop":  # H11b: P only; G and N get op.not_allowed
@@ -413,6 +421,10 @@ class RegistryBackend:
             return await self._register_runs(call, result)
         if op in TERM_OPS or op == "run.stop":
             return await terms.complete(call, result)
+        if op in GRANT_OPS:  # H11c: the runner grant table and the runner, on the event loop
+            from . import runnergrants
+
+            return await runnergrants.complete(call, result)
         if op in WORKTREE_OPS and op != "worktree.list":  # H11d: the runner's git, then the registration
             from . import worktrees
 
@@ -577,6 +589,10 @@ class RegistryBackend:
                 result = records_ops.serve(call)
             elif op in TERM_OPS or op == "run.stop":
                 result = terms.serve(call)
+            elif op in GRANT_OPS:
+                from . import runnergrants
+
+                result = runnergrants.serve(call)
             elif op in RUN_OPS:
                 from . import runners
 
@@ -706,7 +722,7 @@ class RegistryBackend:
                 "scope": grant.scope,
             },
             "session": session,
-            **({"runner": terms.runner_info(call.service)} if call.column.name in ("P", "G") else {}),
+            **({"runner": terms.runner_info(call.service, call.viewer)} if call.column.name in ("P", "G") else {}),
         }
 
     def status(self, call: Call) -> dict[str, Any]:

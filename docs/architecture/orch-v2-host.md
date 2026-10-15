@@ -10607,6 +10607,10 @@ that is core's), the R2 vector `answer_convenience_refused`.
   stay unmarked.
 - `relayr6._convenience_block` passes the stored relay level like `relayhook.convenience_block`; a level drop does not
   halt the worker (the alarm `relay_reader_old` is the rule, §11A.6 "Foreign appends").
+- `Registry._save` adds a new entry only by consuming the spent `AdmitToken` of `_add` (a direct `_save` cannot).
+- `orch init` declares `host.dev_refused` and passes the host's refusal through as it is (the P1 catalog entry, the
+  CLI goldens). The other refusing paths (`host.register`, `host.bootstrap`, `relay.link`, a records push) are host
+  ops, not P1 operations, so the code is in the host table and §0.6 for them.
 - `convenience.flag_or_gate` also decides `refuse_reader_op`'s "convenience on" refusal and `observe_relay_level`'s
   required level (`gated=` from the relay hook).
 

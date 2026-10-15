@@ -769,6 +769,8 @@ def test_registry_add_needs_the_admit_token(tmp_path):
         AdmitToken(object(), entry)  # only admit holds the key
     with pytest.raises(HostError):
         reg._save({entry.workspace_id: entry})  # a new entry through _save: refused
+    with pytest.raises(HostError):  # an unspent token does not open _save either
+        reg._save({entry.workspace_id: entry}, token=AdmitToken(reg_mod._ADMIT_KEY, entry))
     assert reg.entries() == [] and not reg.path.exists()
     token = AdmitToken(reg_mod._ADMIT_KEY, entry)  # what admit makes (the test reaches the private key)
     other = Entry("d" * 32, "DEMO", str(tmp_path / "ws2"), UID, group_name("d" * 32), {})
@@ -779,6 +781,9 @@ def test_registry_add_needs_the_admit_token(tmp_path):
     reg.remove(entry.workspace_id)
     with pytest.raises(HostError):
         reg._add(entry, token)  # single use
+    with pytest.raises(HostError):
+        reg._save({entry.workspace_id: entry}, token=token)  # spent and persisted: never again through _save
+    assert reg.entries() == []
 
 
 @pytest.mark.parametrize("argv", [["run", "--dev-sim"], ["run", "--fore"], ["run", "--dev-sim-c"], ["run", "--dev-r"]])

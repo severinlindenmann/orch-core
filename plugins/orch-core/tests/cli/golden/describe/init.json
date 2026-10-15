@@ -103,6 +103,17 @@
         ]
       },
       {
+        "code": "host.dev_refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "a dev host serves throwaway dev-pair sandboxes only and a normal host never serves one; use a real workspace",
+        "fix": [
+          "orch",
+          "host",
+          "status"
+        ]
+      },
+      {
         "code": "human_only",
         "exit": 3,
         "retryable": false,

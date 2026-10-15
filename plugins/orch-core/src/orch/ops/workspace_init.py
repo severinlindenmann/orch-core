@@ -530,7 +530,7 @@ def _host_refusal(error: dict[str, Any]) -> OrchError:
     message = str(error.get("message", code))[:300]
     if code in _UNDECIDED:
         return _unavailable(f"the host is not ready ({code}: {message})")
-    if code in ("host.busy", "custody.unsafe_mode", "lock.busy", "internal"):
+    if code in ("host.busy", "custody.unsafe_mode", "lock.busy", "internal", "host.dev_refused"):
         return OrchError(code, f"{message}; nothing was created")
     return _refuse("invalid.input", f"the host refused the workspace ({code}): {message}; nothing was created")
 

@@ -36,17 +36,24 @@ class AdmitToken:
     """Proof that :func:`admit` decided this exact entry (§11A.17.3 R5): made only with :data:`_ADMIT_KEY`, bound to
     one entry, spent by the first :meth:`Registry._add`. Without one, neither ``_add`` nor ``_save`` adds anything."""
 
-    __slots__ = ("_entry", "_spent")
+    __slots__ = ("_entry", "_persisted", "_spent")
 
     def __init__(self, key: object, entry: Entry) -> None:
         if key is not _ADMIT_KEY:
             raise HostError("internal", "a registry entry is added only through orch.host.registry.admit")
-        self._entry, self._spent = entry, False
+        self._entry, self._spent, self._persisted = entry, False, False
 
     def spend(self, entry: Entry) -> None:
+        """:meth:`Registry._add` takes the token (once, for its own entry)."""
         if self._spent or self._entry is not entry:
             raise HostError("internal", "an admit token is used once, for the entry admit decided")
         self._spent = True
+
+    def persist(self, entry: Entry) -> None:
+        """:meth:`Registry._save` writes the entry the spent token names (once): a direct ``_save`` call cannot."""
+        if not self._spent or self._persisted or self._entry is not entry:
+            raise HostError("internal", "a registry entry is added only through orch.host.registry.admit")
+        self._persisted = True
 
 
 WS_ID = re.compile(r"[0-9a-f]{32}")
@@ -218,15 +225,15 @@ class Registry:
         with self._lock:
             self._entries = entries
 
-    def _save(self, entries: dict[str, Entry], *, admitted: Entry | None = None) -> None:
-        """Persist ``entries``. A workspace that is not registered now may appear only as ``admitted``, the entry
-        whose token :meth:`_add` just spent (removals and rewrites of known entries need none)."""
+    def _save(self, entries: dict[str, Entry], *, token: AdmitToken | None = None) -> None:
+        """Persist ``entries``. A workspace that is not registered now may appear only as the one entry of the
+        :class:`AdmitToken` :meth:`_add` just spent, which this call consumes (removals need none)."""
         with self._lock:
-            added = {k for k in entries if k not in self._entries}
-            if added and (
-                admitted is None or added != {admitted.workspace_id} or entries[admitted.workspace_id] is not admitted
-            ):
-                raise HostError("internal", "a registry entry is added only through orch.host.registry.admit")
+            added = [k for k in entries if k not in self._entries]
+            if added:
+                if len(added) != 1 or type(token) is not AdmitToken:
+                    raise HostError("internal", "a registry entry is added only through orch.host.registry.admit")
+                token.persist(entries[added[0]])
             doc = {"v": 1, "workspaces": [entries[k].to_doc() for k in sorted(entries)]}
             write_private(self.path, doc)
 
@@ -241,7 +248,7 @@ class Registry:
                 raise HostError("host.busy", f"{entry.root} is already registered")
             token.spend(entry)
             entries = {**self._entries, entry.workspace_id: entry}
-            self._save(entries, admitted=entry)
+            self._save(entries, token=token)
             self._entries = entries
 
     def remove(self, workspace_id: str) -> bool:

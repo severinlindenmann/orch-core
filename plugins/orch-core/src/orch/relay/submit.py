@@ -149,7 +149,7 @@ def make_relay_fields(append: Append) -> Callable[[dict[str, Any]], dict[str, An
 
     def relay_fields(record: dict[str, Any]) -> dict[str, Any] | str:
         args = record.get("args_normalised") or {}
-        events, log_id = args.get("events"), args.get("log")
+        events, log_id = record.get("signed_events"), args.get("log")
         principal = record.get("principal")
         if type(events) is not list or not events or type(log_id) is not str or type(principal) is not str:
             return "keep"

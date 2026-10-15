@@ -429,6 +429,34 @@ def test_an_unreadable_holder_after_an_earlier_pass_stops_every_later_call(env, 
         assert len(m.seen) > n
 
 
+@pytest.mark.parametrize("bad", [b"null", b"{not json", b"[]", b'{"instance_id": "' + b"0" * 32 + b'"}'])
+def test_f2_an_unreadable_instance_record_after_an_earlier_pass_stops_every_later_call(env, tmp_path, bad):
+    """R1 carry-over F2 (R2): ``login()`` passes; then ``instance.json`` becomes unreadable (or loses its directory
+    binding): ``hold()`` raises StateError and so does every later entry point, with no request sent."""
+    m, sim = env
+    with StateDir(_linked_dir(tmp_path, "held-f2")) as st:
+        clock = Clock(sim)
+        s = make_session(m.origin(), holder=FileHolderStore(st), clock=clock)
+        d = directory(s)
+        s.login()
+        st.write("instance.json", bad)
+        n = len(m.seen)
+        with pytest.raises(StateError):
+            s.hold()
+        calls = _entry_points(m, s, d, clock)
+        for name in ENTRIES:
+            with pytest.raises(StateError):
+                calls[name]()
+            assert len(m.seen) == n, name
+
+
+def test_one_session_per_state_directory_a_second_state_dir_is_refused(tmp_path):
+    """R1 carry-over: one live instance per state directory (11A.3), so R5 can only ever build one Session over it."""
+    with StateDir(tmp_path / "relay-one"):
+        with pytest.raises(StateError):
+            StateDir(tmp_path / "relay-one")
+
+
 # -- round 9: preflight is serialised within one Session --------------------------------------------------------------
 
 

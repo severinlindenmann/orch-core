@@ -127,7 +127,7 @@ def test_the_signature_must_verify_under_this_device_over_this_log():
 
 def _record(events, log="L"):
     actor = events[0]["actor"]
-    return {"principal": "r:" + actor["device"], "args_normalised": {"log": log, "events": events}}
+    return {"principal": "r:" + actor["device"], "args_normalised": {"log": log}, "signed_events": events}
 
 
 def test_relay_fields_rolls_forward_through_append_and_commits():
@@ -159,8 +159,9 @@ def test_relay_fields_fails_with_the_landed_seqs_on_an_error():
     "record",
     [
         {},
-        {"principal": "r:d_x", "args_normalised": {"log": "L", "events": []}},
-        {"principal": "r:d_other", "args_normalised": {"log": "L", "events": [{"actor": {"device": "d_x"}}]}},
+        {"principal": "r:d_x", "args_normalised": {"log": "L"}, "signed_events": []},
+        {"principal": "r:d_x", "args_normalised": {"log": "L", "events": [{"actor": {"device": "d_x"}}]}},
+        {"principal": "r:d_other", "args_normalised": {"log": "L"}, "signed_events": [{"actor": {"device": "d_x"}}]},
     ],
 )
 def test_relay_fields_keeps_what_it_cannot_say(record):

@@ -236,7 +236,8 @@ class FakeHost:
         if not recheck():
             raise Refusal("op.not_allowed", retryable=False)
         key = f"{identity.principal}|{idem}"
-        binding = canon.dumps({"log": log, "events": events}).decode()
+        unsigned = [{k: v for k, v in e.items() if k != "sig"} for e in events]  # event identity, not sig bytes
+        binding = canon.dumps({"log": log, "events": unsigned}).decode()
         outcomes = self._load("outcomes.json")
         rec = outcomes.get(key)
         if rec is not None:

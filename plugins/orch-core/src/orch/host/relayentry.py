@@ -122,7 +122,9 @@ class RelayEntry:
         identity, the log, the key, :func:`judge_events`, ``outcomes.plan`` (fsynced), ``append_relay`` and a log check
         before the outcome is classified."""
         service = self.service
-        args = {"log": log, "events": events}
+        # the binding is the event identity (signed content and actor), never the signature bytes: an identical
+        # event signed again is the same request (orch-52 final); the signed events are noted on the record
+        args = {"log": log, "events": [{k: v for k, v in e.items() if k != "sig"} for e in events]}
         try:
             store = service.store
             if store is None or service.state == "unavailable":
@@ -142,6 +144,7 @@ class RelayEntry:
     def _apply(self, intent: Any, identity: Identity, log: str, events: list[dict]) -> dict[str, Any]:
         service = self.service
         store = service.store
+        service.outcomes.note(intent, signed_events=events)  # fsynced: what relay_fields rolls forward
         ws = service.workspace_id
         ev = events[0]
         found = store.logged_event(log, ev["id"])
@@ -199,7 +202,10 @@ def judge_events(store: Any, log: str, events: list[dict[str, Any]]) -> None:
         probe = {**ev, "seq": seq, "prev": prev, "at": at}
         if "ws_seq" in stamp:
             probe["ws_seq"] = stamp["ws_seq"]
-        r = preview(state, probe, log=log)
+        try:
+            r = preview(state, probe, log=log)
+        except Exception:  # noqa: BLE001 - device-supplied fields the model cannot judge: refused, never run
+            raise HostError("invalid.input", "the event cannot be judged") from None
         if isinstance(r, ModelRefusal):
             exc = StoreError.from_refusal(r)
             raise HostError(exc.code, exc.detail or exc.code)

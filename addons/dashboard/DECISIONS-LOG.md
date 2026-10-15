@@ -1791,3 +1791,32 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** Align the gated `drop/1` fixtures with orch-relay revision #71 (864c2d55): retire sends `expect_version` and nullable `expect_head` from the list. A version conflict keeps the dialog open with its code and reload guidance, and refreshes the list. Expired/retired rows show the nullable `tombstone_until_ms` date beside their reason.
 - **Why:** Prevent deleting an item changed since listing, and make the tombstone retention deadline visible using the page’s date format. Layout fixtures exercise both tombstone states.
 - **Revert:** Remove the retire preconditions/conflict fixture and the head/tombstone fields, rendering and tests; restore the earlier fixture contract.
+
+## 2026-10-15 Reader levels and click-to-sign refusal reasons (core H12d-2, #513)
+
+- **Decision:**
+  - **Error.detail is closed per code on the server** (`errors.py` `closed_detail`): `detail` reaches the browser only for
+    `sign.convenience_unavailable` and `sign.convenience_readers`, with only `reason` (from that code's closed set) and `devices`
+    (a list of at most 64 `d_` + 32-hex ids; anything else drops the whole list). Every other code's `detail` is dropped,
+    including the ones core's table allows (`term.not_attachable`, `run.limit`, `launch.no_grant`, `runner.disabled`,
+    `ticket.key_not_next`): no page reads them. Before this, `detail` passed through unfiltered.
+  - **`reader.list`** is a read of cap `reader/1` (hostlink), served at `GET /api/w/<uuid>/readers` through an allow-list:
+    `{available, readers:[{device, person, reader, level}], required_reader}`. `dk_hash`, `digest` and `decl` stay on the
+    server. `reader.declare` is never sent (a declaration comes from the device). Feature `readers`.
+  - **`/members`** forwards the read_ext/3 device fields and `reader` (`label`, `label_hidden`, `paired_at`, `relay`,
+    `cert_expires_at`, `reader`), each checked; a label with invisible or control characters other than LF is withheld
+    (`label_hidden`), never repaired.
+  - **The page** (`src/api/refusals.ts`) rechecks the reason and the devices and says each reason in one sentence; an
+    unknown reason gets the code's general sentence and is never shown. The devices a refusal names are shown by label and
+    member (`RefusalDevices`), never by id, in the sign panel, the hand-off dialog and pairing errors. A known
+    `sign.convenience_readers` reason replaces the host's message in the click problem (the host text may name readers by
+    id); without a reason (an older host) the host's message stays. In the terminal hand-off the host's message follows the
+    sentence, labelled "The host says".
+  - **The signer's `problem`** is a sentence where known (`readers_old`, `disabled`, `not_convenience`, `version_mismatch`,
+    `custody_unavailable`); `readers_old` links to Settings → Devices.
+  - **Settings → Devices** shows "Reader levels" whenever the host serves `reader/1`, independent of the pairing gate. Paired
+    devices are now those with `relay: true` (core sends `relay` on every device).
+- **Why:** H12d-2's brief; the readers' levels are the fix for every relaxed refusal, so the page names them.
+- **Revert:** drop `closed_detail` (restore `error = {k: v … if k != "fix"}`), `reader.list`/`reader/1` in `hostlink.py`, the
+  `readers` feature and route, the new `Device` fields; delete `src/api/refusals.ts`, `RefusalDevices.tsx`, `host/Readers.tsx`,
+  `src/dev/readersFixture.ts` and the two scenarios; restore the `UNAVAILABLE` map in `click.ts`.

@@ -8955,6 +8955,12 @@ structurally: the invariant is named and enforced in one place.
   `host/human.py` keep their own removed/revoked checks for local socket peers (not relay decisions). No relayr6 path
   returns a usable key source with a stale or unbound gate: `r6()` binds only after the rebuild and prune, and
   `seal_state` re-checks the live binding; the link source signs only the card, which no gate governs.
+- Mutation, round 6: 17 new mutants of the prune and the rebuild span (a stale-copy write, no compare-and-swap, the
+  queue ignored, the in-memory lowering first, no `_require_safe`, the rebuild outside the lock span or re-entering
+  the store, `any` over persons, a person-agnostic raise, never or always pruning, another reason kind, a non-durable
+  prune): 3 survivors hit two redundant checks, which are removed (one compare-and-swap right before the write
+  remains); of the remaining 14, 12 killed, 2 equivalent (the head cannot change between the prune's write and its
+  in-memory lowering, every head write holds the writer lock the prune holds; `standing_ok` always returns a bool).
 - Mutation, round 5: 20 new mutants of the round-5 code (the prune's queue, kind, `""`, standing, durability and
   lowering; the rebuild's prune; the unified standing function and the person-aware questions; R2's standing copy;
   the freshness-check order; the queued-raise commit): 17 killed at first, 2 survivors closed by tests (the queue,

@@ -97,3 +97,21 @@ def test_the_workspace_name_is_read_below_the_pinned_root(env, outside, tmp_path
         assert reads_ws._name(SimpleNamespace(store=s), "X") == "Acme"
     assert seen == []
     s.close()
+
+
+def test_a_records_snapshot_hashes_the_pinned_root(env, outside, tmp_path):
+    from orch.host import records as host_records
+
+    s = env.bootstrap()
+    uid = env.new_ticket()
+    ctx = SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS)
+    want = host_records._take(ctx)
+    shutil.copytree(env.root, outside / "ws")
+    (outside / "ws" / "tickets" / uid / "ticket.json").write_bytes(b'{"forged": true}\n')
+    env.root.rename(tmp_path / "ws-moved")
+    os.symlink(outside / "ws", env.root)
+    with watch(outside) as seen:
+        got = host_records._take(SimpleNamespace(store=s, holder=SimpleNamespace(), workspace_id=WS))
+    assert seen == []
+    assert got["files"] == want["files"]  # the store's own directory, not the one the path now names
+    s.close()

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import fcntl
 import os
 import secrets
 import stat
@@ -386,30 +387,32 @@ class RootFS:
     def real_dir(self, p: Rel) -> Path:
         """The directory ``p`` (below the pinned root, made if missing) by its **real path now**, for the one consumer
         that can only take a path (SQLite, the derived index). The path is the kernel's name of the pinned directory
-        (``F_GETPATH`` on macOS, ``/proc/self/fd`` on Linux), then checked by walking it from ``/`` with
-        ``O_NOFOLLOW`` on every component (:func:`orch.gitread.fs.open_walk`) to the same ``st_dev``/``st_ino``: at
-        that moment the path has no symlink and names this directory. What is left is the window between this check
-        and the consumer's own open (documented in #516: the index is derived data, never read for a decision)."""
-        from orch.gitread.errors import Unavailable
-        from orch.gitread.fs import open_walk
-
+        (``F_GETPATH`` on macOS, ``/proc/self/fd`` on Linux), then checked component by component with ``lstat`` (no
+        component is a symlink) and its last one against the fd's ``st_dev``/``st_ino``: at that moment the path has no
+        symlink and names this directory. (``lstat``, not an open walk from ``/``: the host's audit hook allows opens
+        only under its roots.) What is left is the window between this check and the consumer's own open, documented
+        in #516: the index is derived data, never read for a decision."""
         self.mkdir(p)
         with self.dir(p) as fd:
             st = os.fstat(fd)
             try:
                 if sys.platform == "darwin":
-                    import fcntl
-
                     raw = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", 50), b"\0" * 1024)
                     real = raw.split(b"\0", 1)[0].decode()
                 else:
                     real = os.readlink(f"/proc/self/fd/{fd}")
-                d, wst = open_walk(real)
-                d.close()
-            except (OSError, UnicodeDecodeError, Unavailable) as e:
+                if not real.startswith("/") or any(c in (".", "..") for c in real.split("/")[1:]):
+                    raise OSError(errno.EINVAL, "not a clean absolute path", real)
+                cur = ""
+                for comp in [c for c in real.split("/") if c]:
+                    cur += "/" + comp
+                    if stat.S_ISLNK(os.lstat(cur).st_mode):
+                        raise OSError(errno.ELOOP, "a symlink on the way", cur)
+                last = os.lstat(real)
+            except (OSError, UnicodeDecodeError) as e:
                 why = f"{os.fspath(p)!r}: its real path cannot be checked ({e})"
                 raise StoreError("validation.path", why) from None
-        if (wst.st_dev, wst.st_ino) != (st.st_dev, st.st_ino):
+        if not stat.S_ISDIR(last.st_mode) or (last.st_dev, last.st_ino) != (st.st_dev, st.st_ino):
             raise StoreError("validation.path", f"{os.fspath(p)!r} moved while its real path was checked")
         return Path(real)
 

@@ -9385,7 +9385,7 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     | Site | Isolation |
     |---|---|
     | `gitsafe` gate's own reads | `argv`, `isolated_env`, no person keys |
-    | `store/observe.git` (`head`, `porcelain`, `dirty`, `repo_identity`; `ops/caps.Git` and `hostclient` in direct mode) | gate before every command, `submodules` for `status`; `argv`, `isolated_env`; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (the person's own idea of clean; a pattern file and line-ending settings, no program) (#546) |
+    | `store/observe.git` (`head`, `porcelain`, `dirty`, `repo_identity`; `ops/caps.Git` and `hostclient` in direct mode) | gate before every command, `submodules` for `status`; `argv`, `isolated_env`; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (the person's own idea of clean; a pattern file and line-ending settings, no program). A `git config --no-includes` read (the identity's `remote.origin.url`, F1 5.7) executes nothing and is not gated, like the gate's own listing (#546) |
     | `ops/health._git` (`check --staged`: `diff --cached --raw`, `show :<path>`) | gate once per check (`git.unavailable` naming the key), `argv`, `isolated_env`, no person keys, through `caps.exec` (#546) |
     | `runner/wtgit.read_git`, `tree_dirty` | gate (and `submodules`), `argv`, `isolated_env`, no person keys |
     | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |

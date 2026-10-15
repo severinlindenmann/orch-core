@@ -97,8 +97,8 @@ def world(tmp_path, monkeypatch):
 
 def make_repo(w, name: str, *, attrs: str | None = None) -> Path:
     """A committed repo (``a.g``, ``b.txt``, optional ``.gitattributes``) with ``a.g`` changed in the work tree (same
-    size, newer mtime: git must read it), a staged change of ``b.txt``, and a bare ``<name>-dst.git`` that borrows its
-    objects (``objects/info/alternates``)."""
+    size, newer mtime: git must read it), a staged change of ``b.txt`` (newer mtime too), and a bare
+    ``<name>-dst.git`` that borrows its objects (``objects/info/alternates``)."""
     repo = w.tmp / name
     repo.mkdir()
     w.git(repo, "init", "-q", "-b", "main")
@@ -111,8 +111,9 @@ def make_repo(w, name: str, *, attrs: str | None = None) -> Path:
     (repo / "b.txt").write_text("bee2\n")
     w.git(repo, "add", "b.txt")
     (repo / "a.g").write_text("two\n")
-    st = (repo / "a.g").stat()
-    os.utime(repo / "a.g", (st.st_atime + 10, st.st_mtime + 10))
+    for f in ("a.g", "b.txt"):  # b.txt: same content, newer stat, so a refresh always writes the index
+        st = (repo / f).stat()
+        os.utime(repo / f, (st.st_atime + 10, st.st_mtime + 10))
     dst = w.tmp / f"{name}-dst.git"
     w.git(w.tmp, "init", "-q", "--bare", str(dst))
     (dst / "objects" / "info" / "alternates").write_text(str(repo / ".git" / "objects") + "\n")
@@ -283,6 +284,9 @@ def test_observe_runs_no_program_of_a_hostile_repo_config(world):
     assert observe.dirty(repo) is None
     assert observe.head(repo) is None
     assert observe.git(repo, "diff") is None
+    # reading the repo's config as data (F1 5.7's identity) is no git command that runs anything: not gated
+    w.git(repo, "remote", "add", "origin", "https://github.com/acme/x")
+    assert observe.repo_identity(repo, "x") == "https://github.com/acme/x"
     assert w.fired() == set()
 
 

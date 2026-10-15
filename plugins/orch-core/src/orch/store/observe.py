@@ -5,7 +5,8 @@ One place that talks to git for the core: ``orch.ops.runner`` (the commit and th
 :mod:`orch.gitsafe` (:data:`orch.gitsafe.ISOLATION`, #546): no configuration the person or the repository controls is
 read except through an explicit allow-list.
 
-* **The repository's own configuration:** :func:`orch.gitsafe.gate` before every command (a key outside the
+* **The repository's own configuration:** :func:`orch.gitsafe.gate` before every command but a plain
+  ``git config --no-includes`` read, which executes nothing (a key outside the
   allow-list, such as a ``filter.<d>.clean`` that a ``.gitattributes`` selects, or a config file another account can
   write: git is not started and the answer is ``None``, "cannot be told"); ``status`` also refuses a populated
   submodule (:func:`orch.gitsafe.submodules`: its own config is not gated).
@@ -43,11 +44,17 @@ def git(path: Path, *args: str, strip: bool = True, person: Iterable[str] = (), 
     """``git -C path ...`` isolated (:mod:`orch.gitsafe`): the gate on the repository's own configuration first, then
     git with system and global configuration off, keeping only the ``person`` keys of the person's configuration;
     stdout stripped (unless ``strip`` is off). ``None`` if the gate refuses, git fails or is missing. ``whole_tree``:
-    the command reads the working tree (``status``), so a populated submodule is refused too."""
+    the command reads the working tree (``status``), so a populated submodule is refused too.
+
+    A ``git config --no-includes`` read is not gated: it reads the repository's own config file as data and executes
+    nothing, exactly as the gate's own listing does (``repo_identity`` reads ``remote.origin.url`` this way, so a
+    repository with, say, a local ``url.<base>.insteadOf`` still has its identity, F1 5.7)."""
     own = os.environ
     repo = os.path.abspath(path)
+    config_read = args[:2] == ("config", "--no-includes")
     try:
-        gitsafe.gate(repo, own)
+        if not config_read:
+            gitsafe.gate(repo, own)
         if whole_tree:
             gitsafe.submodules(repo, own)
         entries = gitsafe.person_entries(own, person)
@@ -106,7 +113,7 @@ def repo_identity(path: Path, name: str) -> str:
     """The identity of the repository (F1 5.7) from the raw ``remote.origin.url`` (no ``insteadOf``, unstripped): the
     canonical ``https://`` URL it maps to, else ``local:<name>``; more than one value is ``local:<name>`` (git fetches
     from the first and pushes to all)."""
-    out = git(path, "config", "--null", "--get-all", "remote.origin.url", strip=False)
+    out = git(path, "config", "--no-includes", "--null", "--get-all", "remote.origin.url", strip=False)
     values = [v for v in (out or "").split("\0") if v]
     return canon.canonical_repo_identity(values[0] if len(values) == 1 else "", name)
 

@@ -395,8 +395,8 @@ def test_a_write_without_idem_is_idem_required_and_a_bad_one_idem_invalid(w):
     assert refusal(w, w.send(w.phone.request(w.wk, m)))["refusal"] == "idem.required"
     m = w.new_ticket(idem="a_" + ulid())
     assert refusal(w, w.send(w.phone.request(w.wk, m)))["refusal"] == "idem.invalid"
-    m = w.new_ticket(idem=ulid())  # well-formed, but not the event id
-    assert refusal(w, w.send(w.phone.request(w.wk, m)))["refusal"] == "idem.invalid"
+    m = w.new_ticket(idem=ulid())  # well-formed, but not the event id: 14.6 P1 (review M2)
+    assert refusal(w, w.send(w.phone.request(w.wk, m)))["refusal"] == "invalid.input"
     assert w.host.runs == []
 
 
@@ -405,14 +405,28 @@ def test_the_scope_must_be_in_both_the_certificate_and_the_member_list(tmp_path,
     w = World(tmp_path)
     try:
         if where == "cert":
-            p = Phone(("look", "decide"))
-            w.r6.add(p, ("look", "decide", "operate"))
-        else:
-            p = Phone(("look", "decide", "operate"))
+            p = Phone(("look",))
             w.r6.add(p, ("look", "decide"))
+        else:
+            p = Phone(("look", "decide"))
+            w.r6.add(p, ("look",))
         w.phone = p
         assert refusal(w, w.send(p.request(w.wk, w.new_ticket())))["refusal"] == "forbidden_scope"
         assert w.call({"op": "whoami", "args": {}})[0] == {"status": "ok"}
+    finally:
+        w.close()
+
+
+def test_a_look_decide_phone_creates_a_ticket(tmp_path):
+    """I1: the 14.8 phone profile ``scopes_max: ["look","decide"]`` (no ``operate``) creates a ticket and answers."""
+    w = World(tmp_path)
+    try:
+        p = Phone(("look", "decide"))
+        w.r6.add(p)
+        w.phone = p
+        meta, data = w.answer(w.send(p.request(w.wk, w.new_ticket())))
+        assert meta == {"status": "ok"} and data["data"]["seqs"] == [1]
+        assert [op for op, _ in w.host.runs] == ["new_ticket"]
     finally:
         w.close()
 
@@ -442,7 +456,7 @@ def test_two_devices_with_the_same_idem_never_collide(tmp_path):
         m = w.new_ticket()
         w.call(m)
         w.phone, mine = other, w.phone
-        ev = other.event(m["args"]["log"], "ticket.created", eid=m["idem"], key="DEMO-77", ticket_type="task",
+        ev = other.event(m["args"]["log"], "ticket.created", eid=m["idem"], key="DEMO-0077", ticket_type="bug",
                          title="other", owner="p_" + other.person)  # fmt: skip
         meta, data = w.call({"op": "new_ticket", "args": {"log": m["args"]["log"], "events": [ev]}, "idem": m["idem"]})
         # the outcome keys never collide (no replay of the first device's outcome, no idem.conflict); the log dedup

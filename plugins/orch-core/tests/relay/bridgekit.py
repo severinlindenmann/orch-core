@@ -299,7 +299,7 @@ class FakeHost:
         self.runs.append((op, idem))
         if ev.get("title") == "refuse me":
             return self._fail(key, binding, "ticket.exists")
-        if ev.get("key") == "DEMO-TAKEN":
+        if ev.get("key") == "DEMO-0007":  # the kit's taken key
             return self._fail(key, binding, "ticket.key_not_next", next_key="DEMO-42")
         logd[ev["id"]] = {"seq": len(logd) + 1, "type": ev["type"], "ident": ident}
         self._save("log.json", logd)
@@ -438,7 +438,7 @@ class World:
     def new_ticket(self, *, key: str | None = None, title: str = "From the phone", **kw: Any) -> dict[str, Any]:
         log = ulid(self.clock.ms)
         ev = self.phone.event(log, "ticket.created", eid=ulid(self.clock.ms),
-                              key=key or f"DEMO-{secrets.randbelow(10**6) + 1}", ticket_type="task", title=title,
+                              key=key or f"DEMO-{secrets.randbelow(998_000) + 1000}", ticket_type="bug", title=title,
                               owner="p_" + self.phone.person)  # fmt: skip
         return {
             "op": "new_ticket",

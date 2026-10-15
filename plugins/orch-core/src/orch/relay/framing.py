@@ -128,7 +128,7 @@ OPS: Mapping[str, OpSpec] = {
     "member.list": OpSpec("member.list", "read", "look"),
     "whoami": OpSpec("whoami", "read", "look"),
     "outcome.get": OpSpec("outcome.get", "read", "look"),
-    "new_ticket": OpSpec("relay.submit", "write", "operate", "ticket.created"),
+    "new_ticket": OpSpec("relay.submit", "write", "decide", "ticket.created"),
     "answer": OpSpec("relay.submit", "write", "decide", "question.answered"),
 }
 
@@ -161,6 +161,7 @@ RETRY: Mapping[str, str] = {
             "committed", "event.duplicate_id", "ticket.exists", "idem.conflict", "idem.invalid", "idem.required",
             "forbidden_scope", "not_member", "revoked", "bad_signature", "malformed", "req.invalid",
             "grant.secret_in_args", "op.not_allowed", "invalid.input", "frame.too_large", "not_found", "internal",
+            "validation.event", "validation.text", "sig.invalid",
         ),
         "D",
     ),

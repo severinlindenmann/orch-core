@@ -11,11 +11,19 @@ R6 is a security dependency of R2, not a fixture (11A.1): R2 is tested against a
   holds the seal lock and takes ONE snapshot of the seal state (:class:`SealState`: the committed epoch, the rotation
   gate, the epoch a ``stale_epoch`` names). The caller seals AND commits the replayable bytes (T2 or the refusal
   record) inside that span; R6 raises the gate or commits a rotation inside :meth:`BridgeKeys.serialised` (the same
-  lock), so a gate is never raised between the check and the commit. :meth:`Sealer.seal_response` (data) refuses
-  any epoch but the snapshot's committed one, and any epoch while the gate is up. :meth:`Sealer.seal_refusal` is the
+  lock), so a gate is never raised between the check and the commit. :meth:`_Sealer.seal_response` (data) refuses
+  any epoch but the snapshot's committed one, and any epoch while the gate is up. :meth:`_Sealer.seal_refusal` is the
   only path under an old, burned or gated epoch: it builds the plaintext ITSELF with
   :func:`orch.relay.framing.refusal_meta` (the closed field sets), so no caller can seal arbitrary plaintext there;
-  under a burned epoch (above the committed one, :meth:`EpochKeySource.refusal_key`) only ``stale_epoch``.
+  under a burned epoch (above the committed one, :meth:`EpochKeySource.refusal_key`) only ``stale_epoch``. The sealer
+  class is private and its constructor takes a module-private token: only :meth:`BridgeKeys.sealing` builds one, with
+  the snapshot it took itself (a test pins that by AST; review D2-7).
+* **Lock order** (11A.5, review D2-4): the workspace store lock first, then the seal lock, then the RidStore lock
+  (innermost; it never calls out). Inside a :meth:`BridgeKeys.sealing` span the bridge takes only the RidStore lock
+  and SQLite; it never takes the store lock and never calls ``job()``. No :class:`EpochKeySource` method
+  (``current_epoch``, ``wk``, ``seal_state``, ``refusal_key``) may take the store lock or wait for the workspace
+  worker: R6 commits a rotation under the store lock inside :meth:`BridgeKeys.serialised` (store lock, then seal
+  lock), so a source that took the store lock under the seal lock would deadlock with it.
 * :class:`R6View` returns the current accepted member list: per device its person, its scopes and its certificate, and
   the owner-verified person key (``pk_pub``) the certificate is checked under.
 """
@@ -34,8 +42,9 @@ from .sign import RelaySigner
 
 __all__ = [
     "BridgeKeys", "EpochKeySource", "KeyMissing", "Member", "MemberList", "R6View", "SealRefused", "SealState",
-    "Sealer",
 ]  # fmt: skip
+
+_TOKEN = object()  # only BridgeKeys.sealing holds it: nothing else can build a sealer (G1, review D2-7)
 
 
 class KeyMissing(Exception):
@@ -148,18 +157,21 @@ class BridgeKeys:
             yield
 
     @contextlib.contextmanager
-    def sealing(self, signer: RelaySigner) -> Iterator[Sealer]:
+    def sealing(self, signer: RelaySigner) -> Iterator[_Sealer]:
         """G1: the seal lock and ONE snapshot of the seal state; seal AND commit the replayable bytes inside it."""
         with self._lock:
-            yield Sealer(self, signer, self._source.seal_state(), self._wk)
+            yield _Sealer(_TOKEN, self, signer, self._source.seal_state(), self._wk)
 
 
-class Sealer:
-    """The only way to seal a response chunk, bound to one :class:`SealState` snapshot (G1)."""
+class _Sealer:
+    """The only way to seal a response chunk, bound to one :class:`SealState` snapshot (G1). Private: built only by
+    :meth:`BridgeKeys.sealing` (the token), never with a caller's own (forged) :class:`SealState`."""
 
     def __init__(
-        self, keys: BridgeKeys, signer: RelaySigner, state: SealState, channel: Callable[[int], bytes]
+        self, token: object, keys: BridgeKeys, signer: RelaySigner, state: SealState, channel: Callable[[int], bytes]
     ) -> None:
+        if token is not _TOKEN:
+            raise TypeError("a sealer is built only by BridgeKeys.sealing")
         self._keys, self._signer, self.state, self._channel = keys, signer, state, channel
 
     def data_ok(self, epoch: int) -> bool:

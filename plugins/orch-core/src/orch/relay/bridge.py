@@ -9,7 +9,7 @@ worker contract R5 needs: ``start()``, ``stop()``, ``join(timeout) -> bool``.
 Every chunk is sealed inside :meth:`BridgeKeys.sealing` (G1): one snapshot of the seal state, and the bytes are
 committed (T2 or the refusal record) before the span ends. Data is sealed only under the snapshot's committed epoch
 with the rotation gate down; anything else becomes a refusal (``already_done {status: unknown}`` for an answer that
-may not be sealed), built by :meth:`Sealer.seal_refusal` from the closed refusal fields.
+may not be sealed), built by :meth:`keys._Sealer.seal_refusal` from the closed refusal fields.
 
 Order (§8.6, with 11A.4/11A.5):
 
@@ -23,11 +23,14 @@ Order (§8.6, with 11A.4/11A.5):
    (not in R6's current member list, or its certificate does not verify under its person's key now, or the F1 state
    does not associate exactly this pair), ``bad_signature`` (``dk_sig`` of the certificate). The certificate and the
    signature are checked before the host's standing; an unsigned request reaches the store only within the budget.
-   Recorded keyed ``u:<device>`` (R2-11): never matched by a verified request of that device;
+   Recorded keyed ``u:<device>`` (R2-11): a verified request of that device never matches it by rid alone; only the
+   SAME bytes (same digest, so the device's own signature) replay it, so a definite refusal stays definite (D2-2).
+   Once its bytes are swept a step-4 refusal is silence (D2-1);
 5. replay: a known ``(device, rid)``: same bytes -> the stored chunk bytes again (no answer while the rid is still
    admitted; ``already_done {status: unknown}`` at the next index once the bytes were swept, ruling D); other bytes ->
-   the four ``rid_conflict`` cases of 11A.4; 5b quota: the row caps (drop), then ``busy`` (recorded within
-   ``PER_DEVICE + BUSY_ALLOWANCE``, seq not used) above ``PER_DEVICE`` or the stored-answer byte budgets;
+   the four ``rid_conflict`` cases of 11A.4; the same bytes recorded as a step-4 refusal ``u:<device>`` replay that
+   refusal and never run (D2-2); 5b quota: the row caps (drop), then ``busy`` (recorded within
+   ``PER_DEVICE + BUSY_ALLOWANCE``, seq not used) above ``PER_DEVICE``;
 6. framing: strict meta with a string ``op``, else ``malformed`` (recorded, seq not used);
 7. seq window -> ``stale_sequence`` (``high``); from here the seq is consumed;
 8. ±300 s -> ``stale_timestamp`` (``host_ms``);
@@ -37,7 +40,12 @@ Order (§8.6, with 11A.4/11A.5):
 11. :func:`orch.relay.framing.check_meta` (``auth`` -> ``req.invalid``, grant shape -> ``grant.secret_in_args``, op
     table -> ``forbidden_scope``, idem rules), the scope in BOTH the certificate and the member list, the write's
     events (:func:`orch.relay.submit.check_events`; freshness is the host's, after dedup: ruling A), ruling B (the
-    same idem admitted or running under another rid -> ``pending``, never a second run), then T1 and the run.
+    same idem admitted or running under another rid -> ``pending``, never a second run); a READ over the stored-answer
+    byte budgets -> ``busy`` (seq not used; writes are never refused for bytes, D2-3); then T1 and the run.
+
+Robustness (D2-1, D2-7): one poll item, one job or one aux step that raises is logged (bounded) and acknowledged;
+it never stops the loop. A refusal code outside the closed table is sealed as ``internal``; a signer refusal is
+silence for that chunk.
 """
 
 from __future__ import annotations
@@ -63,7 +71,7 @@ from .keys import BridgeKeys, KeyMissing, Member, R6View, SealRefused
 from .retry import RelayRefused
 from .rids import Rid, RidStore, seq_accept
 from .session import Fenced, Session, SessionError
-from .sign import RelaySigner
+from .sign import RelaySigner, SignerRefused
 
 __all__ = ["OPS", "PROTO_CODES", "Bridge", "BridgeLoop", "HostPort", "Item", "PostResult"]
 
@@ -80,6 +88,12 @@ DEVICE_DAY_ROWS = 16_384  # per device per 24 h (R2-3: one device cannot fill th
 MAX_RETAINED_ROWS = 262_144  # host-wide non-tombstone rows (24 h)
 DEVICE_CHUNK_BYTES = 16 << 20  # stored answer bytes + 2 MiB per admitted read, per device (R2-4)
 CHUNK_BYTES = 128 << 20  # the same host-wide
+#: D2-3: a device past its fair share (its bytes with this answer above FAIR_CHUNK_BYTES) may fill the host only up to
+#: SHARED_CHUNK_BYTES; the rest is reserved for devices within their share, so starving every read on the host takes
+#: at least 6 heavy (96 MiB / 16 MiB) plus 8 light (32 MiB / 4 MiB) member devices, and writes are never refused for
+#: bytes (their answers are one small chunk, bounded by the row caps)
+FAIR_CHUNK_BYTES = 4 << 20
+SHARED_CHUNK_BYTES = CHUNK_BYTES - (32 << 20)
 BUDGET = 10
 BUDGET_WINDOW_MS = 60_000
 CHUNK_ROOM = wire.MAX_CHUNK - wire.OVERHEAD  # plaintext of one chunk
@@ -173,6 +187,10 @@ class Bridge:
         self._stuck_lock = threading.Lock()
         #: (device, rid) -> (delay ms, due ms) of a rid whose last POST was "retry"; one entry per open rid
         self._post_wait: dict[tuple[str, str], tuple[int, int]] = {}
+        #: guards _reopened and _post_wait (the responder, job and aux threads all change them; review N1)
+        self._maps_lock = threading.Lock()
+        #: rids being POSTed now: a second _post_rid of the same rid (job thread and aux flush) waits its turn (N1)
+        self._posting: set[tuple[str, str]] = set()
 
     # -- start-up (11A.4 recovery, start fence) -------------------------------------------------------------------
 
@@ -203,7 +221,7 @@ class Bridge:
             return
         try:
             got = self.job(lambda b=built, r=rec: self.port.lookup(b[0], r.idem))
-        except Refusal:
+        except Exception:  # noqa: BLE001 - a refusal or anything else: the device settles it through outcome.get
             got = {"state": "unknown"}
         self._answer_outcome(rec, h, got)
 
@@ -219,9 +237,11 @@ class Bridge:
             self._answer_refusal(rec, h, "already_done", **_UNKNOWN)
 
     def _header_of(self, rec: Rid) -> wire.Header:
-        """A request header rebuilt from the rid record: enough to address the answer (device, rid, epoch)."""
+        """A request header rebuilt from the rid record: enough to address the answer (device, rid, epoch). A step-4
+        record is keyed ``u:<device>``: the header names the device itself (D2-1)."""
+        device = rec.device[2:] if rec.device.startswith("u:") else rec.device
         return wire.Header(
-            2, 1, 0, wire.SUITE, self.ws, bytes.fromhex(rec.device), bytes.fromhex(rec.rid), bytes(16), rec.seq, 0,
+            2, 1, 0, wire.SUITE, self.ws, bytes.fromhex(device), bytes.fromhex(rec.rid), bytes(16), rec.seq, 0,
             rec.epoch, bytes(16),
         )  # fmt: skip
 
@@ -277,8 +297,8 @@ class Bridge:
             ukey = "u:" + device  # R2-11: never the verified device's own (device, rid)
             known_u = self.rids.get(ukey, rid)
             if known_u is not None:
-                if known_u.req_digest == digest:
-                    self._replay(known_u)
+                if known_u.req_digest == digest and _has_bytes(known_u):
+                    self._replay(known_u)  # swept: silence (step 4 needs no answer; D2-1)
                 return None
             if not self._spend_budget(now):
                 return None
@@ -289,10 +309,16 @@ class Bridge:
         if known is not None:
             self._known(known, h, digest, now)
             return None
+        # D2-2: these exact bytes were refused at step 4 (a definite answer): replay that refusal, never run them
+        known_u = self.rids.get("u:" + device, rid)
+        if known_u is not None and known_u.req_digest == digest:
+            if _has_bytes(known_u):
+                self._replay(known_u)
+            return None
         # 5b. quota: the row caps (drop), then busy (recorded within the allowance, seq not used)
         if not self._room(device, now, verified=True):
             return None
-        if self.rids.live(now - RID_RETENTION_MS, device) >= PER_DEVICE or not self._bytes_ok(device):
+        if self.rids.live(now - RID_RETENTION_MS, device) >= PER_DEVICE:
             self._refuse(h, digest, now, "busy", window=None)
             return None
         # 6. framing
@@ -346,6 +372,10 @@ class Bridge:
                     raise Refusal("pending")
         except Refusal as r:
             self._refuse(h, digest, now, window=window, **_refusal_fields(r))
+            return None
+        # D2-3: a read may store a whole answer; over the byte budgets: busy, the seq not used (nothing ran)
+        if req.spec.kind == "read" and not self._bytes_ok(device):
+            self._refuse(h, digest, now, "busy", window=None)
             return None
         # T1
         self.rids.admit(
@@ -436,12 +466,15 @@ class Bridge:
         return True
 
     def _bytes_ok(self, device: str) -> bool:
-        """The stored-answer byte budgets (R2-4): stored chunk bytes plus one whole answer per admitted read."""
+        """The stored-answer byte budgets of a read (R2-4, D2-3): stored chunk bytes plus one whole answer per
+        admitted read, per device and host-wide; past its fair share a device sees only the shared part of the host
+        budget, so the reserve stays open to the devices within theirs."""
         reserve = framing.RELAY_DEVICE_RESPONSE_BYTES
-        mine = self.rids.chunk_bytes(device) + self.rids.admitted_reads(device) * reserve
-        if mine + reserve > DEVICE_CHUNK_BYTES:
+        mine = self.rids.chunk_bytes(device) + self.rids.admitted_reads(device) * reserve + reserve
+        if mine > DEVICE_CHUNK_BYTES:
             return False
-        return self.rids.chunk_bytes() + self.rids.admitted_reads() * reserve + reserve <= CHUNK_BYTES
+        host = self.rids.chunk_bytes() + self.rids.admitted_reads() * reserve + reserve
+        return host <= (CHUNK_BYTES if mine <= FAIR_CHUNK_BYTES else SHARED_CHUNK_BYTES)
 
     # -- refusals and replays -------------------------------------------------------------------------------------
 
@@ -463,9 +496,8 @@ class Bridge:
         if not self._room(dkey, now, verified=kind != "unverified"):
             return
         with self.keys.sealing(self.signer) as s:
-            try:
-                chunk = s.seal_refusal(request=h, idx=0, ts_ms=self.now_ms(), code=code, **fields)
-            except (SealRefused, KeyMissing):
+            chunk = self._seal_refusal(s, h, 0, code, **fields)
+            if chunk is None:
                 return
             self.rids.record_refusal(
                 device=dkey, rid=h.rid.hex(), first_ms=now, req_digest=digest, epoch=h.epoch, seq=h.seq,
@@ -481,21 +513,21 @@ class Bridge:
         if rec.state != "answered":
             return  # admitted: running, or waiting for recovery: no answer now (no interim already_done)
         key, now = (rec.device, rec.rid), self.now_ms()
-        count, last = self._reopened.get(key, (0, -REPLAY_EVERY_MS))
-        if count >= REPLAY_MAX or now - last < REPLAY_EVERY_MS:
-            return  # bounded (P3-D27's bounds): the relay would refuse a ninth re-store anyway
-        self._reopened[key] = (count + 1, now)
-        self._reopened.move_to_end(key)
-        while len(self._reopened) > REPLAY_TRACKED:
-            self._reopened.popitem(last=False)
+        with self._maps_lock:
+            count, last = self._reopened.get(key, (0, -REPLAY_EVERY_MS))
+            if count >= REPLAY_MAX or now - last < REPLAY_EVERY_MS:
+                return  # bounded (P3-D27's bounds): the relay would refuse a ninth re-store anyway
+            self._reopened[key] = (count + 1, now)
+            self._reopened.move_to_end(key)
+            while len(self._reopened) > REPLAY_TRACKED:
+                self._reopened.popitem(last=False)
         if rec.chunks and all(c.data is None for c in rec.chunks):
+            if rec.device.startswith("u:"):
+                return  # a swept step-4 refusal: silence (D2-1)
             idx = max(c.idx for c in rec.chunks) + 1
             with self.keys.sealing(self.signer) as s:
-                try:
-                    chunk = s.seal_refusal(
-                        request=self._header_of(rec), idx=idx, ts_ms=now, code="already_done", **_UNKNOWN
-                    )
-                except (SealRefused, KeyMissing):
+                chunk = self._seal_refusal(s, self._header_of(rec), idx, "already_done", **_UNKNOWN)
+                if chunk is None:
                     return  # the epoch's key is gone: nothing can be sealed for this rid any more
                 self.rids.append_chunk(rec.device, rec.rid, idx, rec.epoch, chunk)
         else:
@@ -522,11 +554,11 @@ class Bridge:
         """Replace the never-attempted chunks of ``rid`` with one closing refusal at ``idx``. A chunk that became
         ``attempted`` meanwhile (a concurrent POST, R2-12) is never replaced: the caller re-reads, nothing stops."""
         with self.keys.sealing(self.signer) as s:
-            try:
-                chunk = s.seal_refusal(request=h, idx=idx, ts_ms=self.now_ms(), code=code, **fields)
-                self.rids.replace_unattempted(device, rid, [(idx, h.epoch, chunk)])
-            except (SealRefused, KeyMissing):
+            chunk = self._seal_refusal(s, h, idx, code, **fields)
+            if chunk is None:
                 return
+            try:
+                self.rids.replace_unattempted(device, rid, [(idx, h.epoch, chunk)])
             except ValueError:
                 log.info("relay chunk attempted meanwhile device=%s rid=%s", device, rid)
                 return
@@ -614,17 +646,32 @@ class Bridge:
                         (i, s.seal_response(request=h, idx=i, last=i == n - 1, ts_ms=self.now_ms(), plaintext=pt))
                         for i, pt in enumerate(pts)
                     ]
-            except (SealRefused, KeyMissing):
-                return  # the key is gone: nothing can be sealed for this rid
+            except (SealRefused, KeyMissing, SignerRefused):
+                return  # the key is gone (or the signer refused): nothing can be sealed for this rid
             stored = self.rids.answer(rec.device, rec.rid, chunks)  # T2, inside the seal span, before any POST
         if stored:
             self._post_rid(rec.device, rec.rid)
 
+    def _seal_refusal(self, s: Any, h: wire.Header, idx: int, code: str, **fields: Any) -> bytes | None:
+        """``s.seal_refusal`` for this request at ``idx``. ``None`` when nothing may be sealed (the gate, the key, the
+        signer). A code or field outside the closed refusal table (a host code the table does not know) is sealed as
+        ``internal`` in the same context, never raised into the loop (D2-7)."""
+        try:
+            return s.seal_refusal(request=h, idx=idx, ts_ms=self.now_ms(), code=code, **fields)
+        except (SealRefused, KeyMissing, SignerRefused):
+            return None
+        except ValueError:
+            log.error("relay refusal outside the closed refusal table: sealed as internal")
+        try:
+            effects = bool(fields.get("effects_possible"))
+            return s.seal_refusal(request=h, idx=idx, ts_ms=self.now_ms(), code="internal", effects_possible=effects)
+        except (SealRefused, KeyMissing, ValueError):
+            return None
+
     def _answer_refusal(self, rec: Rid, h: wire.Header, code: str, **fields: Any) -> None:
         with self.keys.sealing(self.signer) as s:
-            try:
-                chunk = s.seal_refusal(request=h, idx=0, ts_ms=self.now_ms(), code=code, **fields)
-            except (SealRefused, KeyMissing):
+            chunk = self._seal_refusal(s, h, 0, code, **fields)
+            if chunk is None:
                 return
             stored = self.rids.answer(rec.device, rec.rid, [(0, chunk)])
         if stored:
@@ -663,11 +710,26 @@ class Bridge:
                 continue
             with self._stuck_lock:
                 self._stuck.pop((device, rid), None)
-            self._settle(rec)
+            try:
+                self._settle(rec)
+            except Exception:  # noqa: BLE001 - never the aux thread's end (lease renewal, flush; D2-7)
+                log.error("relay write settle failed device=%s rid=%s", device, rid)
 
     # -- posting --------------------------------------------------------------------------------------------------
 
     def _post_rid(self, device: str, rid: str) -> None:
+        key = (device, rid)
+        with self._maps_lock:
+            if key in self._posting:
+                return  # another thread posts this rid now (N1); what it leaves open, the aux flush posts later
+            self._posting.add(key)
+        try:
+            self._post_rid_once(device, rid)
+        finally:
+            with self._maps_lock:
+                self._posting.discard(key)
+
+    def _post_rid_once(self, device: str, rid: str) -> None:
         rec = self.rids.get(device, rid)
         if rec is None:
             return
@@ -677,11 +739,15 @@ class Bridge:
             if c.state == "stored":
                 self.rids.mark(device, rid, c.idx, "attempted")  # committed before the first byte of the POST
             got = self.post(device, rid, c.data)
+            with self._maps_lock:
+                if got == "retry":
+                    prev = self._post_wait.get((device, rid), (POST_BACKOFF_MS // 2, 0))[0]
+                    delay = min(prev * 2, POST_BACKOFF_MAX_MS)
+                    self._post_wait[(device, rid)] = (delay, self.now_ms() + delay)
+                else:
+                    self._post_wait.pop((device, rid), None)
             if got == "retry":
-                delay = min(self._post_wait.get((device, rid), (POST_BACKOFF_MS // 2, 0))[0] * 2, POST_BACKOFF_MAX_MS)
-                self._post_wait[(device, rid)] = (delay, self.now_ms() + delay)
                 return  # this one stays attempted: the same bytes again after the delay
-            self._post_wait.pop((device, rid), None)
             if got == "posted":
                 self.rids.mark(device, rid, c.idx, "posted")
                 continue
@@ -701,18 +767,23 @@ class Bridge:
         """POST every persisted chunk not yet posted (recovery first, then after transient failures)."""
         now, open_ = self.now_ms(), self.rids.unposted()
         live = set(open_)
-        for k in [k for k in self._post_wait if k not in live]:  # bounded by the open rids
-            self._post_wait.pop(k, None)
-        for device, rid in open_:
-            wait = self._post_wait.get((device, rid))
-            if wait is None or wait[1] <= now:
-                self._post_rid(device, rid)
+        with self._maps_lock:
+            for k in [k for k in self._post_wait if k not in live]:  # bounded by the open rids
+                self._post_wait.pop(k, None)
+            due = [k for k in open_ if (w := self._post_wait.get(k)) is None or w[1] <= now]
+        for device, rid in due:
+            self._post_rid(device, rid)
 
     def rotate(self) -> None:
         """An R6 rotation signal: every open answer under an older epoch is closed (11A.5 "Epochs")."""
         for rec in self.rids.answered_open():
+            if rec.device.startswith("u:"):
+                continue  # a step-4 refusal: one closing chunk already, never data (D2-1)
             if rec.epoch < self.keys.current:
-                self.rotate_rid(rec.device, rec.rid)
+                try:
+                    self.rotate_rid(rec.device, rec.rid)
+                except Exception:  # noqa: BLE001 - one rid never stops R6's rotation (D2-1)
+                    log.error("relay rotation of one rid failed device=%s rid=%s", rec.device, rec.rid)
 
     def rotate_rid(self, device: str, rid: str) -> None:
         """An open answer ends with ``LAST | REFUSAL stale_epoch`` at its next unused index; one with no chunk
@@ -734,15 +805,19 @@ class Bridge:
                     idx, code, fields = max(attempted) + 1, "stale_epoch", {"epoch": s.state.current}
                 else:
                     idx, code, fields = 0, "already_done", dict(_UNKNOWN)
-                try:
-                    chunk = s.seal_refusal(request=h, idx=idx, ts_ms=self.now_ms(), code=code, **fields)
-                    self.rids.replace_unattempted(device, rid, [(idx, rec.epoch, chunk)])
-                except (SealRefused, KeyMissing):
+                chunk = self._seal_refusal(s, h, idx, code, **fields)
+                if chunk is None:
                     return
+                try:
+                    self.rids.replace_unattempted(device, rid, [(idx, rec.epoch, chunk)])
                 except ValueError:
                     continue  # a chunk became attempted between the read and the transaction: read again
             self._post_rid(device, rid)
             return
+
+
+def _has_bytes(rec: Rid) -> bool:
+    return any(c.data is not None for c in rec.chunks)
 
 
 def _is_last(data: bytes | None) -> bool:
@@ -818,6 +893,7 @@ class BridgeLoop:
         self._last_poll = 0.0
         self._highest = 0
         self._started = False
+        self._failures = 0
         self.error: BaseException | None = None
 
     # -- lifecycle ----------------------------------------------------------------------------------------------
@@ -943,7 +1019,10 @@ class BridgeLoop:
                 self._qlock.notify_all()
             adm = None
             if item.route == "bridge":
-                adm = self.bridge.receive(item)
+                try:
+                    adm = self.bridge.receive(item)
+                except Exception as e:  # noqa: BLE001 - one item never stops the loop; it is acknowledged (D2-1)
+                    self._item_failed("receive", e)
             # every outcome above is durable (dropped, refused, replayed or admitted at T1): acknowledge in order
             self.bridge.rids.set_cursor(max(item.n, self.bridge.rids.cursor()))
             while adm is not None and not self._stop.is_set():
@@ -961,7 +1040,10 @@ class BridgeLoop:
                 continue
             if adm is None or self._stop.is_set():
                 return
-            self.bridge.run(adm)
+            try:
+                self.bridge.run(adm)
+            except Exception as e:  # noqa: BLE001 - the rid stays admitted: recovered at the next start (D2-7)
+                self._item_failed("run", e)
 
     # -- aux: lease renewal, retention, re-posts ------------------------------------------------------------------
 
@@ -972,10 +1054,30 @@ class BridgeLoop:
                 self.session.hold(deadline_s=AUX_HOLD_DEADLINE_S)
                 self._last_poll = self._mono()
             if self._mono() - last_sweep >= 60.0:
-                self.bridge.rids.sweep(self.bridge.now_ms())
                 last_sweep = self._mono()
-            self.bridge.retry_stuck()
-            self.bridge.flush()
+                self._aux_step("sweep", lambda: self.bridge.rids.sweep(self.bridge.now_ms()))
+            self._aux_step("retry", self.bridge.retry_stuck)
+            self._aux_step("flush", self.bridge.flush)
+
+    def _aux_step(self, what: str, fn: Callable[[], None]) -> None:
+        """One aux step; an exception is logged (bounded) and the aux thread goes on: lease renewal never stops for
+        a retention or posting failure (D2-7). The session's own errors (fenced, lost) still stop the worker."""
+        try:
+            fn()
+        except (Fenced, SessionError):
+            raise
+        except Exception as e:  # noqa: BLE001 - logged by class only
+            self._item_failed(what, e)
+
+    def _item_failed(self, what: str, e: BaseException) -> None:
+        """A bounded log line (the first 10, then every 1000th) and one alarm per class of failure."""
+        with self._qlock:
+            self._failures += 1
+            n = self._failures
+        if n <= 10 or n % 1000 == 0:
+            log.error("relay %s failed (%d so far): %s", what, n, type(e).__name__)
+        if n == 1:
+            self.bridge.alarm("relay_item_failed", f"{what}: {type(e).__name__}")
 
     def _poster(self, conn: Transport) -> Poster:
         lock = threading.Lock()

@@ -1,10 +1,10 @@
-"""The H12e adapter seam (``orch.host.relayadmit``): the contract the swap to core's helpers (#474) must keep. Every
-test here runs against the seam; when ``orch.host.admission`` exists, the same behaviour tests also run against the real
-helpers, and the signatures must agree, so the swap is the seam's two import lines."""
+"""The H12e adapter seam (``orch.host.relayadmit``): core's helpers (#474, merged) under one module, plus one stand-in,
+``device_standing`` (H12e-2, #482). Every behaviour test runs against the seam AND against ``orch.host.admission``
+(``judge_events`` from ``orch.host.human``); once #482 merges, its ``device_standing`` is checked against the same
+contract (review I3a: the real helpers are collected and run, not skipped)."""
 
 from __future__ import annotations
 
-import importlib.util
 import inspect
 
 import pytest
@@ -17,7 +17,10 @@ from tests.host.human_helpers import lab, served  # noqa: F401 - fixtures
 from .bridgekit import ulid
 from .test_relay_entry import _entry, _event, _new_ticket, _next_key, _on_worker, _submit
 
-NAMES = {"COLUMN_R_AUTH", "check_target", "check_window", "judge_events", "known_or_fresh", "next_key", "signed_digest"}
+NAMES = {
+    "COLUMN_R_AUTH", "check_target", "check_window", "device_standing", "judge_events", "known_or_fresh", "next_key",
+    "signed_digest",
+}  # fmt: skip
 SIGS = {
     "check_window": ["event_id", "now"],
     "signed_digest": ["workspace_id", "log", "event"],
@@ -25,20 +28,19 @@ SIGS = {
     "next_key": ["store"],
     "check_target": ["store", "log", "event"],
     "judge_events": ["store", "log", "events", "git", "copies"],
+    "device_standing": ["store", "person_id", "device_id"],
 }
-REAL = importlib.util.find_spec("orch.host.admission") is not None
 
 
 def _impls():
-    out = [relayadmit]
-    if REAL:  # pragma: no cover - after #474 merges
-        import types
+    import types
 
-        from orch.host import admission, human
+    from orch.host import admission, human
 
-        out.append(types.SimpleNamespace(**{n: getattr(admission, n, None) for n in NAMES},
-                                         judge_events=human.judge_events))  # fmt: skip
-    return out
+    real = {n: getattr(admission, n, None) for n in NAMES - {"judge_events", "device_standing"}}
+    # TODO(#482): admission.device_standing once merged; until then the seam's stand-in is the only one
+    real["device_standing"] = getattr(admission, "device_standing", relayadmit.device_standing)
+    return [relayadmit, types.SimpleNamespace(**real, judge_events=human.judge_events)]
 
 
 def test_the_seam_has_h12es_names_and_signatures():
@@ -48,13 +50,16 @@ def test_the_seam_has_h12es_names_and_signatures():
     assert relayadmit.COLUMN_R_AUTH == submit.AUTH  # the relay side's own copy (orch.host is banned there)
 
 
-@pytest.mark.skipif(not REAL, reason="H12e (#474) not merged: the real helpers do not exist yet")
-def test_the_real_helpers_keep_the_contract():  # pragma: no cover - after #474 merges
-    from orch.host import admission
+def test_the_seam_is_the_real_helpers():
+    """D2-5: the round-2 stand-ins are gone: every name but ``device_standing`` IS core's helper (so
+    ``event.abandoned`` and the visibility filter of ``check_target`` come from core)."""
+    from orch.host import admission, human
 
-    for name, params in SIGS.items():
-        if name != "judge_events":
-            assert list(inspect.signature(getattr(admission, name)).parameters) == params, name
+    for name in NAMES - {"judge_events", "device_standing"}:
+        assert getattr(relayadmit, name) is getattr(admission, name), name
+    assert relayadmit.judge_events is human.judge_events
+    if hasattr(admission, "device_standing"):  # pragma: no cover - after #482 merges
+        assert list(inspect.signature(admission.device_standing).parameters) == SIGS["device_standing"]
 
 
 @pytest.mark.parametrize("impl", _impls())

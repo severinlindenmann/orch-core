@@ -76,10 +76,10 @@ def main() -> None:
             del m2["idem"]
             run("write_without_idem", m2, "idem.required")
             m3 = w.new_ticket(idem=ulid(T0))
-            run("idem_not_the_event_id", m3, "idem.invalid")
+            run("idem_not_the_event_id", m3, "idem != events[0].id: invalid.input (14.6 P1)")
             m4 = w.new_ticket()
             m4["args"]["events"][0] = w.phone.event(m4["args"]["log"], "ticket.created", eid=ulid(T0 - 900_001),
-                                                    key="DEMO-9", ticket_type="task", title="old",
+                                                    key="DEMO-0009", ticket_type="bug", title="old",
                                                     owner="p_" + w.phone.person)  # fmt: skip
             m4["idem"] = m4["args"]["events"][0]["id"]
             run("event_expired", m4, "the event id's ULID time outside [now - 900 s, now + 300 s]: event.expired")
@@ -95,13 +95,13 @@ def main() -> None:
             run("chunked_answer", {"op": "ticket.text", "args": {"size": 300_000}},
                 "an answer over one chunk: chunk 0 meta {status: ok}, later {}, LAST on the final one")  # fmt: skip
             # -- round 2 (orch-f1's asks) --
-            ans = w.phone.event(m["args"]["log"], "question.answered", eid=ulid(T0), question="q1",
-                                hash="sha256:" + "0" * 64, option="yes")  # fmt: skip
+            ans = w.phone.event(m["args"]["log"], "question.answered", eid=ulid(T0), question="Q1",
+                                hash="sha256:" + "0" * 64, option="yes", based_on="sha256:" + "1" * 64)  # fmt: skip
             run("answer_write", {"op": "answer", "args": {"log": m["args"]["log"], "events": [ans]}, "idem": ans["id"]},
                 "an answer write: relay.submit of one device-signed question.answered (scope decide)")  # fmt: skip
             run(
                 "ticket_key_not_next",
-                w.new_ticket(key="DEMO-TAKEN"),
+                w.new_ticket(key="DEMO-0007"),
                 "the key is not the next free key: C-auto, rebuild with next_key (advisory) under a NEW event id",
             )
             failed = w.new_ticket(title="refuse me")
@@ -136,6 +136,19 @@ def main() -> None:
             run("already_done_on_a_read", {"op": "whoami", "args": {}},
                 "stamped before the host (re)started: already_done {status: unknown}; on a read: re-issue, new rid",
                 setup=[{"do": "clock", "ms": 1000}, {"do": "restart"}], ts_ms=T0 + 500)  # fmt: skip
+            # -- round 3 (14.6 P3/P7 codes, review M2/I3) --
+            m5 = w.new_ticket()
+            m5["args"]["events"][0]["ws_seq"] = 1
+            run("write_host_field", m5, "a host-stamped field in the submitted event: validation.event (14.6 P3), D")
+            m6 = w.new_ticket()
+            m6["args"]["events"][0]["ticket_type"] = "no-such-type"
+            run("write_schema", m6, "the F1 event schema refuses the event: validation.event (14.6 P3), D")
+            m7 = w.new_ticket()
+            m7["args"]["events"][0]["title"] = "a\u202eb"
+            run("write_text_rule", m7, "an F1 section 11.3 text rule (a bidi control): validation.text (P3), D")
+            m8 = w.new_ticket()
+            m8["args"]["events"][0]["title"] = "changed after signing"
+            run("write_sig_invalid", m8, "the event signature does not verify: sig.invalid (14.6 P7), D")
             run(
                 "stale_epoch_under_a_burned_key",
                 {"op": "whoami", "args": {}},
@@ -188,6 +201,9 @@ def main() -> None:
             "relay_device_response_bytes": framing.RELAY_DEVICE_RESPONSE_BYTES,
             "busy_allowance": bridge.BUSY_ALLOWANCE,
             "device_chunk_bytes": bridge.DEVICE_CHUNK_BYTES,
+            "chunk_bytes": bridge.CHUNK_BYTES,
+            "shared_chunk_bytes": bridge.SHARED_CHUNK_BYTES,
+            "fair_chunk_bytes": bridge.FAIR_CHUNK_BYTES,
             "stuck_backoff_ms": list(bridge.STUCK_BACKOFF_MS),
             "chunk_room": bridge.CHUNK_ROOM,
             "window_ms": bridge.WINDOW_MS,

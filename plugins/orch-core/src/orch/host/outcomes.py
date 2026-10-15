@@ -799,3 +799,7 @@ class OutcomeStore(IntentStore):
         if "error" in record:
             out["error"] = record["error"]
         return out
+
+
+# the relay.submit result builder registers itself here, before any reconcile_all (R2, review M1)
+from . import relaybuild as _relaybuild  # noqa: E402, F401

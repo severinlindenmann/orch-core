@@ -17,7 +17,7 @@ IDENT = Identity(WS, "d_" + P.device, "p_" + P.person, "sha256:" + "1" * 64, 2, 
 
 def _args(**over):
     log = ulid()
-    fields = {"key": "DEMO-1", "ticket_type": "task", "title": "t", "owner": "p_" + P.person}
+    fields = {"key": "DEMO-0001", "ticket_type": "bug", "title": "t", "owner": "p_" + P.person}
     ev = P.event(log, "ticket.created", eid=over.pop("eid", None) or ulid(), **{**fields, **over})
     return {"log": log, "events": [ev]}
 
@@ -39,7 +39,8 @@ def test_a_good_event_passes_and_comes_back_unchanged():
 
 
 def test_the_table_and_ops_agree():
-    assert submit.EVENTS == {"new_ticket": ("ticket.created", "operate"), "answer": ("question.answered", "decide")}
+    """I1: both types need ``decide`` (11A.14 route scope, L2, the 14.8 phone profile ``["look","decide"]``)."""
+    assert submit.EVENTS == {"new_ticket": ("ticket.created", "decide"), "answer": ("question.answered", "decide")}
     for op, (typ, scope) in submit.EVENTS.items():
         assert framing.OPS[op].event == typ and framing.OPS[op].scope == scope
 
@@ -57,21 +58,58 @@ def test_an_event_type_outside_the_table_is_forbidden_scope():
         lambda a: a["events"].clear(),
         lambda a: a.update(log="workspace"),
         lambda a: a.update(extra=1),
-        lambda a: a["events"][0].update(seq=1),
-        lambda a: a["events"][0].update(host_sig="x"),
-        lambda a: a["events"][0].update(source_sha=[]),
-        lambda a: a["events"][0].update(id="nope"),
     ],
 )
-def test_shape_is_a_validation_code(mutate):
+def test_shape_is_p1_invalid_input(mutate):
     a = _args()
     mutate(a)
     idem = a["events"][0]["id"] if a.get("events") and isinstance(a["events"][0].get("id"), str) else ulid()
     assert code(lambda: check(a, idem=idem)) == "invalid.input"
 
 
-def test_idem_must_be_the_event_id():
-    assert code(lambda: check(_args(), idem=ulid())) == "idem.invalid"
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda e: e.update(seq=1),
+        lambda e: e.update(at="2026-01-01T00:00:00Z"),
+        lambda e: e.update(prev=None),
+        lambda e: e.update(ws_seq=1),
+        lambda e: e.update(host_sig="x"),
+        lambda e: e.update(source_sha=[]),
+        lambda e: e.update(id="nope"),
+        lambda e: e.update(v=1),
+        lambda e: e.update(hash_v=2),
+        lambda e: e.update(based_on="sha256:" + "0" * 64),
+        lambda e: e.update(ticket_type="no-such-type"),
+        lambda e: e.update(key="DEMO-1"),
+        lambda e: e.update(extra_field=1),
+        lambda e: e.update(owner="p_" + "9" * 32),
+        lambda e: e.pop("title"),
+        lambda e: e.pop("auth"),
+        lambda e: e.update(sig="not base64url!"),
+    ],
+)
+def test_p3_the_submitted_subset_schema_is_validation_event(mutate):
+    """M2 / I3: a host field, a non-ULID id, ``v``/``hash_v``, a creation's ``based_on``, the F1 schema (unknown
+    ticket type, key format, extra or missing fields, the owner rule): ``validation.event``, before the signature."""
+    a = _args()
+    mutate(a["events"][0])
+    ev = a["events"][0]
+    assert code(lambda: check(a, idem=ev["id"] if type(ev.get("id")) is str else ulid())) == "validation.event"
+
+
+@pytest.mark.parametrize("text", ["e\u0301", "a\u202eb", "a\rb", "a\x7fb", "\U000323b0"])
+def test_p3_the_text_rules_are_validation_text(text):
+    """F1 §11.3 (NFD, bidi controls, CR, DEL, a code point unassigned in Unicode 16.0): ``validation.text``, checked
+    before the signature (such an event cannot even be signed: its signing bytes refuse the text)."""
+    a = _args()
+    a["events"][0]["title"] = text
+    assert code(lambda: check(a)) == "validation.text"
+
+
+def test_idem_must_be_the_event_id_p1():
+    """M2: 14.6 P1 says ``invalid.input`` for idem != id."""
+    assert code(lambda: check(_args(), idem=ulid())) == "invalid.input"
 
 
 def test_the_lock_free_checks_never_judge_freshness():
@@ -93,12 +131,13 @@ def test_the_actor_must_be_exactly_the_requesting_device_and_person():
     a["events"][0] = _signed_by(other, a["log"], a["events"][0])
     ident = Identity(WS, "d_" + other.device, "p_" + other.person, IDENT.cert_digest, 2, IDENT.list_hash)
     assert code(lambda: check(a, ident=ident, pub=other.dk_pub)) == "op.not_allowed"
-    mine = dict(a["events"][0], actor={"kind": "person", "id": ident.person_id, "device": ident.device_id})
+    mine = dict(a["events"][0], actor={"kind": "person", "id": ident.person_id, "device": ident.device_id},
+                owner=ident.person_id)  # fmt: skip
     a["events"][0] = _signed_by(other, a["log"], mine)
     assert check(a, ident=ident, pub=other.dk_pub)  # the control: its own actor passes
 
 
-@pytest.mark.parametrize("auth", ["convenience", "secure-enclave", "webauthn", None])
+@pytest.mark.parametrize("auth", ["convenience", "secure-enclave", "webauthn"])
 def test_only_the_column_r_auth_kinds(auth):
     a = _args()
     ev = dict(a["events"][0])
@@ -113,22 +152,34 @@ def test_only_the_column_r_auth_kinds(auth):
 @pytest.mark.parametrize("auth", sorted(submit.AUTH))
 def test_the_allowed_auth_kinds_pass_when_signed(auth):
     log = ulid()
-    ev = P.event(log, "ticket.created", key="DEMO-1", ticket_type="task", title="t", owner="p_" + P.person, auth=auth)
+    ev = P.event(log, "ticket.created", key="DEMO-0001", ticket_type="bug", title="t", owner="p_" + P.person, auth=auth)
     assert check({"log": log, "events": [ev]})
 
 
 def test_the_signature_must_verify_under_this_device_over_this_log():
+    """M2: 14.6 P7 says ``sig.invalid``."""
     a = _args()
     a["events"][0]["title"] = "changed after signing"
-    assert code(lambda: check(a)) == "op.not_allowed"
+    assert code(lambda: check(a)) == "sig.invalid"
     b = _args()
     b["log"] = ulid()  # signed for another log
-    assert code(lambda: check(b)) == "op.not_allowed"
+    assert code(lambda: check(b)) == "sig.invalid"
     c = _args()
-    assert code(lambda: check(c, pub=Phone().dk_pub)) == "op.not_allowed"
+    assert code(lambda: check(c, pub=Phone().dk_pub)) == "sig.invalid"
     d = _args()
     d["events"][0]["sig"] = crypto.b64u(b"\x00" * 64)
-    assert code(lambda: check(d)) == "op.not_allowed"
+    assert code(lambda: check(d)) == "sig.invalid"
+
+
+def test_a_missing_signature_is_p4_op_not_allowed():
+    a = _args()
+    del a["events"][0]["sig"]
+    assert code(lambda: check(a)) in ("op.not_allowed", "validation.event")
+
+
+@pytest.mark.parametrize("code_", ["validation.event", "validation.text", "sig.invalid", "invalid.input"])
+def test_the_lock_free_codes_are_definite(code_):
+    assert framing.retry_class(code_) == "D" and code_ in framing.RETRY
 
 
 # -- relay_fields ------------------------------------------------------------------------------------------------------

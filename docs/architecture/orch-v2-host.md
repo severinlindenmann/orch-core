@@ -145,7 +145,8 @@ Res     = {t:"res", id:ReqId, ok:true, result:Result}
 Result  = {data:any, key:Key | null, seq:int 0.., cursor:int 0.., hints:[str]{0..8}, lines:[str]{0..10000},
            duplicate:bool, exit:int 0..9, head:str | null}
 Error   = {code:str/[a-z_]+(\.[a-z_]+)*/, message:str{1..400}, hint?:str{1..400},
-           fix?:{argv:[str]{1..32}}, retryable:bool, retry_after_ms?:int 1..3600000}
+           fix?:{argv:[str]{1..32}}, retryable:bool, retry_after_ms?:int 1..3600000,
+           detail?:{state?:str, which?:str, reason?:str, missing?:str, next_key?:Key}}   // v1.9, closed per code (below)
 Evt     = {t:"evt", sub:SubId, cursor:Cursor, items:[Item]{0..64}, end?:EndReason}
 Fatal   = {t:"fatal", error:Error}
 OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
@@ -153,7 +154,21 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 
 - **`Result`** is `orch.ops.Result` in full. The CLI renders text from it with its own templates, so P1's golden
   output is unchanged.
-- **`Error`** is the F1 §10.4 item 4 body plus the optional `retry_after_ms`. The `exit` member of an error `Res` is
+- **`Error.detail` (v1.9, #479)** is optional and **closed per code**: only the five codes below may carry it, only the
+  keys listed for the code, and only a closed value or a `Key`-format string; never free text, a path or a secret. The
+  host drops any other code, key or value before it sends. A client ignores unknown keys (§0.4), so this is additive.
+
+  | Code | `detail` keys (all optional; a missing key means the host did not know) |
+  |---|---|
+  | `term.not_attachable` | `state`: `starting`, `running`, `exited` or `lost` |
+  | `run.limit` | `which`: `agent_ws`, `agent_person`, `shell_person` or `runner` |
+  | `launch.no_grant` | `reason`: `none`, `expiring`, `scope` or `revoked` |
+  | `runner.disabled` | `missing`: `addon` or `machine` |
+  | `ticket.key_not_next` | `next_key`: the store's next ticket key (advisory, never a reservation) |
+
+  The `blocked` object of a preview (§12) keeps its own `detail` with the same keys; it is part of the result, not of
+  an `Error`.
+- **`Error`** is the F1 §10.4 item 4 body plus the optional `retry_after_ms` and `detail`. The `exit` member of an error `Res` is
   the CLI exit code (§0.6).
 - **Malformed requests.** A `req` with an unknown key, a missing required key or a wrong type answers `req.invalid`
   when its `id` is readable, and is `fatal` `frame.invalid` otherwise. `args` that fail the op's schema answer
@@ -447,14 +462,14 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
-| `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` | — |
+| `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` (v1.9: on the `Error` only where the host knows the reason; a preview's `blocked.detail` always has it) | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
 | `grant.not_runner` | 3 | no | stays | `grant.deposit` of a grant whose `grant.issued` lacks `label:"runner"` | — |
 | `grant.verbs` | 3 | no | stays | `grant.deposit` of a grant whose `verbs` is not `"agent"` (a narrower grant cannot run a harness) | — |
 | `grant.expiring` | 3 | no | stays | `grant.deposit` of a grant with less than 15 minutes left | — |
 | `event.expired` | 3 | no | stays | `relay.submit`: the event id's ULID time is outside [host now − 900 s, host now + 300 s] at job time (§11A.14 step W, after L3: amendment A; H12e `admission.known_or_fresh`). Definite, nothing landed (class C-review) | — |
 | `event.abandoned` | 3 | no | stays | `relay.submit`: a restore abandoned the event with this id (in the replayed log's ids, not in its lines; §11A.14 L3; H12e `admission.dedup`). Class C-review | — |
-| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); the relay answer carries the advisory `next_key` (R2; the socket `Error` has no `detail`, `HostError.detail` is in-process), never a reservation. Class C-auto | — |
+| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); the `Error` carries the advisory `detail.next_key` (v1.9, §0.3; R2's relay answer may carry it too), never a reservation. Class C-auto | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.
@@ -3780,6 +3795,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `runner.unavailable`, `other`; never host text) and `grant.deposit_status` gains `reason`; the click signer
     `contract` goes from 1 to 2 (deposit support; a client for contract 2 accepts 1 and 2); `run.sub` gains the
     `{t:"runner", grant}` item (§12.3). No F1, schema or capability change.
+
+**v1.8 → v1.9 (additive, #479; item numbers may be renumbered when a parallel change lands first).**
+
+44. **`Error.detail`** (§0.3): an optional object on the socket `Error`, closed per code. `HostError.error()` sends it
+    and `frames._ERROR` allows it. Only `term.not_attachable` (`state`), `run.limit` (`which`), `launch.no_grant`
+    (`reason`), `runner.disabled` (`missing`) and `ticket.key_not_next` (`next_key`) may carry it; any other code, key
+    or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
+    `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
+    (§0.4), so no cap or op version changes.
 
 ---
 

@@ -42,6 +42,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
+from stat import S_ISREG as _S_ISREG
 from typing import Any, Literal, NamedTuple, Protocol
 
 from orch import canon, crypto, schema
@@ -66,7 +67,7 @@ from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none,
 from .index import Index
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
-from .outbox import Outbox, OutboxEntry, Segment, make_entry, parse_entry
+from .outbox import Outbox, OutboxEntry, RelayPosition, Segment, make_entry, parse_entry
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins, is_forwarded, pair
 
@@ -79,6 +80,8 @@ _EMPTY = canon.section_hash("")
 _PLACEHOLDER_SIG = "A" * 85 + "A"
 _TICKET_HOST_EVENTS = frozenset({"edit.external", "projection.repaired"})
 _ZERO_ACC = "sha256:" + "0" * 64
+RELAY_BRANCH_MAX = (64 << 20) // 74  # heads: the relay's largest staging set (64 MiB at 74 bytes a head, P3-D20)
+RELAY_CACHE_BYTES = 16 << 20  # the one cached branch, raw digests (64 bytes a head: about 262 000 heads at most)
 _NOPLAN = object()  # no outbox plan: the append writes its workspace checkpoint by the P1 rule (every 50)
 _log = logging.getLogger("orch.store")
 MAX_FORWARDED_ITEM_BYTES = 4096  # a forwarded revocation item (cj) above this is dropped (H12b review, Opus F2)
@@ -253,6 +256,8 @@ class Store:
         self._pins = HostPins(host_state_dir, workspace_id) if host_state_dir is not None else None
         #: the relay outbox (§11 P3-D21), active while ``<state>/hosts/<ws>/relay/link.json`` exists
         self._outbox = Outbox(self._pins.dir / "outbox") if self._pins is not None else None
+        self._relay_branch: tuple[tuple[Any, ...], bytes, bytes] | None = None  # R3 paging (raw digests)
+        self._relay_ancestry: dict[tuple[Any, ...], bool] = {}  # R3 classify: (older, newer, Store.revision())
         self._lock = FileLock(self.state_dir / "lock", timeout=lock_timeout)
         self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id)
         self._index = Index(self.state_dir / "index.sqlite")
@@ -2945,6 +2950,265 @@ class Store:
             if entry.n != n or entry.hash != hash:
                 raise StoreError("outbox.mismatch", f"outbox entry {n} holds another checkpoint")
             return self._outbox.delete(n)
+
+    # ------------------------------------------------------------------ R3's reads (the relay publisher, §11A.5)
+
+    def relay_segment(
+        self,
+        log: str,
+        after: Mapping[str, Any],
+        upto: Mapping[str, Any],
+        *,
+        skip: int = 0,
+        limit: int | None = None,
+    ) -> Segment:
+        """Heads of ``log`` between two checkpoint entries, for one staging page of R3 (§11A.5).
+
+        ``after`` is ``{seq, acc}`` (and ``head`` when ``seq`` > 0; ``seq`` 0 with the zero accumulator for a log the
+        relay does not hold yet) and ``upto`` is ``{seq, head, acc}``. The path is the current log when both are points
+        of it (O(1) per call: the accumulators are known), else the recorded ancestry (``heads.sqlite``: an abandoned
+        branch, for a republication across an accepted restore), checked whole: exactly ``upto.seq - after.seq`` heads
+        folding from ``after.acc`` to ``upto.acc`` and ending at ``upto.head``. Returns the part ``skip`` heads in, at
+        most ``limit`` heads, with the accumulator before it. Takes the lock. Refuses ``validation.relay`` for a
+        malformed range or a branch above :data:`RELAY_BRANCH_MAX`, ``chain.broken`` for an unreadable or unverified
+        log, ``chain.diverged`` when no verified path joins the two entries. One verified branch is cached, so paging
+        through it costs one walk.
+
+        Not side-effect-free: taking the lock runs the store's recovery (pending appends, a catch-up journal) and may
+        load and replay ticket logs, which can write projections; call it as a worker job like every store method.
+
+        Accepted limit (orch-52 round 6, issue #562): a branch above ``RELAY_CACHE_BYTES`` (about 262 000 heads) is not
+        cached, so each of its pages walks and folds it whole (bounded by ``RELAY_BRANCH_MAX``); bounded paging for
+        huge abandoned branches is #562."""
+        try:
+            a_seq, a_acc = after["seq"], after["acc"]
+            u_seq, u_head, u_acc = upto["seq"], upto["head"], upto["acc"]
+        except (KeyError, TypeError):
+            raise StoreError("validation.relay", "a relay segment joins two log entries") from None
+        if (
+            type(a_seq) is not int
+            or type(u_seq) is not int
+            or not 0 <= a_seq <= u_seq
+            or type(skip) is not int
+            or not 0 <= skip <= u_seq - a_seq
+            or (limit is not None and (type(limit) is not int or limit < 1))
+        ):
+            raise StoreError("validation.relay", "a relay segment is a range between two entries of one log")
+        span = u_seq - a_seq - skip
+        take = span if limit is None else min(limit, span)
+        with self._locked():
+            if log != WORKSPACE:
+                check_uid(log)
+                self._ensure({log})
+            if log in self._read_errors or log in self._unverified:
+                raise StoreError("chain.broken", f"{log}: unreadable or unverified; nothing is published")
+            info = self._logs.get(log)
+
+            def point(seq: int, acc: object, head: object) -> bool:
+                if info is None:
+                    return seq == 0 and acc == _ZERO_ACC
+                if seq == 0:
+                    return acc == _ZERO_ACC
+                return seq <= info.seq and info.accs[seq - 1] == acc and info.heads[seq - 1] == head
+
+            if point(a_seq, a_acc, after.get("head")) and point(u_seq, u_acc, u_head):
+                assert info is not None or u_seq == 0
+                start = a_seq + skip
+                acc = (info.accs[start - 1] if start else _ZERO_ACC) if info is not None else _ZERO_ACC
+                heads = tuple(info.heads[start : start + take]) if info is not None else ()
+                return Segment(log, start, acc, heads)
+            from .checkpoints import _extension
+
+            if u_seq - a_seq > RELAY_BRANCH_MAX:  # review round 2, P2: the walk is bounded by the largest set
+                raise StoreError("validation.relay", f"{log}: a branch of {u_seq - a_seq} heads is above the bound")
+            key = (log, a_seq, a_acc, u_seq, u_head, u_acc)
+            cached = self._relay_branch
+            if cached is None or cached[0] != key:
+                self._relay_branch = None
+                old = {"seq": a_seq, "head": after.get("head"), "acc": a_acc}
+                walked = [] if u_seq == a_seq else (self._pins.branch(u_head, a_seq) if self._pins else None)
+                if walked is None or not _extension(old, {"seq": u_seq, "head": u_head, "acc": u_acc}, walked):
+                    raise StoreError("chain.diverged", f"{log}: no verified path between the two entries")
+                raw_heads = b"".join(bytes.fromhex(h[7:]) for h in walked)
+                raw_accs = bytearray(bytes.fromhex(a_acc[7:]))
+                acc = a_acc
+                for head in walked:
+                    acc = canon.log_acc(acc, head)
+                    raw_accs += bytes.fromhex(acc[7:])
+                del walked
+                cached = (key, raw_heads, bytes(raw_accs))
+                # review delta 2, F3: one verified branch is kept as raw 32-byte digests (64 bytes a head), only while
+                # it fits RELAY_CACHE_BYTES, so paging is a slice, not a second walk and fold under the lock
+                if len(raw_heads) + len(raw_accs) <= RELAY_CACHE_BYTES:
+                    self._relay_branch = cached
+            _, raw_heads, raw_accs = cached
+            end = skip + take
+            if end == u_seq - a_seq:
+                self._relay_branch = None  # the run's last page: released (F3)
+            heads = tuple("sha256:" + raw_heads[i * 32 : i * 32 + 32].hex() for i in range(skip, end))
+            return Segment(log, a_seq + skip, "sha256:" + raw_accs[skip * 32 : skip * 32 + 32].hex(), heads)
+
+    def relay_position(self, checkpoint: Mapping[str, Any] | None) -> RelayPosition:
+        """Classify the relay's held checkpoint H (already verified by R1's reader) against this host, for R3's
+        startup classification (§11A.5): whether the current logs contain it, the host's numbering high-water mark,
+        the newest local workspace checkpoint, and whether H is an abandoned workspace checkpoint. Takes the lock and
+        loads every ticket log. Refuses ``checkpoint.prefix_invalid`` for an H that is not this workspace's WSK
+        checkpoint; reads ``abandoned/`` through pinned directory fds (a symlinked component is ``validation.path``).
+
+        Not side-effect-free: the lock runs recovery and loading every ticket log may write projections."""
+        with self._locked():
+            if self._pins is None or self._outbox is None:
+                raise StoreError("validation.host_state", "the relay position needs the host state dir")
+            self._scan_dirs()
+            self._ensure(set(self._exists))
+            held = self._pins.held()
+            mine = [cp for cp in (held, self._checkpoints.workspace()) if cp and "o" in cp]
+            numbering = max(
+                [self._checkpoints.highest_n(), self._pins.high_n(), self._outbox.max_n()]
+                + [cp["o"]["n"] for cp in mine]
+            )
+            newest = max(mine, key=lambda cp: cp["o"]["n"], default=None)
+            current = {"n": newest["o"]["n"], "hash": canon.checkpoint_hash(newest["o"])} if newest else None
+            if checkpoint is None:
+                return RelayPosition(True, numbering, current, False)
+            o = self._relay_checkpoint(checkpoint)
+            contained = True
+            for log, entry in {WORKSPACE: o["workspace_log"], **o["tickets"]}.items():
+                info = self._logs.get(log)
+                seq = entry["seq"]
+                if (
+                    info is None
+                    or log in self._read_errors
+                    or not 1 <= seq <= info.seq
+                    or info.heads[seq - 1] != entry["head"]
+                    or info.accs[seq - 1] != entry["acc"]
+                ):
+                    contained = False
+                    break
+            abandoned = False
+            if not contained:
+                h = canon.checkpoint_hash(o)
+                with contextlib.closing(self._abandoned_workspace_checkpoints()) as found:
+                    for raw in found:
+                        try:
+                            cp = loads(raw)
+                            abandoned = canon.checkpoint_hash(cp["o"]) == h
+                        except (ValueError, KeyError, TypeError, canon.HashError):
+                            continue
+                        if abandoned:
+                            break
+            return RelayPosition(contained, numbering, current, abandoned)
+
+    def _abandoned_workspace_checkpoints(self) -> Iterator[bytes]:
+        """The bytes of each ``.state/checkpoints/abandoned/workspace-*.json``, read through directory fds pinned from
+        the workspace root one component at a time (``O_DIRECTORY | O_NOFOLLOW``), each file opened relative to its
+        directory with ``O_NOFOLLOW`` and checked to be a regular file (review round 2, P1): a symlinked component
+        anywhere on the path is refused (``validation.path``), never followed outside the store; a missing one means
+        none. At most 4 MiB per file."""
+        rel = self._checkpoints.dir.relative_to(self.root) / "abandoned"
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        fds: list[int] = []
+        try:
+            try:
+                fds.append(os.open(self.root, flags))
+            except OSError:  # review delta 2, F2: a root swapped for a symlink is refused, never a raw OSError
+                raise StoreError("validation.path", "the workspace root is a symlink or not a directory") from None
+            for part in rel.parts:
+                try:
+                    fds.append(os.open(part, flags, dir_fd=fds[-1]))
+                except FileNotFoundError:
+                    return
+                except OSError:  # ELOOP or ENOTDIR: a symlink or not a directory
+                    raise StoreError("validation.path", f"{rel}: a component is a symlink or not a directory") from None
+            dfd = fds[-1]
+            for name in sorted(os.listdir(dfd)):
+                if not (name.startswith("workspace-") and name.endswith(".json")):
+                    continue
+                try:
+                    ffd = os.open(  # O_NONBLOCK: a FIFO never blocks the store lock (review delta 2, F2)
+                        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0), dir_fd=dfd
+                    )
+                except OSError:
+                    continue  # a symlinked entry is not evidence
+                try:
+                    st = os.fstat(ffd)
+                    if not _S_ISREG(st.st_mode) or st.st_size > 4 << 20:
+                        continue
+                    chunks, size = [], 0
+                    while piece := os.read(ffd, 1 << 16):
+                        size += len(piece)
+                        if size > 4 << 20:
+                            break
+                        chunks.append(piece)
+                    else:
+                        yield b"".join(chunks)
+                finally:
+                    os.close(ffd)
+        finally:
+            for fd in reversed(fds):
+                os.close(fd)
+
+    def relay_ancestor(self, older: Mapping[str, Any], newer: Mapping[str, Any]) -> bool:
+        """Whether checkpoint ``older`` is ``newer`` or an ancestor of it: every log of ``older`` is in ``newer`` at or
+        past its ``seq``, with a verified path between (the current log, or the recorded ancestry of an abandoned
+        branch). R3 uses it to explain a relay H that a restore abandoned (§11A.5). Takes the lock (which runs recovery:
+        not side-effect-free). A walk above :data:`RELAY_BRANCH_MAX` heads is refused ``validation.relay``."""
+
+        with self._locked():
+            if self._pins is None:
+                return False
+            a, b = self._relay_checkpoint(older), self._relay_checkpoint(newer)
+            # review delta 2, F3: classify() asks this at every step; the answer can change only when the history
+            # changes, so the key holds Store.revision() (H12d-3: every read head and every ticket-log file's stat
+            # signature): an append by another Store instance, a reloaded branch of the same length or a cut tail all
+            # change it (orch-52 round 6; a sum of seqs did not). At most 256 answers are kept.
+            key = (canon.checkpoint_hash(a), canon.checkpoint_hash(b), self.revision())
+            known = self._relay_ancestry.get(key)
+            if known is not None:
+                return known
+            answer = self._ancestor(a, b)
+            if len(self._relay_ancestry) >= 256:
+                self._relay_ancestry.clear()
+            self._relay_ancestry[key] = answer
+            return answer
+
+    def _ancestor(self, a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+        from .checkpoints import _extension
+
+        assert self._pins is not None
+        new = {WORKSPACE: b["workspace_log"], **b["tickets"]}
+        for log, eo in {WORKSPACE: a["workspace_log"], **a["tickets"]}.items():
+            en = new.get(log)
+            if en is None or en["seq"] < eo["seq"]:
+                return False
+            if en["seq"] - eo["seq"] > RELAY_BRANCH_MAX:  # review round 2, P2: a bounded walk, refused above it
+                raise StoreError("validation.relay", f"{log}: an ancestry walk above the bound")
+            if en["seq"] == eo["seq"]:
+                if en != eo:
+                    return False
+                continue
+            path = self._pins.branch(en["head"], eo["seq"])
+            if path is None or not _extension(eo, en, path):
+                return False
+        return True
+
+    def _relay_checkpoint(self, cp: Mapping[str, Any]) -> dict[str, Any]:
+        from .checkpoints import verify_object
+
+        wsk = self._wsk_pub()
+        try:
+            ok = (
+                wsk is not None
+                and verify_object(wsk, cp)
+                and cp["o"]["kind"] == "workspace_checkpoint"
+                and cp["o"]["workspace_id"] == self.workspace_id
+                and cp["o"]["genesis"] == self._pin
+            )
+        except (KeyError, TypeError):
+            ok = False
+        if not ok:
+            raise StoreError("checkpoint.prefix_invalid", "not a checkpoint of this workspace's key")
+        return cp["o"]
 
     def _recover_catchup(self) -> None:
         """Finish a catch-up replacement whose journal was committed (§11A.5 step 4): before anything numbers a

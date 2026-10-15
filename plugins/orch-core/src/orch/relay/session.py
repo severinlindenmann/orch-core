@@ -234,17 +234,21 @@ class Session:
         fenced_stops: bool = True,
         raw: bytes | None = None,
         transport: Transport | None = None,
+        content_type: str = "application/octet-stream",
     ) -> dict[str, Any]:
         """One relay call. ``body`` is built into ``cj`` bytes once; a 401 ``unauthenticated``/``expired`` re-logs in
         once and resends the identical bytes. 2xx bodies must be an object with exactly ``keys``; anything else raises
         :class:`RelayRefused` (or :class:`Fenced` for 409 ``fenced``).
 
         R2: ``raw`` sends those exact bytes as ``application/octet-stream`` (an ORB2 chunk; at most ``request_cap``),
-        instead of a JSON ``body``. ``transport`` is the calling thread's own connection (11A.7: one ``RelayConn``
+        instead of a JSON ``body`` (R3: ``content_type="application/json"`` for a ``cj`` body built and counted once,
+        a staging page or manifest). ``transport`` is the calling thread's own connection (11A.7: one ``RelayConn``
         per thread) while the login, the holder generation and the preflight stay this Session's, shared by the
         workspace's relay threads (round 8, R7-4)."""
         if raw is not None and (body is not None or type(raw) is not bytes or len(raw) > request_cap):
             raise wire.WireError("too_large" if type(raw) is bytes else "malformed", "raw request body")
+        if content_type not in ("application/octet-stream", "application/json"):
+            raise wire.WireError("malformed", "content type")
         if holder and self._fenced:
             raise Fenced("fenced: writes stopped")
         if not self._checked or self._refused is not None:
@@ -257,7 +261,7 @@ class Session:
         while True:
             headers: dict[str, str] = {}
             if data is not None:
-                headers["Content-Type"] = "application/octet-stream" if raw is not None else "application/json"
+                headers["Content-Type"] = content_type if raw is not None else "application/json"
             token = None
             if auth:
                 token = self._ensure_login()
@@ -545,13 +549,21 @@ class Session:
         self._alarm("relay_takeover_refused", why)
         raise TakeoverRefused(why)
 
-    def _hold_call(self, body: dict[str, Any], deadline_s: float, *, takeover: bool, fenced_stops: bool = True) -> Hold:
+    def _hold_call(
+        self,
+        body: dict[str, Any],
+        deadline_s: float,
+        *,
+        takeover: bool,
+        fenced_stops: bool = True,
+        transport: Transport | None = None,
+    ) -> Hold:
         path = f"/v2/workspaces/{self.workspace_id}/host/hold"
         route = "POST /v2/workspaces/{ws}/host/hold"
         try:
             obj = self.call(
                 "POST", path, route, body=body, deadline_s=deadline_s, keys={"gen", "lease_s", "cursor"},
-                fenced_stops=fenced_stops,
+                fenced_stops=fenced_stops, transport=transport,
             )  # fmt: skip
             return Hold(_int(obj["gen"], 1), _int(obj["lease_s"], 1), _int(obj["cursor"]))
         except RelayMisbehaving as e:
@@ -559,8 +571,21 @@ class Session:
                 self._refuse(f"the relay's hold answer carried no valid gen ({e})")
             raise
 
-    def _renew(self, gen: int, deadline_s: float, *, running: bool) -> Hold:
-        got = self._hold_call({"gen": gen, "take_over": False}, deadline_s, takeover=False, fenced_stops=running)
+    def renew(self, *, deadline_s: float = AUX_HOLD_DEADLINE_S, transport: Transport | None = None) -> Hold:
+        """Renew the RUNNING lease (``{gen, take_over: false}``; a ``fenced`` answer stops, as a running renewal does)
+        over the caller's own connection. R3's first link uses it: R5 starts the aux renewal only after the link, and
+        a first publication can outlast the 40 s lease (review R2). Never a probe: without a generation it refuses."""
+        if self._fenced:
+            raise Fenced("fenced: writes stopped")
+        gen = self._gen
+        if gen is None:
+            raise NotHolder("no holder generation to renew")
+        return self._renew(gen, deadline_s, running=True, transport=transport)
+
+    def _renew(self, gen: int, deadline_s: float, *, running: bool, transport: Transport | None = None) -> Hold:
+        got = self._hold_call(
+            {"gen": gen, "take_over": False}, deadline_s, takeover=False, fenced_stops=running, transport=transport
+        )
         if got.gen != gen:
             raise RelayMisbehaving("hold renewed another generation")
         self._gen = gen

@@ -746,3 +746,72 @@ def _calls_in(node: ast.AST) -> list[tuple[str, int]]:
             if name is not None:
                 out.append((name, n.lineno))
     return out
+
+
+# -- R3 (11A.5): the publisher reaches the store only as worker jobs ------------------------------------------------
+
+_STORE_WRITES = {"mint_catchup", "outbox_delete", "relay_link", "relay_mark_linked", "note_forwarded_revocation",
+                 "checkpoint", "append"}  # fmt: skip
+
+
+def _store_uses(tree: ast.AST) -> list[tuple[ast.Attribute, list[ast.AST]]]:
+    """Every ``self._store.<x>`` with its ancestors (outermost first)."""
+    out = []
+
+    def walk(node: ast.AST, stack: list[ast.AST]) -> None:
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "_store"
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "self"
+        ):
+            out.append((node, stack))
+        for child in ast.iter_child_nodes(node):
+            walk(child, [*stack, node])
+
+    walk(tree, [])
+    return out
+
+
+def _is_job_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_job"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "self"
+    )
+
+
+def test_r3_every_store_call_of_the_publisher_is_a_worker_job():
+    """11A.4/11A.5: R3 reaches the store only through ``job(fn)`` (R5: ``RelayWorker.submit(fn).result()``, the
+    workspace's worker thread, under the store lock), never across networking: every ``self._store.x`` in
+    ``publish.py`` sits inside a lambda passed to ``self._job`` (or is the job's own argument).
+
+    Honest limits (the same class as R6-6): a value alias (``s = self._store; s.outbox_delete(...)``) or a store method
+    stored earlier and called later is not followed; that the job really runs on the worker thread is R5's wiring."""
+    tree = ast.parse((PKG / "publish.py").read_text())
+    uses = _store_uses(tree)
+    assert uses, "publish.py no longer reaches the store through self._store"
+    for node, stack in uses:
+        parent = stack[-1]
+        in_lambda = [i for i, a in enumerate(stack) if isinstance(a, ast.Lambda)]
+        ok = (_is_job_call(parent) and parent.args and parent.args[0] is node) or (
+            bool(in_lambda) and in_lambda[-1] > 0 and _is_job_call(stack[in_lambda[-1] - 1])
+        )
+        assert ok, f"publish.py:{node.lineno} self._store.{node.attr} outside a worker job"
+    for p in MODULES:  # no other relay module holds the store
+        if p.name != "publish.py":
+            assert not _store_uses(ast.parse(p.read_text())), p.name
+
+
+def test_r3_measure_is_a_pure_counter():
+    """``Store.mint_catchup`` calls ``measure`` under the store lock; it must never call the store (H12b): the
+    function names nothing but its argument and the wire counter. Limit: what ``wire.set_bytes`` does is pinned by
+    the counter tests, not here."""
+    tree = ast.parse((PKG / "publish.py").read_text())
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "measure")
+    names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+    assert names <= {"wire", "segments", "s", "len", "Segment", "tuple", "int"}, names
+    assert not any(isinstance(n, ast.Attribute) and n.attr.startswith("_") for n in ast.walk(fn))

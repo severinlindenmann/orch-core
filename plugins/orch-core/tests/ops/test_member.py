@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 
 from orch import crypto
 from tests.identity.helpers import Person
+from tests.store.helpers import WS
 
 
 def invite(ws, tmp, name="newbie"):
@@ -114,3 +116,123 @@ def test_member_management_needs_the_operate_scope_of_the_device(hws, me, tmp_pa
     r = me("member", "add", "--name", "N", "--pk", pk, "--cert", cert, "--json")
     assert r.code == 5 and "device.scope" in r.doc["error"]["message"], r.out
     assert len(roster(hws)) == n
+
+
+# --- the durable convenience_seen mark (#441) -------------------------------------------------------------------------
+
+
+def test_member_add_is_refused_while_the_convenience_seen_mark_is_set(hws, me, tmp_path):
+    """A restore can drop every convenience event from the merged history; the mark still refuses a new reader."""
+    from orch.ops.readers import ensure_convenience_mark
+
+    ensure_convenience_mark(hws.host_state, WS, os.getuid())
+    _p, pk, cert = invite(hws, tmp_path)
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert r.err_code == "sign.convenience_readers"
+    assert len(roster(hws)) == n
+
+
+def test_the_mark_fails_closed_and_is_never_cleared(tmp_path):
+    from orch.ops.readers import convenience_seen, ensure_convenience_mark, seen_path
+
+    wid = "a" * 32
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    assert not convenience_seen(state, wid)
+    ensure_convenience_mark(state, wid, os.getuid())
+    assert convenience_seen(state, wid) and json.loads(seen_path(state, wid).read_text())["seen"] is True
+    ensure_convenience_mark(state, wid, os.getuid())  # idempotent
+    # anything at the path counts as seen, a corrupt file or a link included
+    seen_path(state, wid).write_text("{not json")
+    assert convenience_seen(state, wid)
+    seen_path(state, wid).unlink()
+    seen_path(state, wid).symlink_to(tmp_path / "nowhere")
+    assert convenience_seen(state, wid)
+    # a directory that cannot be looked into: the doubt is "seen"
+    other = "b" * 32
+    (state / "hosts" / other).mkdir(mode=0o700)
+    os.chmod(state / "hosts" / other, 0)
+    try:
+        assert convenience_seen(state, other)
+    finally:
+        os.chmod(state / "hosts" / other, 0o700)
+
+
+def _as_convenience(monkeypatch):
+    """The person's key signs with ``auth: "convenience"`` (as convenience custody does in direct mode)."""
+    from orch.ops.human import Human
+
+    real = Human.backend
+
+    class AsConvenience:
+        auth = "convenience"
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(Human, "backend", property(lambda self: AsConvenience(real.fget(self))))
+
+
+def test_a_direct_convenience_append_sets_the_mark_first(hws, me, tmp_path, monkeypatch):
+    from orch.ops.readers import seen_path
+
+    _as_convenience(monkeypatch)
+    _p, pk, cert = invite(hws, tmp_path)
+    assert not seen_path(hws.host_state, WS).exists()
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert)
+    assert r.code == 0, r.err
+    assert roster(hws)[-1]["auth"] == "convenience"
+    assert seen_path(hws.host_state, WS).exists()
+    # a later reader is refused although the flag lives in no host here
+    _q, qk, qcert = invite(hws, tmp_path, "other")
+    assert me("member", "add", "--name", "O", "--pk", qk, "--cert", qcert, "--json").err_code == (
+        "sign.convenience_readers"
+    )
+
+
+def test_a_direct_convenience_append_without_its_mark_writes_nothing(hws, me, tmp_path, monkeypatch):
+    from orch.ops import readers
+
+    def boom(*_a, **_k):
+        raise OSError("no space left")
+
+    _as_convenience(monkeypatch)
+    monkeypatch.setattr(readers, "ensure_convenience_mark", boom)
+    _p, pk, cert = invite(hws, tmp_path)
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert r.err_code == "internal" and "convenience_seen" in r.doc["error"]["message"], r.doc
+    assert len(roster(hws)) == n
+
+
+def test_persisting_the_mark_never_trusts_the_conservative_reader(tmp_path, monkeypatch):
+    """Codex #454 P2: a lookup error makes ``convenience_seen`` say "seen" (for refusals), but persisting the mark must
+    raise instead of skipping the write, so the append is refused."""
+    import pytest
+
+    from orch.ops import readers
+
+    wid = "c" * 32
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    real_lstat = os.lstat
+
+    def flaky(path, *a, **k):
+        if str(path).endswith(readers.SEEN_FILE):
+            raise PermissionError(13, "denied")
+        return real_lstat(path, *a, **k)
+
+    monkeypatch.setattr(readers.os, "lstat", flaky)
+    assert readers.convenience_seen(state, wid)  # conservative for refusals
+    with pytest.raises(OSError):
+        readers.ensure_convenience_mark(state, wid, os.getuid())
+    monkeypatch.undo()
+    readers.seen_path(state, wid).parent.mkdir(parents=True, mode=0o700)
+    readers.seen_path(state, wid).symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(Exception) as info:  # something else at the path: not the persisted mark
+        readers.ensure_convenience_mark(state, wid, os.getuid())
+    assert getattr(info.value, "code", "") == "custody.unsafe_mode"

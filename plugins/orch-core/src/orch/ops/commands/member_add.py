@@ -15,7 +15,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """The invitee made their own person key and first device certificate; the owner signs only the roster change."""
     h = Human(ctx, "member.add")
     h.who()
-    refuse_new_reader(h.store, "member.add")  # READER_OPS; orch-v2-host §0.8.6
+    # READER_OPS, §0.8.6; direct mode also asks the durable mark (#441), the host asks it itself (refuse_reader_op)
+    refuse_new_reader(h.store, "member.add", None if h.call.ws.hosted else h.call.ws.state_dir)
     try:
         pk = crypto.unb64u(args["pk"], crypto.PUB_LEN)
         crypto.validate_public_key(pk)

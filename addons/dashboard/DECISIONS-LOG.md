@@ -1535,6 +1535,13 @@ machinery unchanged and keep core in charge of wording. Converting would need a 
 
 **Revert:** Only with equivalent core process/host isolation and label concurrency guarantees; preview cleanup remains necessary while tests share API objects.
 
+## 2026-10-14 #444 recheck: foreign reload destination and concurrent unknown signatures
+
+- **Decision:** Reset every foreign navigation to `/` before rendering and move to the launch destination only after its own code was redeemed (a made-up `launch` with an attacker `to=` stays on `/`; Opus delta F-1), while preserving private launch redemption and channel isolation. Re-mark uncertain signing outcomes after signer errors, even if a concurrent definite failure cleared the in-flight mark.
+- **Why:** A later untagged reload must not authenticate an attacker-chosen path or query (R-2); unknown signature outcomes must retain the cancellation/replacement guard across concurrent attempts (R-3). The foreign notice still directs users to open from the terminal or a bookmark at `/`.
+- **Revert:** Restore the prior URL replacement in `src/api/bootstrap.ts` and remove the uncertain-outcome re-mark in `server/src/orch_dashboard/click.py`, accepting the two residual races again.
+- **F-2 (Opus delta, info) closed structurally:** `Handoffs.begin_sign`/`end_sign` count sign calls in flight per request and remember unknown outcomes. A definite failure clears the mark only when no other sign is in flight and no outcome is unknown, in any finish order; an unknown outcome stays marked until the host answer is known (`settled`) or the mark expires. Two concurrent definite failures still clear it (nothing is at the host).
+
 ## M7a: real terminals in the dock (14 Oct 2026)
 
 **Decision:** On a real host the dock is drawn only when the server lists the `terminals` feature for the workspace (the host serves
@@ -1585,4 +1592,3 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
   many accepted sockets for 5 s each. Not reachable from a web page (exact Host/Origin). Revisit with a per-process accept budget if needed.
 - I3: `run.list`/`run.sub` rely on the host's person filter (D-P2-26); the dashboard does not compare runs to the pinned person (it does
   not project `person` at all). Defence in depth only; the host is the authority.
-

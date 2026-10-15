@@ -432,7 +432,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 | `sign.convenience_unavailable` | 3 | no | stays | `auth: "convenience"` at `human.prepare`, a `human.get` binding or `human.submit` while the workspace's flag is off or a reader is outside the condition; the message starts with the reason `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (§0.8.6 item 1) | — |
 | `sign.click_only` | 3 | no | stays | a hand-off request (`human.prepare` with `handoff:true`, the code for `orch sign`) on a workspace whose click-to-sign flag is on; also `human.get` binding and `human.submit` of a hand-off request prepared before the flag was switched on, and `orch host convenience on` while hand-off requests are pending (the message lists them). The fix for a refused prepare, bind or submit is `orch host convenience off --workspace W`; for the refused `convenience on` it is to let the pending requests expire (10 minutes; a bound one counts a minute past its expiry) (§0.8.6 item 8) | — |
-| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device) to a workspace whose history has `auth: "convenience"` events; the fix names the readers to update (§0.8.6 item 1) | — |
+| `sign.convenience_readers` | 3 | no | stays | adding a reader (`member.add`; later relay pairing or a device; a records push to an unmarked URL, D-P2-34) to a workspace whose history has `auth: "convenience"` events or whose durable `convenience_seen` mark is set (#441); the fix names the readers to update (§0.8.6 item 1) | — |
 | `runner.unavailable` | 9 | yes | stays | no runner is connected to the host (H11a, addons design D-P2-24) | 1000 |
 | `runner.disabled` | 3 | no | stays | dashboard execution is off for the workspace on this machine, or the addon is not granted (D-P2-31) | — |
 | `launch.cwd_changed` | 3 | no | stays | the pinned working directory of a run no longer matches (D-P2-29) | — |
@@ -479,6 +479,17 @@ dashboard execution for the workspace `runner.disabled` (`detail.missing:"machin
 host restart shows as `RunnerInfo.connected:false` and, for ops that need it, `runner.unavailable`. Exit convention:
 state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`), transient conditions 9. Every
 `message` is host-authored and untrusted: clients render it as plain text.
+
+**Store codes of the relay publisher (H12b).** These are raised by the store API that R3 calls (§11A.5 "As built in
+H12b") and are never sent on a socket. A workspace op that meets one maps it to `internal` (`cli/store_errors.py`).
+
+| Code | Exit | Retryable | Fate | When | `retry_after_ms` |
+|---|---|---|---|---|---|
+| `checkpoint.prefix_invalid` | 1 | no | stays | `Checkpoints.sign_prefix` refuses a prefix (a number at or below an existing one, an entry that is not a point of its log, a prefix that drops its base, a ticket event resting on a later workspace head, a prefix that is not downward closed, an `at` before the base), or the catch-up source does not verify | — |
+| `relay.too_large` | 1 | no | stays | `Store.mint_catchup` cannot split: a restore is queued (an anchor), or one event's step set is above the cap. R3 alarms it (`host.status`); the 11A.5 oversized-restore refusal uses the same code | — |
+| `outbox.mismatch` | 1 | no | stays | `Store.outbox_delete(n, hash)` for an entry `n` that holds another checkpoint | — |
+| `relay.link_exists` | 1 | no | stays | `Store.relay_link` while `relay/link.json` already exists | — |
+| `relay.link_mismatch` | 1 | no | stays | `Store.relay_mark_linked(expect)` when `link.json` is missing or is not exactly `expect` in state `linking` | — |
 
 **Universal errors.** These may come from any op, beyond the op's own list:
 
@@ -1647,7 +1658,8 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 
 1. **A quick task is a ticket** with `type: chore` and the label `quick`. Nothing records "quick" except that label, so
    claims, grants, evidence, visibility, approval gates and the log work unchanged, and a task that outgrows the idea is
-   made an ordinary ticket by removing the label (`orch set KEY labels=…`).
+   made an ordinary ticket by removing the label (`orch set KEY labels=…` with the other labels, or `orch set KEY
+   labels=` for none: an empty value is the empty label set).
 2. **`quick.list`** (read; columns P, G and N, like `ticket.query`: N sees `workspace` tickets only; registry op in the
    CLI, so `orch describe quick.list` documents it) takes `{status?:[Status], limit?:int 1..200 = 100, page?:str,
    max_commits?:int 1..100 = 1, max_files?:int 1..1000 = 3}` and answers `{rows, next_page, total}`. The limits are
@@ -2192,6 +2204,25 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
   does not make it safe**: the history already contains convenience events and the new reader must parse them. A
   workspace with convenience enabled but no convenience events yet may switch convenience off first and then add the
   reader. The check scans the merged history (`Store.merged_events`); it runs only for these rare ops.
+- **The durable mark `convenience_seen` (#441).** An owner repair (`abandon_tail`, then `restore`) can drop every
+  convenience event from the merged history while the record files and any records repo still hold them. So the
+  workspace keeps a monotonic mark, `<state>/hosts/<ws>/convenience_seen.json` (0600). It is written at the append
+  choke point before the first convenience event is written: the host's `human.finish` (under the store lock; a mark
+  that cannot be written fails the request with `custody.unsafe_mode`, nothing appended) and direct mode's `Human`
+  append (in the append's `precommit`; refused with `internal`, nothing appended). `Store.abandon_tail` writes it
+  too, under the store lock and before the cut, when the cut lines hold a convenience event (only a line
+  `canon.parse_event_line` accepts, with `auth` `"convenience"`; torn or non-canonical bytes never count; a mark that
+  cannot be written refuses the cut). The host's own scan of the merged history, which also reads the cut tails kept
+  in `<root>/.state/abandoned/` by the same canonical rule (legacy workspaces), sets it when it finds one, so an
+  existing workspace counts as seen at its first check. Verifying the signatures of cut lines, or an owner-audited
+  way to clear the mark, is follow-up #458. **Only these host-side observations write the mark**: the
+  records tool's report on the pushed history refuses that one push and never writes it (#454 review: free text an
+  agent writes must not block `member.add` for good). Persisting is checked separately from reading
+  (`ensure_convenience_mark`: a regular file must be there, else it is written; any error refuses). Nothing clears
+  it, a restore included. Every reader-adding check asks it: the host at prepare, binding and submit
+  (`refuse_reader_op`), direct `member.add`, and the records export check (D-P2-34). Reading fails closed: anything
+  at that path, or an error looking, counts as seen. In tier A the direct-mode and the host state directory are one,
+  so a mark set in direct mode holds after `orch host register`.
 - **Phase 2 (H12d, draft): the reader-version handshake** (item 9) admits readers that declare and prove level 1
   (they understand `convenience`), with convenience history and while the flag is on, in host and direct mode, and
   relaxes `relay_paired`, `other_member` and `phone_device` to count only readers below level 1. Until H12d merges, this
@@ -2820,7 +2851,10 @@ descendant, then exports convenience events to unknown readers. The fix has two 
    2 still holds after the host's state is lost.
 
 This is independent of H12d and should land first, as its own fix (Q10). The same rule covers publications the relay
-retains: 11A.6's permanent reservation already counts them.
+retains: 11A.6's permanent reservation already counts them. **Built in #441** (§0.8.6 item 1, §12.8 "As built"): the
+mark is also written in direct mode's append and by `abandon_tail`; the tool's report is `history_convenience` on
+`records.export_check` and, unlike part 1's "whenever a scan finds one", it never writes the mark (only the host's own
+scans do; #454 review); under H12d, `required_reader` reads the same mark.
 
 **9.8 The relay (orch-29 #3, #4; Codex 11).**
 - **`GET /v2/relay-info`** → `{"v":1, "reader":N}`, optionally with `max_publication_bytes`.
@@ -3582,6 +3616,35 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `run.stop` (`run/1`) are P-only; the runner reports `runner.term`; `whoami` gains `runner` for P and G; the runner's
     term socket re-checks its authorization at every use, and the host ends live attachments when a kill switch is
     pulled ("As built in H11b", §12.6).
+33. **Records: the durable `convenience_seen` mark and smaller records items (#441):**
+    `<state>/hosts/<ws>/convenience_seen.json`, set at the append choke point (host `human.finish`, direct `Human`
+    append) before the first convenience event and whenever a scan finds one, never cleared, also set by `abandon_tail`
+    for cut convenience events and by the host's scan of the merged history and the cut tails (never by the tool's
+    report), asked by every reader-adding check (§0.8.6 item 1); `records.export_check` gains the required
+    `history_convenience` (the tool scans the event logs of the history it pushes, before any network call,
+    `GIT_NO_LAZY_FETCH=1`; D-P2-34); `orch records status` (the dashboard's child) writes nothing to the records repo
+    and makes no network call; `records.status.configured` now means the workspace's records repo exists;
+    `records.status` takes `current_url` and answers `remote.current_url`, `remote.current_private` and
+    `remote.matches_last` (§12.8); `orch set REF labels=` sets the empty label set. Additive on the wire except
+    `history_convenience`, which tool and host ship together. No log or certificate change.
+34. **Store hooks for the relay (H12b, §11A.5 "As built in H12b"):**
+    - In a relay-linked workspace every append writes its exact workspace checkpoint into
+      `<state>/hosts/<ws>/outbox/` in the same commit (the pending directory). A restore's entry carries T and the full
+      evidence set. Checkpoints outside an append are queued too.
+    - R3's store API: `Store.outbox_entries`, `Store.outbox_delete(n, hash)` and `Store.mint_catchup(source, cap,
+      measure)`. Catch-up uses dense numbers above every existing `n` and one `at`, with an atomic journalled
+      replacement. A queued restore is an anchor and blocks catch-up. Prefixes are checked by
+      `Checkpoints.sign_prefix`.
+    - R4's store API: `Store.note_forwarded_revocation(item) -> held | pending | dropped`, with facts derived only from
+      the signed objects.
+    - New store codes `checkpoint.prefix_invalid`, `relay.too_large` (also R3's alarm code), `outbox.mismatch`,
+      `relay.link_exists` and `relay.link_mismatch`. They are never sent on a socket (§0.6).
+    - Review round 1:
+      - a durable numbering reservation: no `n` is signed unless reserved, and none is reused;
+      - outbox coalescing, `outbox_first`/`outbox_entries(limit)`;
+      - `Store.relay_link(link, *, guard)` and `Store.relay_mark_linked`;
+      - bounded forwarded evidence (F1 caps updated).
+    - No wire, log or certificate change.
 
 ---
 
@@ -4416,7 +4479,8 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   - A restore's entry comes right after the source it names, and normal checkpoints queued behind it wait.
   - Membership bodies are not outbox entries (see membership publication below).
   - P2 reserves this as a hook in the append transaction of D-P2-3 (next to the outcome record), plus a directory
-    `<state>/hosts/<ws>/outbox/` in the D-P2-17 custody list.
+    `<state>/hosts/<ws>/outbox/` in the D-P2-17 custody list. Built in H12b (§11A.5 "As built in H12b"). Store-side
+    coalescing supersedes unaccepted middle plain entries; the relay needs no consecutive `n`.
 - **Person-event and decision ids admitted** are committed to host state in the same transaction as their admission,
   as tombstones that survive a restore. H2b's outcome store must leave room for that table.
 - **The holder lease (P3-D10).**
@@ -4639,7 +4703,7 @@ a distinct UID and a restricted signing service (the reserved out-of-process `br
 | response chunk (ORB2 direction 2) | `orch/v2/sig/bridge\|` over `header \|\| body` | WSK | `RelaySigner.response_chunk` inside `BridgeKeys.seal_response` | signer **exists**; ORB2 seal and open (`K_bridge(e)`, `K_msg`, AES-GCM with the header as AAD) **must be added** (the `crypto.hkdf` and `aes_gcm_*` primitives exist) |
 | device request (direction 1) | `orch/v2/sig/bridge\|` | the device's `dk_sig` (verified, not made) | `crypto.verify` against the certificate's `dk_sig_pub` | primitive **exists**; check order of proto §8.6 **must be added** |
 | workspace checkpoint | `orch/v2/sig/checkpoint\|` | WSK | written by the store (`store/checkpoints.py:sign_object`); R3 publishes stored bytes and never signs | **exists** |
-| catch-up checkpoints (11A.5, P3-D37) | same | WSK | `Store.mint_catchup` → `Checkpoints.sign_prefix`, under the store lock | **must be added** (`write_workspace` cannot: it refuses a prefix behind its baseline and keeps later ticket entries) |
+| catch-up checkpoints (11A.5, P3-D37) | same | WSK | `Store.mint_catchup` → `Checkpoints.sign_prefix`, under the store lock | **built in H12b** (`write_workspace` cannot: it refuses a prefix behind its baseline and keeps later ticket entries) |
 | card | `orch/v2/sig/card-wsk\|` | WSK | `RelaySigner.card` (first link) | **must be added** |
 | member list, WK grants, cert requests | `sig_member_list`, `sig_wk_grant`, `sig_cert_request` | WSK | R6 builders; `wk_commit` (label `h_wk_commit` exists, no function) | **must be added** (R6) |
 | genesis pin (`PUT genesis`, P3-D18) | `orch/v2/sig/genesis-pin\|` | an owner device's `dk_sig` | person path: `human.prepare` of a new non-event material kind `relay.genesis_pin`, `host/signer.check` and `render` for it, signed by the click or terminal signer | **must be added**; `sig_genesis_pin` is in **no** role list today, so it must be added to `DEVICE_KEY_LABELS` (`custody/base.py`) |
@@ -4955,6 +5019,144 @@ the pinned genesis and workspace, the genesis pin's owner-device signature) and 
   - `staging_conflict`: drop the set (sets expire after 1 h) and restage under the same `(source, target)` only with
     identical pages. Otherwise alarm.
 
+#### As built in H12b (store side: outbox, catch-up, evidence intake)
+
+H12b built the store half of R3 and R4 in `orch.store` (`store.py`, `outbox.py`, `checkpoints.py`). Nothing in
+`orch.relay` is part of it. Every method below takes the store lock, so R3 and R4 call them only as worker jobs
+(`RelayWorker.submit`), never across networking.
+
+**When the outbox is on.** While `<state>/hosts/<ws>/relay/link.json` exists (`Store.outbox_active`). The file is
+written only by `Store.relay_link(link, *, guard)`. That method takes the store lock, then enters `guard()` (R5 passes
+`lambda: orch.host.relaylink.link_reservation(service)`, H12a: the host-wide lock plus the `sign.convenience_readers`
+and `host.limit` refusals, held across the write). It refuses `relay.link_exists` when a link already exists, and
+otherwise writes `{**link, "state": "linking"}` (atomic, fsynced, 0600, directory 0700). If `guard()` raises,
+nothing is written. `Store.relay_mark_linked(expect)` rewrites `linking` to `linked` under the lock only when the file
+holds exactly `expect` (`relay.link_mismatch` otherwise). Appends take the same lock, so every checkpoint after the
+write is queued. Before returning, `relay_link` fsyncs `relay/` and its parent `hosts/<ws>/` while both locks are
+still held (review round 2), so a new `relay/` survives a crash.
+
+**R5 lock order.** The store lock is taken first, then the guard's host-wide lock. R5's guard must never take a store
+lock (of this or another workspace) while it holds the host-wide lock, or two workspaces linking at once deadlock. Before the
+link nothing is queued: the first publication is a catch-up from the relay's H. After unlink nothing new is queued and
+the existing entries stay.
+
+**Outbox layout** (`<state>/hosts/<ws>/outbox/`, 0700, files 0600, in the D-P2-17 custody list per §11): one file per
+entry, `<n, 20 digits>.json`, holding `cj({v:1, kind:"plain"|"restore", n, hash, checkpoint, restore, catchup})`.
+`checkpoint` is the exact WSK-signed workspace checkpoint (a restore's target T) and `hash` its `checkpoint_hash`.
+A restore's `restore` holds the full evidence set as the pending transition holds it: `source` (C), `event` (the
+signed restore line), `log`, `device_cert`, `pk_pub`, `delegation`, `proofs`, `acc_from`, `acc_before`,
+`forward_heads`, `abandoned_heads`, `publication_complete`. `catchup.json` in the same directory is the catch-up
+journal (not an entry).
+
+**The append hook (P3-D21).** In a linked workspace **every** append writes a workspace checkpoint, not every 50th
+ticket append. Each checkpoint is the append's outbox entry. The store signs the checkpoint *before* the commit, from
+the logs as the append will leave them, and writes the entry into the event's pending directory beside the
+projection files (manifest field `outbox`, its sha256). The log line is the commit, so the existing crash rules
+decide the entry with the event: a crash before the line deletes both, and after it recovery installs both. The
+install checks the entry (WSK signature, workspace, genesis, and an entry for the event's log at exactly the event's
+`seq` and head). It then adopts a plain entry's checkpoint as `workspace.json` and the held checkpoint, so the outbox
+is never ahead of `workspace.json`. In recovery a pending entry that fails the check is reported `store.torn_write`
+and left out; it is never installed. A restore's entry (T plus evidence) is built from the transition staged in the
+same commit. Checkpoints written outside an append (`Store.checkpoint`, the eager open) are queued too, entry first.
+**Numbering invariant (review round 1, Opus F1).** *No checkpoint `n` is signed unless it is reserved first, and a
+reserved `n` is never reused.*
+- `HostPins.reserve_n(n)` writes the high-water mark `checkpoint-n` durably (fsynced) before anything numbered `n` is
+  signed: an append's planned checkpoint, any other workspace checkpoint, a restore target, and catch-up (`m+k` before
+  the first prefix is signed).
+- `_install_outbox` and journal recovery reserve again (idempotent).
+- The next number is `max(highest_n, baseline n, high_n) + 1`, read from that one durable value. There is no outbox
+  scan per append.
+- A crash anywhere at most burns a number.
+- Adoption repairs the host pin and `workspace.json` independently (Codex P1).
+
+**Coalescing (review round 1, Opus F3).** The relay accepts any higher `n` that extends its held checkpoint: `n` need
+not be consecutive (orch-relay `checkpoints.py`: `n > held n`, an exact extension, `at` not earlier). So when a plain
+entry is written, the store deletes the entry just below it if that entry is plain, not catch-up and not the lowest.
+- Always kept: the lowest entry (R3 publishes oldest first and stages only the lowest), every restore, the plain entry
+  just before a restore (its source), every catch-up entry and the newest entry.
+- The queue stays at about 2 + 2 × (queued restores) entries.
+- R3 must stage only the lowest entry (`Store.outbox_first()`).
+
+**Interface for R3 and R4 (orch-29):**
+
+| Call | Returns | Refuses |
+|---|---|---|
+| `Store.outbox_active` | `bool` | — |
+| `Store.relay_link(link, *, guard)` / `Store.relay_mark_linked(expect)` | `None` | `relay.link_exists`, `validation.relay_link` (another workspace, or a state past `linking`), whatever `guard()` raises (nothing written) / `relay.link_mismatch` |
+| `Store.outbox_first()` | the lowest entry, verified, or None | `store.torn_write` |
+| `Store.outbox_entries(limit=None)` | `list[OutboxEntry]` (only the first `limit` when given), lowest `n` first, each verified again on read: `n`, `hash`, `kind`, `checkpoint`, `restore` (`dict` or None), `catchup` | `store.torn_write` for any entry that does not verify (the publisher stops; it never skips) |
+| `Store.outbox_delete(n, hash)` | `True` (deleted) or `False` (no entry `n`: idempotent) | `outbox.mismatch` when entry `n` holds another checkpoint (nothing deleted); `store.torn_write` for a symlinked entry |
+| `Store.mint_catchup(source=H, cap=int, measure=f)` | the new `OutboxEntry` list Q1 … Qk (`catchup: true`), or `[]` when nothing lies past H | `relay.too_large` (a restore is queued, or one event's step exceeds `cap`), `checkpoint.prefix_invalid` (H does not verify), `chain.diverged` (H is not in the logs, or its `n` is above the host's numbering), `chain.broken`/`chain.diverged`/`checkpoint.missing` while any log is broken, unverified or diverged |
+| `Store.note_forwarded_revocation(item)` | `"held"`, `"pending"` or `"dropped"` | nothing: an item that does not verify is `"dropped"`; only a store fault (`store.busy`, `store.torn_write`) raises, and then there is no result, so no ack |
+
+- `measure(segments) -> int` is R3's exact counter (11A.5). It receives a tuple of
+  `orch.store.outbox.Segment(log, after_seq, from_acc, heads)`, one per log that grows in the step, the workspace log
+  first and then the tickets by uid. It returns the `cj` bytes the relay's staging caps count for that step.
+- `source` is the relay's held checkpoint object `{o, sig}` as R1 verified it, or None when the relay holds none.
+- `OutboxEntry.to_json()` gives the stored form.
+- `held` tells R4 to raise the owners' `needs` item: the store has no needs items.
+
+**Catch-up as built.**
+- The store loads every ticket log first and refuses if anything is broken or a ticket's checkpoint is missing
+  (`checkpoint.missing`, review F4).
+- The steps follow the merged order of §5.5 past H. Each step takes the longest run whose set fits (exponential,
+  then binary search over `measure`), so every prefix is downward closed in the merged order.
+- Numbers are `m+1 … m+k`, with `m = max(highest_n, high_n, outbox n, held n)`. There is one `at`: the maximum of
+  the clock, every checkpoint `at` in play (`workspace.json`, held, H, the outbox) and the last event `at` of every
+  log.
+- `Checkpoints.sign_prefix` re-checks every prefix before signing:
+  - `n` is above every existing number, and `at` is not before the base;
+  - each entry is a point of its log (head and accumulator);
+  - the prefix contains its base (H, then the previous prefix);
+  - every added ticket event rests on a workspace `seq` inside the prefix;
+  - the added events are downward closed.
+  Any failure is `checkpoint.prefix_invalid`. Nothing is carried from an older checkpoint, so a prefix never lists a
+  later ticket entry.
+- R3's `measure` callback runs under the store lock. After the plan, the store refuses with
+  `checkpoint.prefix_invalid` when the logs changed (in memory or on disk) or the numbering moved while `measure` ran,
+  and R3 re-plans; otherwise it reserves `m+k`. `measure` must be a pure counter that never calls the store.
+- The replacement is atomic through `outbox/catchup.json` (Q1 … Qk and the plain entries they supersede). The
+  journal is written first. Then the entries are written, the superseded ones deleted, Qk written as `workspace.json`
+  and accepted, and the journal deleted. Every lock finishes a journal it finds, before anything numbers a checkpoint
+  or reads the outbox.
+
+**Judgement calls (fail closed).**
+1. *Anchored catch-up mints nothing.* 11A.5 allows numbers between H and a queued anchor when they are free. With
+   dense numbering none is provably free: the store keeps no record of every checkpoint it once signed under a number,
+   and a second signature under a used `n` is an equivocation. So any queued restore makes `mint_catchup` refuse
+   `relay.too_large` and change nothing (the 11A.5 "anchor is unpublishable" exit).
+2. *Every append is checkpointed while linked.* "An outbox entry per append, the exact checkpoint" (§11) is read
+   literally: the P1 "every 50 ticket appends" rule applies only to unlinked workspaces. This costs O(tickets) per
+   append, bounded by the P3-D20 ticket capacity.
+3. *Outbox growth* is bounded by coalescing (above, review F3). It replaces round 0's "no coalescing".
+4. *A forged or torn pending entry* is reported and dropped in recovery, not installed. The committed event then has
+   no entry of its own, and the next checkpoint covers it.
+5. *Forwarded evidence* is judged by 11A.9 exactly, with these additions (review F2 and F8):
+   - the item is `dropped` when it has another key set (exactly the 8 relay keys, `provenance` exactly
+     `{cursor, digest}`), is above 4 KiB in `cj`, or fails `schema.validate_def` (`deviceCert`, `revocation`), or its
+     `label_sealed` is above 1024 characters;
+   - stored records are at most 6 KiB;
+   - at most 256 forwarded records per person, the owner included, and at most 1536 non-owner records in total,
+     members included; the owner is exempt from the total (review round 2, D1); the eviction cap is 1024 (F1 §5.10's
+     runtime numbers are updated to match);
+   - the forwarded worst case is (1536 + 256) × 6 KiB, about 10.5 MiB;
+   - `revocations.jsonl` is read without a size limit (review round 2, D2): only the host writes it, forwarded records
+     are capped as above, and chain-learned records grow only with accepted history (one per pair, each bounded by
+     the event line cap);
+   - anything unparseable is `dropped` and logged by failure class, never with key material;
+   - the pinned owner passed to `note_revocation` is the genesis delegation's `owner_person_id`.
+6. *Planning keeps the post-commit exclusions* (review F5): an excluded log, or a ticket checkpoint already at or past
+   the event, gives no planned checkpoint. Such a linked append still commits, with **no outbox entry** (fail closed:
+   nothing is certified for a log the post-commit rule would not certify).
+7. *A pending linked append* blocks a store opened without host state (`validation.host_state`, naming the event).
+   The doctor names it as `outbox.pending`, and the next host open finishes it (review F6).
+8. *A restore before the first accepted publication* (review F7): the restore entry is an anchor ahead of the
+   first-link catch-up, so nothing can be published until migration. This is accepted for v1.7 and documented here.
+   The owner should complete the first publication before signing a restore.
+9. *The pending outbox file* is created `O_EXCL | O_NOFOLLOW`. A symlinked pending file or entry is refused (F8).
+
+Tests: `tests/store/test_outbox.py`, `tests/store/test_catchup.py`, `tests/store/test_forwarded_revocation.py`.
+
 ### 11A.6 Convenience rule
 
 A relay link and every device pairing add readers of the log (§0.8.6 item 1, D-P2-23).
@@ -5093,8 +5295,8 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   - `device_id = cert.o.device_id = revocation.o.device_id`, `person = id(pk_pub) = revocation.o.person_id`,
     `reason = revocation.o.reason`; the item's outer `device_id`, `person_id` and `reason` MUST equal them;
   - `provenance.digest == "sha256:" + sha256(cj(revocation))`.
-- Holding is one worker job, `Store.note_forwarded_revocation(item) -> "held" | "pending" | "dropped"` (**must be
-  added**), under the store lock:
+- Holding is one worker job, `Store.note_forwarded_revocation(item) -> "held" | "pending" | "dropped"` (built in
+  H12b, 11A.5 "As built in H12b"), under the store lock:
   - `store.state.device_person(device) == person` (associated): `HostPins.note_revocation(device, reason, revocation,
     at, cert, pk_pub, chain=False, is_member=state.is_member, owner=<pinned owner>)`; result `held` and a `needs` item;
   - not associated, but the person is a current or past member: held the same way as pending forwarded evidence (it
@@ -5188,9 +5390,8 @@ orch-mobile before R2 merges.
 - **Column R in the host:** the changes listed in 11A.4 (`RelayIdentity`, `Peer.kind "relay"`, `resolve_relay`,
   `Call.authorize`, `principal_of`, `NO_PARTIAL`, `append_signed`, the column-site audit).
 - **Durable remote submission:** `relay/submit.py`, the `submission` journal, `relay_fields`, `relay.submit.recover`.
-- **Forwarded evidence intake:** `Store.note_forwarded_revocation` (no store API takes forwarded evidence today; the two
-  `note_revocation` callers in `store/store.py` take chain evidence from the log).
-- **Catch-up:** `Store.mint_catchup`, `Checkpoints.sign_prefix`.
+- **Forwarded evidence intake:** `Store.note_forwarded_revocation`. *Built in H12b* (11A.5 "As built in H12b").
+- **Catch-up:** `Store.mint_catchup`, `Checkpoints.sign_prefix`. *Built in H12b.*
 - **Decision evidence:** relay §13 has the host record a verified detached `decision` verbatim as F1 `evidence`, with
   every `decision_id` single-use forever across restores. Core's F1 model has no evidence carriage and nothing reads
   `sig_decision`. orch-52 decides the F1 shape; until then `decision` is not served.
@@ -5204,7 +5405,7 @@ orch-mobile before R2 merges.
   receive sealed `WK` grants or card keys. R6 needs a new device key or a re-certification.
 - **WK custody, `wk_commit`, member-list, grant, card and cert-request builders:** none exist (labels only).
 - **ORB2 codec and `auth_bytes`:** not in core.
-- **Outbox:** reserved in §11, not built. The store's append transaction needs the hook.
+- **Outbox:** *built in H12b*: the hook in the append transaction, `Store.outbox_entries` and `Store.outbox_delete`.
 - **`_relay_paired`:** probes `membership/` only (11A.6).
 - **Relay 429 detail:** permanent and transient quotas are indistinguishable until the relay adds `quota`.
 - **P3-D37:** merged (relay `7c0406a`), but `ORCH_RELAY_MAX_PUBLICATION_BYTES` is not advertised to clients, so the cap
@@ -5279,7 +5480,7 @@ Records tool (python -I -m orch.records, one shot, person UID): from `orch recor
 | **D-P2-31** | **Dashboard execution** (**owner decision, 12 Oct 2026: accepted**; start agent and terminals may be switched on per workspace from the terminal; tier B narrows it in phase 3). One machine switch, `orch runner enable --workspace W` (terminal only: `/dev/tty`, refused under `ORCH_GRANT`, prints the risk, requires typing the workspace prefix, records time and text), gates agent start, worktree git and terminals; the workspace also needs the addon granted (`addon.granted`). `--no-terminals` is a UX preference only and does not make agent execution safe. The dashboard has no op that turns it on; a same-UID process can. **Card line** (workspace card, Start dialog, terminal header): **"Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys."** Owner's plain-language risk: *"Anything that takes over the dashboard (a bug in the web page, a stolen login token, a malicious dependency), or any agent it starts, can run any command as you and read your files, SSH keys and orch keys. Today a takeover can already sign as you; after this it can also run code."* | As soon as the dashboard can start an agent, a takeover is code execution as the person, terminals or not. | **SC** |
 | **D-P2-32** | **Worktrees.** One per (ticket, linked repo) at the host-chosen path `<repo path>.worktrees/<WS8>-<KEY>` (`WS8` = the first 8 characters of the workspace id), on the ticket's current `links.branches` branch, created and removed by the runner's git under a per-repo lock. The host then pins it and records a **registration generation**. Prepared requests, every `human.get` binding and the D58 precommit bind (workspace, ticket uid, repo, branch ref, source sha, worktree pin, generation); a new registration invalidates outstanding preparations, and nothing ever falls back to the declared working copy. HEAD is rechecked against the current branch; one ticket per branch (`worktree.branch_in_use`). A clean tree is an observation of that directory at that moment, not proof that tests ran on those bytes. Amends D-P2-19 "Declared paths" and H10a. | As built, D58 and `tree.check` read only the declared working copy; binding the registration closes "prepare against worktree A, swap the registration". | **SC** |
 | **D-P2-33** | **Records** are the store's own files (never `.state/`), committed by a person-side one-shot tool `python -I -m orch.records`, never by the host or the runner, into a **dedicated records repo** only. The tool commits exactly the manifest the host names (`records.snapshot`): a temporary index built **from empty**, the written tree checked against the manifest before `commit-tree`; history validated once (or a fresh orphan history); the real index refreshed only by compare-and-swap; single-read hashing under a pinned root; byte limits. Push is **fast-forward only**: the lease guards the race, it never authorizes a non-fast-forward; no rebase. Git commits are unsigned transport: authority comes only from F1 replay and checkpoints. | Correctness (no `.state/` in history, no clobbered index, no torn line); no git in the host; push credentials are the person's. | **SC** |
-| **D-P2-34** | **A records push adds a reader** (**owner decision, 12 Oct 2026: the private remote is allowed**; one exact remote URL marked "only I read this"; the docs and the UI state that orch trusts the owner's word). Every push path calls `records.export_check {manifest, sha, url, ref}` right before pushing; while the convenience flag is on or the history holds `auth:"convenience"` events it answers `sign.convenience_readers` unless that exact normalized URL is in this machine's `private_remotes` (set in the terminal only). The tool resolves the effective push URL once and uses that literal string for `ls-remote` and `push`. This is a policy orch enforces on its own export paths, not information-flow control (manual git can still push). Owner's plain-language risk: *"orch trusts your word; if someone else can read that remote, they get your convenience-signed history."* | A records remote is a copy of the workspace log that other cores may read; a per-workspace boolean would silently follow a changed remote. | **SC** |
+| **D-P2-34** | **A records push adds a reader** (**owner decision, 12 Oct 2026: the private remote is allowed**; one exact remote URL marked "only I read this"; the docs and the UI state that orch trusts the owner's word). Every push path calls `records.export_check {manifest, sha, url, ref}` right before pushing; while the convenience flag is on or the history holds `auth:"convenience"` events it answers `sign.convenience_readers` unless that exact normalized URL is in this machine's `private_remotes` (set in the terminal only). **As built (#441):** "the history" is the merged history, **or** the durable `convenience_seen` mark (§0.8.6 item 1; never cleared by a restore), **or** the records tool's scan of the event logs reachable from the pushed commit (`history_convenience`, which refuses that push only and never writes the mark), reported before any network call; any error fails closed. The tool resolves the effective push URL once and uses that literal string for `ls-remote` and `push`. This is a policy orch enforces on its own export paths, not information-flow control (manual git can still push). Owner's plain-language risk: *"orch trusts your word; if someone else can read that remote, they get your convenience-signed history."* | A records remote is a copy of the workspace log that other cores may read; a per-workspace boolean would silently follow a changed remote. | **SC** |
 | **D-P2-35** | **Quick tasks are tickets** (`type: chore`, label `quick`), created through the existing `new` paths; the addon is a view (`quick.list`) plus UI; limits are display only. If the label `set` fails after `new`, the retry labels the created ticket, never a second one. | T14: events are the only truth. | |
 | **D-P2-36** | **Phase-2 first-party addons are manifest-only** (`addons/{start-agent,terminals,worktrees,quick,records}/orch-addon.json`). Manifests cannot introduce scripts, executable UI components, command templates or op messages; core dispatch enforces capabilities independently of UI visibility; addon frames never gain run actions. No addon runner code runs in tier A (D-P2-20 stands). | Tier A has no worker; core code is reviewed as core. | |
 | **D-P2-37** | **Run lifecycle is host state, not F1** (no `agent.started`/`agent.stopped` events). Clients subscribe first (`run.sub`), then list (`run.list {since?}`); every `Run` has a host-monotonic `rev`; `{t:"gone", run}` when a run leaves the caller's view. The launch intent (run id, idem, spec) is persisted **before** the spawn command; the runner dedupes `spawn` by run id; a restart between intent and ack reconciles at `runner.hello` instead of spawning again. `Run.session` equals the `actor.session` of that agent's F1 events. Run state in 0700 directories, files 0600. | A run is a local process fact; list-then-subscribe loses exits; a lost ack must never double-launch. | |
@@ -6009,15 +6210,17 @@ is transport metadata, never authorization or freshness: consumers verify by F1 
 `AGENTS.orch.md` and `config.json` get no authority from sitting in the repo.
 
 ```
-records.status   {} → {configured:bool, repo:{state:"ok"|"missing"|"not_dedicated"|"unsafe"|"index_differs",
-                       problem?:str} | null, pending:{events:int, tickets:[{key:Key, events:int}]{0..200}, more:bool,
-                       workspace_events:int}, last:{commit:Sha, at:Time, by:Person, ws_seq:int, pushed_at:Time | null}
-                       | null, auto:{on:bool, every_min:int, push:bool} | null,
-                       remote:{url:str, private:bool, export:"ok"|"blocked_convenience"} | null}
+records.status   {current_url?:str} → {configured:bool, repo:{state:"ok"|"missing"|"not_dedicated"|"unsafe"|
+                       "index_differs", problem?:str} | null, pending:{events:int, tickets:[{key:Key, events:int}]
+                       {0..200}, more:bool, workspace_events:int}, last:{commit:Sha, at:Time, by:Person, ws_seq:int,
+                       pushed_at:Time | null} | null, auto:{on:bool, every_min:int, push:bool} | null,
+                       remote:{url:str | null, private:bool, export:"ok"|"blocked_convenience",
+                       current_url:str | null, current_private:bool | null, matches_last:bool | null} | null}
                        // remote: the push URL git resolves now (§12.8), shown through visible.tsx
+                       // configured: the workspace's records repo exists (#441 follow-up; see "As built")
 records.snapshot {page?:str} → {manifest:Hash, ws_seq:int, heads:{str:Hash}, taken_at:Time,
                        files:[{path:str, size:int, sha256:Hash}]{0..2000}, next_page:str | null}
-records.export_check {manifest:Hash, sha:Sha, url:str{1..512}, ref:str} → {ok:true}
+records.export_check {sha:Sha, url:str{1..512}, ref:str, history_convenience:bool} → {ok:true}
 records.note     {manifest:Hash, commit:Sha, pushed:bool, url?:str} → {}
 ```
 
@@ -6042,7 +6245,9 @@ records.note     {manifest:Hash, commit:Sha, pushed:bool, url?:str} → {}
   orphan history. The validated tip is kept in `records.json`; later pushes validate `tip..HEAD`.
   `GIT_NO_REPLACE_OBJECTS=1`; `info/grafts` and shallow repos are refused.
 - **Push:** fast-forward only. The tool resolves the effective push URL once (`pushurl`, else `url`; `insteadOf` and
-  `pushInsteadOf` already refused), calls `records.export_check` with that literal URL, `ls-remote`s it, checks that the
+  `pushInsteadOf` already refused), validates the history, scans the event logs reachable from S for an event with
+  `auth:"convenience"` (#441, see "Push rule"), calls `records.export_check` with that literal URL and the scan's report, all before any
+  network call, then `ls-remote`s it, checks that the
   remote tip T is an ancestor of the commit S, and runs `git -c push.followTags=false push --no-recurse-submodules
   --force-with-lease=refs/heads/<b>:T <url> S:refs/heads/<b>`. A missing remote branch only with `orch records push
   --initial` (terminal). Divergence or a lease failure: `records.push_rejected`, never a rebase.
@@ -6077,17 +6282,35 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
   `records.remote_private` is for **owners only**. G and N get `op.not_allowed`.
   - `records.snapshot {page?}` → `{workspace, manifest, ws_seq, heads, taken_at, count, bytes, files, next_page}`
     (no `for` argument; the export decision is `records.export_check`).
-  - `records.export_check {sha, url, ref}` → `{workspace, sha, url, ref, policy:"none"|"private_remote",
-    convenience, check}` or `sign.convenience_readers`; it takes no `manifest` (the push may be of an older commit).
+  - `records.export_check {sha, url, ref, history_convenience}` → `{workspace, sha, url, ref, history_convenience,
+    policy:"none"|"private_remote", convenience, check}` or `sign.convenience_readers`; it takes no `manifest` (the
+    push may be of an older commit). `history_convenience` (required, #441) is the tool's report that an event log
+    reachable from `sha` holds an event with top-level `auth:"convenience"`; `convenience` is true when the flag is
+    on, the durable `convenience_seen` mark is set, the merged history (or a cut tail) holds such an event, or the
+    report says so. A merged-history or cut-tail hit sets the mark; **the report never does**: it refuses this push
+    only.
   - `records.remote_private {url?, on}` → `{private_remote:{url, at, by} | null, text}`.
   - `records.note {manifest?, commit?, pushed, url?, repo?:{state, problem?}, auto?}` → `{}`; a `manifest` must be
     one this caller took and the host still holds (`page.expired` otherwise). Notes are kept **per person**
     (`lasts[<person>]`, at most 64), with `last_noted {by, at}` workspace-wide (#433 review, Opus finding 1).
-  - `records.status {}` → as in the block above, for **the caller's own** last note (another manager's note never
-    changes it), plus `last_noted`. `repo` and `remote.url` come from the caller's last commit or push note (the host
-    runs no git, D-P2-19). `remote.url` is **display only**: a client never passes it to `records.remote_private`
-    (the tool resolves the URL to mark from git itself). The tool's `status` adds `local {repo, url}` as it sees them
-    now and writes nothing.
+  - `records.status {current_url?}` → as in the block above, for **the caller's own** last note (another manager's
+    note never changes it), plus `last_noted`. `repo` and `remote.url` come from the caller's last commit or push
+    note (the host runs no git, D-P2-19). `remote.url` is **display only**: a client never passes it to
+    `records.remote_private` (the tool resolves the URL to mark from git itself). The tool's `status` adds `local
+    {repo, url}` as it sees them now and writes nothing.
+  - **`configured`** means **the workspace's records repo exists** (not "a note exists"): the last repo state any
+    tool reported for the workspace (`repo {state, at, by}` in the host's `records.json`, from any manager's note;
+    a record from before it falls back to any person's last report) is `ok`, `index_differs` or `unsafe` (`missing`
+    and `not_dedicated` are false). `orch records init` reports the repo. The tool's own `status` replaces it with
+    what it sees now (`local.repo`). Same in host and direct mode.
+  - **The current push URL** (for the dashboard's push confirmation): the tool's `status` passes the effective push
+    URL it resolved now as `current_url` (refused like any URL that can hide a secret). The answer's `remote` then
+    has `current_url` (for display: userinfo stripped; for anyone but an owner only the host, `local` for a path or
+    `file://`), `current_private` (that exact string carries the private-remote mark) and `matches_last` (it equals
+    the caller's last pushed destination, `remote.url`). Without `current_url` the three are `null`; `remote` is
+    `null` only when there is neither a last URL nor a current one (`url` is then `null` when only the current is
+    known, and `private`/`export` describe the current URL). Display only: the push resolves the URL and asks
+    `records.export_check` again at push time.
 - **Limits.** 64 MiB per file, 1 GiB and 200 000 files per snapshot (`records.too_large`); pages of 2 000 files bound
   to the manifest and the caller's principal for 10 min, at most 4 manifests per workspace; 50 export and 50 mark
   audit entries; `pending.tickets` at most 200. Hash cache by (path, size, inode, mtime, ctime).
@@ -6096,7 +6319,10 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
   recomputes it from the pages.
 - **Two state files.** The host's `<state>/hosts/<ws>/records.json` (0600): `private_remote` (the one mark),
   `marks` (audit: action, redacted URL, person, time), `exports` (audit of every export check), `last` (the note).
-  The person's `<state>/records.json` (0600): `validated` (per workspace and branch, the last validated tip) and
+  The host's `<state>/hosts/<ws>/convenience_seen.json` (0600, #441): the durable mark (§0.8.6 item 1), never
+  cleared. The host's `records.json` also keeps `repo` (the workspace's last reported repo state, for `configured`).
+  The person's `<state>/records.json` (0600): `validated` (per workspace and branch, the last validated tip), `clean`
+  (per workspace and branch, the last tip scanned clean of convenience events) and
   `auto` (per workspace `{on, every_min, push, root?, last_run?}`; `root` only for a direct-mode workspace,
   `last_run` the timer's own clock). In tier A both live
   in the same state directory. The mark is in the host file, not in the person's (`private_remotes:[url]` above is
@@ -6119,10 +6345,22 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
   https or ssh only, no userinfo, query or fragment); `ls-remote` and `push` run in a throwaway config-free bare repo
   whose alternates name the records repo's objects, keeping only `credential.*`, `http.*`, `ssh.*` and
   `core.sshCommand` of the person's frozen system and global config (no `url.*`, no `remote.*`); any `remote.<x>.*`
-  in the records repo's own config other than the remote in use is refused. T from `ls-remote` must exist locally
-  and be an ancestor of S; then the history check, `records.export_check(S, URL, ref)`, a recheck of the local config
-  and the URL, and `git push --no-verify --porcelain --no-recurse-submodules --no-follow-tags
-  --force-with-lease=<ref>:<T> <url> <S>:<ref>`. Never a non-fast-forward. A missing remote branch needs
+  in the records repo's own config other than the remote in use is refused. **Before any network call** (#441): the
+  history check, the convenience scan and `records.export_check(S, URL, ref, history_convenience)`. Then T from
+  `ls-remote` must exist locally and be an ancestor of S (an up-to-date remote ends the run here), a recheck of the
+  local config and the URL, and `git push --no-verify --porcelain --no-recurse-submodules --no-follow-tags
+  --force-with-lease=<ref>:<T> <url> <S>:<ref>`.
+- **The convenience scan** (#441, #454 review). Only event logs count: blobs at `events/workspace.jsonl` or
+  `tickets/<ulid>/events.jsonl` that a commit reachable from S (and not from the tip last scanned clean) added or
+  changed (`diff-tree`; the history is linear). Bodies and artifacts are free text agents write and are never read.
+  A line counts when it parses as JSON, leniently (`\u` escapes, duplicate keys, any order or spacing), with
+  top-level `auth` `"convenience"`; a line that does not parse as a JSON object counts too (fail closed: agents cannot
+  write raw event-log lines); any parse error, `RecursionError` included, is caught. Every records git call runs with
+  `GIT_NO_LAZY_FETCH=1`, so a partial clone never fetches behind the scan; as a backstop for git older than 2.45, a
+  records repo whose own config sets `extensions.partialClone` or `remote.*.promisor`/`partialclonefilter` is
+  `records.unsafe_config`. A tip scanned clean is kept as `clean
+  {sha, scanner}` per workspace and branch in the person's `records.json`; an entry of another scanner version means
+  a full rescan. Never a non-fast-forward. A missing remote branch needs
   `push --initial` (terminal). **The mark binds that URL string; the person's own settings (ssh config, credential
   helpers, DNS) decide how it is reached.**
 - **Codes and exits** (`orch.records.RecordsError`; the host op passes the same code and exit):
@@ -6146,7 +6384,18 @@ decision of 12 Oct 2026 on the private remote; this list is what is built.
 - **Dashboard child.** `python -I -m orch.records commit [--push] --workspace <id> --json` and `… auto off
   --workspace <id> --json` print exactly one JSON line valid against `orch.records.cli.CHILD_SCHEMA`:
   `{ok:true, commit?, pushed?, url?, detail?}` or `{ok:false, code, message, hint?, commit?}` (`commit` when a push
-  failed after the commit landed); exit 0 or the code's exit. The dashboard's argv stays exactly these two.
+  failed after the commit landed); exit 0 or the code's exit. A third argv reads the status:
+  `python -I -m orch.records status --workspace <id> --json` resolves the effective push URL as a push does, calls
+  `records.status {current_url}` and prints `{ok:true, detail:{status}}` (the host's answer with `local` and
+  `configured` as the tool sees them now, and `remote.current_url`, `current_private`, `matches_last`). What it does
+  exactly: **no writes to the records repo and no network** (`ls-remote --get-url` only, `GIT_NO_LAZY_FETCH=1`; the
+  index is compared with `diff-index --cached`, never `write-tree`), no records lock file and no run log, and a
+  throwaway temporary transport directory (the one push uses to check the literal URL). It **may record the
+  convenience mark** (when the host's scan of the merged history or cut tails finds a convenience event: a host
+  observation, as for any `records.status`), and in direct mode it opens the store, which takes the store lock and
+  may run its recovery, like any direct-mode read. Same gitsafe and
+  environment rules as push (`HOME`, `PATH`, `SSH_AUTH_SOCK` at most); it fits the dashboard's bounded child (60 s,
+  minimal environment, `python -I`).
 - **Auto mode and timer.** `auto on` asks on the terminal, writes the person's `auto` entry and installs a per-user
   timer: LaunchAgent `io.orch.records` (`StartInterval` 300) or systemd user units `orch-records.service`
   (`Type=oneshot`) and `orch-records.timer` (every 5 min), running `python -I -m orch.records auto --state <state>

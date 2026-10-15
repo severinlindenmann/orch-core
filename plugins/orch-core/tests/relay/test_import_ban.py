@@ -506,3 +506,46 @@ def test_signer_holds_no_key_attribute():
                 continue
             assert v is not k, name
             assert getattr(v, "__self__", None) is not k, f"{name} is a bound method of the key"
+
+
+# -- R2 extensions (honest limits: AST rules over orch.relay's own code, defence in depth, not isolation) -----------
+
+
+def _calls_to(path: Path, attr: str) -> list[int]:
+    tree = ast.parse(path.read_text())
+    return [
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == attr
+    ]  # fmt: skip
+
+
+def _imports(path: Path) -> set[str]:
+    out = set()
+    for n in ast.walk(ast.parse(path.read_text())):
+        if isinstance(n, ast.Import):
+            out |= {a.name for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            out.add(n.module)
+    return out
+
+
+def test_r2_epoch_keys_are_used_only_through_bridgekeys():
+    """11A.2: ``K_bridge`` is derived only in ``keys.py`` (BridgeKeys) and ``wire.py`` (the codec itself). Limit: a
+    value alias of ``wire.k_bridge`` is not followed (the R6-6 class)."""
+    users = {p.name for p in MODULES if _calls_to(p, "k_bridge") or _calls_to(p, "wk")}
+    assert users <= {"keys.py", "wire.py"}, users
+
+
+def test_r2_only_the_rid_store_opens_sqlite_and_nothing_appends_to_the_store():
+    """The rid store is the only SQLite user; no orch.relay module calls a store ``append`` (the relay path appends
+    only through the host's ``append_relay``, behind HostPort)."""
+    assert {p.name for p in MODULES if "sqlite3" in _imports(p)} == {"rids.py"}
+    for p in MODULES:
+        assert not _calls_to(p, "append_signed") and not _calls_to(p, "append_relay"), p.name
+        assert not _calls_to(p, "host_append"), p.name
+
+
+def test_r2_the_bridge_signs_only_through_the_signer_method():
+    """Response chunks are signed only by ``RelaySigner.response_chunk`` (called from ``BridgeKeys.seal_response``)."""
+    users = {p.name for p in MODULES if _calls_to(p, "response_chunk")}
+    assert users == {"keys.py"}, users

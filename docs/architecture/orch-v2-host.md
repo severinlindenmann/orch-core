@@ -8919,7 +8919,9 @@ structurally: the invariant is named and enforced in one place.
 - Tests: `tests/store/test_relay_gate.py` (end to end through the real store: `device.removed`, `device.revoked`,
   `member.removed`, a restore's revocation, a foreign append, a held and a pending forwarded revocation, unrelated
   appends, a failing gate, close, the AST chokepoint), the review's X3/X5/X6 and survivors N02, N04, N11, N16, N17, N32,
-  N33. Equivalent: N14, N19, N22; N18 (parent fsync) needs a crash harness.
+  N33. Equivalent: N14, N19, N22; N18 (parent fsync) needs a crash harness. Mutation, round 3: 28 new mutants of the
+  round-3 code on a `git archive` copy, 24 killed at first, 3 survivors (a device vanishing from the state, a
+  malformed member, a replaced but unclosed store) closed by tests, 1 equivalent (a no-op rewrite of the setter).
 
 - Mutation, round 2: the review's 60 mutants left 6 required survivors (M16, M18, M27, M36, M51, M57) and M58: each has
   a test now. 30 new mutants of the round-2 code on a `git archive` copy: 27 killed at first, one survivor closed by

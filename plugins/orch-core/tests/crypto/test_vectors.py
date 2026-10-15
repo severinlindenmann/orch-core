@@ -11,9 +11,9 @@ member lists, P2/P3), ``cert_request``, ``cert_binding``, ``rejected_forms``, ``
 ``bridge`` (pairing and bridge v2, P2/P3; R1 checks only its ORB2 codec layer in ``tests/relay/test_wire.py``),
 ``member_list_snapshots`` and ``wk_commit`` (membership publication
 and WK commitments, P3), ``p3`` (relay HTTP, restore and queue vectors, P3), ``checkpoints`` (relay checkpoint
-transport and restore, P3), ``revocation_op`` (host revocation op, P2), ``push`` (P3), ``drop`` and
-``ws_envelopes`` (Drop and ws-to-ws, P2+), ``checkpoints_g4`` (relay checkpoint isolation, R3), ``unpublished``
-(P3-D31 evidence, R4).
+transport and restore, P3), ``revocation_op`` (host revocation op, P2), ``ws_envelopes`` (ws-to-ws, P2+),
+``checkpoints_g4`` (relay checkpoint isolation, R3), ``unpublished`` (P3-D31 evidence, R4). ``push`` and ``drop``
+are H13-0's (``test_h13_push.py``, ``test_h13_drop.py``).
 ``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
 listed, so a vector update cannot go unconsumed silently.
 """
@@ -179,9 +179,10 @@ def test_key_pair_round_trip_on_vector_keys():
 CONSUMED = {"keys", "ids", "sign", "hkdf", "salted_aead", "seal", "seal_open", "label_sealed", "certs", "revocations"}
 # reader_decl: `decls` and the `gate` of each `pair_meta` case in tests/identity/test_reader_decl.py; the pair-meta
 # envelopes and `request_meta` (rd) wait for the pairing and column-R code (H12d-3, with R6)
-OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish", "relay_auth", "card", "reader_decl"}
+# push and drop: H13-0, tests/crypto/test_h13_push.py and test_h13_drop.py (every vector, byte-exact)
+OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish", "relay_auth", "card", "reader_decl", "push", "drop"}
 DEFERRED = {
-    "wk_grants", "member_lists", "cert_request", "enroll", "bridge", "revocation_op", "push", "drop",
+    "wk_grants", "member_lists", "cert_request", "enroll", "bridge", "revocation_op",
     "ws_envelopes", "cert_binding", "rejected_forms", "approved_anchor",
     "member_list_snapshots", "wk_commit", "p3", "checkpoints", "checkpoints_g4", "unpublished",
 }  # fmt: skip

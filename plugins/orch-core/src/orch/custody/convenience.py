@@ -458,6 +458,11 @@ class ConvenienceBackend:
         self.signatures += 1
         return sig
 
+    def unseal(self, key_id: str, purpose: str, object_id: bytes, epoch: int, extra: bytes, sealed: bytes) -> bytes:
+        """Never: convenience custody holds one device signing key, and a key-exchange key is never in convenience
+        custody (the primary's keys are passphrase-only, orch-v2-host 11A.15.1)."""
+        raise CustodyError("convenience custody holds no key-exchange key and opens nothing")
+
     def verify_capability(self) -> None:
         """Load the key and prove it signs (a throwaway payload, verified against the selected public key)."""
         key = self._load()

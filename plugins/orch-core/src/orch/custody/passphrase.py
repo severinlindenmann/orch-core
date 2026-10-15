@@ -43,7 +43,7 @@ import json
 import os
 import secrets
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
@@ -53,6 +53,9 @@ from orch import canon, crypto
 
 from . import files
 from .base import (
+    KX_PURPOSE_RULES,
+    KX_PURPOSES,
+    PRIMARY_SIG_LABELS,
     ROLE_LABELS,
     CustodyError,
     KeyNotFound,
@@ -72,6 +75,7 @@ __all__ = [
     "KdfParams",
     "PassphraseBackend",
     "PassphraseRequest",
+    "PrimarySession",
     "render_prompt",
     "tty_passphrase_provider",
 ]
@@ -82,7 +86,9 @@ MIN_N = 2**15
 MAX_N = 2**20
 MAX_SHOWN = 120
 MAX_NAME = 80
-ROLES = ("person", "device")
+ROLES = ("person", "device", "primary", "kx")
+_FIELDS = frozenset({"v", "key_id", "role", "pub", "kdf", "nonce", "ct"})
+_KX_FIELDS = _FIELDS | {"purposes", "recipient"}
 
 
 @dataclass(frozen=True)
@@ -148,6 +154,25 @@ def render_prompt(request: PassphraseRequest) -> str:
         for name, value in request.fields:
             lines += _field_lines(name, value)
         lines.append("this one passphrase signs every event of the plan you just read, and nothing else")
+        if request.action:
+            lines.append(f'note (caller text, not signed): "{_value(request.action)}"')
+        return "\n".join(lines) + "\n"
+    if request.kind == "unseal":
+        lines = ["", "=== orch: passphrase to open one sealed item ===", f"sha256: {digest}"]
+        lines.append(f"key: {_value(request.key_id, 64)}")
+        for name, value in request.fields:
+            lines += _field_lines(name, value)
+        lines.append("this opens one sealed item addressed to this key; nothing is signed")
+        return "\n".join(lines) + "\n"
+    if request.kind == "primary":
+        lines = ["", "=== orch: passphrase for your primary key, for this one command ==="]
+        lines.append(f"key: {_value(request.key_id, 64)}")
+        for name, value in request.fields:
+            lines += _field_lines(name, value)
+        lines.append(
+            "until this command ends, it may log in to your relay as your primary and open cert requests"
+            " addressed to it; it signs nothing else"
+        )
         if request.action:
             lines.append(f'note (caller text, not signed): "{_value(request.action)}"')
         return "\n".join(lines) + "\n"
@@ -298,6 +323,55 @@ def _params_ok(params: KdfParams, floor: int) -> bool:
     )
 
 
+def _check_purposes(value: object, *, creating: bool = False) -> list[str]:
+    """A kx key's purposes: a non-empty list of distinct :data:`KX_PURPOSES` members, sorted (on disk exactly so)."""
+    err: Exception = (
+        CustodyError(f"a kx key holds a non-empty set of these purposes only: {', '.join(KX_PURPOSES)}")
+        if creating
+        else ValueError("purposes")
+    )
+    if type(value) not in ((list, tuple) if creating else (list,)) or not value:
+        raise err
+    if not all(type(v) is str for v in value):  # type: ignore[union-attr]
+        raise err
+    out = sorted(value) if creating else list(value)  # type: ignore[arg-type]
+    if out != sorted(set(out)) or not set(out) <= set(KX_PURPOSES):
+        raise err
+    return out
+
+
+def _check_recipient(value: object) -> bytes:
+    if type(value) is not str or len(value) != 32 or value != value.lower():
+        raise ValueError("recipient")
+    return bytes.fromhex(value)
+
+
+def _kx_rule(doc: dict, purpose: object, object_id: object, epoch: object, extra: object, sealed: object) -> bytes:
+    """The checks before a ``kx`` key opens anything; returns the recipient id fixed in the key file."""
+    if doc["role"] != "kx":
+        raise CustodyError("only a kx key opens a seal; a signing key never does ECDH")
+    if type(purpose) is not str or purpose not in doc["purposes"]:
+        raise CustodyError(f"this kx key does not open purpose {purpose!r}")
+    want_epoch, want_extra = KX_PURPOSE_RULES[purpose]
+    if type(epoch) is not int or epoch != want_epoch or type(extra) is not bytes or extra != want_extra:
+        raise CustodyError(f"a {purpose} seal is opened at epoch {want_epoch} with no other AAD")
+    if type(object_id) is not bytes or len(object_id) != 16 or type(sealed) is not bytes:
+        raise CustodyError("the object id is 16 bytes and the sealed item is bytes")
+    return bytes.fromhex(doc["recipient"])
+
+
+@dataclass(frozen=True)
+class PrimarySession:
+    """What :meth:`PassphraseBackend.primary_unlocked` yields: the pair's public identity and two capabilities,
+    ``sign(payload)`` (relay logins only) and ``unseal(purpose, object_id, epoch, extra, sealed)``."""
+
+    device_id: bytes
+    dk_sig_pub: bytes
+    dk_kx_pub: bytes
+    sign: Callable[[bytes], bytes] = field(repr=False)
+    unseal: Callable[[str, bytes, int, bytes, bytes], bytes] = field(repr=False)
+
+
 class PassphraseBackend:
     name = "passphrase"
     auth = "passphrase"
@@ -335,12 +409,16 @@ class PassphraseBackend:
         try:
             doc = json.loads(path.read_bytes())
             if (
-                set(doc) != {"v", "key_id", "role", "pub", "kdf", "nonce", "ct"}
+                type(doc) is not dict
+                or doc.get("role") not in ROLES
+                or set(doc) != (_KX_FIELDS if doc["role"] == "kx" else _FIELDS)
                 or doc["v"] != 1
                 or doc["key_id"] != key_id
-                or doc["role"] not in ROLES
             ):
                 raise ValueError("shape")
+            if doc["role"] == "kx":
+                _check_purposes(doc["purposes"])
+                _check_recipient(doc["recipient"])
             kdf = doc["kdf"]
             if set(kdf) != {"name", "n", "r", "p", "salt"} or kdf["name"] != "scrypt":
                 raise ValueError("kdf")
@@ -355,19 +433,41 @@ class PassphraseBackend:
         except (ValueError, KeyError, TypeError, crypto.CryptoError) as e:
             raise CustodyError(f"corrupt key file for {key_id!r}: {e}") from None
         header = {"v": 1, "key_id": key_id, "role": doc["role"], "pub": doc["pub"], "kdf": kdf}
+        if doc["role"] == "kx":  # authenticated with the rest of the header: a changed purpose or recipient never opens
+            header["purposes"], header["recipient"] = doc["purposes"], doc["recipient"]
         return doc, header, params, salt, nonce, ct
 
     # -- interface ----------------------------------------------------------------------------------------------------
 
     def create(
-        self, key_id: str, *, secret: bytes | None = None, role: str = "device", passphrase: str | None = None
+        self,
+        key_id: str,
+        *,
+        secret: bytes | None = None,
+        role: str = "device",
+        passphrase: str | None = None,
+        purposes: tuple[str, ...] | None = None,
+        recipient: bytes | None = None,
     ) -> bytes:
         """Create the key. ``passphrase`` is for a caller that has already asked the person itself on the terminal
         (``orch init`` offers a generated one); without it the backend's own prompt asks (twice). Either way the text
-        must pass :func:`orch.custody.strength.check_strength`."""
+        must pass :func:`orch.custody.strength.check_strength`.
+
+        ``role="kx"`` makes a key-exchange key: ``purposes`` (a subset of :data:`KX_PURPOSES`) and ``recipient`` (the
+        16-byte recipient id the seals name) are required and written into the authenticated header. ``kx`` and
+        ``primary`` keys are always generated here, never imported (``secret`` is refused)."""
         check_key_id(key_id)
         if role not in ROLES:
-            raise CustodyError(f"the passphrase backend holds person and device keys, not {role!r}")
+            raise CustodyError(f"the passphrase backend holds person, device, primary and kx keys, not {role!r}")
+        extra_header: dict[str, object] = {}
+        if role == "kx":
+            if purposes is None or type(recipient) is not bytes or len(recipient) != 16:
+                raise CustodyError("a kx key is created with its purposes and its 16-byte recipient id")
+            extra_header = {"purposes": _check_purposes(purposes, creating=True), "recipient": recipient.hex()}
+        elif purposes is not None or recipient is not None:
+            raise CustodyError("purposes and a recipient belong to kx keys only")
+        if role in ("kx", "primary") and secret is not None:
+            raise CustodyError(f"a {role} key is generated in custody, never imported")
         path = self._path(key_id)
         if path.exists():
             raise files.KeyExists(key_id)
@@ -384,7 +484,7 @@ class PassphraseBackend:
         check_strength(passphrase)
         salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
         kdf = {"name": "scrypt", "n": self._kdf.n, "r": self._kdf.r, "p": self._kdf.p, "salt": crypto.b64u(salt)}
-        header = {"v": 1, "key_id": key_id, "role": role, "pub": crypto.b64u(pub), "kdf": kdf}
+        header = {"v": 1, "key_id": key_id, "role": role, "pub": crypto.b64u(pub), "kdf": kdf, **extra_header}
         scalar = bytearray(crypto.private_scalar(key))
         derived = bytearray(_derive(pw, salt, self._kdf))
         try:
@@ -458,6 +558,8 @@ class PassphraseBackend:
             raise CustodyError("an unlocked batch names the device labels it may sign")
         check_key_id(key_id)
         doc, header, params, salt, nonce, ct = self._read(key_id)
+        if doc["role"] != "device":
+            raise CustodyError("only a device key signs a batch")
         request = PassphraseRequest("batch", key_id, action if isinstance(action, str) else "", digest, fields)
         restore = _harden()  # before the prompt: the passphrase, the derived key and the scalar are all covered
         try:
@@ -524,6 +626,134 @@ class PassphraseBackend:
             _zeroise(scalar)
             raise CustodyError("key file does not match its public key")
         return scalar
+
+    # -- key exchange (orch-v2-host 11A.15.10 item 9) ------------------------------------------------------------------
+
+    def _decrypt(self, loaded: tuple, pw: bytes) -> bytearray:
+        """The scalar of a loaded key file (the caller zeroises it); :class:`WrongPassphrase` when it does not open."""
+        doc, header, params, salt, nonce, ct = loaded
+        derived = bytearray(_derive(pw, salt, params))
+        try:
+            try:
+                return bytearray(crypto.aes_gcm_open(bytes(derived), nonce, ct, self._aad(header)))
+            except InvalidTag:
+                raise WrongPassphrase("wrong passphrase") from None
+        finally:
+            _zeroise(derived)
+
+    @staticmethod
+    def _key_of(doc: dict, scalar: bytearray):
+        key = crypto.private_key_from_scalar(int.from_bytes(scalar, "big"))
+        if crypto.public_bytes(key) != crypto.unb64u(doc["pub"], crypto.PUB_LEN):
+            raise CustodyError("key file does not match its public key")
+        return key
+
+    def unseal(self, key_id: str, purpose: str, object_id: bytes, epoch: int, extra: bytes, sealed: bytes) -> bytes:
+        """See :meth:`orch.custody.base.Backend.unseal`. One passphrase prompt per call (kind ``unseal``); the rules
+        are checked before the prompt. A command that opens and signs several times uses
+        :meth:`primary_unlocked` instead."""
+        check_key_id(key_id)
+        loaded = self._read(key_id)
+        doc = loaded[0]
+        rcpt = _kx_rule(doc, purpose, object_id, epoch, extra, sealed)
+        fields = (("purpose", purpose), ("object", object_id.hex()), ("epoch", str(epoch)))
+        request = PassphraseRequest("unseal", key_id, "", crypto.sha256(sealed).hex()[:32], fields)
+        pw = _passphrase_bytes(self._provider(request))
+        if not pw:
+            raise WrongPassphrase("empty passphrase")
+        scalar = self._decrypt(loaded, pw)
+        key = None
+        try:
+            key = self._key_of(doc, scalar)
+            return crypto.open_sealed(key, rcpt, purpose, object_id, epoch, sealed, extra)
+        finally:
+            _zeroise(scalar)
+            key = None  # noqa: F841
+
+    def create_primary(
+        self, sig_key_id: str, kx_key_id: str, *, purposes: tuple[str, ...], passphrase: str | None = None
+    ) -> tuple[bytes, bytes]:
+        """The primary key pair under one passphrase (one prompt, asked twice): ``sig_key_id`` (role ``primary``)
+        and ``kx_key_id`` (role ``kx``, ``purposes``, recipient = the protocol device id of the signing key). If the
+        second key cannot be made, the first is removed. Returns ``(dk_sig_pub, dk_kx_pub)``."""
+        check_key_id(sig_key_id)
+        check_key_id(kx_key_id)
+        if sig_key_id == kx_key_id:
+            raise CustodyError("the primary's two keys need two key ids")
+        if passphrase is None:
+            passphrase = self._provider(PassphraseRequest("create", sig_key_id, "", ""))
+        sig_pub = self.create(sig_key_id, role="primary", passphrase=passphrase)
+        try:
+            kx_pub = self.create(
+                kx_key_id, role="kx", purposes=purposes, recipient=crypto.device_id(sig_pub), passphrase=passphrase
+            )
+        except BaseException:
+            with contextlib.suppress(KeyNotFound):
+                self.delete(sig_key_id)
+            raise
+        return sig_pub, kx_pub
+
+    @contextlib.contextmanager
+    def primary_unlocked(
+        self, sig_key_id: str, kx_key_id: str, *, action: str, fields: tuple[tuple[str, str], ...] = ()
+    ) -> Iterator[PrimarySession]:
+        """The one-command unlock of the primary role (11A.15.10 item 9): one passphrase prompt (kind ``primary``)
+        opens both keys of the pair for the ``with`` block; the yielded :class:`PrimarySession` signs only
+        :data:`PRIMARY_SIG_LABELS` (the relay login) and opens only the ``kx`` key's purposes, under the same rules as
+        :meth:`unseal`. Both keys are zeroised when the block ends, however it ends; core dumps and debugger attach
+        are off from before the prompt (:func:`_harden`). The two files must be a pair (the ``kx`` recipient is the
+        signing key's device id) under one passphrase. Only :mod:`orch.custody.primary` calls it (a test checks)."""
+        check_key_id(sig_key_id)
+        check_key_id(kx_key_id)
+        sig_loaded, kx_loaded = self._read(sig_key_id), self._read(kx_key_id)
+        sig_doc, kx_doc = sig_loaded[0], kx_loaded[0]
+        if sig_doc["role"] != "primary" or kx_doc["role"] != "kx":
+            raise CustodyError("the primary unlock opens a primary signing key and a kx key")
+        sig_pub = crypto.unb64u(sig_doc["pub"], crypto.PUB_LEN)
+        kx_pub = crypto.unb64u(kx_doc["pub"], crypto.PUB_LEN)
+        if kx_doc["recipient"] != crypto.device_id(sig_pub).hex():
+            raise CustodyError("the kx key does not belong to this primary signing key")
+        request = PassphraseRequest("primary", sig_key_id, action if isinstance(action, str) else "", "", fields)
+        restore = _harden()
+        sig_scalar, kx_scalar = bytearray(), bytearray()
+        live: list = []
+        try:
+            pw = _passphrase_bytes(self._provider(request))
+            if not pw:
+                raise WrongPassphrase("empty passphrase")
+            sig_scalar = self._decrypt(sig_loaded, pw)
+            kx_scalar = self._decrypt(kx_loaded, pw)
+            live += [self._key_of(sig_doc, sig_scalar), self._key_of(kx_doc, kx_scalar)]
+
+            def sign(payload: bytes) -> bytes:
+                if not live:
+                    raise CustodyError("the primary key is locked again")
+                if not label_allowed(payload, PRIMARY_SIG_LABELS):
+                    raise CustodyError("the primary signs relay logins only")
+                return crypto.sign(live[0], payload)
+
+            def unseal(purpose: str, object_id: bytes, epoch: int, extra: bytes, sealed: bytes) -> bytes:
+                if not live:
+                    raise CustodyError("the primary key is locked again")
+                rcpt = _kx_rule(kx_doc, purpose, object_id, epoch, extra, sealed)
+                return crypto.open_sealed(live[1], rcpt, purpose, object_id, epoch, sealed, extra)
+
+            yield PrimarySession(crypto.device_id(sig_pub), sig_pub, kx_pub, sign, unseal)
+        finally:
+            live.clear()
+            _zeroise(sig_scalar)
+            _zeroise(kx_scalar)
+            restore()
+
+    def key_info(self, key_id: str) -> dict:
+        """The public part of a key file (role, public key, and for ``kx`` its purposes and recipient). Never
+        prompts, never decrypts."""
+        check_key_id(key_id)
+        doc, *_ = self._read(key_id)
+        out = {"key_id": key_id, "role": doc["role"], "pub": doc["pub"]}
+        if doc["role"] == "kx":
+            out["purposes"], out["recipient"] = list(doc["purposes"]), doc["recipient"]
+        return out
 
     def presence(self) -> str:
         return self.auth or "none"

@@ -24,8 +24,9 @@ Decisions (H12d-1, the strictest reading where 9.3 leaves room):
   does not declare. Entries of levels above ``host_max`` are otherwise ignored (an unknown higher level is accepted as
   ``host_max``, 9.3); entries up to ``host_max`` name only known surfaces, each a ``sha256:`` + 64 lower-case hex.
 * ``created_ms`` more than 300 s ahead of the host clock is refused for every ``via`` (9.3 "Latest wins"); ``enrol``
-  also refuses one more than 30 days old; ``declare`` must be within ±300 s. ``now_ms=None`` is a recheck (a binding,
-  a submit), which never reads the clock (9.3 "Freshness is checked once").
+  also refuses one more than 30 days old; ``declare`` must be within ±300 s. ``now_ms=None, recheck=True`` is a
+  recheck (a binding, a submit), which never reads the clock (9.3 "Freshness is checked once"); either alone is a
+  caller bug (#463 review L2).
 * The expected digests are core's own (:data:`KAT_DIGESTS`, pinned by ``tests/vectors/f1/reader_kat_1.json``); a
   caller passes others only to consume foreign vectors.
 """
@@ -207,7 +208,7 @@ def _time(o: Mapping[str, Any], now_ms: int | None) -> None:
         raise DeclInvalid("time", f"created_ms {t} is outside the {via} window; the host's time is {now_ms}")
 
 
-def _context(workspace_id, dk_sig_pub, dk_kx_pub, who, bind, surfaces, now_ms, host_max, expected) -> tuple[str, ...]:
+def _context(workspace_id, dk_sig_pub, dk_kx_pub, who, bind, surfaces, now_ms, recheck, host_max, expected):
     if not _hex32(workspace_id):
         raise ValueError("workspace_id must be 32 lower-case hex")
     crypto.validate_public_key(dk_sig_pub)
@@ -217,8 +218,12 @@ def _context(workspace_id, dk_sig_pub, dk_kx_pub, who, bind, surfaces, now_ms, h
     req = tuple(surfaces)
     if not req or len(set(req)) != len(req) or not set(req) <= set(SURFACES):
         raise ValueError(f"surfaces must be a non-empty subset of {SURFACES}")
-    if now_ms is not None and not _uint(now_ms, _MS_MAX):
-        raise ValueError("now_ms must be a millisecond timestamp or None (a recheck)")
+    if type(recheck) is not bool:
+        raise ValueError("recheck must be a bool")
+    if recheck and now_ms is not None:
+        raise ValueError("a recheck reads no clock: pass now_ms=None with recheck=True")
+    if not recheck and not _uint(now_ms, _MS_MAX):
+        raise ValueError("now_ms must be the host clock in ms; only an explicit recheck=True passes now_ms=None")
     if not _uint(host_max, LEVEL_MAX) or not isinstance(expected, Mapping):
         raise ValueError("host_max and expected must be given")
     for k in range(1, host_max + 1):
@@ -238,6 +243,7 @@ def verify_decl(
     bind: Mapping[str, str],
     surfaces: Iterable[str],
     now_ms: int | None,
+    recheck: bool = False,
     expected: Mapping[str, Mapping[str, str]] = KAT_DIGESTS,
     host_max: int = HOST_MAX,
 ) -> Declared:
@@ -249,9 +255,11 @@ def verify_decl(
     the requesting device's certificate); ``who`` the person binding the host expects (``{"person_id": hex}``, or
     ``{"pk_pin": b64u}`` for a pairing without a certificate); ``bind`` the expected ``bind`` exactly; ``surfaces``
     the KAT surfaces the host requires (``log`` from a core, ``view`` from a phone); ``now_ms`` the host clock at
-    admission, ``None`` for a recheck; ``expected`` level -> surface -> digest, every level up to ``host_max``.
+    admission; a recheck (a binding, a submit: never the clock) passes ``now_ms=None`` **and** ``recheck=True``, and
+    either alone is a :class:`ValueError`, so freshness is never dropped by accident; ``expected`` level -> surface ->
+    digest, every level up to ``host_max``.
     A bad context (not the declaration) raises :class:`ValueError`: it is the caller's bug, never the reader's."""
-    req = _context(workspace_id, dk_sig_pub, dk_kx_pub, who, bind, surfaces, now_ms, host_max, expected)
+    req = _context(workspace_id, dk_sig_pub, dk_kx_pub, who, bind, surfaces, now_ms, recheck, host_max, expected)
     o, sig = _shape(decl, host_max)
     if not crypto.verify(dk_sig_pub, sig, LABEL + canon.cj_checked(o)):
         raise DeclInvalid("signature", "not signed by the request's device key under orch/v2/sig/reader-decl|")

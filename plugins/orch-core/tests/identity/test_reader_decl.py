@@ -260,8 +260,20 @@ def test_declare_window_is_plus_minus_300_s():
 def test_a_recheck_never_reads_the_clock():
     d = _signed(_o(bind={"via": "declare"}, created_ms=NOW - 7 * DAY))
     refused(d, "time", bind={"via": "declare"})
-    assert verify(d, bind={"via": "declare"}, now_ms=None).level == 1
-    refused(_signed(_o(kat={"1": {"view": OTHER}})), "kat_mismatch", now_ms=None)
+    assert verify(d, bind={"via": "declare"}, now_ms=None, recheck=True).level == 1
+    refused(_signed(_o(kat={"1": {"view": OTHER}})), "kat_mismatch", now_ms=None, recheck=True)
+
+
+def test_dropping_freshness_needs_an_explicit_recheck():
+    """#463 review L2: now_ms=None alone is a caller bug, never a silent skip of the time window."""
+    d = _signed(_o(bind={"via": "declare"}, created_ms=NOW - 7 * DAY))
+    with pytest.raises(ValueError, match="recheck"):
+        verify(d, bind={"via": "declare"}, now_ms=None)
+    with pytest.raises(ValueError, match="recheck"):
+        verify(d, bind={"via": "declare"}, recheck=True)  # a recheck reads no clock: now_ms must be None
+    with pytest.raises(ValueError):
+        verify(d, bind={"via": "declare"}, now_ms=None, recheck=1)
+    refused(d, "time", bind={"via": "declare"}, recheck=False)
 
 
 # --- the context ---------------------------------------------------------------------------------------------------

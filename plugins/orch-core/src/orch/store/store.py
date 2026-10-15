@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import calendar
 import contextlib
+import copy
 import hashlib
 import json
 import logging
@@ -620,6 +621,13 @@ class Store:
     def genesis(self) -> str | None:
         assert self._state is not None
         return self._state.workspace.genesis
+
+    def genesis_event(self) -> dict[str, Any] | None:
+        """A copy of the loaded ``workspace.created`` event (R6a: the owner's ``PK`` and the delegation for the first
+        card come from it, re-checked by the caller with ``identity.members.check_genesis``), or ``None``."""
+        if self._genesis_event is None:
+            return None
+        return copy.deepcopy(self._genesis_event)
 
     @property
     def diverged(self) -> Mapping[str, Divergence]:

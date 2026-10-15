@@ -197,6 +197,21 @@ def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_u
             item = _lstat_owned(keys / name, host_uid)
             if item is not None and (not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o077):
                 raise unsafe(f"{keys / name}: a key must be a 0600 file")
+    # R6a (11A.15.3): membership/ and its keys/ and cards/ are 0700 directories, every file in them a 0600 regular
+    # file (WK, WXK and CK are secrets: refused, never repaired, as the WSK above)
+    for sub in ("membership", "membership/keys", "membership/cards"):
+        d = hosts / sub
+        info = _lstat_owned(d, host_uid)
+        if info is None:
+            continue
+        if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+            raise unsafe(f"{d}: expected a 0700 directory")
+        for name in os.listdir(d):
+            if sub == "membership" and name in ("keys", "cards"):
+                continue  # checked as directories in their own turn
+            item = _lstat_owned(d / name, host_uid)
+            if item is not None and (not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o077):
+                raise unsafe(f"{d / name}: a membership file must be a 0600 file")
     if _lstat_owned(hosts, host_uid) is not None:
         for name in os.listdir(hosts):
             item = _lstat_owned(hosts / name, host_uid)

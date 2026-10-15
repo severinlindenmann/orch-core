@@ -62,7 +62,7 @@ REAL_WORLD = [
     ("extensions.worktreeConfig", "true"), ("extensions.objectFormat", "sha256"), ("gc.auto", "0"),
     ("maintenance.auto", "false"), ("maintenance.gc.enabled", "true"), ("lfs.repositoryformatversion", "0"),
     ("lfs.https://github.com/o/r.git/info/lfs.access", "basic"), ("color.ui", "auto"), ("color.diff.meta", "blue"),
-    ("advice.detachedHead", "false"), ("status.showUntrackedFiles", "all"),
+    ("advice.detachedHead", "false"), ("status.showUntrackedFiles", "all"), ("diff.renames", "copies"),
     ("merge.conflictStyle", "zdiff3"), ("rebase.autoStash", "true"), ("fetch.prune", "true"),
     ("submodule.recurse", "false"), ("rerere.enabled", "true"),
 ]  # fmt: skip
@@ -283,10 +283,19 @@ def test_no_lazy_fetch_in_every_scrubbed_environment():
     assert "protocol.allow=never" in gitsafe._argv("/", ["status"])
 
 
+def test_a_status_submodule_summary_is_refused():
+    """A summary opens submodules: no allowed key may change what an operation opens (#561)."""
+    assert gitsafe.exec_risk([(L, "status.submoduleSummary", "true")]) == "status.submoduleSummary"
+
+
 @pytest.mark.parametrize(
-    "key", ["diff.submodule", "diff.relative", "diff.renames", "diff.context", "diff.ignoreSubmodules",
-            "status.submoduleSummary"],
-)  # fmt: skip
-def test_keys_that_change_what_an_operation_opens_or_reports_are_refused(key):
-    """Codex on #561: an operation's fixed options are the only source of its behaviour."""
-    assert gitsafe.exec_risk([(L, key, "true")]) == key
+    "key", ["diff.external", "diff.x.textconv", "diff.x.command", "diff.submodule", "diff.relative"]
+)
+def test_the_gate_tolerates_every_diff_key_which_the_operations_neutralise(world, key):  # noqa: F811
+    """orch-52 on #561: git-lfs and editors set ``diff.*``; the gate tolerates it (every diff operation pins it), while
+    the shared allow-list (``exec_risk``, the records tool) still refuses the program-running keys."""
+    root, repo, own, args = world
+    _git(repo, "config", key, "/nonexistent/prog")
+    gitsafe.gate(str(repo), own)
+    runs_a_program = key in ("diff.external", "diff.x.textconv", "diff.x.command")
+    assert gitsafe.exec_risk([(L, key, "x")]) == (key if runs_a_program else None)

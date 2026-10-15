@@ -4123,7 +4123,8 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list":
     `isolated_env`, `config_env`, `person_entries`, and `command`, a **closed set of operations** (`gitsafe.OPS`:
     `head`, `symbolic_head`, `toplevel`, `ref`, `commit`, `parent`, `merge_base`, `status`, `index_flags`,
-    `staged_raw`, `staged_tree`, `staged_blob`, `diff_numstat`, `diff_names`, `diff_patch`) with validated operands (a revision is
+    `staged_raw`, `staged_tree`, `staged_blob`, `diff_numstat`, `diff_names`, `diff_patch`; every diff operation pins
+    each `diff` knob, so the gate tolerates `diff.*` in a repository's config) with validated operands (a revision is
     `HEAD`, a full commit id or `refs/heads/<name>`, followed by `--`) and no free argv. `ops/caps.Git.run` (free argv) is removed. Every operation runs the gitsafe
     gate first: a repository whose own config sets a key outside the allow-list, such as a filter its
     `.gitattributes` selects, gives `None` in `store/observe` (D58's "git cannot be asked", never clean) and
@@ -9371,15 +9372,14 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     - `remote.<n>.{url,pushurl,fetch,push,tagopt,prune,mirror,…}`.
     - `branch.<n>.{remote,merge,rebase,pushremote,description}`.
     - `user.*`, `init.defaultBranch`, `extensions.{objectFormat,worktreeConfig,refStorage,preciousObjects,partialClone}`.
-    - The tuning keys of `gc`, `pack`, `fetch`, `pull`, `push`, `merge`, `rebase`, `submodule`, `status`,
+    - The tuning keys of `gc`, `pack`, `fetch`, `pull`, `push`, `merge`, `rebase`, `submodule`, `status`, `diff`,
       `color`, `column`, `advice`, `i18n`, `blame`, `maintenance`, `log`, `rerere`, `index`, `feature`, `checkout`,
       `worktree` and `transfer`.
     - The signing switches only: `commit.gpgSign`, `tag.gpgSign`, `gpg.format`.
     - LFS's own `lfs.repositoryformatversion` and `lfs.<url>.access`.
   - **What it never holds:** anything that names a program, a command, a driver, a hook or another config file. That
-    excludes every `diff.*` key (since #546: `diff.submodule` or `diff.relative` would change what a read opens or
-    reports; an operation's fixed options are the only source of its behaviour), `status.submoduleSummary`,
-    `filter.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
+    excludes `diff.<driver>.*` and `diff.external` (but see "Tolerated: `diff.*`" below), `status.submoduleSummary`
+    (a summary opens submodules), `filter.*`, `merge.<driver>.*`, `hook.*`, `include*`, `alias.*`, `pager.*`,
     `credential.*`, `gc.recentObjectsHook`, `remote.<n>.{vcs,uploadpack,receivepack}`, `*.cmd` tools, editors, gpg
     programs, `core.attributesFile` and any unknown section. A non-boolean `core.fsmonitor` is refused.
   - **Why an allow-list.** The class "a config key that runs a program" is open-ended, and each git release can add
@@ -9416,9 +9416,26 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     itself checks only the directory's owner.
   - **Local filters are refused.** A repository with `git lfs install --local` or git-crypt has its filters in the
     local config, so it is refused. Install such filters globally.
-  - **Attributes only *select* drivers.** After the gate, the repo's config defines no program. An attribute can
-    therefore select only a built-in behaviour or a driver the person configured globally (LFS after
+  - **Attributes only *select* drivers.** After the gate, the repo's config defines no program except a tolerated
+    `diff` driver, which no orch git command runs (see below). An attribute can therefore select only a built-in behaviour or a driver the person configured globally (LFS after
     `git lfs install`). That driver runs as the runner's UID, the person in tier A, as when they run git.
+  - **Tolerated: `diff.*` (orch-52, #561).** The gate refuses every key outside the allow-list except `diff.*`,
+    driver programs included (`diff.external`, `diff.<driver>.textconv`, `diff.<driver>.command`), because git-lfs
+    and editors set them and orch must keep working. They are neutralised, not trusted: an operation's fixed options
+    are the only source of its behaviour, so every diff operation of `gitsafe.OPS` pins each diff knob that can run
+    a program or change the output orch parses:
+    - `--no-ext-diff` and `--no-textconv`;
+    - `--submodule=short`, `--no-relative` (`--relative` where it is meant), `--no-color`, `--ignore-submodules`,
+      `-O/dev/null`, `--no-renames` or `-M50%`, and `--src-prefix=a/ --dst-prefix=b/` on the patch;
+    - command-scope values for every named `diff` key: prefixes, `relative`, `submodule`, `ignoreSubmodules`,
+      `renames`, `renameLimit`, `algorithm`, `indentHeuristic`, `context`, `interHunkContext`, `suppressBlankEmpty`,
+      `colorMoved`, `colorMovedWS`, `wsErrorHighlight`, `color.diff`, `color.ui`.
+
+    `gitsafe._DIFF_PINS` lists each key and why. The keys left unpinned run nothing: a driver's `xfuncname` or
+    `binary`, which only do what the repo's own attributes ask for. No other operation reads diff config, and the
+    runner's `worktree add`/`remove` run no diff. A test sets every one of these keys to a hostile value and gets
+    byte-identical output to a clean repository from every operation. The shared allow-list (`exec_risk`, which the
+    records tool also applies) still refuses the program-running `diff` keys.
   - **Overridden keys.** A local `core.hooksPath` (husky) and a boolean `core.fsmonitor` are on the list, because
     `-c core.hooksPath=/dev/null` and `-c core.fsmonitor=false` override them on every command.
 - **Submodules (Codex #439):** orch does not inspect submodules.

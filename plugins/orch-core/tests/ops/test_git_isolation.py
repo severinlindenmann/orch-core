@@ -245,6 +245,8 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
     assert scopes <= {"local", "command"}, scopes
     keys = {line.split("\t", 1)[1].split("=", 1)[0] for line in listing.splitlines() if line.startswith("command")}
     person = {"core.excludesfile"} if op == "status" else set()
+    if gitsafe.OPS[op].args[0] == "diff":  # orch's own pins of every diff knob (orch-52 on #561)
+        person |= {kv.split("=", 1)[0].lower() for kv in gitsafe._DIFF_PINS[1::2]}
     assert keys == {"core.hookspath", "core.fsmonitor", "protocol.allow", "submodule.recurse", "core.attributesfile",
                     "i18n.commitencoding"} | person  # fmt: skip
     assert "core.attributesfile=/dev/null" in listing and "core.hookspath=/dev/null" in listing
@@ -767,10 +769,8 @@ def test_an_allowed_looking_diff_submodule_never_opens_a_submodule(world, monkey
     w.git(repo, "-c", "diff.submodule=diff", "diff", before, after, check=False)
     assert w.fired() & {"sub-external", "sub-textconv", "sub-fsmonitor"}  # positive control: a child diff ran
     w.clear()
-    w.git(repo, "config", "diff.submodule", "diff")
-    assert observe.git(repo, "diff_patch", rev=("3", before, after)) is None  # the gate refuses the key
-    # and the operation shields by itself: --submodule=short beats the config even past the gate
-    monkeypatch.setattr(gitsafe, "gate", lambda *a, **k: None)
+    w.git(repo, "config", "diff.submodule", "diff")  # tolerated by the gate (orch-52): neutralised, not refused
+    gitsafe.gate(str(repo), os.environ)
     for op, operand in (("diff_patch", ("3", before, after)), ("diff_names", (before, after)),
                         ("diff_numstat", (before, after))):  # fmt: skip
         out = observe.git(repo, op, rev=operand)
@@ -790,9 +790,8 @@ def test_diff_relative_never_hides_a_staged_gitlink_outside_the_subdirectory(wor
     plain = w.git(repo / "d", "diff", "--cached", "--raw").stdout
     assert "sub" not in plain  # positive control: the config hides it in plain git
     w.clear()
-    assert observe.dirty(repo / "d") is None  # the gate refuses the key: unknown, never clean
-    monkeypatch.setattr(gitsafe, "gate", lambda *a, **k: None)
-    got = observe.dirty(repo / "d")  # past the gate, --no-relative still shows the whole repository
+    gitsafe.gate(str(repo), os.environ)  # tolerated (orch-52): neutralised by --no-relative, not refused
+    got = observe.dirty(repo / "d")  # --no-relative still shows the whole repository
     assert got is not None and "staged submodule change: sub" in got.splitlines()
     assert w.fired() == set()
 
@@ -809,3 +808,94 @@ def test_a_lock_inside_a_component_is_fine(world):
     repo = make_repo(w, "r")
     w.git(repo, "branch", "a.locks/b.lockx")
     assert observe.git(repo, "ref", rev="refs/heads/a.locks/b.lockx") is not None
+
+
+# --------------------------- orch-52 on #561: diff.* is tolerated by the gate and neutralised by every operation
+
+#: every diff knob of the repo's own config that can run a program or change output, at a hostile value
+HOSTILE_DIFF = {
+    "diff.external": "{diff-external}", "diff.x.command": "{diff-command}", "diff.x.textconv": "{diff-textconv}",
+    "diff.submodule": "log", "diff.relative": "true", "diff.ignoreSubmodules": "all", "diff.renames": "copies",
+    "diff.renameLimit": "1", "diff.noprefix": "true", "diff.mnemonicPrefix": "true", "diff.srcPrefix": "X/",
+    "diff.dstPrefix": "Y/", "diff.algorithm": "histogram", "diff.indentHeuristic": "false", "diff.context": "0",
+    "diff.interHunkContext": "10", "diff.suppressBlankEmpty": "true", "diff.orderFile": "{order}",
+    "diff.colorMoved": "zebra", "diff.colorMovedWS": "allow-indentation-change", "diff.wsErrorHighlight": "all",
+    "diff.autoRefreshIndex": "false", "diff.wordRegex": ".", "color.ui": "always", "color.diff": "always",
+}  # fmt: skip
+
+
+def _diff_repo(w, where: str) -> tuple[Path, str, str]:
+    """A repo with a diff that every knob above changes: blank-line runs, a rename, a gitlink move, a subdirectory,
+    a ``*.g diff=x`` attribute, a staged change and a work-tree change. Fixed dates: the same ids everywhere."""
+    base = w.tmp / where
+    base.mkdir()
+    repo = base / "r"
+    w.git(base, "init", "-q", "-b", "main", str(repo))
+    commit = ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m"]
+    (repo / "a.g").write_text("one\n\n\nfoo\n\nbar\n" + "".join(f"line {i}\n" for i in range(30)))
+    (repo / "b.txt").write_text("bee\n")
+    (repo / "d").mkdir()
+    (repo / "d" / "x").write_text("x\n")
+    (repo / "old.txt").write_text("l1\nl2\nl3\nl4\nl5\n")
+    (repo / ".gitattributes").write_text("*.g diff=x\n")
+    w.git(repo, "add", "-A")
+    w.git(repo, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},sub")
+    w.git(repo, *commit, "c1")
+    c1 = w.git(repo, "rev-parse", "HEAD").stdout.strip()
+    (repo / "a.g").write_text("one\n\nfoo\n\n\nbar\nbaz\n" + "".join(f"line {i}\n" for i in range(30) if i != 15))
+    (repo / "d" / "x").write_text("y\n")
+    w.git(repo, "mv", "old.txt", "new.txt")
+    with (repo / "new.txt").open("a") as f:
+        f.write("l6\n")
+    w.git(repo, "add", "a.g", "d/x", "new.txt")  # not -A: the gitlink has no directory and must stay
+    w.git(repo, "update-index", "--cacheinfo", f"160000,{'2' * 40},sub")
+    w.git(repo, *commit, "c2")
+    c2 = w.git(repo, "rev-parse", "HEAD").stdout.strip()
+    (repo / "b.txt").write_text("bee2\n")
+    w.git(repo, "add", "b.txt")
+    w.git(repo, "update-index", "--cacheinfo", f"160000,{'3' * 40},sub")  # a staged pointer move
+    (repo / "a.g").write_text("work tree\n")
+    w.clear()
+    return repo, c1, c2
+
+
+def _every_operation_bytes(repo: Path, c1: str, c2: str) -> dict:
+    out = {}
+    for where in (repo, repo / "d"):
+        for op, spec in gitsafe.OPS.items():
+            sample = {"rev": c2, "path": "x" if where.name == "d" else "b.txt", "context": "3"}
+            operand = tuple(sample[k] for k in spec.operands) or None
+            if op in ("diff_numstat", "diff_names", "merge_base"):
+                operand = (c1, c2)
+            elif op == "diff_patch":
+                operand = ("3", c1, c2)
+            argv, env = gitsafe.command(str(where), op, os.environ, operand=operand)
+            done = subprocess.run(argv, env=env, cwd="/", capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
+            out[(where.name, op)] = (done.returncode, done.stdout.replace(os.fsencode(os.path.realpath(repo)), b"<r>"))
+    return out
+
+
+def test_every_hostile_diff_key_is_neutralised_byte_for_byte(world):
+    w = world
+    clean, c1, c2 = _diff_repo(w, "clean")
+    hostile, h1, h2 = _diff_repo(w, "hostile")
+    assert (c1, c2) == (h1, h2)
+    (w.tmp / "order").write_text("new.txt\nsub\n*\n")
+    for k, v in HOSTILE_DIFF.items():
+        value = str(w.tmp / "order") if v == "{order}" else w.prog(v.strip("{}")) if v.startswith("{") else v
+        w.git(hostile, "config", k, value)
+    # positive controls: plain git runs every program and its output differs from the clean repo's
+    w.git(hostile, "diff", c1, c2, check=False)
+    assert {"diff-external", "diff-command"} <= w.fired()
+    w.git(hostile, "diff", "--no-ext-diff", c1, c2, check=False)
+    assert "diff-textconv" in w.fired()
+    w.clear()
+    for args in (["diff", "--no-ext-diff", "--no-textconv", c1, c2], ["diff", "--cached", "--raw"],
+                 ["diff", "--numstat", c1, c2]):  # fmt: skip
+        assert w.git(hostile, *args).stdout != w.git(clean, *args).stdout, args
+    w.clear()
+    gitsafe.gate(str(hostile), os.environ)  # tolerated, not refused
+    want, got = _every_operation_bytes(clean, c1, c2), _every_operation_bytes(hostile, c1, c2)
+    assert {k for k in want if want[k] != got[k]} == set()
+    assert want[("r", "diff_patch")][0] == 0 and b"diff --git a/a.g b/a.g" in want[("r", "diff_patch")][1]
+    assert w.fired() == set()

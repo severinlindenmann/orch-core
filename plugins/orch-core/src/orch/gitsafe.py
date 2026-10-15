@@ -22,9 +22,10 @@ every git release can add a key, so the rule is an **allow-list** (owner decisio
   is a different repository's, and ``--ignore-submodules`` would hide its changes. Every cleanliness verdict calls it.
 * **Attributes** (``.gitattributes`` in any tree, ``$GIT_DIR/info/attributes``) only *select* a driver by name; the
   program always comes from configuration. Once the gate passed, the repository's own configuration defines no driver
-  program, so an attribute can select only (a) a built-in behaviour (``text``, ``eol``, ``ident``,
-  ``working-tree-encoding``: no program) or (b) a driver the person configured globally (e.g. ``filter=lfs`` from
-  ``git lfs install``), which runs as the person exactly as when they run git themselves. No attribute file is parsed.
+  program except a tolerated ``diff`` driver, which no orch git command runs (:func:`gate`), so an attribute can
+  select only (a) a built-in behaviour (``text``, ``eol``, ``ident``, ``working-tree-encoding``: no program), (b) that
+  neutralised ``diff`` driver, or (c) a driver the person configured globally (e.g. ``filter=lfs`` from ``git lfs
+  install``), which runs as the person exactly as when they run git themselves. No attribute file is parsed.
 * **Kept, defence in depth:** :data:`NEUTRAL` (``-c`` on every command: hooks to ``/dev/null``, fsmonitor off, no
   network protocol, no submodule recursion) and a from-scratch environment (the callers').
 
@@ -218,14 +219,18 @@ ALLOWED: dict[str, frozenset[str] | str] = {
     "lfs": frozenset({"repositoryformatversion"}),
     "color": "*",
     "column": frozenset({"ui", "branch", "clean", "status", "tag"}),
-    # Codex on #561 (0a887514): an operation's fixed options are the only source of its behaviour, so no allowed key
-    # may change what an operation opens or reports. Gone: the whole ``diff`` section (``diff.submodule=diff`` made a
-    # diff between commits open a submodule and run a child diff; ``diff.relative`` hid changes outside a
-    # subdirectory; ``diff.context``, ``diff.algorithm`` ... shaped the patch) and ``status.submoduleSummary``.
-    # What stays is overridden by every operation's fixed options (``status.renames``, ``status.showUntrackedFiles``,
-    # ``submodule.<n>.ignore``, ``color.*``: ``--no-renames``, ``--untracked-files``, ``--ignore-submodules``,
-    # ``--no-color``), or describes the work tree itself (``core.autocrlf``, ``core.filemode``, ``core.ignoreCase``,
-    # as git init writes them).
+    # ``diff``: the named keys stay on the shared allow-list (``exec_risk``, which the records tool applies too, as
+    # before #546). The gate goes further and TOLERATES every ``diff.*`` key, driver programs included, because every
+    # diff operation of :data:`OPS` pins them (:data:`_DIFF_PINS`, :data:`_DIFF_FIXED`, see :func:`gate`).
+    # ``status.submoduleSummary`` is gone (a summary opens submodules). What else stays is overridden by every
+    # operation's fixed options (``status.renames``, ``status.showUntrackedFiles``, ``submodule.<n>.ignore``,
+    # ``color.*``: ``--no-renames``, ``--untracked-files``, ``--ignore-submodules``, ``--no-color``), or describes the
+    # work tree itself (``core.autocrlf``, ``core.filemode``, ``core.ignoreCase``, as git init writes them).
+    "diff": frozenset({
+        "renames", "renamelimit", "algorithm", "mnemonicprefix", "noprefix", "indentheuristic", "colormoved",
+        "colormovedws", "context", "interhunkcontext", "statgraphwidth", "statnamewidth", "suppressblankempty",
+        "ignoresubmodules", "relative", "dirstat", "autorefreshindex", "submodule",
+    }),
     "status": frozenset({
         "short", "branch", "relativepaths", "showstash", "aheadbehind", "renames", "renamelimit",
         "displaycommentprefix", "showuntrackedfiles",
@@ -350,9 +355,11 @@ def _argv(repo: str, args: Sequence[str]) -> list[str]:
     and ``--no-ext-diff --no-textconv`` right after ``diff``, ``show`` or ``log``. Private: ``args`` are only ever the
     gate's own fixed reads or an operation of :data:`OPS` (:func:`command`)."""
     rest = list(args)
+    pins: tuple[str, ...] = ()
     if rest and rest[0] in _NO_PROGRAMS:
         rest[1:1] = ["--no-ext-diff", "--no-textconv"]
-    return ["git", *HARDEN, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
+        pins = _DIFF_PINS
+    return ["git", *HARDEN, *pins, "--no-pager", "--no-optional-locks", "-C", repo, *rest]
 
 
 #: the person's (system and global) configuration ``status`` keeps, so that "clean" means what it means in their own
@@ -393,7 +400,40 @@ _SLOT = re.compile(r"<(rev|path|context)>")
 #: between two commits) never open a submodule, so they keep ``=dirty`` and still show a gitlink (pointer) change.
 #: every diff between commits: never relative to a subdirectory, never a submodule opened for its log or its diff
 #: (``--submodule=short`` beats an allowed-looking ``diff.submodule``), no colour, pointer moves visible
-_DIFF_FIXED = ("--no-relative", "--submodule=short", "--no-color", "--ignore-submodules=dirty")
+_DIFF_FIXED = ("--no-relative", "--submodule=short", "--no-color", "--ignore-submodules=dirty", "-O/dev/null")
+#: Every diff operation also gets these command-scope values (command scope beats the repo's own config), so a
+#: ``diff.*`` key the gate tolerates cannot run a program or change the output orch parses. Each named key of
+#: ``git help config``'s ``diff`` section, and why:
+#:
+#: * run a program: ``diff.external``, ``diff.<driver>.command`` (``--no-ext-diff``), ``diff.<driver>.textconv``
+#:   (``--no-textconv``), both added by :func:`_argv` to every ``diff``; ``diff.<driver>.cachetextconv`` is then
+#:   unused; ``diff.trustExitCode``, ``diff.tool``, ``diff.guitool``: difftool only, never run.
+#: * what is opened or listed: ``diff.submodule`` (pinned ``short`` and ``--submodule=short``), ``diff.relative``
+#:   (pinned ``false``; ``--no-relative``, or ``--relative`` for ``staged_raw``), ``diff.ignoreSubmodules``
+#:   (pinned ``none``; every diff passes ``--ignore-submodules``), ``diff.orderFile`` (``-O/dev/null`` on every diff),
+#:   ``diff.renames`` and ``diff.renameLimit`` (pinned ``true`` and ``1000``; ``--no-renames`` or ``-M50%``).
+#: * the text: ``diff.noprefix``, ``diff.mnemonicPrefix``, ``diff.srcPrefix``, ``diff.dstPrefix`` (pinned off and
+#:   ``a/``/``b/``), ``diff.context`` (``-U<n>``), ``diff.interHunkContext`` (``0``), ``diff.algorithm``
+#:   (``default``), ``diff.indentHeuristic`` (``true``), ``diff.suppressBlankEmpty`` (``false``),
+#:   ``color.diff``/``color.ui``, ``diff.colorMoved``, ``diff.colorMovedWS``, ``diff.wsErrorHighlight`` (no colour:
+#:   ``--no-color``, and pinned off).
+#: * harmless here: ``diff.autoRefreshIndex`` (only a diff against the work tree, which no operation runs),
+#:   ``diff.dirstat``, ``diff.statNameWidth``, ``diff.statGraphWidth`` (no ``--stat``), ``diff.wordRegex`` and
+#:   ``diff.<driver>.wordRegex`` (no ``--word-diff``).
+#: * not pinnable, no program: ``diff.<driver>.xfuncname``/``funcname`` (the text after ``@@`` in a hunk header) and
+#:   ``diff.<driver>.binary`` (a file a repo's attribute marks binary is shown as binary). They change only what the
+#:   repo's own attributes ask for and run nothing.
+_DIFF_PINS = tuple(
+    arg
+    for kv in (
+        "diff.noprefix=false", "diff.mnemonicPrefix=false", "diff.srcPrefix=a/", "diff.dstPrefix=b/",
+        "diff.relative=false", "diff.submodule=short", "diff.ignoreSubmodules=none", "diff.renames=true",
+        "diff.renameLimit=1000", "diff.algorithm=default", "diff.indentHeuristic=true", "diff.context=3",
+        "diff.interHunkContext=0", "diff.suppressBlankEmpty=false", "diff.colorMoved=no", "diff.colorMovedWS=no",
+        "diff.wsErrorHighlight=none", "color.diff=false", "color.ui=false",
+    )
+    for arg in ("-c", kv)
+)  # fmt: skip
 
 OPS: dict[str, Op] = {
     "head": Op(("rev-parse", "--verify", "-q", "HEAD^{commit}")),
@@ -407,16 +447,17 @@ OPS: dict[str, Op] = {
                  person=STATUS_KEYS, tree=True),
     "index_flags": Op(("ls-files", "-v")),
     "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--no-color", "--relative",
-                      "--ignore-submodules=dirty")),
+                      "--ignore-submodules=dirty", "--submodule=short", "-O/dev/null")),
     # paths of staged_raw are relative to -C <repo> (--relative): ":0:./<path>" resolves them there, not at the top
     "staged_tree": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--no-color", "--no-relative",
-                       "--ignore-submodules=dirty")),
+                       "--ignore-submodules=dirty", "--submodule=short", "-O/dev/null")),
     "staged_blob": Op(("cat-file", "blob", ":0:./<path>")),
     "diff_numstat": Op(("diff", "--numstat", "-M50%", *_DIFF_FIXED, "--end-of-options",
                          "<rev>", "<rev>", "--")),
     "diff_names": Op(("diff", "--name-status", "-M50%", *_DIFF_FIXED, "--end-of-options",
                          "<rev>", "<rev>", "--")),
-    "diff_patch": Op(("diff", "-U<context>", "-M50%", *_DIFF_FIXED, "--end-of-options",
+    "diff_patch": Op(("diff", "-U<context>", "-M50%", *_DIFF_FIXED, "--src-prefix=a/", "--dst-prefix=b/",
+                      "--end-of-options",
                          "<rev>", "<rev>", "--")),
 }  # fmt: skip
 #: a revision operand: ``HEAD``, a full commit id, or ``refs/heads/<name>`` with ``<name>`` checked by
@@ -655,7 +696,12 @@ def gate(repo: str, own: Mapping[str, str], *, timeout: float = GATE_SECONDS) ->
         raise Unsafe("the repository path is not absolute")
     git_version(own, timeout=timeout)
     config_files(repo, own, timeout=timeout)
-    key = exec_risk(local_config(repo, own, timeout=timeout))
+    # The one exception to the allow-list (orch-52, #561): every ``diff.*`` key is TOLERATED, driver programs
+    # included (git-lfs and editors set them; orch must keep working). It is neutralised, not trusted: every diff
+    # operation of OPS pins each diff knob that can run a program or change the output orch parses (--no-ext-diff,
+    # --no-textconv, _DIFF_FIXED, _DIFF_PINS), no other operation reads diff config, and run_git's worktree commands
+    # run no diff. Everything else outside the allow-list is still refused.
+    key = exec_risk(e for e in local_config(repo, own, timeout=timeout) if not e[1].lower().startswith("diff."))
     if key is not None:
         raise Unsafe(f"the repository's own config sets {key}, which is not on orch's allow-list of repository config "
                      "(a key that could make git run a program or read config elsewhere); orch does not run git there "

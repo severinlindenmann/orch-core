@@ -64,7 +64,7 @@ def test_remove_checks_the_worktrees_own_config_too(world):  # noqa: F811
     assert wtgit.run_git(args("worktree.add"), own) == {"ok": True}
     wt = Path(f"{repo}.worktrees") / NAME
     _git(repo, "config", "extensions.worktreeConfig", "true")
-    _git(wt, "config", "--worktree", "diff.evil.textconv", "sh -c 'touch /nonexistent'")
+    _git(wt, "config", "--worktree", "filter.evil.clean", "sh -c 'touch /nonexistent'")
     with pytest.raises(SpawnError) as e:
         wtgit.run_git(args("worktree.remove"), own)
     assert e.value.code == "observe.unavailable" and "the worktree" in e.value.message
@@ -78,9 +78,6 @@ def test_remove_checks_the_worktrees_own_config_too(world):  # noqa: F811
         ("includeIf.gitdir:/.path", "/elsewhere/config"),
         ("core.attributesFile", "/elsewhere/attributes"),
         ("filter.x.process", "evil"),
-        ("diff.x.textconv", "evil"),
-        ("diff.x.command", "evil"),
-        ("diff.external", "evil"),
         ("merge.x.driver", "evil"),
         ("core.sshCommand", "evil"),
         ("core.gitProxy", "evil"),
@@ -104,6 +101,7 @@ def test_remove_checks_the_worktrees_own_config_too(world):  # noqa: F811
     ],
 )
 def test_the_gate_refuses_every_program_key(world, key, value):  # noqa: F811
+    """Every program key outside ``diff.*``: the gate tolerates ``diff.*`` (orch-52 on #561), see below."""
     root, repo, own, args = world
     _git(repo, "config", key, value)
     with pytest.raises(gitsafe.Unsafe) as e:
@@ -170,3 +168,17 @@ def test_a_global_driver_still_works_in_run_git(world):  # noqa: F811
     a["base"] = _git(repo, "rev-parse", "HEAD")
     assert wtgit.run_git(a, own) == {"ok": True}
     assert marker.exists()
+
+
+@pytest.mark.parametrize("key", ["diff.x.textconv", "diff.x.command", "diff.external"])
+def test_the_gate_tolerates_a_diff_program_and_the_worktree_commands_never_run_it(world, key):  # noqa: F811
+    """orch-52 on #561: ``diff.*`` is tolerated (git-lfs and editors set it) and neutralised: orch's diff operations
+    pin --no-ext-diff/--no-textconv, and ``worktree add``/``remove`` run no diff at all."""
+    root, repo, own, args = world
+    marker = root / "diff-program-ran"
+    (repo / ".gitattributes").write_text("* diff=x\n")
+    _git(repo, "config", key, f"touch {marker}; true")
+    gitsafe.gate(str(repo), own)
+    assert wtgit.run_git(args("worktree.add"), own) == {"ok": True}
+    assert wtgit.run_git(args("worktree.remove"), own) == {"ok": True}
+    assert not marker.exists()

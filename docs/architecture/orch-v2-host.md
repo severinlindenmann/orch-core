@@ -3749,13 +3749,6 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `phone_events.json` and a changed `text.json`; amendments A–D to §11A.14 (known identity before freshness,
     re-seal under a new rid, the retry table authoritative, a same-rid resend after the chunk expired). No hash,
     contract or schema change.
-<<<<<<< HEAD
-41. **Device liveness and judge hardening (H12e-2, §11A.14 "As built in H12e-2"; the number may be renumbered when
-    H11c lands):** `orch.host.admission.device_standing` (the API for column R's `standing()`); `judge_events` maps
-    unexpected model exceptions to `validation.event`; §11A.14 amended: a `failed` outcome with nothing landed counts as
-    `refused` (14.4), the identity check lives in the result builder with no digest in `Planned` (14.6 L7, 14.9),
-    start-up recovery runs in R2's `Bridge.start` (H12a R5). No hash, contract or schema change.
-=======
 40. **Start agent and the runner grant (H11c, contract v1.6, cap `run/1`):** ops `agent.preview`, `agent.start` (P only), `grant.deposit` (a person-class caller
     with a verified `auth.grant` of their own `label:"runner"` grant; `OpKind "deposit"`, column G at the matrix),
     `grant.deposit_status` and `grant.forget` (P only); `whoami.runner.grant` and `run.list.runner.grant` carry the
@@ -3771,7 +3764,10 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `term.attach`/`term.open` carry `retry_after_ms` (bucket-derived for `rate.limited`; the runner's `attach.limit`
     keeps its code); `ORCH_HOST_RUN_DIR` is the one run-dir env name (core never reads `ORCH_RUN_DIR`);
     `TermClient.send` has its own write deadline (`send_timeout`). No wire schema change.
->>>>>>> origin/develop
+42. **Device liveness and judge hardening (H12e-2, §11A.14 "As built in H12e-2"):** `orch.host.admission.device_standing` (the API for column R's `standing()`); `judge_events` maps
+    unexpected model exceptions to `validation.event`; §11A.14 amended: a `failed` outcome with nothing landed counts as
+    `refused` (14.4), the identity check lives in the result builder with no digest in `Planned` (14.6 L7, 14.9),
+    start-up recovery runs in R2's `Bridge.start` (H12a R5). No hash, contract or schema change.
 
 ---
 

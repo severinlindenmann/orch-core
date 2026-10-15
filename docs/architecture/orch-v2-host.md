@@ -5652,7 +5652,16 @@ marker across restarts with `relay_fields` registered once and `submit.recover` 
 the convenience halt, the stuck worker, the slots, unlink and relink, `orch host status`), and R5 AST rules in
 `tests/relay/test_import_ban.py` (only `relayhook` builds the relay objects, once each; only the service and the hook
 set `service.relay`; the starter runs only from `_relay_try_start`, after `start_blocker`, under `relay_cond`). Mutation
-pass on a `git archive` scratch copy: MUTANTS_RESULT.
+pass on a `git archive` scratch copy (36 text mutants: the gate removed at each of its three checks or flipped, the
+starter without `start_blocker` or outside `relay_cond`, the marker ignored, `join` ignoring its timeout, `close` not
+waiting, `register` twice or never, `submit.recover` in `open`, `submit` after stop, `stop` not stopping the loop, the
+precheck or the first link skipped, the loop started while stopping, the state directory or the slot not released
+(worker and failed start), the loop joined once, the cap removed, the convenience check or the audit skipped, the halt
+not stopping at once, no marker, unlink overwriting or ignoring a worker, the reservation without its guard, a double
+start, alarms written on every call, the open beside a stuck worker, class N given the relay, a failed loop shown
+running, a child without the pid check): **36 killed**. The first passes left 5 survivors (the halt's synchronous
+stop, the slot and the directory of a failed start, the unlink job's race guard, the open beside a stuck worker),
+each killed by a new test, and surfaced the fork-lock bug above and a racy assertion.
 
 ### 11A.5 The bridge loop (R2) and the publisher (R3)
 

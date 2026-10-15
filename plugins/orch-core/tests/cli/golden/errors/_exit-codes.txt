@@ -21,6 +21,8 @@ custody.no_prompt 3 retry:false
 custody.no_key 3 retry:false
 custody.wrong_passphrase 3 retry:false
 sign.convenience_readers 3 retry:false
+sign.convenience_unavailable 3 retry:false
+reader.decl_invalid 3 retry:false
 custody.no_batch 3 retry:false
 grant.required 3 retry:false
 grant.expired 3 retry:false

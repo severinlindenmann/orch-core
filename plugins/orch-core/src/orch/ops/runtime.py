@@ -785,6 +785,19 @@ class Call:
         self.check_secret(text)
         return text
 
+    def read_file_capped(self, source: str, cap: int) -> bytes:
+        """The bytes of a file argument, at most ``cap`` of them, refused (``invalid.input``) when longer **before**
+        anyone parses them (H12d-2 I2: a reader declaration)."""
+        if source == "-":
+            data = self._read_limited(source)
+        elif source in self.ctx.files:
+            data = self.ctx.files[source]
+        else:
+            data = self._read_path(source, cap)[0]
+        if len(data) > cap:
+            raise OrchError("invalid.input", f"the file is longer than {cap} bytes")
+        return bytes(data)
+
     def _read_limited(self, source: str) -> bytes:
         if source == "-":
             try:

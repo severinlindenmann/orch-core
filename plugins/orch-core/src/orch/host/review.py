@@ -26,6 +26,8 @@ from orch import canon
 __all__ = [
     "ENVELOPE",
     "GATE_TYPES",
+    "LEVEL_MAX",
+    "READER_TYPES",
     "PERSON_AGENT_OPS",
     "events_fit",
     "person_op_types",
@@ -35,6 +37,7 @@ __all__ = [
     "fingerprint_view",
     "of",
     "payload",
+    "reader_line",
     "review_digest",
     "sha256_cj",
 ]
@@ -96,6 +99,21 @@ def events_fit(op: str, types: list[str]) -> bool:
     if op == "new":
         return types == ["ticket.created"]
     return True
+
+
+#: H12d-2 (§0.8.6 item 9.11): the event types that add a reader; their ``derived`` carries ``reader``, the level of
+#: the declaration the host verified (0: none). It is a host attestation the signer shows but cannot recompute (the
+#: declaration is an argument, not material), bound into ``review_digest`` like every review block; a signer that
+#: does not know the key refuses the review it cannot reproduce (update orch)
+READER_TYPES = frozenset({"member.added", "device.added"})
+LEVEL_MAX = 2**31 - 1
+
+
+def reader_line(level: int) -> str:
+    """The review line of a reader-adding event (§0.8.6 item 9.11)."""
+    if level >= 1:
+        return f"Reader: understands convenience signing (level {level}) (host attestation of its declaration)"
+    return "Reader: old (level 0) (host attestation: no declaration of level 1)"
 
 
 class ReviewError(ValueError):

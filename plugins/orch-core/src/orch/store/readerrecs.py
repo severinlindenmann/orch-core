@@ -30,6 +30,7 @@ __all__ = [
     "device_ids",
     "read_record",
     "readers_dir",
+    "relay_level",
     "record_path",
     "remove_record",
     "write_record",
@@ -110,3 +111,23 @@ def remove_record(state_dir: Path, workspace_id: str, device_hex: str) -> bool:
     except FileNotFoundError:
         return False
     return True
+
+
+def relay_level(state_dir: Path | None, workspace_id: str) -> int | None:
+    """The relay's last verified reader level (9.8), ``None`` when the workspace never had a relay. Until H12d-3 checks
+    ``GET /v2/relay-info``, every pairing counts as level 0: ``hosts/<ws>/relay/link.json`` (``linking`` or
+    ``linked``), any ``relay/unlinked-*.json`` (a former link: the reservation of 11A.6 is permanent) or the R6
+    membership state ``hosts/<ws>/membership/``. A dangling link counts, and so does a ``relay/`` directory that
+    cannot be listed (fail closed). **H12d-3 hook:** read the level stored with the link here."""
+    if state_dir is None:
+        return None
+    base = Path(state_dir) / "hosts" / workspace_id
+    if os.path.lexists(base / "membership") or os.path.lexists(base / "relay" / "link.json"):
+        return 0
+    try:
+        names = os.listdir(base / "relay")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return 0  # cannot tell: a reader may exist
+    return 0 if any(n.startswith("unlinked-") and n.endswith(".json") for n in names) else None

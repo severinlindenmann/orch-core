@@ -45,8 +45,12 @@ __all__ = [
     "read",
     "reason",
     "refuse_handoff",
+    "readers_error",
+    "recheck_readers",
     "refuse_reader_op",
     "set_enabled",
+    "unavailable",
+    "why",
     "workspace_lock",
 ]
 
@@ -94,20 +98,12 @@ def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> 
 
 
 def _relay_paired(state_dir: Path, workspace_id: str) -> bool:
-    """The reader reservation (orch-v2-host §11A.6): true when ``hosts/<ws>/relay/link.json`` (a link, ``linking`` or
-    ``linked``) or any ``relay/unlinked-*.json`` (a former link: the reservation is permanent) exists, or the R6
-    membership state ``hosts/<ws>/membership/``. A dangling symlink counts, and so does a ``relay/`` directory that
-    cannot be listed (fail closed)."""
-    base = Path(state_dir) / "hosts" / workspace_id
-    if os.path.lexists(base / "membership") or os.path.lexists(base / "relay" / "link.json"):
-        return True
-    try:
-        names = os.listdir(base / "relay")
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True  # cannot tell: a reader may exist
-    return any(n.startswith("unlinked-") and n.endswith(".json") for n in names)
+    """The reader reservation (orch-v2-host §11A.6): a relay link, a former one or the R6 membership state exists
+    (:func:`orch.store.readerrecs.relay_level`: until H12d-3 every pairing counts as level 0)."""
+    from orch.store.readerrecs import relay_level
+
+    level = relay_level(state_dir, workspace_id)
+    return level is not None and level < 1
 
 
 def _model_knows() -> bool:
@@ -121,68 +117,180 @@ def _model_knows() -> bool:
     return AUTH in enum and AUTH in AUTH_VALUES
 
 
-def reason(store: Any, state_dir: Path, workspace_id: str, host_uid: int, person: str, device: str) -> str | None:
-    """The first reason convenience signing is not allowed now, or None."""
+def why(
+    store: Any, state_dir: Path, workspace_id: str, host_uid: int, person: str, device: str
+) -> tuple[str, list[str]] | None:
+    """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
+    H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
+    device whose reader record does not verify counts as 0); ``relay_paired`` counts a relay below level 1 (every
+    pairing until H12d-3); ``reader_version`` qualifies the signing device itself."""
+    from orch.ops.readers import below_level, levels
+
     if not enabled(state_dir, workspace_id, host_uid):
-        return "disabled"
+        return "disabled", []
     if _relay_paired(state_dir, workspace_id):
-        return "relay_paired"
+        return "relay_paired", []
     ws = store.state.workspace
-    if any(p != person for p in ws.members):
-        return "other_member"
-    for ref, dev in ws.devices.items():
-        if ref != device and not dev.removed and not dev.revoked:
-            return "other_member" if dev.person != person else "phone_device"
+    found = below_level(ws, levels(state_dir, workspace_id, store.state, host_uid), person, device, None)
+    if found is not None:
+        return found
     if not _model_knows():
-        return "reader_version"
+        return "reader_version", []
     return None
+
+
+def reason(store: Any, state_dir: Path, workspace_id: str, host_uid: int, person: str, device: str) -> str | None:
+    """The first reason convenience signing is not allowed now, or None (:func:`why`)."""
+    found = why(store, state_dir, workspace_id, host_uid, person, device)
+    return None if found is None else found[0]
 
 
 _TEXT = {
     "disabled": "convenience signing is off for this workspace (orch host convenience on --workspace W)",
     "relay_paired": "the workspace is paired with a relay, whose readers may not know convenience signatures",
-    "other_member": "another member (or their device) reads this workspace and may not know convenience signatures",
-    "phone_device": "you have another device in this workspace (a phone or another machine) that may not know them",
+    "other_member": "another member's reader (a core or a device) has not declared that it knows convenience "
+    "signatures",
+    "phone_device": "another device of yours (a phone or another machine) has not declared that it knows them",
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
 }
 
 
+def unavailable(reason: str, devices: list[str]) -> HostError:
+    """``sign.convenience_unavailable`` for ``reason`` (the message starts with it) and the readers it names."""
+    named = f" ({', '.join(devices)})" if devices else ""
+    hint = "sign in your terminal with orch sign CODE"
+    if devices:
+        hint = "update those readers and declare them (orch keys reader declare), or remove them; meanwhile " + hint
+    return HostError(
+        "sign.convenience_unavailable",
+        f"{reason}: {_TEXT[reason]}{named}",
+        hint=hint,
+        detail={"reason": reason, "devices": devices},
+    )
+
+
 def check(service: Any, person: str, device: str) -> None:
-    """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``) unless the condition holds."""
-    why = reason(service.store, service.state_dir, service.workspace_id, service.host_uid, person, device)
-    if why is not None:
-        raise HostError(
-            "sign.convenience_unavailable",
-            f"{why}: {_TEXT[why]}",
-            hint="sign in your terminal with orch sign CODE",
-        )
+    """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the
+    condition holds."""
+    found = why(service.store, service.state_dir, service.workspace_id, service.host_uid, person, device)
+    if found is not None:
+        raise unavailable(*found)
 
 
-def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
-    """While the flag is on, an op that adds a reader is refused: switch convenience off first (owner decision). The
-    durable ``convenience_seen`` mark refuses at every step (#441); with ``history`` (at binding and at submit, under
-    the store lock) a merged history holding convenience events refuses too (and sets the mark)."""
+def refuse_reader_op(
+    service: Any,
+    op: str,
+    *,
+    history: bool = False,
+    events: list[dict[str, Any]] | None = None,
+    readers: list[dict[str, Any]] | None = None,
+) -> None:
+    """The early reader checks of an op that adds a reader (§0.8.6 item 1, H12d-2 item 9.4).
+
+    ``member.add`` with its prepared ``events`` (H12d-2): the new reader's declaration (``readers``, verified again
+    here without the clock, 9.3) against ``required_reader``: 1 while the flag is on, the durable mark is set or, with
+    ``history`` (at binding and at submit, under the store lock), the merged history holds a convenience event. A
+    reader of level 1 is admitted with convenience history and while the flag is on; a missing or lower declaration
+    is ``sign.convenience_readers`` (``no_declaration``, ``reader_too_old``). The append checks it again
+    (:func:`orch.host.human.append_signed`), authoritatively.
+
+    ``relay.link`` and ``relay.pair`` (and ``member.add`` without its events): unchanged until H12d-3 brings their
+    declarations (relay-info, the pair meta): refused while the mark is set, the history (``history``) holds a
+    convenience event or the flag is on."""
     if op not in READER_OPS:
         return
+    if op == "member.add" and events is not None:
+        _check_new_readers(service, events, readers or [], history=history)
+        return
     seen = convenience_seen(service.state_dir, service.workspace_id)  # #441: the durable mark, in every check
+    reason = "relay_too_old" if op == "relay.link" else "no_declaration"
     if seen or (history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid)):
         raise HostError(
             "sign.convenience_readers",
-            f"{op} would add a reader to a workspace whose history has convenience signatures",
+            f"{reason}: {op} would add a reader to a workspace whose history has convenience signatures",
             hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)." + READER_UPGRADE,
+            detail={"reason": reason, "devices": []},
         )
     if enabled(service.state_dir, service.workspace_id, service.host_uid):
         raise HostError(
             "sign.convenience_readers",
-            f"{op} adds a reader while convenience signing is on for this workspace",
+            f"{reason}: {op} adds a reader while convenience signing is on for this workspace",
             hint="switch it off first: orch host convenience off --workspace W",
             fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
+            detail={"reason": reason, "devices": []},
         )
 
 
+def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]]) -> dict[str, int]:
+    """Verify each admitted declaration again against the event that adds its device (no clock: a binding, a submit,
+    9.3), and return device -> level. A declaration that no longer verifies is ``reader.decl_invalid``."""
+    from orch.identity.reader import DeclInvalid
+    from orch.ops.readers import READER_EVENTS, verify_admission
+
+    out: dict[str, int] = {}
+    for entry in readers:
+        ev = next(
+            (
+                e
+                for e in events
+                if e.get("type") in READER_EVENTS
+                and "d_" + str(((e.get(READER_EVENTS[e["type"]]) or {}).get("o") or {}).get("device_id"))
+                == entry.get("device")
+            ),
+            None,
+        )
+        if ev is None:
+            raise HostError("internal", "a reader declaration names no device the request adds")
+        try:
+            got = verify_admission(
+                entry["decl"],
+                workspace_id=service.workspace_id,
+                cert=ev[READER_EVENTS[ev["type"]]],
+                person=ev.get("person") or entry["person"],
+                via="enrol",
+                surfaces=("log",),
+                now_ms=None,
+            )
+        except DeclInvalid as exc:
+            raise HostError("reader.decl_invalid", exc.detail) from None
+        if got.digest != entry.get("digest") or got.level != entry.get("level"):
+            raise HostError("internal", "the stored reader declaration changed")
+        out[entry["device"]] = got.level
+    return out
+
+
+def readers_error(exc: Any) -> HostError:
+    """A :class:`orch.ops.readers.ReadersRefused` as the host's error (with the closed ``detail``)."""
+    return HostError(exc.code, exc.message, hint=exc.hint, detail=exc.detail)
+
+
+def _check_new_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]], *, history: bool):
+    from orch.ops.readers import ReadersRefused, check_readers
+
+    flag = enabled(service.state_dir, service.workspace_id, service.host_uid)
+    seen = convenience_seen(service.state_dir, service.workspace_id)
+    if flag or seen:
+        required = 1
+    elif history:
+        required = 1 if seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid) else 0
+    else:
+        required = 0
+    lv: dict[str, int | None] = dict(recheck_readers(service, events, readers))
+    try:
+        check_readers(service.store.state.workspace, lv, [_no_auth(e) for e in events], required=required,
+                      relay_level=None)  # fmt: skip
+    except ReadersRefused as exc:
+        raise readers_error(exc) from None
+
+
+def _no_auth(e: dict[str, Any]) -> dict[str, Any]:
+    """The reader part only: a convenience signer is checked by :func:`check` (prepare, binding, submit)."""
+    return {k: v for k, v in e.items() if k != "auth"}
+
+
 READER_UPGRADE = (
-    " Reader-version handshake planned for phase 2; until then use click-to-sign only on workspaces that won't get a"
-    " phone, relay link or other member yet."
+    " A member's core declares with orch keys reader declare --enrol (member.add --reader-decl); relay links and phone"
+    " pairings declare with the relay and phone releases of H12d-3."
 )
 
 

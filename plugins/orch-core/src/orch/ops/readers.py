@@ -197,7 +197,9 @@ class ReadersRefused(Exception):
         return {"reason": self.reason, "devices": list(self.devices)}
 
     def orch_error(self) -> OrchError:
-        return OrchError(self.code, self.message, hint=self.hint)
+        out = OrchError(self.code, self.message, hint=self.hint)
+        out.detail = self.detail  # type: ignore[attr-defined] - the host sends it as the closed Error.detail
+        return out
 
 
 def _bare(ref: str) -> str:
@@ -268,30 +270,37 @@ def current_devices(ws: Any) -> list[Any]:
     return [d for _, d in sorted(ws.devices.items()) if not d.removed and not d.revoked]
 
 
-def record_level(record: Any, workspace_id: str, dev: Any, ws: Any = None) -> int | None:
-    """The level ``record`` counts as for the device ``dev`` (a model ``Device``) now, or ``None`` when it does not
-    verify: every field against the device's certificate and person, the declaration verified again (``recheck``: no
-    clock) with the ``via`` and surfaces of its source. A ``pk_pin`` declaration (a pairing without a certificate,
-    H12d-3) counts only under the pin of the device's person key (``ws``: the member list)."""
+def _evidence(state: Any, device: str) -> dict[str, Any] | None:
+    try:
+        return state.device_evidence(device)
+    except (KeyError, AttributeError):
+        return None
+
+
+def record_level(record: Any, workspace_id: str, dev: Any, evidence: Any) -> int | None:
+    """The level ``record`` counts as for the device ``dev`` (a ``DeviceView``) now, or ``None`` when it does not
+    verify: every field against the device's certificate and person (``evidence``: the model's
+    ``State.device_evidence``, ``{device_cert, pk_pub}``), the declaration verified again (``recheck``: no clock)
+    with the ``via`` and surfaces of its source. A ``pk_pin`` declaration (a pairing without a certificate, H12d-3)
+    counts only under the pin of the device's person key."""
     from orch import crypto
     from orch.identity import reader
 
     if not isinstance(record, dict) or set(record) != _RECORD_FIELDS or record.get("v") != 1:
         return None
     source = record.get("source")
-    if source not in SOURCES or not isinstance(record.get("decl"), dict):
+    if source not in SOURCES or not isinstance(record.get("decl"), dict) or not isinstance(evidence, dict):
         return None
     if record["device_id"] != _bare(dev.id) or record["person_id"] != _bare(dev.person):
         return None
-    keys = _cert_keys(dev.cert)
+    keys = _cert_keys(evidence.get("device_cert"))
     o = record["decl"].get("o")
     if keys is None or not isinstance(o, dict) or not isinstance(o.get("who"), dict):
         return None
     who = o["who"]
     if who != {"person_id": _bare(dev.person)}:
-        member = None if ws is None else (ws.members.get(dev.person) or getattr(ws, "former", {}).get(dev.person))
         try:
-            pin = crypto.b64u(crypto.pk_pin(crypto.unb64u(member.pk_pub, crypto.PUB_LEN))) if member else None
+            pin = crypto.b64u(crypto.pk_pin(crypto.unb64u(evidence.get("pk_pub"), crypto.PUB_LEN)))
         except (crypto.CryptoError, ValueError, TypeError):
             pin = None
         if source != "pair" or pin is None or who != {"pk_pin": pin}:
@@ -323,15 +332,16 @@ def record_level(record: Any, workspace_id: str, dev: Any, ws: Any = None) -> in
     return None
 
 
-def levels(state_dir: Path | None, workspace_id: str, ws: Any, uid: int | None = None) -> dict[str, int | None]:
-    """device ref -> the level its record counts as, for every current device (:func:`current_devices`); ``None``
-    means no record that verifies (a missing, unreadable or foreign record: level 0, "no declaration")."""
+def levels(state_dir: Path | None, workspace_id: str, state: Any, uid: int | None = None) -> dict[str, int | None]:
+    """device ref -> the level its record counts as, for every current device of the model ``state``
+    (:func:`current_devices`); ``None`` means no record that verifies (a missing, unreadable or foreign record:
+    level 0, "no declaration")."""
     from orch.store.readerrecs import read_record
 
     out: dict[str, int | None] = {}
-    for dev in current_devices(ws):
+    for dev in current_devices(state.workspace):
         rec = read_record(state_dir, workspace_id, _bare(dev.id), uid)
-        out[dev.id] = None if rec is None else record_level(rec, workspace_id, dev, ws)
+        out[dev.id] = None if rec is None else record_level(rec, workspace_id, dev, _evidence(state, dev.id))
     return out
 
 
@@ -370,7 +380,7 @@ def store_record(state_dir: Path, workspace_id: str, uid: int, record: dict[str,
     return record
 
 
-def prune(state_dir: Path, workspace_id: str, ws: Any, uid: int | None = None) -> dict[str, list[str]]:
+def prune(state_dir: Path, workspace_id: str, state: Any, uid: int | None = None) -> dict[str, list[str]]:
     """``register``'s import (9.4 "Direct mode"): every record file is verified against the replayed log; one that
     does not verify for a current device of its id is removed (its device counts as 0 anyway). Returns
     ``{"kept": [...], "dropped": [...]}`` (device refs). A removal that fails keeps the file (it still counts 0)."""
@@ -380,10 +390,11 @@ def prune(state_dir: Path, workspace_id: str, ws: Any, uid: int | None = None) -
 
     kept, dropped = [], []
     for hexid in device_ids(state_dir, workspace_id):
-        dev = ws.devices.get("d_" + hexid)
+        dev = state.workspace.devices.get("d_" + hexid)
         current = dev is not None and not dev.removed and not dev.revoked
         rec = read_record(state_dir, workspace_id, hexid, uid)
-        if current and rec is not None and record_level(rec, workspace_id, dev, ws) is not None:
+        evidence = _evidence(state, "d_" + hexid) if current else None
+        if current and rec is not None and record_level(rec, workspace_id, dev, evidence) is not None:
             kept.append("d_" + hexid)
             continue
         with contextlib.suppress(OSError):
@@ -460,7 +471,10 @@ def check_readers(
     ``reader_too_old``), or carries ``auth: "convenience"`` while a current reader other than its signing device is
     below level 1 (``sign.convenience_unavailable``: ``relay_paired``, ``other_member``, ``phone_device``).
     ``lv`` holds the levels of the current devices and of the readers the request admits (:func:`levels` plus the
-    pending declarations). Pure."""
+    pending declarations). Pure. A convenience event in ``events`` itself makes ``required`` at least 1 (after it
+    lands, the readers it adds read a convenience-signed history)."""
+    if any(isinstance(e, dict) and e.get("auth") == "convenience" for e in events):
+        required = max(required, 1)
     if required >= 1:
         for dev in added_readers(events, ws):
             got = lv.get(dev)

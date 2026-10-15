@@ -458,6 +458,15 @@ class FakeStore:
         finally:
             self.lock_depth -= 1
 
+    def refresh(self) -> None:
+        """H12d-2: ``append_signed`` reads the readers' state before a convenience or reader event."""
+
+    @property
+    def state(self) -> Any:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(workspace=SimpleNamespace(devices={}, members={}), device_evidence=lambda d: None)
+
     def logged_event(self, log: str, event_id: str) -> dict[str, Any] | None:
         for e in self.appended:
             if e["id"] == event_id:
@@ -1001,7 +1010,9 @@ def test_append_signed_appends_nothing_when_the_mark_cannot_be_written(tmp_path)
     (state / "hosts" / WS).write_text("not a directory")  # the mark's directory cannot exist
     store = FakeStore()
     landed, error = append_signed(MarkService(store, state), "L", [signed(1, auth="convenience")], [{}], signed_by=None)
-    assert landed == [] and error is not None and error.code == "custody.unsafe_mode" and store.appended == []
+    # H12d-2: the readers check runs first and fails closed on the same unreadable directory (a relay may exist)
+    assert landed == [] and error is not None and store.appended == []
+    assert error.code in ("custody.unsafe_mode", "sign.convenience_unavailable")
 
 
 # --- review round 2 ---------------------------------------------------------------------------------------------------

@@ -26,7 +26,19 @@ def _ws(*people: Person):
     for p in people:
         devices[p.device] = Device(p.device, p.ref, p.cert())
         members[p.ref] = Member(p.ref, "x", "member", crypto.b64u(p.pk_pub))
-    return SimpleNamespace(devices=devices, members=members, former={})
+    ws = SimpleNamespace(devices=devices, members=members, former={})
+    return ws
+
+
+def _state(ws):
+    """A stand-in for the model's ``State``: the workspace view and ``device_evidence``."""
+    return SimpleNamespace(
+        workspace=ws,
+        device_evidence=lambda d: {
+            "device_cert": ws.devices[d].cert,
+            "pk_pub": ws.members[ws.devices[d].person].pk_pub,
+        },
+    )
 
 
 def _admit(state, p: Person, *, level=1, created_ms=NOW, via="declare", source="declare", surfaces=("log",)):
@@ -44,7 +56,7 @@ def test_a_stored_declaration_counts_at_its_level_and_nothing_else_counts(tmp_pa
     rec, d = _admit(tmp_path, a)
     assert rec["digest"] == reader.decl_digest(d) and rec["reader"] == 1
     assert oct(os.stat(readerrecs.record_path(tmp_path, WS, a.device[2:])).st_mode & 0o777) == "0o600"
-    assert readers.levels(tmp_path, WS, ws) == {a.device: 1, b.device: None}
+    assert readers.levels(tmp_path, WS, _state(ws)) == {a.device: 1, b.device: None}
 
 
 def test_a_record_counts_only_for_its_exact_device_pair(tmp_path):
@@ -54,11 +66,11 @@ def test_a_record_counts_only_for_its_exact_device_pair(tmp_path):
     # another person's certificate for the same keys (F1 lets anyone certify any key): inherits nothing
     other = Person()
     ws.devices[a.device] = Device(a.device, other.ref, a.cert())
-    assert readers.levels(tmp_path, WS, ws)[a.device] is None
+    assert readers.levels(tmp_path, WS, _state(ws))[a.device] is None
     # removed and revoked devices are no readers at all
     ws = _ws(a)
     ws.devices[a.device].removed = True
-    assert readers.levels(tmp_path, WS, ws) == {}
+    assert readers.levels(tmp_path, WS, _state(ws)) == {}
 
 
 @pytest.mark.parametrize(
@@ -77,7 +89,7 @@ def test_a_tampered_record_counts_as_no_declaration(tmp_path, change):
     rec, _ = _admit(tmp_path, a)
     change(rec)
     readerrecs.write_record(tmp_path, WS, UID, rec)
-    assert readers.levels(tmp_path, WS, _ws(a))[a.device] is None
+    assert readers.levels(tmp_path, WS, _state(_ws(a)))[a.device] is None
 
 
 def test_an_unsafe_record_file_counts_as_no_declaration(tmp_path):
@@ -85,12 +97,12 @@ def test_an_unsafe_record_file_counts_as_no_declaration(tmp_path):
     _admit(tmp_path, a)
     path = readerrecs.record_path(tmp_path, WS, a.device[2:])
     os.chmod(path, 0o644)
-    assert readers.levels(tmp_path, WS, _ws(a))[a.device] is None
+    assert readers.levels(tmp_path, WS, _state(_ws(a)))[a.device] is None
     os.chmod(path, 0o600)
     target = path.with_suffix(".real")
     os.rename(path, target)
     os.symlink(target, path)
-    assert readers.levels(tmp_path, WS, _ws(a))[a.device] is None
+    assert readers.levels(tmp_path, WS, _state(_ws(a)))[a.device] is None
 
 
 def test_the_same_declaration_with_another_signature_keeps_the_stored_record(tmp_path):
@@ -111,15 +123,15 @@ def test_latest_wins_by_created_ms_and_a_lower_declaration_lowers_the_level(tmp_
     ws = _ws(a)
     _admit(tmp_path, a, created_ms=NOW)
     older, _ = _admit(tmp_path, a, level=0, created_ms=NOW - 1000)  # loses: the stored one is later
-    assert older["reader"] == 1 and readers.levels(tmp_path, WS, ws)[a.device] == 1
+    assert older["reader"] == 1 and readers.levels(tmp_path, WS, _state(ws))[a.device] == 1
     newer, _ = _admit(tmp_path, a, level=0, created_ms=NOW + 1000)  # a withdrawal
-    assert newer["reader"] == 0 and readers.levels(tmp_path, WS, ws)[a.device] == 0
+    assert newer["reader"] == 0 and readers.levels(tmp_path, WS, _state(ws))[a.device] == 0
 
 
 def test_a_higher_unknown_level_counts_as_the_highest_known_one(tmp_path):
     a = Person()
     rec, _ = _admit(tmp_path, a, level=7)
-    assert rec["reader"] == 7 and readers.levels(tmp_path, WS, _ws(a))[a.device] == reader.HOST_MAX
+    assert rec["reader"] == 7 and readers.levels(tmp_path, WS, _state(_ws(a)))[a.device] == reader.HOST_MAX
 
 
 def test_prune_drops_what_does_not_verify_against_the_log(tmp_path):
@@ -127,7 +139,7 @@ def test_prune_drops_what_does_not_verify_against_the_log(tmp_path):
     _admit(tmp_path, a)
     _admit(tmp_path, b)
     ws = _ws(a)  # b is not a current device here
-    out = readers.prune(tmp_path, WS, ws)
+    out = readers.prune(tmp_path, WS, _state(ws))
     assert out == {"kept": [a.device], "dropped": [b.device]}
     assert readerrecs.device_ids(tmp_path, WS) == [a.device[2:]]
 

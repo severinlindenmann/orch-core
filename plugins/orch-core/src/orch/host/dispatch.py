@@ -316,7 +316,8 @@ def host_error(e: OrchError, op: Operation | None) -> HostError:
 
     body = render.error_envelope(e, op)["error"]
     fix = (body.get("fix") or {}).get("argv")
-    out = HostError(body["code"], body.get("message") or body["code"], hint=body.get("hint"), fix=fix)
+    detail = getattr(e, "detail", None)  # H12d-2: a reader refusal's closed detail (§0.3, closed per code)
+    out = HostError(body["code"], body.get("message") or body["code"], hint=body.get("hint"), fix=fix, detail=detail)
     out.retryable = bool(body.get("retryable", out.retryable))
     return out
 

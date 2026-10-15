@@ -38,7 +38,7 @@ from starlette.websockets import WebSocket, WebSocketState
 
 from . import reads
 from .adapters import runs as project
-from .errors import HostError, fail
+from .errors import HostError, fail, retry_after, valid_code
 from .gateway import Gateway
 from .hostlink import HostLink
 
@@ -277,10 +277,12 @@ class Closed(Exception):
 def host_closed(exc: HostError) -> Closed:
     """`term.attach` refused: `host.error` with the code; the host's message only when it is plain short text."""
     err = exc.error
-    code = err.get("code") if isinstance(err.get("code"), str) and len(err["code"]) <= 64 else "internal"
+    code = err.get("code") if valid_code(err.get("code")) else "internal"
     message = project.text(err.get("message"), 300)
     detail = err.get("detail") if isinstance(err.get("detail"), dict) else {}
-    retry = next((v for v in (err.get("retry_after_ms"), detail.get("retry_after_ms")) if type(v) is int), None)
+    retry = next(
+        (v for v in (err.get("retry_after_ms"), detail.get("retry_after_ms")) if retry_after(v) is not None), None
+    )
     return Closed(
         "host.error",
         code=code,

@@ -5,6 +5,7 @@ missing or wrong relay checkout skips locally but fails in CI."""
 from __future__ import annotations
 
 import json
+import socket
 import subprocess
 import sys
 import threading
@@ -70,18 +71,34 @@ def test_teardown_reaps_our_process_group_and_reports_leaks(tmp_path):
     rp.stop()
     assert rp.leaked() == []
     assert proc.returncode is not None
+    # something still accepting on the relay's port is a leak too
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((harness.HOST, rp.port))
+        s.listen(1)
+        assert rp.leaked() == [f"port {rp.port} still accepting"]
+    assert rp.leaked() == []
+
+
+def _outcome(fn) -> BaseException | None:
+    """What ``fn`` raised, skip and fail outcomes included (``pytest.raises`` would let a wrong outcome escape as the
+    test's own skip)."""
+    try:
+        fn()
+    except BaseException as e:  # noqa: BLE001 - Skipped/Failed are BaseException
+        return e
+    return None
 
 
 def test_no_relay_dir_skips_locally_and_fails_in_ci(monkeypatch):
     monkeypatch.delenv(harness.RELAY_DIR_ENV, raising=False)
     for k in harness.REQUIRED_ENVS:
         monkeypatch.delenv(k, raising=False)
-    with pytest.raises(pytest.skip.Exception, match="ORCH_RELAY_DIR is unset"):
-        harness.relay_dir()
+    e = _outcome(harness.relay_dir)
+    assert type(e) is pytest.skip.Exception and "ORCH_RELAY_DIR is unset" in str(e)
     for k in harness.REQUIRED_ENVS:
         monkeypatch.setenv(k, "1")
-        with pytest.raises(pytest.fail.Exception, match="requires it"):
-            harness.relay_dir()
+        e = _outcome(harness.relay_dir)
+        assert type(e) is pytest.fail.Exception and "requires it" in str(e), (k, type(e))
         monkeypatch.delenv(k)
 
 
@@ -95,8 +112,8 @@ def test_a_relay_checkout_at_another_commit_fails(monkeypatch, tmp_path):
     subprocess.run([*git, "add", "-A"], check=True)
     subprocess.run([*git, "commit", "-q", "-m", "x"], check=True)
     monkeypatch.setenv(harness.RELAY_DIR_ENV, str(tmp_path))
-    with pytest.raises(pytest.fail.Exception, match="SOURCE pins"):
-        harness.relay_dir()
+    e = _outcome(harness.relay_dir)
+    assert type(e) is pytest.fail.Exception and "SOURCE pins" in str(e)
     monkeypatch.setenv(harness.RELAY_DIR_ENV, str(tmp_path / "src"))
-    with pytest.raises(pytest.fail.Exception, match="not an orch-relay checkout"):
-        harness.relay_dir()
+    e = _outcome(harness.relay_dir)
+    assert type(e) is pytest.fail.Exception and "not an orch-relay checkout" in str(e)

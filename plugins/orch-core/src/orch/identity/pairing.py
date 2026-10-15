@@ -13,13 +13,29 @@ secret.
 from __future__ import annotations
 
 import base64
+import re
+from dataclasses import dataclass, field
 
 from orch import canon, crypto
 from orch.crypto.labels import L
+from orch.relay.wire import WireError, check_origin
 
 from .errors import Refused
 
-__all__ = ["CHALLENGE_FIELDS", "MAX_EPOCH", "cert_code", "sas", "wk_commit"]
+__all__ = [
+    "CHALLENGE_FIELDS",
+    "MAX_EPOCH",
+    "MAX_LINK",
+    "PairFields",
+    "PairLink",
+    "cert_code",
+    "pair_link",
+    "parse_pair_fragment",
+    "parse_pair_link",
+    "render_pair_link",
+    "sas",
+    "wk_commit",
+]
 
 MAX_EPOCH = 2**32 - 1  # protocol §7.2: an epoch is a u32 in 1 .. 2^32-1 wherever it is parsed
 
@@ -141,3 +157,154 @@ def cert_code(challenge_o: dict) -> str:
     if type(o["expires_ms"]) is not int or not 0 <= o["expires_ms"] <= _MAX_SAFE_INT:
         raise _bad("expires_ms")
     return _code(crypto.sha256(L["h_sas_cert"] + bytes([crypto.SUITE_ID]) + canon.dumps(o)))
+
+
+# --- 3. pair links (§8.3 step 1, D45/D46) ----------------------------------------------------------------------------
+#
+# Two forms carry the same five fields:
+#
+#   https://<origin>/pair#v2.<ws hex>.<offer hex>.<b64u S>.<b64u wsk_pin>.<b64u pk_pin>
+#   orch://pair?relay=<percent-encoded origin>#v2.<the same five fields>
+#
+# **The QR carries the native ``orch://`` link** (design 11A.15.12 G2, Q5): a browser page served by the relay would
+# see an HTTPS link's fragment, the app's URL handler does not. The HTTPS form is the fallback a person can type or
+# open. Both are printed on the person's terminal only (11A.15.9 exposure rules).
+#
+# Canonical spellings: the origin as 11A.2 stores it (``orch.relay.wire.check_origin``: lower case, no path, no
+# trailing slash, ``http`` only for loopback); the path exactly ``/pair`` (``/app/pair`` is an alias the app may
+# accept, this parser does not); in the native form, ``relay`` is the only query parameter and its value escapes every
+# byte outside RFC 3986 unreserved (``A-Z a-z 0-9 - . _ ~``) as upper-case ``%XX`` (``https%3A%2F%2F...``, what
+# JavaScript's ``encodeURIComponent`` gives for an origin). :func:`parse_pair_link` accepts a text only if rendering
+# its parsed fields gives the same text back.
+
+MAX_LINK = 2048  # bytes; a link longer than any canonical one is refused before parsing (orch-mobile's bound)
+_FRAGMENT = re.compile(
+    r"v2\.([0-9a-f]{32})\.([0-9a-f]{32})\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})"
+)
+_UNRESERVED = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+_NATIVE_HEAD = "orch://pair?relay="
+_HTTPS_PATH = "/pair"
+
+
+@dataclass(frozen=True, slots=True)
+class PairFields:
+    """The five fields after ``v2``. ``secret`` (``S``) never appears in a repr."""
+
+    workspace_id: str
+    offer_id: str
+    secret: bytes = field(repr=False)
+    wsk_pin: bytes
+    pk_pin: bytes
+
+    def fragment(self) -> str:
+        return ".".join(
+            (
+                "v2",
+                self.workspace_id,
+                self.offer_id,
+                *(crypto.b64u(b) for b in (self.secret, self.wsk_pin, self.pk_pin)),
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PairLink:
+    """A parsed whole link: the relay origin it names, its form, and the fields."""
+
+    origin: str
+    native: bool
+    fields: PairFields
+
+
+def _origin(origin: object) -> str:
+    try:
+        return check_origin(origin)
+    except WireError:
+        raise _bad("origin") from None
+
+
+def _pct(text: str) -> str:
+    return "".join(chr(b) if b in _UNRESERVED else f"%{b:02X}" for b in text.encode("ascii"))
+
+
+def render_pair_link(link: PairLink) -> str:
+    """The one canonical spelling of ``link`` in its form."""
+    origin = _origin(link.origin)
+    frag = link.fields.fragment()
+    return f"{_NATIVE_HEAD}{_pct(origin)}#{frag}" if link.native else f"{origin}{_HTTPS_PATH}#{frag}"
+
+
+def pair_link(
+    origin: str, workspace_id: str, offer_id: str, secret: bytes, wsk_pub: bytes, pk_pub: bytes
+) -> tuple[str, str]:
+    """``(https, native)`` links for an offer. The pins are derived here from the keys (``wsk_pin`` of the own WSK,
+    ``pk_pin`` of the pinned owner ``PK``), so a caller cannot pass a pin of the wrong key kind. The QR carries
+    ``native``."""
+    fields = PairFields(
+        workspace_id=crypto.hex_id(_id(workspace_id, "workspace_id")),
+        offer_id=crypto.hex_id(_id(offer_id, "offer_id")),
+        secret=_raw(secret, 32, "secret"),
+        wsk_pin=crypto.wsk_pin(_pub(wsk_pub, "wsk_pub")),
+        pk_pin=crypto.pk_pin(_pub(pk_pub, "pk_pub")),
+    )
+    origin = _origin(origin)
+    return (
+        render_pair_link(PairLink(origin=origin, native=False, fields=fields)),
+        render_pair_link(PairLink(origin=origin, native=True, fields=fields)),
+    )
+
+
+def parse_pair_fragment(fragment: str) -> PairFields:
+    """The relay's fragment rule (``bridge.links``): an optional single leading ``#``, exactly ``v2``, lower-case hex
+    ids, and canonical 43-character b64u of 32 bytes for each of the last three fields."""
+    if type(fragment) is not str:
+        raise _bad("fragment")
+    m = _FRAGMENT.fullmatch(fragment.removeprefix("#"))
+    if m is None:
+        raise _bad("fragment")
+    try:
+        s, wp, pp = (crypto.unb64u(m.group(i), 32) for i in (3, 4, 5))
+    except crypto.EncodingError:
+        raise _bad("fragment") from None
+    return PairFields(workspace_id=m.group(1), offer_id=m.group(2), secret=s, wsk_pin=wp, pk_pin=pp)
+
+
+def _unpct(value: str) -> str:
+    """Strict ``%XX`` decoding of the ``relay`` value; canonicality is checked by re-rendering, not here."""
+    out = bytearray()
+    i = 0
+    while i < len(value):
+        c = value[i]
+        if c == "%":
+            h = value[i + 1 : i + 3]
+            if len(h) != 2 or not all(x in "0123456789ABCDEFabcdef" for x in h):
+                raise _bad("relay")
+            out.append(int(h, 16))
+            i += 3
+        else:
+            out.append(ord(c))
+            i += 1
+    try:
+        return out.decode("ascii")
+    except UnicodeDecodeError:
+        raise _bad("relay") from None
+
+
+def parse_pair_link(text: str) -> PairLink:
+    """Parse a whole pairing link, strictly: one of the two canonical forms above, printable ASCII, at most
+    :data:`MAX_LINK` bytes, exactly one ``#``. Anything that does not re-render to the same text is refused."""
+    if type(text) is not str or not text.isascii() or not 0 < len(text) <= MAX_LINK:
+        raise _bad("link")
+    if not all(0x21 <= ord(c) < 0x7F for c in text) or text.count("#") != 1:
+        raise _bad("link")
+    head, _, frag = text.partition("#")
+    fields = parse_pair_fragment(frag)
+    if head.startswith(_NATIVE_HEAD):
+        link = PairLink(origin=_origin(_unpct(head[len(_NATIVE_HEAD) :])), native=True, fields=fields)
+    elif head.endswith(_HTTPS_PATH):
+        link = PairLink(origin=_origin(head[: -len(_HTTPS_PATH)]), native=False, fields=fields)
+    else:
+        raise _bad("link")
+    if render_pair_link(link) != text:
+        raise _bad("link not canonical")
+    return link

@@ -5,6 +5,7 @@ import asyncio
 import json
 import queue
 import socket
+import threading
 import time
 
 import pytest
@@ -448,11 +449,12 @@ def test_every_input_frame_survives_a_slow_runner_with_the_real_termclient_revie
     for i in range(3):
         pump.put(("in", bytes([65 + i]) * 65536))
     reader.join(30)
+    before_stop = list(pump.delivered)  # after stop the socket is shut down on purpose (delta2 D2-L1)
     pump.stop()
     pump.thread.join(2)
     runner.close()
     assert frames_in == [1, 2, 3] and bytes(got) == b"A" * 65536 + b"B" * 65536 + b"C" * 65536
-    assert [d for d in pump.delivered if d[0] == "closed"] == []
+    assert [d for d in before_stop if d[0] == "closed"] == []
 
 
 def test_the_pump_stops_between_queued_items_review_d_l3():
@@ -500,3 +502,41 @@ def test_cleanup_joins_the_pump_thread_with_a_bound_review_d_l3():
     sock.pump = P()
     asyncio.run(sock._cleanup())
     assert joined and joined[0] is not None and 0 < joined[0] <= terminals.WRITE_TIMEOUT + 1
+
+
+def test_stop_ends_a_write_blocked_on_a_slow_runner_and_refuses_later_ones_delta2_l1():
+    """A runner that reads nothing: the pump's write would wait WRITE_TIMEOUT (10 s), up to three times after stop."""
+    import socket as _socket
+
+    from orch_dashboard.terminals import Pump, SteadyWrites
+
+    ours, runner = _socket.socketpair()
+    try:
+
+        class Client:
+            sock = ours
+
+        client = Client()
+        pump = Pump(client, None, None)
+        assert isinstance(client.sock, SteadyWrites)
+        outcome = {}
+
+        def write():
+            started = time.monotonic()
+            try:
+                client.sock.sendall(b"x" * (4 << 20))  # far more than the socket buffers hold
+            except OSError as exc:
+                outcome["error"] = type(exc).__name__
+            outcome["took"] = time.monotonic() - started
+
+        writer = threading.Thread(target=write)
+        writer.start()
+        time.sleep(0.3)  # the write is blocked now
+        pump.stop()
+        writer.join(2)
+        assert not writer.is_alive() and "error" in outcome and outcome["took"] < 2
+        with pytest.raises(ConnectionAbortedError):
+            client.sock.sendall(b"more")
+    finally:
+        ours.close()
+        runner.close()

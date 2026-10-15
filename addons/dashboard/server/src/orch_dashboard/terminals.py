@@ -23,6 +23,7 @@ import hashlib
 import json
 import queue
 import secrets
+import socket
 import struct
 import threading
 import time
@@ -346,9 +347,10 @@ class SteadyWrites:
     is busy. Every `sendall` here runs under `WRITE_TIMEOUT`, and the read timeout is put back afterwards.
     (Core request: `TermClient.send` could do this itself.)"""
 
-    def __init__(self, sock):
+    def __init__(self, sock, stopped: threading.Event | None = None):
         self.sock = sock
         self.read_timeout = sock.gettimeout()
+        self.stopped = stopped or threading.Event()
 
     def settimeout(self, value):
         self.read_timeout = value
@@ -358,6 +360,8 @@ class SteadyWrites:
         return self.read_timeout
 
     def sendall(self, data):
+        if self.stopped.is_set():  # nothing more reaches the runner once the attachment is over (delta2 D2-L1)
+            raise ConnectionAbortedError("attachment stopped")
         self.sock.settimeout(WRITE_TIMEOUT)
         try:
             self.sock.sendall(data)
@@ -381,10 +385,10 @@ class Pump:
 
     def __init__(self, client, loop: asyncio.AbstractEventLoop, post):
         self.client, self.loop, self.post = client, loop, post
-        if client is not None and getattr(client, "sock", None) is not None:
-            client.sock = SteadyWrites(client.sock)
-        self.inbox: queue.SimpleQueue = queue.SimpleQueue()
         self.stopped = threading.Event()
+        if client is not None and getattr(client, "sock", None) is not None:
+            client.sock = SteadyWrites(client.sock, self.stopped)
+        self.inbox: queue.SimpleQueue = queue.SimpleQueue()
         self.pending = 0  # unacknowledged input bytes (read by the loop; written here)
         self.queued = 0  # input bytes put into the inbox and not yet taken by the pump (review L5)
         self.queued_lock = threading.Lock()
@@ -402,6 +406,11 @@ class Pump:
 
     def stop(self):
         self.stopped.set()
+        # A write already blocked on a slow runner ends now, not after WRITE_TIMEOUT; reads end too (delta2 D2-L1).
+        sock = getattr(self.client, "sock", None)
+        if isinstance(sock, SteadyWrites):
+            with suppress(OSError):
+                sock.sock.shutdown(socket.SHUT_RDWR)
 
     def _deliver(self, item):
         if not self.stopped.is_set():

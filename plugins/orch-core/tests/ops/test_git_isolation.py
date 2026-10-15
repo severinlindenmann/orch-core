@@ -896,8 +896,9 @@ def test_every_hostile_diff_key_is_neutralised_byte_for_byte(world):
     # positive controls: plain git runs every program and its output differs from the clean repo's
     w.git(hostile, "diff", c1, c2, check=False)
     assert {"diff-external", "diff-command"} <= w.fired()
-    w.git(hostile, "diff", "--no-ext-diff", c1, c2, check=False)
-    assert {"diff-textconv", "lfs-textconv"} <= w.fired()
+    w.git(hostile, "diff", "--no-ext-diff", c1, c2, "--", "a.g", check=False)
+    w.git(hostile, "diff", "--no-ext-diff", c1, c2, "--", "big.l", check=False)
+    assert {"diff-textconv", "lfs-textconv"} <= w.fired(), w.git(hostile, "check-attr", "diff", "--", "big.l").stdout
     w.clear()
     for args in (["diff", "--no-ext-diff", "--no-textconv", c1, c2], ["diff", "--numstat", c1, c2]):
         assert w.git(hostile, *args).stdout != w.git(clean, *args).stdout, args

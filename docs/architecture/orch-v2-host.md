@@ -3983,7 +3983,18 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (`orch.click.protocol.click_detail`, exactly `{reason, devices}` against the host's `DETAIL_KEYS` and `DEVICE_ID`;
     an invalid part drops all of it); every other code drops it. `ClickError` gains `detail`; `orch.click.client` now
     imports the stdlib-only `orch.host.errors`. No wire, hash or schema change; the click `contract` stays 2.
-51. **`relay.pair_device` (H12c-e, §11A.15.10 item 12, "As built in H12c-e"; the number may be renumbered when a
+51. **The person-key source (H12c-d, §11A.15.10 item 10, Q1 = B; the number may be renumbered when a parallel change
+    lands first):** `orch.custody.personkey`: the `PersonKeySource` protocol (`person_id`, `pk_pub`,
+    `sign(label, payload)`, `signer(label)`, `derive_label_key()`, a context manager) and `RecoveryCodeSource`, which
+    asks for the recovery code on `/dev/tty` once per command, checks it with the existing parser, derives `PK` as
+    `orch init` does, refuses another person's code before any signature and zeroises (best effort) when the block
+    ends. It signs only the labels its command names (`labels=`, required; a subset of device certificates, cert
+    challenges, rejections and revocations, never `sig_ws_delegation`). New custody codes `custody.recovery_code`
+    (with the parser's reason), `custody.person_mismatch`, `custody.person_key_closed`, `custody.person_key`,
+    `custody.label_refused`; `human_only` under `ORCH_GRANT`. The dev sandbox's
+    source is in the test tree. No CLI, wire, hash, contract or schema change. Details: §11A.15.10 "As built in
+    H12c-d".
+52. **`relay.pair_device` (H12c-e, §11A.15.10 item 12, "As built in H12c-e"; the number may be renumbered when a
     parallel change lands first):** a host person op (`human.prepare`/`human.submit` only; a plain request is
     `human_only`; listed in `welcome.ops` at version 1) with args `{offer_id}` and the new `Material` kind
     `relay.pair_device` (§0.8.1); it emits `device.added {device, cert}` from R6's verified facts. New
@@ -7543,6 +7554,71 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   outside `identity/_mint.py`, `identity/wscard.py` and `identity/certreq.py`, and a `"_mint"` string everywhere
   (Codex P2 on #512: re-exports and attribute chains through the minting modules). Other consumers re-check a minted
   type with `certreq.require_minted(obj, cls)` (`answers.py`).
+
+**As built in H12c-d (item 10, the person-key source; 15 Oct 2026).**
+- **Where.** `orch.custody.personkey` (custody, not `orch.identity`: it does terminal I/O and holds a key; 11A.15.10
+  keeps `orch.identity` pure and `orch.relay` never imports custody).
+- **`PersonKeySource`** (a `runtime_checkable` protocol): `person_id` (16 bytes), `pk_pub` (65 bytes, known once
+  the block is entered), `sign(label, payload)` where `label` is a label **name** (`"sig_cert_challenge"`) and
+  `payload` the full signed bytes, which must start with that label's bytes; `signer(label)` is the same bound to
+  one label, the `sign` callable the builders take (`make_cert_challenge(pk.pk_pub, pk.signer("sig_cert_challenge"),
+  request, inner, nonce)`, `make_cert_rejection`, `make_device_cert`, `make_revocation`); `derive_label_key()` =
+  `HKDF(pk_scalar, "", "orch/v2/pvk|p1")`, byte-equal to `workspace_init._label_key` (tested), the only derivation
+  offered; a context manager: the key exists inside the `with` block only. `check_payload(label, payload)` is the one
+  label policy every source applies.
+- **Labels (JUDGEMENT CALL).** `SIGN_LABELS` = `sig_device_cert`, `sig_cert_challenge`, `sig_cert_rejection`,
+  `sig_revocation`: a subset of `PERSON_KEY_LABELS` **without `sig_ws_delegation`**. The delegation is signed once
+  by `orch init` from the code it has just shown; adding and revoking devices never need it, and a source that cannot
+  sign one cannot delegate a workspace to another `WSK`. Same set as 11A.15.16 fixes for A'.
+- **`RecoveryCodeSource(labels=…, person_id=… | pk_pub=…, action=…)`** (Q1 = B). `labels` is **required** (least
+  privilege, review of #519, Opus F4): a non-empty subset of `SIGN_LABELS`; adding a device names
+  `{sig_cert_challenge, sig_cert_rejection, sig_device_cert}`, revoking names `{sig_revocation}`; any other label is
+  `custody.label_refused`. Exactly one expected person (the workspace owner's pinned key). `action` is shown printable
+  characters only (whitespace becomes a space; ESC, CSI, C1, bidi and other format characters are removed), at most
+  120 characters (F2). On entering: refuses under `ORCH_GRANT` (any value; code `human_only`; the only environment
+  variable read, and it only narrows); opens `/dev/tty` **first** (the passphrase backend's `_open_tty`; never stdin;
+  no terminal is `custody.no_prompt` and sets nothing irreversible, F3), then hardens (core dumps off, no debugger
+  attach: the passphrase backend's `_harden`) **before** the prompt; asks **once**, echo off, at most 512 bytes; while
+  the prompt waits, a default-action `SIGTERM`/`SIGHUP` restores echo and the previous handlers and re-raises (F5;
+  main thread only, a `SIGKILL` leaves echo off as `getpass` does); checks the text with
+  `recovery.check_recovery_code` (a bad code is `custody.recovery_code`, `reason` = `recovery.words`,
+  `recovery.unknown_word` or `recovery.checksum`, no retry: one prompt per command); derives with
+  `recovery.derive_person_scalar` (production scrypt); compares `person_id` (and `pk_pub` when given) in constant
+  time and refuses another person with `custody.person_mismatch` **before any signature**. A source is used once
+  (`custody.person_key_closed` on a second `with`, and for `sign`/`derive_label_key` outside the block). Every exit
+  path (normal, exception, `KeyboardInterrupt`, `SystemExit`, a refusal while entering) zeroises the typed bytes and
+  the 32-byte scalar buffer, drops the key object and undoes the reversible hardening. Nothing is written to disk; no
+  code or key in a message or `repr`; copy and pickle are refused. **No typed text in an exception (F1):** the shared
+  parse-and-derive step `_unlock` records a parser refusal's reason inside the `except` and raises
+  `BadRecoveryCode` after it (no `__cause__`, no `__context__`), clearing the parser's frames; a failed derivation of
+  a valid code clears the failure's frames and raises a fresh `custody.person_key` (or a fresh `KeyboardInterrupt`)
+  without cause or context; tests walk the whole chain and every frame's locals. `pk_pub` before the block returns
+  the expected key, or raises `PublicKeyUnknown` (also an `AttributeError`), so a runtime protocol check is safe on
+  Python 3.11. **Best effort, honestly (F6):** immutable copies stay until the memory is reused: the decoded code
+  text and the bytes the parser and scrypt make from it, the scalar as a Python `int` and its `to_bytes` temporary,
+  the `bytes` copy of the scalar `derive_label_key` passes to HKDF and the label key it returns, and OpenSSL's copy
+  inside the key object; a same-UID program can capture the typed code (11A.15.16).
+- **Boundary tests** (`tests/custody/test_personkey.py`, AST over `orch`): only `custody/personkey.py` names
+  `RecoveryCodeSource` (R6, orch-29, adds its add-device and revoke call sites to `SOURCE_CALLERS` with its review);
+  only `identity/recovery.py`, `identity/__init__.py`, `ops/workspace_init.py` and `custody/personkey.py` reach
+  `derive_person_scalar`/`derive_person_key`; only `workspace_init` and `personkey` name `orch/v2/pvk|p1`; the key
+  and scalar are reached only through `self._live`; nothing in `orch` imports the test tree. An end-to-end test types
+  a generated code into a real pty and signs a cert challenge (and a rejection, a certificate with a sealed label and
+  a revocation) that `check_cert_challenge` and the other checks accept, for a request made and opened as the primary
+  does.
+- **The dev sandbox's source** is `tests/relay/personkey_sandbox.py` (`SandboxPersonKey(root, labels=…, …)`, never
+  packaged; it shares `_unlock` and the label policy): it reads `<root>/secrets/recovery-code` (0600, a regular file
+  by `fstat`, opened `O_NOFOLLOW | O_NONBLOCK` through `secrets/`, which must be this user's and 0700, F7) only after
+  `check_manifest(root)` finds `<root>/.orch-dev-sandbox` (0600, this user's, JSON with `id` and `root: {st_dev,
+  st_ino}` equal to the root's; the root a private real directory). `tests/relay/owner.py` is not on develop yet, so
+  this is a minimal check: **orch-29** should make `owner.py`/`dev-pair` share it (or replace it and keep its tests).
+  `make_sandbox(root, code)` writes that shape. Production code reads no stored code or key.
+- **For callers (orch-29, Opus N3):** read `pk_pub` only inside the `with` block, or construct the source with
+  `pk_pub=` (the workspace owner's pinned key); a source built with `person_id=` raises `PublicKeyUnknown` for
+  `pk_pub` before its code is typed. The parser and the derivation are wrapped against any interrupt (N1), and a
+  replaced `SystemExit` keeps an `int` exit code (N2).
+- **Not yet (R6, orch-29):** the call sites (step 7b's challenge and rejection, the certificate, `orch` revoke), the
+  error-table entries in `ops/errors.py` for the five new custody codes, item 11 and item 12.
 
 **As built in H12c-e (item 12, 15 Oct 2026).**
 - **Pure half: `orch.identity.pairdevice`** (no key, no clock; `orch.relay` may import it). `PairDeviceFacts` is what

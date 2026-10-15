@@ -120,6 +120,24 @@ def refuse_real_home(path, what: str) -> None:
         raise AssertionError(f"a test tried to write {what} under the real home: {target}")
 
 
+@pytest.hookimpl(trylast=True)  # after -m has deselected: the split sees the tests that would run
+def pytest_collection_modifyitems(config, items):
+    spec = os.environ.get("ORCH_TEST_SHARD")
+    if not spec:
+        return
+    from tests._shard import assign, parse
+
+    index, count = parse(spec)
+    weights: dict[str, int] = {}
+    for item in items:
+        module = item.nodeid.split("::")[0]
+        weights[module] = weights.get(module, 0) + 1
+    slices = assign(weights, count)
+    kept = [i for i in items if slices[i.nodeid.split("::")[0]] == index]
+    config.hook.pytest_deselected(items=[i for i in items if i not in kept])
+    items[:] = kept
+
+
 def pytest_sessionstart(session):
     session.config._orch_service_files = _service_snapshot()
 

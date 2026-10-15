@@ -220,7 +220,7 @@ def test_no_click_feature_unless_the_flag_is_on_and_the_signer_can_sign(
 
 
 def test_a_signer_of_another_contract_is_refused(client, token, stub, script):
-    script.contract = 2
+    script.contract = 3
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" not in ws["features"] and ws["click"] is None
     assert script.clients[0].closed  # that child is stopped
@@ -1449,3 +1449,209 @@ def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
     handoffs.begin_sign("ws", "hr_x", until)
     handoffs.end_sign("ws", "hr_x", until, "definite")
     assert handoffs.is_unsettled("hr_x") is None
+
+
+# -- M7b: the runner grant, a click request in the deposit-only grant mode (D-P2-27, section 0.8.6 item 6) ------------
+
+DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
+DEPOSIT_RISK = (
+    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 "
+    "hours."
+)
+SECRET = "demo-not-a-real-secret-tail"
+GRANT = "gr_01M4Y46B485AXD4CBEJZ15Z1TV"
+
+
+def runner_grant(**kw):
+    return {"action": "runner_grant", **kw}
+
+
+def grant_view(**over):
+    view = {
+        "risk": RISK,
+        "op": "grant",
+        "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
+        "deposit": True,
+        "deposit_line": DEPOSIT_LINE,
+        "confirm": {"kind": "word", "word": "DEMO~0a1b2c3d/GRANT"},
+    }
+    return {"view": {**view, **over}, "view_digest": HASH}
+
+
+@pytest.fixture
+def deposits(script, monkeypatch):
+    """A contract-2 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
+    leave this server (the host's `result` with a secret in it, and an unknown field)."""
+    script.contract = 2
+    # Accepting contract 2 is core's own small PR (1 and 2); until it lands here, these tests admit 2.
+    monkeypatch.setattr(click_signer, "CONTRACT", 2)
+    script.sign_answer = {
+        "result": {"data": {"grant": GRANT, "secret": f"{GRANT}.{SECRET}"}, "seq": 9},
+        "duplicate": False,
+        "deposit": "confirmed",
+        "deposit_id": "0" * 25 + "1",
+        "grant": GRANT,
+        "auth": {"grant": f"{GRANT}.{SECRET}"},
+        "ORCH_GRANT": SECRET,
+    }
+    base = script.handler
+
+    def handler(op, args):
+        if op == "sign" and script.view["view"].get("op") == "grant":
+            script.states[args["request_id"]] = "submitted"
+            return dict(script.sign_answer)
+        return base(op, args)
+
+    script.handler = handler
+    script.view = grant_view()
+    return script
+
+
+def test_runner_grant_needs_a_contract_2_signer_else_update_orch(client, token, stub, script):
+    res = prepare(client, token, stub, runner_grant())
+    assert res.status_code == 409, res.text
+    err = res.json()["error"]
+    assert err["code"] == "human.click_refused" and err["reason"] == "terminal_only" and err["why"] == "update_orch"
+    assert err["message"] == "This orch version can't hand a grant to the runner; update orch."
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
+
+
+def test_runner_grant_prepares_a_deposit_grant_with_hours_and_scope_only(client, token, stub, deposits):
+    res = prepare(client, token, stub, runner_grant(hours=12, scope="all"))
+    assert res.status_code == 200, res.text
+    sent = [c for c in deposits.clients[0].calls if c[0] == "prepare"][0][1]
+    assert sent["op"] == "grant" and sent["args"] == {"hours": 12, "scope": "all"} and sent["deposit"] is True
+    assert sent["idem"].startswith("a_")
+    prepare(client, token, stub, runner_grant())
+    assert [c for c in deposits.clients[0].calls if c[0] == "prepare"][1][1]["args"] == {
+        "hours": 8,
+        "scope": "workable",
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        runner_grant(hours=13),
+        runner_grant(hours=0),
+        runner_grant(hours="8"),
+        runner_grant(scope="mine"),
+        runner_grant(label="runner"),
+        runner_grant(verbs="agent"),
+        runner_grant(deposit=True),
+        runner_grant(secret="x"),
+    ],
+)
+def test_runner_grant_bodies_are_closed(client, token, stub, deposits, body):
+    assert prepare(client, token, stub, body).status_code == 400
+    assert [c for cl in deposits.clients for c in cl.calls if c[0] == "prepare"] == []
+
+
+def test_runner_grant_is_never_a_terminal_handoff(client, token, stub, deposits):
+    res = client.post(f"/api/w/{stub.ws}/handoff", json=runner_grant(), headers=hdr(token))
+    assert res.status_code == 400
+
+
+def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, stub, deposits, host_check):
+    prepare(client, token, stub, runner_grant())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == deposits.view
+    assert host_check.checks[-1]["expect_op"] == "grant" and host_check.checks[-1]["expect_events"] is not None
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"deposit": False},
+        {"deposit_line": "The secret is shown here"},
+        {"lines": ["grant", DEPOSIT_LINE]},  # no risk sentence
+        {"lines": ["grant", DEPOSIT_RISK]},  # no deposit line in the lines
+        {"confirm": {"kind": "click"}},
+        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d"}},
+    ],
+)
+def test_a_grant_view_without_the_deposit_parts_is_not_shown(client, token, stub, deposits, over):
+    deposits.view = grant_view(**over)
+    prepare(client, token, stub, runner_grant())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_a_view_of_another_op_that_claims_a_deposit_is_not_shown(client, token, stub, script):
+    script.view = {"view": {**script.view["view"], "deposit": True}, "view_digest": HASH}
+    prepare(client, token, stub)
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_the_grant_sign_answer_is_the_deposit_fields_only_and_never_the_secret(client, token, stub, deposits):
+    prepare(client, token, stub, runner_grant())
+    body = {"request_id": REQ, "view_digest": HASH, "word": "DEMO~0a1b2c3d/GRANT"}
+    res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == {
+        "state": "submitted",
+        "duplicate": False,
+        "deposit": "confirmed",
+        "deposit_id": "0" * 25 + "1",
+        "grant": GRANT,
+    }
+    assert SECRET not in res.text and "auth" not in res.text and "result" not in res.json()
+
+
+@pytest.mark.parametrize(
+    ("answer", "out"),
+    [
+        ({"deposit": "rejected", "deposit_reason": "grant.expiring"}, {"deposit_reason": "grant.expiring"}),
+        ({"deposit": "rejected", "deposit_reason": "a host sentence"}, {"deposit_reason": "other"}),
+        ({"deposit": "rejected"}, {"deposit": "rejected", "deposit_reason": "other"}),
+        ({"deposit": "unknown", "deposit_reason": "grant.verbs"}, {"deposit": "unknown"}),
+        ({"deposit": "maybe"}, {"deposit": "unknown"}),
+        ({"deposit_id": "not-a-ulid"}, {"deposit_id": None}),
+        ({"deposit_id": "0" * 25 + "2"}, {"deposit_id": None}),  # not this request's
+        ({"grant": f"{GRANT}.{SECRET}"}, {"grant": None}),
+    ],
+)  # fmt: skip
+def test_each_deposit_field_is_checked(client, token, stub, deposits, answer, out):
+    deposits.sign_answer = {**deposits.sign_answer, **answer}
+    prepare(client, token, stub, runner_grant())
+    body = {"request_id": REQ, "view_digest": HASH, "word": "DEMO~0a1b2c3d/GRANT"}
+    got = client.post(url(stub, "sign"), json=body, headers=hdr(token)).json()
+    for key, value in out.items():
+        assert got[key] == value
+    assert ("deposit_reason" in got) is (got["deposit"] == "rejected")
+    assert SECRET not in repr(got)
+
+
+def test_expected_admits_only_the_callers_runner_grant():
+    from orch_dashboard.handoff import RunnerGrant, expected
+
+    me = "p_" + "1" * 32
+    good = {
+        "type": "grant.issued",
+        "label": "runner",
+        "verbs": "agent",
+        "hours": 8,
+        "scope": "workable",
+        "actor": {"kind": "person", "id": me, "device": None},
+    }
+    check = expected(RunnerGrant(action="runner_grant"), me)
+    assert check([good])
+    for bad in (
+        {"label": None},
+        {"label": "mine"},
+        {"verbs": ["log"]},
+        {"verbs": "all"},
+        {"hours": 9},
+        {"hours": 24},
+        {"scope": "all"},
+        {"type": "grant.revoked"},
+        {"actor": {"kind": "person", "id": "p_" + "2" * 32, "device": None}},
+        {"actor": {"kind": "agent", "id": me}},
+    ):
+        assert not check([{**good, **bad}]), bad
+    assert not check([good, good])
+    assert not expected(RunnerGrant(action="runner_grant"), None)([good])
+    twelve = expected(RunnerGrant(action="runner_grant", hours=12, scope="all"), me)
+    assert twelve([{**good, "hours": 12, "scope": "all"}]) and not twelve([{**good, "hours": 13, "scope": "all"}])

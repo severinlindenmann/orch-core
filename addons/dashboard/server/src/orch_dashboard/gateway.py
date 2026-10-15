@@ -155,8 +155,7 @@ class Gateway:
             "members": [("member.list", "query/1")],
             "settings_read": [("workspace.settings", "settings/1")],
             "grant_list": [("grant.list", "query/1")],
-            # Terminals (M7a, section 12.6): the person's own shells. `agent.preview`/`agent.start` (H11c) are not
-            # served by this server yet: no "agent_start" feature is ever listed and the page keeps "not available".
+            # Terminals (M7a, section 12.6): the person's own shells.
             "terminals": [
                 ("run.sub", "run/1"),
                 ("run.list", "run/1"),
@@ -165,6 +164,20 @@ class Gateway:
                 ("term.open", "term/1"),
                 ("term.attach", "term/1"),
                 ("attach.cancel", "term/1"),
+            ],
+            # Start agent (M7b, H11c): preview and start an agent run; the person's runner grant (read through
+            # `whoami.runner`, forgotten with `grant.forget`, a deposit's outcome read with `grant.deposit_status`).
+            # Issuing the grant is a click request of the signer child (`click.py`), never a host op of this process.
+            "agent_start": [
+                ("agent.preview", "run/1"),
+                ("agent.start", "run/1"),
+                ("run.list", "run/1"),
+                ("whoami", "ops/1"),
+            ],
+            "runner_grant": [
+                ("grant.deposit_status", "run/1"),
+                ("grant.forget", "run/1"),
+                ("whoami", "ops/1"),
             ],
         }
         for feature, ops in requirements.items():

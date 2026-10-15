@@ -19,6 +19,8 @@ from pathlib import Path
 from .errors import HostError, fail
 
 CONTRACT = 1
+#: The first contract that hands a runner grant to the runner (contract 1 reads every `grant` as terminal only).
+DEPOSIT_CONTRACT = 2
 #: `ORCH_DASHBOARD_CLICK=off` never starts a signer (a kill switch; the tests use it unless they test the signer).
 SWITCH = "ORCH_DASHBOARD_CLICK"
 RESTART_AFTER = 1.0  # seconds: a signer that dies at once is not respawned in a tight loop
@@ -54,6 +56,7 @@ class Signer:
         self.unsettled: Callable[[], bool] = lambda: False  # set by the routes: is a signature's outcome unknown?
         self.client = None
         self.core: str | None = None
+        self.contract: int | None = None  # the running signer's contract (1 or 2), once started
         self.last_spawn = -1e9
         self.refused: tuple[float, HostError] | None = None  # a signer of another contract: until this time
         self.restarts = 0
@@ -121,9 +124,16 @@ class Signer:
             self.refused = (self.clock() + CONTRACT_RETRY, error)
             raise error
         self.refused = None
+        self.contract = status["contract"] if type(status["contract"]) is int else None
         self.core = str(status.get("core"))[:40]
         self.client = client
         return client
+
+    def deposits(self) -> bool:
+        """Does the running signer (started now if needed) hand a runner grant to the runner? Contract 2 and later."""
+        with self.lock:
+            self._ensure()
+            return (self.contract or 0) >= DEPOSIT_CONTRACT
 
     def close(self) -> None:
         with self.lock:

@@ -413,7 +413,7 @@ A workspace that was not created by `orch init` also needs its workspace signing
 export ORCH_DEV=1
 export ORCH_WORKSPACE=/private/tmp/orch-m1/workspace
 export ORCH_STATE_DIR=/private/tmp/orch-m1/state
-export ORCH_RUN_DIR=/private/tmp/orch-m1/state/run
+export ORCH_HOST_RUN_DIR=/private/tmp/orch-m1/state/run
 mkdir -p "$ORCH_STATE_DIR"
 chmod 700 "$ORCH_STATE_DIR"
 touch "$ORCH_STATE_DIR/.orch-dev" "$ORCH_WORKSPACE/.orch-dev"

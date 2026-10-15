@@ -19,7 +19,9 @@ link reservation's critical section and the persistent stop of ``orch host relay
   convenience event (:func:`orch.ops.readers.restore_held`).
 * **The stop.** ``hosts/<ws>/relay/stopped.json`` (0600) keeps the relay worker stopped across host restarts, the
   operator procedure after a state restore (§11A.4 "Scope of exactly-once"). :func:`may_start` is the check the relay
-  worker's start (R5) must pass: linked, and not stopped. A marker that cannot be read safely counts as stopped.
+  worker's start (R5) must pass: linked, not stopped, and the R6 gate open (:data:`orch.relay.worker.R6_READY`,
+  §11A.1). :func:`start_blocker` names what blocks it (``host.status.relay``). A marker that cannot be read safely
+  counts as stopped.
 """
 
 from __future__ import annotations
@@ -46,6 +48,13 @@ __all__ = [
     "may_start",
     "observe_relay_level",
     "relay_dir",
+    "start_blocker",
+    "unlink_intent_path",
+    "unlink_pending",
+    "mark_unlink_intent",
+    "note_alarm",
+    "read_unlink_intent",
+    "clear_unlink_intent",
     "stopped_path",
 ]
 
@@ -106,6 +115,11 @@ def link_reservation(service: Any, *, relay_level: int | None = None, clock: Any
     if store is None:
         raise HostError("workspace.unavailable", "the workspace is not open")
     with store.locked(), _flock(service.state_dir, "relay-link.lock", service.host_uid):
+        if unlink_pending(service.state_dir, service.workspace_id):  # round 5 L1: finish the unlink first
+            raise HostError(
+                "lock.busy",
+                "unlink_pending: an unlink of this workspace has not finished (it finishes at the next open)"[:118],
+            )
         refuse_reader_op(service, "relay.link", history=True, relay_level=relay_level)
         linked = linked_workspaces(service.state_dir)
         if len(linked) >= MAX_LINKED:
@@ -176,6 +190,73 @@ def _private_relay_dir(state_dir: Path, workspace_id: str, host_uid: int) -> Pat
     return ensure_private_dir(relay_dir(state_dir, workspace_id), host_uid)
 
 
+def unlink_intent_path(state_dir: Path, workspace_id: str) -> Path:
+    return relay_dir(state_dir, workspace_id) / "unlink-intent.json"
+
+
+def mark_unlink_intent(
+    state_dir: Path, workspace_id: str, host_uid: int, *, linked_at: int | None, clock: Any = time.time
+) -> None:
+    """The durable intent of ``orch host relay unlink`` (0600), written before anything else of the unlink: until
+    the rename is done and the intent cleared, no worker starts (:func:`start_blocker`), ``relay start`` and a new
+    reservation are refused, and the next open finishes the rename (R5 round 3, D-1). It is bound to the link it was
+    made for (``linked_at``, round 5 L1): an intent for another link is stale and never acted on."""
+    _private_relay_dir(state_dir, workspace_id, host_uid)
+    write_private(
+        unlink_intent_path(state_dir, workspace_id), {"v": 1, "at_ms": int(clock() * 1000), "linked_at": linked_at}
+    )
+
+
+def read_unlink_intent(state_dir: Path, workspace_id: str, host_uid: int) -> dict[str, Any]:
+    """The intent record; :class:`HostError` (``custody.unsafe_mode``) when it is not a private JSON object of the
+    host UID with a ``linked_at`` field (fail closed: the intent stays and keeps blocking)."""
+    doc = read_json(unlink_intent_path(state_dir, workspace_id), host_uid)
+    at = doc.get("linked_at", ...) if isinstance(doc, dict) else ...
+    if at is ... or not (at is None or (type(at) is int and at >= 0)):
+        raise unsafe(f"{unlink_intent_path(state_dir, workspace_id)}: not an unlink intent record")
+    return doc
+
+
+def note_alarm(
+    state_dir: Path, workspace_id: str, host_uid: int, code: str, detail: str, *, clock: Any = time.time
+) -> None:
+    """Record an alarm in ``relay/alarms.json`` from the host side (no worker runs): the same rows as the worker's
+    book (at most 64). Best effort: a write that fails is logged by the caller's own report."""
+    path = relay_dir(state_dir, workspace_id) / "alarms.json"
+    try:
+        doc = read_json(path, host_uid)
+    except HostError:
+        doc = None
+    rows = [r for r in (doc.get("alarms") if isinstance(doc, dict) else None) or [] if isinstance(r, dict)][:64]
+    now = int(clock() * 1000)
+    row = next((r for r in rows if r.get("code") == code), None)
+    if row is None:
+        rows = rows[:63]
+        row = {"code": code, "count": 0, "first_ms": now}
+        rows.append(row)
+    row.update(count=int(row.get("count") or 0) + 1, last_ms=now, detail=detail[:200])
+    write_private(path, {"v": 1, "alarms": rows})
+
+
+def clear_unlink_intent(state_dir: Path, workspace_id: str, host_uid: int) -> None:
+    from orch.store.fsio import fsync_dir
+
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(unlink_intent_path(state_dir, workspace_id))
+        fsync_dir(relay_dir(state_dir, workspace_id))
+
+
+def unlink_pending(state_dir: Path, workspace_id: str) -> bool:
+    """An unlink intent exists (or cannot be ruled out: fail closed)."""
+    try:
+        os.lstat(unlink_intent_path(state_dir, workspace_id))
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def mark_stopped(state_dir: Path, workspace_id: str, host_uid: int, *, clock: Any = time.time) -> None:
     """Write the stop marker (0600): the relay worker stays stopped until :func:`clear_stopped`."""
     _private_relay_dir(state_dir, workspace_id, host_uid)
@@ -211,15 +292,33 @@ def is_stopped(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
     return True
 
 
-def may_start(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
-    """The relay worker may start (R5): the relay directory is a private directory of the host UID with safe
-    ancestors, ``link.json`` is a private JSON object of the host UID and the worker is not stopped. Anything else,
-    including any doubt, is ``False``."""
+def start_blocker(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
+    """What keeps the relay worker from starting (R5), or ``None``: ``stopped`` (the marker, or any doubt about it),
+    ``not_linked`` (no ``link.json``), ``link_unsafe`` (the relay directory is not a private directory of the host
+    UID with safe ancestors, or ``link.json`` is not a private JSON object of the host UID), then the R6 gate
+    (:data:`orch.relay.worker.R6_GATE_REASON` while :data:`orch.relay.worker.R6_READY` is false, §11A.1). The gate is
+    checked last so that ``host.status.relay`` names the operator's own stop first."""
+    from orch.relay import worker
+
+    if unlink_pending(state_dir, workspace_id):
+        return "unlink_pending"
     if is_stopped(state_dir, workspace_id, host_uid):
-        return False
+        return "stopped"
+    if not os.path.lexists(link_path(state_dir, workspace_id)):
+        return "not_linked"
     try:
         ensure_private_dir(relay_dir(state_dir, workspace_id), host_uid, create=False)
         link = read_json(link_path(state_dir, workspace_id), host_uid)
     except (HostError, OSError):
-        return False
-    return isinstance(link, dict)
+        return "link_unsafe"
+    if not isinstance(link, dict):
+        return "link_unsafe"
+    if not worker.r6_ready():
+        return worker.R6_GATE_REASON
+    return None
+
+
+def may_start(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
+    """The relay worker may start (R5): :func:`start_blocker` names nothing. Anything else, including any doubt and
+    the closed R6 gate, is ``False``."""
+    return start_blocker(state_dir, workspace_id, host_uid) is None

@@ -103,7 +103,7 @@ def _parser() -> argparse.ArgumentParser:
     relay = sub.add_parser(
         "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
     )
-    relay.add_argument("action", choices=("stop", "start"))
+    relay.add_argument("action", choices=("stop", "start", "unlink"))
     relay.add_argument("--workspace", required=True, help="workspace id or prefix")
     relay.add_argument("--state", type=Path)
     relay.add_argument("--run", type=Path)
@@ -668,8 +668,8 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
 
     state = _state(args.state, env)
     uid = os.getuid()
-    if args.action == "start" and env.get("ORCH_GRANT"):
-        return write_error(out, False, "human_only", "an agent never restarts the relay worker")
+    if args.action in ("start", "unlink") and env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", f"an agent never runs orch host relay {args.action}")
     try:
         reg = read_json(registry_path(state), uid) or {"workspaces": []}
     except HostError as exc:
@@ -683,7 +683,7 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
             relaylink.mark_stopped(state, wid, uid)
     except HostError as exc:
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
-    op = "host.relay_stop" if args.action == "stop" else "host.relay_start"
+    op = {"stop": "host.relay_stop", "start": "host.relay_start", "unlink": "host.relay_unlink"}[args.action]
     res: dict[str, Any] | None = None
     absent = False  # the host is confirmed not running: no socket, or nobody accepts on it
     try:
@@ -698,11 +698,15 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
             message = (
                 f"host unreachable ({why}): the marker is set, a running worker may continue until the host restarts"
             )
+        elif args.action == "unlink":
+            message = f"host unreachable ({why}): nothing was unlinked"
         else:
             message = f"host unreachable ({why}): the stop was not cleared"
         error = {"code": "host.unavailable", "message": message, "retryable": True}
         out.write(json.dumps({"ok": False, "error": error, "exit": 9}, sort_keys=True) + "\n")
         return 9
+    if absent and args.action == "unlink":  # the rename needs the store lock: only through the host
+        return write_error(out, False, "host.unavailable", "unlink runs through the host: start it first")
     if absent:  # no host: the marker alone decides
         try:
             if args.action == "start":

@@ -993,6 +993,9 @@ class BridgeLoop:
         self._alarmed: set[tuple[str, str]] = set()
         self._alarms_exhausted = False
         self.error: BaseException | None = None
+        #: extra aux steps ``(name, fn)`` run after the built-in ones, each guarded like them (R5's seam for R4's
+        #: unpublished consumer, 11A.9: "R4 runs on the aux thread"); appended before :meth:`start`
+        self.aux_steps: list[tuple[str, Callable[[], None]]] = []
 
     # -- lifecycle ----------------------------------------------------------------------------------------------
 
@@ -1030,6 +1033,10 @@ class BridgeLoop:
         if alive:
             log.error("relay_thread_stuck: %s", ",".join(alive))
         return not alive
+
+    def threads(self) -> list[threading.Thread]:
+        """The threads started so far (R5: ``host.status.relay`` reports whether any is alive)."""
+        return list(self._threads)
 
     def _spawn(self, role: str, fn: Callable[[], None]) -> None:
         t = threading.Thread(target=self._guard(fn), name=f"orch-relay-{role}-{self.id8}", daemon=True)
@@ -1163,6 +1170,8 @@ class BridgeLoop:
                 self._aux_step("sweep", self.bridge.sweep)
             self._aux_step("retry", self.bridge.retry_stuck)
             self._aux_step("flush", self.bridge.flush)
+            for what, fn in list(self.aux_steps):
+                self._aux_step(what, fn)
 
     def _aux_step(self, what: str, fn: Callable[[], None]) -> None:
         """One aux step; an exception is logged (bounded) and the aux thread goes on: lease renewal never stops for

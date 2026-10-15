@@ -2045,7 +2045,8 @@ call `member.list` gets the same list, §0.5). Times are `Time` (whole seconds, 
   agent grant) and N (no-person) get `label: null` on every device. Every other field is the same for every column.
 - **`cert_expires_at`** is the device certificate's `expires_ms` from F1 (`device.added`, `member.added`,
   `workspace.created`; the review's `derived.cert_expires`, §0.8.1) as `Time`, `null` for a certificate that never
-  expires.
+  expires, and also `null` for a value outside the RFC 3339 range (before 1970 or after year 9999; a verified
+  certificate may carry year 10000): one odd certificate never fails the read. `paired_at` follows the same rule.
 - **`relay`** is true exactly when the device was paired through the relay: it has R6's record
   `membership/devices/<device_id>.json` (11A.15.3) for the same person. **`label`** is that record's label, cleaned
   per protocol §2.5 by `orch.identity.pairing.clean_label` (the one cleaner, 11A.15.10 item 4), `null` without a record
@@ -3838,13 +3839,6 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
     `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
     (§0.4), so no cap or op version changes.
-45. **`member.list` device fields under `read_ext/3`** (§0.4, §0.8, §0.8.5; for the dashboard's "Pair a phone"):
-    each device gains `label`, `paired_at` (Time), `relay`, `cert_expires_at` (Time) and `reader`. `cert_expires_at`
-    comes from the F1 certificate; the other four come from R6's relay record and H12d's reader record, which are not
-    built yet, so they are `null`/`false` until then. Which members and devices a viewer gets is unchanged; `label` is
-    `null` for G and N (persons only, orch-52). `read_ext/3` lists `read_ext/1` and `read_ext/2`
-    too. No F1, schema or op version change.
-
 46. **R6 pairing builders 5 to 8 (H12c-b, §11A.15.10):**
     `orch.identity.answers` (the six exact §8.3 pair answers; a relayed challenge or rejection enters only as the
     verified `CertChallenge`/`CertRejection`); `orch.identity.memberlist` (`member_list_o`, `check_member_list`,
@@ -3857,6 +3851,12 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (the vectors win): `member_list_o` takes `owner_person_id` and derives `persons` without the owner;
     `check_wk_grant` takes the device id; `check_cert_request` takes a `VerifiedCard`, `now_ms` and `me` as person and
     device ids; the `make_*` builders take `pk_pub`. No hash, contract or schema change.
+47. **`member.list` device fields under `read_ext/3`** (§0.4, §0.8, §0.8.5; for the dashboard's "Pair a phone"):
+    each device gains `label`, `paired_at` (Time), `relay`, `cert_expires_at` (Time) and `reader`. `cert_expires_at`
+    comes from the F1 certificate; the other four come from R6's relay record and H12d's reader record, which are not
+    built yet, so they are `null`/`false` until then. Which members and devices a viewer gets is unchanged; `label` is
+    `null` for G and N (persons only, orch-52). `read_ext/3` lists `read_ext/1` and `read_ext/2`
+    too. No F1, schema or op version change.
 
 ---
 

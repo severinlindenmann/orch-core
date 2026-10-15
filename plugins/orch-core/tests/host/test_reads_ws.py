@@ -186,6 +186,48 @@ def test_member_list_device_fields_without_r6_or_reader_records(w):
     assert (added["valid"], added["relay"]) == (True, False)
 
 
+@pytest.mark.parametrize(
+    ("ms", "want"),
+    [
+        (1_760_000_123_456, "2025-10-09T08:55:23Z"),  # a normal value
+        (0, "1970-01-01T00:00:00Z"),
+        (253402300799999, "9999-12-31T23:59:59Z"),  # the last RFC 3339 second
+        (253402300800000, None),  # year 10000: no RFC 3339 Time
+        (10**30, None),
+        (-1, None),  # before 1970
+        (-62135596800000, None),  # year 1
+        (True, None),
+        (1.5, None),
+        ("7", None),
+        (None, None),
+    ],
+)
+def test_ms_time_answers_null_outside_the_rfc3339_range(ms, want):
+    from orch.host.reads_ws import _ms_time
+
+    assert _ms_time(ms) == want
+
+
+def test_member_list_survives_a_cert_that_expires_in_year_10000(w, monkeypatch):
+    """A verified certificate may carry ``expires_ms`` in year 10000: ``cert_expires_at`` is null, the device is still
+    listed and valid, and the read does not fail. A relay record's out-of-range ``paired_ms`` is null the same way."""
+    from orch.host import reads_ws
+
+    store = w.lab.ws.other()
+    w.lab.ws.store = store
+    try:
+        ref, _ = w.lab.ws.add_device(expires_ms=253402300800000)
+    finally:
+        store.close()
+        w.lab.ws.store = None
+    record = {"device_id": ref, "person_id": w.lab.owner, "label": "Phone", "paired_ms": -86_400_000}
+    monkeypatch.setattr(reads_ws, "relay_devices", lambda ctx: {ref: record})
+    c = w.client()
+    owner = next(m for m in ok(c.req("member.list"))["members"] if m["person"] == w.lab.owner)
+    added = next(d for d in owner["devices"] if d["id"] == ref)
+    assert (added["cert_expires_at"], added["paired_at"], added["valid"], added["relay"]) == (None, None, True, True)
+
+
 def _owner_dev(w) -> str:
     return next(d.id for d in w.service.store.state.workspace.devices.values() if d.person == w.lab.owner)
 

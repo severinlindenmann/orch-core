@@ -183,9 +183,15 @@ def _label(record: dict[str, Any] | None) -> str | None:
         return None
 
 
+#: the first epoch ms past ``9999-12-31T23:59:59Z``: a later value has no RFC 3339 ``Time``
+_TIME_END_MS = 253402300800000
+
+
 def _ms_time(value: Any) -> str | None:
-    """An epoch-ms value as ``Time`` (whole seconds, like every host read), ``None`` for anything else."""
-    return iso(value // 1000) if type(value) is int and value >= 0 else None
+    """An epoch-ms value as ``Time`` (whole seconds, like every host read); ``None`` for anything else, and for a value
+    outside the RFC 3339 range (before 1970 or after year 9999, which a verified cert may carry): one odd value never
+    breaks the read."""
+    return iso(value // 1000) if type(value) is int and 0 <= value < _TIME_END_MS else None
 
 
 @handler("member.list")

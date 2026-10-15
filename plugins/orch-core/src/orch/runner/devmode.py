@@ -25,6 +25,7 @@ import contextlib
 import errno
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -40,15 +41,37 @@ def path_for(run_dir: Path, uid: int) -> Path:
 
 
 def is_service_run_dir(run_dir: Path) -> bool:
-    """``run_dir`` is (or lies inside) a service run directory, as written or after resolving links."""
+    """``run_dir`` is (or lies inside) a service run directory. Decided by identity, not spelling: by path (as written
+    and resolved; case-folded on macOS, whose default file system ignores case, so a case-sensitive volume can only
+    refuse more) and by ``(st_dev, st_ino)`` of every existing ancestor of the resolved path against every service
+    root that exists (a link, another case or a second mount of the same directory)."""
     seen = {Path(os.path.normpath(os.path.abspath(run_dir)))}
-    with contextlib.suppress(OSError):
+    with contextlib.suppress(OSError, ValueError):
         seen.add(Path(os.path.realpath(run_dir)))
     roots = set(SERVICE_RUN_ROOTS)
     for root in SERVICE_RUN_ROOTS:
-        with contextlib.suppress(OSError):
+        with contextlib.suppress(OSError, ValueError):
             roots.add(Path(os.path.realpath(root)))
-    return any(p == r or p.is_relative_to(r) for p in seen for r in roots)
+
+    def fold(p: Path) -> Path:
+        return Path(str(p).casefold()) if sys.platform == "darwin" else p
+
+    if any(fold(p) == fold(r) or fold(p).is_relative_to(fold(r)) for p in seen for r in roots):
+        return True
+    ids = set()
+    for root in roots:
+        with contextlib.suppress(OSError, ValueError):
+            st = os.stat(root)
+            ids.add((st.st_dev, st.st_ino))
+    if not ids:
+        return False
+    for p in seen:
+        for ancestor in (p, *p.parents):
+            with contextlib.suppress(OSError, ValueError):
+                st = os.stat(ancestor)
+                if (st.st_dev, st.st_ino) in ids:
+                    return True
+    return False
 
 
 def _private_dir(directory: Path, uid: int) -> None:

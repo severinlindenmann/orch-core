@@ -272,3 +272,37 @@ def test_a_separate_foreground_runner_connects_only_to_a_dev_runner_host(tmp_pat
             _stop(child)
         w.h.stop()
         w.lab.close()
+
+
+# -- review hardening (#475): identity, not spelling; never block on a FIFO --------------------------------------------
+
+
+@pytest.mark.skipif(not os.path.isdir("/Users/Shared"), reason="needs /Users/Shared")
+def test_a_service_run_directory_in_another_case_is_recognized_by_identity():
+    if not os.path.exists("/users/shared"):
+        pytest.skip("case-sensitive file system")
+    assert devmode.is_service_run_dir(Path("/users/shared/orch/run/501")) is True
+    assert devmode.is_service_run_dir(Path("/USERS/Shared")) is False  # an ancestor of the root is not inside it
+
+
+def test_a_link_to_a_service_root_is_recognized_by_identity(tmp_path, monkeypatch):
+    root = tmp_path / "svc"
+    root.mkdir()
+    monkeypatch.setattr(devmode, "SERVICE_RUN_ROOTS", (root,))
+    (tmp_path / "alias").symlink_to(root)
+    assert devmode.is_service_run_dir(tmp_path / "alias" / "501") is True
+    assert devmode.is_service_run_dir(tmp_path / "other") is False
+
+
+def test_verify_never_blocks_on_a_fifo(tmp_path):
+    import threading
+
+    run = _run_dir(tmp_path)
+    path = devmode.announce(run, UID)
+    path.unlink()
+    os.mkfifo(path, 0o600)
+    got: list[bool] = []
+    t = threading.Thread(target=lambda: got.append(devmode.verify(run, UID, _creds())), daemon=True)
+    t.start()
+    t.join(5)
+    assert got == [False], "verify blocked on a FIFO"

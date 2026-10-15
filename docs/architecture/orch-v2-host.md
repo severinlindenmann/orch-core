@@ -6290,8 +6290,10 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   UID and the peer PID, and that PID is still the process born at the recorded time (a stale file whose PID was reused
   is refused); every error denies. The main-PID check still applies first. Refused at start (`invalid.input`): without
   `--foreground` (the units never pass it), under the service manager (`XPC_SERVICE_NAME` is `io.orch.host` or
-  `io.orch.runner`), and for a service run directory (`/Users/Shared/orch/run`, `/run/orch`, also after resolving
-  links; also in `Host` itself). Any other run directory (`<state>/run`, `--run`, `ORCH_HOST_RUN_DIR`) is a dev one:
+  `io.orch.runner`), and for a service run directory (`/Users/Shared/orch/run`, `/run/orch`; decided by identity:
+  as written and resolved, case-folded on macOS, and by `(st_dev, st_ino)` of every existing ancestor against each
+  existing root; also in `Host` itself). The file is opened `O_NONBLOCK | O_NOFOLLOW` and must be a regular file
+  (`custody.read_json`), so a FIFO in its place never blocks the accept loop. Any other run directory (`<state>/run`, `--run`, `ORCH_HOST_RUN_DIR`) is a dev one:
   a short `ORCH_HOST_RUN_DIR` is what tests use for the socket-path limit. The host logs a warning (and the CLI prints
   one) at start. Tier A: like the main-PID check this is fault separation, not a boundary (any process of the host
   UID can write the file); it keeps a stale or misdirected process from being taken for the runner.

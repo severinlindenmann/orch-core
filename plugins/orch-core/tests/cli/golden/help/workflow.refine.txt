@@ -1,0 +1,8 @@
+ok help refine
+turn a rough ticket into requirements, acceptance criteria and tasks
+1. orch show --section requirements  # Read a ticket
+2. orch section set requirements --file -  # Replace one section of the body with text from -m or --file
+3. orch ac add 'text'  # Add an acceptance criterion
+4. orch task add 'text' --verify 'cmd' --proves AC1  # Add a task, optionally with a verify command and the criteria it proves
+5. orch ask 'question' --options a,b --rec a  # Ask a person
+next: orch describe CMD

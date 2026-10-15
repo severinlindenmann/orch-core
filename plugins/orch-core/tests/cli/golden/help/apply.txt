@@ -1,0 +1,5 @@
+Apply a batch of operations atomically, from JSON (--file -).
+usage: orch apply --file PATH [--dry-run]
+  --file PATH  read the text from PATH, or - for stdin (required)
+  --dry-run  say what would happen, append nothing
+more: orch describe apply

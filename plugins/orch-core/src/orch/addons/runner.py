@@ -1,230 +1,371 @@
-"""`ctx.run` (spec v2 §11.9): argv only, allowlisted binaries, timeout, scrubbed env, never while a page renders."""
+"""The out-of-process addon runner: JSON-RPC 2.0 over stdio, one process per call (ticket-format §8.1).
+
+Nothing in P1 calls this (A5: addons run from P2), but the boundary is built and tested now so that P2 only wires it.
+P2 wires it as: ``call`` for a workspace-visible ticket, then ``Registry.check_proposal`` on the result, then the host
+builds, validates (``Registry.check_write``) and signs the events itself.
+
+What the host guarantees, each point pinned by ``tests/addons/test_runner.py``:
+
+* **A private, verified copy.** The package is staged read-only in a fresh temporary directory and its digest is
+  checked on the copy against the granted ``package_sha256``; the addon runs from the copy, never from the workspace.
+* **A closed environment.** ``PATH``, ``LANG``, ``HOME``/``TMPDIR`` (the working directory),
+  ``PYTHONDONTWRITEBYTECODE``, ``PYTHONPATH``, ``ORCH_ADDON``, ``ORCH_ADDON_CAPABILITIES`` and nothing else: no
+  ``ORCH_GRANT``, no key, no token. Every file descriptor but 0, 1 and 2 is closed. The working directory is
+  empty and its own.
+* **Strict framing.** One request line in; exactly one response line out (at most 256 KiB), strict JSON, a fixed shape;
+  stderr is capped and never interpreted. A crash, a timeout, too much output, a second line, malformed or extra
+  keys, a wrong id: an error of the call, nothing applied.
+* **A deadline.** The whole call, including startup, is bounded; the process group is killed at the end of every call.
+  A process that leaves its group (``setsid``, a double fork) is **not** tracked and outlives the call; killing every
+  process of the addon needs its own UID or a cgroup, which is a P2 requirement (ticket-format §8.1).
+* **Bound to the grant.** The command, the capabilities and the manifest come from the package bytes that match the
+  signed ``addon.granted`` (digest, name, version, capabilities), never from a separately passed manifest. The
+  request carries only the ticket's key, type, status and this addon's own fields, and only for a ticket whose
+  visibility is ``workspace``.
+* **Proposals only.** The result is checked by :meth:`orch.addons.registry.Registry.check_proposal`; the addon holds
+  no key and appends nothing.
+
+Process limits (CPU time, file size, no core files) are defence in depth, **not a sandbox**: until the P2 host runs
+addons under their own UID, an addon is trusted to the degree the owner trusts its package. In particular "no addon
+holds a key" (core §4) is true only once the addon's UID cannot read the host's key store; in the same UID it is not
+(ticket-format §8.1).
+"""
+
 from __future__ import annotations
 
 import contextlib
-import contextvars
 import os
+import selectors
+import shutil
 import signal
 import subprocess
-import threading
+import sys
+import tempfile
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Any
 
-from orch.errors import OrchError
+from orch import canon
+from orch.addons.manifest import ManifestError, load_manifest
+from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path, package_digest, read_package
+from orch.model.types import Addon
 
-_rendering: contextvars.ContextVar[bool] = contextvars.ContextVar("orch_addon_rendering", default=False)
-BASE_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP",
-            "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR", "APPDATA", "LOCALAPPDATA", "USERPROFILE",
-            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR")
-MAX_OUTPUT_BYTES = 8 * 1024 * 1024  # per stream (stdout, stderr)
-_CHUNK = 65536
-_POSIX = os.name != "nt"
-_LIVE_LOCK = threading.Lock()
-_LIVE: set[tuple[subprocess.Popen, int | None]] = set()
+__all__ = ["Limits", "RunnerError", "call", "child_env"]
+
+PATH = "/usr/local/bin:/usr/bin:/bin"
+MAX_REQUEST = 64 << 10
 
 
-def kill_live_processes() -> int:
-    """Force-kill every process group a SubprocessRunner call currently has running, from any thread: used at
-    shutdown so a blocked fetch (a long-poll's ctx.run can wait up to 35 s) never holds up exit — the blocked
-    `proc.wait()` returns at once once its process group is dead, and the worker thread finishes right after.
-    Returns how many it killed."""
-    with _LIVE_LOCK:
-        live = list(_LIVE)
-    for proc, pgid in live:
-        _kill_group(proc, pgid)
-    return len(live)
+class RunnerError(Exception):
+    """A call failed. ``code`` is one of ``addon.digest_mismatch``, ``addon.start_failed``, ``addon.timeout``,
+    ``addon.crashed``, ``addon.output_too_large``, ``addon.bad_response``, ``addon.error`` (the addon answered with a
+    JSON-RPC error), ``addon.bad_request``; ``detail`` never contains output of the addon, ``stderr`` does (capped, for
+    the log, never to be shown as instructions)."""
 
-
-class AddonRunError(OrchError):
-    pass
+    def __init__(self, code: str, detail: str, stderr: str = "") -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.detail = detail
+        self.stderr = stderr
 
 
 @dataclass(frozen=True)
-class RunResult:
-    argv: tuple[str, ...]
-    returncode: int
-    stdout: str
-    stderr: str
+class Limits:
+    timeout: float = 10.0  # seconds for the whole call
+    max_response: int = 256 << 10
+    max_stderr: int = 16 << 10
+
+    def __post_init__(self) -> None:
+        if not 0 < self.timeout <= 60 or self.max_response <= 0 or self.max_stderr < 0:
+            raise ValueError("limits out of range (timeout 0..60 s)")
 
 
-@contextlib.contextmanager
-def rendering():
-    """Mark a page render: `ctx.run` refuses inside (spec: pages read the cache only)."""
-    token = _rendering.set(True)
+def child_env(name: str, capabilities: Sequence[str], work: str, pkg: str) -> dict[str, str]:
+    """The whole environment of an addon process (§8.1). Built from nothing, never from the host's."""
+    return {
+        "PATH": PATH,
+        "LANG": "C.UTF-8",
+        "HOME": work,
+        "TMPDIR": work,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": pkg,
+        "ORCH_ADDON": name,
+        "ORCH_ADDON_CAPABILITIES": ",".join(capabilities),
+    }
+
+
+def _stage(package: Package, root: str) -> str:
+    """Write the package read-only under ``root/pkg`` and return its path."""
+    pkg = os.path.join(root, "pkg")
+    os.mkdir(pkg, 0o700)
+    dirs = [pkg]
+    for rel, data in package.files.items():
+        check_path(rel)  # a hand-built Package is checked again: no ``..``, no absolute path, no odd name
+        parts = rel.split("/")
+        d = pkg
+        for part in parts[:-1]:
+            d = os.path.join(d, part)
+            if not os.path.isdir(d):
+                os.mkdir(d, 0o700)
+                dirs.append(d)
+        fd = os.open(
+            os.path.join(d, parts[-1]), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o400
+        )
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+    for d in reversed(dirs):
+        os.chmod(d, 0o500)
+    return pkg
+
+
+_TRAMPOLINE = """
+import os, resource, sys
+cpu, exe = int(sys.argv[1]), sys.argv[2]
+for which, value in ((resource.RLIMIT_CORE, 0), (resource.RLIMIT_FSIZE, 1 << 20), (resource.RLIMIT_CPU, cpu)):
     try:
-        yield
+        resource.setrlimit(which, (value, value))
+    except (ValueError, OSError):
+        pass
+os.execv(exe, sys.argv[2:])
+"""
+
+
+def _kill(proc: subprocess.Popen[bytes]) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(proc.pid, signal.SIGKILL)
+
+
+def _rmtree(path: str) -> None:
+    def fix(func: Any, p: str, _exc: Any) -> None:
+        with contextlib.suppress(OSError):
+            os.chmod(os.path.dirname(p), 0o700)
+            os.chmod(p, 0o700)
+            func(p)
+
+    for dirpath, dirnames, _files in os.walk(path):
+        with contextlib.suppress(OSError):
+            os.chmod(dirpath, 0o700)
+        for d in dirnames:
+            with contextlib.suppress(OSError):
+                os.chmod(os.path.join(dirpath, d), 0o700)
+    shutil.rmtree(path, onerror=fix)
+
+
+def _own_fields(ticket: Any, name: str) -> dict[str, Any]:
+    f = ticket.fields.get("addons", {}).get(name, {}) if hasattr(ticket, "fields") else {}
+
+    def plain(v: Any) -> Any:
+        if isinstance(v, Mapping):
+            return {k: plain(x) for k, x in v.items()}
+        if isinstance(v, tuple | list):
+            return [plain(x) for x in v]
+        return v
+
+    return plain(f)
+
+
+def call(
+    package: Package,
+    granted: Addon,
+    *,
+    trigger: str,
+    ticket: Any,
+    limits: Limits | None = None,
+) -> Any:
+    """Run the addon once with method ``propose`` and return the ``result`` of its response (validate it with
+    ``Registry.check_proposal``). ``granted`` is the replayed grant; ``ticket`` is a ``TicketView``, of which only the
+    key, type, status and this addon's own fields are sent. Raises :class:`RunnerError`."""
+    if not granted.enabled or granted.purged:
+        raise RunnerError("addon.inactive", "the addon is disabled or purged")
+    if ticket.visibility != "workspace":
+        raise RunnerError("addon.not_visible", "an addon is run only for a ticket every member can see")
+    try:
+        digest = package_digest(package.files)  # recomputed: the digest field of a Package is never trusted
+    except PackageError:
+        raise RunnerError("addon.digest_mismatch", "the package is empty") from None
+    if digest != granted.package_sha256 or MANIFEST_FILE not in package.files:
+        raise RunnerError("addon.digest_mismatch", "the package is not the one that was granted")
+    try:
+        manifest = load_manifest(package.files[MANIFEST_FILE])
+    except ManifestError:
+        raise RunnerError("addon.digest_mismatch", "the granted package has no valid manifest") from None
+    if (manifest.name, manifest.version, manifest.capabilities) != (
+        granted.name,
+        granted.version,
+        sorted(granted.capabilities),
+    ):
+        raise RunnerError("addon.digest_mismatch", "the manifest is not the one that was granted")
+    granted_digest = granted.package_sha256
+    try:
+        request = canon.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "propose",
+                "params": {
+                    "addon": granted.name,
+                    "version": granted.version,
+                    "capabilities": sorted(granted.capabilities),
+                    "trigger": trigger,
+                    "ticket": {
+                        "key": ticket.key,
+                        "type": ticket.type,
+                        "status": ticket.status,
+                        "fields": _own_fields(ticket, granted.name),
+                    },
+                },
+            }
+        )
+    except (ValueError, TypeError, RecursionError):
+        raise RunnerError("addon.bad_request", "the request is not strict JSON") from None
+    request += b"\n"
+    if len(request) > MAX_REQUEST:
+        raise RunnerError("addon.bad_request", f"the request is larger than {MAX_REQUEST} bytes")
+
+    limits = limits or Limits()
+    deadline = time.monotonic() + limits.timeout
+    root = tempfile.mkdtemp(prefix="orch-addon-")
+    proc: subprocess.Popen[bytes] | None = None
+    try:
+        os.chmod(root, 0o700)
+        try:
+            pkg = _stage(package, root)
+        except (PackageError, OSError) as e:
+            raise RunnerError("addon.digest_mismatch", f"the package is not stageable: {type(e).__name__}") from None
+        work = os.path.join(root, "work")
+        os.mkdir(work, 0o700)
+        try:
+            if read_package(pkg).digest != granted_digest:  # the digest of the copy, not of what was read before
+                raise RunnerError("addon.digest_mismatch", "the staged copy differs from the granted package")
+        except PackageError:
+            raise RunnerError("addon.digest_mismatch", "the staged copy is not a valid package") from None
+        env = child_env(granted.name, sorted(granted.capabilities), work, pkg)
+        argv = [a.replace("{pkg}", pkg) for a in manifest.entry_cmd]
+        exe = argv[0] if os.sep in argv[0] else shutil.which(argv[0], path=PATH)
+        if exe is None:
+            raise RunnerError("addon.start_failed", "the command is not found")
+        argv[0] = exe
+        try:
+            # a trampoline sets the resource limits and execs the command: no ``preexec_fn`` (unsafe in a threaded host)
+            proc = subprocess.Popen(  # noqa: S603  (argv comes from the granted manifest, no shell)
+                [sys.executable, "-I", "-S", "-c", _TRAMPOLINE, str(int(limits.timeout) + 2), *argv],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=work,
+                env=env,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except (OSError, ValueError):
+            raise RunnerError("addon.start_failed", "the process did not start") from None
+        out, err, overflow = _converse(proc, request, deadline, limits)
+        _kill(proc)  # the group is killed; a process that left it (setsid) is not tracked in P1
+        if overflow == "timeout":
+            raise RunnerError("addon.timeout", f"no complete answer within {limits.timeout:g} s", _text(err))
+        if overflow == "output":
+            raise RunnerError("addon.output_too_large", f"more than {limits.max_response} bytes", _text(err))
+        code = proc.returncode
+        if code != 0:
+            raise RunnerError("addon.crashed", f"exit status {code}", _text(err))
+        return _parse(out, _text(err))
     finally:
-        _rendering.reset(token)
+        if proc is not None:
+            _kill(proc)
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=2)
+            for f in (proc.stdin, proc.stdout, proc.stderr):
+                if f is not None:
+                    with contextlib.suppress(OSError):
+                        f.close()
+        _rmtree(root)
 
 
-def is_rendering() -> bool:
-    return _rendering.get()
-
-
-def scrubbed_env(extra_names, environ=None) -> dict:
-    environ = os.environ if environ is None else environ
-    # ORCH_* is orch's own (ORCH_STATE_DIR, ORCH_HARNESS, ...); an addon never gets it, even if a
-    # manifest somehow declared it (manifest_problems already refuses that at parse time).
-    names = set(BASE_ENV) | {n for n in extra_names if not str(n).startswith("ORCH_")}
-    return {k: v for k, v in environ.items() if k in names and not k.startswith("ORCH_")}
-
-
-def _find_executable(name: str, path_value: str | None) -> str | None:
-    """Only absolute directories in PATH are searched: a relative entry (`.`, `./bin`) is ignored, so
-    a binary planted in the addon's or the server's current directory (e.g. `./git`) can never shadow
-    the real one."""
-    if os.path.isabs(name):
-        return name if os.path.isfile(name) else None
-    if not path_value:
-        return None
-    exts = [""]
-    if not _POSIX:
-        exts = [e for e in os.environ.get("PATHEXT", ".EXE;.BAT;.CMD").split(os.pathsep) if e] + [""]
-    for d in path_value.split(os.pathsep):
-        if not d or not os.path.isabs(d):
-            continue
-        for ext in exts:
-            candidate = Path(d) / (name + ext)
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
-    return None
-
-
-def _kill_group(proc: subprocess.Popen, pgid: int | None) -> None:
-    """Kill the whole process group (not just `proc`), so a grandchild — e.g. one the child spawned
-    and left running, inheriting the same session — dies too and releases any pipe it still holds
-    open. `pgid` is captured once, right after `Popen`, because `proc.pid` may already be reaped (and
-    its number reused by the OS) by the time this runs."""
+def _converse(
+    proc: subprocess.Popen[bytes], request: bytes, deadline: float, limits: Limits
+) -> tuple[bytes, bytes, str]:
+    """Feed the request, collect stdout and stderr under the caps and the deadline, wait for the exit. The last item is
+    ``""``, ``"timeout"`` or ``"output"``."""
+    assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+    sel = selectors.DefaultSelector()
+    for f in (proc.stdin, proc.stdout, proc.stderr):
+        os.set_blocking(f.fileno(), False)
+    sel.register(proc.stdin, selectors.EVENT_WRITE, "in")
+    sel.register(proc.stdout, selectors.EVENT_READ, "out")
+    sel.register(proc.stderr, selectors.EVENT_READ, "err")
+    out, err, sent = bytearray(), bytearray(), 0
     try:
-        if _POSIX and pgid is not None:
-            os.killpg(pgid, signal.SIGKILL)
-        else:
-            proc.kill()
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        pass
-
-
-class _ReaderThread(threading.Thread):
-    """Drains one stream in the background so the child never blocks on a full pipe, stopping (and
-    flagging `too_large`) once more than `cap` bytes have been read. Uses `os.read` on the raw fd
-    rather than `BufferedReader.read(n)`, which blocks until either `n` bytes are available or EOF —
-    exactly wrong for a child that writes a little and then goes quiet (or hangs): a short read must
-    return as soon as any data arrives."""
-
-    def __init__(self, stream, cap: int):
-        super().__init__(daemon=True)
-        self.stream = stream
-        self.fd = stream.fileno()
-        self.cap = cap
-        self.chunks: list[bytes] = []
-        self.total = 0
-        self.too_large = threading.Event()
-
-    def run(self) -> None:
-        try:
-            while True:
+        while sel.get_map():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return bytes(out), bytes(err), "timeout"
+            events = sel.select(timeout=min(left, 0.2))
+            if not events and proc.poll() is not None:
+                break  # exited and nothing is waiting: a grandchild that holds a pipe is not waited for
+            for key, _ in events:
+                which = key.data
+                if which == "in":
+                    try:
+                        sent += os.write(proc.stdin.fileno(), request[sent : sent + 65536])
+                    except BlockingIOError:
+                        continue
+                    except OSError:  # the addon closed its stdin: it will answer or not
+                        sent = len(request)
+                    if sent >= len(request):
+                        sel.unregister(proc.stdin)
+                        proc.stdin.close()
+                    continue
                 try:
-                    chunk = os.read(self.fd, _CHUNK)
-                except OSError:  # the fd was closed from the main thread to unblock us
-                    break
+                    chunk = os.read(key.fileobj.fileno(), 65536)  # type: ignore[union-attr]
+                except BlockingIOError:
+                    continue
                 if not chunk:
-                    break
-                self.chunks.append(chunk)
-                self.total += len(chunk)
-                if self.total > self.cap:
-                    self.too_large.set()
-                    break
-        finally:
-            try:
-                self.stream.close()
-            except OSError:
-                pass
-
-    @property
-    def data(self) -> bytes:
-        return b"".join(self.chunks)
-
-
-class SubprocessRunner:
-    def __init__(self, *, env_names: tuple[str, ...], cwd: Path):
-        self.env_names = tuple(env_names)
-        self.cwd = Path(cwd)
-
-    def __call__(self, argv, timeout: float, env: dict | None = None) -> RunResult:
-        if is_rendering():
-            raise AddonRunError("ctx.run is not allowed while a page renders; fetch in a provider instead")
-        extra = {k: v for k, v in (env or {}).items() if k in self.env_names and not k.startswith("ORCH_")}
-        env = {**scrubbed_env(self.env_names), **extra}
-        exe = _find_executable(argv[0], env.get("PATH"))
-        if not exe or not os.path.exists(exe):
-            raise AddonRunError(f"{argv[0]} is not installed or not on PATH")
-        popen_kwargs = {"start_new_session": True} if _POSIX else {}
+                    sel.unregister(key.fileobj)
+                    continue
+                if which == "out":
+                    out += chunk
+                    if len(out) > limits.max_response + 1:
+                        return bytes(out), bytes(err), "output"
+                elif len(err) < limits.max_stderr:
+                    err += chunk[: limits.max_stderr - len(err)]
         try:
-            proc = subprocess.Popen([exe, *argv[1:]], cwd=self.cwd, env=env, stdin=subprocess.DEVNULL,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen_kwargs)
-        except OSError as e:
-            raise AddonRunError(f"{argv[0]} could not be started ({e})") from e
+            proc.wait(timeout=max(deadline - time.monotonic(), 0.001))
+        except subprocess.TimeoutExpired:
+            return bytes(out), bytes(err), "timeout"
+        return bytes(out), bytes(err), ""
+    finally:
+        sel.close()
 
-        pgid = None
-        if _POSIX:
-            try:
-                pgid = os.getpgid(proc.pid)  # captured now: proc.pid may be reaped (and reused) later
-            except OSError:
-                pgid = None
 
-        key = (proc, pgid)
-        with _LIVE_LOCK:
-            _LIVE.add(key)  # visible to kill_live_processes() from any thread until this call is done
+def _text(raw: bytes) -> str:
+    return raw.decode("utf-8", errors="replace")
 
-        out_reader = _ReaderThread(proc.stdout, MAX_OUTPUT_BYTES)
-        err_reader = _ReaderThread(proc.stderr, MAX_OUTPUT_BYTES)
-        out_reader.start()
-        err_reader.start()
 
-        deadline = time.monotonic() + timeout
-        timed_out = False
-        while True:
-            if out_reader.too_large.is_set() or err_reader.too_large.is_set():
-                break
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
-            try:
-                proc.wait(timeout=min(remaining, 0.2))  # polls in short slices: a kill from another thread
-                break                                    # (kill_live_processes) is noticed within ~0.2 s
-            except subprocess.TimeoutExpired:
-                continue
+def _parse(raw: bytes, stderr: str) -> Any:
+    def bad(why: str) -> RunnerError:
+        return RunnerError("addon.bad_response", why, stderr)
 
-        with _LIVE_LOCK:
-            _LIVE.discard(key)
-
-        too_large = out_reader.too_large.is_set() or err_reader.too_large.is_set()
-
-        # Whatever ended the wait above (timeout, the cap, a normal exit, or an outside kill), kill the
-        # process group — not only `proc` — *before* joining the readers: a reader can be blocked in
-        # `os.read` with no data yet (e.g. a grandchild still holding the pipe open after the child itself
-        # exited), and joining first would add that block on top of our own timeout. Killing first,
-        # then closing the pipes ourselves as a backstop, makes both readers return promptly.
-        _kill_group(proc, pgid)
-        for stream in (proc.stdout, proc.stderr):
-            try:
-                stream.close()
-            except OSError:
-                pass
-        out_reader.join(timeout=2)
-        err_reader.join(timeout=2)
-
-        if timed_out or too_large:
-            if too_large:
-                raise AddonRunError("output too large")
-            raise AddonRunError(f"{argv[0]} timed out after {timeout:g} s")
-
-        stdout = out_reader.data.decode("utf-8", errors="replace")
-        stderr = err_reader.data.decode("utf-8", errors="replace")
-        return RunResult(tuple(argv), proc.returncode, stdout, stderr)
+    if not raw.endswith(b"\n") or b"\n" in raw[:-1]:
+        raise bad("the answer is exactly one line ending in LF")
+    try:
+        doc = canon.loads_strict(raw[:-1])
+    except (canon.JcsError, ValueError, RecursionError, UnicodeError):
+        raise bad("the answer is not strict JSON") from None
+    if (
+        type(doc) is not dict
+        or doc.get("jsonrpc") != "2.0"
+        or "id" not in doc
+        or doc["id"] != 1
+        or type(doc["id"]) is not int
+    ):
+        raise bad("not a JSON-RPC 2.0 response to request 1")
+    keys = set(doc)
+    if keys == {"jsonrpc", "id", "result"}:
+        return doc["result"]
+    if keys == {"jsonrpc", "id", "error"}:
+        e = doc["error"]
+        if type(e) is dict and set(e) == {"code", "message"} and type(e["code"]) is int and type(e["message"]) is str:
+            raise RunnerError("addon.error", f"the addon answered with error {e['code']}", stderr)
+        raise bad("the error object is {code, message}")
+    raise bad("exactly one of result and error")

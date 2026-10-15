@@ -1,0 +1,3 @@
+List the installed addons and whether each is enabled.
+usage: orch addon list
+more: orch describe addon.list

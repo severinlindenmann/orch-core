@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "artifact.mismatch",
+    "message": "an evidence file differs from its recorded digest",
+    "hint": "orch show",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}

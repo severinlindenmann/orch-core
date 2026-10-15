@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "grant.expired",
+    "message": "grant expired or revoked",
+    "hint": "ask the person for a new grant",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

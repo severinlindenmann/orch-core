@@ -1,0 +1,4 @@
+exit 2
+--- stdout
+--- stderr
+err not_found no ticket 99 · retry:false · next: orch list

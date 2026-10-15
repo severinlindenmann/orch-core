@@ -1,0 +1,6 @@
+Revoke a grant; every session using it ends.
+usage: orch grant revoke GRANT [--reason TEXT] [--dry-run]
+  GRANT  grant id
+  --reason TEXT  why
+  --dry-run  say what would happen, append nothing
+more: orch describe grant.revoke

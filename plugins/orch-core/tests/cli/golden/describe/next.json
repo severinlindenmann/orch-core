@@ -1,0 +1,46 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "next",
+    "name": "next",
+    "cli": "orch next",
+    "summary": "The ticket to work on next.",
+    "who": "read",
+    "usage": "orch next",
+    "pre": [
+      "workspace_exists"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "The ticket to work on next.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok next {target}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": []
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

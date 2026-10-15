@@ -1,0 +1,4 @@
+exit 3
+--- stdout
+--- stderr
+err custody.wrong_passphrase wrong passphrase · retry:false · next: run the command again and type your passphrase · fix: orch help

@@ -1,0 +1,196 @@
+import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
+import { hasFeature } from '@/api/features'
+import type { Workspace } from '@/api/types'
+import { LoadFailed } from '@/components/LoadFailed'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { fmtDateTime, plural } from '@/lib/time'
+import { queries } from '@/api/queries'
+import { CopyButton } from '../General'
+import { Raw } from '@/components/sign/visible'
+import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
+import { ClickRisk } from '@/components/sign/ClickSignPanel'
+import { Mono, Section } from '../../ticket/shared'
+import { OwnerNote } from '../OwnerNote'
+import { useViewerRole } from './useViewerRole'
+import { useSettingsHandoff } from './useSettingsHandoff'
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[140px_1fr] items-center gap-3 py-1.5 text-[13px]">
+      <dt className="text-text-muted">{label}</dt>
+      <dd className="flex items-center gap-1">{children}</dd>
+    </div>
+  )
+}
+
+/** Workspace identity, the three durations (changed by a hand-off) and the repositories (read only: the Repos addon edits them). */
+export function HostGeneral({ workspace }: { workspace: Workspace }) {
+  const settings = useQuery(queries.hostSettings(workspace.id))
+  const identity = useQuery(queries.identity(workspace.id))
+  const role = useViewerRole(workspace)
+  const { ask, dialog } = useSettingsHandoff(workspace.id)
+  const [draft, setDraft] = useState<Partial<Record<DurationKey, string>>>({})
+  if (settings.isError) return <LoadFailed what="settings" onRetry={() => void settings.refetch()} />
+  const id = identity.data
+  // The runner is what the host says (`whoami.runner`); nothing is drawn when it says nothing. The list of workspaces carries it too.
+  const runner = id?.runner ?? workspace.runner ?? null
+  const data = settings.data
+  const served = hasFeature('do:settings.set', workspace.id)
+  const why = !canChangeSettings(role) ? 'Only owners can save.' : !served ? 'This host cannot change settings yet.' : null
+
+  const value = (k: DurationKey) => draft[k] ?? String(data?.[k] ?? '')
+  const changed = DURATIONS.filter((d) => draft[d.key] !== undefined && draft[d.key] !== String(data?.[d.key]))
+  const invalid = changed.find((d) => !inRange(Number(draft[d.key]), d.min, d.max))
+  const save = () => {
+    const set = Object.fromEntries(changed.map((d) => [d.key, Number(draft[d.key])]))
+    ask({
+      title: 'Change the workspace settings',
+      action: { action: 'settings_set', ...set },
+      autoStart: true,
+    })
+  }
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-base font-semibold">General</h2>
+      <Section title="Workspace">
+        <dl className="divide-y divide-border">
+          <Row label="Name">
+            <Raw>{workspace.name}</Raw>
+          </Row>
+          <Row label="Prefix">
+            <Mono>{workspace.prefix}</Mono>
+            <CopyButton value={workspace.prefix} label="prefix" />
+          </Row>
+          <Row label="UUID">
+            <Mono>{id?.uuid ?? workspace.id}</Mono>
+            <CopyButton value={id?.uuid ?? workspace.id} label="UUID" />
+          </Row>
+          {id?.key_fingerprint && (
+            <Row label="Key fingerprint">
+              <Mono>{id.key_fingerprint}</Mono>
+              <CopyButton value={id.key_fingerprint} label="key fingerprint" />
+            </Row>
+          )}
+          {id?.epoch != null && (
+            <Row label="Epoch">
+              <span>epoch {id.epoch}</span>
+            </Row>
+          )}
+        </dl>
+      </Section>
+
+      {workspace.click?.custody === 'convenience' && (
+        <Section title="Signing">
+          <div data-testid="workspace-card-signing" className="space-y-2">
+            <ClickRisk />
+            <p className="text-[13px] text-text-muted">
+              {workspace.click.enabled && workspace.click.available
+                ? 'Sign with one click is on for this workspace. "Sign in the terminal instead" stays in every dialog.'
+                : `Sign with one click is not available now${workspace.click.problem ? ` (${workspace.click.problem})` : ''}. Sign in the terminal.`}
+            </p>
+          </div>
+        </Section>
+      )}
+
+      {runner && (
+        <Section title="Dashboard execution">
+          <div data-testid="workspace-card-runner" className="space-y-2 text-[13px]">
+            {runner.enabled ? (
+              <p data-testid="runner-execution-line" className="text-warning">
+                {DASHBOARD_EXECUTION_LINE}
+              </p>
+            ) : (
+              <p className="text-text-muted">
+                Dashboard execution is off for this workspace: no agent or terminal can be started from here. Turn it on in your terminal with <code className="font-mono text-text">{TERMINAL_COMMANDS.runnerEnable}</code>.
+              </p>
+            )}
+            <p className="text-text-muted">
+              {runner.connected ? 'The runner on this machine is connected' : 'The runner on this machine is not connected'}
+              {runner.enabled ? `; terminals are ${runner.terminals ? 'available' : 'not available'}.` : '.'}
+            </p>
+          </div>
+        </Section>
+      )}
+
+      <Section title="Timing">
+        {!data ? (
+          <p className="text-[13px] text-text-muted">Reading the settings…</p>
+        ) : !data.available ? (
+          <p data-testid="settings-unavailable" className="text-[13px] text-text-muted">
+            This host does not say what the settings are, so none is shown.
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-4 @[40rem]/page:grid-cols-3">
+              {DURATIONS.map((d) => (
+                <div key={d.key} className="space-y-1.5">
+                  <Label htmlFor={`set-${d.key}`}>
+                    {d.label} ({d.unit})
+                  </Label>
+                  <Input
+                    id={`set-${d.key}`}
+                    type="number"
+                    min={d.min}
+                    max={d.max}
+                    step={1}
+                    value={value(d.key)}
+                    disabled={!!why}
+                    aria-invalid={draft[d.key] !== undefined && !inRange(Number(draft[d.key]), d.min, d.max) ? true : undefined}
+                    onChange={(e) => setDraft({ ...draft, [d.key]: e.target.value })}
+                  />
+                  <p className="text-[12px] text-text-faint">
+                    {data.defaults?.includes(d.key) ? 'The default. ' : ''}
+                    {d.min} to {d.max} {d.unit}
+                  </p>
+                </div>
+              ))}
+            </div>
+            {invalid && (
+              <p role="alert" className="mt-2 text-[13px] text-danger">
+                {invalid.label} is a whole number from {invalid.min} to {invalid.max} {invalid.unit}.
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button disabled={!!why || changed.length === 0 || !!invalid} onClick={save} aria-describedby={why ? 'settings-why' : undefined}>
+                Save settings
+              </Button>
+              {why && <OwnerNote id="settings-why">{why}</OwnerNote>}
+            </div>
+            <p className="mt-2 text-[12px] text-text-muted">
+              A new grant lasts {data.grant_hours === null ? '' : plural(data.grant_hours ?? 0, 'hour')} unless its signer picks another length (a member's grant is never longer than this); grants already signed keep their end time.
+              {data.settings_at && ` Last changed ${fmtDateTime(data.settings_at.at)}.`}
+            </p>
+          </>
+        )}
+      </Section>
+
+      <Section title="Repositories">
+        {!data ? (
+          <p className="text-[13px] text-text-muted">Reading the repositories…</p>
+        ) : !data.available || !data.repos ? (
+          <p className="text-[13px] text-text-muted">This host does not say which repositories there are.</p>
+        ) : data.repos.length === 0 ? (
+          <p className="text-[13px] text-text-muted">No repositories are declared.</p>
+        ) : (
+          <ul aria-label="Repositories" className="divide-y divide-border text-[13px]">
+            {data.repos.map((r) => (
+              <li key={r.name} className="flex flex-wrap items-center gap-x-4 gap-y-0.5 py-1.5">
+                <Mono><Raw>{r.name}</Raw></Mono>
+                <span className="text-text-muted">{r.default_branch === null ? 'no default branch' : <Raw>{r.default_branch}</Raw>}</span>
+                {r.remote && <span className="min-w-0 break-all text-text-faint"><Raw>{r.remote}</Raw></span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {data?.repos_more && <p className="mt-2 text-[12px] text-text-muted">More repositories exist than are listed here.</p>}
+        <p className="mt-2 text-[12px] text-text-muted">Repositories are added, changed and removed in the Repos addon, not here.</p>
+      </Section>
+      {dialog}
+    </div>
+  )
+}

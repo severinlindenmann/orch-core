@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/gate-input",
+  "title": "Gate hash input G",
+  "description": "Format doc section 5.7: the 15 keys, always present, whose cj the gate hash covers (artifacts {kind, digest, ac, task}, receipts {event, repo, commit, exit}). Per-gate emptiness rules are in validate().",
+  "type": "object",
+  "properties": {
+    "workspace_id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+    },
+    "uid": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+    },
+    "gate": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+    },
+    "schema": {
+      "const": "orch.ticket/2"
+    },
+    "hash_v": {
+      "const": 1
+    },
+    "sections": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/anySectionId"
+      },
+      "additionalProperties": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+      }
+    },
+    "fields": {
+      "type": "object",
+      "properties": {
+        "ticket_type": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"
+        },
+        "size": {
+          "oneOf": [
+            {
+              "enum": [
+                "xs",
+                "s",
+                "m",
+                "l",
+                "xl"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+              },
+              "text": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "text"
+            ]
+          }
+        },
+        "links": {
+          "oneOf": [
+            {
+              "$ref": "https://schemas.orch.dev/v2/ticket#/properties/links"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "addons": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ticket_type",
+        "size",
+        "acceptance",
+        "links",
+        "addons"
+      ]
+    },
+    "addon_packages": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+      },
+      "additionalProperties": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+          },
+          "text": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+          },
+          "verify": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "cmd": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "cmd"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proves": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "verify",
+          "proves"
+        ]
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+          },
+          "digest": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          },
+          "ac": {
+            "oneOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "oneOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "digest",
+          "ac",
+          "task"
+        ]
+      }
+    },
+    "receipts": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+          },
+          "repo": {
+            "oneOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoName"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commit": {
+            "oneOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/gitCommit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/safeInt"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "event",
+          "repo",
+          "commit",
+          "exit"
+        ]
+      }
+    },
+    "source_sha": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sourceList"
+    },
+    "prior": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "gen": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+            },
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "gen",
+          "approvals"
+        ]
+      }
+    },
+    "policy_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "people_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "workspace_id",
+    "uid",
+    "gate",
+    "schema",
+    "hash_v",
+    "sections",
+    "fields",
+    "addon_packages",
+    "tasks",
+    "artifacts",
+    "receipts",
+    "source_sha",
+    "prior",
+    "policy_hash",
+    "people_hash"
+  ]
+}

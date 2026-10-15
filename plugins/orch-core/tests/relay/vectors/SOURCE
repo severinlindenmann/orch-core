@@ -1,0 +1,4 @@
+relay_repo: orch-relay
+relay_commit: 438b7193068d24f68035ddab733e04781801c5d1
+http_fixtures_manifest_revision: 12
+vectors_v2_sha256: b5d08fb5636c601571006b6d5cb752e9a83f34a0df987bf4ed52403c20a9e2d5

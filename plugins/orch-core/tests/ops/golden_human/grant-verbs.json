@@ -1,0 +1,16 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "grant": "gr_GRANT",
+    "until": "2026-09-21T16:20:01Z",
+    "scope": "all"
+  },
+  "key": null,
+  "seq": 7,
+  "cursor": 0,
+  "hints": [
+    "set ORCH_GRANT=<the value shown> for the harness"
+  ]
+}
+# exit 0

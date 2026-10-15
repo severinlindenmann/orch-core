@@ -1,0 +1,7 @@
+ok describe next
+The ticket to work on next.
+usage: orch next
+who: read · emits: -
+pre: workspace_exists
+errors:
+out: ok next {target} / next: {next}

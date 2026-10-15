@@ -1,0 +1,50 @@
+{
+  "6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11": [
+    {
+      "id": "gr_01J9Z8",
+      "person": "p_sev",
+      "scope": "all",
+      "issued_at": "2026-10-09T10:00:00Z",
+      "until": "2026-10-09T18:00:00Z",
+      "revoked": null,
+      "sessions": [
+        "s_77c2",
+        "s_77c2.1",
+        "s_77c2.2",
+        "s_9e3f"
+      ]
+    },
+    {
+      "id": "gr_01J9Y4",
+      "person": "p_mara",
+      "scope": "all",
+      "issued_at": "2026-10-09T09:00:00Z",
+      "until": "2026-10-09T17:00:00Z",
+      "revoked": null,
+      "sessions": [
+        "s_a41"
+      ]
+    },
+    {
+      "id": "gr_01J9C1",
+      "person": "p_sev",
+      "scope": "ci",
+      "issued_at": "2026-10-09T05:00:00Z",
+      "until": "2026-10-09T09:00:00Z",
+      "revoked": null,
+      "sessions": []
+    },
+    {
+      "id": "gr_01J9X2",
+      "person": "p_mara",
+      "scope": "all",
+      "issued_at": "2026-10-08T09:00:00Z",
+      "until": "2026-10-08T17:00:00Z",
+      "revoked": {
+        "at": "2026-10-08T14:12:00Z",
+        "by": "p_mara"
+      },
+      "sessions": []
+    }
+  ]
+}

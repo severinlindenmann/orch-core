@@ -1,0 +1,4 @@
+exit 3
+--- stdout
+--- stderr
+err transition.refused status.transition: ticket.reopened from testing · retry:false · next: orch show --section current_state · fix: orch show

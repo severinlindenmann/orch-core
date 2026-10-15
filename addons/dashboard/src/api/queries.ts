@@ -1,0 +1,84 @@
+// One definition per query (G4 review I2): the key and the function that fills it. Pages use these with useQuery
+// (adding `enabled` and their own options), and the route loaders (app/routeData.ts) warm the very same entries with
+// ensureQueryData, so a page and its loader can never drift apart. Keys are unchanged from before.
+
+import { queryOptions } from '@tanstack/react-query'
+import { api, type ListTicketsParams } from '@/api/client'
+import type { ArtifactQuery } from './types'
+import { running } from './workspaces'
+import type { HostGrant } from './settings'
+import type { QuickLimits } from './quickRecords'
+
+/** Query key of an addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
+export function addonStateKey(ws: string | undefined, name: string, ticket?: string): unknown[] {
+  return ticket ? ['addon-state', ws, name, { ticket }] : ['addon-state', ws, name]
+}
+
+export const queries = {
+  /** Who the viewer is in `ws` (a person has a different id, name and role in each workspace); without `ws`, the first. */
+  me: (ws?: string) => queryOptions({ queryKey: ws ? ['me', ws] : ['me'], queryFn: () => api.getMe(ws) }),
+  /** The workspaces whose host answers. One cache entry: `workspacesAll` reads the same one and keeps the others. */
+  workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running }),
+  workspacesAll: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),
+  addons: () => queryOptions({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 }),
+  devDataset: () => queryOptions({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() }),
+  today: (ws: string) => queryOptions({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }),
+  agents: (ws: string) => queryOptions({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws) }),
+  addonDecisions: (ws: string) => queryOptions({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws) }),
+  grants: (ws: string) => queryOptions({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws) }),
+  agentActivity: (ws: string) => queryOptions({ queryKey: ['agent-activity', ws], queryFn: () => api.getAgentActivity(ws) }),
+  /** The board's own copy of the ticket list (moves update it optimistically). */
+  board: (ws: string) => queryOptions({ queryKey: ['board', ws], queryFn: () => api.listBoard(ws) }),
+  /** Every ticket of the workspace, unfiltered (options, counts, titles). */
+  ticketsAll: (ws: string) => queryOptions({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws) }),
+  /** The Tickets list for its server-side filters (see ticketsServerParams). */
+  tickets: (ws: string, params: ListTicketsParams) => queryOptions({ queryKey: ['tickets', ws, params], queryFn: () => api.listTickets(ws, params) }),
+  /** Closed tickets (host v1.4 leaves them out unless asked): the Tickets list's Closed filter. */
+  ticketsClosed: (ws: string, params: ListTicketsParams) =>
+    queryOptions({ queryKey: ['tickets', ws, 'closed', params], queryFn: () => api.listTickets(ws, { ...params, status: ['closed'] }) }),
+  /** One ticket, keyed by its workspace (the id a real host knows it by) and its key. */
+  ticket: (ws: string, key: string) => queryOptions({ queryKey: ['ticket', ws, key], queryFn: () => api.getTicket(key, ws), retry: false }),
+  connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),
+  skills: (ws: string) => queryOptions({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws) }),
+  /** Reduced workspace settings of a real host (M4). */
+  hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws) }),
+  roster: (ws: string) => queryOptions({ queryKey: ['members', ws], queryFn: () => api.getRoster(ws) }),
+  /**
+   * Grants as the host gives this person (an owner: all; anyone else: their own). A non-owner is not told when someone
+   * else's grant changes (the live stream does not carry others' `grant.*` items), so the list is read again on focus
+   * and every 30 seconds.
+   */
+  hostGrants: (ws: string, active: boolean) =>
+    queryOptions<HostGrant[]>({ queryKey: ['settings-grants', ws, active], queryFn: () => api.listHostGrants(ws, active), refetchInterval: 30_000, refetchOnWindowFocus: true }),
+  /** Quick tasks of a real host (M6): one group of statuses, with this browser's limits (they are part of the key). */
+  quick: (ws: string, statuses: string[], limits: QuickLimits) =>
+    queryOptions({
+      queryKey: ['quick', ws, statuses.join(','), limits.max_commits, limits.max_files],
+      queryFn: () =>
+        api.getQuick(ws, { status: statuses, ...(limits.max_commits ? { max_commits: limits.max_commits } : {}), ...(limits.max_files ? { max_files: limits.max_files } : {}) }),
+    }),
+  /** Records status (owners, maintainers: the host refuses anyone else). Refused answers are not retried. */
+  records: (ws: string) => queryOptions({ queryKey: ['records', ws], queryFn: () => api.getRecords(ws), retry: false }),
+  identity: (ws: string) => queryOptions({ queryKey: ['identity', ws], queryFn: () => api.getIdentity(ws) }),
+  people: (ws: string) => queryOptions({ queryKey: ['people', ws], queryFn: () => api.listPeople(ws) }),
+  /** The relay state with the time it was read (the page polls while something moves). */
+  relay: (ws: string) => queryOptions({ queryKey: ['relay', ws], queryFn: async () => ({ state: await api.getRelay(ws), at: Date.now() }) }),
+  workspaceAddons: (ws: string) => queryOptions({ queryKey: ['workspace-addons', ws], queryFn: () => api.getWorkspaceAddons(ws) }),
+  /**
+   * An addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. While the state
+   * says `moving: true` (work the host runs in the background, e.g. a clone in progress) it is read again every second;
+   * otherwise after `nextRefreshMs` when the state asks for it (a scheduled check), bounded to 30 s – 1 h.
+   */
+  addonState: (ws: string, name: string, ticket?: string) =>
+    queryOptions({ queryKey: addonStateKey(ws, name, ticket), queryFn: () => api.getAddonState(ws, name, ticket), staleTime: 10_000, refetchInterval: (q) => addonRefresh(q.state.data), retry: false }),
+  /** Mandates, PREVIEW ONLY: the shell banner, Today's digest and Agents → Mandates read this one entry. */
+  mandatesPreview: (ws: string) => queryOptions({ queryKey: ['mandates-preview', ws], queryFn: () => api.getMandatesPreview(ws), enabled: !!api.getLocalMandatesPreview(ws)?.on, initialData: () => api.getLocalMandatesPreview(ws), retry: false }),
+  artifacts: (ws: string, query: ArtifactQuery) => queryOptions({ queryKey: ['artifacts', ws, query], queryFn: () => api.listArtifacts(ws, query) }),
+}
+
+/** How soon the shared addon-state query reads again: the generic `moving` / `nextRefreshMs` contract (no addon names). */
+export function addonRefresh(data: Record<string, unknown> | undefined): number | false {
+  if (data?.moving === true) return 1000
+  const next = data?.nextRefreshMs
+  return typeof next === 'number' && Number.isFinite(next) ? Math.min(3_600_000, Math.max(30_000, next)) : false
+}

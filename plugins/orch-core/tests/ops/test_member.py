@@ -1,0 +1,238 @@
+"""``orch member add|remove|role``: roster changes signed by owners (and, for members and viewers, maintainers)."""
+
+from __future__ import annotations
+
+import json
+import os
+
+from orch import crypto
+from tests.identity.helpers import Person
+from tests.store.helpers import WS
+
+
+def invite(ws, tmp, name="newbie"):
+    """What an invitee hands the owner: their public key and their first device certificate (a file)."""
+    p = Person()
+    cert = tmp / f"{name}.cert.json"
+    cert.write_text(json.dumps(p.cert(created=ws.clock[0] * 1000)))
+    return p, crypto.b64u(p.pk_pub), str(cert)
+
+
+def roster(ws):
+    return [e for e in ws.read_events("workspace") if e["type"] in ("member.added", "member.removed", "role.changed")]
+
+
+def members(ws):
+    s = ws.other()
+    try:
+        return {m.person: m.role for m in s.state.workspace.members.values()}
+    finally:
+        s.close()
+
+
+def test_the_owner_adds_a_member_from_the_invitees_key_and_certificate(hws, me, tmp_path):
+    p, pk, cert = invite(hws, tmp_path)
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--role", "maintainer")
+    assert r.code == 0, r.err
+    assert r.first.startswith(f"ok member.added {p.ref} maintainer seq=")
+    e = roster(hws)[-1]
+    assert (e["person"], e["name"], e["role"], e["pk_pub"]) == (p.ref, "Nina", "maintainer", pk)
+    assert (
+        e["actor"]["id"] == hws.owner.ref and e["auth"] == "passphrase" and e["roster_v"] == 1
+    )  # the member list as it was when it signed
+    assert members(hws)[p.ref] == "maintainer"
+    assert f"their person id is {p.ref}" in r.out and "out of band" in r.out
+
+
+def test_the_certificate_can_come_on_stdin_and_a_second_add_is_refused(hws, me, tmp_path):
+    p, pk, cert = invite(hws, tmp_path)
+    text = open(cert).read()
+    assert me("member", "add", "--name", "Nina", "--pk", pk, "--cert", "-", stdin=text).code == 0
+    assert members(hws)[p.ref] == "member"  # the default role
+    again = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert again.code == 5 and "member.exists" in again.doc["error"]["message"]
+
+
+def test_a_bad_key_a_bad_certificate_or_another_persons_certificate_is_refused(hws, me, tmp_path):
+    p, pk, cert = invite(hws, tmp_path)
+    q, qk, qcert = invite(hws, tmp_path, "other")
+    n = len(roster(hws))
+    assert me("member", "add", "--name", "N", "--pk", "AAAA", "--cert", cert, "--json").err_code == "invalid.input"
+    (tmp_path / "junk.json").write_text("{not json")
+    assert (
+        me("member", "add", "--name", "N", "--pk", pk, "--cert", str(tmp_path / "junk.json"), "--json").err_code
+        == "parse.json"
+    )
+    r = me("member", "add", "--name", "N", "--pk", pk, "--cert", qcert, "--json")  # q's certificate for p's key
+    assert r.code == 5 and r.err_code == "invalid.input" and len(roster(hws)) == n
+
+
+def test_roles_the_last_owner_and_removal(hws, me, tmp_path):
+    p, pk, cert = invite(hws, tmp_path)
+    assert me("member", "add", "--name", "N", "--pk", pk, "--cert", cert).code == 0
+    r = me("member", "role", p.ref, "maintainer")
+    assert r.code == 0 and r.first.startswith(f"ok role.changed {p.ref} maintainer seq=")
+    assert members(hws)[p.ref] == "maintainer"
+    # the last owner can neither be demoted nor removed
+    r = me("member", "role", hws.owner.ref, "member", "--json")
+    assert r.code == 5 and "members.last_owner" in r.doc["error"]["message"]
+    r = me("member", "remove", hws.owner.ref, "--json")
+    assert r.code == 5 and "members.last_owner" in r.doc["error"]["message"]
+    assert me("member", "role", p.ref, "owner").code == 0  # a second owner...
+    assert me("member", "role", hws.owner.ref, "member").code == 0  # ...and now the first may step down
+    assert members(hws)[hws.owner.ref] == "member"
+    assert me("member", "remove", "p_" + "0" * 32, "--json").err_code == "not_found"
+
+
+def test_remove_ends_the_members_standing(hws, me, tmp_path):
+    q = hws.add_member("quinn", "member")
+    assert me("member", "remove", q.ref).code == 0
+    assert q.ref not in members(hws)
+    assert roster(hws)[-1]["type"] == "member.removed"
+    hws.act_as(q)
+    hws.provider.requests.clear()
+    r = me("grant", "--json")  # their device no longer belongs to a member
+    assert r.code == 3 and r.err_code == "role.denied" and hws.provider.requests == []
+
+
+def test_a_maintainer_adds_members_and_viewers_only(hws, me, tmp_path):
+    m = hws.add_member("mia", "maintainer")
+    hws.act_as(m)
+    p, pk, cert = invite(hws, tmp_path)
+    assert me("member", "add", "--name", "V", "--pk", pk, "--cert", cert, "--role", "viewer").code == 0
+    q, qk, qcert = invite(hws, tmp_path, "q")
+    r = me("member", "add", "--name", "Q", "--pk", qk, "--cert", qcert, "--role", "owner", "--json")
+    assert r.code == 3 and r.err_code == "role.denied"
+    r = me("member", "role", p.ref, "member", "--json")  # role changes are for owners
+    assert r.code == 3 and r.err_code == "role.denied"
+    assert members(hws)[p.ref] == "viewer"
+
+
+def test_member_management_needs_the_operate_scope_of_the_device(hws, me, tmp_path):
+    m = hws.add_member("dana", "maintainer", scopes=("look", "decide"))  # may decide, may not operate
+    hws.act_as(m)
+    p, pk, cert = invite(hws, tmp_path)
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "N", "--pk", pk, "--cert", cert, "--json")
+    assert r.code == 5 and "device.scope" in r.doc["error"]["message"], r.out
+    assert len(roster(hws)) == n
+
+
+# --- the durable convenience_seen mark (#441) -------------------------------------------------------------------------
+
+
+def test_member_add_is_refused_while_the_convenience_seen_mark_is_set(hws, me, tmp_path):
+    """A restore can drop every convenience event from the merged history; the mark still refuses a new reader."""
+    from orch.ops.readers import ensure_convenience_mark
+
+    ensure_convenience_mark(hws.host_state, WS, os.getuid())
+    _p, pk, cert = invite(hws, tmp_path)
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert r.err_code == "sign.convenience_readers"
+    assert len(roster(hws)) == n
+
+
+def test_the_mark_fails_closed_and_is_never_cleared(tmp_path):
+    from orch.ops.readers import convenience_seen, ensure_convenience_mark, seen_path
+
+    wid = "a" * 32
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    assert not convenience_seen(state, wid)
+    ensure_convenience_mark(state, wid, os.getuid())
+    assert convenience_seen(state, wid) and json.loads(seen_path(state, wid).read_text())["seen"] is True
+    ensure_convenience_mark(state, wid, os.getuid())  # idempotent
+    # anything at the path counts as seen, a corrupt file or a link included
+    seen_path(state, wid).write_text("{not json")
+    assert convenience_seen(state, wid)
+    seen_path(state, wid).unlink()
+    seen_path(state, wid).symlink_to(tmp_path / "nowhere")
+    assert convenience_seen(state, wid)
+    # a directory that cannot be looked into: the doubt is "seen"
+    other = "b" * 32
+    (state / "hosts" / other).mkdir(mode=0o700)
+    os.chmod(state / "hosts" / other, 0)
+    try:
+        assert convenience_seen(state, other)
+    finally:
+        os.chmod(state / "hosts" / other, 0o700)
+
+
+def _as_convenience(monkeypatch):
+    """The person's key signs with ``auth: "convenience"`` (as convenience custody does in direct mode)."""
+    from orch.ops.human import Human
+
+    real = Human.backend
+
+    class AsConvenience:
+        auth = "convenience"
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(Human, "backend", property(lambda self: AsConvenience(real.fget(self))))
+
+
+def test_a_direct_convenience_append_sets_the_mark_first(hws, me, tmp_path, monkeypatch):
+    from orch.ops.readers import seen_path
+
+    _as_convenience(monkeypatch)
+    _p, pk, cert = invite(hws, tmp_path)
+    assert not seen_path(hws.host_state, WS).exists()
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert)
+    assert r.code == 0, r.err
+    assert roster(hws)[-1]["auth"] == "convenience"
+    assert seen_path(hws.host_state, WS).exists()
+    # a later reader is refused although the flag lives in no host here
+    _q, qk, qcert = invite(hws, tmp_path, "other")
+    assert me("member", "add", "--name", "O", "--pk", qk, "--cert", qcert, "--json").err_code == (
+        "sign.convenience_readers"
+    )
+
+
+def test_a_direct_convenience_append_without_its_mark_writes_nothing(hws, me, tmp_path, monkeypatch):
+    from orch.ops import readers
+
+    def boom(*_a, **_k):
+        raise OSError("no space left")
+
+    _as_convenience(monkeypatch)
+    monkeypatch.setattr(readers, "ensure_convenience_mark", boom)
+    _p, pk, cert = invite(hws, tmp_path)
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "Nina", "--pk", pk, "--cert", cert, "--json")
+    assert r.err_code == "internal" and "convenience_seen" in r.doc["error"]["message"], r.doc
+    assert len(roster(hws)) == n
+
+
+def test_persisting_the_mark_never_trusts_the_conservative_reader(tmp_path, monkeypatch):
+    """Codex #454 P2: a lookup error makes ``convenience_seen`` say "seen" (for refusals), but persisting the mark must
+    raise instead of skipping the write, so the append is refused."""
+    import pytest
+
+    from orch.ops import readers
+
+    wid = "c" * 32
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    real_lstat = os.lstat
+
+    def flaky(path, *a, **k):
+        if str(path).endswith(readers.SEEN_FILE):
+            raise PermissionError(13, "denied")
+        return real_lstat(path, *a, **k)
+
+    monkeypatch.setattr(readers.os, "lstat", flaky)
+    assert readers.convenience_seen(state, wid)  # conservative for refusals
+    with pytest.raises(OSError):
+        readers.ensure_convenience_mark(state, wid, os.getuid())
+    monkeypatch.undo()
+    readers.seen_path(state, wid).parent.mkdir(parents=True, mode=0o700)
+    readers.seen_path(state, wid).symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(Exception) as info:  # something else at the path: not the persisted mark
+        readers.ensure_convenience_mark(state, wid, os.getuid())
+    assert getattr(info.value, "code", "") == "custody.unsafe_mode"

@@ -1,9 +1,0 @@
-/* compare, and the screenshot figure screens and video share */
-.w-compare, .w-screens { display: grid; gap: var(--s-3); }
-.w-compare { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.w-screens { grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
-.w-shot { margin: 0; min-width: 0; }
-.w-shot img, .w-video { display: block; max-width: 100%; height: auto; max-height: calc(var(--s-12) * 8); object-fit: contain; margin-inline: auto; border: 1px solid var(--line); border-radius: var(--r-sm);
-  background: var(--surface2); }
-.w-shot figcaption { font: var(--type-meta); color: var(--muted); margin-top: var(--s-1); overflow-wrap: anywhere; }
-@media (max-width: 899px) { .w-compare, .w-screens { grid-template-columns: minmax(0, 1fr); } }

@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "stop",
+    "message": "STOP: report to the user",
+    "hint": "the same refusal came three times; do not retry",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

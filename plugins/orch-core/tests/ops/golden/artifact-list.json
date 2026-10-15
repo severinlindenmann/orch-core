@@ -1,0 +1,25 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "count": 2,
+    "artifacts": [
+      {
+        "name": "T1-receipt.log",
+        "kind": "receipt"
+      },
+      {
+        "name": "evidence.log",
+        "kind": "other",
+        "ac": "AC1"
+      }
+    ]
+  },
+  "key": "DEMO-0001",
+  "seq": 15,
+  "cursor": 15,
+  "hints": [
+    "orch show"
+  ]
+}
+# exit 0

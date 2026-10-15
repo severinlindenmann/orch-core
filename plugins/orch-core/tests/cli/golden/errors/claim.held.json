@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "claim.held",
+    "message": "another session holds the claim",
+    "hint": "orch claim --takeover --reason TEXT, or pick another ticket",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "claim"
+      ]
+    },
+    "retryable": false
+  }
+}

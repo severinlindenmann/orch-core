@@ -1,0 +1,9 @@
+Issue a standing grant for agents; the secret is printed once, on your terminal.
+usage: orch grant [--hours N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--runner] [--dry-run]
+  --hours N  length in whole hours (1 to 24) [default 8]
+  --scope SCOPE  what it covers (all|workable) [default workable]
+  --verbs VERBS  agent, or operation names comma separated [default agent]
+  --label TEXT  short label
+  --runner  hand the secret to the orch runner on this machine instead of showing it (label runner, 12 h max)
+  --dry-run  say what would happen, append nothing
+more: orch describe grant

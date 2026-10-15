@@ -1,0 +1,4 @@
+List the ticket's artifacts.
+usage: orch artifact list [REF]
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+more: orch describe artifact.list

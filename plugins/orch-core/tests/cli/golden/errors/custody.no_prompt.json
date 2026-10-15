@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "custody.no_prompt",
+    "message": "no terminal to ask for your passphrase on",
+    "hint": "run this command yourself, in your own terminal",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "instructions.hook",
+    "name": "instructions.hook",
+    "cli": "orch instructions hook",
+    "summary": "The text a harness hook injects at session start or before compaction: at most six lines.",
+    "who": "read",
+    "usage": "orch instructions hook session-start|pre-compact",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "The text a harness hook injects at session start or before compaction: at most six lines.",
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "session-start",
+            "pre-compact"
+          ],
+          "description": "which hook",
+          "x-metavar": "EVENT"
+        }
+      },
+      "x-positional": [
+        "event"
+      ],
+      "required": [
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {head}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "silent": {
+            "type": "boolean",
+            "description": "print nothing"
+          }
+        },
+        "required": [
+          "event",
+          "head"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": []
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

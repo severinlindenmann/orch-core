@@ -1,0 +1,8 @@
+{
+  "schema": "orch.addon/2",
+  "name": "terminals",
+  "version": "0.1.0",
+  "title": "Terminals",
+  "entry": {"cmd": ["orch-terminals", "serve"]},
+  "capabilities": ["pty"]
+}

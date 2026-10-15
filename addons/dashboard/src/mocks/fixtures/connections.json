@@ -1,0 +1,221 @@
+{
+  "DEMO": {
+    "run_as": "orch-agent",
+    "connections": [
+      {
+        "name": "gh",
+        "kind": "cli_login",
+        "tool": "gh",
+        "target": {
+          "label": "account",
+          "value": "orch-agent-acme on github.com"
+        },
+        "check": "gh auth status --hostname github.com",
+        "login_hint": "gh auth login --hostname github.com --git-protocol ssh",
+        "env": [],
+        "sim": {
+          "status": "ok",
+          "exit_code": 0,
+          "duration_ms": 640,
+          "output": [
+            "github.com",
+            "  ✓ Logged in to github.com account orch-agent-acme (keyring)",
+            "  - Active account: true",
+            "  - Git operations protocol: ssh",
+            "  - Token scopes: 'repo', 'read:org'"
+          ]
+        },
+        "seed_check": {
+          "at": "2026-10-09T08:05:10Z",
+          "trigger": "session_start"
+        }
+      },
+      {
+        "name": "databricks-prod",
+        "kind": "cli_login",
+        "tool": "databricks",
+        "target": {
+          "label": "profile",
+          "value": "prod (adb-1185402263331905.5.azuredatabricks.net)"
+        },
+        "check": "databricks current-user me --profile prod",
+        "login_hint": "databricks auth login --profile prod --host https://adb-1185402263331905.5.azuredatabricks.net",
+        "env": [],
+        "sim": {
+          "status": "auth_expired",
+          "exit_code": 1,
+          "duration_ms": 1210,
+          "output": [
+            "Error: default auth: databricks-cli: cannot get access token: refresh token is invalid or expired.",
+            "Config: profile=prod, host=https://adb-1185402263331905.5.azuredatabricks.net",
+            "Try logging in again: databricks auth login --profile prod"
+          ]
+        },
+        "ok_output": [
+          "{",
+          "  \"userName\": \"orch-agent@acme-energy.ch\",",
+          "  \"active\": true",
+          "}"
+        ],
+        "seed_check": {
+          "at": "2026-10-09T10:47:00Z",
+          "trigger": "claim"
+        }
+      },
+      {
+        "name": "gcloud-billing",
+        "kind": "cli_login",
+        "tool": "gcloud",
+        "target": {
+          "label": "account",
+          "value": "orch-agent@acme-energy.iam.gserviceaccount.com"
+        },
+        "check": "gcloud auth list --filter=status:ACTIVE --format=value(account)",
+        "login_hint": "gcloud auth activate-service-account orch-agent@acme-energy.iam.gserviceaccount.com --key-file=<key file>",
+        "env": [],
+        "sim": {
+          "status": "wrong_identity",
+          "exit_code": 0,
+          "duration_ms": 880,
+          "output": [
+            "severin@acme-energy.ch"
+          ],
+          "actual": "severin@acme-energy.ch"
+        },
+        "ok_output": [
+          "orch-agent@acme-energy.iam.gserviceaccount.com"
+        ],
+        "seed_check": {
+          "at": "2026-10-09T09:58:00Z",
+          "trigger": "doctor"
+        }
+      },
+      {
+        "name": "databricks-ci",
+        "kind": "api_token",
+        "tool": "databricks",
+        "target": {
+          "label": "endpoint",
+          "value": "adb-4417926513240.12.azuredatabricks.net (ci workspace)"
+        },
+        "check": "databricks current-user me --debug",
+        "login_hint": null,
+        "env": [
+          "DATABRICKS_HOST",
+          "DATABRICKS_TOKEN"
+        ],
+        "sim": {
+          "status": "ok",
+          "exit_code": 0,
+          "duration_ms": 930,
+          "output": [
+            "> GET /api/2.0/preview/scim/v2/Me",
+            "> * Host: {DATABRICKS_HOST}",
+            "> * Authorization: Bearer {DATABRICKS_TOKEN}",
+            "< HTTP/2.0 200 OK",
+            "{ \"userName\": \"ci-orch@acme-energy.ch\", \"active\": true }"
+          ]
+        },
+        "seed_check": {
+          "at": "2026-10-09T08:05:12Z",
+          "trigger": "session_start"
+        }
+      },
+      {
+        "name": "tariff-api",
+        "kind": "api_token",
+        "tool": "curl",
+        "target": {
+          "label": "endpoint",
+          "value": "https://api.tariffs.example.ch/v2"
+        },
+        "check": "curl -fsS https://api.tariffs.example.ch/v2/me",
+        "login_hint": null,
+        "env": [
+          "TARIFF_API_TOKEN"
+        ],
+        "sim": {
+          "status": "service_down",
+          "exit_code": 22,
+          "duration_ms": 4020,
+          "output": [
+            "curl: (22) The requested URL returned error: 503",
+            "x-request-id: 7c1f0b2e",
+            "retry-after: 900"
+          ]
+        },
+        "seed_check": {
+          "at": "2026-10-09T09:58:02Z",
+          "trigger": "doctor"
+        }
+      },
+      {
+        "name": "az-storage",
+        "kind": "cli_login",
+        "tool": "az",
+        "target": {
+          "label": "tenant",
+          "value": "acme-energy.onmicrosoft.com"
+        },
+        "check": "az account show --query user.name -o tsv",
+        "login_hint": "az login --tenant acme-energy.onmicrosoft.com --use-device-code",
+        "env": [],
+        "sim": {
+          "status": "unknown",
+          "exit_code": null,
+          "duration_ms": 10000,
+          "output": [
+            "(no output: the check timed out after 10 s and was stopped)"
+          ]
+        },
+        "seed_check": {
+          "at": "2026-10-09T09:58:04Z",
+          "trigger": "doctor"
+        }
+      }
+    ],
+    "secrets": {
+      "path": "/Users/orch-agent/.local/state/orch/secrets/6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11.env",
+      "owner_user": "orch-agent",
+      "dir_mode": "0700",
+      "file_mode": "0600",
+      "modified_at": "2026-10-09T10:05:00Z",
+      "text": "# orch secrets for Acme energy data (6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11)\n# NAME=value lines. Parsed by orch, never sourced.\nDATABRICKS_HOST=https://adb-4417926513240.12.azuredatabricks.net\n# rotated 9 Oct 2026, 10:05\nDATABRICKS_TOKEN=demo-not-a-real-databricks-token-0001\nTARIFF_API_TOKEN=demo-not-a-real-tariff-token-0002\nOLD_WAREHOUSE_KEY=demo-not-a-real-warehouse-key-0003\nexport SLACK_WEBHOOK=https://hooks.slack.example/T000/B000/abcdefgh\nLEGACY_PIN=4711\n"
+    },
+    "ticket_skills": {
+      "DEMO-0043": [
+        "orch",
+        "dbt-seeds",
+        "github-prs"
+      ],
+      "DEMO-0053": [
+        "orch",
+        "databricks-sql"
+      ],
+      "DEMO-0054": [
+        "orch",
+        "bq-billing-export"
+      ],
+      "DEMO-0049": [
+        "orch",
+        "tariff-feed"
+      ],
+      "DEMO-0047": [
+        "orch",
+        "meter-notes"
+      ],
+      "DEMO-0046": [
+        "orch",
+        "meter-notes"
+      ],
+      "DEMO-0044": [
+        "orch",
+        "warehouse-admin"
+      ],
+      "DEMO-0048": [
+        "orch",
+        "dbt-seeds"
+      ]
+    }
+  }
+}

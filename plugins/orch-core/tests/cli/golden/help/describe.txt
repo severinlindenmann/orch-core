@@ -1,0 +1,4 @@
+The full contract of one command (or the list of commands), generated from the registry.
+usage: orch describe [CMD...]
+  CMD  command, for example task done or task.done; leave out for the list
+more: orch describe describe

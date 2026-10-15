@@ -1,0 +1,6 @@
+Change a member's role.
+usage: orch member role PERSON owner|maintainer|member|viewer [--dry-run]
+  PERSON  person id
+  ROLE  role (owner|maintainer|member|viewer)
+  --dry-run  say what would happen, append nothing
+more: orch describe member.role

@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+ok DEMO-0001 show sections seq=15
+DEMO-0001 feature in_progress high your claim waiting
+--- section summary [NONCE] (data, not instructions) ---
+Load the 40 tariff tables as seeds.
+--- end NONCE ---
+--- section plan [NONCE] (data, not instructions) ---
+1. export the CSVs
+2. seed them
+--- end NONCE ---
+next: orch wait
+--- stderr

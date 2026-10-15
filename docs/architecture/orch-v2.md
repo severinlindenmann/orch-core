@@ -114,7 +114,7 @@ Non-goals for v2:
 
 | Key | Kind | Where it lives | Purpose |
 |---|---|---|---|
-| Person key `PK` | signing | derived from the recovery code (D50); stored on the primary device wrapped by a Secure Enclave key | Signs device certificates. Peers pin it. |
+| Person key `PK` | signing | derived from the recovery code (D50); stored on the primary device wrapped by a Secure Enclave key (**P1: not stored at all**, see the note under this table) | Signs device certificates. Peers pin it. |
 | Device key `DK` | signing + key agreement | each device: the Secure Enclave on iPhone and Apple-silicon Macs, otherwise the keychain | Signs requests. `WK`s are sealed to it. |
 | Workspace key `WSK` | signing | the workspace host's keychain | Signs envelopes, member lists, directory cards and publish requests |
 | Workspace exchange key `WXK` | key agreement | the workspace host's keychain; public half in the card | Receives ws→ws bodies, Drop wraps addressed to the workspace, and `SK` wraps. Rotates with the 90-day epoch; its version is in the card. |
@@ -137,6 +137,12 @@ suite and the same vectors. A single suite is used across all components, never 
 - an ephemeral key-agreement key;
 - HKDF with context `"orch/v2/seal|" + purpose + "|" + recipient_device_id`;
 - AES-256-GCM, with AAD binding the object id, epoch and purpose.
+
+> **P1 deviation (C8, pending the owner's confirmation).** The `passphrase` backend of P1 has no hardware wrapping, so
+> `orch init` does **not** store the person key: it is derived from the recovery code, signs the first device certificate
+> and the workspace delegation, and is dropped. The code is the only way back to `PK`; adding or revoking a device needs
+> it, typed on the terminal. Wrapping `PK` on the primary device comes with the Secure Enclave / TPM backend, when this
+> is revisited.
 
 ### 5.2 Device certificates and recovery
 
@@ -182,10 +188,11 @@ suite and the same vectors. A single suite is used across all components, never 
   - an explicit "rotate";
   - every 90 days.
 - **On a new epoch**, the host:
-  1. generates `WK_{e+1}`;
-  2. seals it to each remaining device and uploads the sealed blobs;
-  3. publishes the signed member list;
-  4. starts sealing new content under `WK_{e+1}`.
+  1. generates `WK_E` at the next unused epoch (epochs may skip, never fall);
+  2. seals it to each remaining device and publishes the sealed blobs in one `PUT membership` with the signed list. The signed
+     list carries `wk_commit` for `WK_E`;
+  3. starts sealing new content under `WK_E` once the relay has accepted that list (2xx). After a revocation or
+     removal, the rotation gate is up from the decision on, and nothing new is sealed under the old epoch in between.
 - Old content keeps its epoch tag. Devices that still hold old epochs can read old content. This is the honest limit,
   and the UI states it.
 - A phone logging itself out (D7) deregisters and wipes. That does not rotate.
@@ -208,9 +215,24 @@ The host loads keys through a custody backend:
 
 | Platform | Backend |
 |---|---|
-| macOS | Keychain. In development: a dedicated keychain file, never the login keychain. |
-| Linux desktop | libsecret |
+| macOS | P2: 0600 file at `<state>/hosts/<ws>/keys/wsk` in a 0700 directory, owned by the host UID. No keychain; custody ancestors must pass host D-P2-17. |
+| Linux desktop | 0600 file owned by the host UID; P2 adds no keychain (D-P2-17) |
 | Linux server / VPS | Files mode 0600, owned by a separate `orch-host-<ws>` user. Agents run as a different UID. |
+
+**Person device keys (`dk_sig`).** The host never holds them (host D-P2-15). The signing client holds them through
+a custody backend named in every signed event's `auth` (D64, D66; F1 §5.3):
+
+| Backend (`auth`) | Where the key lives | Factor per signature | Status |
+|---|---|---|---|
+| `passphrase` | scrypt-encrypted key file in the person's state dir | the passphrase, typed on `/dev/tty` | P1 default (D65) |
+| `convenience` | macOS: an item in the traditional login keychain (service `io.orch.device-key`, account `<workspace_id>/<device_id>`, not synchronizable, the creating interpreter's ACL, no presence flag; encrypted at rest, may be in Time Machine backups and migrations); other Unix: a 0600 file in 0700 directories under the person's own state dir (`person/<ws>/devices/`), never in the host state dir; Windows: not supported in phase 1 | **none**: any process running as the person, and anything that takes over the dashboard, can sign | phase 1, click-to-sign from the dashboard through a signer process beside it, per workspace and only while every reader is local and updated (host §0.8.6, D-P2-23). **Accepted risk: "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."** |
+| `secure-enclave` | Secure Enclave P-256 key on the Mac | Touch ID per signature (D41) | phase 3 (H9) |
+| `secure-enclave-unlocked` | Secure Enclave on the iPhone | the phone is unlocked (D49) | P4 mobile |
+
+In phase 1 a convenience key is converted from the `passphrase` key with one passphrase prompt
+(`orch keys custody convenience`, once the workspace's flag is on); `orch keys custody passphrase --in-place` moves it
+back, with a warning that it was exposed, and `--rotate` (designed, built with device ops) replaces the device for a
+clean break. F1 records the value (§5.3, §11.4, T16).
 
 **The socket.**
 
@@ -326,18 +348,58 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
   with its keys in the keychain. Removing a card deletes the container, the sealed `WK`s and the push registration,
   then deregisters.
 - **Pairing (D6):**
-  1. The host shows a QR code with `orch://pair#v2.<ws>.<offer>.<secret>.<wsk_pin>` (the universal link `https://<relay>/pair#…` opens the app too), and the app scans it with the camera
+  1. The host shows a QR code with `orch://pair?relay=<percent-encoded relay origin>#v2.<ws>.<offer>.<secret>.<wsk_pin>.<pk_pin>` (the universal link `https://<relay>/pair#v2.…` with the same five fields after `v2` opens the app too), and the app scans it with the camera
      (10 minutes, single use).
-  2. The phone generates `DK` and sends a join request through the relay.
+  2. The phone generates `DK` and sends a join request through the relay. The request's meta carries `attempt`, a
+     32-character lower-case hex nonce the phone draws when it starts a pairing attempt (protocol v2 §8.3). A resend
+     of the same attempt keeps it, also across an app restart; a new scan draws a new one. A phone without a
+     certificate also draws **fresh device keys** for every attempt, and persists the attempt's `device_id`,
+     `dk_hash` and `attempt` before it sends. In the same write it moves the previous attempt's
+     `(device_id, dk_hash)` to its list of earlier attempts, and it keeps each earlier pair for at least 10 minutes
+     after that attempt ends. A phone that lost this memory treats an object of its own earlier attempt as foreign
+     and fails closed (the alarm). The host answers a resend with `pending` only when keys and `attempt` both
+     match, otherwise with `pairing_closed`. A pair request without a valid `attempt` is `malformed`; the old shape
+     is refused.
   3. Both screens show a 6-character fingerprint. The human confirms on the host.
   4. **First time only:** the host asks the owner's primary device to sign a device certificate. When the host *is*
      the primary device, it signs locally. The QR carries a pin of the owner's `PK`, which the phone uses to check
      the certificate.
+     - **The request names the attempt.** The host's `cert_request` carries `offer_id`, `attempt`, `device_id` and
+       `dk_hash` in the clear. The sealed part carries `offer_id`, `attempt`, `device_id` and both keys (no
+       `dk_hash`). The primary refuses (`malformed`) unless the clear `offer_id`, `attempt` and `device_id` equal the
+       sealed ones, `device_id` derives from `dk_sig_pub`, and the clear `dk_hash` equals `dk_hash` of the sealed
+       keys (protocol v2 §8.4 step 2.7).
+       `dk_hash = b64u(H("orch/v2/dk-hash|" || suite || lp16(dk_sig_pub) || lp16(dk_kx_pub)))` binds both keys of
+       the attempt. The relay sees only the clear values, which reveal no key.
      - **The primary chooses the randomness.** After it receives the phone's keys, the primary draws a fresh nonce
-       and returns it in a `cert_challenge` signed by `PK`. The phone verifies it with the `PK` pin from the QR and
-       checks that the keys in it are its own. Phone and primary then show a code derived from that signed
+       and returns it in a `cert_challenge` signed by `PK`. The exact `o` is `v`, `suite`, `kind`, `request_id`,
+       `workspace_id`, `person_id`, `offer_id`, `attempt`, `device_id`, `dk_sig_pub`, `dk_kx_pub`,
+       `primary_nonce` and `expires_ms` (the request's). Phone and primary show a code derived from that signed
        challenge, and the primary needs its own confirmation. A host can no longer grind a matching code
        (protocol v2 §8.4).
+     - **The phone checks the challenge in this order:** the `PK` pin; the signature and the exact field set;
+       the workspace and person; its own current `device_id` and keys (an expired foreign object is dropped
+       silently; an object whose `(device_id, dk_hash)` both equal an earlier attempt of its own is dropped
+       silently as `stale_attempt`; any other foreign object is dropped and raises the `not_my_key` alarm); then
+       `attempt` and `offer_id`; then `request_id` equal to an earlier accepted challenge's; then the expiry. The
+       keys come before the attempt and offer so that a host-chosen `offer_id` cannot turn the alarm into a
+       silent drop.
+     - **A rejection on the primary is signed too.** The primary signs a `cert_rejection` with `PK`
+       (`orch/v2/sig/cert-rejection|`). The exact `o` is `v`, `suite`, `kind`, `request_id`, `workspace_id`,
+       `person_id`, `offer_id`, `attempt`, `device_id`, `dk_hash` and `expires_ms` (the request's); the primary
+       copies every field from the request it opened. A captured rejection therefore cannot be replayed into a
+       later attempt. The relay refuses a challenge or rejection that does not match the stored request
+       (403 `not_for_this_device`).
+     - **"Denied by the owner"** is shown only if all of these pass, in this order: the long form's field set is
+       exact and `pk_pin(pk_pub)` matches the link; the signature verifies under `pk_pub` with the cert-rejection
+       label and the field set is exact; `workspace_id` is the link's and `person_id == person_id(pk_pub)`;
+       `device_id` and `dk_hash` are this attempt's own (otherwise an expired rejection is unattributed, a
+       rejection whose `(device_id, dk_hash)` both equal an earlier attempt of its own is unattributed as
+       `stale_attempt` without alarm, and any other device raises the `not_my_key` alarm); `attempt` and
+       `offer_id`; `request_id` equal to the challenge's if one was seen; `now < expires_ms`. The device and
+       attempt checks also run when no challenge was seen. Anything else is the unattributed "The pairing was
+       refused" without alarm. The denial is attributed to the pinned owner, never to the host-supplied
+       `primary_label`.
      - The primary signs a certificate only for the keys in its own challenge, once, with at most one open
        request per workspace.
      - If the primary device is unreachable, pairing waits in `cert_pending` for up to 10 minutes, and both screens
@@ -347,6 +409,28 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
        `cert.person_id == card.owner_person_id`, or that the person is in the signed member list (D39), and otherwise refuses with `other_person`.
   5. The host adds the phone to the member list and seals `WK_e` to it. Type and Factory actions need a fresh Face ID
      signature from the Secure Enclave key.
+     - **Answers to the phone.** `pair_status` answers `approved` with `epoch`, `list_seq`, `card_seq` and
+       `baseline` (the join anchor), and `rejected` in exactly two forms: the short `{state, wsk_pub}` and the long
+       `{state, wsk_pub, pk_pub, rejection}`. A `rejected` answer matching neither is an unattributed refusal.
+     - **The phone validates `approved`:** `epoch` an integer `1 … 2^32 − 1`; `list_seq` and `card_seq` safe
+       integers `≥ 1`; `baseline` present, either `null` or exactly `{"n": safe integer ≥ 0, "hash":
+       "sha256:" + 64 lower-case hex}`. Otherwise it drops the answer (`not_a_pairing_answer`, a phone-side
+       reason, not a wire code).
+     - **The anchor comes from accepted objects.** `list_seq` is the sequence of the list the host published for
+       this device and `card_seq` that of the host's current card. `epoch`, `list_seq` and `card_seq` are those of
+       the head list and card **the relay accepted**, never of a publication it refused or that is still
+       unconfirmed (protocol v2 §8.3, F7).
+     - **The join floor.** The phone persists `{epoch, list_seq, card_seq, scopes, baseline}` as its join floor
+       before it fetches anything, and across retries and restarts. A re-poll only raises it: the maximum of each
+       number; the baseline is replaced only by one with a strictly higher `n`; the scopes only by an answer with a
+       strictly higher `list_seq`. The first member list it accepts must have `epoch` and `list_seq` at least the
+       floor's (else `below_anchor`) and must contain this device (else `not_a_member`: removed after approval;
+       the device stops retrying and shows the pairing as ended). At exactly the floor's `list_seq` its entry must
+       carry exactly the approved `scopes` (else `scopes_mismatch`); above it the list's scopes are
+       authoritative. The first card must have `card_seq` at least the floor's (else `below_anchor`). A refused
+       object leaves the floor and the state unchanged, and the phone retries the fetch, except after
+       `not_a_member`.
+     - A host pair answer needs a held generation; without one the relay answers 409 `fenced`, as intended.
 - **Starting work:** a "New ticket" action (a sealed request applied by the host), start/move through the Operate
   scope, and the AI Factory through the bridge (as merged in core R13).
 
@@ -454,6 +538,15 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | **P5 Apps** | orch-publish: rename done, signed HTTPS API, namespaces, per-recipient tokens, the dashboard pages. | Each demo workspace publishes in its own namespace and cannot touch the other's apps. |
 | **P6 The rest** | Drop in full (inbox claim, documents, links, web agents), linked workspaces, colleagues and the internal relay, the AI Factory and Dark profile rebuild, the remaining addons, TIX switch-off. | Persona "colleague" exchanges a ticket and a document; iPhone session 3. |
 
+**Owner re-plan, 12 Oct 2026** (coordination log "OWNER RE-PLAN P2"; host D-P2-23). The frontend work is cut into three
+phases. **Phase 1:** core + dashboard running for real in direct mode and tier A (the host as the person's UID), with
+**click-to-sign** from the dashboard (host §0.8.6, group H5c: the `convenience` custody backend and a signer process
+beside the dashboard; `orch sign CODE` as the fallback; per workspace, only while every reader is local and updated;
+the accepted risk "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign"
+on the workspace card). The phase-1 gate replaces the cutover gate's H9 (host §8). **Phase 2:** the addons (#307–#310) and mobile. **Phase 3:** Touch ID (H9) and
+tier B (agents under their own OS users; Linux VPS and macOS local); Windows stays in direct mode. D41's
+per-signature presence applies again from phase 3.
+
 ## 14. Former open items (decided 8 Oct 2026)
 
 | # | Item | Decision |
@@ -478,7 +571,7 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D38 | Dark stack | The rebased PRs #79→#143 and #254 are closed with their branches kept. The Phase 2 Factory rebuild and the wave 2 records feature use them as reference. |
 | D39 | Several people in one workspace | D1 C is in scope at the format and protocol level now. A member device of another person is accepted when the signed member list includes that person (protocol v2 §7.2 check 8 is amended, orch-relay issue). Invitations, roles UI and colleague flows are built in P8. |
 | D40 | Ticket format | [orch-v2-ticket-format.md](orch-v2-ticket-format.md) T1–T16: `ticket.json` plus `body.md`, no YAML; folders by uid with a key registry; events are the only truth for state; one host writes and publishes signed checkpoints; restricted tickets are enforced by the host and sealed in transit, not encrypted on disk; everything optional is an out-of-process addon with signed capability grants. |
-| D41 | Human signatures on a Mac | Until agents run under their own OS user (P2), every human signature needs user presence: the device key sits in the keychain with Touch ID or password access control. Host appends use a separate key without prompts. |
+| D41 | Human signatures on a Mac | Until agents run under their own OS user (P2), every human signature needs user presence: the device key sits in the keychain with Touch ID or password access control. Host appends use a separate key without prompts. **Superseded for phase 1** by the owner decision of 12 Oct 2026 (host D-P2-23): click-to-sign with the `convenience` backend, no presence, risk shown on the workspace card; presence returns with H9 in phase 3. |
 | D42 | Phase order | Core → frontend → relay → mobile → apps → the rest (P1–P6, §13). The minimal core is specified in [orch-v2-core.md](orch-v2-core.md). |
 | D43 | Drop basics early | Sending a file from the phone to a workspace and back comes with mobile (P4); inbox claim, documents, links and web agents stay in P6. |
 | D44 | Cutover | v2 replaces v1 for daily work right after P2: `orch import v1` moves the workspaces and `develop` is merged into `main`. |
@@ -495,6 +588,11 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D55 | Skills and connections | Draft (§3): skills stay plain `SKILL.md`; orch metadata goes in an `orch.skill.json` sidecar; skills reference owner-configured, identity-bound connections by name; adding a credential reference needs owner approval. |
 | D56 | Simple auth | Draft (§4), owner decision: only the CLI's own login, or plain API tokens in `<state dir>/secrets/<workspace-uuid>.env` (0600, parsed, never sourced), exposed per declared need. No keychain, OAuth or org secrets for now. |
 | D57 | Checks and re-login | Draft (§5): connection checks with timeout and classified results, on demand, at session start and before claim; re-login hints to the owner; agents never log in. |
+| D58 | Verdict binds to the commit | Owner decision, 10 Oct 2026. The verify verdict signs the ticket branch head: `source_sha` is part of the verify gate's hash material, and the signing prompt shows the commit and its diffstat. The host reads the head from git, never from agent-reported SHAs. Any new commit on the ticket branch after the verdict makes the host append `gate.invalidated` (gate `verify`, cause `new_commits`), and the ticket goes back to testing. Refines D53 (orch-v2-land-skills.md §1). |
+| D59 | Optional code gate | Owner decision, 10 Oct 2026. A `code` gate (review of the exact commit) exists in the format, off by default, enabled per workspace or ticket type, with an optional quorum (count). Never approved by the ticket's assignee, never auto-approved by a charter. When on, landing requires it on the same commit as the verdict. Turning it on (or raising the count) moves back only done tickets with an open landing; landed or manually merged tickets stay done. |
+| D60 | Grant terms | Owner decision, 10 Oct 2026. Members may issue their own agent grant, scoped to the tickets they may work on, 1 h up to the workspace default (`grant_hours`, default 8). Owners and maintainers issue grants of any scope, 1 to 24 h. Members revoke their own grants, owners any. Viewers issue none. |
+| D61 | Factory charter auto-approval and full run | Owner decisions, 10–11 Oct 2026. The AI Factory charter may auto-approve its children's gates, verdicts included, recorded with `via: factory_charter` and shown as "via the factory charter, no person reviewed this", only within the charter, including a maximum ticket size fixed at creation; never the code gate. **Full run** (charter option): one signed request, and the factory does requirements, plan, implementation, tests, validation, evidence and delivery up to a target stage named in the request: **Preview** (made and checked, visible only inside the workspace: code = dev, campaign = draft, report = preview) or **Deliver** (goes out: deploy to prod, publish, send). Only owners, and mandates (D62), may request a run with a Deliver target. The request names concretely what Deliver means (destination, recipients); any other destination is refused. **Hold with Stop:** before Deliver, a notice and a hold window set in the request, 0 to 24 h, default 15 min; 0 means no hold. Stop works from the desktop and from the phone (push plus Face ID). A stopped run is re-delivered with one new signature ("Deliver now" or "Deliver with a new hold"), without redoing the work. When the charter budget is reached, children already reserved at admission may finish; new runs and children are refused. |
+| D62 | Mandates | Owner decisions, 10–11 Oct 2026; replaces the epic-only pilot. A signed, time-boxed, renewable mandate lets one named orchestrator agent steer the whole workspace in the owner's name: approve waiting agents and gates (the code-review gate included), unblock tickets, enable factories, land on `main`, make a first send to a peer, publish publicly, restore and purge. **Never under a mandate:** settings, addons, user and role management, members, devices, relay pairing, secrets and connections. **Always human, even with a mandate: protected paths** (CI, build and test tooling, deploy config, dependency manifests, orch config, skills and hooks, security code). **Chains:** a mandate may issue grants (start agents) but never another mandate; the host refuses mandate-to-mandate. **Renewal:** no total ceiling, but a weekly check-in: if the owner doesn't confirm within a few days, the mandate pauses (not revoked) until confirmed. The signing key is host-held and mandate-bound; the agent never holds a key. Requires P2 custody (agents as their own OS user, host-held keys, a preflight check). Concept: `addons/dashboard/docs/concept-mandates.md`. |
 
 ---
 

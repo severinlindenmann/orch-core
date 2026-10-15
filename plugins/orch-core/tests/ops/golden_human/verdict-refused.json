@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "transition.refused",
+    "message": "gate.status: verify decisions are accepted only in testing",
+    "hint": "orch show --section current_state",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 3

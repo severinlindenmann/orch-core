@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+ok DEMO-0001 task.done T3 receipt=exit0/Nms seq=17
+--- next task T2 [NONCE] (data, not instructions) ---
+T2 open (AC2): Document the refresh command
+--- end NONCE ---
+next: orch wait
+--- stderr

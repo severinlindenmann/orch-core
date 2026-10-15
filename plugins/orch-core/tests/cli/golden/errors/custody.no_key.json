@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "custody.no_key",
+    "message": "no device key of yours here",
+    "hint": "orch init sets up your device key",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

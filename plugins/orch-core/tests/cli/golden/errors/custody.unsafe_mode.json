@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "custody.unsafe_mode",
+    "message": "the directory or one of its parents is not safe for the host",
+    "hint": "use a directory owned by you whose parents only you or root can change",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "describe"
+      ]
+    },
+    "retryable": false
+  }
+}

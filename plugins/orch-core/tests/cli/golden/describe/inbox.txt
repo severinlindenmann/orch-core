@@ -1,0 +1,7 @@
+ok describe inbox
+Tickets handed over from peer workspaces, and decisions on your tickets that wait has not handed over.
+usage: orch inbox
+who: read · emits: -
+pre: workspace_exists
+errors:
+out: ok inbox {count} / next: {next}

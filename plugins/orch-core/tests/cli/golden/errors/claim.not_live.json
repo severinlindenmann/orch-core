@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "claim.not_live",
+    "message": "no live claim for that session",
+    "hint": "orch status",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

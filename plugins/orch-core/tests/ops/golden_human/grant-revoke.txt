@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok grant.revoked gr_GRANT seq=7
+next: orch grant
+--- stderr

@@ -1,8 +1,0 @@
-{% extends "layout.html" %}
-{#- The viewer as a page of its own: what a viewer link opens without JS, or in a new tab. -#}
-{% block main %}
-<p class="crumb"><a class="lnk" href="/board">Board</a> / <a class="lnk" href="/t/{{ t.id }}">{{ t.id }}</a> / files</p>
-<section class="card viewer-page" aria-labelledby="viewer-title">
-{% include "_viewer.html" %}
-</section>
-{% endblock %}

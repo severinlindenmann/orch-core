@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "grant.verb",
+    "message": "the grant does not cover this operation",
+    "hint": "ask the person for a grant that lists this operation, or use another operation",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

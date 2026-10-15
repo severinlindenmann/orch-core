@@ -1,0 +1,15 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "question": "Q2",
+    "blocking": true
+  },
+  "key": "DEMO-0001",
+  "seq": 16,
+  "cursor": 16,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

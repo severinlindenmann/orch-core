@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "human_only",
+    "message": "human only",
+    "hint": "orch ask or orch wait",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "ask"
+      ]
+    },
+    "retryable": false
+  }
+}

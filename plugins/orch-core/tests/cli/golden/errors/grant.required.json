@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "grant.required",
+    "message": "no grant",
+    "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

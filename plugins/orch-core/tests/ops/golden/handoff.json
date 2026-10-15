@@ -1,0 +1,14 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "bytes": 60
+  },
+  "key": "DEMO-0001",
+  "seq": 17,
+  "cursor": 17,
+  "hints": [
+    "orch claim --next"
+  ]
+}
+# exit 0

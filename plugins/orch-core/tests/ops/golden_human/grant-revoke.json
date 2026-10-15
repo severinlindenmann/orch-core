@@ -1,0 +1,14 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "grant": "gr_GRANT"
+  },
+  "key": null,
+  "seq": 7,
+  "cursor": 0,
+  "hints": [
+    "orch grant"
+  ]
+}
+# exit 0

@@ -1,0 +1,8 @@
+Replace one section of the body with text from -m or --file.
+usage: orch section set SECTION [--ref REF] [--message TEXT] [--file PATH] [--dry-run]
+  SECTION  section id (summary|context|requirements|out_of_scope|plan|decisions|verification|findings|current_state)
+  --ref REF  ticket REF (flag); default: your claim
+  -m, --message TEXT  free text
+  --file PATH  read the text from PATH, or - for stdin
+  --dry-run  say what would happen, append nothing
+more: orch describe section.set

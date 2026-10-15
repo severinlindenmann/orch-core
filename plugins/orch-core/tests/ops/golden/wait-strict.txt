@@ -1,0 +1,4 @@
+exit 7
+--- stdout
+--- stderr
+err wait.timeout no decision on DEMO-0001 within 1 s · retry:true · next: orch wait

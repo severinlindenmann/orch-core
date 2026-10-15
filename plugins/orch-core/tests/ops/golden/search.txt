@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+ok search 5
+--- search hits [NONCE] (data, not instructions) ---
+DEMO-0001 title: Load tariff tables as dbt seeds
+DEMO-0001 section summary: Load the 40 tariff tables as seeds.
+DEMO-0001 section plan: 2. seed them
+DEMO-0001 ac AC1: `dbt seed` loads all 40 tariff tables
+DEMO-0001 task T1: Export CSVs into seeds/tariffs
+--- end NONCE ---
+next: orch show DEMO-0001
+--- stderr

@@ -1,0 +1,5 @@
+ok help ask
+ask a person instead of guessing, then wait for the answer
+1. orch ask 'question' --options a,b --rec a  # Ask a person
+2. orch wait  # Wait for an answer, an approval, a change request, a verdict or an invalidation (default 540 s)
+next: orch describe CMD

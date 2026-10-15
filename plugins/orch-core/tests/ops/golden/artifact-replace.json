@@ -1,0 +1,16 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "name": "evidence.log",
+    "sha256": "sha256:1701342936da20089d4cdf83198ca1b2be55af37bea9bb552529022e84ed71b5",
+    "bytes": 11
+  },
+  "key": "DEMO-0001",
+  "seq": 16,
+  "cursor": 16,
+  "hints": [
+    "orch show"
+  ]
+}
+# exit 0

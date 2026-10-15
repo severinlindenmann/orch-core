@@ -1,0 +1,15 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "task": "T3",
+    "receipt": "exit0/Nms"
+  },
+  "key": "DEMO-0001",
+  "seq": 17,
+  "cursor": 17,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

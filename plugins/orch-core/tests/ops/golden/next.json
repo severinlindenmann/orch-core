@@ -1,0 +1,15 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "DEMO-0001",
+    "title": "Load tariff tables as dbt seeds"
+  },
+  "key": "DEMO-0001",
+  "seq": 15,
+  "cursor": 15,
+  "hints": [
+    "orch show DEMO-0001"
+  ]
+}
+# exit 0

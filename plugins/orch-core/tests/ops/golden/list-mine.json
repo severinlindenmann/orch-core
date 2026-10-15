@@ -1,0 +1,31 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "count": 3,
+    "tickets": [
+      {
+        "key": "DEMO-0003",
+        "title": "Handed over",
+        "status": "in_progress"
+      },
+      {
+        "key": "DEMO-0002",
+        "title": "Fix the billing join",
+        "status": "open"
+      },
+      {
+        "key": "DEMO-0001",
+        "title": "Load tariff tables as dbt seeds",
+        "status": "in_progress"
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch show DEMO-0003"
+  ]
+}
+# exit 0

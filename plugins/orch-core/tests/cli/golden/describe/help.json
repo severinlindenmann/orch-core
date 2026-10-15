@@ -1,0 +1,86 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "help",
+    "name": "help",
+    "cli": "orch help",
+    "summary": "How to do one kind of work (a workflow), generated from the registry; no argument lists them.",
+    "who": "read",
+    "usage": "orch help [WORKFLOW]",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "How to do one kind of work (a workflow), generated from the registry; no argument lists them.",
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "description": "workflow name",
+          "x-metavar": "WORKFLOW"
+        }
+      },
+      "x-positional": [
+        "workflow"
+      ],
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok help {topic}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string"
+                },
+                "call": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "call"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch help lists the workflows",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

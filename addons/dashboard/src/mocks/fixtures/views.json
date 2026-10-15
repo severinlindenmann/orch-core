@@ -1,0 +1,6 @@
+{
+  "6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11": [
+    { "id": "v_my_open", "name": "My open work", "owner": "p_sev", "shared": false, "params": { "needs": "me" } },
+    { "id": "v_blockers", "name": "Release blockers", "owner": "p_sev", "shared": true, "params": { "priority": ["urgent", "high"], "status": ["open", "in-progress", "waiting"] } }
+  ]
+}

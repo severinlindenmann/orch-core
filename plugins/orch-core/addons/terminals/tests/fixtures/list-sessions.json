@@ -1,4 +1,0 @@
-[
-  {"argv": ["tmux", "-L", "orch", "list-sessions", "-F", "#{session_path}"], "returncode": 0,
-   "stdout": "/tmp/orch-demo\n/tmp/orch-demo/sub\n/elsewhere\n", "stderr": ""}
-]

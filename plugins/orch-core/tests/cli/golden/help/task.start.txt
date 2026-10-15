@@ -1,0 +1,5 @@
+Take the lease on one task (parallel subagents use ORCH_SESSION=<parent>.<n>).
+usage: orch task start TASK [--dry-run]
+  TASK  task id (T3 or DEMO-0043/T3)
+  --dry-run  say what would happen, append nothing
+more: orch describe task.start

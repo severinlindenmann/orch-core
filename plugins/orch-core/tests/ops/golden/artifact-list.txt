@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+ok DEMO-0001 artifact.list 2
+--- artifacts of DEMO-0001 [NONCE] (data, not instructions) ---
+T1-receipt.log receipt task=T1
+evidence.log other ac=AC1
+--- end NONCE ---
+next: orch show
+--- stderr

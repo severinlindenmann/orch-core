@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "quick.unlabelled",
+    "message": "the quick task was created but not labelled",
+    "hint": "run the same orch quick add again: it labels that ticket instead of creating a second one",
+    "fix": {
+      "argv": [
+        "orch",
+        "quick",
+        "list"
+      ]
+    },
+    "retryable": true
+  }
+}

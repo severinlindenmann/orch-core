@@ -1,0 +1,1 @@
+err host.untrusted the process behind the host socket is not the host the registry names · retry:false · next: do not use this socket; check orch host list and who owns the run directory · fix: orch host list

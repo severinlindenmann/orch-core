@@ -1,0 +1,248 @@
+{
+ "acceptance": [
+  {
+   "id": "AC1",
+   "text": "it works"
+  }
+ ],
+ "acceptance_state": [
+  {
+   "evidence": [],
+   "id": "AC1",
+   "state": "unproven",
+   "text": "it works"
+  }
+ ],
+ "addons": {},
+ "artifacts": [],
+ "blocked_by": [],
+ "body": {
+  "context": "ctx",
+  "out_of_scope": "nothing",
+  "requirements": "req"
+ },
+ "branch": {
+  "additions": 0,
+  "base": "",
+  "commits": [],
+  "deletions": 0,
+  "files": 0,
+  "head": "",
+  "name": "feat/one"
+ },
+ "claim": null,
+ "created_at": "2026-09-21T14:13:20Z",
+ "due": null,
+ "gates": {
+  "code": {
+   "approvals": [],
+   "approvers": "",
+   "gen": 0,
+   "hash": "HASH12",
+   "needed": 0,
+   "required": false,
+   "state": "pending"
+  },
+  "plan": {
+   "approvals": [],
+   "approvers": "",
+   "gen": 2,
+   "hash": "HASH12",
+   "needed": 0,
+   "required": true,
+   "state": "pending"
+  },
+  "requirements": {
+   "approvals": [],
+   "approvers": "",
+   "gen": 1,
+   "hash": "HASH12",
+   "needed": 0,
+   "required": true,
+   "state": "pending"
+  },
+  "verify": {
+   "approvals": [],
+   "approvers": "",
+   "gen": 3,
+   "hash": "HASH12",
+   "needed": 0,
+   "required": true,
+   "state": "pending"
+  }
+ },
+ "head": {
+  "hash": "",
+  "seq": 8
+ },
+ "key": "DEMO-0001",
+ "labels": [
+  "api",
+  "ui"
+ ],
+ "links": {
+  "branches": {
+   "code": "feat/one"
+  },
+  "external": [],
+  "prs": [],
+  "repos": [
+   "code"
+  ]
+ },
+ "log_more": false,
+ "parent": null,
+ "people": {
+  "assignees": [],
+  "owner": "p_user1",
+  "reviewers": [],
+  "watchers": []
+ },
+ "priority": "high",
+ "questions": [
+  {
+   "blocking": true,
+   "id": "Q1",
+   "options": [
+    {
+     "key": "csv",
+     "label": "csv"
+    },
+    {
+     "key": "api",
+     "label": "api"
+    }
+   ],
+   "text": "Which export is the source?",
+   "to": "ticket_owner"
+  },
+  {
+   "blocking": false,
+   "id": "Q2",
+   "options": [
+    {
+     "key": "csv",
+     "label": "csv"
+    },
+    {
+     "key": "api",
+     "label": "api"
+    }
+   ],
+   "text": "Any naming rule?",
+   "to": "ticket_owner"
+  }
+ ],
+ "questions_state": [
+  {
+   "answer": {
+    "at": "2026-09-21T14:13:27Z",
+    "by": "p_user1"
+   },
+   "asked_at": "",
+   "asked_by": "",
+   "blocking": true,
+   "id": "Q1",
+   "options": [
+    {
+     "key": "csv",
+     "label": "csv"
+    },
+    {
+     "key": "api",
+     "label": "api"
+    }
+   ],
+   "state": "answered",
+   "text": "Which export is the source?",
+   "to": "ticket_owner"
+  },
+  {
+   "answer": null,
+   "asked_at": "",
+   "asked_by": "",
+   "blocking": false,
+   "id": "Q2",
+   "options": [
+    {
+     "key": "csv",
+     "label": "csv"
+    },
+    {
+     "key": "api",
+     "label": "api"
+    }
+   ],
+   "state": "open",
+   "text": "Any naming rule?",
+   "to": "ticket_owner"
+  }
+ ],
+ "read_ext": false,
+ "restricted": false,
+ "schema": "orch.ticket/2",
+ "size": null,
+ "status": "open",
+ "tasks": [
+  {
+   "id": "T1",
+   "proves": [
+    "AC1"
+   ],
+   "text": "Write the export",
+   "verify": null
+  },
+  {
+   "id": "T2",
+   "proves": [],
+   "text": "Document it",
+   "verify": null
+  }
+ ],
+ "tasks_state": [
+  {
+   "done_at": null,
+   "id": "T1",
+   "lease": null,
+   "proves": [
+    "AC1"
+   ],
+   "receipt": null,
+   "state": "todo",
+   "text": "Write the export",
+   "verify": null
+  },
+  {
+   "done_at": null,
+   "id": "T2",
+   "lease": null,
+   "proves": [],
+   "receipt": null,
+   "state": "todo",
+   "text": "Document it",
+   "verify": null
+  }
+ ],
+ "title": "Real P1 ticket",
+ "turn": {
+  "who": "p_user1",
+  "why": "A question is waiting for your answer"
+ },
+ "type": "feature",
+ "uid": "UID1",
+ "unavailable": [
+  "branch commits",
+  "section texts of old revisions",
+  "full text of long comments and verdicts",
+  "task receipts",
+  "verdict",
+  "artifact manifest",
+  "gate approvals",
+  "claim details",
+  "question details",
+  "section history"
+ ],
+ "updated_at": "2026-09-21T14:13:29Z",
+ "verdict": null,
+ "visibility": "workspace"
+}

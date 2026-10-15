@@ -1,0 +1,15 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "person": "p_PERSON",
+    "role": "maintainer"
+  },
+  "key": null,
+  "seq": 7,
+  "cursor": 0,
+  "hints": [
+    "orch member"
+  ]
+}
+# exit 0

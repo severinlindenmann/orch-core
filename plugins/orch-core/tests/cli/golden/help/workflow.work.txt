@@ -1,0 +1,9 @@
+ok help work
+pick up a ticket, do its tasks, prove the acceptance criteria, hand over
+1. orch status  # Who you are, your grant, your cursor, your claim and what needs you
+2. orch claim --next  # Claim a ticket, the next one, or take over another session's claim
+3. orch task next  # The next task to do
+4. orch task done T3 --run --artifact out.log --ac AC2 -m 'what ran'  # Finish a task
+5. orch handoff -m 'where it stands'  # Write the current state (at most 2048 bytes) and release the claim
+6. orch submit  # Move the ticket to testing
+next: orch describe CMD

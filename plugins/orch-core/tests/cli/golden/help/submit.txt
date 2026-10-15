@@ -1,0 +1,5 @@
+Move the ticket to testing; every acceptance criterion needs evidence first.
+usage: orch submit [REF] [--dry-run]
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  --dry-run  say what would happen, append nothing
+more: orch describe submit

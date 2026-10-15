@@ -1,0 +1,10 @@
+ok describe search
+Search ticket titles and sections.
+usage: orch search QUERY [--limit N]
+who: read · emits: -
+pre: workspace_exists
+args:
+  QUERY  what to look for
+  --limit N  at most this many [default 10]
+errors:
+out: ok search {count} / next: {next}

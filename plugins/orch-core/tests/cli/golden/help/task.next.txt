@@ -1,0 +1,4 @@
+The next task to do: its text, what it proves and its verify command.
+usage: orch task next [--ref REF]
+  --ref REF  ticket REF (flag); default: your claim
+more: orch describe task.next

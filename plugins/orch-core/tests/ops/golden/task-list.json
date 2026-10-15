@@ -1,0 +1,38 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "count": 3,
+    "tasks": [
+      {
+        "id": "T1",
+        "text": "Export CSVs into seeds/tariffs",
+        "state": "done",
+        "verify": "echo exported 40",
+        "verify_runnable": true,
+        "verify_author": "agent s_ULID for p_PERSON"
+      },
+      {
+        "id": "T2",
+        "text": "Document the refresh command",
+        "state": "open"
+      },
+      {
+        "id": "T3",
+        "text": "Join in fct_billing",
+        "state": "open",
+        "verify": "echo joined",
+        "verify_runnable": true,
+        "verify_author": "agent s_ULID for p_PERSON"
+      }
+    ],
+    "repos": []
+  },
+  "key": "DEMO-0001",
+  "seq": 15,
+  "cursor": 15,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

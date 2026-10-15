@@ -1,0 +1,7 @@
+ok help parallel
+work as a subagent: one lease on one task of the manager's claim
+1. ORCH_SESSION=<yours>.<n> orch task next  # The next task to do
+2. orch task start T3  # Take the lease on one task (parallel subagents use ORCH_SESSION=<parent>.<n>)
+3. orch task done T3 --run  # Finish a task
+4. orch log 'note'  # Add a note to the ticket log
+next: orch describe CMD

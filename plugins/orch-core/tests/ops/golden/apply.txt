@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok DEMO-0001 apply 2 seq=17
+next: orch wait
+--- stderr

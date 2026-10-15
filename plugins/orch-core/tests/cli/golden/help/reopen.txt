@@ -1,0 +1,6 @@
+Reopen a done or closed ticket; raises every gate's generation.
+usage: orch reopen [REF] [--message TEXT] [--dry-run]
+  REF  ticket REF
+  -m, --message TEXT  free text
+  --dry-run  say what would happen, append nothing
+more: orch describe reopen

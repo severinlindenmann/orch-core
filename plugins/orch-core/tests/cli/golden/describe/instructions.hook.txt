@@ -1,0 +1,8 @@
+ok describe instructions.hook
+The text a harness hook injects at session start or before compaction: at most six lines.
+usage: orch instructions hook session-start|pre-compact
+who: read · emits: -
+args:
+  EVENT  which hook (session-start|pre-compact)
+errors:
+out: ok {head} / next: {next}

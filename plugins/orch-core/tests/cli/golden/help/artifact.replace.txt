@@ -1,0 +1,7 @@
+Replace a stored file; the name stays, the digest changes.
+usage: orch artifact replace NAME PATH [--ref REF] [--dry-run]
+  NAME  artifact name
+  PATH  the new file
+  --ref REF  ticket REF (flag); default: your claim
+  --dry-run  say what would happen, append nothing
+more: orch describe artifact.replace

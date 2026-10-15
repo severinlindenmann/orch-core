@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "internal",
+    "message": "internal error",
+    "hint": "report this to the user",
+    "fix": {
+      "argv": [
+        "orch",
+        "doctor"
+      ]
+    },
+    "retryable": false
+  }
+}

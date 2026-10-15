@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok DEMO-0001 artifact.added second.log seq=16
+next: orch show
+--- stderr

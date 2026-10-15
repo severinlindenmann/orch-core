@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid.input",
+    "message": "--verbs: approve is not an operation an agent may run",
+    "hint": "orch describe grant",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "grant"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 5

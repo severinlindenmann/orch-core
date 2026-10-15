@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "error": {
+    "code": "claim.held",
+    "message": "you already hold DEMO-0001; with --also you hold several and every command then needs a REF",
+    "hint": "orch claim REF --also, or orch release first",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "claim"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 4

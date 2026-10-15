@@ -835,6 +835,7 @@ Question = {id:str, state:"open"|"answered"|"stale", to:[Person], blocking:bool,
             text?:str, why?:str, to_ref?:str, options?:[{key:str, label:str, cost?:str}], recommended?:str,
             asked_at?:Time, asked_by?:Actor, asked_seq?:int,
             answer?:{by:Person, at:Time, seq:int, option:str | null, text:str | null, auth?:str,  // auth: v1.5
+                     signer?:{device:Device, auth:str},                              // signer: H12d-2 (§0.8.6 item 9.11)
                      id:ULID},                                                       // id: v1.7 (§11A.14)
             qid?:str/[0-9a-f]{32}/, hash?:Hash}                                          // v1.5, read_ext/2 (§0.8.5)
 Criterion = {id:str, text:str, evidence:[{artifact:str, digest:Hash, kind:str, attested_by:"agent"|"person"|"unattended"}],

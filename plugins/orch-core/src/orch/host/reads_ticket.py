@@ -189,6 +189,20 @@ def _log(x: _Ticket, since: int, limit: int) -> tuple[list[dict[str, Any]], bool
 # --- questions, criteria, tasks -------------------------------------------------------------------------------------
 
 
+def _signer(event: dict[str, Any]) -> dict[str, str] | None:
+    """``signer: {device, auth}`` of a person-signed event (§0.8.6 item 9.11), only when the production parser of a
+    level-1 reader (:func:`orch.identity.reader.parse_signer`) accepts it: never an unknown ``auth``."""
+    from orch.identity.reader import parse_signer
+
+    actor = event.get("actor") if isinstance(event.get("actor"), dict) else {}
+    signer = {"device": actor.get("device"), "auth": event.get("auth")}
+    try:
+        parse_signer("ticket.get.questions.answer", {"answer": {"signer": signer}})
+    except ValueError:
+        return None
+    return signer  # type: ignore[return-value]
+
+
 def _questions(x: _Ticket) -> list[dict[str, Any]]:
     out = []
     for q in x.view.questions:
@@ -227,6 +241,9 @@ def _questions(x: _Ticket) -> list[dict[str, Any]]:
             }
             if isinstance(answer_event.get("auth"), str):
                 answer["auth"] = answer_event["auth"]
+            signer = _signer(answer_event)
+            if signer is not None:  # H12d-2 (§0.8.6 item 9.11): READER_VIEWS_1, ticket.get.questions.answer
+                answer["signer"] = signer
             answer["id"] = answer_event["id"]  # v1.7 (§11A.14): the counting event's id
             item["answer"] = answer
         item["qid"] = core.qid

@@ -1741,7 +1741,10 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    value has its control characters escaped. It changes nothing. Exit 0 without problems, else 1.
    **Run directory, tier A:** `orch host`, the thin CLI and `orch sign` all use `--run`, else `ORCH_HOST_RUN_DIR`, else
    `<state>/run` (`enable.run_dir_for`). A path that merely exists under the tier-B `/Users/Shared/orch/run/<uid>` is
-   no longer preferred: any local account can create it (H4b preferred it).
+   no longer preferred: any local account can create it (H4b preferred it). **`ORCH_HOST_RUN_DIR` is the only
+   environment name for the run directory**: core reads it in `enable.run_dir_for` alone (host, runner, thin CLI,
+   `orch sign`, the runner unit's environment) and never reads `ORCH_RUN_DIR`; a client in another package (the
+   dashboard server) uses the same name and the same fallback to `<state>/run`.
    **`orch host disable`** is the reverse of `enable`, through the same unit plan and `Manager`: it stops and unloads the
    service (`launchctl bootout gui/<uid>/io.orch.host`; `systemctl --user disable --now orch-host.service`, then a
    `daemon-reload`) and removes the unit file. The state dir always stays. `--purge-releases` also deletes the release

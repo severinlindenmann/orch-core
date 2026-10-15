@@ -4,9 +4,12 @@ text differs, the vectors win (the PR lists each difference)."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
-from orch import crypto
+from orch import canon, crypto
 from orch.identity import Refused, pairing
 from orch.relay import wire
 
@@ -92,6 +95,12 @@ def _steps(case: dict) -> list[dict]:
 
 
 HOST_CASES = S2["bridge"]["host_cases"]
+# Meta v2 (H12d, §8.3): the relay corpus's reader_decl.pair_meta cases, extracted at relay 438b7193 until the vendored
+# corpus is bumped past it (tests/identity/vectors/reader_decl_pair_meta.json).
+READER_DECL = json.loads((Path(__file__).parent / "vectors" / "reader_decl_pair_meta.json").read_text())
+READER_DECL_CASES = [{**c, "name": f"reader_decl.{c['name']}"} for c in READER_DECL["pair_meta"]]
+# Every host-side epoch-0 case in the corpus: the §8.6 host cases, the G3b host cases and the meta v2 cases.
+EPOCH0_SOURCES = [*HOST_CASES, *S2["cert_binding"]["host"], *READER_DECL_CASES]
 ANSWER_CASES = [
     *S2["bridge"]["pair_answers"],
     *S2["cert_binding"]["challenges"],
@@ -129,7 +138,7 @@ def test_sas_vector():
     assert got == SAS["code"]
 
 
-SAS_HOST = [(c["name"], c, s) for c in HOST_CASES for s in _steps(c) if "sas" in s["expect"]]
+SAS_HOST = [(c["name"], c, s) for c in EPOCH0_SOURCES for s in _steps(c) if "sas" in s["expect"]]
 
 
 @pytest.mark.parametrize(("name", "case", "step"), SAS_HOST, ids=[n for n, _, _ in SAS_HOST])
@@ -476,23 +485,47 @@ def test_pair_link_refuses_bad_inputs(i, bad):
 
 # --- 4. pair meta and labels (protocol §2.5, §8.3 steps 2-3; corpus epoch-0 ``bridge.host_cases``) -------------------
 
+
+def _epoch0_steps() -> list[tuple[str, dict, dict]]:
+    """``(id, case, step)`` for every corpus step whose envelope parses with a header epoch of 0."""
+    out = []
+    for c in EPOCH0_SOURCES:
+        for i, st in enumerate(_steps(c)):
+            try:
+                h, _body, _sig = wire.parse_envelope(bytes.fromhex(st["envelope"]), direction=1)
+            except wire.WireError:
+                continue
+            if h.epoch == 0:
+                out.append((f"{c['name']}[{i}]", c, st))
+    return out
+
+
+EPOCH0_STEPS = _epoch0_steps()
 PAIR_REQUESTS = []
 UNOPENED = []
-for _c in HOST_CASES:
-    for _i, _s in enumerate(_steps(_c)):
-        _o = _open_request(_c, _s)
-        if _o is not None:
-            PAIR_REQUESTS.append((f"{_c['name']}[{_i}]", _o[0], _o[1], _s["expect"]))
-        elif _c["name"].startswith("pair"):
-            UNOPENED.append(_c["name"])
+for _n, _c, _s in EPOCH0_STEPS:
+    _o = _open_request(_c, _s)
+    if _o is None:
+        UNOPENED.append((_n, _s["expect"]))
+    else:
+        PAIR_REQUESTS.append((_n, _o[0], _o[1], _s["expect"]))
 
 
 def test_every_epoch_0_host_case_is_covered():
-    """Every ``pair*`` host case opens under its offer's ``K_pair`` except the two the host never decrypts (§8.6
-    steps 1-3: silence for an unknown offer or a bad tag)."""
-    assert UNOPENED == ["pair_unknown_offer_dropped", "pair_sealed_under_another_secret_dropped"]
-    names = {n.split("[")[0] for n, *_ in PAIR_REQUESTS}
-    assert names == {c["name"] for c in HOST_CASES if c["name"].startswith("pair")} - set(UNOPENED)
+    """Derived from the corpus: every epoch-0 step opens under its offer's ``K_pair`` unless the host answers it with
+    silence (``drop``: an unknown offer or a bad tag, §8.6 steps 1-3), and no opened step is a drop."""
+    assert len(EPOCH0_STEPS) == len(PAIR_REQUESTS) + len(UNOPENED)
+    assert all(e["result"] == "drop" for _n, e in UNOPENED), UNOPENED
+    assert all(e["result"] != "drop" for *_x, e in PAIR_REQUESTS)
+    assert {n.split("[")[0] for n, *_ in PAIR_REQUESTS} >= {c["name"] for c in S2["cert_binding"]["host"]}
+    assert {n.split("[")[0] for n, *_ in PAIR_REQUESTS} >= {c["name"] for c in READER_DECL_CASES}
+
+
+@pytest.mark.parametrize("case", READER_DECL_CASES, ids=[c["name"] for c in READER_DECL_CASES])
+def test_reader_decl_fixture_metas_are_the_envelopes(case):
+    """The extract's ``meta`` is what its envelope carries (so the extract is internally consistent)."""
+    for st in _steps(case):
+        assert _open_request(case, st)[1] == case["meta"]
 
 
 @pytest.mark.parametrize(("name", "h", "meta", "expect"), PAIR_REQUESTS, ids=[r[0] for r in PAIR_REQUESTS])
@@ -512,6 +545,7 @@ def test_check_pair_meta_on_every_epoch_0_host_case(name, h, meta, expect):
     assert pm.dk_sig_pub == _b(meta["dk_sig_pub"]) and pm.dk_kx_pub == _b(meta["dk_kx_pub"])
     assert pm.device_id == crypto.device_id(pm.dk_sig_pub).hex()
     assert pm.attempt == meta["attempt"] and pm.cert == meta["cert"]
+    assert pm.reader_decl == meta.get("reader_decl")  # verbatim and unverified (H12d-3's verify_decl)
     assert pm.label == pairing.clean_label(meta["label"])
     if "label" in expect:
         assert pm.label == expect["label"]
@@ -598,3 +632,124 @@ def test_clean_label_refuses_non_text(bad):
     with pytest.raises(Refused) as e:
         pairing.clean_label(bad)
     assert e.value.code == "malformed"
+
+
+# --- meta v2: the optional seventh field ``reader_decl`` (§8.3, H12d) ------------------------------------------------
+
+_DECL = next(c["meta"]["reader_decl"] for c in READER_DECL_CASES if c["name"].endswith("with_reader_decl_pending"))
+
+
+def test_reader_decl_cap_is_the_corpus_cap():
+    assert pairing.READER_DECL_MAX == READER_DECL["max_bytes"] == 2048
+
+
+def _decl_of_size(n: int) -> dict:
+    d = {"o": {"pad": ""}, "sig": "x"}
+    d["o"]["pad"] = "a" * (n - len(canon.dumps(d)))
+    assert len(canon.dumps(d)) == n
+    return d
+
+
+def test_reader_decl_at_the_cap_passes_and_one_byte_over_is_refused():
+    assert pairing.check_pair_meta(_meta(reader_decl=_decl_of_size(2048))).reader_decl == _decl_of_size(2048)
+    with pytest.raises(Refused) as e:
+        pairing.check_pair_meta(_meta(reader_decl=_decl_of_size(2049)))
+    assert e.value.code == "malformed"
+
+
+def test_reader_decl_is_returned_verbatim_and_absent_is_none():
+    assert pairing.check_pair_meta(_meta(reader_decl=_DECL)).reader_decl == _DECL
+    assert pairing.check_pair_meta(_meta()).reader_decl is None
+    # the bridge looks at the shape only: a sig that is not a string is the host gate's (``shape``), not malformed
+    assert pairing.check_pair_meta(_meta(reader_decl={"o": {}, "sig": 1})).reader_decl == {"o": {}, "sig": 1}
+
+
+@pytest.mark.parametrize(
+    "decl",
+    [
+        None,
+        [],
+        "x",
+        {"o": _DECL["o"]},
+        {"sig": _DECL["sig"]},
+        {**_DECL, "x": 1},
+        {"o": None, "sig": _DECL["sig"]},
+        {"o": [], "sig": _DECL["sig"]},
+        {"o": "x", "sig": _DECL["sig"]},
+    ],
+)
+def test_reader_decl_that_is_not_a_signed_object_is_malformed(decl):
+    with pytest.raises(Refused) as e:
+        pairing.check_pair_meta(_meta(reader_decl=decl))
+    assert e.value.code == "malformed"
+
+
+def test_reader_decl_with_another_unknown_field_is_malformed():
+    with pytest.raises(Refused):
+        pairing.check_pair_meta(_meta(reader_decl=_DECL, rd="x"))
+
+
+# --- PairFields / PairLink invariants at construction ----------------------------------------------------------------
+
+_GOOD_FIELDS = {
+    "workspace_id": _P["workspace"],
+    "offer_id": _P["offer"],
+    "secret": bytes.fromhex(_P["secret"]),
+    "wsk_pin": bytes.fromhex(_P["wsk_pin"]),
+    "pk_pin": bytes.fromhex(_P["pk_pin"]),
+}
+
+
+def test_direct_construction_renders_what_the_parser_accepts():
+    f = pairing.PairFields(**_GOOD_FIELDS)
+    for native in (False, True):
+        text = pairing.render_pair_link(pairing.PairLink(origin=ORIGIN, native=native, fields=f))
+        assert pairing.parse_pair_link(text) == pairing.PairLink(origin=ORIGIN, native=native, fields=f)
+
+
+@pytest.mark.parametrize(
+    ("key", "bad"),
+    [
+        ("workspace_id", _P["workspace"].upper()),
+        ("workspace_id", _P["workspace"][:-2]),
+        ("workspace_id", bytes.fromhex(_P["workspace"])),
+        ("offer_id", "g" * 32),
+        ("offer_id", None),
+        ("secret", bytes.fromhex(_P["secret"])[:31]),
+        ("secret", bytearray(32)),
+        ("secret", _P["secret"]),
+        ("wsk_pin", bytes(33)),
+        ("wsk_pin", None),
+        ("pk_pin", bytes(31)),
+        ("pk_pin", _P["pk_pin"]),
+    ],
+)
+def test_pair_fields_refuse_bad_values_at_construction(key, bad):
+    with pytest.raises(Refused) as e:
+        pairing.PairFields(**{**_GOOD_FIELDS, key: bad})
+    assert e.value.code == "malformed"
+
+
+@pytest.mark.parametrize(
+    ("kw"),
+    [
+        {"origin": "https://relay.example.org/"},
+        {"origin": "http://evil.example.org"},
+        {"origin": None},
+        {"native": 1},
+        {"native": None},
+        {"native": "yes"},
+        {"fields": _GOOD_FIELDS},
+        {"fields": None},
+    ],
+)
+def test_pair_link_refuses_bad_values_at_construction(kw):
+    args = {"origin": ORIGIN, "native": True, "fields": pairing.PairFields(**_GOOD_FIELDS), **kw}
+    with pytest.raises(Refused) as e:
+        pairing.PairLink(**args)
+    assert e.value.code == "malformed"
+
+
+def test_render_pair_link_refuses_anything_but_a_pair_link():
+    with pytest.raises(Refused):
+        pairing.render_pair_link({"origin": ORIGIN, "native": True, "fields": None})

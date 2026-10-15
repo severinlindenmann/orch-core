@@ -339,12 +339,50 @@ class OutQueue:
         return item
 
 
+class SteadyWrites:
+    """The TermClient's socket with a write timeout of its own (review M2, delta D-M1). Core's client sends input frame
+    2.. from inside `recv` (after the previous frame's ack) and throttled resends from `pump`, all under whatever
+    timeout `recv` last set (10..50 ms): too short for a 64 KiB frame through an 8 KiB AF_UNIX buffer while the runner is
+    busy. Every `sendall` here runs under `WRITE_TIMEOUT`, and the read timeout is put back afterwards. (Core request:
+    `TermClient.send` could do this itself.)"""
+
+    def __init__(self, sock):
+        self.sock = sock
+        self.read_timeout = sock.gettimeout()
+
+    def settimeout(self, value):
+        self.read_timeout = value
+        self.sock.settimeout(value)
+
+    def gettimeout(self):
+        return self.read_timeout
+
+    def sendall(self, data):
+        self.sock.settimeout(WRITE_TIMEOUT)
+        try:
+            self.sock.sendall(data)
+        finally:
+            with suppress(OSError):
+                self.sock.settimeout(self.read_timeout)
+
+    def recv(self, n):
+        return self.sock.recv(n)
+
+    def fileno(self):
+        return self.sock.fileno()
+
+    def close(self):
+        self.sock.close()
+
+
 class Pump:
     """The thread that owns the `TermClient` after `connect`: it writes the browser's input and resizes, pumps
     throttled resends and reads the runner socket continuously, posting every frame to the event loop."""
 
     def __init__(self, client, loop: asyncio.AbstractEventLoop, post):
         self.client, self.loop, self.post = client, loop, post
+        if client is not None and getattr(client, "sock", None) is not None:
+            client.sock = SteadyWrites(client.sock)
         self.inbox: queue.SimpleQueue = queue.SimpleQueue()
         self.stopped = threading.Event()
         self.pending = 0  # unacknowledged input bytes (read by the loop; written here)
@@ -382,10 +420,6 @@ class Pump:
                     if kind == "in":
                         with self.queued_lock:
                             self.queued -= len(rest[0])
-                    # Writes get their own timeout (review M2): `recv` leaves 10..50 ms on the socket, too short for a
-                    # 64 KiB frame through an 8 KiB AF_UNIX buffer while the runner is busy. `recv` sets its own again.
-                    if client.sock is not None:
-                        client.sock.settimeout(WRITE_TIMEOUT)
                     if kind == "in":
                         client.send_input(rest[0])
                     elif kind == "resize":

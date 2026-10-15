@@ -412,3 +412,44 @@ def test_an_out_of_range_offset_ends_the_socket_review_i4():
 
     _, items = asyncio.run(run())
     assert [i[0] for i in items] == ["ctl"] and items[0][1] == {"t": "_end", "reason": "runner.lost", "lost": False}
+
+
+def test_every_input_frame_survives_a_slow_runner_with_the_real_termclient_review_d_m1():
+    """Core's TermClient sends frame 2.. from inside `recv` (after the ack of the one before), under recv's short
+    timeout. A runner that reads every 20 ms must still get a multi-frame paste whole, with no `runner.lost`."""
+    import base64
+    import threading as th
+
+    from orch.host import frames
+    from orch.runner.termclient import TermClient
+
+    ours, runner = socket.socketpair()
+    client = TermClient("/nonexistent", {"runner": {"uid": 0, "pid": 0, "gen": "0" * 32}, "lease_gen": 0})
+    client.sock, client.writer = ours, True
+    pump = RecordingPump(client)
+    got, frames_in = bytearray(), []
+
+    def slow_runner():
+        decoder = frames.Decoder()
+        runner.settimeout(10)
+        while len(got) < 3 * 65536:
+            data = runner.recv(4096)
+            if not data:
+                return
+            for frame in decoder.feed(data):
+                frames_in.append(frame["input_id"])
+                got.extend(base64.b64decode(frame["b64"]))
+                runner.sendall(frames.encode({"t": "ack", "input_id": frame["input_id"]}))
+            time.sleep(0.02)
+
+    reader = th.Thread(target=slow_runner, daemon=True)
+    reader.start()
+    pump.start()
+    for i in range(3):
+        pump.put(("in", bytes([65 + i]) * 65536))
+    reader.join(30)
+    pump.stop()
+    pump.thread.join(2)
+    runner.close()
+    assert frames_in == [1, 2, 3] and bytes(got) == b"A" * 65536 + b"B" * 65536 + b"C" * 65536
+    assert [d for d in pump.delivered if d[0] == "closed"] == []

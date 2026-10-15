@@ -249,3 +249,11 @@ def test_artifact_get_needs_the_diff_capability(gateway, stub):
     with pytest.raises(HostError) as err:
         link.call("artifact.get", {"ref": "DEMO-0001", "name": "x", "offset": 0})
     assert err.value.error["code"] == "op.unsupported"
+
+
+def test_fastapi_telemetry_is_off_even_when_the_environment_asks_for_it(monkeypatch):
+    monkeypatch.setenv("FASTAPI_OTEL_AUTO_CONFIGURE", "true")
+    app = create_app(PORT)
+    config = app._telemetry
+    assert not any(config[k] for k in ("tracing", "metrics", "logs", "operation_spans", "auto_configure"))
+    assert app._native_telemetry.enabled() is False

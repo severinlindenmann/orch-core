@@ -45,7 +45,10 @@ def create_app(port: int, gateway=None, auth=None, static=None):
         await live.close()
         gateway.close()
 
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    # FastAPI >= 0.140 ships OpenTelemetry on by default: off here, whatever the environment says (no request paths or
+    # exception text may ever leave this local server).
+    telemetry = {"tracing": False, "metrics": False, "logs": False, "operation_spans": False, "auto_configure": False}
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan, telemetry=telemetry)
     app.state.auth = auth
     app.state.live = live
     app.state.term_tickets = tickets

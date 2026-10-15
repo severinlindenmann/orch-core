@@ -40,12 +40,13 @@ _HEX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _TIMEOUT = 30
 
 
-def git(path: Path, op: str, *, rev: str | None = None, strip: bool = True) -> str | None:
+def git(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None, strip: bool = True) -> str | None:
     """Operation ``op`` of :data:`orch.gitsafe.OPS` against the repository at ``path``, isolated
     (:func:`orch.gitsafe.command`: the gate first, every time; a populated submodule refused for ``status``; system
-    and global configuration off). ``rev``: the operation's revision operand (``HEAD`` or ``refs/heads/<name>``,
-    validated). Stdout stripped (unless ``strip`` is off). ``None`` if the operation or operand is refused, the gate
-    refuses, git fails or is missing: git is never started after a refusal (fail closed)."""
+    and global configuration off). ``rev``: the operation's operands, in order (revisions: ``HEAD``, a full commit id
+    or ``refs/heads/<name>``; ``diff_patch``'s context first), each validated. Stdout stripped (unless ``strip`` is
+    off). ``None`` if the operation or an operand is refused, the gate refuses, git fails or is missing: git is never
+    started after a refusal (fail closed)."""
     own = os.environ
     try:
         argv, env = gitsafe.command(os.path.abspath(path), op, own, operand=rev)

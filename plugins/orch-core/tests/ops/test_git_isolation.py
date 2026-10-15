@@ -121,6 +121,12 @@ def make_repo(w, where: str, *, attrs: str | None = None) -> Path:
     return repo
 
 
+def sample_operands(spec: gitsafe.Op) -> tuple[str, ...] | None:
+    """A valid operand for each slot of ``spec``."""
+    sample = {"rev": "refs/heads/main", "path": "b.txt", "context": "3"}
+    return tuple(sample[k] for k in spec.operands) or None
+
+
 def run_all(caller: str, repo: Path) -> dict:
     """Every operation the caller has, on ``repo`` (paths of the repo replaced, so results compare across repos)."""
     if caller == "observe":
@@ -228,7 +234,7 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
     repo = make_repo(w, "r")
     plain = w.git(repo, "config", "--list", "--show-scope", home=w.home).stdout.lower()
     assert all(k in plain for k in ALL_HOSTILE)  # positive control
-    operand = {"rev": "refs/heads/main", "path": "b.txt"}.get(gitsafe.OPS[op].operand or "")
+    operand = sample_operands(gitsafe.OPS[op])
     argv, env = gitsafe.command(str(repo), op, os.environ, operand=operand)
     # the configuration that operation's environment and global options give git, listed by git itself
     listing = subprocess.run(
@@ -273,7 +279,7 @@ def test_no_operation_runs_a_pager_even_on_a_terminal(world):
     assert w.fired() & {"pager", "pager-status"}
     w.clear()
     for op, spec in gitsafe.OPS.items():
-        operand = {"rev": "refs/heads/main", "path": "b.txt"}.get(spec.operand or "")
+        operand = sample_operands(spec)
         on_tty(*gitsafe.command(str(repo), op, os.environ, operand=operand))
     assert w.fired() == set()
 
@@ -282,7 +288,7 @@ def test_no_operation_runs_a_pager_even_on_a_terminal(world):
 
 
 def test_operations_are_a_closed_set_with_no_network_subcommand():
-    allowed = {"rev-parse", "symbolic-ref", "status", "ls-files", "diff", "cat-file"}
+    allowed = {"rev-parse", "symbolic-ref", "merge-base", "status", "ls-files", "diff", "cat-file"}
     assert {op.args[0] for op in gitsafe.OPS.values()} <= allowed
     assert not hasattr(gitsafe, "argv")  # the free-argv builder is gone
     from orch.ops.caps import Git
@@ -572,3 +578,20 @@ def test_refusal_names_the_gates_reason_only_for_a_repository(world, tmp_path):
     (tmp_path / "nogit").mkdir()
     assert observe.refusal(tmp_path / "nogit") is None
     assert w.fired() == set()
+
+
+def test_every_revision_of_a_diff_operation_is_validated_and_followed_by_the_end_of_revisions(world):
+    repo = make_repo(world, "r")
+    head = observe.head(repo)
+    for op in ("diff_numstat", "diff_names", "diff_patch", "merge_base"):
+        spec = gitsafe.OPS[op]
+        argv, _env = gitsafe.command(str(repo), op, os.environ, operand=sample_operands(spec))
+        assert argv[-1] == "--" and "--ignore-submodules=all" in argv or op == "merge_base"
+        for bad in ("--output=/tmp/x", "-c", f"{head}..{head}", "HEAD~1"):
+            values = list(sample_operands(spec))
+            values[-1] = bad
+            with pytest.raises(gitsafe.Unsafe):
+                gitsafe.command(str(repo), op, os.environ, operand=tuple(values))
+    with pytest.raises(gitsafe.Unsafe):  # the context is 0 to 10 lines, nothing else
+        gitsafe.command(str(repo), "diff_patch", os.environ, operand=("11", head, head))
+    assert observe.git(repo, "diff_numstat", rev=(head, head)) == ""

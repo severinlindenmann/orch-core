@@ -360,59 +360,85 @@ STATUS_KEYS = frozenset({"core.excludesfile", "core.autocrlf", "core.eol"})
 
 @dataclass(frozen=True)
 class Op:
-    """One read-only git operation: fixed arguments, at most one validated operand (``rev``: a revision; ``path``: a
-    path in the index), the person keys it keeps, and whether it reads the working tree (then a populated submodule
-    is refused first, :func:`submodules`)."""
+    """One read-only git operation: fixed arguments, some holding a slot for a validated operand (``<rev>``: a
+    revision; ``<path>``: a path in the index; ``<context>``: 0 to 10 lines), the person keys it keeps, and whether
+    it reads the working tree (then a populated submodule is refused first, :func:`submodules`)."""
 
     args: tuple[str, ...]
-    operand: str | None = None
-    suffix: str = ""
     person: frozenset[str] = frozenset()
     tree: bool = False
 
+    @property
+    def operands(self) -> tuple[str, ...]:
+        """The kinds of the operands, in order."""
+        return tuple(m for a in self.args for m in _SLOT.findall(a))
+
+
+_SLOT = re.compile(r"<(rev|path|context)>")
 
 #: The CLOSED set of git operations orch's read-only callers may run (#546, Codex P1 on #561): ``store/observe``
-#: (and through it ``ops/caps.Git`` and ``hostclient``), ``ops/health`` and ``runner/wtgit.read_git``. There is no
-#: free argv: no caller can add a global option (``-c``, ``-C``, ``--git-dir``, ``--work-tree``, ``--exec-path``,
-#: ``--namespace``, ``-p``, ``--config-env``), an option of its own or a subcommand. No operation can reach the
-#: network. Submodules: ``status`` hides them entirely (``--ignore-submodules=all``: git never opens one) and a
-#: populated one is refused anyway; ``diff --cached`` never opens a submodule (it compares the index with ``HEAD``
-#: only) and keeps ``=dirty`` so a staged gitlink still shows.
+#: (and through it ``ops/caps.Git``, ``hostclient`` and the dashboard's dev host), ``ops/health`` and
+#: ``runner/wtgit.read_git``. There is no free argv: no caller can add a global option (``-c``, ``-C``,
+#: ``--git-dir``, ``--work-tree``, ``--exec-path``, ``--namespace``, ``-p``, ``--config-env``), an option of its own
+#: or a subcommand; revisions are followed by ``--``. No operation can reach the network. Submodules: ``status`` and
+#: every diff run with ``--ignore-submodules=all`` (git never opens one) and ``status`` refuses a populated one
+#: anyway; the one exception is ``staged_raw`` (``diff --cached``, index against ``HEAD``, never opens a
+#: submodule), which keeps ``=dirty`` so ``orch check --staged`` still sees a staged gitlink.
 OPS: dict[str, Op] = {
     "head": Op(("rev-parse", "--verify", "-q", "HEAD^{commit}")),
     "symbolic_head": Op(("symbolic-ref", "-q", "HEAD")),
     "toplevel": Op(("rev-parse", "--show-toplevel")),
-    "ref": Op(("rev-parse", "--verify", "-q"), operand="rev"),
-    "commit": Op(("rev-parse", "--verify", "-q"), operand="rev", suffix="^{commit}"),
+    "ref": Op(("rev-parse", "--verify", "-q", "<rev>")),
+    "commit": Op(("rev-parse", "--verify", "-q", "<rev>^{commit}")),
+    "parent": Op(("rev-parse", "--verify", "-q", "<rev>^1")),
+    "merge_base": Op(("merge-base", "<rev>", "<rev>", "--")),
     "status": Op(("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all"),
                  person=STATUS_KEYS, tree=True),
     "index_flags": Op(("ls-files", "-v")),
     "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--relative", "--ignore-submodules=dirty")),
-    "staged_blob": Op(("cat-file", "blob"), operand="path"),
+    "staged_blob": Op(("cat-file", "blob", ":0:<path>")),
+    "diff_numstat": Op(("diff", "--numstat", "-M50%", "--ignore-submodules=all", "<rev>", "<rev>", "--")),
+    "diff_names": Op(("diff", "--name-status", "-M50%", "--ignore-submodules=all", "<rev>", "<rev>", "--")),
+    "diff_patch": Op(("diff", "-U<context>", "-M50%", "--ignore-submodules=all", "<rev>", "<rev>", "--")),
 }  # fmt: skip
-#: a revision operand: ``HEAD`` or a branch ref; never a leading ``-``, ``..``, ``@{``, ``//`` or a trailing ``/``
-#: or ``.``: what ``rev-parse --verify`` can only read as one ref name
-_REV = re.compile(r"HEAD|refs/heads/(?!.*\.\.)(?!.*@\{)(?!.*//)[A-Za-z0-9_+@][A-Za-z0-9._+@/-]{0,199}(?<![/.])")
+#: a revision operand: ``HEAD``, a full commit id or a branch ref; never a leading ``-``, ``..``, ``@{``, ``//`` or
+#: a trailing ``/`` or ``.``: what git can only read as one object name
+_REV = re.compile(
+    r"HEAD|[0-9a-f]{40}|[0-9a-f]{64}|refs/heads/(?!.*\.\.)(?!.*@\{)(?!.*//)[A-Za-z0-9_+@][A-Za-z0-9._+@/-]{0,199}(?<![/.])"
+)
 
 
-def _operand(op: Op, value: str | None) -> list[str]:
-    if op.operand is None:
-        if value is not None:
-            raise Unsafe("this git operation takes no operand")
-        return []
+def _check(kind: str, value: object) -> str:
     if not isinstance(value, str) or not value or "\0" in value or "\n" in value:
         raise Unsafe("invalid git operand")
-    if op.operand == "rev":
+    if kind == "rev":
         if not _REV.fullmatch(value) or value.endswith(".lock"):
             raise Unsafe("invalid revision")
-        return [value + op.suffix]
-    if value.startswith("/") or len(value) > 4096:  # a path of the index, relative to the top
+    elif kind == "context":
+        if not re.fullmatch(r"[0-9]|10", value):
+            raise Unsafe("invalid context")
+    elif value.startswith("/") or len(value) > 4096:  # a path of the index, relative to the top
         raise Unsafe("invalid path")
-    return [":0:" + value]  # an object name (stage 0 of that path): never an option, never a stage or :/ search
+    return value
+
+
+def _fill(op: Op, operand: str | tuple[str, ...] | None) -> list[str]:
+    """``op``'s arguments with each slot replaced by its validated operand (a path only ever lands in the object name
+    ``:0:<path>``: never an option, never a stage or a ``:/`` search)."""
+    values = () if operand is None else (operand,) if isinstance(operand, str) else tuple(operand)
+    if len(values) != len(op.operands):
+        raise Unsafe("wrong number of git operands")
+    it = iter(values)
+    return [_SLOT.sub(lambda m: _check(m.group(1), next(it)), a) for a in op.args]
 
 
 def command(
-    repo: str, op: str, own: Mapping[str, str], *, operand: str | None = None, timeout: float = GATE_SECONDS
+    repo: str,
+    op: str,
+    own: Mapping[str, str],
+    *,
+    operand: str | tuple[str, ...] | None = None,
+    timeout: float = GATE_SECONDS,
 ) -> tuple[list[str], dict[str, str]]:
     """The argv and environment of operation ``op`` of :data:`OPS` against ``repo`` (absolute), for the caller to
     spawn (``cwd="/"``, stdin closed). Runs :func:`gate` first, every time, and :func:`submodules` for an operation
@@ -421,12 +447,12 @@ def command(
     spec = OPS.get(op)
     if spec is None:
         raise Unsafe("unknown git operation")
-    tail = _operand(spec, operand)
+    args = _fill(spec, operand)
     gate(repo, own, timeout=timeout)
     if spec.tree:
         submodules(repo, own, timeout=timeout)
     entries = person_entries(own, spec.person, timeout=timeout)
-    return _argv(repo, [*spec.args, *tail]), isolated_env(own, entries)
+    return _argv(repo, args), isolated_env(own, entries)
 
 
 def gitlinks(raw: bytes) -> list[str]:

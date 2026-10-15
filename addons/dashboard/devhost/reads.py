@@ -879,21 +879,22 @@ def diff(store, views, args):
         recorded = next((e for e in v.source_list if e["repo"] == identity), None)
         if recorded is None:
             raise fail("observe.unavailable", f"{name}: the host has not observed a branch head", exit=3)
-        head = observe.git(path, "rev-parse", "--verify", "-q", f"refs/heads/{branch}^{{commit}}")
+        # operations of orch.gitsafe.OPS only (#546): no free git arguments
+        head = observe.git(path, "commit", rev=f"refs/heads/{branch}")
         # Bound to D58: the head shown is the source_sha a verdict would sign. A branch that moved since the host
         # observed it is refused, never shown as if it were that commit.
         if head != recorded["sha"]:
             raise fail("observe.unavailable", f"{name}: the branch moved since it was observed", exit=3)
         default = next(
-            (b for b in ("main", "master") if observe.git(path, "rev-parse", "--verify", "-q", f"refs/heads/{b}")), None
+            (f"refs/heads/{b}" for b in ("main", "master") if observe.git(path, "ref", rev=f"refs/heads/{b}")), None
         )
-        base = observe.git(path, "merge-base", head, default) if default else None
-        base = base or observe.git(path, "rev-parse", "--verify", "-q", f"{head}^")
+        base = observe.git(path, "merge_base", rev=(head, default)) if head and default else None
+        base = base or (observe.git(path, "parent", rev=head) if head else None)
         if not base:
             raise fail("observe.unavailable", f"{name}: no base to compare with", exit=3)
         sources.append({"repo": name, "branch": branch, "base_sha": base, "head_sha": head})
-        numstat = observe.git(path, "diff", "--numstat", "-M50%", base, head) or ""
-        names = observe.git(path, "diff", "--name-status", "-M50%", base, head) or ""
+        numstat = observe.git(path, "diff_numstat", rev=(base, head)) or ""
+        names = observe.git(path, "diff_names", rev=(base, head)) or ""
         status = {}
         for line in names.splitlines():
             code, *paths = line.split("\t")
@@ -904,7 +905,7 @@ def diff(store, views, args):
                 real = next((p for p in status if real.endswith(p)), real)
             code, old = status.get(real, ("M", None))
             files.append({**f, "path": real, "repo": name, "status": code, "old_path": old})
-        text = observe.git(path, "diff", f"-U{context}", "-M50%", base, head, strip=False) or ""
+        text = observe.git(path, "diff_patch", rev=(str(context), base, head), strip=False) or ""
         parts.append(text)
     unified = "".join(parts)
     if len(unified.encode()) > limit:

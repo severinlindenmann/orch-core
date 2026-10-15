@@ -1,9 +1,23 @@
 """Reading the linked git repositories (F1 5.7 "the host appends any pending ``branch.pushed``", D58).
 
 One place that talks to git for the core: ``orch.ops.runner`` (the commit and the cleanliness of the tree around a
-``task done --run``) and :func:`observe` (the source list of a ticket). Every git call runs with a **scrubbed
-environment**: all ``GIT_*`` variables are dropped (a caller cannot choose the repository, the index or the object store
-through them), ``core.fsmonitor`` is off and nothing is read from the user's terminal.
+``task done --run``) and :func:`observe` (the source list of a ticket). Every git call meets the invariant of
+:mod:`orch.gitsafe` (:data:`orch.gitsafe.ISOLATION`, #546): no configuration the person or the repository controls is
+read except through an explicit allow-list.
+
+* **A closed set of operations** (:data:`orch.gitsafe.OPS`): :func:`git` takes an operation name and at most one
+  validated operand (a branch ref), never free arguments, so no caller can add ``-c``, ``-C``, ``--git-dir`` or an
+  option of its own (Codex P1 on #561).
+* **The repository's own configuration:** :func:`orch.gitsafe.command` runs :func:`orch.gitsafe.gate` before every
+  operation, with no exception and no fallback (a key outside the allow-list, such as a ``filter.<d>.clean`` that a
+  ``.gitattributes`` selects, or a config file another account can write: git is not started and the answer is
+  ``None``, "cannot be told"). ``status`` never opens a submodule's work tree (``--ignore-submodules=dirty``) and
+  refuses a populated one (:func:`orch.gitsafe.submodules`); the operation enforces both, not the caller.
+* **The person's configuration:** system and global configuration off; ``status`` keeps only
+  :data:`orch.gitsafe.STATUS_KEYS`, every other operation nothing.
+* **The environment** is built from scratch (:func:`orch.gitsafe.isolated_env`): no ``GIT_*`` variable of the caller
+  (it cannot choose the repository, the index or the object store through them), no token, no ``ORCH_*``. Hooks,
+  fsmonitor, the network, pagers and diff programs are off, and git has no controlling terminal.
 """
 
 from __future__ import annotations
@@ -15,85 +29,129 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from orch import canon
+from orch import canon, gitsafe
 
-__all__ = ["git", "git_env", "head", "observe", "porcelain", "repo_identity", "repo_path"]
+__all__ = [
+    "NoAnswer", "dirty", "git", "head", "lookup", "observe", "porcelain", "refusal", "repo_identity", "repo_path",
+    "symbolic_head", "toplevel",
+]  # fmt: skip
 
 _HEX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _TIMEOUT = 30
 
 
-_ENV_ALLOW = ("PATH", "HOME", "LANG", "TMPDIR", "TERM")
+class NoAnswer(Exception):
+    """git gave no answer (a refusal, a timeout, a failure to start, or an exit other than "no such thing"): unlike
+    ``None`` from :func:`lookup`, which is git's honest "no result"."""
 
 
-def git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """The environment git runs in: an allow-list (``PATH``, ``HOME``, ``LANG``, ``LC_*``, ``TMPDIR``, ``TERM``). No
-    ``GIT_*`` variable (a caller cannot choose the repository, the index or a credential helper through them) and no
-    token, key or ``ORCH_*`` variable reaches git or the hooks and helpers it may start."""
-    src = os.environ if base is None else base
-    return {
-        k: v for k, v in src.items() if (k in _ENV_ALLOW or k.startswith("LC_")) and not k.upper().startswith("GIT_")
-    }
+#: the operations whose exit 1 is git's honest "no result" (a missing ref, no common ancestor), not a failure
+_LOOKUPS = frozenset({"ref", "commit", "parent", "merge_base"})
 
 
-def git(path: Path, *args: str, strip: bool = True) -> str | None:
-    """``git -C path ...`` on a scrubbed environment; stdout stripped (unless ``strip`` is off), ``None`` if git fails
-    or is missing."""
+def _run(path: Path, op: str, rev: str | tuple[str, ...] | None, strip: bool) -> tuple[int, str]:
+    """``(returncode, stdout)`` of operation ``op``; raises :class:`NoAnswer` when git gives no answer at all."""
+    own = os.environ
     try:
+        argv, env = gitsafe.command(os.path.abspath(path), op, own, operand=rev)
         done = subprocess.run(
-            [
-                "git",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "core.attributesFile=/dev/null",
-                "-c",
-                "protocol.allow=never",
-                "--no-optional-locks",
-                "-C",
-                str(path),
-                *args,
-            ],
+            argv,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="surrogateescape",
             timeout=_TIMEOUT,
             check=False,
-            env={**git_env(), "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_LAZY_FETCH": "1"},
+            env=env,
+            cwd="/",
             stdin=subprocess.DEVNULL,
-            start_new_session=True,  # no controlling terminal: a repository's filter cannot reach the person's tty
+            start_new_session=True,  # no controlling terminal: nothing git starts can reach the person's tty
         )
-    except (OSError, subprocess.SubprocessError):
+    except (gitsafe.Unsafe, OSError, subprocess.SubprocessError) as exc:
+        raise NoAnswer(type(exc).__name__) from None
+    out = gitsafe.plain_hunk_headers(done.stdout) if op == "diff_patch" else done.stdout  # repo-chosen text, #561
+    return done.returncode, (out.strip() if strip else out)
+
+
+def git(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None, strip: bool = True) -> str | None:
+    """Operation ``op`` of :data:`orch.gitsafe.OPS` against the repository at ``path``, isolated
+    (:func:`orch.gitsafe.command`: the gate first, every time; a populated submodule refused for ``status``; system
+    and global configuration off). ``rev``: the operation's operands, in order (revisions: ``HEAD``, a full commit id
+    or ``refs/heads/<name>``; ``diff_patch``'s context first), each validated. Stdout stripped (unless ``strip`` is
+    off). ``None`` if the operation or an operand is refused, the gate refuses, git fails or is missing: git is never
+    started after a refusal (fail closed). :func:`lookup` tells "no result" from "no answer"."""
+    try:
+        rc, out = _run(path, op, rev, strip)
+    except NoAnswer:
         return None
-    if done.returncode != 0:
+    return out if rc == 0 else None
+
+
+def lookup(path: Path, op: str, *, rev: str | tuple[str, ...] | None = None) -> str | None:
+    """A revision lookup (``ref``, ``commit``, ``parent``, ``merge_base``): its answer, or ``None`` when git answered
+    "no such thing" (exit 1: a missing ref, no common ancestor). Raises :class:`NoAnswer` when git gave no answer
+    (a refusal, a timeout, a failure), so a caller never mistakes a failed lookup for an honest empty one (Opus R8-L2
+    on #561)."""
+    if op not in _LOOKUPS:
+        raise ValueError(f"not a lookup: {op}")
+    rc, out = _run(path, op, rev, True)
+    if rc == 0:
+        return out
+    if rc == 1:
         return None
-    return done.stdout.strip() if strip else done.stdout
+    raise NoAnswer(f"exit {rc}")
 
 
 def head(path: Path) -> str | None:
     """The full commit id of ``HEAD``, or ``None``."""
-    out = git(path, "rev-parse", "HEAD")
+    out = git(path, "head")
     return out if out and _HEX.fullmatch(out) else None
 
 
+def refusal(path: Path) -> str | None:
+    """Why orch does not run git in the repository at ``path`` (:func:`orch.gitsafe.gate`'s reason), or ``None`` (no
+    refusal, or no repository at all: no ``.git`` at ``path`` or above it)."""
+    here = Path(os.path.abspath(path))
+    if not any(os.path.lexists(d / ".git") for d in (here, *here.parents)):
+        return None
+    try:
+        gitsafe.gate(os.path.abspath(path), os.environ)
+    except gitsafe.Unsafe as exc:
+        return exc.reason
+    return None
+
+
+def symbolic_head(path: Path) -> str | None:
+    """The branch ref ``HEAD`` names (``refs/heads/<branch>``), ``None`` when detached or unreadable."""
+    return git(path, "symbolic_head")
+
+
+def toplevel(path: Path) -> str | None:
+    """The top of the working copy ``path`` is in, or ``None``."""
+    return git(path, "toplevel")
+
+
 def porcelain(path: Path) -> str | None:
-    """``git status --porcelain`` (empty: a clean tree, untracked files count); ``None`` if git fails."""
-    return git(path, "status", "--porcelain=v1", "--untracked-files=normal")
+    """``git status --porcelain`` (empty: a clean tree, untracked files count); ``None`` if git fails, the gate
+    refuses or a submodule is checked out."""
+    return git(path, "status")
 
 
 def dirty(path: Path) -> str | None:
-    """Best effort: what a person would call uncommitted work. ``git status --porcelain`` (untracked files included)
-    plus
-    the files git is told to ignore changes of (``skip-worktree`` and ``assume-unchanged``, from ``git ls-files -v``).
-    Empty means clean as far as this can tell; ``None`` means git could not be asked. It cannot see everything (files
-    matched by ``.gitignore`` or ``info/exclude``, a ``filter`` in the repository's own config): a receipt is
-    attested by
-    the agent's environment anyway (F1 10.7)."""
+    """Best effort: what a person would call uncommitted work. ``git status --porcelain`` (untracked files included),
+    a staged gitlink change (``status`` never looks at submodules), and the files git is told to ignore changes of
+    (``skip-worktree`` and ``assume-unchanged``, from ``git ls-files -v``). Empty means clean as far as this can tell;
+    ``None`` means git could not be asked, or the repository's own configuration is outside orch's allow-list, or it
+    has a checked-out submodule (:mod:`orch.gitsafe`). It cannot see everything (files matched by ``.gitignore`` or
+    ``info/exclude``): a receipt is attested by the agent's environment anyway (F1 10.7)."""
     status = porcelain(path)
-    listing = git(path, "ls-files", "-v")
-    if status is None or listing is None:
+    staged = git(path, "staged_tree", strip=False)  # the whole repository, not only below path
+    listing = git(path, "index_flags")
+    if status is None or staged is None or listing is None:
         return None
-    hidden = [ln[2:] for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]
-    return status + ("\n" if status and hidden else "") + "\n".join(f"hidden change flag: {h}" for h in hidden)
+    lines = [status] if status else []
+    lines += [f"staged submodule change: {p}" for p in gitsafe.gitlinks(staged.encode("utf-8", "surrogateescape"))]
+    lines += [f"hidden change flag: {ln[2:]}" for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]
+    return "\n".join(lines)
 
 
 def repo_path(root: Path, repos: Mapping[str, Mapping[str, str]], name: str) -> Path | None:
@@ -105,9 +163,17 @@ def repo_path(root: Path, repos: Mapping[str, Mapping[str, str]], name: str) -> 
 def repo_identity(path: Path, name: str) -> str:
     """The identity of the repository (F1 5.7) from the raw ``remote.origin.url`` (no ``insteadOf``, unstripped): the
     canonical ``https://`` URL it maps to, else ``local:<name>``; more than one value is ``local:<name>`` (git fetches
-    from the first and pushes to all)."""
-    out = git(path, "config", "--null", "--get-all", "remote.origin.url", strip=False)
-    values = [v for v in (out or "").split("\0") if v]
+    from the first and pushes to all).
+
+    Read from the repository's own configuration as the gate lists it (:func:`orch.gitsafe.local_config`: isolated,
+    ``--no-includes``, executes nothing), not by a second git command, so a repository the gate would refuse (say, a
+    local ``url.<base>.insteadOf``) still has its identity (F1 5.7) and nothing runs. A listing that fails is
+    ``local:<name>``."""
+    try:
+        entries = gitsafe.local_config(os.path.abspath(path), os.environ)
+    except gitsafe.Unsafe:
+        entries = []
+    values = [v for _scope, k, v in entries if k == "remote.origin.url" and v]
     return canon.canonical_repo_identity(values[0] if len(values) == 1 else "", name)
 
 
@@ -160,11 +226,11 @@ def observe(store: Any, ref: str, problems: list[str] | None = None, backend: An
                 continue
             sha = found
         else:
-            if git(path, "rev-parse", "--verify", "-q", ref_name) is None:
+            if git(path, "ref", rev=ref_name) is None:
                 if problems is not None:
                     problems.append(f"{name}: git does not know {ref_name}; its code cannot be observed")
                 continue
-            sha = git(path, "rev-parse", "--verify", "-q", f"{ref_name}^{{commit}}")
+            sha = git(path, "commit", rev=ref_name)
             if not sha or not _HEX.fullmatch(sha):
                 if problems is not None:
                     problems.append(f"{name}: {ref_name} names no commit object; nothing was recorded")

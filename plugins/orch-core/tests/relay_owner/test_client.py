@@ -24,7 +24,7 @@ from orch.relay_owner import (
 from ..relay import corpus
 from ..relay.helpers import V_ORIGIN
 from ..relay.mock import Expect, MockRelay, Reply, fixture_expect, json_reply
-from .kit import PERSON, PHONE, PK, VecSigner, challenge_of, client, login_expects, proof_ok
+from .kit import PERSON, PHONE, PK, VecPK, VecSigner, challenge_of, client, login_expects, proof_ok
 
 CERTS = corpus.S2["certs"]["signed"]
 
@@ -528,29 +528,6 @@ def test_no_secret_in_logs(relay, caplog):
 
 
 # --- the primary's own certificate ------------------------------------------------------------------------------------
-
-
-class VecPK:
-    """A vector person key behind the ``PersonKeySource`` surface the builders use."""
-
-    def __init__(self) -> None:
-        self._k = corpus.priv("person_alice.sig")
-        self.pk_pub = PK
-        self.person_id = crypto.person_id(PK)
-        self.labels: list[str] = []
-
-    def signer(self, label):
-        from orch.crypto.labels import L
-
-        def sign(payload: bytes) -> bytes:
-            assert payload.startswith(L[label])
-            self.labels.append(label)
-            return crypto.sign(self._k, payload)
-
-        return sign
-
-    def derive_label_key(self) -> bytes:
-        return b"\x07" * 32
 
 
 def test_primary_certificate_is_look_only_never_expiring_and_label_sealed():

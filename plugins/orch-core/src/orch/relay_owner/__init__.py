@@ -19,9 +19,23 @@ from .client import (
     Route,
     primary_certificate,
 )
+from .journal import Entry, JournalError, PrimaryJournal, RequestConflict, journal_dir
+from .queue import ANSWER_LABELS, PHONE_SCOPES, Pending, Poll, PrimaryQueue, QueueRefused, Skipped
 
 __all__ = [
+    "ANSWER_LABELS",
     "MAX_LISTED_REQUESTS",
+    "PHONE_SCOPES",
+    "Entry",
+    "JournalError",
+    "Pending",
+    "Poll",
+    "PrimaryJournal",
+    "PrimaryQueue",
+    "QueueRefused",
+    "RequestConflict",
+    "Skipped",
+    "journal_dir",
     "ROUTES",
     "DeviceSigner",
     "OwnerClient",

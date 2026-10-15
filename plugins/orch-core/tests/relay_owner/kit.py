@@ -87,3 +87,25 @@ def login_expects(token: str = "FAKE-primary", *, signer: VecSigner | None = Non
             json_reply(200, {"token": token, "expires_ms": 1_790_000_900_000}),
         ),
     ]  # fmt: skip
+
+
+class VecPK:
+    """A vector person key behind the ``PersonKeySource`` surface the builders use (``pk_pub``, ``person_id``,
+    ``signer(label)``, ``derive_label_key()``); records every label it signed."""
+
+    def __init__(self, name: str = "person_alice") -> None:
+        self._k = corpus.priv(f"{name}.sig")
+        self.pk_pub = corpus.pub(f"{name}.sig")
+        self.person_id = crypto.person_id(self.pk_pub)
+        self.labels: list[str] = []
+
+    def signer(self, label: str):
+        def sign(payload: bytes) -> bytes:
+            assert payload.startswith(L[label])
+            self.labels.append(label)
+            return crypto.sign(self._k, payload)
+
+        return sign
+
+    def derive_label_key(self) -> bytes:
+        return b"\x07" * 32

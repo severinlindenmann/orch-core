@@ -386,7 +386,9 @@ class Pump:
     def __init__(self, client, loop: asyncio.AbstractEventLoop, post):
         self.client, self.loop, self.post = client, loop, post
         self.stopped = threading.Event()
-        if client is not None and getattr(client, "sock", None) is not None:
+        # Core's TermClient from orch-core #475 on has its own write deadline (`send_timeout`) and calls socket methods
+        # this wrapper does not offer (setblocking, send): wrap only an older client.
+        if client is not None and getattr(client, "sock", None) is not None and not hasattr(client, "send_timeout"):
             client.sock = SteadyWrites(client.sock, self.stopped)
         self.inbox: queue.SimpleQueue = queue.SimpleQueue()
         self.pending = 0  # unacknowledged input bytes (read by the loop; written here)
@@ -408,9 +410,10 @@ class Pump:
         self.stopped.set()
         # A write already blocked on a slow runner ends now, not after WRITE_TIMEOUT; reads end too (delta2 D2-L1).
         sock = getattr(self.client, "sock", None)
-        if isinstance(sock, SteadyWrites):
+        raw = sock.sock if isinstance(sock, SteadyWrites) else sock
+        if isinstance(raw, socket.socket):
             with suppress(OSError):
-                sock.sock.shutdown(socket.SHUT_RDWR)
+                raw.shutdown(socket.SHUT_RDWR)
 
     def _deliver(self, item):
         if not self.stopped.is_set():

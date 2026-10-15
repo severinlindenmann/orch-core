@@ -25,6 +25,22 @@ def state_dir(env=None) -> Path:
     return core_state_dir(os.environ if env is None else env)
 
 
+class RunDirectoryError(RuntimeError):
+    """A legacy override would send the dashboard to a different host."""
+
+
+def run_dir(state: Path, env=None) -> Path:
+    from orch.host.enable import run_dir_for
+
+    env = os.environ if env is None else env
+    run = run_dir_for(state, env=env)
+    if "ORCH_RUN_DIR" in env and Path(env["ORCH_RUN_DIR"]).absolute() != run:
+        raise RunDirectoryError(
+            "ORCH_RUN_DIR is no longer read; set ORCH_HOST_RUN_DIR (the host's run directory) instead"
+        )
+    return run
+
+
 def read_pins(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
@@ -57,9 +73,9 @@ WRITE_OPS = ("move", "settings.set", "policy.set", "member.add", "member.role", 
 class Gateway:
     def __init__(self, state=None, click=None):
         self.state = state or state_dir()
+        self.run = run_dir(self.state)
         # The one signer child of this server (started on first use, so a dev server with no host starts none).
         self.click = click or Signer(self.state)
-        self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run"))).absolute()
         self.links = {}
         self.control = None
         self.lock = threading.RLock()

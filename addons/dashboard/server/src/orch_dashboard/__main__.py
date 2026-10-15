@@ -25,7 +25,7 @@ import uvicorn
 
 from .app import create_app
 from .auth import Auth
-from .gateway import state_dir
+from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
 
 
@@ -112,6 +112,7 @@ def sweep_redirects(directory, now=None):
 
 
 def serve(lock_held=False):
+    run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
         if not lock_held:
@@ -122,6 +123,7 @@ def serve(lock_held=False):
 
 def _serve(directory, lock_fd=None):
     # For a child, its launcher holds the startup lock until ctl.sock answers.
+    gateway = Gateway()
     ctl_path = directory / "ctl.sock"
     stale_socket(ctl_path)
     redirects = redirect_directory(directory)
@@ -134,7 +136,7 @@ def _serve(directory, lock_fd=None):
     listener.listen(128)
     port = listener.getsockname()[1]
     config = uvicorn.Config(
-        create_app(port, auth=auth),
+        create_app(port, gateway=gateway, auth=auth),
         proxy_headers=False,
         access_log=False,
         log_level="warning",
@@ -222,6 +224,7 @@ def open_dashboard(path="/", print_url=False):
     path = safe_path(path)
     if print_url and not sys.stdout.isatty():
         raise RuntimeError("--print-url requires a terminal")  # before anything is started or minted
+    run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd, locked(fd):
         try:
@@ -303,13 +306,16 @@ def main():
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args.command == "serve" and not args.stop:
-        return serve(args.launcher_lock)
     try:
+        if args.command == "serve" and not args.stop:
+            return serve(args.launcher_lock)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
         else:
             open_dashboard(args.path, print_url=args.print_url)
+    except RunDirectoryError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except (RuntimeError, OSError) as exc:
         # A one-line refusal for the person at the terminal; nothing was started or minted on the refusals above.
         print(f"orch-dashboard: {exc}", file=sys.stderr)

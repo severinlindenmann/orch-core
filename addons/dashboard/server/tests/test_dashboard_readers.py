@@ -276,3 +276,27 @@ def test_a_host_without_reader_1_answers_not_available(worlds, p1):
 
 def test_the_readers_route_needs_a_session(client, stub):
     assert client.get(f"/api/w/{stub.ws}/readers").status_code == 401
+
+
+def test_the_detail_table_matches_cores_per_code_table():
+    """errors.DETAIL_KEYS mirrors core's orch.host.errors.DETAIL_KEYS: a code, key or value core adds or removes must be
+    a deliberate change here too (Opus delta L1). The dashboard is at least as strict: `next_key` is checked against
+    the ticket-key format where core leaves it open (None), and an over-long device list is dropped, never cut."""
+    from orch.host import errors as core
+
+    from orch_dashboard import errors as dash
+
+    assert dash.DETAIL_KEYS.keys() == core.DETAIL_KEYS.keys()
+    for code, keys in core.DETAIL_KEYS.items():
+        assert dash.DETAIL_KEYS[code].keys() == keys.keys(), code
+        for key, allowed in keys.items():
+            mine = dash.DETAIL_KEYS[code][key]
+            if isinstance(allowed, tuple):
+                assert set(mine) == set(allowed), (code, key)
+            elif allowed is None:
+                assert mine == dash.KEY, (code, key)  # stricter: a ticket key, not free text
+            else:
+                assert mine == allowed, (code, key)
+    assert dash.DEVICES_MAX == core.DEVICES_MAX
+    assert dash.DEVICE.pattern == core._DEVICE.pattern
+    assert dash.TICKET_KEY.pattern == core._KEY.pattern

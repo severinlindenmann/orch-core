@@ -14,7 +14,7 @@ import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
 import { HostRecords } from '@/app/pages/settings/host/Records'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
-import { createPairFixture, installPairFixture, type PairFixtureOptions } from './pairFixture'
+import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { PairDevice, PairOfferStatus } from '@/api/pairing'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
@@ -193,7 +193,8 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
     case 'pair-cert':
       return { offers: [pairOffer('cert_pending', { cert_code: 'H4WZ7P' })], devices }
     case 'pair-failed':
-      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], devices }
+      // A failed offer is not live: the scenario follows it as the page would right after the failure.
+      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: 'of_' + '7'.repeat(32) }, devices }
     case 'pair-devices':
       return { devices: [...devices, ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))] }
     default:
@@ -201,6 +202,13 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
   }
 }
 let undoPair: (() => void) | null = null
+let pairOverride: PairFixtureOptions | null = null
+let pairFixture: PairFixture | null = null
+/** Tests: options merged into the next pair scenario, and the fixture it installed (to drive `pair` items). */
+export const pairPreviewForTests = {
+  set: (o: PairFixtureOptions | null) => void (pairOverride = o),
+  fixture: () => pairFixture,
+}
 
 let current: LayoutScenario = 'quick-normal'
 let installed = false
@@ -218,6 +226,8 @@ export function resetLayoutPreview() {
   originals.clear()
   undoPair?.()
   undoPair = null
+  pairOverride = null
+  pairFixture = null
   installed = false
   current = 'quick-normal'
   serial = 0
@@ -292,7 +302,8 @@ export function LayoutPreview({ name }: { name: string }) {
     current = name as LayoutScenario
     if (current.startsWith('pair-')) {
       undoPair?.()
-      undoPair = installPairFixture(createPairFixture(pairOptions(current)))
+      pairFixture = createPairFixture({ ...pairOptions(current), ...pairOverride })
+      undoPair = installPairFixture(pairFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
     for (const key of ['quick', 'records', 'identity', 'runs', 'pair']) qc.removeQueries({ queryKey: [key] })

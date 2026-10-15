@@ -88,6 +88,10 @@ function Pairing({ workspace }: { workspace: Workspace }) {
 
   const live = preview.data?.live_offer ?? null
   const currentId = follow ?? (live && !dismissed.has(live) ? live : null)
+  // Keep following the host's live offer once shown, also after it ends (its outcome stays until "Start again").
+  useEffect(() => {
+    if (!follow && live && !dismissed.has(live)) setFollow(live)
+  }, [follow, live, dismissed])
   const status = list.data?.offers.find((o) => o.offer_id === currentId) ?? null
 
   // Belt and braces: whatever the list says past `open` also drops the link.

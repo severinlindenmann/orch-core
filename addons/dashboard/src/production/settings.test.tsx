@@ -21,6 +21,14 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })
 
+it('Devices on a real host: pairing a phone is not available yet, and no pairing request is made', async () => {
+  show('/w/DEMO/settings/devices')
+  expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone is not available on this host yet.')
+  expect(state.host.calls.filter((c) => /pair|device/.test(c.path))).toEqual([])
+  expect(state.host.posts()).toEqual([])
+  expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
+})
+
 it('General shows what the host says, marks defaults and lists repositories read only', async () => {
   show('/w/DEMO/settings/general')
   expect(await screen.findByLabelText(/Agent grant length/, {}, T)).toHaveValue(8)

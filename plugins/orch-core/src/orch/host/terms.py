@@ -154,7 +154,9 @@ def _require_ready(service: WorkspaceService, hub: RunnerHub | None) -> RunnerHu
         raise HostError("runner.unavailable", "this host serves no runner", retry_after_ms=1000)
     gone = missing(service, hub)
     if gone is not None:
-        raise HostError("runner.disabled", f"terminals are not available here: {gone} missing")
+        raise HostError(
+            "runner.disabled", f"terminals are not available here: {gone} missing", detail={"missing": gone}
+        )
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     return hub
@@ -199,7 +201,7 @@ def serve(call: Call) -> dict[str, Any]:
             raise HostError("idem.required", "term.open needs opts.idem")
         plan = _plan(call, args, hub)
         if plan["blocked"] is not None:
-            raise HostError(plan["blocked"]["code"], plan["blocked"]["message"])
+            raise HostError(plan["blocked"]["code"], plan["blocked"]["message"], detail=plan["blocked"].get("detail"))
         if plan["spec"] != args["spec"]:
             raise HostError("launch.changed", "what term.open would start differs from the preview: preview again")
         return ok_result(
@@ -268,12 +270,16 @@ async def _open(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, A
 
     state = enablement.state_of(hub.host.state_dir, wid, hub.host.host_uid)  # read again at use
     if not state["enabled"] or not state["terminals"]:
-        raise HostError("runner.disabled", "terminals are not available here: machine missing")
+        raise HostError(
+            "runner.disabled", "terminals are not available here: machine missing", detail={"missing": "machine"}
+        )
     live = [r for r in hub.store.records.values() if r.get("state") in runners.LIVE]
     if sum(1 for r in live if r.get("person") == person and r.get("kind") == "shell") >= SHELLS_PER_PERSON:
-        raise HostError("run.limit", "at most 16 shells per person", retry_after_ms=5000)
+        raise HostError(
+            "run.limit", "at most 16 shells per person", retry_after_ms=5000, detail={"which": "shell_person"}
+        )
     if sum(1 for r in live if r.get("runner_uid") == hub.uid) >= RUNS_PER_RUNNER:
-        raise HostError("run.limit", "at most 64 runs per runner", retry_after_ms=5000)
+        raise HostError("run.limit", "at most 64 runs per runner", retry_after_ms=5000, detail={"which": "runner"})
     if not hub.take_start(person):
         raise HostError("rate.limited", "at most 10 starts per minute", retry_after_ms=hub.start_retry_ms(person))
     launch = data["launch"]
@@ -301,7 +307,9 @@ async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
 
     state_now = enablement.state_of(hub.host.state_dir, call.service.workspace_id, hub.host.host_uid)
     if not state_now["enabled"] or not state_now["terminals"]:  # the switch is read again at use
-        raise HostError("runner.disabled", "terminals are not available here: machine missing")
+        raise HostError(
+            "runner.disabled", "terminals are not available here: machine missing", detail={"missing": "machine"}
+        )
     rec = hub.store.records.get(run)
     if rec is None or rec.get("person") != person:
         raise HostError("not_found", "no such run")
@@ -311,7 +319,9 @@ async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
     elif state == "exited" and mode == "read" and _replayable(rec):
         pass
     else:
-        raise HostError("term.not_attachable", f"the run is {state}: nothing can be attached to it")
+        raise HostError(
+            "term.not_attachable", f"the run is {state}: nothing can be attached to it", detail={"state": state}
+        )
     if rec.get("workspace_id") != call.service.workspace_id:
         raise HostError("not_found", "no such run")
     if not hub.connected or rec.get("runner_uid") != hub.uid or rec.get("gen") != hub.generation:

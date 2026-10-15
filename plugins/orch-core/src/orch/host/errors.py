@@ -6,9 +6,10 @@ leaves the connection open ("stays"); ``host.restarting`` keeps the connection o
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-__all__ = ["HOST_CODES", "HostError", "disposition"]
+__all__ = ["DETAIL_KEYS", "HOST_CODES", "HostError", "closed_detail", "disposition"]
 
 #: §0.6 codes the host adds, as (exit, retryable). ``lock.busy`` is exit 9 on the socket (§0.6), unlike P1's exit 4.
 HOST_CODES: dict[str, tuple[int, bool]] = {
@@ -110,6 +111,38 @@ def disposition(code: str) -> tuple[int, bool]:
     return (spec.exit, spec.retryable) if spec is not None else (5, False)
 
 
+#: §0.3 ``Error.detail`` (contract v1.9): the CLOSED per-code schema. Only these codes carry detail, only these
+#: keys, and each value is a member of a closed set or a key-format string: never free text, never a secret.
+#: ``None`` marks a format-checked string (a ticket key), a tuple a closed value set.
+_KEY = re.compile(r"[A-Z][A-Z0-9]{1,9}-[0-9]{4,}")
+DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | None]] = {
+    "term.not_attachable": {"state": ("starting", "running", "exited", "lost")},
+    "run.limit": {"which": ("agent_ws", "agent_person", "shell_person", "runner")},
+    "launch.no_grant": {"reason": ("none", "expiring", "scope", "revoked")},
+    "runner.disabled": {"missing": ("addon", "machine")},
+    "ticket.key_not_next": {"next_key": None},
+}
+
+
+def closed_detail(code: str, detail: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The part of ``detail`` the socket may send for ``code``: listed keys with allowed values, else ``None``."""
+    allowed = DETAIL_KEYS.get(code)
+    if not allowed or not detail:
+        return None
+    out: dict[str, Any] = {}
+    for key, values in allowed.items():
+        value = detail.get(key)
+        if not isinstance(value, str):
+            continue
+        if values is None:
+            if _KEY.fullmatch(value) is None:
+                continue
+        elif value not in values:
+            continue
+        out[key] = value
+    return out or None
+
+
 class HostError(Exception):
     """One request's refusal: ``response(request_id)`` is its ``res`` frame, ``error()`` its stored ``Error``."""
 
@@ -124,8 +157,8 @@ class HostError(Exception):
         detail: dict[str, Any] | None = None,
     ) -> None:
         self.code = code
-        #: structured facts for an in-process caller (``ticket.key_not_next``: ``{"next_key": ...}``, §11A.14). Not
-        #: part of the socket ``Error`` (§0.3 has no ``detail``): R2 decides how its relay answer carries it
+        #: structured facts for an in-process caller (``ticket.key_not_next``: ``{"next_key": ...}``, §11A.14). The
+        #: socket ``Error`` carries only :func:`closed_detail` of it (§0.3, contract v1.9)
         self.detail = dict(detail) if detail else None
         self.message = (message or code)[:400]
         self.exit, self.retryable = disposition(code)
@@ -142,6 +175,9 @@ class HostError(Exception):
             out["fix"] = {"argv": list(self.fix)}
         if self.retry_after_ms is not None:
             out["retry_after_ms"] = self.retry_after_ms
+        sent = closed_detail(self.code, self.detail)
+        if sent:
+            out["detail"] = sent
         return out
 
     def response(self, request_id: str) -> dict[str, Any]:
@@ -156,6 +192,7 @@ class HostError(Exception):
             retry_after_ms=error.get("retry_after_ms"),
             hint=error.get("hint"),
             fix=fix,
+            detail=error.get("detail"),
         )
         e.retryable = bool(error.get("retryable", e.retryable))
         return e

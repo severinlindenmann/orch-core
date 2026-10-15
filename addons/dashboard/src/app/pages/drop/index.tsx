@@ -7,9 +7,9 @@
 // new tab; a download is an `application/octet-stream` blob behind an anchor with `download`.
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { DROP_UNAVAILABLE, dropApi, dropError, dropQueries, dropServed, fmtBytes, newIdem, saveBytes, sizeRefusal, uploadBlob, UploadCancelled, type DropDirection, type DropErrorDetail, type DropInfo, type DropItem, type DropState, type DropVersion } from '@/api/drop'
+import { DROP_UNAVAILABLE, dropApi, dropError, dropQueries, dropBlob, dropServed, fmtBytes, newIdem, saveBytes, sizeRefusal, uploadBlob, UploadCancelled, type DropDirection, type DropErrorDetail, type DropInfo, type DropItem, type DropState, type DropVersion } from '@/api/drop'
 import type { Workspace } from '@/api/types'
-import { Inline } from '@/components/sign/visible'
+import { Inline, Raw, visible } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { fmtDateTime } from '@/lib/time'
@@ -56,7 +56,7 @@ export function DropErrorLine({ detail, children }: { detail: DropErrorDetail; c
   return (
     <div role="alert" data-testid="drop-error" data-code={detail.code} className="space-y-1 text-[13px] text-danger">
       <p>
-        {detail.text} <Mono className="text-text-muted">{detail.code}</Mono>
+        {detail.text} <Mono className="text-text-muted">{visible(detail.code)}</Mono>
         {detail.quota !== undefined && (
           <>
             {' '}
@@ -189,7 +189,7 @@ export function DropName({ name, hidden }: { name: string | null; hidden: boolea
 function Author({ author }: { author: DropItem['author'] }) {
   return (
     <span data-testid="drop-author">
-      {author.person_name ? <Inline>{author.person_name}</Inline> : <Mono>{author.person}</Mono>} · device <Mono>{author.device}</Mono>
+      {author.person_name ? <Inline>{author.person_name}</Inline> : <Raw>{author.person}</Raw>} · device <Raw>{author.device}</Raw>
       {author.origin === 'agent' ? (
         <Pill tone="warning" className="ml-1.5">
           <span data-testid="drop-agent">sealed by an agent</span>
@@ -248,7 +248,7 @@ function Row({ ws, item, info, open, onToggle, onRetire, onChanged }: { ws: stri
           <Button size="sm" variant="outline" data-testid="drop-download" disabled={blocked !== null || busy} aria-describedby={blocked ? `why-${item.object_id}` : undefined} onClick={() => void download()}>
             {busy ? 'Downloading…' : 'Download'}
           </Button>
-          {!tomb && (
+          {!tomb && item.can_retire !== false && (
             <Button size="sm" variant="outline" data-testid="drop-delete" onClick={onRetire}>
               Delete
             </Button>
@@ -319,8 +319,13 @@ function Row({ ws, item, info, open, onToggle, onRetire, onChanged }: { ws: stri
 /** `drop.read` then the bytes, saved as a download. Never inline, never a new tab. */
 async function downloadVersion(ws: string, object_id: string, version: number) {
   const r = await dropApi.read(ws, { object_id, version })
-  const bytes = await dropApi.content(ws, r.blob)
-  saveBytes(bytes, r.name_hidden ? null : r.name, `drop-${object_id}-v${version}`)
+  // The read blob is decrypted content at rest on the host: dropped once the bytes are here (or the fetch failed).
+  try {
+    const bytes = await dropApi.content(ws, r.blob)
+    saveBytes(bytes, r.name_hidden ? null : r.name, `drop-${object_id}-v${version}`)
+  } finally {
+    dropBlob(ws, r.blob)
+  }
 }
 
 // ——— Document versions ———
@@ -485,7 +490,7 @@ function Upload({ ws, info, onSent, target, initial }: { ws: string; info: DropI
     setPhase({ k: 'uploading', name: file.name, sent: 0, total: file.size })
     let blob: string
     try {
-      blob = await uploadBlob(ws, file, { signal: ctl.signal, onProgress: (sent, total) => !ctl.signal.aborted && setPhase({ k: 'uploading', name: file.name, sent, total }) })
+      blob = await uploadBlob(ws, file, { maxBytes: info.max_bytes, signal: ctl.signal, onProgress: (sent, total) => !ctl.signal.aborted && setPhase({ k: 'uploading', name: file.name, sent, total }) })
     } catch (e) {
       abort.current = null
       return setPhase(e instanceof UploadCancelled ? { k: 'cancelled', name: file.name } : { k: 'error', name: file.name, detail: dropError(e, info) })
@@ -498,6 +503,8 @@ function Upload({ ws, info, onSent, target, initial }: { ws: string; info: DropI
       setPhase({ k: 'done', name: file.name })
       onSent()
     } catch (e) {
+      // A refused send doesn't consume the blob (§0.10): drop it, it holds host quota and the plaintext.
+      dropBlob(ws, blob)
       setPhase({ k: 'error', name: file.name, detail: dropError(e, info) })
     }
   }

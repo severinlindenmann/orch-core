@@ -1729,10 +1729,34 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
   `application/octet-stream`, behind a hidden `<a download>` that is clicked and removed; the object URL is revoked after 30 s. Never
   rendered inline, never `window.open`, no iframe/img/object, no preview.
 - **The future server route** (`GET /api/workspaces/:ws/drop/blob/:blob`, not built): `Content-Type: application/octet-stream`,
-  `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded host-cleaned name>`,
+  `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded name>`,
   `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Content-Security-Policy: sandbox; default-src 'none'`,
-  `Referrer-Policy: no-referrer`; the blob id checked against `^b_[A-Z2-7]{26}$`, bound to the viewer's session and workspace; no Range.
-  The page then uses an anchor to that route with `download` instead of the blob URL.
+  `Referrer-Policy: no-referrer`; no Range. Review L5 (Opus, 15 Oct) fixes the plan:
+  1. **Auth:** the page keeps `fetch` with the `Authorization` header, then the blob URL + `<a download>` it uses now. A plain anchor to
+     the route can't carry the bearer token; the session token is never put in a query string. (A short-lived single-use download ticket
+     is the alternative if streaming large files through memory becomes a problem.)
+  2. **Header values:** the name is first passed through the page's `downloadName` rule (below), server side too. The `filename=` ASCII
+     fallback keeps only `[A-Za-z0-9._ -]` (so no `"`, `\`, CR/LF, `;` or non-ASCII; empty → `drop-<object>-v<n>`). `filename*` percent-
+     encodes every byte outside RFC 8187 attr-char.
+  3. **Blob scope:** the route serves only a blob that a `drop.read` by this viewer's session in this workspace returned (the server
+     remembers it), never any other host blob; id checked against `^b_[A-Z2-7]{26}$`; the blob is dropped after it is served.
+- **Review fixes (Opus review, 15 Oct; APPROVE, 6 Low):**
+  - **L1, saved filename:** display and the filesystem are separate sinks. Display still cleans nothing. The saved name
+    (`downloadName` in `drop.ts`) is the host's name only if it is plain: `visible(name) === name` (no invisible, bidi, control,
+    non-plain space or decomposed characters, no backslash), no `/ \ : * ? " < > |`, no leading or trailing dot or space, not a Windows
+    device name, not a launcher (`.lnk`, `.url`, `.desktop`, `.command`, `.webloc` …), at most 120 characters. Anything else is saved as
+    `drop-<object>-v<n>`. The name is never rewritten into a look-alike.
+  - **L2:** `uploadBlob` checks the bytes it actually read against `max_bytes` (as well as `File.size` at pick time).
+  - **L3:** the allocated blob is dropped on any upload failure (not only cancel) and after a refused `drop.send`. The decrypted
+    `drop.read` blob is dropped once its bytes are fetched (best-effort `blob.drop`). Host contract wish: read blobs single-use or
+    short-lived anyway.
+  - **L4:** the upload continues from the host's `received`, clamped to the file. A `received` that goes backwards or doesn't move is
+    `blob.invalid`.
+  - **L6:** `DropItem.can_retire` (optional, ASSUMPTION pending D39a1): `false` hides Delete. A refusal maps to `drop.not_eligible`
+    with a sentence.
+  - **Info:** host ids and error codes are shown through `visible()`/`Raw` (I1). The revoke after 30 s is tested (I3). The real api's
+    "not served" is its own code, `drop.not_served`, distinct from `drop.unavailable` (relay unreachable) (I4). I2 (a countdown on Retry
+    following `retry_after_ms`) is not done: nothing retries automatically and the text says when.
 - **Revert:** delete `src/api/drop.ts`, `src/app/pages/drop/`, `src/dev/dropFixture.ts`, the `drop-*` scenarios in
   `src/dev/layoutPreview.tsx`, the `real-host-drop-*` guard entries (`scripts/layout-guard.mjs`, `layout-guard-pages.mjs`, the test in
   `layoutGuardPages.test.ts`), `dropRoute` in `router.tsx` and the Drop entry in `Sidebar.tsx`.

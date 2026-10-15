@@ -4,7 +4,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
-import { CHUNK_BYTES, DropError, dropApi, dropError, dropServed, fmtBytes, realDropApi, sizeRefusal } from '@/api/drop'
+import { CHUNK_BYTES, DropError, dropApi, dropError, downloadName, dropServed, fmtBytes, MAX_FILE_NAME, realDropApi, saveBytes, sizeRefusal, uploadBlob } from '@/api/drop'
 import { DROP_SAMPLE_ERRORS, dropPreviewForTests, resetLayoutPreview } from '@/dev/layoutPreview'
 import { createDropFixture, dropItem, installDropFixture, PHONE } from '@/dev/dropFixture'
 import { renderApp } from '@/test/renderApp'
@@ -44,8 +44,8 @@ const pick = async (view: ReturnType<typeof renderApp>, f: File) => view.user.up
 describe('the gate', () => {
   it('the real api answers "not available" and the gate needs both the feature and a served api', async () => {
     expect(realDropApi.served('w')).toBe(false)
-    await expect(realDropApi.list('w', { direction: 'received' })).rejects.toMatchObject({ code: 'drop.unavailable' })
-    await expect(realDropApi.blobPut('w', { offset: 0, b64: '', last: true })).rejects.toMatchObject({ code: 'drop.unavailable' })
+    await expect(realDropApi.list('w', { direction: 'received' })).rejects.toMatchObject({ code: 'drop.not_served' })
+    await expect(realDropApi.blobPut('w', { offset: 0, b64: '', last: true })).rejects.toMatchObject({ code: 'drop.not_served' })
     setFeatures({ features: [] })
     expect(dropServed('w')).toBe(false)
     setFeatures({ features: ['drop'] })
@@ -331,5 +331,142 @@ describe('delete', () => {
     const view = open('drop-list')
     await view.user.click(within(await rowOf('meeting-notes.md')).getByTestId('drop-delete'))
     expect(await screen.findByTestId('drop-confirm', {}, T)).toHaveTextContent('Delete this document for everyone?It is removed for everyone at once, with all its versions.')
+  })
+})
+
+describe('review fixes', () => {
+  it('L1: the saved name is the host name only when plain; otherwise the fixed fallback', () => {
+    const fb = 'drop-x-v1'
+    expect(downloadName('quarterly-report.pdf', fb)).toBe('quarterly-report.pdf')
+    expect(downloadName('Übersicht 2026.pdf', fb)).toBe('Übersicht 2026.pdf')
+    for (const bad of ['invoice\u202Efdp.exe', 'a\u200Bb.txt', 'tab\there.txt', 'line\nbreak.txt', '<img src=x onerror=alert(1)>.html', '../etc/passwd', 'a\\b.txt',
+      'C:evil.txt', ' lead.txt', 'trail.txt ', '.hidden', 'name.', 'CON', 'con.txt', 'LPT1.log', 'open-me.lnk', 'run.command', 'app.desktop', 'x'.repeat(MAX_FILE_NAME + 1), 'e\u0301.txt'])
+      expect(downloadName(bad, fb), JSON.stringify(bad)).toBe(fb)
+    expect(downloadName(null, fb)).toBe(fb)
+    expect(downloadName('', fb)).toBe(fb)
+  })
+
+  it('L1: a right-to-left override name downloads under the fallback name', async () => {
+    const view = open('drop-long-names')
+    const row = await rowOf('invoice\\u{202e}fdp.exe')
+    await view.user.click(within(row).getByTestId('drop-download'))
+    await waitFor(() => expect(clicked).toHaveLength(1), T)
+    expect(clicked[0].getAttribute('download')).toMatch(/^drop-demo-obj-\d+-v1$/)
+  })
+
+  it('L2: the bytes actually read are checked against the cap; nothing is sent when they exceed it', async () => {
+    const fx = createDropFixture()
+    const undo = installDropFixture(fx)
+    try {
+      const f = file(10, 'grew.bin')
+      // The file grew on disk between the pick (size 10) and the read.
+      Object.defineProperty(f, 'arrayBuffer', { value: async () => new Uint8Array(2000).buffer })
+      await expect(uploadBlob('w', f, { maxBytes: 1000 })).rejects.toMatchObject({ code: 'drop.too_large' })
+      expect(fx.calls.filter((c) => c.op === 'blob.put')).toHaveLength(0)
+    } finally {
+      undo()
+    }
+  })
+
+  it('L3: a blob.put failure part-way drops the allocated host blob', async () => {
+    const view = open('drop-list', { putErrorAtChunk: 1 })
+    await pick(view, file(2 * MiB, 'fails.bin'))
+    expect(await within(screen.getByTestId('drop-zone')).findByTestId('drop-error', {}, T)).toHaveAttribute('data-code', 'blob.invalid')
+    await waitFor(() => expect(ops('blob.drop')).toHaveLength(1))
+    expect(ops('blob.drop')[0].args[0]).toMatch(/^b_DEMO/)
+    expect(ops('send')).toHaveLength(0)
+  })
+
+  it('L3: a refused drop.send drops the uploaded blob', async () => {
+    const view = open('drop-errors')
+    await pick(view, file(5, 'x.txt'))
+    await within(screen.getByTestId('drop-zone')).findByTestId('drop-error', {}, T)
+    await waitFor(() => expect(ops('blob.drop')).toHaveLength(1))
+    expect(ops('blob.drop')[0].args[0]).toBe((ops('send')[0].args[0] as { blob: string }).blob)
+  })
+
+  it('L3: the decrypted read blob is dropped after the download', async () => {
+    const view = open('drop-list')
+    await view.user.click(within(await rowOf('quarterly-report.pdf')).getByTestId('drop-download'))
+    await waitFor(() => expect(ops('blob.drop')).toHaveLength(1), T)
+    expect(ops('blob.drop')[0].args[0]).toMatch(/^b_READ/)
+  })
+
+  describe('L4: progress follows the host\'s received', () => {
+    const run = async (answer: (args: { offset: number; b64: string; blob?: string }, n: number) => number) => {
+      const offsets: number[] = []
+      const progress: number[] = []
+      let n = 0
+      const undo = installDropFixture(createDropFixture())
+      dropApi.blobPut = async (_ws, args) => {
+        offsets.push(args.offset)
+        return { blob: 'b_TEST', size: 0, received: answer(args, n++) }
+      }
+      try {
+        const result = uploadBlob('w', file(2 * CHUNK_BYTES, 'x.bin'), { maxBytes: 100 * MiB, onProgress: (sent) => progress.push(sent) })
+        return { result: await result.then(() => 'ok', (e) => e), offsets, progress }
+      } finally {
+        undo()
+      }
+    }
+    const len = (b64: string) => atob(b64).length
+
+    it('a host that lags is continued from where it is', async () => {
+      const r = await run((a, n) => (n === 0 ? a.offset + len(a.b64) - 100 : a.offset + len(a.b64)))
+      expect(r.result).toBe('ok')
+      expect(r.offsets).toEqual([0, CHUNK_BYTES - 100, 2 * CHUNK_BYTES - 100])
+      expect(r.progress).toEqual([0, CHUNK_BYTES - 100, 2 * CHUNK_BYTES - 100, 2 * CHUNK_BYTES])
+    })
+
+    it('an overshooting received never shows more than the file', async () => {
+      const r = await run(() => 10 * CHUNK_BYTES)
+      expect(r.result).toBe('ok')
+      expect(Math.max(...r.progress)).toBe(2 * CHUNK_BYTES)
+    })
+
+    it('a host that goes backwards is an error, not a silent restart', async () => {
+      const r = await run((a, n) => (n === 0 ? a.offset + len(a.b64) : 0))
+      expect(r.result).toMatchObject({ code: 'blob.invalid' })
+      expect(r.offsets).toEqual([0, CHUNK_BYTES])
+    })
+  })
+
+  it('L6: Delete is hidden where the host says it would refuse; a refusal is a mapped sentence', async () => {
+    const view = open('drop-list', {
+      received: [dropItem({ name: 'not-mine.pdf', can_retire: false }), dropItem({ name: 'own.pdf' })],
+      retireError: new DropError(403, { code: 'drop.not_eligible', message: 'drop.not_eligible', retryable: false }),
+    })
+    expect(within(await rowOf('not-mine.pdf')).queryByTestId('drop-delete')).toBeNull()
+    await view.user.click(within(await rowOf('own.pdf')).getByTestId('drop-delete'))
+    await view.user.click(await screen.findByTestId('drop-confirm-delete', {}, T))
+    const err = await within(screen.getByTestId('drop-confirm')).findByTestId('drop-error', {}, T)
+    expect(err).toHaveAttribute('data-code', 'drop.not_eligible')
+    expect(err.textContent).not.toMatch(/^Not done\./)
+  })
+
+  it('I1: host ids are shown with invisible characters escaped', async () => {
+    open('drop-list', { received: [dropItem({ name: 'x.pdf', author: { ...PHONE, person_name: null, person: 'p_\u202Eevil', device: 'd_\u202Edev' } })] })
+    const author = within(await rowOf('x.pdf')).getByTestId('drop-author')
+    expect(author.textContent).toContain('p_\\u{202e}evil')
+    expect(author.textContent).toContain('d_\\u{202e}dev')
+    expect(author.textContent).not.toMatch(/\u202e/)
+  })
+
+  it('I3: the object URL is revoked after the download', () => {
+    vi.useFakeTimers()
+    try {
+      saveBytes(new Blob(['x']), 'a.txt', 'fb')
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(30_000)
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:demo/1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('I4: "not served" has its own code and text, distinct from the relay being unreachable', async () => {
+    const e = await realDropApi.info('w').catch((x) => x)
+    expect(dropError(e)).toEqual({ code: 'drop.not_served', text: 'Drop is not available on this host yet.' })
+    expect(dropError(DROP_SAMPLE_ERRORS[8]).text).toMatch(/can't reach the relay/)
   })
 })

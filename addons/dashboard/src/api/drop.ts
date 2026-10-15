@@ -12,6 +12,7 @@
 import { queryOptions } from '@tanstack/react-query'
 import { hasFeature } from './features'
 import { ApiError } from './types'
+import { visible } from '@/components/sign/visible'
 
 /** Relay entry state. `expired` and `retired` entries stay listed as tombstones for 30 days (no download, a reason). */
 export type DropState = 'live' | 'pruned' | 'expired' | 'retired'
@@ -45,6 +46,11 @@ export interface DropItem {
   /** Inbox items before the host claims them (no auto-claim yet): only the host and the author can open them. */
   claimed: boolean
   state: DropState
+  /**
+   * ASSUMPTION (pending the D39a1 amendment on who may retire a file): `false` when `drop.retire` would refuse this viewer,
+   * and the page offers no Delete. Absent: Delete is offered and the host decides (a refusal is `drop.not_eligible`).
+   */
+  can_retire?: boolean
 }
 
 export interface DropListPage {
@@ -130,8 +136,9 @@ export interface DropApi {
 
 export const DROP_UNAVAILABLE = 'Drop is not available on this host yet.'
 
+/** `drop.not_served`: this build or host doesn't serve Drop (distinct from `drop.unavailable`, the relay being unreachable). */
 const unavailable = (): Promise<never> =>
-  Promise.reject(new ApiError(404, { code: 'drop.unavailable', message: DROP_UNAVAILABLE, retryable: false }))
+  Promise.reject(new ApiError(404, { code: 'drop.not_served', message: DROP_UNAVAILABLE, retryable: false }))
 
 /** The real implementation: "not available" until the proposed ops are agreed and the server serves them. */
 export const realDropApi: DropApi = {
@@ -260,6 +267,10 @@ export function dropError(error: unknown, ctx: { max_bytes?: number; version_cap
       return { code, text: 'This version was pruned: only the newest 8 versions and those under 30 days old keep their content.' }
     case 'drop.unavailable':
       return { code, text: "Drop can't reach the relay right now (it is unreachable, or this host is not linked to one)." }
+    case 'drop.not_served':
+      return { code, text: DROP_UNAVAILABLE }
+    case 'drop.not_eligible':
+      return { code, text: "You can't do this to this item (only some members may delete it, or it can't be deleted)." }
     case 'drop.not_visible':
       return { code, text: "You can't see this item (it is not shared with you, or it was removed)." }
   }
@@ -305,8 +316,8 @@ function bytesOf(file: Blob): Promise<ArrayBuffer> {
  * Upload `file` to a host blob in `blob.put` chunks; `onProgress(sent, total)` after each acknowledged chunk. Abort with
  * `signal` between chunks: the allocated blob is dropped (best effort) and `UploadCancelled` is thrown.
  */
-export async function uploadBlob(ws: string, file: Blob, opts: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {}): Promise<string> {
-  const { onProgress, signal } = opts
+export async function uploadBlob(ws: string, file: Blob, opts: { maxBytes: number; onProgress?: (sent: number, total: number) => void; signal?: AbortSignal }): Promise<string> {
+  const { onProgress, signal, maxBytes } = opts
   const check = () => {
     if (signal?.aborted) throw new UploadCancelled()
   }
@@ -317,6 +328,9 @@ export async function uploadBlob(ws: string, file: Blob, opts: { onProgress?: (s
   const data = new Uint8Array(await bytesOf(file))
   const sha256 = `sha256:${hex(await crypto.subtle.digest('SHA-256', data))}`
   const total = data.length
+  // The bytes actually read, not only `File.size` at pick time (a file can grow in between): nothing over the cap is sent.
+  if (total > maxBytes)
+    throw new DropError(413, { code: 'drop.too_large', message: 'drop.too_large', retryable: false }, { limit_bytes: maxBytes })
   const upload_key = randomKey()
   let blob: string | undefined
   let inflight: Promise<{ blob: string }> | null = null
@@ -337,20 +351,28 @@ export async function uploadBlob(ws: string, file: Blob, opts: { onProgress?: (s
       inflight = put
       const r = await Promise.race([put, aborted])
       blob = r.blob
-      offset = Math.max(end, r.received)
+      // Continue where the host says it is (§0.10: `received` tells the client where to continue), within [0, total].
+      // A host that went backwards past what it already acknowledged is an error, not a silent restart.
+      const received = Math.min(total, Math.max(0, Math.floor(Number(r.received) || 0)))
+      if (received < offset || (received === offset && end > offset))
+        throw new DropError(502, { code: 'blob.invalid', message: 'blob.invalid', retryable: false })
+      offset = received
       onProgress?.(offset, total)
       check()
     } while (offset < total)
     return blob!
   } catch (e) {
-    if (e instanceof UploadCancelled) {
-      // Drop the allocation: known already, or the one the first chunk in flight will answer with.
-      const drop = (id: string) => void dropApi.blobDrop(ws, id).catch(() => {})
-      if (blob) drop(blob)
-      else inflight?.then((r) => drop(r.blob), () => {})
-    }
+    // Cancelled or failed: drop the allocation (it counts against the host's blob quota): known already, or the one the
+    // first chunk in flight will answer with.
+    if (blob) dropBlob(ws, blob)
+    else inflight?.then((r) => dropBlob(ws, r.blob), () => {})
     throw e
   }
+}
+
+/** `blob.drop`, best effort (a host blob reserves quota until consumed or collected; a read blob is plaintext at rest). */
+export function dropBlob(ws: string, blob: string): void {
+  void dropApi.blobDrop(ws, blob).catch(() => {})
 }
 
 /** A fresh idempotency key for one `drop.send`. */
@@ -358,16 +380,39 @@ export const newIdem = randomKey
 
 // ——— Download ———
 
+const UNSAFE_FILE_CHAR = /[/\\:*?"<>|]/
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i
+/** Names that run something when opened from a file manager: saved under the fallback name instead. */
+const LAUNCHER_EXT = /\.(lnk|url|desktop|command|tool|scf|webloc|inetloc|fileloc|appref-ms|library-ms)$/i
+export const MAX_FILE_NAME = 120
+
+/**
+ * The name a download is saved under: a filesystem sink, separate from display (the page shows names through visible()
+ * and cleans nothing there). The host's name is used only if it is plain: no invisible, bidi, control or non-plain space
+ * characters (`visible(name) === name`), no path or reserved characters, no leading or trailing dot or space, not a
+ * Windows device name or a launcher, at most MAX_FILE_NAME characters. Anything else is saved as `fallback`.
+ */
+export function downloadName(name: string | null, fallback: string): string {
+  if (!name) return fallback
+  const plain =
+    visible(name) === name &&
+    !UNSAFE_FILE_CHAR.test(name) &&
+    !/^[. ]|[. ]$/.test(name) &&
+    !WINDOWS_RESERVED.test(name) &&
+    !LAUNCHER_EXT.test(name) &&
+    [...name].length <= MAX_FILE_NAME
+  return plain ? name : fallback
+}
+
 /**
  * Start a download of the bytes: a blob URL typed `application/octet-stream` behind an anchor with `download`. Never
- * shown inline, never opened in a tab. The name is the host's cleaned name (decision 2: the page cleans nothing itself;
- * the browser strips path separators from `download`); a hidden name downloads as `drop-<object id>`.
+ * shown inline, never opened in a tab. The saved name is `downloadName(name, fallback)`.
  */
 export function saveBytes(bytes: Blob, name: string | null, fallback: string): void {
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
   const a = document.createElement('a')
   a.href = url
-  a.download = name && name.length > 0 ? name : fallback
+  a.download = downloadName(name, fallback)
   a.rel = 'noopener'
   a.style.display = 'none'
   document.body.appendChild(a)

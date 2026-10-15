@@ -20,6 +20,10 @@ export interface DropFixtureOptions {
   chunkDelayMs?: number
   /** `blob.put` answers this many chunks, then never answers again (a stalled upload, for the layout preview). */
   stallAfterChunks?: number
+  /** `blob.put` fails at this chunk (0-based) with `blob.invalid`. */
+  putErrorAtChunk?: number
+  /** Patch each `blob.put` answer (a host whose `received` lags or overshoots). */
+  putAnswer?: (answer: { blob: string; size: number; received: number }, chunk: number) => { blob: string; size: number; received: number }
   /** `drop.send` waits this long ("Sealing and sending…"). */
   sendDelayMs?: number
   /** `drop.send` fails with this error. */
@@ -118,7 +122,9 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
     },
     blobPut: async (_ws, args: BlobPutArgs) => {
       log('blob.put', { offset: args.offset, last: args.last, size: args.size, has_blob: !!args.blob })
-      if (opts.stallAfterChunks !== undefined && chunks++ >= opts.stallAfterChunks) await new Promise(() => {})
+      const chunk = chunks++
+      if (opts.stallAfterChunks !== undefined && chunk >= opts.stallAfterChunks) await new Promise(() => {})
+      if (opts.putErrorAtChunk === chunk) throw new DropError(400, { code: 'blob.invalid', message: 'blob.invalid', retryable: false })
       if (opts.chunkDelayMs) await sleep(opts.chunkDelayMs)
       let id = args.blob
       if (!id) {
@@ -136,7 +142,8 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
         for (const p of u.parts) all.set(p, (o += p.length) - p.length)
         blobs.set(id, all)
       }
-      return { blob: id, size: u.size, received }
+      const answer = { blob: id, size: u.size, received }
+      return opts.putAnswer ? opts.putAnswer(answer, chunk) : answer
     },
     blobDrop: async (_ws, blob) => {
       log('blob.drop', blob)

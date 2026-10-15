@@ -698,10 +698,15 @@ class RidStore:
                 if db.execute("PRAGMA freelist_count").fetchone()[0] == 0:
                     break
                 db.execute("PRAGMA incremental_vacuum(1)").fetchall()
+            db.execute("COMMIT")
         except BaseException:
-            db.execute("ROLLBACK")
+            # never leave the writer lock held (every later _tx would fail at BEGIN IMMEDIATE): a failed COMMIT too
+            if db.in_transaction:
+                try:
+                    db.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass  # the original error is the one that matters
             raise
-        db.execute("COMMIT")
         return db.execute("PRAGMA freelist_count").fetchone()[0] == 0
 
     def counts(self) -> dict[str, Any]:

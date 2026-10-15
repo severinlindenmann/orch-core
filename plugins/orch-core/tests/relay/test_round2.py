@@ -5,6 +5,7 @@ behaviour; these assert the fixed one."""
 from __future__ import annotations
 
 import secrets
+import sqlite3
 import threading
 import time
 
@@ -269,6 +270,40 @@ def test_the_vacuum_step_refuses_an_open_transaction_and_never_commits_it(w):
     assert db.in_transaction  # still open: neither committed nor joined
     db.execute("ROLLBACK")
     assert db.execute("SELECT COUNT(*) FROM window WHERE device='vacuum-probe'").fetchone()[0] == 0
+
+
+class _CommitFails:
+    """The store's connection, except that the next COMMIT raises (with the transaction still open)."""
+
+    def __init__(self, conn) -> None:
+        self.conn, self.armed = conn, True
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
+    def execute(self, sql, *a):
+        if self.armed and sql == "COMMIT":
+            self.armed = False
+            raise sqlite3.OperationalError("disk I/O error (injected)")
+        return self.conn.execute(sql, *a)
+
+
+def test_a_failed_vacuum_commit_rolls_back_and_frees_the_writer_lock(w, monkeypatch):
+    monkeypatch.setattr(rids, "VACUUM_PAGES", 0)
+    w.send(w.phone.request(w.wk, {"op": "ticket.text", "args": {"size": 1 << 20}}))
+    w.rids.sweep(w.clock.ms + rids.RID_KEEP_MS)
+    real = w.rids._conn  # noqa: SLF001
+    free = real.execute("PRAGMA freelist_count").fetchone()[0]
+    assert free > 0
+    w.rids._conn = _CommitFails(real)  # noqa: SLF001
+    try:
+        with w.rids._lock, pytest.raises(sqlite3.OperationalError, match="injected"):  # noqa: SLF001
+            w.rids._vacuum_step()  # noqa: SLF001
+    finally:
+        w.rids._conn = real  # noqa: SLF001
+    assert not real.in_transaction  # rolled back: the writer lock is free
+    assert real.execute("PRAGMA freelist_count").fetchone()[0] == free  # nothing of the step kept
+    assert w.bridge.receive(w.item(_whoami(w))) is not None  # a later write (a _tx) goes through
 
 
 # -- R2-5: the answer cap is the relay's per-device undelivered budget ------------------------------------------------

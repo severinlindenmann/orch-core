@@ -295,19 +295,6 @@ class StateDir:
         name = self._name(name)
         self._publish(name, data, claim=False, limit=_limit(limit))
 
-    def remove(self, name: str) -> bool:
-        """Unlink ``name`` (never following a symlink entry: it unlinks the entry itself) and fsync the directory;
-        ``False`` when it did not exist."""
-        name = self._name(name)
-        with self.lock:
-            dfd = self._dir()
-            try:
-                os.unlink(name, dir_fd=dfd)
-            except FileNotFoundError:
-                return False
-            os.fsync(dfd)
-            return True
-
     def claim(self, name: str, data: bytes) -> bool:
         """Create ``name`` with ``data`` only if it does not exist (``os.link`` of a complete temp file: atomic, never
         replaces); ``False`` when another writer claimed it first."""

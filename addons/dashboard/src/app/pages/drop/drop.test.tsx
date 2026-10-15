@@ -470,3 +470,16 @@ describe('review fixes', () => {
     expect(dropError(DROP_SAMPLE_ERRORS[8]).text).toMatch(/can't reach the relay/)
   })
 })
+
+describe('the upload-progress preview', () => {
+  it('holds mid-upload under StrictMode (as in the browser): progress at 50 % and Cancel, until cancelled', async () => {
+    dropPreviewForTests.set(null)
+    const view = renderApp('/__layout/drop-upload-progress', { strict: true })
+    await waitFor(() => expect(screen.getByTestId('drop-progress-text')).toHaveTextContent('1.5 MiB of 3 MiB (50 %)'), T)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(screen.getByTestId('drop-progress')).toBeInTheDocument()
+    expect(screen.queryByTestId('drop-cancelled')).toBeNull()
+    await view.user.click(screen.getByTestId('drop-cancel'))
+    expect(await screen.findByTestId('drop-cancelled', {}, T)).toBeInTheDocument()
+  })
+})

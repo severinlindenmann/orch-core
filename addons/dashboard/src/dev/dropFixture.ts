@@ -1,7 +1,7 @@
 // DEV/TEST ONLY: an in-memory stand-in for the PROPOSED `drop/1` host ops (src/api/drop.ts). It never talks to a host.
 // The layout preview and the tests install it over `dropApi`, and drive live updates with `emit`, the way
 // `sub.open {topics:["drop"]}` items would arrive. Ids are `demo-*`; nothing is sealed, the bytes are plain.
-import { DropError, dropApi, realDropApi, type BlobPutArgs, type DropApi, type DropAuthor, type DropDirection, type DropInfo, type DropItem, type DropSubItem, type DropVersion } from '@/api/drop'
+import { CHUNK_BYTES, DropError, dropApi, realDropApi, type BlobPutArgs, type DropApi, type DropAuthor, type DropDirection, type DropInfo, type DropItem, type DropSubItem, type DropVersion } from '@/api/drop'
 
 export const FIXTURE_INFO: DropInfo = { max_bytes: 25 * 1024 * 1024, version_cap: 1024, writes: ['file'] }
 
@@ -18,7 +18,7 @@ export interface DropFixtureOptions {
   pageSize?: number
   /** Each `blob.put` chunk waits this long (so progress and cancel can be seen). */
   chunkDelayMs?: number
-  /** `blob.put` answers this many chunks, then never answers again (a stalled upload, for the layout preview). */
+  /** Each upload's `blob.put` answers this many chunks, then never answers again (a stalled upload, for the layout preview). */
   stallAfterChunks?: number
   /** `blob.put` fails at this chunk (0-based) with `blob.invalid`. */
   putErrorAtChunk?: number
@@ -123,7 +123,8 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
     blobPut: async (_ws, args: BlobPutArgs) => {
       log('blob.put', { offset: args.offset, last: args.last, size: args.size, has_blob: !!args.blob })
       const chunk = chunks++
-      if (opts.stallAfterChunks !== undefined && chunk >= opts.stallAfterChunks) await new Promise(() => {})
+      // Per upload, by offset (not a fixture-wide count): a cancelled earlier upload doesn't move where the next one stalls.
+      if (opts.stallAfterChunks !== undefined && args.offset >= opts.stallAfterChunks * CHUNK_BYTES) await new Promise(() => {})
       if (opts.putErrorAtChunk === chunk) throw new DropError(400, { code: 'blob.invalid', message: 'blob.invalid', retryable: false })
       if (opts.chunkDelayMs) await sleep(opts.chunkDelayMs)
       let id = args.blob

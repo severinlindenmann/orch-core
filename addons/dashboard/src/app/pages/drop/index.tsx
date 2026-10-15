@@ -479,42 +479,60 @@ function Upload({ ws, info, onSent, target, initial }: { ws: string; info: DropI
   const abort = useRef<AbortController | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const busy = phase.k === 'uploading' || phase.k === 'sealing'
-  useEffect(() => () => abort.current?.abort(), [])
+  // Each start is a run; only the newest run may change what the page shows (an aborted run's late answers are ignored).
+  const run = useRef(0)
+  useEffect(
+    () => () => {
+      run.current += 1
+      abort.current?.abort()
+    },
+    [],
+  )
 
   const start = async (file: File) => {
     if (busy) return
+    const me = ++run.current
+    const show = (p: Phase) => {
+      if (run.current === me) setPhase(p)
+    }
     const refused = sizeRefusal(file.size, info)
-    if (refused) return setPhase({ k: 'refused', name: file.name, text: refused })
+    if (refused) return show({ k: 'refused', name: file.name, text: refused })
     const ctl = new AbortController()
     abort.current = ctl
-    setPhase({ k: 'uploading', name: file.name, sent: 0, total: file.size })
+    const release = () => {
+      if (abort.current === ctl) abort.current = null
+    }
+    show({ k: 'uploading', name: file.name, sent: 0, total: file.size })
     let blob: string
     try {
-      blob = await uploadBlob(ws, file, { maxBytes: info.max_bytes, signal: ctl.signal, onProgress: (sent, total) => !ctl.signal.aborted && setPhase({ k: 'uploading', name: file.name, sent, total }) })
+      blob = await uploadBlob(ws, file, { maxBytes: info.max_bytes, signal: ctl.signal, onProgress: (sent, total) => !ctl.signal.aborted && show({ k: 'uploading', name: file.name, sent, total }) })
     } catch (e) {
-      abort.current = null
-      return setPhase(e instanceof UploadCancelled ? { k: 'cancelled', name: file.name } : { k: 'error', name: file.name, detail: dropError(e, info) })
+      release()
+      return show(e instanceof UploadCancelled ? { k: 'cancelled', name: file.name } : { k: 'error', name: file.name, detail: dropError(e, info) })
     }
-    abort.current = null
+    release()
     // The host's step: seal, sign and send to the relay. Not cancellable from here (the host persists the frame).
-    setPhase({ k: 'sealing', name: file.name })
+    show({ k: 'sealing', name: file.name })
     try {
       await dropApi.send(ws, { blob, name: file.name, mime: file.type || 'application/octet-stream', ...(target ?? {}) }, newIdem())
-      setPhase({ k: 'done', name: file.name })
+      show({ k: 'done', name: file.name })
       onSent()
     } catch (e) {
       // A refused send doesn't consume the blob (§0.10): drop it, it holds host quota and the plaintext.
       dropBlob(ws, blob)
-      setPhase({ k: 'error', name: file.name, detail: dropError(e, info) })
+      show({ k: 'error', name: file.name, detail: dropError(e, info) })
     }
   }
-  const started = useRef(false)
+  // Dev preview only: start with an upload running. Under StrictMode the effect runs, is cleaned up (the first run is
+  // cancelled and its late answers ignored) and runs again, so the shown upload is always the live one.
   useEffect(() => {
-    if (initial && !started.current) {
-      started.current = true
-      void start(initial)
+    if (!initial) return
+    void start(initial)
+    return () => {
+      run.current += 1
+      abort.current?.abort()
     }
-    // Once, for the dev preview only.
+    // `start` is recreated each render; the preview starts once per file.
   }, [initial])
   const pickFiles = (files: FileList | null) => {
     const f = files?.[0]

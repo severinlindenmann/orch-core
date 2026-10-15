@@ -119,3 +119,13 @@ def test_runner_json_reads_defaults_and_refuses_an_unsafe_file(tmp_path):
     os.chmod(path, 0o600)
     cfg = read_config(tmp_path, os.getuid())
     assert cfg.pass_env == ("ANTHROPIC_API_KEY",) and cfg.login_shell is False
+
+
+@pytest.mark.parametrize("text", ["null", "[]", '"x"', "1", "true"])
+def test_runner_json_that_is_not_an_object_refuses_never_defaults(tmp_path, text):
+    """Codex P2 #4: only a missing file means defaults."""
+    path = tmp_path / "runner.json"
+    path.write_text(text)
+    path.chmod(0o600)
+    with pytest.raises(ConfigError):
+        read_config(tmp_path, os.getuid())

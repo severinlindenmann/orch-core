@@ -17,6 +17,7 @@ launch that depends on it (``launch.invalid``), it never falls back to defaults.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,10 +87,13 @@ def read_config(state_dir: Path, uid: int) -> RunnerConfig:
     from orch.host.custody import read_json
     from orch.host.errors import HostError
 
+    path = config_path(state_dir)
+    if not os.path.lexists(path):  # only a missing file means defaults; JSON null is an invalid file (Codex P2 #4)
+        return RunnerConfig()
     try:
-        doc = read_json(config_path(state_dir), uid)
+        doc = read_json(path, uid)
     except HostError as exc:
         raise ConfigError(f"runner.json cannot be read: {exc.message}") from None
-    if doc is None:
-        return RunnerConfig()
+    if doc is None:  # it vanished between the two looks, or it says null: refused either way
+        raise ConfigError("runner.json is not an object")
     return parse(doc)

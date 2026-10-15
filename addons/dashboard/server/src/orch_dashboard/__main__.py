@@ -160,7 +160,10 @@ def _serve(directory, lock_fd=None):
     finally:
         os.umask(old)
     os.chmod(ctl_path, 0o600)
-    ctl_ino = ctl_path.lstat().st_ino
+    # Linux hands a removed socket's inode number to the next one: its change time tells them apart.
+    st = ctl_path.lstat()
+    ctl_id = (st.st_ino, st.st_ctime_ns)
+    retired = threading.Event()
     ctl.listen(8)
     ctl.settimeout(0.5)
     if lock_fd is not None:
@@ -192,11 +195,14 @@ def _serve(directory, lock_fd=None):
                     pass  # never log the launch payload
 
     def retire():
-        """Close the control socket and remove its path if it is still ours (a new server may have bound it)."""
+        """Close the control socket and remove its path if it is still ours (a new server may have bound it). Once."""
+        if retired.is_set():
+            return
+        retired.set()
         ctl.close()
         with suppress(OSError):
             st = ctl_path.lstat()
-            if stat.S_ISSOCK(st.st_mode) and st.st_ino == ctl_ino:
+            if stat.S_ISSOCK(st.st_mode) and (st.st_ino, st.st_ctime_ns) == ctl_id:
                 ctl_path.unlink()
 
     thread = threading.Thread(target=ipc, daemon=True)

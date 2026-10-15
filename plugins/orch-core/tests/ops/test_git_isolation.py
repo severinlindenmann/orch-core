@@ -330,7 +330,7 @@ def test_a_leading_dash_or_special_path_is_only_ever_an_index_path(world, path):
     w = world
     repo = make_repo(w, "r")
     argv, _env = gitsafe.command(str(repo), "staged_blob", os.environ, operand=path)
-    assert argv[-1] == f":0:{path}"  # an object name: stage 0 of that path, never an option, never :/ search
+    assert argv[-1] == f":0:./{path}"  # an object name: stage 0 of that path below -C, never an option or :/ search
     caps = Capabilities.direct()
     assert health._git(repo, "staged_blob", caps=caps, path=path) is None  # no such file in the index
     (repo / path.replace("/", "_")).write_text("dash\n")
@@ -586,7 +586,7 @@ def test_every_revision_of_a_diff_operation_is_validated_and_followed_by_the_end
     for op in ("diff_numstat", "diff_names", "diff_patch", "merge_base"):
         spec = gitsafe.OPS[op]
         argv, _env = gitsafe.command(str(repo), op, os.environ, operand=sample_operands(spec))
-        assert argv[-1] == "--" and "--ignore-submodules=all" in argv or op == "merge_base"
+        assert argv[-1] == "--" and "--ignore-submodules=dirty" in argv or op == "merge_base"
         for bad in ("--output=/tmp/x", "-c", f"{head}..{head}", "HEAD~1"):
             values = list(sample_operands(spec))
             values[-1] = bad
@@ -631,3 +631,112 @@ def test_the_too_old_message_says_what_is_needed(monkeypatch):
     with pytest.raises(gitsafe.Unsafe) as e:
         gitsafe.git_version(os.environ)
     assert "2.32 or newer" in e.value.reason and "update git" in e.value.reason
+
+
+def test_merge_base_returns_the_real_fork_point_of_two_branches(world):
+    """A fork point with commits on both sides: ``merge_base`` names the fork, not either head or a parent (a5283877
+    ended the operation with ``--``, which merge-base rejects, so it returned nothing)."""
+    w = world
+    repo = make_repo(w, "r")
+    commit = ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m"]
+    w.git(repo, *commit, "fork")
+    fork = observe.head(repo)
+    w.git(repo, "switch", "-q", "-c", "side")
+    w.git(repo, *commit, "side 1")
+    w.git(repo, *commit, "side 2")
+    w.git(repo, "switch", "-q", "main")
+    w.git(repo, *commit, "main 1")
+    main = observe.git(repo, "commit", rev="refs/heads/main")
+    side = observe.git(repo, "commit", rev="refs/heads/side")
+    assert len({fork, main, side}) == 3
+    assert observe.git(repo, "merge_base", rev=(side, "refs/heads/main")) == fork
+    assert observe.git(repo, "merge_base", rev=("refs/heads/side", main)) == fork
+    assert observe.git(repo, "parent", rev=side) != fork  # the fallback would be wrong here
+
+
+# ------------------------------------------------- Opus delta 2 on #561: subdirectory roots, pointer moves, operands
+
+
+def test_check_staged_reads_the_workspace_file_not_a_decoy_at_the_top(world):
+    """M1 (probe 6): the workspace is a subdirectory of its repo. ``staged_raw`` lists paths relative to it, and
+    ``staged_blob`` must read exactly those files, not same-named ones at the repo's top."""
+    w = world
+    top = w.tmp / "top"
+    (top / "ws" / "tickets" / "X").mkdir(parents=True)
+    (top / "tickets" / "X").mkdir(parents=True)
+    w.git(w.tmp, "init", "-q", "-b", "main", str(top))
+    (top / "tickets" / "X" / "ticket.json").write_text("BENIGN at top\n")
+    (top / "ws" / "tickets" / "X" / "ticket.json").write_text("HOSTILE ORCH_GRANT=secret in workspace\n")
+    w.git(top, "add", "-A")
+    ws, caps = top / "ws", Capabilities.direct()
+    raw = health._git(ws, "staged_raw", caps=caps)
+    rel = raw.split(b"\0")[1].decode()
+    assert rel == "tickets/X/ticket.json"
+    assert health._git(ws, "staged_blob", caps=caps, path=rel) == b"HOSTILE ORCH_GRANT=secret in workspace\n"
+    for bad in ("../tickets/X/ticket.json", "tickets/../../x", ".."):
+        with pytest.raises(gitsafe.Unsafe):
+            gitsafe.command(str(ws), "staged_blob", os.environ, operand=bad)
+        assert health._git(ws, "staged_blob", caps=caps, path=bad) is None
+
+
+def _super_with_armed_submodule(w) -> tuple[Path, Path]:
+    """A superproject ``r`` with a subdirectory ``d`` and a committed, populated submodule ``sub`` whose own config
+    arms a clean filter and an fsmonitor program (``_populated_submodule``)."""
+    repo = make_repo(w, "r")
+    (repo / "d").mkdir()
+    (repo / "d" / "x").write_text("x\n")
+    sub = _populated_submodule(w, repo)
+    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "with sub")
+    return repo, sub
+
+
+def test_the_submodule_refusal_covers_the_whole_repo_even_from_a_subdirectory(world):
+    """M2 (probe 3): a repo path pointing into a subdirectory must not skip the populated-submodule refusal, or a
+    dirty checked-out submodule elsewhere would read as clean."""
+    w = world
+    repo, sub = _super_with_armed_submodule(w)
+    w.git(repo, "status", "--porcelain")
+    assert w.fired() & {"sub-clean", "sub-fsmonitor"}  # positive control: plain git runs the submodule's config
+    w.clear()
+    assert observe.dirty(repo) is None
+    assert observe.dirty(repo / "d") is None  # refused from the subdirectory too, never "" (clean)
+    with pytest.raises(gitsafe.Unsafe, match="submodule"):
+        gitsafe.submodules(str(repo / "d"), os.environ)
+    assert w.fired() == set()
+
+
+def test_a_staged_pointer_move_outside_the_subdirectory_still_counts(world):
+    w = world
+    repo, sub = _super_with_armed_submodule(w)
+    w.git(sub, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "move")
+    w.git(repo, "add", "sub")  # a staged pointer move
+    shutil.rmtree(sub)
+    sub.mkdir()  # unpopulated now
+    w.clear()
+    got = observe.dirty(repo / "d")
+    assert got is not None and "staged submodule change: sub" in got.splitlines()
+    assert w.fired() == set()
+
+
+def test_a_pointer_move_between_commits_is_visible_and_runs_nothing(world):
+    """L1: diffs between two commits never open a submodule, so they keep ``--ignore-submodules=dirty`` and show the
+    pointer move (``=all`` hid it from the dashboard's diff)."""
+    w = world
+    repo, sub = _super_with_armed_submodule(w)
+    before = observe.git(repo, "commit", rev="refs/heads/main")
+    w.git(sub, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "move")
+    w.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump sub")
+    after = observe.git(repo, "commit", rev="refs/heads/main")
+    w.clear()
+    assert "sub" in observe.git(repo, "diff_names", rev=(before, after)).split()
+    assert "sub" in observe.git(repo, "diff_numstat", rev=(before, after))
+    assert "Subproject commit" in observe.git(repo, "diff_patch", rev=("3", before, after))
+    assert w.fired() == set()
+
+
+@pytest.mark.parametrize("operand", [5, 3.0, b"refs/heads/main", ["refs/heads/main"], {"x": 1}, object()])
+def test_an_operand_of_the_wrong_type_is_refused_not_a_type_error(world, operand):
+    repo = make_repo(world, "r")
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.command(str(repo), "ref", os.environ, operand=operand)
+    assert observe.git(repo, "ref", rev=operand) is None

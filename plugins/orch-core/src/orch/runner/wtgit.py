@@ -364,7 +364,7 @@ def read_git(
     strip: bool = True,
 ) -> str | None:
     """Operation ``op`` of :data:`orch.gitsafe.OPS` for the direct-mode tool (``commit`` of ``rev``, ``status``,
-    ``index_flags``, ``staged_raw``), isolated like every read (:func:`orch.gitsafe.command`: the gate first, every
+    ``index_flags``, ``staged_tree``), isolated like every read (:func:`orch.gitsafe.command`: the gate first, every
     time; a populated submodule refused for ``status``; no free argv; system and global config off; own process
     group, 30 s). Stdout stripped (unless ``strip`` is off); ``None`` when git fails, times out or is missing. Raises
     :class:`orch.gitsafe.Unsafe` when the operation, its operand or the repository is refused (git is then not
@@ -399,7 +399,7 @@ def tree_dirty(repo: str, own: Mapping[str, str]) -> str | None:
     submodules), and the files git is told to ignore (``skip-worktree``, ``assume-unchanged``)."""
     _clean_abs(repo)
     status = read_git(repo, "status", own)
-    staged = read_git(repo, "staged_raw", own, strip=False)
+    staged = read_git(repo, "staged_tree", own, strip=False)  # the whole repository
     listing = read_git(repo, "index_flags", own)
     if status is None or staged is None or listing is None:
         return None

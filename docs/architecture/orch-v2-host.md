@@ -4123,12 +4123,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     invocation by orch reads configuration the person or a repo controls, except through an explicit allow-list":
     `isolated_env`, `config_env`, `person_entries`, and `command`, a **closed set of operations** (`gitsafe.OPS`:
     `head`, `symbolic_head`, `toplevel`, `ref`, `commit`, `parent`, `merge_base`, `status`, `index_flags`,
-    `staged_raw`, `staged_blob`, `diff_numstat`, `diff_names`, `diff_patch`) with validated operands (a revision is
+    `staged_raw`, `staged_tree`, `staged_blob`, `diff_numstat`, `diff_names`, `diff_patch`) with validated operands (a revision is
     `HEAD`, a full commit id or `refs/heads/<name>`, followed by `--`) and no free argv. `ops/caps.Git.run` (free argv) is removed. Every operation runs the gitsafe
     gate first: a repository whose own config sets a key outside the allow-list, such as a filter its
     `.gitattributes` selects, gives `None` in `store/observe` (D58's "git cannot be asked", never clean) and
     `git.unavailable` naming the key in `orch check --staged`. `status` never opens a submodule
-    (`--ignore-submodules=all`) and refuses a populated one; a staged gitlink change still counts as uncommitted work.
+    (`--ignore-submodules=all`) and refuses a populated one anywhere in the repository, even when the path points into
+    a subdirectory; the diffs never open a submodule and keep `=dirty`, so a pointer move shows; a staged gitlink
+    change still counts as uncommitted work. `staged_blob` reads `:0:./<path>`, relative to the workspace, so a
+    workspace in a subdirectory of its repository is checked file for file.
     System and global config are off; `status` keeps only the person's `core.excludesFile`, `core.autocrlf` and
     `core.eol`. The gate refuses git older than 2.32. `wtgit.run_git` stays the documented exception. **Behaviour
     changes:** the repository identity (F1 5.7) reads `remote.origin.url` from the repository's own local and
@@ -9399,7 +9402,7 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
     | `gitsafe.git_version` (`git --version`) | `isolated_env`; once per `PATH`; the gate refuses git older than 2.32 |
     | `store/observe.git` (`head`, `symbolic_head`, `toplevel`, `porcelain`, `dirty`, `ref`, `commit`; `ops/caps.Git` and `hostclient` in direct mode) | `gitsafe.command`: operations of `gitsafe.OPS` only, the gate before every one, `submodules` and `--ignore-submodules=all` for `status`; person keys only for `status`: `core.excludesFile`, `core.autocrlf`, `core.eol` (and git's default global ignore file). The identity's `remote.origin.url` (F1 5.7) comes from `gitsafe.local_config`, the gate's own listing. `ops/caps.Git.run` (free argv) is removed (#546) |
     | `ops/health._git` (`check --staged`: `staged_raw`, `staged_blob`) | `_gate` once for the finding's reason, then `gitsafe.command` (the gate again), no person keys, through `caps.exec` (#546) |
-    | `runner/wtgit.read_git`, `tree_dirty`, `worktree_cli` revisions | `gitsafe.command`: `commit`, `status`, `staged_raw`, `index_flags` |
+    | `runner/wtgit.read_git`, `tree_dirty`, `worktree_cli` revisions | `gitsafe.command`: `commit`, `status`, `staged_tree`, `index_flags` |
     | dashboard dev host `devhost/reads.diff` (through `store/observe.git`) | `gitsafe.command`: `commit`, `ref`, `merge_base`, `parent`, `diff_numstat`, `diff_names`, `diff_patch` |
     | `records/git.Git.run`, records `fast-import` | `config_env` with `person_config`'s two lists, the records `HARDEN` (which includes the two pinned keys), `check_local` on top of the gate's allow-list (#541) |
     | records `git init --template=` (repo and transport) | system and global config off, no frozen config (#541) |

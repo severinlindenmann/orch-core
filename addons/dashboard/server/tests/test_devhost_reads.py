@@ -412,3 +412,26 @@ def test_a_receipt_label_is_passed_through_ticket_get_and_the_log(rich, stub):
     assert got["tasks"][0]["receipt"]["attested_by"] == "agent"
     item = next(i for i in got["log"] if i["type"] == "task.done")
     assert item["data"]["receipt"]["attested_by"] == "agent"
+
+
+def test_the_parent_fallback_is_logged_never_silent(rich, stub, monkeypatch, caplog):
+    """#546: a merge-base operation that yields nothing falls back to the parent commit with one warning line (the
+    error code only, no repo content), so a broken operation cannot hide again."""
+    import logging
+
+    from devhost import reads
+
+    with caplog.at_level(logging.WARNING, logger="orch_dashboard.devhost"):
+        normal = stub.call("diff", {"ref": "DEMO-0001"})["data"]
+    assert not [r for r in caplog.records if "merge base unavailable" in r.getMessage()]  # the real merge base
+    caplog.clear()
+    real = reads.observe.git
+    monkeypatch.setattr(
+        reads.observe, "git", lambda path, op, **kw: None if op == "merge_base" else real(path, op, **kw)
+    )
+    with caplog.at_level(logging.WARNING, logger="orch_dashboard.devhost"):
+        data = stub.call("diff", {"ref": "DEMO-0001"})["data"]
+    lines = [r for r in caplog.records if "merge base unavailable" in r.getMessage()]
+    assert len(lines) == 1 and lines[0].levelno == logging.WARNING
+    assert lines[0].getMessage() == "merge base unavailable, using the parent commit (git.merge_base_failed)"
+    assert data["sources"][0]["base_sha"] != normal["sources"][0]["head_sha"]

@@ -8,6 +8,7 @@ these ops.
 import base64
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import time
@@ -19,6 +20,8 @@ from orch.store import observe
 from orch.store.render import HEADINGS, thaw
 
 from orch_dashboard.errors import fail
+
+_LOG = logging.getLogger("orch_dashboard.devhost")
 
 STATUSES = ("backlog", "open", "in_progress", "testing", "done", "closed")
 PRIORITY_RANK = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
@@ -889,7 +892,13 @@ def diff(store, views, args):
             (f"refs/heads/{b}" for b in ("main", "master") if observe.git(path, "ref", rev=f"refs/heads/{b}")), None
         )
         base = observe.git(path, "merge_base", rev=(head, default)) if head and default else None
-        base = base or (observe.git(path, "parent", rev=head) if head else None)
+        if not base and head:  # never silently: a broken operation once hid here (#546)
+            code = (
+                "observe.unavailable" if observe.refusal(path) else "git.no_default_branch" if not default
+                else "git.merge_base_failed"
+            )  # fmt: skip
+            _LOG.warning("merge base unavailable, using the parent commit (%s)", code)
+            base = observe.git(path, "parent", rev=head)
         if not base:
             raise fail("observe.unavailable", f"{name}: no base to compare with", exit=3)
         sources.append({"repo": name, "branch": branch, "base_sha": base, "head_sha": head})

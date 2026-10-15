@@ -112,7 +112,7 @@ def dirty(path: Path) -> str | None:
     has a checked-out submodule (:mod:`orch.gitsafe`). It cannot see everything (files matched by ``.gitignore`` or
     ``info/exclude``): a receipt is attested by the agent's environment anyway (F1 10.7)."""
     status = porcelain(path)
-    staged = git(path, "staged_raw", strip=False)
+    staged = git(path, "staged_tree", strip=False)  # the whole repository, not only below path
     listing = git(path, "index_flags")
     if status is None or staged is None or listing is None:
         return None

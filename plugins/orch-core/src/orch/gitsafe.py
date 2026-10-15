@@ -66,7 +66,7 @@ and ``hostclient`` in direct mode)                      identity's ``remote.orig
                                                         ``ops/caps.Git.run`` (free argv) is removed
 ``ops/health._git`` (``check --staged``: ``staged_raw``,  :func:`gate` once per check for its message, then
 ``staged_blob``)                                        :func:`command` (gate again), through ``caps.exec`` (#546)
-``runner/wtgit.read_git``, ``tree_dirty``,              :func:`command`: ``commit``, ``status``, ``staged_raw``,
+``runner/wtgit.read_git``, ``tree_dirty``,              :func:`command`: ``commit``, ``status``, ``staged_tree``,
 ``worktree_cli`` revisions                              ``index_flags``
 dashboard dev host ``devhost/reads.diff`` (through      :func:`command`: ``commit``, ``ref``, ``merge_base``,
 ``store/observe.git``)                                  ``parent``, ``diff_numstat``, ``diff_names``, ``diff_patch``
@@ -385,9 +385,9 @@ _SLOT = re.compile(r"<(rev|path|context)>")
 #: ``--git-dir``, ``--work-tree``, ``--exec-path``, ``--namespace``, ``-p``, ``--config-env``), an option of its own
 #: or a subcommand. Every revision comes after ``--end-of-options`` (git 2.32 is required anyway), so even a
 #: validator miss cannot become an option, and a diff's revisions are followed by ``--``. No operation can reach the
-#: network. Submodules: ``status`` and every diff run with ``--ignore-submodules=all`` (git never opens one) and
-#: ``status`` refuses a populated one anyway; the one exception is ``staged_raw`` (``diff --cached``, index against
-#: ``HEAD``, never opens a submodule), which keeps ``=dirty`` so ``orch check --staged`` still sees a staged gitlink.
+#: network. Submodules: ``status`` runs with ``--ignore-submodules=all`` (git never opens one) and refuses a populated
+#: one anyway (looked for in the whole repository); the diffs (``diff --cached``, index against ``HEAD``, and diffs
+#: between two commits) never open a submodule, so they keep ``=dirty`` and still show a gitlink (pointer) change.
 OPS: dict[str, Op] = {
     "head": Op(("rev-parse", "--verify", "-q", "HEAD^{commit}")),
     "symbolic_head": Op(("symbolic-ref", "-q", "HEAD")),
@@ -400,13 +400,15 @@ OPS: dict[str, Op] = {
                  person=STATUS_KEYS, tree=True),
     "index_flags": Op(("ls-files", "-v")),
     "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--relative", "--ignore-submodules=dirty")),
-    "staged_blob": Op(("cat-file", "blob", ":0:<path>")),
-    "diff_numstat": Op(("diff", "--numstat", "-M50%", "--ignore-submodules=all", "--end-of-options", "<rev>", "<rev>",
-                         "--")),
-    "diff_names": Op(("diff", "--name-status", "-M50%", "--ignore-submodules=all", "--end-of-options", "<rev>", "<rev>",
-                         "--")),
-    "diff_patch": Op(("diff", "-U<context>", "-M50%", "--ignore-submodules=all", "--end-of-options", "<rev>", "<rev>",
-                         "--")),
+    # paths of staged_raw are relative to -C <repo> (--relative): ":0:./<path>" resolves them there, not at the top
+    "staged_tree": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--ignore-submodules=dirty")),
+    "staged_blob": Op(("cat-file", "blob", ":0:./<path>")),
+    "diff_numstat": Op(("diff", "--numstat", "-M50%", "--ignore-submodules=dirty", "--end-of-options",
+                         "<rev>", "<rev>", "--")),
+    "diff_names": Op(("diff", "--name-status", "-M50%", "--ignore-submodules=dirty", "--end-of-options",
+                         "<rev>", "<rev>", "--")),
+    "diff_patch": Op(("diff", "-U<context>", "-M50%", "--ignore-submodules=dirty", "--end-of-options",
+                         "<rev>", "<rev>", "--")),
 }  # fmt: skip
 #: a revision operand: ``HEAD``, a full commit id, or ``refs/heads/<name>`` with ``<name>`` checked by
 #: :func:`_branch_ok` (git's own ref rules, Unicode allowed)
@@ -441,7 +443,7 @@ def _check(kind: str, value: object) -> str:
     elif kind == "context":
         if not re.fullmatch(r"[0-9]|10", value):
             raise Unsafe("invalid context")
-    elif value.startswith("/") or len(value) > 4096:  # a path of the index, relative to the top
+    elif value.startswith("/") or len(value) > 4096 or ".." in value.split("/"):  # relative to -C <repo>, below it
         raise Unsafe("invalid path")
     return value
 
@@ -449,7 +451,9 @@ def _check(kind: str, value: object) -> str:
 def _fill(op: Op, operand: str | tuple[str, ...] | None) -> list[str]:
     """``op``'s arguments with each slot replaced by its validated operand (a path only ever lands in the object name
     ``:0:<path>``: never an option, never a stage or a ``:/`` search)."""
-    values = () if operand is None else (operand,) if isinstance(operand, str) else tuple(operand)
+    if operand is not None and not isinstance(operand, (str, tuple)):
+        raise Unsafe("invalid git operand")
+    values = () if operand is None else (operand,) if isinstance(operand, str) else operand
     if len(values) != len(op.operands):
         raise Unsafe("wrong number of git operands")
     it = iter(values)
@@ -480,7 +484,7 @@ def command(
 
 
 def gitlinks(raw: bytes) -> list[str]:
-    """The paths of ``staged_raw`` output (``-z``) whose old or new mode is a gitlink (``160000``)."""
+    """The paths of ``staged_raw``/``staged_tree`` output (``-z``) whose old or new mode is a gitlink (``160000``)."""
     fields = raw.split(b"\0")
     out: list[str] = []
     for i in range(0, len(fields) - 1, 2):
@@ -654,12 +658,21 @@ def submodules(repo: str, own: Mapping[str, str], *, timeout: float = GATE_SECON
     and ``git status`` would run its filters; ``--ignore-submodules`` instead hides its changes, so a clean verdict
     would be false. orch does not inspect submodules: such a tree's cleanliness is unknown (as the host's reader,
     which refuses a checked-out submodule). Run :func:`gate` first: this lists the index with git."""
-    raw = _run(repo, ["ls-files", "--stage", "-z"], own, timeout, "the repository's index")
+    # the whole repository, from its top, not only below ``repo`` (a repo path may point into a subdirectory, and
+    # status covers the whole tree; Opus delta 2 on #561, M2)
+    top = (
+        _run(repo, ["rev-parse", "--show-toplevel"], own, timeout, "the repository's top")
+        .decode("utf-8", "surrogateescape")
+        .rstrip("\n")
+    )
+    if not top.startswith("/") or "\n" in top:
+        raise Unsafe("the repository's top cannot be located")
+    raw = _run(top, ["ls-files", "--stage", "-z"], own, timeout, "the repository's index")
     for entry in raw.split(b"\0"):
         if not entry.startswith(b"160000 "):
             continue
         rel = entry.partition(b"\t")[2].decode("utf-8", "surrogateescape")
-        path = os.path.join(repo, rel)
+        path = os.path.join(top, rel)
         try:
             st = os.lstat(path)
         except FileNotFoundError:

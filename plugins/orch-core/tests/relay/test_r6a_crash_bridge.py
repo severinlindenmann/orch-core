@@ -262,13 +262,15 @@ def test_the_seal_lock_is_the_key_stores_own(rw):
     store hook waits for an open seal span."""
     import threading
 
-    with rw.bridge.keys.sealing(rw.bridge.signer):
+    with rw.bridge.keys.sealing(rw.bridge.signer) as s:
         t = threading.Thread(target=lambda: rw.mk.raise_gate(DEVICE, "device.removed"))
         t.start()
         t.join(0.2)
-        assert t.is_alive() and not rw.mk.gate_up()
+        # round 4: the in-memory gate goes up at once (fail closed), the queue waits for the seal lock; the open
+        # span keeps the snapshot it took before the gate, every later snapshot is gated
+        assert t.is_alive() and not s.state.gated and rw.mk.seal_state().gated
     t.join(5)
-    assert rw.mk.gate_up()
+    assert not t.is_alive() and rw.mk.gate_up() and rw.mk.head()["gate"]["up"]
     with rw.bridge.keys.serialised():
         assert rw.mk.current_epoch() == 1  # reentrant for the source's own reads
 

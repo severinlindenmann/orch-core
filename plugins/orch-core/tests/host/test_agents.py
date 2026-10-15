@@ -252,7 +252,8 @@ def test_start_is_p_only_and_needs_the_switch(ready):
         "idem.required"
     )
     enablement.set_enabled(Path(w.lab.state), w.wid, False, UID)
-    assert err(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])) == "runner.disabled"
+    got = start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])
+    assert err(got) == "runner.disabled" and got["error"]["detail"] == {"missing": "machine"}
     assert w.runner.sup.runs() == []
 
 

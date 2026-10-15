@@ -491,7 +491,8 @@ def _deposit_plan(call: Call, hub: RunnerHub, deposit_id: str) -> dict[str, Any]
         raise HostError("grant.expiring", "the grant has less than 15 minutes left; issue a new one")
     if not enablement.state_of(hub.host.state_dir, service.workspace_id, hub.host.host_uid)["enabled"]:
         raise HostError("runner.disabled", "dashboard execution is off for this workspace on this machine "
-                        "(missing: machine); turn it on in your terminal: orch runner enable")  # fmt: skip
+                        "(missing: machine); turn it on in your terminal: orch runner enable",
+                        detail={"missing": "machine"})  # fmt: skip
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     return {"deposit_id": deposit_id, "grant": grant.id, "person": mapped, "until": view.expires_at,
@@ -524,7 +525,11 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
         if op == "grant.forget":
             return ok_result(await grants.forget(wid, plan["person"], plan["grant"], plan["until"]))
         if not enablement.state_of(hub.host.state_dir, wid, hub.host.host_uid)["enabled"]:  # again, at use
-            raise HostError("runner.disabled", "dashboard execution is off for this workspace (missing: machine)")
+            raise HostError(
+                "runner.disabled",
+                "dashboard execution is off for this workspace (missing: machine)",
+                detail={"missing": "machine"},
+            )
         secret = (call.frame.get("auth") or {}).get("grant")
         if not isinstance(secret, str) or not secret.startswith(plan["grant"] + "."):
             raise HostError("op.not_allowed", "grant.deposit: auth.grant is not the planned grant")

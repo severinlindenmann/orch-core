@@ -210,7 +210,7 @@ def start_worker(service: WorkspaceService, backend: Any, seams: Seams) -> None:
         keys_dir = Path(service.state_dir) / "hosts" / ws / "keys"
         backend_keys = FileBackend(keys_dir) if keys_dir.is_dir() else None
         if backend_keys is None or not backend_keys.exists("wsk"):
-            raise HostError("trust.wsk_missing", "the workspace signing key is not in the host's custody")
+            raise HostError("workspace.unavailable", "the workspace signing key is not in the host's custody")
         wsk = BackendSigner(backend_keys, "wsk")
         epochs, view = seams.r6(service)
         bkeys = BridgeKeys(epochs, bytes.fromhex(ws))

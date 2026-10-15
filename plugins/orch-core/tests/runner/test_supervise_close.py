@@ -7,11 +7,14 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
+import time
 
 import pytest
 
-from orch.runner.supervise import SpawnError, Supervisor, peek_exit
-from tests.runner.helpers import spec, wait_for
+from orch.runner import supervise
+from orch.runner.supervise import RunnerBusy, SpawnError, Supervisor, peek_exit
+from tests.runner.helpers import kill_own, spec, wait_for
 
 pytestmark = pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the runner is POSIX only")
 
@@ -82,27 +85,74 @@ def test_leader_exit_after_close_writes_to_no_recycled_fd(state, tmp_path, monke
     live.proc.wait()
 
 
-class _StuckThread:
-    def join(self, timeout=None):
-        pass
-
-    def is_alive(self):
-        return True
-
-
-def test_close_with_a_stuck_io_thread_leaves_its_fds_open(state, monkeypatch, caplog):
+def test_a_stuck_io_thread_releases_its_fds_and_the_lock_itself_once_it_ends(state, monkeypatch, caplog):
+    """close() never closes fds under a running I/O thread; the thread releases them (and runner.lock, last) on exit."""
+    monkeypatch.setattr(supervise, "JOIN_SECONDS", 0.2)
     sup = _opened(state)
-    real = sup._thread
-    wake = (sup._wake_r, sup._wake_w)
-    sup._thread = _StuckThread()  # type: ignore[assignment]
+    wake, lock_fd = (sup._wake_r, sup._wake_w), sup._lock_fd
+    entered, go = threading.Event(), threading.Event()
+    real_step = sup._step
+
+    def stuck(next_scan):
+        entered.set()
+        go.wait(10)
+        return real_step(next_scan)
+
+    sup._step = stuck  # type: ignore[method-assign]
+    assert entered.wait(5)
     closed = _spy(monkeypatch, "close")
     with caplog.at_level(logging.ERROR, logger="orch.runner.supervise"):
         sup.close()
-    assert not set(wake) & set(closed)
-    assert all(os.fstat(fd) for fd in wake)  # still ours, still open
+    assert sup._thread.is_alive()
+    assert not {*wake, lock_fd} & set(closed)
+    assert all(os.fstat(fd) for fd in (*wake, lock_fd))  # still ours, still open
     assert any("I/O thread" in r.getMessage() for r in caplog.records)
-    # once the thread has really ended, a later close releases them, once
-    real.join(5)
-    sup._thread = real
-    sup.close()
-    assert [closed.count(fd) for fd in wake] == [1, 1]
+    with pytest.raises(RunnerBusy):  # no other runner starts while the old thread still runs
+        Supervisor(state, cgroups=None).open()
+    go.set()
+    sup._thread.join(5)
+    assert not sup._thread.is_alive()
+    assert [closed.count(fd) for fd in (*wake, lock_fd)] == [1, 1, 1]
+    assert closed.index(lock_fd) > max(closed.index(fd) for fd in wake)  # the lock is released last
+    sup.close()  # nothing left to release
+    assert [closed.count(fd) for fd in (*wake, lock_fd)] == [1, 1, 1]
+    nxt = Supervisor(state, cgroups=None)
+    nxt.open()
+    nxt.close()
+
+
+def test_a_spawn_racing_close_is_stopped_with_the_others_never_orphaned(state, tmp_path):
+    """close(stop_runs=True) fences spawns before it takes its stop snapshot: one in progress finishes first and is
+    stopped with the rest."""
+    sup = _opened(state)
+    entered, go = threading.Event(), threading.Event()
+    real_start = sup._start
+
+    def slow_start(s):
+        entered.set()
+        go.wait(10)
+        return real_start(s)
+
+    sup._start = slow_start  # type: ignore[method-assign]
+    s = spec(tmp_path, ["/bin/sh", "-c", "exec sleep 60"])
+    spawned: list = []
+    spawner = threading.Thread(target=lambda: spawned.append(sup.spawn(s)))
+    spawner.start()
+    assert entered.wait(5)
+    closer = threading.Thread(target=lambda: sup.close(stop_runs=True, grace=0.5))
+    closer.start()
+    time.sleep(0.2)
+    assert closer.is_alive()  # waits for the spawn in progress
+    go.set()
+    spawner.join(10)
+    closer.join(20)
+    assert not closer.is_alive()
+    try:
+        assert spawned and spawned[0]["duplicate"] is False
+        live = sup.live[s.run]
+        assert peek_exit(live.proc) is not None  # stopped, not left running behind a closed PTY
+        rec = sup.table.get(s.run)
+        assert rec["state"] == "exited" and rec["cleanup"] == "complete"
+    finally:
+        if spawned:
+            kill_own(spawned[0]["pid"], spawned[0]["birth"])

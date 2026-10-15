@@ -154,8 +154,9 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 
 - **`Result`** is `orch.ops.Result` in full. The CLI renders text from it with its own templates, so P1's golden
   output is unchanged.
-- **`Error.detail` (v1.9, #479)** is optional and **closed per code**: only the five codes below may carry it, only the
-  keys listed for the code, and only a closed value or a `Key`-format string; never free text, a path or a secret. The
+- **`Error.detail` (v1.9, #479)** is optional and **closed per code**: only the codes below may carry it, only the
+  keys listed for the code, and only a closed value, a `Key`-format string or (H12d-2) a list of device ids; never
+  free text, a path or a secret. The
   host drops any other code, key or value before it sends. A client ignores unknown keys (§0.4), so this is additive.
 
   | Code | `detail` keys (all optional; a missing key means the host did not know) |
@@ -165,6 +166,8 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
   | `launch.no_grant` | `reason`: `none`, `expiring`, `scope` or `revoked` |
   | `runner.disabled` | `missing`: `addon`, `machine` or `terminals` |
   | `ticket.key_not_next` | `next_key`: the store's next ticket key (advisory, never a reservation) |
+  | `sign.convenience_unavailable` | `reason`: `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version`; `devices`: the readers below level 1 (H12d-2) |
+  | `sign.convenience_readers` | `reason`: `no_declaration`, `reader_too_old`, `declaration_unknown`, `relay_too_old` or `unknown_readers`; `devices`: the new reader (H12d-2) |
 
   The `blocked` object of a preview (§12) keeps its own `detail` with the same keys; it is part of the result, not of
   an `Error`.
@@ -221,6 +224,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
+| `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11) | workspace |
 | `runner/1` | `runner.hello`, `runner.report`, `runner.exit` (1) (v1.6, §12.3.3) | runner |
 
 
@@ -2263,8 +2267,9 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
   so a mark set in direct mode holds after `orch host register`.
 - **Phase 2 (H12d, draft): the reader-version handshake** (item 9) admits readers that declare and prove level 1
   (they understand `convenience`), with convenience history and while the flag is on, in host and direct mode, and
-  relaxes `relay_paired`, `other_member` and `phone_device` to count only readers below level 1. Until H12d merges, this
-  item holds as written.
+  relaxes `relay_paired`, `other_member` and `phone_device` to count only readers below level 1. **H12d-2 built**
+  `member.add` with a declaration and the relaxed `other_member` and `phone_device` (item 9 "As built in H12d-2");
+  `relay_paired`, relay links and pairings hold as written until H12d-3.
 
 **2. The `convenience` custody backend** (`orch.custody.convenience`, next to `passphrase` and `secure-enclave`; never
 imported by `orch.custody`'s package init, the host or the dashboard's HTTP process).
@@ -2672,6 +2677,60 @@ integration (R6, orch-f1 pairing). Inputs: orch-f1 (orch-mobile `aa13ca6`), orch
 runner (9.2) with `reader_kat_1` and the `checkpoint.json` convenience cases (9.12). Nothing is wired into an op yet;
 records, `check_readers`, `member.add --reader-decl` and `reader.declare` are H12d-2. Notes per sub-item below.
 
+**As built in H12d-2** (reader records, the gate, the ops and the views; Opus, orch-52). Judgement calls where the text
+leaves room, the strictest reading unless said otherwise:
+- **Records** (9.10): `orch.store.readerrecs` (files) and `orch.ops.readers` (rules). **One directory for both modes**:
+  `<state>/hosts/<ws>/readers/<device hex>.json`, not `<workspace>/.state/readers/`: in tier A the direct-mode and
+  the host state directory are one (the `convenience_seen` precedent, #441), so `register` "imports" by verifying
+  every record against the log it just read and removing the ones that do not verify (`readers.prune`), and
+  `unregister` leaves them for direct mode (nothing to export). **Every read verifies again**: a record counts only
+  for its exact current device pair (not removed, not revoked), every field against the device's certificate and
+  person (`State.device_evidence`), the declaration re-verified without the clock (`recheck`) with the `via` and KAT
+  surfaces of its `source` (`member.add`: `enrol`/`log`; `declare`: `declare`/`log` or `view`; `pair`: `pair`/`view`,
+  and a `pk_pin` only under the pin of the device's person key). Anything else, an unsafe file included, is "no
+  declaration" (level 0). **I1:** `store_record` compares on `sha256(cj(o))` (the same `o` keeps the stored bytes,
+  whatever its `sig`); latest wins by `created_ms`, then arrival; a lower newer declaration lowers the level. An
+  expired certificate still counts as a reader (it may hold what it read). Held revocations in `HostPins` are not
+  consulted (counting more readers is the safe side).
+- **Invariant I at the append** (9.4): `check_readers(ws, levels, events, required, relay_level)` is pure and runs
+  under the store lock in host `append_signed` (`_readers_refusal`, before the `convenience_seen` mark, for the
+  events not in the log yet) and in direct `Human._sign_and_append` (a `precommit` before the mark's). It refuses a
+  reader-adding event (`member.added`, `device.added`; a `restore` counts **every** current device until a path
+  emits one) whose new reader is below `required_reader` (`no_declaration`, `reader_too_old`), and a convenience
+  event while another current reader is below level 1 (the relaxed reasons, 9.9). A convenience event in the same
+  request makes `required_reader` at least 1. The admitted reader's record is written there, before the append; a
+  record that cannot be written refuses the append. `tests/host/test_append_paths.py` lists every log append.
+- **Direct mode tightens:** a convenience-signed direct append (convenience custody in direct mode) is refused
+  while another current reader is below level 1, with `sign.convenience_unavailable` (now a P1 global code).
+- **`member.add`** (9.11): `reader_decl` is an `x-file` argument (`--reader-decl PATH`), read with a 4 KiB cap
+  **before** `loads_strict` (I2), verified `via:"enrol"` with the `log` surface and the certificate's keys and
+  person. The early check runs in the handler (direct: mark and history; host: history) and in the host's
+  `refuse_reader_op` after the handler (flag, mark; at binding and submit also the history), rechecking the
+  declaration without the clock. The declaration rides in the request record's `readers` (not signed, not
+  material). **The review line** is `derived.reader` of a reader-adding event's review block, the level the host
+  verified (0 without one): a host attestation the signer requires, shows (`Reader: understands convenience
+  signing (level N)` / `Reader: old (level 0)`) and binds through `review_digest`, but cannot recompute (the
+  declaration is an argument). `relay.link` and `relay.pair` keep item 1's rule until H12d-3.
+- **`reader.declare`** is P only (`person_write`, an idem): a current device of the calling person, `via:"declare"`,
+  the `log` surface; it answers the record now current `{device, reader, level, digest}` (an older declaration
+  answers the stored one). Column R with `rd` is H12d-3. **`reader.list`** (P and R) answers `{readers:[{device,
+  person, dk_hash, reader, level, digest, decl}], required_reader}`; `dk_hash` lets `orch keys reader declare` build
+  a declaration. `required_reader` in the reads is the flag or the mark (no history scan on a read).
+- **Custody decision (9.3, #463 L1):** a **convenience device key never signs a reader declaration** (no review, no
+  presence: a same-UID process must not raise or lower a level); a convenience device needs no record for its own
+  signatures (`reader_version` qualifies it). The passphrase prompt shows every field (`describe`, object kind
+  `reader_decl`). `orch keys reader declare --workspace W` runs the KAT at runtime over core's production `log`
+  parser (`reader_kat_1.json` ships as package data, byte-equal to the vector) and declares level 1 or 0;
+  `--enrol --workspace-id ID --cert PATH --out PATH` writes the invitee's `via:"enrol"` declaration.
+- **Views:** `ticket.get` `questions[].answer` gains `signer:{device, auth}` (beside `auth`), emitted only when
+  `parse_signer` accepts it. `member.list` devices gain `reader` (the counted level), `member.list` and
+  `workspace.show` gain `required_reader`. The click signer's `status` shows `readers_old` after a refusal for a
+  reader below level 1, until a call succeeds. `orch host convenience on` says that other readers must declare first
+  (it does not list them: the CLI reads no model state; the refusals and `reader.list` name them).
+- **Not in H12d-2:** the pair-meta `reader_decl` and the gate in the R6 allocation, `rd` in column R, relay-info,
+  `relay_reader_old`, `readers reset` (H12d-3; hooks: `readerrecs.relay_level`, the `pair` source, the `pk_pin`
+  check), the `needs` item "re-declare readers".
+
 **9.0 What this can and cannot do.**
 - **A malicious reader can always lie.** It can hard-code any answer and misparse anyway. A person's compromised device
   is already within that person's authority (11A.9). Nothing here defends against it.
@@ -2831,7 +2890,8 @@ reader_decl = {"o": {"v": 1, "kind": "reader_decl", "suite": 2, "workspace_id": 
 - **Custody (H12d-1, #463 review L1):** `sig_reader_decl` is in `DEVICE_KEY_LABELS`, but no backend signs it yet. The
   passphrase prompt refuses it (no review rendering: "not prompted for in P1"), and the `convenience` backend, which
   signs without any review, refuses it explicitly with the same message before reading its key. H12d-2 decides
-  whether and how a declaration is signed (`orch keys reader declare`, the phone).
+  whether and how a declaration is signed (`orch keys reader declare`, the phone). **Decided in H12d-2:** the
+  convenience backend refuses it for good; the passphrase prompt shows it (see "As built in H12d-2").
 - **Notes for H12d-2 (#463 Opus review):**
   - **I1:** ECDSA signatures are malleable (high-s is accepted, `crypto.verify`), so the same declaration can arrive
     with two `sig` values and two `rd`. Reader records deduplicate and compare declarations on `sha256(cj(o))`, never
@@ -3813,6 +3873,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     or value is dropped before sending, and no free text or secret is ever sent. The §0.6 rows that promised
     `detail.*` are now true; `ticket.key_not_next` carries `detail.next_key`. A client ignores unknown `Error` keys
     (§0.4), so no cap or op version changes.
+45. **Reader records, invariant I, `reader.declare`/`reader.list`, `signer` in the views (H12d-2, §0.8.6 item 9 "As
+    built in H12d-2"; the number may be renumbered when a parallel change lands first):** `member.add` takes
+    `reader_decl` (`--reader-decl PATH`, an `x-file`), and the review of a reader-adding event carries
+    `derived.reader` (a host attestation; a signer without it refuses: update orch). New ops `reader.declare` (P,
+    `person_write`, an idem) and `reader.list` (a read, P and R), cap `reader/1`; `member.list` devices gain `reader`,
+    `member.list` and `workspace.show` gain `required_reader`; `ticket.get` `questions[].answer` gains
+    `signer:{device, auth}`. New code `reader.decl_invalid`; `sign.convenience_readers` and
+    `sign.convenience_unavailable` gain `Error.detail` `{reason, devices}` (seven codes may carry `detail` now).
+    Additive for P clients while `required_reader` is 0.
 
 ---
 
@@ -4915,7 +4984,7 @@ a distinct UID and a restricted signing service (the reserved out-of-process `br
 | member list, WK grants, cert requests | `sig_member_list`, `sig_wk_grant`, `sig_cert_request` | WSK | R6 builders; `wk_commit` (label `h_wk_commit` exists, no function) | **must be added** (R6) |
 | genesis pin (`PUT genesis`, P3-D18) | `orch/v2/sig/genesis-pin\|` | an owner device's `dk_sig` | person path: `human.prepare` of a new non-event material kind `relay.genesis_pin`, `host/signer.check` and `render` for it, signed by the click or terminal signer | **must be added**; `sig_genesis_pin` is in **no** role list today, so it must be added to `DEVICE_KEY_LABELS` (`custody/base.py`) |
 | restore line (owner policy, P3-D23/D24) | `sig_ws_event` or `sig_ticket_event` (person), `sig_host_event` (host) | owner `dk_sig`, then WSK | person path through `human.*`; the store's transition machinery exists (`store/pins.py` `pending-transitions/`, `transitions/`) | the person op (prepare, review, submit of `restore`) is **not** in `ops/commands`: **must be added** |
-| reader declaration (H12d, §0.8.6 item 9.3) | `orch/v2/sig/reader-decl\|` (`sig_reader_decl`, an F1 label in `orch.canon.LABELS`) | the declaring device's `dk_sig` | made by the reader (a phone, or `orch keys reader declare`, H12d-2); the host only verifies (`orch.identity.reader.verify_decl`) | label in `DEVICE_KEY_LABELS` **exists** (H12d-1); the signing path **must be added** (H12d-2) |
+| reader declaration (H12d, §0.8.6 item 9.3) | `orch/v2/sig/reader-decl\|` (`sig_reader_decl`, an F1 label in `orch.canon.LABELS`) | the declaring device's `dk_sig` | made by the reader (a phone, or `orch keys reader declare`, H12d-2); the host only verifies (`orch.identity.reader.verify_decl`) | label in `DEVICE_KEY_LABELS` **exists** (H12d-1); the signing path **built** in H12d-2 (passphrase prompt; the convenience backend refuses) |
 | workspace delegation | `orch/v2/sig/ws-delegation\|` | owner PK | made at `init` (`identity/certs.make_delegation`); R1 and R3 only carry the stored one | **exists** |
 | device certificate, revocation, cert challenge, cert rejection | PK labels | the person's PK | owner clients only; the host never makes them and only carries or verifies them (`identity/certs.check_cert`, `verify_cert`, `verify_revocation`, `check_delegation`) | **exists** (verify side) |
 
@@ -7502,6 +7571,8 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `worktree/1` | `worktree.create` | ✓ visible ticket | ✓ own claimed ticket | — | idem create |
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
+| `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R with `rd`: H12d-3) |
+| `reader/1` | `reader.list` | ✓ | — | — | read (also column R) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 

@@ -8894,7 +8894,7 @@ R2's `relay/keys.py`).
   (no zeroisation claim); `recover_h7` cannot recover from `ledger_unreadable` (owner repair).
 **Round 3 (Opus delta review of f6edb15e: PASS WITH REQUIRED CHANGES; fixed 15 Oct 2026, orch-29).** The main
 finding is the second occurrence of the class "the gate is not raised on some path" (round 1 F4), so it is fixed
-structurally (CLAUDE rule: name the invariant, enforce it in one place).
+structurally: the invariant is named and enforced in one place.
 - J-R6a-20 **THE RELAY GATE INVARIANT: a device whose F1 standing goes from `ok` to not `ok`, by any means, raises
   the gate before the store lock is released.** Enforced in ONE place: the `Store._state` setter, the only way the
   model state changes (`_load`: open, reload of a foreign append, recovered pending appends; `_commit`: every append

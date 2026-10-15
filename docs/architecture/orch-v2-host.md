@@ -7257,6 +7257,10 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   st_ino}` equal to the root's; the root a private real directory). `tests/relay/owner.py` is not on develop yet, so
   this is a minimal check: **orch-29** should make `owner.py`/`dev-pair` share it (or replace it and keep its tests).
   `make_sandbox(root, code)` writes that shape. Production code reads no stored code or key.
+- **For callers (orch-29, Opus N3):** read `pk_pub` only inside the `with` block, or construct the source with
+  `pk_pub=` (the workspace owner's pinned key); a source built with `person_id=` raises `PublicKeyUnknown` for
+  `pk_pub` before its code is typed. The parser and the derivation are wrapped against any interrupt (N1), and a
+  replaced `SystemExit` keeps an `int` exit code (N2).
 - **Not yet (R6, orch-29):** the call sites (step 7b's challenge and rejection, the certificate, `orch` revoke), the
   error-table entries in `ops/errors.py` for the five new custody codes, item 11 and item 12.
 

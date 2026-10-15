@@ -5,6 +5,7 @@ missing or wrong relay checkout skips locally but fails in CI."""
 from __future__ import annotations
 
 import json
+import signal
 import socket
 import subprocess
 import threading
@@ -177,3 +178,22 @@ def test_a_relay_checkout_at_another_commit_fails(monkeypatch, tmp_path):
     monkeypatch.setenv(harness.RELAY_DIR_ENV, str(tmp_path / "src"))
     e = _outcome(harness.relay_dir)
     assert type(e) is pytest.fail.Exception and "not an orch-relay checkout" in str(e)
+
+
+def test_the_per_test_budget_is_a_hard_limit_and_keeps_an_outer_alarm(monkeypatch):
+    from . import conftest as t2conf
+
+    monkeypatch.setattr(t2conf, "TEST_BUDGET_S", 0.2)
+    outer = signal.signal(signal.SIGALRM, signal.SIG_IGN)
+    signal.setitimer(signal.ITIMER_REAL, 50)  # an outer alarm (perl -e 'alarm N') already armed
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(t2conf.T2Timeout), t2conf._Budget():
+            time.sleep(5)
+        assert time.monotonic() - t0 < 2
+        left, _ = signal.getitimer(signal.ITIMER_REAL)
+        assert 45 < left <= 50  # restored, minus the time spent
+        assert signal.getsignal(signal.SIGALRM) == signal.SIG_IGN
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, outer)

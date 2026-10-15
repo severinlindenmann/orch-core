@@ -21,6 +21,7 @@ __all__ = [
     "REASONS",
     "REFUSALS",
     "CONTRACT",
+    "FEATURES",
     "ClickError",
     "RISK",
     "WORD_OPS",
@@ -46,7 +47,10 @@ DEPOSIT_RISK = (
 )
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = 12
-OPS = ("prepare", "view", "sign", "cancel", "status")
+OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off")
+#: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
+#: the dashboard's click-to-sign switch (§0.8.6 item 3a); an older signer has no ``features`` and no switch
+FEATURES = ("custody",)
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)

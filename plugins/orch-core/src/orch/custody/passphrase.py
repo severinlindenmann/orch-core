@@ -386,13 +386,22 @@ class PassphraseBackend:
         _min_n: int = MIN_N,
     ) -> None:
         """``_``-prefixed arguments are test seams (an injected passphrase callback, a lowered scrypt floor). Production
-        code calls ``PassphraseBackend(directory)`` and gets the terminal prompt and the 2^15 floor."""
+        code calls ``PassphraseBackend(directory)`` and gets the terminal prompt and the 2^15 floor, or
+        :meth:`answering` for the dashboard's custody switch."""
         if not _params_ok(_kdf, _min_n):
             raise CustodyError("unacceptable scrypt parameters")
         self._dir = files.private_dir(directory)
         self._provider = _passphrase_provider or tty_passphrase_provider
         self._kdf = _kdf
         self._min_n = _min_n
+
+    @classmethod
+    def answering(cls, directory: str | Path, passphrase: str) -> PassphraseBackend:
+        """The production backend whose prompts are answered with ``passphrase`` instead of the terminal: the
+        dashboard's click-to-sign switch (orch-v2-host §0.8.6 item 3a), where the person types the passphrase into
+        the dashboard and the click signer passes it on. Only :func:`orch.custody.select.convert_to_convenience` uses
+        it; every other setting (the scrypt floor included) is production's."""
+        return cls(directory, _passphrase_provider=lambda _request: passphrase)
 
     # -- file format --------------------------------------------------------------------------------------------------
 

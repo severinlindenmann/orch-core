@@ -44,7 +44,7 @@ def _sites() -> dict[tuple[str, str], int]:
             continue  # the store's own append, and its callers within the store
         tree = ast.parse(path.read_text())
 
-        def walk(node: ast.AST, scope: list[str]) -> None:
+        def walk(node: ast.AST, scope: list[str], rel: str = rel) -> None:
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     walk(child, [*scope, child.name])

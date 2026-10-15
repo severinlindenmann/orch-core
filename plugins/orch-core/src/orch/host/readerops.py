@@ -9,7 +9,8 @@
   the record now current, ``{device, reader, level, digest}``: a declaration that lost to a later one answers the
   stored one, so the caller sees that its ``digest`` was not taken.
 * ``reader.list {}`` (a read, columns P and R): every current device with its reader record, ``{readers:[{device,
-  person, reader, level, digest, decl}], required_reader}``; a device without a record that verifies has ``reader``
+  person, dk_hash, reader, level, digest, decl}], required_reader}`` (``dk_hash``: what a declaration of the device
+  binds, so ``orch keys reader declare`` can build one); a device without a record that verifies has ``reader``
   and ``level`` 0 and ``digest``/``decl`` null.
 
 ``required_reader`` in the reads comes from the flag and the durable mark only (no history scan on a read: the mark is
@@ -73,6 +74,7 @@ def listing(service: Any) -> dict[str, Any]:
             {
                 "device": dev.id,
                 "person": dev.person,
+                "dk_hash": _dk_hash(evidence),
                 "reader": rec["reader"] if ok else 0,
                 "level": level if ok else 0,
                 "digest": rec["digest"] if ok else None,
@@ -80,6 +82,15 @@ def listing(service: Any) -> dict[str, Any]:
             }
         )
     return {"readers": rows, "required_reader": read_required(service)}
+
+
+def _dk_hash(evidence: Any) -> str | None:
+    """``dk_hash`` of the device's certificate keys (what a declaration binds, 9.3), or ``None``."""
+    from orch import crypto
+    from orch.ops.readers import _cert_keys
+
+    keys = _cert_keys((evidence or {}).get("device_cert"))
+    return None if keys is None else crypto.b64u(crypto.dk_hash(*keys))
 
 
 def device_levels(service: Any) -> dict[str, int]:

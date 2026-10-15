@@ -133,7 +133,16 @@ def _serve(directory, lock_fd=None):
     listener.bind(("127.0.0.1", 0))
     listener.listen(128)
     port = listener.getsockname()[1]
-    config = uvicorn.Config(create_app(port, auth=auth), proxy_headers=False, access_log=False, log_level="warning")
+    config = uvicorn.Config(
+        create_app(port, auth=auth),
+        proxy_headers=False,
+        access_log=False,
+        log_level="warning",
+        # The terminal WebSocket (section 12.6.6): max_size 64 KiB, no permessage-deflate, no subprotocol.
+        ws="websockets",
+        ws_max_size=65536,
+        ws_per_message_deflate=False,
+    )
     server = uvicorn.Server(config)
     ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     old = os.umask(0o177)

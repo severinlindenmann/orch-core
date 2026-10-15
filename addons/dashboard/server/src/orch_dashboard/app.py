@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, click, handoff, reads, settings
+from . import adapters, addon_routes, click, handoff, reads, settings, terminals
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .gateway import Gateway
@@ -35,6 +35,9 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     static = Path(static) if static else Path(__file__).parent / "static"
 
     live = Live(gateway, auth)
+    tickets = terminals.Tickets()
+    streams = terminals.Streams(live)
+    live.terminals = lambda token: streams.open.get(token, 0)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -45,6 +48,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.auth = auth
     app.state.live = live
+    app.state.term_tickets = tickets
     app.add_middleware(Security, port=port, auth=auth)
 
     @app.exception_handler(HostError)
@@ -71,6 +75,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
         try:
             app.state.cancel_session(request.state.token)  # an open sign request is cancelled with its session
             app.state.cancel_clicks(request.state.token)
+            tickets.forget(request.state.token)  # its unused browser tickets go with it
         finally:
             auth.logout(request.state.token)  # the session ends even if a cancel failed
         return {"ok": True}
@@ -134,6 +139,8 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     click.register(app, gateway)
     settings.register(app, gateway)
     addon_routes.register(app, gateway)
+    terminals.register(app, gateway, tickets)
+    terminals.register_socket(app, gateway, auth, tickets, streams)
 
     @app.get("/{path:path}")
     def spa(path: str, request: Request):

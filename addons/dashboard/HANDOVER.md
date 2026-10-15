@@ -1093,5 +1093,32 @@ workspace's own repository, a push to a LOCAL bare repo refused and nothing publ
 mock api's methods per scenario). `scripts/layout-guard.mjs` checks the `real-host-*` pages: quick, many rows, limits open, normal-ticket
 and add (first signature) dialogs, records (long URLs), hidden URL, first commit, push confirm, failed push, runner on/off.
 
-
 M6 follow-up (#454, 2026-10-14): `GET /api/w/<ws>/records/current` checks `records/1` and `records.status`, authorizes with the host, then runs `python -I -m orch.records status --workspace <id> --json` under the same isolation, 60-second budget, output cap and workspace guard as commit. Its strict success envelope is `{ok:true,detail:{status:…}}`; only validated status fields reach the browser (`local` is discarded). The confirm dialog checks on each opening and uses `remote.current_url`, `current_private`, and `matches_last`; unavailable/hidden current URLs retain the historical warning with a failure code. The page outside keeps the last-known labels. No new events.
+
+## Terminals on the real host (M7a, 14 Oct)
+
+Stream B M7a (host contract v1.6 §12.3, §12.6; H11b). The dock is real when the server lists `terminals` (host caps `run/1`, `term/1`
+and the seven ops below); otherwise it is not drawn on a real host. Start agent (H11c) is not wired: no `agent_start` feature.
+
+| Route | Host op | Notes |
+|---|---|---|
+| `GET /api/w/{ws}/runs` | `run.list {state:"all"}` (paged, 8 pages max) | runs projected (`adapters/runs.py`: no grant, session, person); `runner` = `{connected, enabled, terminals}` |
+| SSE `/api/events` event `runs` | `run.sub` (opened before the page lists, D-P2-37) | items `{t:"run", run}` / `{t:"gone", run}`; the page merges by `rev`; `resync`/`ready` read the full list again |
+| `POST /api/w/{ws}/terminals/preview` | `term.preview` | `display`, `cwd_path`, `notice`, `blocked`, `warnings`: untrusted text, hidden characters withheld |
+| `POST /api/w/{ws}/terminals/open` `{…, spec, idem}` | `term.open` (idem create) | the page draws one `a_<ULID>` idem per confirmed preview and reuses it on a retry |
+| `POST /api/w/{ws}/runs/{run}/stop` | `run.stop` | `{state, cleanup}`; incomplete/unknown → "Some processes may still be running" |
+| `POST /api/w/{ws}/runs/{run}/attach` `{mode, take?, from?}` | none | the browser ticket of §12.6.6 step 1 (128 bits, sha256 kept, single use, 30 s, 10/min/session, bound to ws/run/mode/take/from/session/server generation) |
+| WebSocket `GET /term` | `term.attach` (own host connection), `attach.cancel` on every teardown | §12.6.6 checks in `Security.websocket`; uvicorn `ws_max_size=65536`, `ws_per_message_deflate=False`; dependency `websockets==13.1` |
+
+- **Bridge** (`server/src/orch_dashboard/terminals.py`): `TermSocket` per WebSocket; a `Pump` thread owns core's `TermClient` after
+  `connect` (input, resizes, throttled resends, continuous reads); `OutQueue` keeps 512 KiB of decoded output (oldest → one `gap`),
+  control frames never dropped. Close codes: `CLOSE_TABLE`, verbatim from §12.6.6.
+- **Page** (`src/app/terminal/real/`): `termProtocol.ts` (messages, close policy, reply filter), `termView.ts` (xterm per §12.6.7),
+  `RealTerminal.tsx` (lease UX), `RealDock.tsx` (runs, preview, stop). `src/api/runs.ts` holds the routes and the live merge.
+- **Tests:** `server/tests/test_terminals.py` (table, tickets, socket checks, queue, sink), `test_terminals_host.py` (core host + runner in
+  process: lease, 4409, resize, 4401, replay of an exited run, stop, live `runs`, the log canary), `test_realhost_terminals.py`
+  (`-m realhost`); page: `src/app/terminal/real/*.test.ts(x)` including `canary.test.ts` (§12.6.7 corpus with a real xterm in jsdom),
+  `src/api/runs.test.ts`, `src/dev/layoutPreview.test.tsx`. Layout guard: `real-host-terminal-*`.
+- **Requests for stream A:** (1) a dev-only seam so `orch host run --foreground` can admit a foreground runner (`orch runner run
+  --foreground`) without a service manager, for a subprocess real-host test; (2) `term.attach`'s refusals could carry `retry_after_ms`
+  for `rate.limited`/`attach.limit` (the server passes it on when present, else 1000 ms).

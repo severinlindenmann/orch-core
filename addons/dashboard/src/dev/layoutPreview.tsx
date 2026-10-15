@@ -16,6 +16,9 @@ import { HostRecords } from '@/app/pages/settings/host/Records'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
+import { runsApi, type Run, type RunList } from '@/api/runs'
+import { RealDock } from '@/app/terminal/real/RealDock'
+import { termTransport, type TermConnection, type TermHandlers } from '@/app/terminal/real/termProtocol'
 
 export const LAYOUT_SCENARIOS = [
   'quick-normal',
@@ -28,6 +31,13 @@ export const LAYOUT_SCENARIOS = [
   'records-push-mismatch',
   'runner-on',
   'runner-off',
+  // M7a: the real-host terminal dock (RealDock with fixture runs and a fixture socket).
+  'terminal-dock',
+  'terminal-preview',
+  'terminal-readonly',
+  'terminal-take',
+  'terminal-exited',
+  'terminal-stop',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -114,6 +124,41 @@ function request(action: Record<string, unknown>): HandoffRequest {
   }
 }
 
+const RUN_BASE = 'r_01M4Y46B485AXD4CBEJZ15Z1'
+const fixtureRun = (id: string, over: Partial<Run> = {}): Run => ({
+  run: RUN_BASE + id, rev: 1, kind: 'shell', ticket: null, harness: 'shell', mode: null, model: null, as_person: true, state: 'running',
+  started_at: '2026-10-12T09:00:00Z', viewers: 1, writer: false, cols: 100, rows: 30, replay_until: null, label: null, label_hidden: false,
+  cwd: { kind: 'workspace' }, exit: null, ...over,
+})
+const ENDED = { code: 1, signal: null, at: '2026-10-12T09:30:00Z', reason: 'stopped' as const, cleanup: 'complete' as const }
+const runList = (scenario: LayoutScenario): RunList => {
+  const runner = { connected: true, enabled: true, terminals: true }
+  if (scenario === 'terminal-exited')
+    return { runner, truncated: false, runs: [fixtureRun('EX', { state: 'exited', replay_until: '2026-01-01T00:00:00Z', exit: ENDED, label: `Build ${LONG_WORD}` })] }
+  if (scenario === 'terminal-stop')
+    return { runner, truncated: false, runs: [fixtureRun('ST', { state: 'exited', replay_until: '2099-01-01T00:00:00Z', exit: { ...ENDED, cleanup: 'incomplete' } })] }
+  return {
+    runner,
+    truncated: false,
+    runs: [
+      fixtureRun('AA', { writer: scenario === 'terminal-take', label: `Release notes for ${LONG_URL}` }),
+      fixtureRun('BB', { ticket: 'DEMO-0043', label: null }),
+      ...Array.from({ length: 6 }, (_, i) => fixtureRun(`C${i}`, { label: `Shell ${i + 3}` })),
+      fixtureRun('DD', { state: 'exited', replay_until: '2099-01-01T00:00:00Z', exit: ENDED }),
+    ],
+  }
+}
+/** A fixture socket: `ready` at once (never the lease), then a screenful of output. Nothing leaves this page. */
+function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
+  const timer = setTimeout(() => {
+    h.ready({ start: 0, offset: 0, cols: 100, rows: 30, writer: false, state: current === 'terminal-stop' ? 'exited' : 'running' })
+    const text = Array.from({ length: 40 }, (_, i) => `demo $ echo line ${i} ${'-'.repeat(i % 90)}\r\n`).join('')
+    h.output(0, new TextEncoder().encode(text))
+    if (current === 'terminal-stop') h.exit(1, null)
+  }, 50)
+  return { sendInput() {}, resize() {}, close: () => clearTimeout(timer) }
+}
+
 let current: LayoutScenario = 'quick-normal'
 let installed = false
 const originals = new Map<string, unknown>()
@@ -121,7 +166,12 @@ const originals = new Map<string, unknown>()
 /** Test cleanup: undo every mock api swap before another test uses the shared client. */
 export function resetLayoutPreview() {
   const a = api as unknown as Record<string, unknown>
-  for (const [name, fn] of originals) a[name] = fn
+  const r = runsApi as unknown as Record<string, unknown>
+  for (const [name, fn] of originals) {
+    if (name === 'runs.connect') termTransport.connect = fn as typeof termTransport.connect
+    else if (name.startsWith('runs.')) r[name.slice(5)] = fn
+    else a[name] = fn
+  }
   originals.clear()
   installed = false
   current = 'quick-normal'
@@ -145,6 +195,19 @@ function install() {
   })
   set('getRecords', async () => records(current))
   set('getRecordsCurrent', async () => ({ ...records(current), remote: { ...records(current).remote!, current_url: LONG_URL + (current === 'records-push-mismatch' ? '/changed' : ''), current_url_hidden: false, current_private: true, matches_last: current !== 'records-push-mismatch' } }))
+  // M7a: the real-host dock's routes and its socket answer from fixtures.
+  const r = runsApi as unknown as Record<string, unknown>
+  for (const name of ['list', 'preview', 'open', 'stop', 'ticket']) originals.set(`runs.${name}`, r[name])
+  originals.set('runs.connect', termTransport.connect)
+  r.list = async () => runList(current)
+  r.preview = async () => ({
+    spec: 'f'.repeat(64), display: `$SHELL -l -c 'exec "$0" "$@"' ${LONG_WORD}`, display_hidden: false, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing`,
+    cwd_path_hidden: false, notice: 'acts as you, not as an agent', as_person: true, login_shell: true, env: ['PATH', 'HOME', 'LANG', 'TERM', 'ORCH_TICKET', 'SHELL', 'USER', 'LOGNAME'],
+    blocked: null, warnings: [`The working copy ${LONG_URL} has uncommitted changes.`],
+  })
+  r.ticket = async () => ({ ticket: 'layout-preview', expires_in_ms: 30000 })
+  r.stop = async () => ({ state: 'exited', cleanup: 'incomplete' })
+  termTransport.connect = fixtureConnect
   // "Make a normal ticket" reads the ticket fresh: answer with the quick row's labels and status.
   set('getTicket', async (...args: never[]) => {
     const key = args[0] as string
@@ -183,12 +246,13 @@ export function LayoutPreview({ name }: { name: string }) {
     install()
     current = name as LayoutScenario
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs']) qc.removeQueries({ queryKey: [key] })
     return current
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
   if (scenario.startsWith('quick-')) return <QuickPage />
+  if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
   if (scenario.startsWith('records-'))
     return (
       <SettingsFrame current="records" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
@@ -199,5 +263,18 @@ export function LayoutPreview({ name }: { name: string }) {
     <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
       <HostGeneral workspace={workspace} />
     </SettingsFrame>
+  )
+}
+
+/** The real-host dock at its default bottom size, under a stand-in page area (the guard checks it at 720 px too). */
+function TerminalPreview({ scenario }: { scenario: LayoutScenario }) {
+  const view = { width: typeof window === 'undefined' ? 1440 : window.innerWidth, height: typeof window === 'undefined' ? 900 : window.innerHeight }
+  return (
+    <div className="flex h-[640px] min-w-0 flex-col">
+      <p className="p-3 text-xs text-text-muted">Real-host terminal dock ({scenario}): fixture runs and a fixture socket.</p>
+      <div className="flex-1" />
+      <RealDock prefs={{ open: true, side: 'bottom', bottom: 360, right: 480, harness: 'shell' } as never} side="bottom" size={360} view={view} area={view.width}
+        rightFits={false} setPrefs={() => {}} focus={{ current: null }} memory={new Map()} collapse={() => {}} autoPreview={scenario === 'terminal-preview'} />
+    </div>
   )
 }

@@ -1,11 +1,16 @@
+import contextlib
+
 from .errors import response
 
 # §0.8.6 item 7: the required directives (default-src, script-src, object-src, base-uri, frame-ancestors, form-action)
 # plus the narrow extras this app needs (its own styles, connections and inline-free images).
+# `connect-src` adds the terminal WebSocket on this server's own port only (section 12.6.6: no `ws:` wildcard, no
+# `localhost`); `script-src` and `style-src` are not loosened for xterm.
 CSP = (
     "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
-    "form-action 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:"
+    "form-action 'self'; style-src 'self'; connect-src 'self' ws://127.0.0.1:{port}; img-src 'self' data:"
 )
+TERM_PATH = "/term"
 # Bodies of the sign routes are tiny (ids, a hash, a typed word); everything else keeps the general bound.
 CLICK_BODY_LIMIT = 16_384
 CLICK_STEP = ("/view", "/sign", "/cancel", "/state")
@@ -18,6 +23,8 @@ class Security:
         self.app, self.port, self.auth = app, port, auth
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "websocket":
+            return await self.websocket(scope, receive, send)
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         path, method = scope["path"], scope["method"]
@@ -34,7 +41,7 @@ class Security:
                 started = True
                 hs = list(message.get("headers", []))
                 hs += [
-                    (b"content-security-policy", CSP.encode()),
+                    (b"content-security-policy", CSP.format(port=self.port).encode()),
                     (b"x-content-type-options", b"nosniff"),
                     (b"x-frame-options", b"DENY"),
                     (b"referrer-policy", b"no-referrer"),
@@ -104,3 +111,31 @@ class Security:
                 raise
             # No body/header interpolation in errors or logs.
             await reject("internal", 500)
+
+    async def websocket(self, scope, receive, send):
+        """Section 12.6.6: only `/term`; closed before `accept` unless Host and Origin are exactly this server's
+        (`localhost`, a missing or `null` Origin refused), with no subprotocol. Cookies are never read (dropped from the
+        scope). permessage-deflate is off and `ws_max_size` is 64 KiB in the server's configuration (`__main__`). The
+        bearer is checked through the browser ticket (the first message), not here."""
+        headers = scope["headers"]
+
+        def values(name):
+            return [v.decode("latin1") for k, v in headers if k.lower() == name]
+
+        if (
+            scope["path"] != TERM_PATH
+            or values(b"host") != [f"127.0.0.1:{self.port}"]
+            or values(b"origin") != [f"http://127.0.0.1:{self.port}"]
+            or values(b"sec-websocket-protocol")
+            or scope.get("subprotocols")
+            or scope.get("query_string")
+        ):
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        scope = {**scope, "headers": [(k, v) for k, v in headers if k.lower() != b"cookie"]}
+        try:
+            await self.app(scope, receive, send)
+        except Exception:
+            # No frame, ticket or byte in a log: the socket just closes.
+            with contextlib.suppress(Exception):
+                await send({"type": "websocket.close", "code": 4500})

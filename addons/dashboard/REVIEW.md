@@ -562,5 +562,16 @@ You should see: "Quick tasks" in the sidebar listing both tasks with "counts unk
 shows the commit. The four terminal-only commands appear as text with no button. With a remote (use a local bare repo only) the export warning
 shows verbatim before **Commit and push**. `orch runner enable` (terminal) makes Settings, General show the "Dashboard execution" line.
 
-
 M6 follow-up (2026-10-14): In the disposable workspace, open Commit and push and check the current destination and private assurance. Change the local remote URL, reopen, and check the mismatch against the last push. Layout fixtures `/__layout/records-push-failed` and `/__layout/records-push-mismatch` exercise long current URLs. Convert a ticket with only `quick`: the dialog says “Labels kept: none”, and the signed set removes its last label.
+
+## Try terminals (M7a, real host, own terminal)
+
+The end-to-end check is in-process (a subprocess host admits only the runner unit's main PID, and `orch runner enable` installs a
+launchd/systemd unit, which must not happen on this shared laptop): `cd addons/dashboard/server && uv run pytest -m realhost
+tests/test_realhost_terminals.py` (core's host and runner in this process, a real `/bin/sh`). On a disposable real host
+(`tests/realhost_kit.py up BASE`) with the `terminals` addon granted but no runner, the dock shows (feature `terminals`) and
+**New terminal** shows the host's preview with its `blocked` reason; nothing starts. With a runner, what you should see: the preview
+(command, folder, "acts as you, not as an agent", the D-P2-31 line), **Open terminal** opens a shell you can type in; another tab shows
+it read-only with **Take control**; taking it there shows **Take back** here; **Stop** ends it ("Some processes may still be running"
+when cleanup was incomplete); an ended run whose output is gone says "Output no longer kept". Layout: `/__layout/terminal-dock` (and
+`-preview`, `-readonly`, `-take`, `-exited`, `-stop`) in the dev build.

@@ -61,7 +61,7 @@ def test_source_names_commit_revision_and_vector_hash():
     src = corpus.source()
     assert set(src) == {"relay_repo", "relay_commit", "http_fixtures_manifest_revision", "vectors_v2_sha256"}
     assert len(src["relay_commit"]) == 40 and int(src["relay_commit"], 16) >= 0
-    assert int(src["http_fixtures_manifest_revision"]) == MANIFEST["revision"] == 11
+    assert int(src["http_fixtures_manifest_revision"]) == MANIFEST["revision"] == 12
     assert hashlib.sha256(corpus.vectors_bytes()).hexdigest() == src["vectors_v2_sha256"]  # decompressed bytes
 
 

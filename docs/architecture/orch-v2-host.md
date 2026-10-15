@@ -5653,6 +5653,14 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   control-socket client of the host UID (the agent refusal is the CLI's); eight stuck workers that outlive `close()`
   keep their slots until the process restarts (fail closed); a first link in flight at `stop()` runs to its per-call
   deadlines (the session's own transport is not in the loop's connections), bounded by the 120 s join.
+- **Mutation pass, round 2:** 26 new mutants aimed at the round-2 tests (R1 reverted, a partial worker kept, the audit
+  failing open or skipped after a failed build, the halt joining on the worker thread, the convenience check without
+  the store lock, the `link.json` workspace and origin checks, the seam checks, `Publisher.start` under the lock, `join`
+  ignoring the start thread or the publisher, no reaper, `alive` too early, a truthy gate, WorkerStop swallowed, no
+  re-check after the first link, the CLI unlink refusals, the unlink timeout, alarm text, the stored-alarm and
+  `max_publication_bytes` bounds, `host.status` failing on a relay error): **26 killed**. The pass also found a race,
+  now fixed: the reaper and a later `join` could both report the worker ended while one was still releasing
+  (`_finish` is serialised by its own lock and sets `_ended` last).
 
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`

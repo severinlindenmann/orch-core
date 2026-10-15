@@ -4168,8 +4168,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     parallel change lands first):** DECIDED-pending-review, docs only, nothing built. A host started with
     `orch host run --foreground --dev-sim-convenience` plus a `dev-pair` sandbox proof (manifest, `dev.json`) accepts
     `auth:"convenience"` on column R for sandbox workspaces only (S1 to S6: pinned root, manifest, genesis owner =
-    sandbox person and prefix `SBX`, a single member, a narrowing workspace marker, a dev relay origin); planned
-    additive fields `host.status.dev` and column-R `whoami.relay.dev`, planned code `host.dev_refused`. 11A.14.3, P5
+    sandbox person and prefix `SBX`, a single member, a narrowing workspace marker, the link origin = `dev.json`'s); planned
+    additive fields `host.status.dev` and column-R `whoami.relay.dev`, planned code `host.dev_refused`; orch-52 decided O2 (the dev relay origin in `dev.json`, no allow-list in code), O3
+    (unit writers refuse the flag and start-up refuses under a service manager) and O5 (keep `SBX`). 11A.14.3, P5
     and 11A.14.10 point at it.
 
 ---
@@ -10123,14 +10124,21 @@ environment variable read by production code may only narrow, never select a wea
   nothing can turn it on in a running host.
 - **The sandbox host config.** `<root>/state/host/dev.json` (0600, this UID, a regular file opened `O_NOFOLLOW`
   through the pinned state directory), written by `dev-pair up` before it starts the host, never by production code:
-  `{"v":1, "sim_convenience":true, "sandbox_id":"<manifest id>", "root":{"st_dev":int, "st_ino":int}}`.
+  `{"v":1, "sim_convenience":true, "sandbox_id":"<manifest id>", "root":{"st_dev":int, "st_ino":int},
+  "relay_origin":"<origin>"}`. `relay_origin` is the one dev relay origin `dev-pair` linked the sandbox to (the
+  literal of 11A.15.11 step 3); production code holds **no** relay allow-list (DECIDED (orch-52), O2).
   Production code only **reads** it, and only when the flag is given. Without the flag the file is ignored, so a
   stray `dev.json` in a real state directory changes nothing.
 - **The start-up proof** (`orch.host.devmode.prove(state)`, run once before the control socket binds; any failure is
   a start-up refusal `host.dev_refused` with a reason, the host does not start at all, it never falls back to a
   normal host):
-  1. `--foreground` is set, and `orch host enable`'s unit for this UID, if one is installed, does not name this
-     state directory (JUDGEMENT CALL, open item O3; no environment marker of the service manager is trusted);
+  1. **Not service-managed (DECIDED (orch-52), O3: both layers).** `--foreground` is set, the unit writers refuse
+     the flag (above), **and** the host refuses dev mode when it detects a service-manager launch: a launchd or
+     systemd marker in its environment (`XPC_SERVICE_NAME`, `INVOCATION_ID`, `JOURNAL_STREAM`, `LISTEN_PID`; any
+     non-empty value) or a parent process that is `launchd` (PID 1 on macOS) or `systemd`. Reading these only
+     **narrows** (a marker can refuse dev mode, never enable it), so it is allowed under the environment rule of
+     11A.15.11. Refusing means the host does not start; it never starts as a normal host instead. Tests
+     `dev_flag_refused_under_service_manager_env` (each marker) and `dev_flag_refused_with_service_manager_parent`;
   2. the state directory is `<root>/state` where `<root>` holds the dev-pair manifest `<root>/.orch-dev-sandbox`
      (0600, this UID, JSON with `id` and `root:{st_dev, st_ino}` equal to the root's, checked through a directory
      descriptor of the root with `O_NOFOLLOW` traversal: the existing `check_manifest(root)`, moved from
@@ -10166,18 +10174,18 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 |---|---|---|
 | S1 | the workspace root is `<root>/ws` (or `<root>/ws-<n>`), reached from the pinned root descriptor without following a link, and its `st_dev`/`st_ino` equal the pair the manifest recorded for this workspace id | a copy or a move breaks it (17.3 "Copies") |
 | S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch init` in that root | the sandbox owns the workspace, not the other way round |
-| S3 | the signed genesis `workspace.created` has `owner.person` = the manifest's sandbox person and `prefix` = `SBX` | an immutable, signed, creation-time marker without an F1 change: a real workspace's genesis owner is a real person and can never be rewritten |
+| S3 | the signed genesis `workspace.created` has `owner.person` = the manifest's sandbox person and `prefix` = `SBX` (the prefix is an extra check, DECIDED (orch-52), O5: cheap and visible in every ticket id) | an immutable, signed, creation-time marker without an F1 change: a real workspace's genesis owner is a real person and can never be rewritten |
 | S4 | the member list holds exactly one person, the sandbox person; no `member.added` in the merged history | a sandbox workspace has no other reader whose history we would poison |
 | S5 | the workspace-local marker `<ws>/.state/dev-sandbox.json` (0600) exists and names the same `sandbox_id` and workspace id | the narrowing marker below; it travels with a copy |
-| S6 | the workspace's `link.json` origin is in the dev allow-list `{http://127.0.0.1:*, http://localhost:*, https://relay.dev.severin.io}` (the list of 11A.15.11 step 3), or there is no link | a sandbox never talks to a production relay |
+| S6 | the workspace's `link.json` origin equals `dev.json`'s `relay_origin` byte for byte, or there is no link (DECIDED (orch-52), O2: no hard-coded allow-list in production code; `dev.json` is read only under the flag and a matching manifest, so a stray file cannot widen anything) | a sandbox talks only to the relay `dev-pair` chose |
 
 - **R5: a dev host serves sandbox workspaces only.** `orch host register` on a dev host refuses a workspace that
   fails any of S1 to S5 (`host.dev_refused`, reason `not_sandbox`), and the start-up proof refuses a state directory
   that holds one. A real workspace can therefore not even be registered on a dev host; `dev_gate` still re-checks per
   request (defence in depth, and the test in 17.8 drives it directly).
 - **The workspace marker only narrows.** `<ws>/.state/dev-sandbox.json` enables nothing by itself. On a **normal**
-  host it refuses: `orch host register` (`host.dev_refused`, reason `sandbox_workspace`), `relay.link` to an origin
-  outside the dev allow-list, and a records push (the D-P2-34 export check). So a stray marker in a real workspace
+  host it refuses: `orch host register` (`host.dev_refused`, reason `sandbox_workspace`), every `relay.link` (a
+  normal host has no `dev.json` to compare an origin with), and a records push (the D-P2-34 export check). So a stray marker in a real workspace
   only makes that workspace refuse registration with a clear message; it can never turn anything on (17.7).
 - **Copies.** A sandbox workspace copied or moved elsewhere fails S1 (another path, another `st_ino`) and on a dev host
   is neither registered nor served. On a normal host its marker (S5) makes registration refuse. Copied without the
@@ -10290,7 +10298,7 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 | PR | Owner | Content | Estimate |
 |---|---|---|---|
 | core D1 | orch-52 (Sonnet, Opus review) | `orch.devsandbox` (manifest check moved from the test tree, shared with `dev-pair`), `orch.host.devmode.prove`, the `--dev-sim-convenience` flag and its refusal in the unit writers, `dev_gate`, P5/L2/L8/`_signed_by`/`convenience.check`/`required_reader` changes, the narrowing marker on normal hosts, `host.status.dev`, `whoami.relay.dev`, the log lines and the alarm, the R2 vectors, new codes in §0.6 (`host.dev_refused`) | 1.5 to 2 days |
-| core D2 | orch-29 | `dev-pair up --sim-convenience`: `--prefix SBX`, the manifest's `person_id` and `workspaces`, the workspace marker, `dev.json`, `orch keys reader declare` for the sandbox device, the flag on `orch host run`, `ORCH_NO_CONVENIENCE` omitted for the host only; `down` unchanged | 0.5 day |
+| core D2 | orch-29 | `dev-pair up --sim-convenience`: `--prefix SBX`, the manifest's `person_id` and `workspaces`, the workspace marker, `dev.json` with `relay_origin`, `orch keys reader declare` for the sandbox device, the flag on `orch host run`, `ORCH_NO_CONVENIENCE` omitted for the host only; `down` unchanged | 0.5 day |
 | relay | orch-29 | none, if the pinned relay and `relay.dev.severin.io` already serve level 1 (17.5); otherwise the 9.8 rollout steps 1 and 2 and a redeploy | 0 to 0.5 day |
 | phone | orch-f1 | Simulator-only `convenience` custody behind the compile-time switch, the `whoami.relay.dev` check per review, the banner, a test that a Release build has no convenience symbol | 1 day |
 
@@ -10305,7 +10313,7 @@ Tests (core unless marked):
 - `sandbox_workspace_on_normal_host_refuses_convenience` (register refused by the marker; with the marker removed,
   register succeeds and a convenience submit answers `op.not_allowed`);
 - one test per S1 to S6 failing alone (moved root, copied root, unlisted workspace id, other genesis owner, other
-  prefix, a second member, missing or mismatched marker, a production relay origin);
+  prefix, a second member, missing or mismatched marker, a link origin other than `dev.json`'s);
 - `stray_dev_json_in_real_state_changes_nothing`, `stray_workspace_marker_only_narrows`;
 - `no_convenience_env_refuses_dev_gate` (any non-empty value);
 - `dev_gate_rechecked_under_lock` (S4 broken between P5 and L2: a `member.added` lands first);
@@ -10318,18 +10326,20 @@ Tests (core unless marked):
   question with `auth:"convenience"`, `committed`; the same run without `--sim-convenience` gets `op.not_allowed`;
 - phone (orch-f1): no convenience custody in a Release build; no sign sheet without `whoami.relay.dev`; the banner.
 
-#### 11A.17.9 Open items (for orch-52, orch-29 and orch-f1)
+#### 11A.17.9 Open items (O1, O4, O6 open for orch-29 and orch-f1; O2, O3, O5 decided by orch-52)
 
 - **O1 (orch-29):** do the pinned local relay and `relay.dev.severin.io` already serve `relay-info` level 1 and the
   convenience checkpoint vectors? If not, the 9.8 rollout steps come first.
-- **O2 (orch-52):** the dev allow-list of S6 names `relay.dev.severin.io` in production code. Acceptable as a narrowing
-  list, or should `dev.json` carry the origin and S6 compare against the manifest instead?
-- **O3 (orch-52):** start-up proof check 1 (not service-managed). Comparing against the installed unit is a heuristic;
-  the simpler alternative is to rely on the unit writers' refusal alone.
+- **O2: DECIDED (orch-52, 15 Oct 2026).** No hard-coded relay allow-list in production code. `dev.json` carries the
+  dev relay origin, written by `dev-pair`; S6 checks that the workspace's link origin equals it. `dev.json` is read
+  only with the flag and a matching manifest, so a stray file cannot widen anything.
+- **O3: DECIDED (orch-52, 15 Oct 2026).** Both: the unit writers refuse the flag, and at start the host refuses dev
+  mode when it detects a service-manager launch (launchd/systemd environment markers or the parent process; reading
+  them only narrows). A refusal means the host does not start, never a normal host instead (17.2 check 1).
 - **O4 (orch-29):** is the sandbox primary's device a device of the sandbox workspace (then it needs a reader record
   too), or only a relay-account device?
-- **O5 (orch-52):** `SBX` as a required prefix (S3) is a visible convention; keep it, or rely on the genesis owner
-  alone?
+- **O5: DECIDED (orch-52, 15 Oct 2026).** Keep the `SBX` prefix as an extra check (S3): cheap, and visible in every
+  ticket id.
 - **O6 (orch-f1):** does the phone check `whoami` before every review (one extra read) or cache it per session with a
   refresh on `op.not_allowed`?
 

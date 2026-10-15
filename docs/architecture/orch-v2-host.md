@@ -9696,7 +9696,8 @@ I/O; `BridgeKeys`, `CardKeys` and `RelaySigner` call them in H13-1.
   `device`) and their openers, `open_wrap` (record names the descriptor's object and version, then `dek_commit` checked
   in constant time), `check_wrap_record` (the closed §10.3 shape), `drop_object` / `check_drop_object` /
   `drop_object_signed_bytes` / `verify_drop_object`, `drop_claim_object` / `drop_claim_signed_bytes`,
-  `rewrap_same_dek` (only the committed DEK, only a `[space_id]` or inbox object). Frames on two levels:
+  `rewrap_same_dek` (only the committed DEK, only a `[space_id]` or inbox object). The review changed this API; the
+  entry below has the result. Frames on two levels:
   `encode_frame` / `parse_frame` / `reframe` are the protocol's §19.9 checks (they reproduce every accepted vector
   frame; `parse_frame` also requires a canonical head, since the host parses only frames it built);
   `build_host_frame` / `reframe_host` add D7: author this workspace, a `file` at version 1, never `inbox`; a
@@ -9716,6 +9717,24 @@ I/O; `BridgeKeys`, `CardKeys` and `RelaySigner` call them in H13-1.
   non-inbox frame a `wk` wrap (§19.9). `tests/crypto/test_h13_closed.py` covers each malformation class (wrong types
   per field, missing fields, bad encodings and lengths, truncation and bit flips of a frame, deep and oversized heads)
   and checks that every public function is wrapped.
+- **Opus review of #574 (F1 to F6), as built.**
+  - F1: `RecoveryEnvelope` and the new `SealedVersion` derive from `orch.crypto._secret.Secret`. `repr`, `str`,
+    `format` and `json.dumps(default=str)` show only a redacted marker. Pickle, `copy`, `deepcopy` and `__getstate__`
+    raise. Both are immutable, neither a dataclass nor a mapping.
+  - F2: `seal_version(object_id, version, content, meta)` is the only sealer. It draws the DEK and the nonce prefix and
+    seals the blob and the zero-nonce metadata once. `seal_meta`, `encrypt_blob` and `content_key` are private, and
+    `drop_object` takes the `SealedVersion`. A re-framing reuses the stored descriptor and blob.
+  - F3: `open_wrap(rec, o, me, *, wk | kx_priv)` is the only public wrap opener. It checks `target_id == me` (the
+    caller's device id, or the space id for `wk` and `wxk`), that a `wk` or `wxk` wrap names `o`'s space, and
+    `dek_commit`.
+  - F4: an AST test over `src` pins that no module reaches another module's `_with_salt`, `_with_prefix`,
+    `_with_nonce` or `_with_ephemeral` seam, or `suite._salted_seal`. Wraps and pushes use the public sealers, and the
+    vector tests fix the randomness inside `orch.crypto.suite`.
+  - F5: `NameError`, `AttributeError`, `AssertionError`, `MemoryError` and `RecursionError` cross the closed boundary
+    unchanged. The cause stays chained but never appears in the message.
+  - F6: the recovery key also binds `u32(version)` (`info = label || ws || u32(e) || object_id || u32(version)`), and
+    the envelope and its storage form carry `version`. `open_push` reports a malformed inner signature as
+    `signature`.
 - **Vectors.** `tests/crypto/test_h13_push.py` and `test_h13_drop.py` reproduce every `push` and `drop` vector
   byte-exact (fixed salts, prefixes and ephemeral keys through test-only seams, the relay reference's `fake` seeds),
   including `upload_frame`, every 200/201 `relay_put` frame and the same-DEK rewrap case. They are hostile-tested:

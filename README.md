@@ -1,25 +1,24 @@
-# orch
+# orch core
 
 **Let coding agents do the work. Keep every decision yours.**
 
-orch is a way of working with coding agents: every piece of work is a ticket, every ticket follows a fixed path, and a person signs each step that matters. Agents file tickets, write the requirements and the plan, do the work and attach the evidence. You approve the requirements and the plan and give the final verdict. orch checks the signatures, so an agent can't approve its own work.
+orch core is a way of working with coding agents: every piece of work is a ticket, every ticket follows a fixed path, and a person signs each step that matters. Agents file tickets, write the requirements and the plan, do the work and attach the evidence. You approve the requirements and the plan and give the final verdict, and you sign in a physical way: with your fingerprint or your phone. An agent can type any command, but it can't put a finger on the sensor.
 
 It works with Claude Code, Codex and any other agent that can run a shell command. Tickets are plain files in your workspace. Mission Control (desktop) and orch mobile (iPhone) show you what's waiting for you.
 
 <p align="center">
-  <img src="docs/images/v2/desktop-today.jpg" alt="Mission Control, Today: connections to fix, a blocking question with a recommended answer, three approvals and a verdict that wait for you, and which agents are working" width="900">
+  <img src="docs/images/readme/desktop-today.jpg" alt="Mission Control, Today: connections to fix, a blocking question with a recommended answer, three approvals and a verdict that wait for you, and which agents are working" width="900">
 </p>
 
-> **Status: v2 in development.** This branch (`develop`) is the v2 rebuild: core, host, dashboard and relay are merged, and the iPhone app is in TestFlight. v1 is the stable release on [`main`](https://github.com/severinlindenmann/orch-core/tree/main). The full design is in [docs/architecture/orch-v2.md](docs/architecture/orch-v2.md).
-> Website: **[severinlindenmann.github.io/orch-core](https://severinlindenmann.github.io/orch-core/)**
+**Website: [severin.io/orch-core](https://severin.io/orch-core/)**
 
 ## Why
 
 Agents are fast, confident and happy to approve their own plan. After a week on another project, I came back and couldn't tell where things stood, because the agents had done the work, not me. orch came out of four problems I kept running into:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/problems-dark.png">
-  <img src="docs/images/v2/problems-light.png" alt="Four problems and what orch does about them. A: I lost control: open tasks, questions and the last status in one place. B: Not what we agreed: signed requirements and plan. C: Done isn't done: a checklist with evidence. D: Same discussion again: ticket history and context.">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/problems-dark.png">
+  <img src="docs/images/readme/problems-light.png" alt="Four problems and what orch does about them. A: I lost control: open tasks, questions and the last status in one place. B: Not what we agreed: signed requirements and plan. C: Done isn't done: a checklist with evidence. D: Same discussion again: ticket history and context.">
 </picture>
 
 ## How it works
@@ -27,18 +26,18 @@ Agents are fast, confident and happy to approve their own plan. After a week on 
 Everything flows into the core. A request comes in, in the requester's own words. The agent gets the keys and the knowledge it needs, follows your skills and rules, and writes every step into the ticket. People answer questions and sign the gates. The results go back to your tracker, docs, code host and data platform, and every finished ticket adds to what the next one can draw on.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/flow-dark.png">
-  <img src="docs/images/v2/flow-light.png" alt="Request, keys and knowledge flow into orch core from the left, skills and rules from above. Inside the core: understand, you sign, plan, you sign, build, prove, you sign. People sign every gate. Results are written back to the tracker, docs, code host and data platform, and feed the knowledge base.">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/flow-dark.png">
+  <img src="docs/images/readme/flow-light.png" alt="Request, keys and knowledge flow into orch core from the left, skills and rules from above. Inside the core: understand, you sign, plan, you sign, build, prove, you sign. People sign every gate. Results are written back to the tracker, docs, code host and data platform, and feed the knowledge base.">
 </picture>
 
 Each ticket follows the same path, with a gate before every next step:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/gates-dark.png">
-  <img src="docs/images/v2/gates-light.png" alt="Ticket, then gate 1 requirements and acceptance criteria (you sign), plan, gate 2 plan approved (you sign), build and prove, gate 3 verdict (you sign).">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/gates-dark.png">
+  <img src="docs/images/readme/gates-light.png" alt="Ticket, then gate 1 requirements and acceptance criteria (you sign), plan, gate 2 plan approved (you sign), build and prove, gate 3 verdict (you sign).">
 </picture>
 
-- **Gates that hold.** Approvals, answers and verdicts are bound to the exact text you saw and signed with your key. Agents get no signing commands, and orch refuses a gate without a person's signature. On the phone every signature needs Face ID; on the Mac, Touch ID per signature and agents under their own OS user are in progress ([enforcement tiers](docs/architecture/orch-v2-harnesses.md#3-enforcement-tiers)).
+- **Gates only a person can open.** Approvals, answers and verdicts are bound to the exact text you saw and need a physical act to sign: your fingerprint, your phone (Face ID), or any hardware signer such as a security key or a TPM chip. Agents get no signing commands, and orch refuses a gate without a person's signature.
 - **Agents that ask instead of guessing.** `orch ask` parks a question with options and a recommended answer, and `orch wait` blocks until you reply, at your desk or on your phone.
 - **Evidence, not claims.** Acceptance criteria, a task list ticked off with proof, and artifacts (screenshots, test reports, PRs) per criterion, before a ticket reaches your verdict.
 - **Memory that survives a holiday.** Every change is an appended, signed event. The current-state note on each ticket tells you where it stands and what's next.
@@ -49,23 +48,23 @@ The desktop dashboard is where you work through what's waiting for you: question
 
 | | |
 |---|---|
-| ![A ticket in progress: requirements and plan approved, verify pending, the current-state handoff note and a question widget that compares DATE with TIMESTAMP](docs/images/v2/desktop-ticket.jpg) | ![Approve plan: the prompt shows the task list exactly as signed](docs/images/v2/desktop-approve.jpg) |
+| ![A ticket in progress: requirements and plan approved, verify pending, the current-state handoff note and a question widget that compares DATE with TIMESTAMP](docs/images/readme/desktop-ticket.jpg) | ![Approve plan: the prompt shows the task list exactly as signed](docs/images/readme/desktop-approve.jpg) |
 | **Ticket page.** Gates at a glance, the handoff note, questions, evidence and history. | **Approve.** The exact text you sign. Only core can show this prompt, not an addon. |
-| ![The board: tickets grouped by epic across backlog, open, in progress, waiting and testing, with GitHub issues alongside](docs/images/v2/desktop-board.jpg) | ![Give verdict: acceptance criteria evidenced, the exact commit the verdict signs, pass or send back](docs/images/v2/desktop-verdict.jpg) |
+| ![The board: tickets grouped by epic across backlog, open, in progress, waiting and testing, with GitHub issues alongside](docs/images/readme/desktop-board.jpg) | ![Give verdict: acceptance criteria evidenced, the exact commit the verdict signs, pass or send back](docs/images/readme/desktop-verdict.jpg) |
 | **Board.** Epics as swimlanes, and addons add their own lanes. | **Verdict.** Signs one commit. A new commit voids it. |
 
-<sub>Screenshots use the simulated "Acme energy data" demo workspace.</sub>
+<sub>The screens show example data.</sub>
 
 ## orch mobile
 
-Answer questions and sign gates from your iPhone. One QR scan joins a workspace, logging out wipes it from the phone, and every signature needs Face ID. The device key never leaves the Secure Enclave.
+Answer questions and sign gates from your iPhone. One QR scan joins a workspace, logging out wipes it from the phone, and every signature needs Face ID. The key never leaves the phone's secure chip.
 
 <table>
   <tr>
-    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-home-dark.jpg"><img src="docs/images/v2/mobile-home-light.jpg" alt="Home: your workspaces, what needs you, and Drop" width="200"></picture></td>
-    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-tickets-dark.jpg"><img src="docs/images/v2/mobile-tickets-light.jpg" alt="A workspace's tickets with their status" width="200"></picture></td>
-    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-question-dark.jpg"><img src="docs/images/v2/mobile-question-light.jpg" alt="A question from an agent with its answer options" width="200"></picture></td>
-    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/mobile-sign-dark.jpg"><img src="docs/images/v2/mobile-sign-light.jpg" alt="The sign sheet: what you are signing, then Sign and send" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/mobile-home-dark.jpg"><img src="docs/images/readme/mobile-home-light.jpg" alt="Home: your workspaces, what needs you, and Drop" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/mobile-tickets-dark.jpg"><img src="docs/images/readme/mobile-tickets-light.jpg" alt="A workspace's tickets with their status" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/mobile-question-dark.jpg"><img src="docs/images/readme/mobile-question-light.jpg" alt="A question from an agent with its answer options" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/mobile-sign-dark.jpg"><img src="docs/images/readme/mobile-sign-light.jpg" alt="The sign sheet: what you are signing, then Sign and send" width="200"></picture></td>
   </tr>
   <tr>
     <td align="center"><sub>Workspaces</sub></td>
@@ -75,11 +74,23 @@ Answer questions and sign gates from your iPhone. One QR scan joins a workspace,
   </tr>
 </table>
 
+## AI Factory and Dark AI Factory
+
+For bigger requests, sign a charter instead of every single gate. You set the limits once: how many tickets, how big each one may be, the budget, the target (a checked preview, or delivery), and a hold window before anything goes out. Inside those limits the agents split the request into tickets and build them; every approval the charter gives is marked "via the charter", and a code-review gate, if you turn one on, is never auto-approved.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/factory-dark.png">
+  <img src="docs/images/readme/factory-light.png" alt="You sign the charter with its limits. Inside the charter the agents split the request into tickets whose gates the charter approves and produce a checked preview. Before delivery there is a hold with a Stop button, then delivery to the destinations named in the charter. AI Factory runs with the lights on, Dark AI Factory with the lights off.">
+</picture>
+
+- **AI Factory:** lights on. The factory runs the tickets while you watch the board, and you can step in at any gate.
+- **Dark AI Factory:** lights off. One signed request runs end to end, from requirements to delivery, with restricted permissions. You sign it in, and you can stop it from your desk or your phone before it ships.
+
 ## Architecture
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/v2/architecture-dark.png">
-  <img src="docs/images/v2/architecture-light.png" alt="On your machine: agents call the orch CLI, which talks over a socket to the host (orch serve), the only process that holds keys; the host writes the workspace files. Mission Control and other addons plug into the host. Through orch-relay, which stores ciphertext only, the host reaches orch mobile and other workspaces. orch-publish serves shares and apps over HTTPS, signed by the workspace.">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/architecture-dark.png">
+  <img src="docs/images/readme/architecture-light.png" alt="On your machine: agents call the orch CLI, which talks over a socket to the host (orch serve), the only process that holds keys; the host writes the workspace files. Mission Control and other addons plug into the host. Through orch-relay, which stores ciphertext only, the host reaches orch mobile and other workspaces. orch-publish serves shares and apps over HTTPS, signed by the workspace.">
 </picture>
 
 | Piece | What it does | Where |
@@ -90,7 +101,7 @@ Answer questions and sign gates from your iPhone. One QR scan joins a workspace,
 | **Mission Control** | The desktop dashboard. It's an addon itself. | [`addons/dashboard`](addons/dashboard) |
 | **Addons** | GitHub reviews and issues, Databricks, wiki, terminals, schedules, quick tasks, or your own. Each one runs only after you trust that exact version. | [`addons/`](addons) |
 | **orch-relay** | Directory, relay, Drop (files) and push. It stores and forwards ciphertext only, and runs as a public instance or self-hosted inside a company. | [orch-relay](https://github.com/severinlindenmann/orch-relay) |
-| **orch mobile** | Native iPhone app: questions, approvals and verdicts with Face ID, push notifications and Drop. | [orch-mobile](https://github.com/severinlindenmann/orch-mobile) |
+| **orch mobile** | iPhone app: questions, approvals and verdicts signed with Face ID, push notifications and Drop. | [orch-mobile](https://github.com/severinlindenmann/orch-mobile) |
 | **orch-publish** | Shares and small apps over HTTPS, in the workspace's own namespace and signed by the workspace. | [orch-publish](https://github.com/severinlindenmann/orch-publish) |
 
 Workspaces can hand tickets to each other: yours, a colleague's or one on a client's VM. An incoming ticket lands in the inbox as untrusted data until you accept it.
@@ -104,29 +115,31 @@ orch doesn't depend on one harness. Every command is defined once, and gates and
 | Install | plugin marketplace | `uv tool install`, then `orch init` writes `AGENTS.orch.md` |
 | Instructions | `AGENTS.orch.md` and skills | `AGENTS.orch.md`, plus skills where the harness supports `SKILL.md` |
 | Gates and signatures | enforced by orch | enforced by orch |
-| Early refusal of hand edits | guard hook (an optional second layer) | detected by `orch check` and `orch doctor`, or prevented by running agents under their own OS user |
+| Hand edits to ticket files | refused early by a guard hook | detected by `orch check` and `orch doctor`, or prevented by running agents under their own OS user |
 
 Details: [harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md).
 
-## Try the v2 preview
+## Get started
 
-v2 is a developer preview. Expect changes, and use [v1 on `main`](https://github.com/severinlindenmann/orch-core/tree/main#install) for day-to-day work. You need [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+You need [uv](https://docs.astral.sh/uv/) and Python 3.11 or newer.
 
 ```bash
-git clone -b develop https://github.com/severinlindenmann/orch-core.git
-uv tool install ./orch-core/plugins/orch-core
+# Claude Code
+claude plugin marketplace add severinlindenmann/orch-core
+claude plugin install orch-core@orch-core
 
-cd your-project
-orch init              # creates the workspace and writes AGENTS.orch.md
-orch host enable       # starts the host as a per-user service
-orch help work         # what an agent reads first
+# Codex and any other agent with a shell
+uv tool install "git+https://github.com/severinlindenmann/orch-core#subdirectory=plugins/orch-core"
+
+# then, in your project
+orch init           # creates the workspace and writes AGENTS.orch.md
+orch host enable    # starts the host that holds the keys
+orch help work      # what an agent reads first
 ```
-
-The dashboard mockup with simulated data runs on its own: `cd addons/dashboard && npm ci && npm run dev` (Node 24).
 
 ## Documentation
 
-- [orch v2 design](docs/architecture/orch-v2.md): decisions, threat model, keys, relay, mobile, phases
+- [Design](docs/architecture/orch-v2.md): decisions, threat model, keys, relay, mobile
 - [The minimal core](docs/architecture/orch-v2-core.md) and the [ticket format](docs/architecture/orch-v2-ticket-format.md)
 - [Host process](docs/architecture/orch-v2-host.md): socket API, signing, custody and worker isolation
 - [Harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md)
@@ -141,7 +154,7 @@ uv sync
 uv run pytest -q -m "not slow"
 ```
 
-The diagrams are drawn from [`docs/images/v2/src/diagrams.html`](docs/images/v2/src/diagrams.html), and `node render.cjs` re-renders the PNGs. See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks CI runs. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
+The diagrams are drawn from [`docs/images/readme/src/diagrams.html`](docs/images/readme/src/diagrams.html), and `node render.cjs` re-renders the PNGs. See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks CI runs. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
 
 ## License
 

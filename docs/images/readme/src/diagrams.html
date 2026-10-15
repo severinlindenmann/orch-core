@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>orch diagrams</title>
-<!-- Source for docs/images/v2/{problems,flow,gates,architecture}-{dark,light}.png.
+<!-- Source for docs/images/readme/{problems,flow,gates,architecture}-{dark,light}.png.
      Render: node render.mjs  (opens ?d=<name>&t=<theme>, screenshots #stage with a transparent background) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -112,6 +112,27 @@ h1 { font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1
 .wl { position: absolute; font-size: 14.5px; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--border); padding: 3px 10px; border-radius: 999px; }
 .legend { position: absolute; display: flex; gap: 28px; font-size: 15px; color: var(--muted); align-items: center; }
 .legend i { display: inline-block; width: 22px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 8px; }
+
+/* factory */
+#factory { width: 1600px; height: 960px; }
+.fence { position: absolute; border: 2px dashed var(--brand); border-radius: 22px; background: var(--brand-soft); }
+.fence .fl { position: absolute; top: 14px; left: 22px; font-size: 15px; font-weight: 600; color: var(--brand); display: flex; gap: 8px; align-items: center; }
+.fence .fl .ico { width: 18px; height: 18px; }
+#x-k1, #x-k2, #x-k3 { min-height: 110px; }
+.kid { position: absolute; width: 200px; padding: 12px 14px; border-radius: 12px; background: var(--surface); border: 1.5px solid var(--border); }
+.kid .k { font: 500 13px 'Geist Mono', monospace; color: var(--muted); }
+.kid .t { font-size: 16px; font-weight: 600; margin-top: 3px; line-height: 1.25; }
+.kid .v { font-size: 13px; color: var(--brand); margin-top: 6px; font-weight: 600; }
+.limits { list-style: none; padding: 0; margin: 12px 0 0; font-size: 15.5px; color: var(--muted); }
+.limits li { padding: 5px 0; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 12px; }
+.limits li b { color: var(--text); font-weight: 600; }
+.mode { position: absolute; width: 744px; padding: 20px 24px; border-radius: 16px; border: 1.5px solid var(--border); background: var(--surface); }
+.mode.dark { background: var(--core-bg); border-color: var(--core-border); color: var(--core-text); }
+.mode .row .ico { width: 26px; height: 26px; color: var(--brand); }
+.mode.dark .row .ico { color: #4fd6b4; }
+.mode .t { font-size: 22px; font-weight: 700; }
+.mode .s { font-size: 16px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+.mode.dark .s { color: var(--core-muted); }
 </style>
 </head>
 <body>
@@ -138,6 +159,10 @@ h1 { font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1
     <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
     <symbol id="i-layout" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-finger" viewBox="0 0 24 24"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect width="14" height="14" x="5" y="5" rx="2"/></symbol>
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></symbol>
   </defs>
 </svg>
@@ -197,7 +222,7 @@ h1 { font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1
     </div>
     <div class="agents"><svg class="ico" style="width:20px;height:20px"><use href="#i-bot"/></svg>The agent: <b>Claude Code</b> · <b>Codex</b> · <b>any CLI agent</b></div>
   </div>
-  <div class="people" id="f-people" style="left:460px; top:705px; width:700px"><svg class="ico"><use href="#i-user"/></svg><div><b>People</b> answer questions and sign every gate, at the desk or on the phone.</div></div>
+  <div class="people" id="f-people" style="left:460px; top:705px; width:700px"><svg class="ico"><use href="#i-user"/></svg><div><b>People</b> answer questions and sign every gate in a physical way, so no agent can sign for them.</div></div>
 
   <div style="position:absolute; left:1230px; top:290px" class="eyebrow">Written back</div>
   <div class="card out" id="f-o1" style="left:1230px; top:325px"><div class="lbl">Tracker</div><div class="sub">status and summary</div></div>
@@ -213,18 +238,18 @@ h1 { font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1
   <svg class="wires"></svg>
   <div style="position:absolute; left:40px; top:30px"><div class="eyebrow">How the agent works</div><h1>A checklist, and a gate before every next step</h1></div>
   <div class="g" id="g1" style="left:40px; top:170px"><div class="n">Ticket</div><div class="t">The ask, in the human’s words</div><div class="s">never rewritten by the agent</div><div class="who"><svg class="ico"><use href="#i-bot"/></svg>agent files it</div></div>
-  <div class="g gate" id="g2" style="left:300px; top:170px"><div class="n">Gate 1</div><div class="t">Requirements &amp; acceptance criteria</div><div class="who"><svg class="ico"><use href="#i-shield"/></svg>you sign</div></div>
+  <div class="g gate" id="g2" style="left:300px; top:170px"><div class="n">Gate 1</div><div class="t">Requirements &amp; acceptance criteria</div><div class="who"><svg class="ico"><use href="#i-finger"/></svg>you sign</div></div>
   <div class="g" id="g3" style="left:560px; top:170px"><div class="n">Plan</div><div class="t">Task list written into the ticket</div><div class="s">each task names what it proves</div><div class="who"><svg class="ico"><use href="#i-bot"/></svg>agent</div></div>
-  <div class="g gate" id="g4" style="left:820px; top:170px"><div class="n">Gate 2</div><div class="t">Plan approved</div><div class="s">before a line of code</div><div class="who"><svg class="ico"><use href="#i-shield"/></svg>you sign</div></div>
+  <div class="g gate" id="g4" style="left:820px; top:170px"><div class="n">Gate 2</div><div class="t">Plan approved</div><div class="s">before a line of code</div><div class="who"><svg class="ico"><use href="#i-finger"/></svg>you sign</div></div>
   <div class="g" id="g5" style="left:1080px; top:170px"><div class="n">Build &amp; prove</div><div class="t">Branch, code, tests, evidence</div><div class="s">per acceptance criterion</div><div class="who"><svg class="ico"><use href="#i-bot"/></svg>agent</div></div>
-  <div class="g gate" id="g6" style="left:1340px; top:170px"><div class="n">Gate 3</div><div class="t">Verdict</div><div class="s">pass, or send back</div><div class="who"><svg class="ico"><use href="#i-shield"/></svg>you sign</div></div>
-  <div class="foot" style="top:430px">Agents work between the gates and stop at each one. <b>Only a person can open a gate:</b> the signature is checked by orch, with your key, not left to the agent’s goodwill. Questions park the work with a recommended answer until you reply.</div>
+  <div class="g gate" id="g6" style="left:1340px; top:170px"><div class="n">Gate 3</div><div class="t">Verdict</div><div class="s">pass, or send back</div><div class="who"><svg class="ico"><use href="#i-finger"/></svg>you sign</div></div>
+  <div class="foot" style="top:430px">Agents work between the gates and stop at each one. <b>Only a person can open a gate:</b> you sign in a physical way, with a fingerprint, your phone or a hardware key. An agent can type any command, but it can’t put a finger on the sensor. Questions park the work with a recommended answer until you reply.</div>
 </section>
 
 <!-- ============ 4. Architecture ============ -->
 <section class="scene" id="architecture">
   <svg class="wires"></svg>
-  <div style="position:absolute; left:40px; top:30px"><div class="eyebrow">orch v2</div><h1>How the pieces fit together</h1></div>
+  <div style="position:absolute; left:40px; top:30px"><div class="eyebrow">orch core</div><h1>How the pieces fit together</h1></div>
 
   <div class="zone" style="left:40px; top:170px; width:820px; height:880px"><span class="zl">Your machine · one workspace per project or client</span></div>
 
@@ -235,7 +260,7 @@ h1 { font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1
 
   <div class="box addon" id="a-mc" style="left:480px; top:370px; width:340px"><div class="row"><svg class="ico"><use href="#i-layout"/></svg><div><div class="lbl">Mission Control</div><div class="sub">Today, Board, tickets; approve and give verdicts, seeing exactly what you sign</div><span class="badge a">addon</span></div></div></div>
   <div class="box addon" id="a-addons" style="left:480px; top:560px; width:340px"><div class="row"><svg class="ico"><use href="#i-blocks"/></svg><div><div class="lbl">Addons</div><div class="sub">GitHub reviews &amp; issues, Databricks, wiki, terminals, schedules, quick tasks, your own</div><span class="badge a">trusted per version</span></div></div></div>
-  <div class="box" id="a-you" style="left:480px; top:225px; width:340px; border-color:var(--brand)"><div class="row"><svg class="ico" style="color:var(--brand)"><use href="#i-user"/></svg><div><div class="lbl">You</div><div class="sub">sign gates, answer questions, give verdicts, in Mission Control, the terminal or on the phone</div></div></div></div>
+  <div class="box" id="a-you" style="left:480px; top:225px; width:340px; border-color:var(--brand)"><div class="row"><svg class="ico" style="color:var(--brand)"><use href="#i-user"/></svg><div><div class="lbl">You</div><div class="sub">sign gates physically: fingerprint, phone or hardware key. Answer questions, give verdicts</div></div></div></div>
 
   <div class="box" id="a-relay" style="left:930px; top:700px; width:300px; padding:20px"><div class="row"><svg class="ico"><use href="#i-server"/></svg><div><div class="lbl">orch-relay</div><div class="sub">directory · relay · drop · push</div><span class="badge"><svg class="ico"><use href="#i-lock"/></svg>stores ciphertext only</span><div class="sub" style="margin-top:8px">public, or self-hosted inside the company</div></div></div></div>
 
@@ -248,6 +273,47 @@ h1 { font-size: 46px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1
     <span><i style="border:2px solid var(--addon)"></i>addon</span>
     <span><svg width="40" height="10" style="vertical-align:middle;margin-right:8px"><line x1="0" y1="5" x2="40" y2="5" stroke="var(--brand)" stroke-width="2.5" stroke-dasharray="7 5"/></svg>end-to-end encrypted</span>
   </div>
+</section>
+
+<!-- ============ 5. AI Factory ============ -->
+<section class="scene" id="factory">
+  <svg class="wires"></svg>
+  <div style="position:absolute; left:40px; top:30px"><div class="eyebrow">AI Factory</div><h1>One request in, finished work out, inside limits you signed</h1></div>
+
+  <div class="card" id="x-charter" style="left:40px; top:200px; width:330px; padding:20px 22px; border:2px solid var(--brand)">
+    <div class="row"><svg class="ico" style="color:var(--brand)"><use href="#i-finger"/></svg><div><div class="lbl">You sign the charter</div><div class="sub">one big request, plus its limits</div></div></div>
+    <ul class="limits">
+      <li>tickets <b>a maximum you set</b></li>
+      <li>size per ticket <b>fixed upfront</b></li>
+      <li>budget <b>hard cap</b></li>
+      <li>target <b>Preview or Deliver</b></li>
+      <li>hold before delivery <b>0 to 24 h</b></li>
+    </ul>
+  </div>
+
+  <div class="fence" id="x-fence" style="left:440px; top:180px; width:700px; height:450px">
+    <div class="fl"><svg class="ico"><use href="#i-lock"/></svg>Inside the charter</div>
+  </div>
+  <div class="kid" id="x-epic" style="left:470px; top:235px; width:640px"><div class="k">EPIC</div><div class="t">The agents split the request into tickets and plan them</div></div>
+  <div class="kid" id="x-k1" style="left:470px; top:350px"><div class="k">FAC-2</div><div class="t">Load the source tables</div><div class="v">✓ gates via the charter</div></div>
+  <div class="kid" id="x-k2" style="left:690px; top:350px"><div class="k">FAC-3</div><div class="t">Build the model and tests</div><div class="v">✓ gates via the charter</div></div>
+  <div class="kid" id="x-k3" style="left:910px; top:350px"><div class="k">FAC-4</div><div class="t">Dashboard and docs</div><div class="v">✓ gates via the charter</div></div>
+  <div class="kid" id="x-proof" style="left:470px; top:500px; width:640px"><div class="k">PREVIEW</div><div class="t">Made, tested and checked, with evidence per ticket, visible only inside the workspace</div></div>
+
+  <div class="card" id="x-hold" style="left:1210px; top:300px; width:350px; padding:18px 20px">
+    <div class="row"><svg class="ico"><use href="#i-stop"/></svg><div><div class="lbl">Hold, with Stop</div><div class="sub">a notice before anything goes out. Stop it from the desk or the phone</div></div></div>
+  </div>
+  <div class="card" id="x-deliver" style="left:1210px; top:470px; width:350px; padding:18px 20px; border-color:var(--brand-line)">
+    <div class="row"><svg class="ico"><use href="#i-send"/></svg><div><div class="lbl">Deliver</div><div class="sub">deploy, publish or send, only to the destinations named in the charter</div></div></div>
+  </div>
+
+  <div class="mode" style="left:40px; top:700px">
+    <div class="row"><svg class="ico"><use href="#i-sun"/></svg><div><div class="t">AI Factory</div><div class="s">Lights on. The factory runs the tickets, you watch the board and can step in at any gate. Every approval it gives is marked “via the charter”.</div></div></div>
+  </div>
+  <div class="mode dark" style="left:816px; top:700px">
+    <div class="row"><svg class="ico"><use href="#i-moon"/></svg><div><div class="t">Dark AI Factory</div><div class="s">Lights off. One signed request runs end to end, from requirements to delivery, with restricted permissions. You sign it in, and you can stop it before it ships.</div></div></div>
+  </div>
+  <div class="foot" style="top:880px">Never auto-approved: a code review gate, if your workspace turns one on. When the budget is reached, no new tickets start.</div>
 </section>
 
 </div>
@@ -334,6 +400,13 @@ document.fonts.ready.then(() => {
       wire(sc, 'a-ws', 'right', 'a-pub', 'left', { d: `M${x1},${y1} C${x1 + 400},${y1} ${x2 - 400},${y2} ${x2},${y2}` });
       label(sc, 'HTTPS, signed', 1000, (y1 + y2) / 2 + 2); }
     { const [x, y] = A('a-cli', 'bottom'); label(sc, 'socket', x + 14, y + 20); }
+  }
+  if (d === 'factory') {
+    const B = { color: css('--brand'), arrow: true, arrowAngle: 0 };
+    wire(sc, 'x-charter', 'right', 'x-fence', 'left', B);
+    for (const k of ['x-k1','x-k2','x-k3']) { wire(sc, 'x-epic', 'bottom', k, 'top', { straight: true, arrow: true, arrowAngle: Math.PI/2 }); wire(sc, k, 'bottom', 'x-proof', 'top', { straight: true, arrow: true, arrowAngle: Math.PI/2 }); }
+    wire(sc, 'x-fence', 'right', 'x-hold', 'left', B);
+    wire(sc, 'x-hold', 'bottom', 'x-deliver', 'top', { straight: true, arrow: true, arrowAngle: Math.PI/2, color: css('--brand') });
   }
   document.body.dataset.ready = '1';
 });

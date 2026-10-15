@@ -3719,6 +3719,12 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     exact next key (`ticket.key_not_next` with an advisory `next_key`); `ticket.get` gains `doc.head`,
     `questions[].answer.id` and `members_v`, `workspace.show` gains `next_key` (`null` for non-creators); the relay
     hold-off after a state restore becomes backup + 1 500 s. F1 §5.1 `id` amended; no hash, contract or schema change.
+38. **Terminal follow-ups (after #469; number may shift if another item lands first):** `orch host run --foreground
+    --dev-runner` admits a foreground runner of the host UID announced in `<run>/term/<uid>/dev-runner.json` (dev and
+    tests only; never a service run directory or another UID; §12.3.3 "As built in H11a"); the retryable refusals of
+    `term.attach`/`term.open` carry `retry_after_ms` (bucket-derived for `rate.limited`; the runner's `attach.limit`
+    keeps its code); `ORCH_HOST_RUN_DIR` is the one run-dir env name (core never reads `ORCH_RUN_DIR`);
+    `TermClient.send` has its own write deadline (`send_timeout`). No wire schema change.
 
 ---
 

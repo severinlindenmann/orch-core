@@ -4,6 +4,8 @@ first message, the output queue, the input sink and the routes' input models (se
 import asyncio
 import json
 import queue
+import socket
+import time
 
 import pytest
 from conftest import ORIGIN, PORT
@@ -317,3 +319,60 @@ def test_ready_for_the_browser_carries_no_internals():
     ready = terminals._ready({"t": "ready", "start": 0, "offset": 9, "cols": 80, "rows": 24, "writer": True,
                               "lease_gen": 4, "state": "running"})  # fmt: skip
     assert "lease_gen" not in ready and ready["offset"] == 9
+
+
+# -- review fixes -----------------------------------------------------------------------------------------------------
+
+
+class SlowRunnerClient:
+    """A TermClient stand-in on a real AF_UNIX pair: `recv` leaves a 10 ms timeout on the socket, as core's does."""
+
+    def __init__(self, sock):
+        self.sock, self.unacked, self.lost, self.ended = sock, {}, [], None
+
+    def send_input(self, data):
+        self.sock.sendall(data)
+
+    def resize(self, cols, rows):
+        pass
+
+    def pump(self):
+        pass
+
+    def recv(self, timeout):
+        self.sock.settimeout(0.01)
+        time.sleep(0.01)
+        raise TimeoutError
+
+    def close(self):
+        self.sock.close()
+
+
+class RecordingPump(terminals.Pump):
+    def __init__(self, client):
+        super().__init__(client, None, None)
+        self.delivered = []
+
+    def _deliver(self, item):
+        self.delivered.append(item)
+
+
+def test_pump_writes_input_with_its_own_timeout_not_the_reads_review_m2():
+    ours, runner = socket.socketpair()
+    pump = RecordingPump(SlowRunnerClient(ours))
+    pump.start()
+    time.sleep(0.05)  # the pump has read once: the socket now has recv's short timeout
+    payload = b"x" * 200_000
+    pump.inbox.put(("in", payload))
+    got = bytearray()
+    runner.settimeout(5)
+    while len(got) < len(payload):  # a runner that is busy for 20 ms between reads
+        chunk = runner.recv(4096)
+        if not chunk:
+            break  # the pump gave up and closed the socket
+        got += chunk
+        time.sleep(0.002)
+    pump.stop()
+    pump.thread.join(2)
+    runner.close()
+    assert bytes(got) == payload and pump.delivered == []

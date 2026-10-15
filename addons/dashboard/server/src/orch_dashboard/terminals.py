@@ -57,6 +57,7 @@ OUT_QUEUE = 512 * 1024  # decoded output bytes per WebSocket
 CONTROL_LIMIT = 4096  # control frames are never dropped; a browser that lets this many pile up ends with overflow
 RESIZE_EVERY = 0.25  # the writer's resizes, coalesced to at most 4 per second
 REPLY_RATE, REPLY_BURST = 4.0, 8.0  # tag 1 (CPR/DA1 replies the page allowed)
+WRITE_TIMEOUT = 10.0  # one input or resize frame to the runner socket
 PENDING_INPUT = 1 << 20  # unacknowledged input bytes before this server stops reading the browser
 MAX_STREAMS = 16  # open streams per session (SSE tabs and terminals together)
 RUN_PAGES = 8
@@ -367,6 +368,10 @@ class Pump:
                         kind, *rest = self.inbox.get_nowait()
                     except queue.Empty:
                         break
+                    # Writes get their own timeout (review M2): `recv` leaves 10..50 ms on the socket, too short for a
+                    # 64 KiB frame through an 8 KiB AF_UNIX buffer while the runner is busy. `recv` sets its own again.
+                    if client.sock is not None:
+                        client.sock.settimeout(WRITE_TIMEOUT)
                     if kind == "in":
                         client.send_input(rest[0])
                     elif kind == "resize":

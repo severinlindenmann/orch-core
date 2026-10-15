@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { CHUNK_BYTES, DropError, dropApi, dropError, downloadName, dropServed, fmtBytes, MAX_FILE_NAME, realDropApi, saveBytes, sizeRefusal, uploadBlob } from '@/api/drop'
 import { DROP_SAMPLE_ERRORS, dropPreviewForTests, resetLayoutPreview } from '@/dev/layoutPreview'
-import { createDropFixture, dropItem, installDropFixture, PHONE } from '@/dev/dropFixture'
+import { createDropFixture, dropItem, installDropFixture, PHONE, PHONE_SHARE } from '@/dev/dropFixture'
 import { renderApp } from '@/test/renderApp'
 import { fmtDateTime } from '@/lib/time'
 
@@ -513,5 +513,114 @@ describe('the upload-progress preview', () => {
     expect(screen.queryByTestId('drop-cancelled')).toBeNull()
     await view.user.click(screen.getByTestId('drop-cancel'))
     expect(await screen.findByTestId('drop-cancelled', {}, T)).toBeInTheDocument()
+  })
+})
+
+describe('Drop A2: shared from your phone', () => {
+  const shared = (over: Parameters<typeof dropItem>[0]) =>
+    dropItem({ shared_from: PHONE_SHARE, claimed_ms: Date.parse('2026-10-09T10:00:00Z'), shared_until_ms: Date.parse('2026-10-16T10:00:00Z'), ...over })
+
+  it('the tab is a view filter over the same rows, with label, claim time, shared-until and the gestureless note', async () => {
+    const view = open('drop-phone')
+    await rowOf('plain-file.pdf')
+    await view.user.click(screen.getByTestId('drop-tab-shared'))
+    await waitFor(() => expect(screen.queryByText('plain-file.pdf')).toBeNull(), T)
+    expect(ops('list').at(-1)!.args).toEqual(['received', null, 'shared_from_phone'])
+    const row = await rowOf('boarding-pass.pdf')
+    expect(within(row).getByTestId('drop-shared-label')).toHaveTextContent('Severin’s iPhone')
+    expect(within(row).getByTestId('drop-claimed')).toBeInTheDocument()
+    expect(within(row).getByTestId('drop-shared-until').textContent).toMatch(/^· shared until /)
+    expect(within(row).queryByTestId('drop-gestureless')).toBeNull()
+    expect(within(await rowOf('photo-without-confirmation.jpg')).getByTestId('drop-gestureless')).toHaveTextContent('added from your phone without a confirmation')
+  })
+
+  it('the label is text, never a link or HTML', async () => {
+    const view = open('drop-list', { received: [shared({ name: 'x.pdf', shared_from: { device: 'd_fixture_x', label: '<a href="https://evil.test">iPhone</a>' } })] })
+    await view.user.click(await screen.findByTestId('drop-tab-shared'))
+    const row = await rowOf('x.pdf')
+    expect(within(row).getByTestId('drop-shared-label').textContent).toContain('<a href="https://evil.test">iPhone</a>')
+    expect(row.querySelector('a')).toBeNull()
+  })
+
+  it('expired and deleted shares stay listed with "no longer available" and no Download or Delete', async () => {
+    const view = open('drop-phone')
+    await view.user.click(await screen.findByTestId('drop-tab-shared'))
+    const expired = await rowOf('old-scan.pdf')
+    expect(within(expired).getByTestId('drop-gone')).toHaveTextContent('File no longer available (expired)')
+    const gone = await rowOf('removed-by-owner.pdf')
+    expect(within(gone).getByTestId('drop-gone')).toHaveTextContent('File no longer available (deleted)')
+    for (const r of [expired, gone]) {
+      expect(within(r).queryByTestId('drop-download')).toBeNull()
+      expect(within(r).queryByTestId('drop-delete')).toBeNull()
+      expect(within(r).getByTestId('drop-shared-until')).toBeInTheDocument()
+    }
+    expect(within(await rowOf('boarding-pass.pdf')).queryByTestId('drop-gone')).toBeNull()
+  })
+
+  it('each unclaimed_reason has its own text; an unknown one gets the generic text', async () => {
+    open('drop-phone')
+    const text = async (n: string) => within(await rowOf(n)).getByTestId('drop-download-reason').textContent
+    expect(await text('awaiting.jpg')).toMatch(/until this workspace’s host claims it/)
+    expect(await text('revoked-phone.jpg')).toMatch(/phone was removed before this was claimed, so the file can’t be claimed/)
+    expect(await text('needs-terminal.jpg')).toMatch(/Mac’s terminal/)
+    expect(await text('from-the-future.jpg')).toMatch(/Not claimed yet/)
+  })
+
+  it('pending_others: a count line when N > 0, nothing when 0 or absent; rows are never filtered client-side', async () => {
+    open('drop-phone')
+    expect(await screen.findByTestId('drop-pending-others')).toHaveTextContent('3 items from others await review at the Mac\'s terminal.')
+    cleanup()
+    open('drop-phone', { pendingOthers: 0 })
+    await rowOf('plain-file.pdf')
+    expect(screen.queryByTestId('drop-pending-others')).toBeNull()
+    cleanup()
+    open('drop-list')
+    await rowOf('quarterly-report.pdf')
+    expect(screen.queryByTestId('drop-pending-others')).toBeNull()
+  })
+
+  it('can_retire: self deletes directly, handoff shows the terminal path, null shows nothing', async () => {
+    open('drop-phone')
+    expect(within(await rowOf('boarding-pass.pdf')).getByTestId('drop-delete')).toBeInTheDocument()
+    const hand = await rowOf('needs-terminal.jpg')
+    expect(within(hand).queryByTestId('drop-delete')).toBeNull()
+    expect(within(hand).getByTestId('drop-handoff')).toHaveTextContent("Confirm at the Mac's terminal")
+    const none = await rowOf('awaiting.jpg')
+    expect(within(none).queryByTestId('drop-delete')).toBeNull()
+    expect(within(none).queryByTestId('drop-handoff')).toBeNull()
+  })
+
+  it('drop.handoff_required in the confirmation switches to the hand-off text; role.denied is the denied text', async () => {
+    const view = open('drop-list', {
+      received: [dropItem({ name: 'own.pdf' })],
+      retireError: new DropError(409, { code: 'drop.handoff_required', message: 'drop.handoff_required', retryable: false }),
+    })
+    await view.user.click(within(await rowOf('own.pdf')).getByTestId('drop-delete'))
+    await view.user.click(await screen.findByTestId('drop-confirm-delete', {}, T))
+    expect(await within(screen.getByTestId('drop-confirm')).findByTestId('drop-handoff', {}, T)).toHaveTextContent("Confirm at the Mac's terminal")
+    expect(screen.queryByTestId('drop-confirm-delete')).toBeNull()
+    const denied = dropError(new DropError(403, { code: 'role.denied', message: 'role.denied', retryable: false }))
+    expect(denied.text).toBe(dropError(new DropError(403, { code: 'drop.not_eligible', message: 'x', retryable: false })).text)
+  })
+
+  it('drop.cursor_reset reloads page 1 quietly with one notice; no cursor is shown', async () => {
+    const view = open('drop-list', { cursorResetOnSecondPage: true })
+    await rowOf('quarterly-report.pdf')
+    await view.user.click(screen.getByTestId('drop-next'))
+    expect(await screen.findByTestId('drop-refreshed', {}, T)).toHaveTextContent('The list was refreshed.')
+    await rowOf('quarterly-report.pdf')
+    expect(screen.queryByTestId('drop-error')).toBeNull()
+    expect(screen.getAllByTestId('drop-row')).toHaveLength(8)
+    expect(document.body.textContent).not.toMatch(/\bcursor\b/i)
+    await view.user.click(screen.getByTestId('drop-next'))
+    await waitFor(() => expect(screen.getAllByTestId('drop-row')).toHaveLength(3), T)
+    expect(screen.queryByTestId('drop-refreshed')).toBeNull()
+  })
+
+  it('old hosts: no new fields means the old behaviour; can_retire false still hides Delete', async () => {
+    open('drop-list', { received: [dropItem({ name: 'old.pdf', can_retire: false }), dropItem({ name: 'older.pdf' })] })
+    expect(within(await rowOf('old.pdf')).queryByTestId('drop-delete')).toBeNull()
+    expect(within(await rowOf('older.pdf')).getByTestId('drop-delete')).toBeInTheDocument()
+    expect(screen.queryByTestId('drop-shared')).toBeNull()
   })
 })

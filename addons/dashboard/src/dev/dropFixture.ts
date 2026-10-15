@@ -36,10 +36,16 @@ export interface DropFixtureOptions {
   retireConflict?: boolean
   /** `drop.list` fails with this error. */
   listError?: DropError
+  /** H6: the count of other people's unclaimed uploads `drop.list` reports (a count only; those rows are never listed). */
+  pendingOthers?: number
+  /** H3: the first request with a cursor (the second page) fails once with `drop.cursor_reset`; `onReset` runs first (rows may change). */
+  cursorResetOnSecondPage?: boolean | (() => void)
 }
 
 export const ME: DropAuthor = { person: 'p_severin', person_name: 'Severin', device: 'd_mac', origin: 'person' }
 export const PHONE: DropAuthor = { person: 'p_severin', person_name: 'Severin', device: 'd_phone_1', origin: 'phone' }
+/** Phone shares (Drop A2). Device ids and labels are fixtures, not real. */
+export const PHONE_SHARE = { device: 'd_fixture_phone_1', label: 'Severin’s iPhone' }
 export const AGENT: DropAuthor = { person: 'p_severin', person_name: 'Severin', device: 'd_mac', origin: 'agent' }
 
 const T0 = Date.parse('2026-10-09T11:30:00Z')
@@ -86,6 +92,7 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
   const lists: Record<DropDirection, DropItem[]> = { received: structuredClone(opts.received ?? []), sent: structuredClone(opts.sent ?? []) }
   const versions: Record<string, DropVersion[]> = structuredClone(opts.versions ?? {})
   const subs = new Set<(item: DropSubItem) => void>()
+  let cursorResetDone = false
   const calls: DropFixture['calls'] = []
   const blobs = new Map<string, Uint8Array>()
   const uploads = new Map<string, { size: number; parts: Uint8Array[] }>()
@@ -113,11 +120,18 @@ export function createDropFixture(opts: DropFixtureOptions = {}): DropFixture {
   const api: DropApi = {
     served: () => opts.served ?? true,
     info: async () => (log('info'), { ...info }),
-    list: async (_ws, { direction, after, limit }) => {
-      log('list', direction, after ?? null)
+    list: async (_ws, { direction, view, after, limit }) => {
+      log('list', direction, after ?? null, ...(view ? [view] : []))
       if (opts.listError) throw opts.listError
-      const { slice, next } = page(lists[direction], after, limit)
-      return { items: structuredClone(slice), next }
+      if (after && opts.cursorResetOnSecondPage && !cursorResetDone) {
+        cursorResetDone = true
+        if (typeof opts.cursorResetOnSecondPage === 'function') opts.cursorResetOnSecondPage()
+        throw new DropError(410, { code: 'drop.cursor_reset', message: 'drop.cursor_reset', retryable: false })
+      }
+      // The host filters; the page renders what comes back.
+      const all = view === 'shared_from_phone' ? lists[direction].filter((i) => i.shared_from) : lists[direction]
+      const { slice, next } = page(all, after, limit)
+      return { items: structuredClone(slice), next, ...(opts.pendingOthers !== undefined ? { pending_others: opts.pendingOthers } : {}) }
     },
     versions: async (_ws, { object_id, after, limit }) => {
       log('versions', object_id, after ?? null)

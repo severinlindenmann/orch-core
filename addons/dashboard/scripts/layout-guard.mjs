@@ -549,6 +549,7 @@ async function run(send, close) {
               ['real-host-drop-upload-progress', 'drop-upload-progress', [['the progress', '[data-testid="drop-progress"]'], ['Cancel', '[data-testid="drop-cancel"]']]],
               ['real-host-drop-errors', 'drop-errors', [['the error texts', '[data-testid="drop-error-gallery"] [data-testid="drop-error"]']]],
               ['real-host-drop-versions', 'drop-versions', [['the version list', '[data-testid="drop-version"]'], ['the cap line', '[data-testid="drop-version-cap"]']]],
+              ['real-host-drop-phone', 'drop-phone', [['the shared-from line', '[data-testid="drop-shared"]'], ['the gestureless note', '[data-testid="drop-gestureless"]'], ['the pending-others line', '[data-testid="drop-pending-others"]'], ['a hand-off line', '[data-testid="drop-handoff"]']]],
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)

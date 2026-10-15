@@ -18,7 +18,7 @@ import { createPairFixture, installPairFixture, type PairFixture, type PairFixtu
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
 import { DropError, dropError } from '@/api/drop'
 import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop'
-import { AGENT, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
+import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
 import { useWorkspace } from '@/app/workspace'
@@ -74,6 +74,7 @@ export const LAYOUT_SCENARIOS = [
   'drop-upload-progress',
   'drop-errors',
   'drop-versions',
+  'drop-phone',
 ] as const
 export type LayoutScenario = (typeof LAYOUT_SCENARIOS)[number]
 
@@ -298,6 +299,26 @@ const dropOptions = (scenario: LayoutScenario): DropFixtureOptions => {
           dropItem({ name: `${LONG_URL}`, claimed: false }),
         ],
       }
+    case 'drop-phone': {
+      const share = (over: Parameters<typeof dropItem>[0]) =>
+        dropItem({ shared_from: PHONE_SHARE, claimed_ms: T0 - DAY, shared_until_ms: T0 + 6 * DAY, can_retire: 'self', ...over })
+      return {
+        received: [
+          share({ name: 'boarding-pass.pdf' }),
+          share({ name: 'photo-without-confirmation.jpg', mime: 'image/jpeg', gestureless: true }),
+          share({ name: `${LONG_URL}.png`, mime: 'image/png', shared_from: { ...PHONE_SHARE, label: `iPhone ${LONG_WORD}` }, can_retire: 'handoff' }),
+          share({ name: 'old-scan.pdf', state: 'expired', expires_ms: T0 - DAY, tombstone_until_ms: T0 + 29 * DAY, can_retire: null }),
+          share({ name: 'removed-by-owner.pdf', state: 'retired', tombstone_until_ms: T0 + 30 * DAY, can_retire: null }),
+          dropItem({ name: 'awaiting.jpg', claimed: false, unclaimed_reason: 'awaiting_claim', can_retire: null }),
+          dropItem({ name: 'revoked-phone.jpg', claimed: false, unclaimed_reason: 'author_revoked', can_retire: null }),
+          dropItem({ name: 'needs-terminal.jpg', claimed: false, unclaimed_reason: 'needs_handoff', can_retire: 'handoff' }),
+          dropItem({ name: 'from-the-future.jpg', claimed: false, unclaimed_reason: 'brand_new_reason' }),
+          dropItem({ name: 'plain-file.pdf' }),
+        ],
+        pendingOthers: 3,
+        pageSize: 20,
+      }
+    }
     case 'drop-upload-progress':
       return { received: mixed().slice(0, 3), stallAfterChunks: 2 }
     case 'drop-errors':

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -38,6 +39,8 @@ from .ownership import OwnershipLock
 from .registry import PERSON, Entry, group_name, validate_peers
 from .transport import Session
 from .workspace import ok_result, person_ok
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .service import Host
@@ -256,9 +259,27 @@ class ControlOps:
             ws = store.state.workspace
             if ws.genesis != pin or ws.workspace_id != workspace_id:
                 raise HostError("trust.genesis_mismatch", "the verified genesis differs from the pinned one")
+            self._import_readers(workspace_id, store.state)
             return workspace_id, ws.prefix, ws
         finally:
             store.close()
+
+    def _import_readers(self, workspace_id: str, state: Any) -> None:
+        """H12d-2 (§0.8.6 item 9.4 "Direct mode"): ``register`` imports direct mode's reader records. In tier A they
+        already lie in this state directory (``<state>/hosts/<ws>/readers/``), so the import verifies each against the
+        log just read and drops the ones that do not verify (their devices count as 0 anyway). Best effort: a record
+        that cannot be removed still counts as 0 at every read."""
+        from orch.ops.readers import prune
+
+        try:
+            out = prune(self.state_dir, workspace_id, state, self.host_uid)
+        except Exception as exc:  # noqa: BLE001 - never blocks a registration: every read verifies again
+            _log.warning("register: reader records of %s not checked (%s)", workspace_id, type(exc).__name__)
+            return
+        if out["dropped"]:
+            _log.info(
+                "register: dropped %d reader record(s) of %s that do not verify", len(out["dropped"]), workspace_id
+            )
 
     def register(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
         root = os.path.realpath(args["root"])

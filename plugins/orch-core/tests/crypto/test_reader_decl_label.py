@@ -14,8 +14,15 @@ VECTORS = Path(__file__).parent.parent / "vectors"
 LABEL = "orch/v2/sig/reader-decl|"
 
 
+def _corpus_labels() -> dict[str, str]:
+    """The vendored relay corpus (``tests/relay/vectors/vectors_v2.json.xz``, checked against SOURCE)."""
+    from tests.relay.corpus import VECTORS as RELAY_VECTORS
+
+    return RELAY_VECTORS["labels"]
+
+
 def _every_label() -> dict[str, str]:
-    corpus = json.loads((VECTORS / "vectors_v2.json").read_text(encoding="utf-8"))["labels"]
+    corpus = _corpus_labels()
     f1 = json.loads((VECTORS / "f1" / "labels.json").read_text(encoding="utf-8"))["labels"]
     out: dict[str, str] = {}
     for source, table in (("corpus", corpus), ("protocol", labels.LABELS), ("f1", f1), ("canon", canon.LABELS)):
@@ -40,7 +47,7 @@ def test_the_label_is_prefix_free_against_every_known_label():
 
 
 def test_the_relay_corpus_names_it_the_same_way_when_present():
-    corpus = json.loads((VECTORS / "vectors_v2.json").read_text(encoding="utf-8"))["labels"]
+    corpus = _corpus_labels()
     assert corpus.get("sig_reader_decl", LABEL) == LABEL
     assert LABEL not in {v for k, v in corpus.items() if k != "sig_reader_decl"}
 

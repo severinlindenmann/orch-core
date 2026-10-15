@@ -823,8 +823,15 @@ def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
     def keys(env):
         return {env[f"GIT_CONFIG_KEY_{i}"].lower() for i in range(int(env["GIT_CONFIG_COUNT"]))}
 
+    def local_ok(key):  # a system gitconfig of the machine may add allow-listed keys: subset, not equality
+        return key in ("user.name", "user.email") or (key.startswith("url.") and key.endswith(("insteadof",)))
+
+    def net_ok(key):
+        return key.startswith(("credential.", "http.", "ssh.")) or key == "core.sshcommand"
+
     local = keys(repo.env())
-    assert local == {"user.name", "user.email", "url.file:///nonexistent/f541/.insteadof"}, local
+    assert all(local_ok(k) for k in local), local
+    assert {"user.name", "user.email", "url.file:///nonexistent/f541/.insteadof"} <= local, local
     seen = repo.out("config", "--list").lower()
     for bad in ("filter.", "diff.", "merge.", "alias.", "core.attributesfile", "core.alternaterefscommand",
                 "core.pager", "core.editor", "gpg.", "commit.gpgsign", "i18n.", "credential.", "http.",
@@ -832,8 +839,32 @@ def test_541_local_calls_see_only_the_allow_listed_global_keys(r):
         assert bad not in seen, bad
     assert "core.hookspath=/dev/null" in seen and f"core.hookspath={r.tmp}" not in seen
     with repo.transport() as net:
-        assert keys(net.env(network=True)) == {"credential.helper", "http.sslverify"}
-        assert keys(net.env()) == {"credential.helper", "http.sslverify"}  # never url.* in the transport repo
+        for env in (net.env(network=True), net.env()):  # never url.* in the transport repo, network or not
+            assert all(net_ok(k) for k in keys(env)) and {"credential.helper", "http.sslverify"} <= keys(env)
+    assert "core.attributesfile=/dev/null" in seen  # not even git's default $XDG_CONFIG_HOME/git/attributes
+
+
+def test_541_the_repos_own_commit_encoding_never_changes_a_records_commit(r):
+    """``i18n.commitEncoding`` is allowed in the repo's own config (it runs nothing), but the records tool pins UTF-8:
+    its commits stay records-only and the next push is not refused."""
+    r.init()
+    first = r.commit()["commit"]
+    url = r.bare()
+    git(r.root, "remote", "add", "origin", url)
+    git(r.root, "config", "--local", "i18n.commitEncoding", "ISO-8859-1")
+    r.push(initial=True)
+    r.w.ticket("one")
+    second = r.commit()["commit"]
+    assert "encoding " not in git(r.root, "cat-file", "commit", second)
+    assert r.push()["from"] == first
+
+
+def test_541_init_copies_no_template_at_all(r):
+    """``records init`` runs ``git init --template=`` like the transport repo: no sample hooks, nothing of a template
+    directory; the tool writes ``info/exclude`` itself."""
+    r.init()
+    assert not (r.root / ".git" / "hooks").exists()
+    assert (r.root / ".git" / "info" / "exclude").read_text().startswith("# orch records")
 
 
 def test_541_a_hostile_global_config_runs_nothing_and_changes_neither_the_commit_nor_the_ff_check(r):

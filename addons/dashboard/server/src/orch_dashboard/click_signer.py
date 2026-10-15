@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .errors import HostError, fail
 
-CONTRACT = 1
+CONTRACTS = (1, 2)  # 2: the signer can hand a runner grant to the runner (deposit-only grant mode, H11c-2)
 #: The first contract that hands a runner grant to the runner (contract 1 reads every `grant` as terminal only).
 DEPOSIT_CONTRACT = 2
 #: `ORCH_DASHBOARD_CLICK=off` never starts a signer (a kill switch; the tests use it unless they test the signer).
@@ -89,7 +89,7 @@ class Signer:
                 pass
 
     def _ensure(self):
-        """The running signer, started (or restarted) if needed, and checked: its status must say `contract: 1`."""
+        """The running signer, started (or restarted) if needed, and checked: its status must say `contract` 1 or 2."""
         if self.off:
             raise unavailable("Click-to-sign is switched off for this server.")
         if self.refused and self.clock() < self.refused[0]:
@@ -115,7 +115,8 @@ class Signer:
             except Exception:  # noqa: BLE001
                 pass
             raise unavailable() from None
-        if status.get("contract") != CONTRACT:
+        contract = status.get("contract")
+        if type(contract) is not int or contract not in CONTRACTS:  # strict: True is not 1, "2" is not 2
             try:
                 client.close()
             except Exception:  # noqa: BLE001
@@ -124,7 +125,7 @@ class Signer:
             self.refused = (self.clock() + CONTRACT_RETRY, error)
             raise error
         self.refused = None
-        self.contract = status["contract"] if type(status["contract"]) is int else None
+        self.contract = contract  # 2 means the signer supports runner-grant deposit
         self.core = str(status.get("core"))[:40]
         self.client = client
         return client

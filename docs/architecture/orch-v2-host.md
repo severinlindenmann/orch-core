@@ -1758,7 +1758,10 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    value has its control characters escaped. It changes nothing. Exit 0 without problems, else 1.
    **Run directory, tier A:** `orch host`, the thin CLI and `orch sign` all use `--run`, else `ORCH_HOST_RUN_DIR`, else
    `<state>/run` (`enable.run_dir_for`). A path that merely exists under the tier-B `/Users/Shared/orch/run/<uid>` is
-   no longer preferred: any local account can create it (H4b preferred it).
+   no longer preferred: any local account can create it (H4b preferred it). **`ORCH_HOST_RUN_DIR` is the only
+   environment name for the run directory**: core reads it in `enable.run_dir_for` alone (host, runner, thin CLI,
+   `orch sign`, the runner unit's environment) and never reads `ORCH_RUN_DIR`; a client in another package (the
+   dashboard server) uses the same name and the same fallback to `<state>/run`.
    **`orch host disable`** is the reverse of `enable`, through the same unit plan and `Manager`: it stops and unloads the
    service (`launchctl bootout gui/<uid>/io.orch.host`; `systemctl --user disable --now orch-host.service`, then a
    `daemon-reload`) and removes the unit file. The state dir always stays. `--purge-releases` also deletes the release
@@ -3755,6 +3758,12 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     show or hand to the runner; the runner commands `grant.put`, `grant.drop` and the `spawn` fields `grant`,
     `session`, `person`; `<state>/runner.json` (`login_shell`, `programs`, `pass_env`); first-party manifest
     `addons/start-agent`. No F1 log or certificate change ("As built in H11c", §12.4).
+41. **Terminal follow-ups (after #469):** `orch host run --foreground
+    --dev-runner` admits a foreground runner of the host UID announced in `<run>/term/<uid>/dev-runner.json` (dev and
+    tests only; never a service run directory or another UID; §12.3.3 "As built in H11a"); the retryable refusals of
+    `term.attach`/`term.open` carry `retry_after_ms` (bucket-derived for `rate.limited`; the runner's `attach.limit`
+    keeps its code); `ORCH_HOST_RUN_DIR` is the one run-dir env name (core never reads `ORCH_RUN_DIR`);
+    `TermClient.send` has its own write deadline (`send_timeout`). No wire schema change.
 
 ---
 
@@ -3778,7 +3787,7 @@ call would start a host as the agent.
 |---|---|---|
 | macOS | LaunchAgent `io.orch.host` (`RunAtLoad`, `KeepAlive`) | `/Users/Shared/orch/run/<host uid>` (D-P2-6, F12), created by the setup helper (H3c) |
 | Linux | systemd user or system unit | `/run/orch/<host uid>`, provisioned by `tmpfiles.d` from the privileged setup. A user unit's `RuntimeDirectory` lives under `$XDG_RUNTIME_DIR`, which agents cannot traverse. |
-| dev and tests | `orch host run --foreground` | `<state>/run` (no agent UIDs) |
+| dev and tests | `orch host run --foreground` (`--dev-runner`: see §12.3.3 "As built in H11a") | `<state>/run` (no agent UIDs) |
 
 **D-P2-3. Every outcome is recoverable.** The store recovers torn appends. The host adds the outcome records and
 their reconciliation (§0.7), so a lost response, an interrupted composite or a human submit is recovered by `idem`,
@@ -7560,6 +7569,22 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - **Logs.** The service manager writes the runner's output to `<state>/runner/runner.out` without rotation (the
   rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
   controlled stop: every managed run is stopped and verified before the runner exits.
+- **Dev-only foreground runner** (dev and tests; terminal follow-ups after #469). Without a service manager the
+  main-PID check can never pass, so a host and a runner run as separate foreground processes need an explicit seam:
+  `orch host run --foreground --dev-runner` (`Host(dev_runner=True)`) also admits a runner that
+  `orch runner run --foreground` announced in `<run>/term/<uid>/dev-runner.json` (`orch.runner.devmode`: 0600 in the
+  runner's 0700 terminal directory, `{v:1, pid, birth, uid}`, removed at exit). Admitted only when the kernel peer UID
+  is the host UID, the file is a private regular file of that UID (no link) in a private directory, it names that
+  UID and the peer PID, and that PID is still the process born at the recorded time (a stale file whose PID was reused
+  is refused); every error denies. The main-PID check still applies first. Refused at start (`invalid.input`): without
+  `--foreground` (the units never pass it), under the service manager (`XPC_SERVICE_NAME` is `io.orch.host` or
+  `io.orch.runner`), and for a service run directory (`/Users/Shared/orch/run`, `/run/orch`; decided by identity:
+  as written and resolved, case-folded on macOS, and by `(st_dev, st_ino)` of every existing ancestor against each
+  existing root; also in `Host` itself). The file is opened `O_NONBLOCK | O_NOFOLLOW` and must be a regular file
+  (`custody.read_json`), so a FIFO in its place never blocks the accept loop. Any other run directory (`<state>/run`, `--run`, `ORCH_HOST_RUN_DIR`) is a dev one:
+  a short `ORCH_HOST_RUN_DIR` is what tests use for the socket-path limit. The host logs a warning (and the CLI prints
+  one) at start. Tier A: like the main-PID check this is fault separation, not a boundary (any process of the host
+  UID can write the file); it keeps a stale or misdirected process from being taken for the runner.
 - **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
   ticket must be exactly 43 characters; at most 96 term-socket connections are handled at once; the lockout is per
   runner, so one client replaying seen tickets locks every attachment out for 60 s.
@@ -7614,7 +7639,11 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   the event loop at `term.open` and `term.attach`; `run.stop` and `attach.cancel` never need it.
 - **Limits.** The host refuses `attach.limit` from the runner's `runner.term` counts (pending capabilities count
   toward none) and `run.limit` (16 shells per person, 64 runs per runner), `rate.limited` (10 starts per minute,
-  burst 5; 30 `term.attach` mints per minute per person, burst 10). The runner's connection cap is 96 (64 attachments
+  burst 5; 30 `term.attach` mints per minute per person, burst 10). Each of these refusals carries
+  `retry_after_ms` as the `Error` member of §0.2 (there is no `detail` field; terminal follow-ups after #469):
+  `rate.limited` the time until the person's next token in that bucket (at most 6 s for starts, 2 s for mints),
+  `attach.limit` 2 000, `run.limit` 5 000. The runner's own `attach.limit` (256 pending capabilities) reaches the
+  caller as `attach.limit` with `retry_after_ms` 2 000, not `run.spawn_failed`. The runner's connection cap is 96 (64 attachments
   plus handshakes); at most 256 capabilities wait to be presented (`attach.allow` beyond: `attach.limit`). Per
   attachment the runner queues at most 4 096 control frames and reads ahead at most 64 frames while a PTY write waits
   for room; beyond either the attachment is revoked, its write lease is released at once, and it ends with
@@ -7638,7 +7667,11 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   the client's own run directory, directory owner and mode, peer UID and PID, `hello.gen`), owns `input_id` and
   `lease_gen`, keeps one input frame in flight, resends on `throttle` with the same id and reports unacknowledged ids
   as `lost`. A runner frame of the wrong shape ends the stream with `protocol`; a stream that closes without `end`
-  ends with `closed`; `send`/`resize` after the end raise `TermEnded`.
+  ends with `closed`; `send`/`resize` after the end raise `TermEnded`. `send` writes non-blocking under its own
+  deadline (`send_timeout`, default 5 s per frame), independent of `recv`'s timeout, so the next input frame that an
+  `ack` puts on the wire from inside `recv` is never cut by a short read timeout; a runner that takes no input for that
+  long ends the stream with `send_timeout` (socket closed; the unacknowledged ids are `lost`). The dashboard server
+  may treat `send_timeout` like `runner.lost` (4503, retry with backoff). Terminal follow-ups after #469.
 - **Terminals addon.** `addons/terminals/orch-addon.json` (capability `pty`, no fields); the host requires it granted
   and enabled. `orch runner terminals on|off --workspace W`: `on` needs the person's own terminal and the prefix (never
   under `ORCH_GRANT`), `off` needs none; both only with dashboard execution already on.

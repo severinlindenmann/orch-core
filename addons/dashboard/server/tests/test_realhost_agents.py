@@ -193,8 +193,6 @@ def test_preview_grant_by_click_start_an_agent_and_forget(aw, monkeypatch, caplo
         assert res.status_code == 409 and res.json()["error"]["why"] == "update_orch"
         # #466's signer already hands a grant to the runner; set the contract gate aside to exercise the real deposit.
         monkeypatch.setattr(click_signer.Signer, "deposits", lambda self: True)
-    else:
-        monkeypatch.setattr(click_signer, "CONTRACT", contract, raising=False)
 
     rid, view, signed = issue_grant(aw)
     assert view["deposit"] is True and view["confirm"]["word"] == aw.word()

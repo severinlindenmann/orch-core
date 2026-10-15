@@ -148,7 +148,7 @@ def read_json(path: Path, host_uid: int, *, limit: int = 16 * 1024 * 1024) -> An
     """A private JSON file of the host UID, or ``None`` if it does not exist. A link, another owner or a group/other
     readable or writable mode is ``custody.unsafe_mode``."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)  # a FIFO never blocks
     except FileNotFoundError:
         return None
     except OSError as exc:

@@ -280,7 +280,9 @@ def test_attach_limits_are_refused_by_the_host_from_the_runners_counts(ready):
         for _ in range(4):
             clients.append(attach(w, c, run)[1])
         wait_for(lambda: ok(c.call("run.list", {}))["data"]["runs"][0]["viewers"] == 4)
-        assert err(c.call("term.attach", {"run": run})) == "attach.limit"
+        res = c.call("term.attach", {"run": run})
+        assert err(res) == "attach.limit"
+        assert res["error"]["retryable"] is True and 1 <= res["error"]["retry_after_ms"] <= 3_600_000
         clients.pop().close()
         wait_for(lambda: ok(c.call("run.list", {}))["data"]["runs"][0]["viewers"] == 3)
         clients.append(attach(w, c, run)[1])
@@ -716,6 +718,52 @@ def test_term_attach_is_rate_limited_per_person(ready):
         codes.append(None if res.get("ok") else res["error"]["code"])
     assert codes[:10] == [None] * 10
     assert "rate.limited" in codes[10:]
+
+
+def test_term_attach_refusals_carry_retry_after_ms_from_the_bucket(ready):
+    """§0.6: a retryable refusal carries ``error.retry_after_ms``; for the mint bucket (30 per minute) it is the time
+    until the next token, so an immediate retry after it succeeds and none comes back sooner than 2 s."""
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    refused = None
+    for _ in range(12):
+        res = c.call("term.attach", {"run": run})
+        if not res.get("ok"):
+            refused = res
+            break
+    assert refused is not None and refused["error"]["code"] == "rate.limited"
+    wait = refused["error"]["retry_after_ms"]
+    assert refused["error"]["retryable"] is True and 1 <= wait <= 2000
+    time.sleep(wait / 1000 + 0.05)
+    assert c.call("term.attach", {"run": run}).get("ok") is True
+
+
+def test_attach_limit_reported_by_the_runner_keeps_its_code_and_carries_retry_after_ms(ready, monkeypatch):
+    """The runner refuses ``attach.allow`` beyond its pending-capability cap with ``attach.limit``: the host passes
+    that code on (not ``run.spawn_failed``) with ``retry_after_ms``."""
+    from orch.runner import term
+
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    monkeypatch.setattr(term, "MAX_ALLOWS", 0)
+    res = c.call("term.attach", {"run": run})
+    assert err(res) == "attach.limit"
+    assert res["error"]["retryable"] is True and 1 <= res["error"]["retry_after_ms"] <= 3_600_000
+
+
+def test_run_limit_on_term_open_carries_retry_after_ms(ready, monkeypatch):
+    from orch.host import terms
+
+    w = ready
+    c = w.conn()
+    open_shell(c)
+    monkeypatch.setattr(terms, "SHELLS_PER_PERSON", 1)
+    pre = preview(c)
+    res = c.call("term.open", {"spec": pre["spec"]}, idem=True)
+    assert err(res) == "run.limit"
+    assert res["error"]["retryable"] is True and 1 <= res["error"]["retry_after_ms"] <= 3_600_000
 
 
 # -- whoami and the flood ------------------------------------------------------------------------------------------

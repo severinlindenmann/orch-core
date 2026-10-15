@@ -25,7 +25,7 @@ def _render(manifest: dict) -> str:  # the relay's manifest.render
     return json.dumps(manifest, sort_keys=True, indent=2) + "\n"
 
 
-PINNED_RELAY_COMMIT = "772d7b07fcd4aad13060cabd3921681dfdc700f4"
+PINNED_RELAY_COMMIT = "438b7193068d24f68035ddab733e04781801c5d1"
 UPDATE = (
     "the vendored relay corpus changed. To update it: run scripts/sync-vectors.sh <relay ref> (it writes "
     "tests/relay/vectors/vectors_v2.json.xz, the http_fixtures/ files MANIFEST.json lists plus MANIFEST.json, and "

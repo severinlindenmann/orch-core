@@ -138,6 +138,25 @@ class Crash(BaseException):  # noqa: N818 - a test seam: a simulated kill betwee
     """Raised by a test's fault hook; never caught by the bridge (it is a BaseException)."""
 
 
+def _atomic(db: sqlite3.Connection, body: Callable[[sqlite3.Connection], Any]) -> Any:
+    """THE transaction of this module (every BEGIN/COMMIT/ROLLBACK is here; a test pins it): ``BEGIN IMMEDIATE``, the
+    body, ``COMMIT`` inside the same ``try``. On ANY exception (the body's or a failed ``COMMIT``) the transaction is
+    rolled back if still open, so the writer lock is never left held (every later ``BEGIN IMMEDIATE`` would fail); a
+    rollback error is swallowed and the original exception re-raised."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        out = body(db)
+        db.execute("COMMIT")
+    except BaseException:
+        if db.in_transaction:
+            try:
+                db.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass  # the original error is the one that matters
+        raise
+    return out
+
+
 class RidStore:
     """``rids.sqlite`` behind one connection and one lock (the relay threads share it)."""
 
@@ -229,14 +248,7 @@ class RidStore:
         """One transaction; the fault hook runs before ``point`` (nothing durable) and after it (committed)."""
         with self._lock:
             self._fault("before_" + point)
-            db = self._db
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                out = body(db)
-            except BaseException:
-                db.execute("ROLLBACK")
-                raise
-            db.execute("COMMIT")
+            out = _atomic(self._db, body)
             self._fault("after_" + point)
             return out
 
@@ -692,21 +704,14 @@ class RidStore:
         db = self._db
         if db.in_transaction:
             raise StateError("relay_state_unsafe: a transaction is open at the vacuum step")
-        db.execute("BEGIN IMMEDIATE")
-        try:
+
+        def pages(db: sqlite3.Connection) -> None:
             for _ in range(VACUUM_STEP):
                 if db.execute("PRAGMA freelist_count").fetchone()[0] == 0:
                     break
                 db.execute("PRAGMA incremental_vacuum(1)").fetchall()
-            db.execute("COMMIT")
-        except BaseException:
-            # never leave the writer lock held (every later _tx would fail at BEGIN IMMEDIATE): a failed COMMIT too
-            if db.in_transaction:
-                try:
-                    db.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass  # the original error is the one that matters
-            raise
+
+        _atomic(db, pages)
         return db.execute("PRAGMA freelist_count").fetchone()[0] == 0
 
     def counts(self) -> dict[str, Any]:

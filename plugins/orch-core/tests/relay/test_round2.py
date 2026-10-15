@@ -306,6 +306,45 @@ def test_a_failed_vacuum_commit_rolls_back_and_frees_the_writer_lock(w, monkeypa
     assert w.bridge.receive(w.item(_whoami(w))) is not None  # a later write (a _tx) goes through
 
 
+def test_a_failed_commit_of_a_write_rolls_back_and_frees_the_writer_lock(w):
+    real = w.rids._conn  # noqa: SLF001
+    w.rids._conn = _CommitFails(real)  # noqa: SLF001
+    probe = "INSERT INTO window(device, high, bitmap) VALUES('commit-probe', 1, '0')"
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="injected"):
+            w.rids._tx("probe", lambda db: db.execute(probe))  # noqa: SLF001
+    finally:
+        w.rids._conn = real  # noqa: SLF001
+    assert not real.in_transaction
+    assert real.execute("SELECT COUNT(*) FROM window WHERE device='commit-probe'").fetchone()[0] == 0
+    assert w.bridge.receive(w.item(_whoami(w))) is not None  # a later write goes through
+
+
+def test_every_transaction_statement_of_rids_is_in_the_one_helper():
+    """Structural (second COMMIT-outside-try finding): BEGIN/COMMIT/ROLLBACK/END/SAVEPOINT/RELEASE appear in
+    ``rids.py`` only inside ``_atomic``, which commits inside its try and rolls back on any exception."""
+    import ast
+    import re
+    from pathlib import Path
+
+    tree = ast.parse(Path(rids.__file__).read_text())
+    word = re.compile(r"\s*(BEGIN|COMMIT|ROLLBACK|END|SAVEPOINT|RELEASE)\b", re.IGNORECASE)
+    inside: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_atomic":
+            inside |= {id(n) for n in ast.walk(node)}
+    found = [
+        (n.lineno, n.value) for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and word.match(n.value) and id(n) not in inside
+    ]  # fmt: skip
+    assert found == []
+    statements = [
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and word.match(n.value) and id(n) in inside
+    ]  # fmt: skip
+    assert sorted(statements) == ["BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"]
+
+
 # -- R2-5: the answer cap is the relay's per-device undelivered budget ------------------------------------------------
 
 

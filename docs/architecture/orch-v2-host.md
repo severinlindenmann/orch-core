@@ -520,6 +520,19 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 | `relay.link_exists` | 1 | no | stays | `Store.relay_link` while `relay/link.json` already exists | — |
 | `relay.link_mismatch` | 1 | no | stays | `Store.relay_mark_linked(expect)` when `link.json` is missing or is not exactly `expect` in state `linking` | — |
 
+**Planned codes of H13 (draft, §11A.16.9; not served yet).** These join the table above, with
+`orch.host.errors.HOST_CODES`, in the PR that serves the `drop/1` op raising them; until then no op answers them.
+
+| Code | Exit | Retryable | Fate | When | `retry_after_ms` |
+|---|---|---|---|---|---|
+| `drop.unavailable` | 9 | yes | stays | no running relay worker, Drop off at the relay, a reconciliation in progress, or `drop.read` before the copy is local | when known |
+| `drop.too_large` | 5 | no | stays | a `drop.send` blob above 26,214,400 bytes | — |
+| `drop.no_audience` | 3 | no | stays | the audience function leaves no device | — |
+| `drop.quota` | 3 | no | stays | a stored-bytes quota at the relay or the host's retire-row bound; `detail.quota` from a closed set | — |
+| `drop.gone` | 3 | no | stays | the object is expired or retired | — |
+| `drop.conflict` | 3 | no | stays | a retire whose precondition failed (the head moved) | — |
+| `drop.integrity` | 1 | no | stays | a descriptor, hash, `dek_commit` or wrap check failed (the entry is quarantined) | — |
+
 **Universal errors.** These may come from any op, beyond the op's own list:
 
 - every op: `req.invalid`, `unknown_command`, `op.unsupported`, `op.not_allowed`, `human_only` (human registry ops,
@@ -4118,6 +4131,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     durable per-request journal (`<state>/person/primary/requests/`) and `PrimaryQueue` (§8.4 steps 2 to 4 with
     `check_cert_request`, `open_cert_request`, `make_cert_challenge`, `make_device_cert`, `make_cert_rejection`).
     No CLI, op, code, wire, hash or schema change.
+55. **H13 design draft: push and Drop, host end (§11A.16; DRAFT for review, nothing served; the number may be
+    renumbered when a parallel change lands first):** the H13a push planner (kinds `question`, `question.closed`,
+    `drop.new`; a durable per-log cursor and `outbound.sqlite` intents; seal at the committed epoch with the gate down;
+    persisted outers resent unchanged), the H13b Drop client (a mirror by change position, full reconciliation rules,
+    host-written `file`s with persisted `ODU2` frames, claims and re-wraps for the phone's `drop_claim`/`drop_rewrap`,
+    the retire intent with its 29-day window), the one audience function for restricted tickets, the planned cap
+    `drop/1` with seven ops and the planned codes in §0.6 "Planned codes of H13", and H13c: no F1, hash, schema or
+    reader-level change. Open questions in §11A.16.12 (among them G1: phones hold no `operate`, which the relay's
+    Drop `PUT` requires).
 
 ---
 

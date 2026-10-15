@@ -43,6 +43,8 @@ export const queries = {
   /** Reduced workspace settings of a real host (M4). */
   hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws) }),
   roster: (ws: string) => queryOptions({ queryKey: ['members', ws], queryFn: () => api.getRoster(ws) }),
+  /** H12d-2: reader levels and `required_reader` (Settings → Devices). */
+  readers: (ws: string) => queryOptions({ queryKey: ['readers', ws], queryFn: () => api.getReaders(ws) }),
   /**
    * Grants as the host gives this person (an owner: all; anyone else: their own). A non-owner is not told when someone
    * else's grant changes (the live stream does not carry others' `grant.*` items), so the list is read again on focus

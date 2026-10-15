@@ -325,6 +325,33 @@ class StateDir:
                     pass
                 raise
 
+    def open_private(self, name: str) -> int:
+        """The checked open of 11A.3 step 2 for a file a library opens by path (``rids.sqlite`` and its sidecars):
+        ``O_RDWR | O_CREAT | O_NOFOLLOW`` (0600) relative to the locked directory fd, then ``fstat``: a regular file
+        of this UID, mode 0600, ``nlink == 1``. Returns the fd; the caller keeps it open and compares its
+        ``(st_dev, st_ino)`` with a ``stat`` of :meth:`file_path` after the library opened the path (step 4)."""
+        name = self._name(name)
+        with self.lock:
+            dfd = self._dir()
+            try:
+                fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+            except OSError as e:  # ELOOP: a symlink
+                raise StateError(f"{name}: not a regular file") from e
+            st = os.fstat(fd)
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_uid != _me()
+                or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink != 1
+            ):
+                os.close(fd)
+                raise StateError(f"{name}: must be a 0600 regular file of this user with one link")
+            return fd
+
+    def file_path(self, name: str) -> Path:
+        """The path of ``name`` here, only for a library that opens by path, together with :meth:`open_private`."""
+        return self.path / self._name(name)
+
     def read_json(self, name: str) -> Any:
         """The parsed file, or ``None`` only when it does not exist; unreadable, not JSON or ``null``: StateError."""
         raw = self.read(name)

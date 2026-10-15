@@ -41,6 +41,15 @@ def register(app: FastAPI, gateway: Gateway):
     def members(ws: str = Depends(workspace)):
         return adapters.settings.roster(gateway.call(ws, "member.list"))
 
+    @app.get("/api/w/{ws}/readers")
+    def readers(ws: str = Depends(workspace)):
+        # H12d-2: every current device's reader level and the workspace's `required_reader`. A host without
+        # `reader/1` answers `available: false` and the page says so.
+        link = gateway.enabled(ws)
+        if not link.supports("reader.list", "reader/1"):
+            return adapters.settings.readers_unavailable()
+        return adapters.settings.readers(link.call("reader.list", {}))
+
     @app.get("/api/w/{ws}/grants")
     def grants(query: Annotated[GrantsQuery, Query()], ws: str = Depends(workspace)):
         link = gateway.enabled(ws)

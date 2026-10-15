@@ -8,7 +8,7 @@ import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickAction, ClickHostState, ClickPrepared, ClickSigned, ClickViewAnswer } from './click'
-import type { HostGrant, HostSettings, RosterMember } from './settings'
+import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import {
   ApiError,
@@ -188,6 +188,7 @@ const reads = {
   // Reduced workspace settings (M4): what the host gives this person, nothing more.
   getHostSettings: (ws: string) => call<HostSettings>(`${w(ws)}/settings`),
   getRoster: (ws: string) => call<RosterMember[]>(`${w(ws)}/members`),
+  getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
   // Quick tasks and records (M6). The limits are this browser's own setting; the server saves nothing.
   getQuick: (ws: string, p: QuickParams = {}) => {

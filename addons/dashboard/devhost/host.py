@@ -79,6 +79,12 @@ class StubHost:
         self.settings_cap = os.environ.get("ORCH_DEV_SETTINGS", "1") != "0"
         self.write_ops = set(WRITE_OPS)
         self.versions = {name: 1 for name in (*OPS, *READS, *HUMAN_OPS, *WRITE_OPS)}
+        # H12d-2: `reader.list` (cap `reader/1`) and the reader fields of `member.list`. The levels are the stub's own
+        # (tests set them); no declaration is verified here. Off with ORCH_DEV_READERS=0 (a host before H12d-2).
+        self.readers_cap = os.environ.get("ORCH_DEV_READERS", "1") != "0"
+        self.reader_levels: dict[str, int] = {}
+        self.required_reader = 0
+        self.versions["reader.list"] = 1  # listed in `welcome.ops` only while `readers_cap`
         if not self.settings_cap:
             self.versions.pop("workspace.settings")
         self.requests = Requests(self)
@@ -169,6 +175,10 @@ class StubHost:
             return [], "overflow"
         return items, None
 
+    def reader_view(self):
+        """(levels, required) for the H12d-2 reads, or None for a host before H12d-2."""
+        return (self.reader_levels, self.required_reader) if self.readers_cap else None
+
     def welcome(self):
         data = self.call("workspace.show", {})["data"]
         return {
@@ -186,8 +196,13 @@ class StubHost:
                 "diff/1",
                 *(["read_ext/1", "read_ext/2", "activity/1"] if self.ext else []),
                 *(["settings/1"] if self.settings_cap else []),
+                *(["reader/1", "read_ext/3"] if self.readers_cap else []),
             ],
-            "ops": {k: v for k, v in self.versions.items() if k not in WRITE_OPS or k in self.write_ops},
+            "ops": {
+                k: v
+                for k, v in self.versions.items()
+                if (k not in WRITE_OPS or k in self.write_ops) and (k != "reader.list" or self.readers_cap)
+            },
             "registry": "sha256:" + hashlib.sha256(json.dumps(self.versions, sort_keys=True).encode()).hexdigest(),
             "tier": "A",
             "limits": {
@@ -227,7 +242,7 @@ class StubHost:
                     return asdict(decl.handler(ctx, args))
                 if op in HUMAN_OPS:
                     return asdict(self.human(op, store, views, args, opts or {}, lookups, files))
-                if op not in OPS or (op == "workspace.settings" and not self.settings_cap):
+                if (op not in OPS and op != "reader.list") or (op == "workspace.settings" and not self.settings_cap):
                     raise fail("unknown_command", exit=2)
                 if args and op not in reads.TAKES_ARGS:
                     raise fail("invalid.input", exit=5)
@@ -272,9 +287,12 @@ class StubHost:
                         "wsk_fingerprint": None,
                         "members_v": ws.roster_v,
                         "state": "ok",
+                        **({"required_reader": self.required_reader} if self.readers_cap else {}),
                     }
                 elif op == "member.list":
-                    data = settingsops.members(ws)
+                    data = settingsops.members(ws, self.reader_view())
+                elif op == "reader.list" and self.readers_cap:
+                    data = settingsops.reader_list(ws, self.reader_view())
                 elif op == "workspace.settings":
                     data = settingsops.settings(self, store, ws, self.person, args)
                 elif op == "grant.list":

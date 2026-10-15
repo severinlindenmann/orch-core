@@ -539,6 +539,9 @@ async function run(send, close) {
               ['real-host-pair-cert', 'pair-cert', [['the cert code', '[data-testid="pair-cert-code"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
               ['real-host-pair-failed', 'pair-failed', [['the remove-the-device line', '[data-testid="pair-needs-remove"]']]],
               ['real-host-pair-devices', 'pair-devices', [['the device list', '[data-testid="device-row"]']]],
+              // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.
+              ['real-host-readers-devices', 'readers-devices', [['the reader rows', '[data-testid="reader-row"]'], ['a device below the level', '[data-testid="reader-row"][data-below="true"]'], ['the required level', '[data-testid="readers-required"]']]],
+              ['real-host-convenience-refusals', 'convenience-refusals', [['the refusals', '[data-testid="refusal-gallery"] [data-testid="click-problem"]'], ['the devices by label', '[data-testid="refusal-devices"]'], ['readers_old', '[data-testid="signer-readers-old"]']]],
               // Drop (proposed drop/1): Workspace → Drop from the fixture drop api.
               ['real-host-drop-unavailable', 'drop-unavailable', [['the not-available line', '[data-testid="drop-unavailable"]']]],
               ['real-host-drop-list', 'drop-list', [['the rows', '[data-testid="drop-row"]'], ['the upload zone', '[data-testid="drop-zone"]'], ['a disabled-download reason', '[data-testid="drop-download-reason"]'], ['the paging', '[data-testid="drop-next"]']]],

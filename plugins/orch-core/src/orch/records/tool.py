@@ -779,10 +779,15 @@ def init_repo(root: Path, *, branch: str = "main", env: Mapping[str, str] | None
     created = False
     if not os.path.lexists(root / ".git"):
         subprocess.run(
-            ["git", "-c", "core.hooksPath=/dev/null", "init", "-q", "-b", branch, str(root)],
+            ["git", "-c", "core.hooksPath=/dev/null", "init", "-q", "--template=", "-b", branch, str(root)],
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            env=_base_env(os.environ if env is None else env, "file"),
+            # no template and the system and global config off (#541): no hooks, no template config, no init.templateDir
+            env={
+                **_base_env(os.environ if env is None else env, "file"),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+            },
             timeout=LOCAL_TIMEOUT,
             check=True,
         )

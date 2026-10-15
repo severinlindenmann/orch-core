@@ -30,6 +30,8 @@ from .hostlink import check_uid, encode, receive
 
 #: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
 GRACE = 3
+#: seconds `restart` waits for the old server to free its control socket
+RESTART_WAIT = 10.0
 
 
 @contextmanager
@@ -311,13 +313,46 @@ def open_dashboard(path="/", print_url=False):
             raise
 
 
+def _free(path) -> bool:
+    """Is the control socket free for a new server: gone, or no one accepts on it?"""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        try:
+            sock.connect(str(path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def restart_dashboard(path="/", print_url=False, wait=RESTART_WAIT):
+    """`orch-dashboard restart`: stop the running server (if any), wait until it has let go of its control socket,
+    then open a new one. A server that does not answer `stop` (an older, hung one) is named, not killed."""
+    ctl = state_dir() / "dashboard" / "ctl.sock"
+    try:
+        control(ctl, "stop")
+    except (FileNotFoundError, ConnectionRefusedError):
+        pass  # none running: just open
+    except TimeoutError:
+        raise RuntimeError(
+            "a dashboard is running but does not answer; find it with `pgrep -fl orch_dashboard` and stop it with kill"
+        ) from None
+    deadline = time.monotonic() + wait
+    while not _free(ctl):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("the running dashboard did not stop in time; try again in a moment")
+        time.sleep(0.1)
+    open_dashboard(path, print_url=print_url)
+
+
 def main():
     if sys.argv[1:2] == ["addon-manifest"]:
         from .manifest import main as manifest_main
 
         return manifest_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop"], default="open")
+    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart"], default="open")
     parser.add_argument("path", nargs="?", default="/")
     parser.add_argument("--print-url", action="store_true", help="print a single-use 30 s URL to a terminal")
     parser.add_argument("--stop", action="store_true")
@@ -328,6 +363,8 @@ def main():
             return serve(args.launcher_lock)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
+        elif args.command == "restart":
+            restart_dashboard(args.path, print_url=args.print_url)
         else:
             open_dashboard(args.path, print_url=args.print_url)
     except RunDirectoryError as exc:

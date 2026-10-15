@@ -104,3 +104,52 @@ def test_the_shutdown_cuts_open_connections_after_a_grace_period(state, slow_ser
     cli.control(ctl, "stop")
     thread.join(timeout=SLOW_SHUTDOWN + 5)
     assert seen["timeout_graceful_shutdown"] == cli.GRACE and 0 < cli.GRACE <= 10
+
+
+# -- `orch-dashboard restart` ---------------------------------------------------------------------------------------
+
+
+def opened(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "open_dashboard", lambda path="/", print_url=False: calls.append((path, print_url)))
+    return calls
+
+
+def test_restart_stops_the_running_server_then_opens(state, slow_server, monkeypatch):
+    thread, ctl = start(state)
+    calls = opened(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["orch-dashboard", "restart"])
+    assert cli.main() == 0
+    assert calls == [("/", False)]
+    assert cli._free(ctl) and not slow_server.is_set()  # it opened without waiting for the old shutdown
+    thread.join(timeout=SLOW_SHUTDOWN + 5)
+
+
+def test_restart_with_nothing_running_just_opens(state, monkeypatch):
+    calls = opened(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["orch-dashboard", "restart", "/w/INT/settings"])
+    assert cli.main() == 0
+    assert calls == [("/w/INT/settings", False)]
+
+
+def test_restart_names_a_server_that_does_not_answer(state, monkeypatch, capsys):
+    calls = opened(monkeypatch)
+
+    def hung(path, command):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(cli, "control", hung)
+    monkeypatch.setattr("sys.argv", ["orch-dashboard", "restart"])
+    assert cli.main() == 1
+    assert "pgrep -fl orch_dashboard" in capsys.readouterr().err and calls == []
+
+
+def test_restart_gives_up_when_the_old_server_keeps_the_socket(state, monkeypatch, capsys):
+    calls = opened(monkeypatch)
+    monkeypatch.setattr(cli, "control", lambda path, command: {"ok": True})
+    monkeypatch.setattr(cli, "_free", lambda path: False)
+    monkeypatch.setattr(cli, "RESTART_WAIT", 0.2)
+    monkeypatch.setattr(cli.restart_dashboard, "__defaults__", ("/", False, 0.2))
+    monkeypatch.setattr("sys.argv", ["orch-dashboard", "restart"])
+    assert cli.main() == 1
+    assert "did not stop in time" in capsys.readouterr().err and calls == []

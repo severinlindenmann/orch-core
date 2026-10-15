@@ -996,6 +996,9 @@ class BridgeLoop:
         #: extra aux steps ``(name, fn)`` run after the built-in ones, each guarded like them (R5's seam for R4's
         #: unpublished consumer, 11A.9: "R4 runs on the aux thread"); appended before :meth:`start`
         self.aux_steps: list[tuple[str, Callable[[], None]]] = []
+        #: R4 (11A.9): the ``notices`` object of the last poll, as received (a copy, or ``None``); read only by R4's
+        #: consumer to see ``notices.unpublished``. Nothing in the bridge acts on it.
+        self.notices: dict[str, Any] | None = None
 
     # -- lifecycle ----------------------------------------------------------------------------------------------
 
@@ -1100,6 +1103,8 @@ class BridgeLoop:
                 log.info("relay poll failed: %s", type(e).__name__)
                 self._stop.wait(1.0)
                 continue
+            notices = obj.get("notices")
+            self.notices = dict(notices) if isinstance(notices, dict) else None  # R4 reads it (read-only here)
             for item in _items(obj):
                 if item.n <= self._highest:
                     continue  # already queued (non-consuming poll)

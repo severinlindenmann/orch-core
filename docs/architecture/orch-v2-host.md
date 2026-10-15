@@ -6832,16 +6832,32 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   raises the rotation gate. The host **never** appends `device.revoked` or a restore by itself. It raises a `needs`
   item for the owners ("publish this revocation"), and publication follows only F1 §5.3, through the person path.
 - A failed item is logged with its pair and the reason, and skipped. Unverified data never changes host state.
-- **R4 build plan (15 Oct 2026, orch-29; PR to come, built behind the dormant R6 gate).** `orch/relay/unpublished.py`
-  (`UnpublishedConsumer.step()`, the `Unpublished` seam): one bounded page per aux turn (`GET unpublished`, 10 s,
-  4 MiB); the position in `relay/unpublished.json` `{cursor, last_full_read_ms, gen}` (11A.3); a read from the start
-  after a new holder `gen`, after `cursor_ahead` and daily, else from the stored position when the poll's
-  `notices.unpublished` is non-null and changed (`BridgeLoop` keeps the last poll's notices, read-only); every item
-  held through `worker.job(Store.note_forwarded_revocation)`; the ack (`POST unpublished/ack {cursor}`) only after
-  every item of the page has a result and the position is durable; a store fault: no ack, retried next turn. The
-  owners' `needs` item: the host has no host-originated `needs` yet, so a `held` result raises the relay alarm
-  `unpublished_held` naming the pair (`host.status.relay`) until it does (JUDGEMENT CALL, for the owner). Host seam
-  `orch/host/relayr4.py` `unpublished(service, worker)`.
+- **As built in R4 (15 Oct 2026, orch-29; PR #571; behind the dormant R6 gate).** `orch/relay/unpublished.py`
+  (`UnpublishedConsumer.step()`, the `Unpublished` seam, on the aux thread): at most one page per turn (`GET
+  unpublished?[cursor=]&limit=64`, 10 s, 4 MiB; the field set `{items, cursor, more}` exact, at most 64 object items,
+  a b64u `cursor` that goes into the query string only after a strict check). A read from the start after a new
+  holder `gen`, after `cursor_ahead` and daily (`FULL_EVERY_MS`), page by page; otherwise from the stored position while
+  the last poll's `notices.unpublished` is non-null and differs from the notice a completed read answered. Every
+  item goes to the host's `hold` (`relayr4`: `worker.job(lambda: store.note_forwarded_revocation(item))`, so all
+  verification and the association check are the store's, H12b); a store fault raises: no position, no ack, the
+  page is read again. Then `relay/unpublished.json` `{v, cursor, scan, gen, last_full_ms, notice, held,
+  scan_held}` is written atomically, and only then `POST unpublished/ack {cursor}` (exactly that field). 429 waits
+  `Retry-After` (else 60 s); other refusals and transport errors back off 30 s, one alarm per class; the session's
+  `Fenced`/`SessionError` reach the aux guard (the worker stops). **R2 change (minimal, read-only):**
+  `BridgeLoop.notices` keeps a copy of the last poll's `notices`; nothing in the bridge acts on it.
+- **Held evidence, interim for #572 (DECIDED 15 Oct 2026, orch-d6 with orch-52):** the host has no host-originated
+  `needs` items yet, so a `held` result raises the relay alarm `unpublished_held` naming the pair, and the pair joins
+  `held` in `unpublished.json` (one row per pair, at most 256; a completed full read replaces the list with the pairs
+  it held, so a published revocation leaves it within a day). `host.status.relay` shows them as `held_evidence` and
+  `attention: [{what, fix}]`; `orch host status` lists a problem with the same text and fix ("an owner signs a
+  `device.revoked` event for that device on an owner device (F1 §5.3), or carries it in the next restore; the host
+  never does it by itself"). **SEAM (#572): promote `unpublished_held` to a host-originated `needs` item ("publish
+  this revocation") when those exist** (`orch/host/relayr4.py`, `orch/relay/unpublished.py`).
+- JUDGEMENT CALLS (R4): the held list is display data only, never evidence (the evidence is the store's
+  `HostPins`); the store's per-pair dedup makes a re-read after a lost ack idempotent; positions are opaque, so the
+  stored position is the last acked page's `cursor` (a read from it only moves forward; a completed full read ends
+  past everything). `orch status` (the workspace op) is unchanged: the held evidence is a host fact, shown by
+  `orch host status` and `host.status.relay`.
 
 **Authenticity, not currency.** R1's readers (`GET card`, `members`, `checkpoint`) prove that an object was signed by
 the right key for this workspace, not that it is the newest: a relay can serve an older card, an older WSK-signed member

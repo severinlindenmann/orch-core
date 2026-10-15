@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from typing import Any, NoReturn, Protocol, TypeVar
 
 from orch import canon
+from orch.ops import readers
 from orch.store.errors import StoreError
 from orch.store.outbox import OutboxEntry, RelayPosition, Segment
 
@@ -413,6 +414,7 @@ class Publisher:
         conn: Callable[[], Transport] | None = None,
         on_diverged: Callable[[VerifiedCheckpoint], None] | None = None,
         on_error: Callable[[BaseException], None] | None = None,
+        relay_level: Callable[[], int | None] | None = None,
         now_ms: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
         mono: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
@@ -424,6 +426,7 @@ class Publisher:
         self._owner, self._wsk = owner_pk_pub, wsk_pub
         self._link_cap = max_publication_bytes
         self._alarm_cb, self._on_diverged, self._on_error = alarm, on_diverged, on_error
+        self._relay_level = relay_level
         self._now_ms, self._mono, self._rng = now_ms, mono, rng or random.SystemRandom()
         self._conn_factory = conn
         self._conn: Transport | None = None
@@ -496,8 +499,11 @@ class Publisher:
                 state, wait = self.step()
                 if state == "idle":
                     self._idle()
-                elif wait > 0 and self._stop.wait(wait):
-                    return
+                elif wait > 0:
+                    self._wake.wait(wait)  # a held or backed-off step is re-checked at once on wake() (or stop)
+                    self._wake.clear()
+                    if self._stop.is_set():
+                        return
         except Exception as e:  # noqa: BLE001 - a fence or session error (or a bug): the publisher stops, R5 is told
             if not self._stop.is_set():
                 self.error = e
@@ -853,12 +859,13 @@ class Publisher:
         size = wire.set_bytes(_layout(runs))
         if size > cap:  # a restore cannot be split (P3-D37): never sent
             raise PublishHeld("relay.too_large", f"restore n {n}: its set is {size} > {cap} bytes")
-        # TODO(H12d-3, #555): once merged, hold through `readers.restore_held(readerrecs.relay_level(...), evidence)`
-        # here, the one place every restore publication is built (outbox and stored records alike); until then the
-        # line's own `auth` is checked against relay-info's level (P14).
-        if line.get("auth") == "convenience" and self.reader_level < 1:
+        # H12d-3 (#555, §0.8.6 item 9.8): the one place every restore publication is built (outbox entries and stored
+        # records alike). The level is read fresh each time (never cached here); a held restore stays queued, is
+        # never lowered or dropped, and is checked again at the next step (hourly, or at once on wake()).
+        level = self._current_level()
+        if readers.restore_held(level, [line]):
             raise PublishHeld("relay_reader_old", f"restore n {n} carries a convenience event; relay reader level "
-                              f"{self.reader_level}")  # fmt: skip
+                              f"{level}")  # fmt: skip
         bundle = {"line": line, "cert": ev["device_cert"], "authz": {"delegation": ev["delegation"]}, "log": lg}
         src = source if source is not None else (entry.restore["source"] if entry and entry.restore else None)
         return _Pub("restore", target, n, canon.checkpoint_hash(target["o"]), H, runs=runs, restore=bundle,
@@ -1207,6 +1214,19 @@ class Publisher:
         self._info_read = True
         if mx is not None and mx < self._link_cap:
             log.info("relay publish: relay-info maximum %d below link.json's %d", mx, self._link_cap)
+
+    def _current_level(self) -> int | None:
+        """The relay's last verified reader level for the H12d-3 hold: R5's ``relay_level()`` (the host's stored level,
+        ``readerrecs.relay_level(state, ws, uid)``, which its login observer writes), read fresh at every call; a
+        failing read counts as 0 (fail closed). Without it (tests, a host that has none yet): relay-info's level as
+        this publisher read it."""
+        if self._relay_level is None:
+            return self.reader_level
+        try:
+            return self._relay_level()
+        except Exception:  # noqa: BLE001 - any doubt is the lowest level
+            log.warning("relay publish: the reader level could not be read; counting 0")
+            return 0
 
     def _transport(self) -> Transport | None:
         if self._conn is None and self._conn_factory is not None:

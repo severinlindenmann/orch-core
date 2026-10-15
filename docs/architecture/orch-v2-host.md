@@ -6531,9 +6531,14 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   refuses `validation.relay`.
 - The three store reads are not side-effect-free. The lock runs recovery, and lazy loading replays logs and can write
   projections. Their docstrings say so.
-- H12d-3 (#555): `_restore_pub` is the one place every restore publication is built. A TODO marks where
-  `readers.restore_held(readerrecs.relay_level(...), evidence)` will go once #555 merges; a seam test pins that both
-  restore paths pass through it.
+- H12d-3 (#555, wired 15 Oct 2026, round 4): `_restore_pub`, the one place every restore publication is built,
+  holds it while `readers.restore_held(level, [line])` is true. The level comes from R5's
+  `relay_level=lambda: readerrecs.relay_level(state, ws, uid)`, the level its login observer stores. It is read fresh
+  at every step, and a read that fails counts as 0. Without the callable, relay-info's level is used. A held restore
+  stays in the outbox: nothing is sent, nothing deleted, C is not lowered. The alarm is `relay_reader_old`. It is
+  re-checked hourly, or at once on `wake()`, which now also ends a held or backed-off wait. Finishing a restore the
+  relay already holds is not held: that path only does bookkeeping, and the delete still needs the fresh read.
+  This supersedes P14.
 
 **Review round 2 delta (Opus, 15 Oct 2026).**
 - F1 Without a connection factory, a transient renewal failure (5xx, transport, `LoginHeldOff`) is retried after

@@ -953,3 +953,110 @@ def test_the_sync_renewal_restarts_its_period_after_a_renewal(kit, monkeypatch):
     k.clock.advance(publish.RENEW_EVERY_S)
     p._tick()  # noqa: SLF001
     assert n["c"] == 2
+
+
+# -- H12d-3 (#555): readers.restore_held wired at _restore_pub -------------------------------------------------------
+
+
+def _as_convenience(monkeypatch):
+    """Judge every restore line as if it carried ``auth: "convenience"`` (the real line stays valid for the relay):
+    the level logic is #555's own ``restore_held``."""
+    from orch.ops import readers
+
+    real = readers.restore_held
+    monkeypatch.setattr(publish.readers, "restore_held",
+                        lambda level, ev: real(level, [{**e, "auth": "convenience"} for e in ev]))  # fmt: skip
+
+
+def _level_kit(k, level):
+    box = {"level": level, "reads": 0}
+
+    def read():
+        box["reads"] += 1
+        return box["level"]
+
+    k.publisher = k.make_publisher(relay_level=read)
+    return box
+
+
+def test_h12d3_a_convenience_restore_is_held_at_a_low_level_then_released(kit, tmp_path, monkeypatch):
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    _as_convenience(monkeypatch)
+    box = _level_kit(k, 0)
+    before = sum(1 for s in k.mock.seen if "/staging/" in s.path or _final(s))
+    for _ in range(2):
+        assert k.publisher.step() == ("wait", publish.HELD_RECHECK_S)
+    assert k.alarms.codes() == ["relay_reader_old"] and k.store.outbox_first().n == entry.n
+    assert sum(1 for s in k.mock.seen if "/staging/" in s.path or _final(s)) == before  # nothing sent
+    assert k.publisher.cap() == k.link_cap  # never lowered
+    box["level"] = 1  # R5's login observer stored the relay's new level
+    k.drain(10)
+    assert (entry.n, entry.hash) in k.sim.accepted and k.store.outbox_entries() == []
+    assert box["reads"] >= 3  # read fresh at every step, never cached
+
+
+def test_h12d3_none_and_unreadable_levels_hold(kit, tmp_path, monkeypatch):
+    k = kit
+    _restored(k, tmp_path)
+    _as_convenience(monkeypatch)
+    for level in (None, "boom"):
+
+        def read(level=level):
+            if level == "boom":
+                raise OSError("unreadable")
+            return level
+
+        p = k.make_publisher(relay_level=read)
+        assert p.step() == ("wait", publish.HELD_RECHECK_S)
+    assert k.store.outbox_entries()[0].kind == "restore"
+
+
+def test_h12d3_the_hold_depends_on_the_evidence(kit, tmp_path):
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    _level_kit(k, 0)
+    k.drain(10)  # a passphrase restore at level 0: not held
+    assert (entry.n, entry.hash) in k.sim.accepted and "relay_reader_old" not in k.alarms.codes()
+    r = entry.restore
+    p = k.publisher
+    with pytest.raises(PublishHeld) as e:  # the same restore with a convenience line: held
+        p._restore_pub(None, entry.checkpoint, {**r["event"], "auth": "convenience"}, r["log"], r, [], 1 << 20,
+                       entry=entry, acc_from=r["acc_from"])  # fmt: skip
+    assert e.value.code == "relay_reader_old"
+
+
+def test_h12d3_a_restart_keeps_holding_and_wake_rechecks(kit, tmp_path, monkeypatch):
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    _as_convenience(monkeypatch)
+    _level_kit(k, 0)
+    assert k.publisher.step()[0] == "wait"
+    k.publisher.stop()
+    box = _level_kit(k, 0)  # a restart: a new publisher on the same state
+    assert k.publisher.step() == ("wait", publish.HELD_RECHECK_S) and k.store.outbox_first().n == entry.n
+    p = k.publisher
+    p.start()
+    time.sleep(0.3)
+    box["level"] = 1
+    p.wake()  # re-checked at once, not after the hour
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and k.store.outbox_entries():
+        time.sleep(0.05)
+    assert k.store.outbox_entries() == []
+    p.stop()
+    assert p.join(5)
+
+
+def test_h12d3_the_hold_never_blocks_finishing_a_restore_the_relay_holds(kit, tmp_path, monkeypatch):
+    """The confirm/delete rule is unaffected: the relay already holds the restore (accepted while the level was 1, the
+    answer lost); a later low level does not stop the bookkeeping, and the delete still needs the fresh read."""
+    k = kit
+    _, entry = _restored(k, tmp_path)
+    k.sim.after = lambda s, r: json_reply(503, {"error": "overloaded"}) if _final(s) else r
+    k.publisher.step()
+    k.sim.after = None
+    _as_convenience(monkeypatch)
+    _level_kit(k, 0)
+    k.drain(10)
+    assert k.store.outbox_entries() == [] and [r["n"] for r in k.publisher.history.restores()] == [entry.n]

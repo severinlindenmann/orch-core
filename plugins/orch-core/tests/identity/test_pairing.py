@@ -472,3 +472,129 @@ def test_pair_link_refuses_bad_inputs(i, bad):
     with pytest.raises(Refused) as e:
         pairing.pair_link(*args)
     assert e.value.code == "malformed"
+
+
+# --- 4. pair meta and labels (protocol §2.5, §8.3 steps 2-3; corpus epoch-0 ``bridge.host_cases``) -------------------
+
+PAIR_REQUESTS = []
+UNOPENED = []
+for _c in HOST_CASES:
+    for _i, _s in enumerate(_steps(_c)):
+        _o = _open_request(_c, _s)
+        if _o is not None:
+            PAIR_REQUESTS.append((f"{_c['name']}[{_i}]", _o[0], _o[1], _s["expect"]))
+        elif _c["name"].startswith("pair"):
+            UNOPENED.append(_c["name"])
+
+
+def test_every_epoch_0_host_case_is_covered():
+    """Every ``pair*`` host case opens under its offer's ``K_pair`` except the two the host never decrypts (§8.6
+    steps 1-3: silence for an unknown offer or a bad tag)."""
+    assert UNOPENED == ["pair_unknown_offer_dropped", "pair_sealed_under_another_secret_dropped"]
+    names = {n.split("[")[0] for n, *_ in PAIR_REQUESTS}
+    assert names == {c["name"] for c in HOST_CASES if c["name"].startswith("pair")} - set(UNOPENED)
+
+
+@pytest.mark.parametrize(("name", "h", "meta", "expect"), PAIR_REQUESTS, ids=[r[0] for r in PAIR_REQUESTS])
+def test_check_pair_meta_on_every_epoch_0_host_case(name, h, meta, expect):
+    """Step 3.1 is the meta shape. An ``op:"pair"`` meta that the host refuses for a later reason (``pairing_closed``,
+    ``bad_signature``, ``stale_timestamp``, a certificate code) passes the shape check; ``malformed`` is refused here;
+    the recorded label is the cleaned one. ``pair_status`` is routed by its op before this check and is not a pair
+    meta, so it is refused here too."""
+    if meta.get("op") != "pair" or expect.get("code") == "malformed":
+        with pytest.raises(Refused) as e:
+            pairing.check_pair_meta(meta)
+        assert e.value.code == "malformed"
+        if meta.get("op") != "pair_status":
+            assert expect == {"result": "refuse", "code": "malformed", "wsk_pub": expect["wsk_pub"]}
+        return
+    pm = pairing.check_pair_meta(meta)
+    assert pm.dk_sig_pub == _b(meta["dk_sig_pub"]) and pm.dk_kx_pub == _b(meta["dk_kx_pub"])
+    assert pm.device_id == crypto.device_id(pm.dk_sig_pub).hex()
+    assert pm.attempt == meta["attempt"] and pm.cert == meta["cert"]
+    assert pm.label == pairing.clean_label(meta["label"])
+    if "label" in expect:
+        assert pm.label == expect["label"]
+    if expect.get("code") == "bad_signature" and "device_id_not_of_key" in name:
+        assert pm.device_id != h.device.hex()  # the caller's step 3.3, from the derived id
+
+
+_META = next(r[2] for r in PAIR_REQUESTS if r[0] == "pair_first_time[0]")
+_CERT = next(r[2]["cert"] for r in PAIR_REQUESTS if r[0] == "pair_with_existing_cert[0]")
+
+
+def _meta(**kw) -> dict:
+    m = dict(_META)
+    for k, v in kw.items():
+        if v is _DEL:
+            del m[k]
+        else:
+            m[k] = v
+    return m
+
+
+def test_check_pair_meta_accepts_a_cert_without_judging_it():
+    """``cert`` is ``null`` or a value the host checks in step 3.5 (``other_person``, ``cert_invalid``, ``revoked``);
+    its shape is not a ``malformed`` refusal, as in the relay's reference."""
+    assert pairing.check_pair_meta(_meta(cert=_CERT)).cert == _CERT
+    assert pairing.check_pair_meta(_meta(cert={"o": 1})).cert == {"o": 1}
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        _meta(op="pair_status"),
+        _meta(op=_DEL),
+        _meta(cert=_DEL),
+        _meta(label=_DEL),
+        _meta(attempt=_DEL),
+        _meta(mac="x"),
+        _meta(attempt=_META["attempt"].upper()),
+        _meta(attempt=_META["attempt"][:-2]),
+        _meta(attempt=None),
+        _meta(dk_sig_pub=crypto.b64u(_OFF_CURVE)),
+        _meta(dk_kx_pub=crypto.b64u(_OFF_CURVE)),
+        _meta(dk_sig_pub=_META["dk_sig_pub"] + "="),
+        _meta(dk_kx_pub=_b(_META["dk_kx_pub"]).hex()),
+        _meta(label=None),
+        _meta(label=["x"]),
+        _meta(label="a\ud800b"),
+        [_META],
+        None,
+    ],
+)
+def test_check_pair_meta_refuses_every_shape_error(meta):
+    with pytest.raises(Refused) as e:
+        pairing.check_pair_meta(meta)
+    assert e.value.code == "malformed"
+
+
+@pytest.mark.parametrize(
+    ("raw", "clean"),
+    [
+        ("Severin's iPhone", "Severin's iPhone"),
+        ("line\nbreak", "line\nbreak"),  # LF is the one Cc kept
+        ("a\rb\tc\x00d\x7fe\x85f", "abcdef"),  # Cc, C1 included
+        ("a‮b⁦c​d‍e﻿", "abcde"),  # Cf: bidi, zero width, BOM
+        ("a b c", "abc"),  # Zl, Zp
+        ("ab\U000f0000c", "abc"),  # Co
+        ("a͸b", "ab"),  # Cn
+        ("aᅟbㅤcﾠd", "abcd"),  # default-ignorable letters (Hangul fillers)
+        ("a͏b️c\U000e0100d᠋e", "abcde"),  # default-ignorable marks (CGJ, variation selectors)
+        ("é", "é"),  # never normalised (no NFC)
+        ("a  b", "a  b"),  # whitespace is not collapsed
+        ("\U0001f4f1 phone", "\U0001f4f1 phone"),
+        ("", ""),
+        ("x" * 81, "x" * 80),  # 80 code points
+        ("​" * 10 + "y" * 85, "y" * 80),  # truncation after removal
+    ],
+)
+def test_clean_label_follows_protocol_2_5(raw, clean):
+    assert pairing.clean_label(raw) == clean
+
+
+@pytest.mark.parametrize("bad", [None, b"x", 1, "a\udfffb"])
+def test_clean_label_refuses_non_text(bad):
+    with pytest.raises(Refused) as e:
+        pairing.clean_label(bad)
+    assert e.value.code == "malformed"

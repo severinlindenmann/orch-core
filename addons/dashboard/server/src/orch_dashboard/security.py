@@ -11,9 +11,10 @@ CSP = (
     "form-action 'self'; style-src 'self'; connect-src 'self' ws://127.0.0.1:{port}; img-src 'self' data:"
 )
 TERM_PATH = "/term"
-# Bodies of the sign routes are tiny (ids, a hash, a typed word); everything else keeps the general bound.
+# Bodies of the sign routes are tiny (ids, a hash, a typed word, the switch's passphrase of at most 1024 characters);
+# everything else keeps the general bound.
 CLICK_BODY_LIMIT = 16_384
-CLICK_STEP = ("/view", "/sign", "/cancel", "/state")
+CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
 
 
 class Security:

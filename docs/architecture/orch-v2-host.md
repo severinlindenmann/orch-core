@@ -2286,8 +2286,8 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
 
 - Click-to-sign is enabled per workspace by the host-state file `<state>/host/convenience.json` (0600, host UID, in
   the D-P2-17 custody list): `{"v":1, "workspaces":{"<ws id>":{"enabled":true, "at":Time}}}`, written by
-  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op), or by the click signer's
-  custody switch (item 3a, amended 15 Oct 2026). **It is off for every workspace until switched on**: the
+  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op), or, in tier A only, by the
+  click signer's custody switch (item 3a, amended 15 Oct 2026). **It is off for every workspace until switched on**: the
   compatibility gate (item 6) is met first.
 - **The condition.** Convenience signing is allowed only while every reader of the workspace's log is local and
   updated: no relay pairing, no phone device, no other member's devices or cores, and a model that knows the value. The
@@ -2419,23 +2419,60 @@ envelope.
   authoritative history includes the old device's removal; previous signatures and their effects remain. The command
   does not report complete revocation while any workspace remains outstanding.
 
-**3a. The dashboard's switch** (owner decision 15 Oct 2026, amending item 3 and D-P2-23). The click signer (item 5)
-has two more channel ops, advertised as `features: ["custody"]` in its `status` (no contract change):
+**3a. The dashboard's switch** (owner decision 15 Oct 2026, amending item 3 and D-P2-23; fixed forward after the
+Opus review of #539, owner decision relayed by orch-d6 15 Oct 2026 22:45). **Tier A only**: in tier B the signer runs
+as the person UID and cannot write the host-UID flag file, so the switch is not offered there (the terminal commands
+are). The click signer (item 5) has two more channel ops, advertised as `features: ["custody"]` in its `status` (no
+contract change). **The invariant, enforced in the signer and nowhere else: the dashboard turns click-to-sign on only
+by proving the passphrase of a key that is in passphrase custody now, and it never chooses a passphrase.**
 
-- `custody_on {workspace_id, passphrase}`: the person types their passphrase into the dashboard; the dashboard server
-  passes it to the signer, which runs the conversion of item 3 (`orch keys custody convenience`) with that text in
-  place of the `/dev/tty` prompt, then sets the workspace's flag, both under the flag lock (item 8) and with the same
-  refusal as `orch host convenience on` while terminal hand-offs are pending (`sign.click_only`). **The passphrase is
-  the factor that keeps a takeover of the dashboard (a stolen bearer token, an XSS) from switching one-click signing
-  on by itself.** A wrong passphrase is `custody.wrong_passphrase`; after 5 of them in 15 minutes the signer answers
-  `rate.limited` (per signer process: it slows guessing through a dashboard session and is no bound against code
-  running as the person, who can read the passphrase key file anyway). The passphrase is never logged, stored or
-  returned.
-- `custody_off {workspace_id, passphrase?}`: the flag goes off at once, with no factor (it only takes authority away).
-  With `passphrase`, the key also moves back under that new passphrase (`--in-place` above; the strength check first,
-  `custody.weak_passphrase`); without it the key stays in the convenience store until then.
+- `custody_on {workspace_id, passphrase}`, by the custody the key is in when it arrives:
+  - **passphrase custody**: the person types their passphrase into the dashboard; the dashboard server passes it to
+    the signer, which runs the conversion of item 3 (`orch keys custody convenience`) with that text in place of the
+    `/dev/tty` prompt. The slow part (scrypt and the key store write) runs before the flag lock and leaves the
+    selection at step `written`, where nothing signs with the key and the passphrase file is untouched. Under the
+    flag lock (item 8) the pending terminal hand-offs (`sign.click_only`, as for `orch host convenience on`) and the
+    selection are checked again, the conversion is finished, and the flag is set last. A hand-off that arrived
+    meanwhile, or `lock.busy`, undoes the staged move; a selection another process changed meanwhile is left alone
+    (`custody.unavailable`). A signer that dies between the two steps leaves the step `written`, which
+    `orch keys custody status` reports and the terminal conversion finishes.
+  - **convenience custody, flag on**: nothing changes (idempotent).
+  - **convenience custody, flag off** (after `custody_off`, `orch host convenience off`, or a terminal conversion):
+    refused with **`custody.terminal_needed`** before any passphrase is looked at, since there is nothing to prove it
+    against; the person runs `orch host convenience on --workspace W` in the terminal.
+  - **an unfinished change**, also one the terminal staged after the status check: `custody.unavailable`. A
+    dashboard passphrase never resumes a staged conversion (resuming checks no passphrase); only the terminal does.
+
+  A wrong passphrase is `custody.wrong_passphrase`, and nothing changes. After 5 of them in 15 minutes the signer
+  answers `rate.limited` with the wait. The misses are wall times in `<person state>/person/click-custody.json` (0600,
+  person-owned, at most 5 entries), so a signer restart (a crash, a dashboard `stop`, a replaced hung signer) does not
+  reset the count. An unreadable record counts as 5 misses now, so it fails closed for one window. A miss recorded
+  ahead of the clock (it was set back) is written back as now once, so the wait never outlasts one window. The limit
+  locks out the dashboard path only; the terminal commands are not limited. Someone holding a dashboard session can keep the
+  dashboard path locked, which fails closed. The limit slows guessing through a stolen bearer token. It is no bound
+  against code running as the person, which can read the passphrase key file and guess offline.
+
+  **What the passphrase protects, and what not.** It keeps someone who holds only a stolen bearer token from turning
+  one-click signing on. It does not protect against a script running in the dashboard page (an XSS, a browser
+  extension): such a script can show a fake prompt or read the real field, capture the typed passphrase, and switch
+  on. The captured passphrase is the device key's own, not only the on bit. It passes through browser memory, the
+  dashboard server's request and the signer as an immutable string that cannot be zeroised. Every hop is loopback,
+  and the passphrase is never logged, stored or returned. Inside the signer the text can only export the key for this
+  one conversion: `PassphraseBackend.answering` returns a backend with `public_key`, `export_for_custody_change` and
+  `delete` and nothing else. A test pins its one caller (`custody/select.py`) and the one caller that passes a
+  dashboard passphrase (`click/signer.py`).
+- `custody_off {workspace_id}`: the flag goes off under the flag lock, with no factor (it only takes authority away),
+  and that is all. The key stays in the convenience store. A `passphrase` is refused before anything changes
+  (`custody.terminal_needed`): the dashboard never re-keys the device key. Moving it back is terminal-only
+  (`orch keys custody passphrase --workspace W --in-place`, the new passphrase typed on `/dev/tty`). That command
+  refuses when a passphrase key file of the device is already there, for example a best-effort delete that failed or
+  a restored backup, because that file still opens with its old passphrase. The person moves it aside first.
 - Both answer the workspace's `status` row. The dashboard shows them in its workspace settings, owner only, with the
-  risk line of item 0.
+  risk line of item 0. Its on form shows the workspace, the device and "moves to: this computer's key store"
+  (the fields the terminal prompt shows). Its off form shows the terminal command for moving the key back. In the
+  state where the key is held but the flag is off, it shows `orch host convenience on --workspace W` instead of a
+  passphrase field. The dashboard server's route refuses `on` without a passphrase and `off` with one as
+  `invalid.input` before the signer is called; its validation answers never echo the request body.
 
 **4. `auth: "convenience"` and F1** (amended in H5c, F1 §5.3, §11.4, T16, §13).
 
@@ -4179,6 +4216,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     refused with `HOME` under a sandbox root, a normal host skips and alarms `SBX` workspaces in its registry at start,
     the manifest id format). 11A.14.3, P5
     and 11A.14.10 point at it.
+60. **Custody switch fix-forward (§0.8.6 item 3a; Opus review of #539; owner decision relayed by orch-d6 15 Oct 2026
+    22:45; the number may be renumbered when a parallel change lands first):** the click signer's `custody_on` refuses
+    a key already in convenience custody with the flag off (new code `custody.terminal_needed`, names
+    `orch host convenience on`); `custody_off` only turns the flag off and refuses a passphrase
+    (`custody.terminal_needed`): moving the key back is terminal-only. The wrong-passphrase limit (5 per 15 min) is
+    persisted in `<person state>/person/click-custody.json`. `PassphraseBackend.answering` returns a backend that only
+    exports. The conversion runs before the flag lock and is finished (or undone) under it. Tier A only. The
+    in-place move back refuses when a key file is already there. The dashboard's route takes a passphrase with `on`
+    only; its card shows the terminal commands instead of a new-passphrase form. A dashboard passphrase never resumes
+    a staged conversion (only the terminal does). No contract, wire or F1 change.
 
 ---
 

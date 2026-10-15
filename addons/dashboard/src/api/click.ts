@@ -22,13 +22,16 @@ export interface ClickCard {
   available: boolean
   problem?: string
   switchable?: boolean
+  /** The device key (`d_` + 32 hex) the switch would move into this computer's key store. */
+  device?: string
 }
 
-/** The switch: `on` needs the person's passphrase; `off` takes an optional NEW passphrase that moves the key back. */
-export interface ClickSwitch {
-  on: boolean
-  passphrase?: string
-}
+/**
+ * The switch: `on` proves the person's CURRENT passphrase (the key must be in passphrase custody now); `off` carries
+ * nothing and only turns the flag off. The dashboard never chooses a passphrase: moving the key back is a terminal
+ * command (`orch keys custody passphrase --in-place`).
+ */
+export type ClickSwitch = { on: true; passphrase: string } | { on: false }
 
 export interface ClickPrepared {
   request_id: string

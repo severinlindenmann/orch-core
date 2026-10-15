@@ -240,3 +240,84 @@ def test_switching_dashboard_execution_off_drops_the_grant_at_the_runner(ready):
     enable(w, False)
     wait_for(lambda: w.runner.grants.report() == [])
     assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+
+
+# -- review round 1 (#466) ---------------------------------------------------------------------------------------------
+
+
+def _slow_puts(w, seconds: float = 1.5):
+    """Delay the runner's grant.put (a deposit stays in flight)."""
+    import time as _time
+
+    real = w.runner.grants.put
+
+    def put(args):
+        _time.sleep(seconds)
+        return real(args)
+
+    w.runner.grants.put = put
+    return real
+
+
+def test_a_forget_during_an_in_flight_deposit_wins(ready):
+    """Opus M1 PoC 1: deposit G1 in flight, then forget G1: G1 must not end up current or held."""
+    w = ready
+    c, d = w.conn(), w.conn()
+    value = issue(w)
+    _slow_puts(w)
+    rid = c.send("grant.deposit", {"deposit_id": new_ulid()}, grant=value)
+    import time as _time
+
+    _time.sleep(0.3)
+    ok(d.call("grant.forget", {"grant": gid_of(value)}))
+    c.answer(rid)
+    wait_for(lambda: w.runner.grants.report() == [])
+    assert ok(d.call("whoami", {}))["data"]["runner"]["grant"] is None
+    assert err(deposit(d, value)) == "grant.forgotten"
+
+
+def test_an_in_flight_redeposit_never_beats_a_newer_replacement(ready):
+    """Opus M1 PoC 2: G1 current; an agent re-deposits G1 (in flight) while the person deposits G2: G2 stays."""
+    w = ready
+    c, d = w.conn(), w.conn()
+    g1, g2 = issue(w), issue(w)
+    ok(deposit(c, g1))
+    real = _slow_puts(w)
+    rid = c.send("grant.deposit", {"deposit_id": new_ulid()}, grant=g1)
+    import time as _time
+
+    _time.sleep(0.3)
+    w.runner.grants.put = real
+    assert ok(deposit(d, g2))["data"]["deposit"] == "confirmed"
+    c.answer(rid)
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(g2)]
+    assert ok(d.call("whoami", {}))["data"]["runner"]["grant"]["id"] == gid_of(g2)
+    assert ok(deposit(d, g2))["data"]["deposit"] == "confirmed"  # never marked forgotten
+
+
+def test_the_watcher_drops_a_current_grant_that_is_forgotten(ready):
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    hub = w.h.host.runners
+    table = hub.grants.table(w.wid)
+    table.forgotten[gid_of(value)] = "2099-01-01T00:00:00Z"  # a forgotten id that is still current (any cause)
+    wait_for(lambda: w.runner.grants.report() == [])
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+
+
+def test_a_pending_deposit_of_the_current_grant_settles_at_hello(ready):
+    """Codex P2 #3: the grant is current; a second deposit of it loses its ack; hello confirms it."""
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    hub = w.h.host.runners
+    hub.command_timeout = 1.0
+    w.runner.link.drop_reports.add("grant.put")
+    did = new_ulid()
+    assert ok(deposit(c, value, did))["data"]["deposit"] == "unknown"
+    w.runner.link.drop_reports.clear()
+    hub.drop_session(hub.session)
+    wait_for(lambda: ok(c.call("grant.deposit_status", {"deposit_id": did}))["data"]["deposit"] == "confirmed")

@@ -137,6 +137,12 @@ class RunnerGrants:
         self.hub = hub
         self.tables: dict[str, GrantTable] = {}
         self._watching: asyncio.Task[None] | None = None
+        #: one deposit, forget or drop at a time per (workspace, person): a deposit in flight never undoes a forget
+        #: or beats a newer replacement (#466 review, Opus M1)
+        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def lock(self, workspace_id: str, person: str) -> asyncio.Lock:
+        return self._locks.setdefault((workspace_id, person), asyncio.Lock())
 
     def table(self, workspace_id: str) -> GrantTable:
         found = self.tables.get(workspace_id)
@@ -158,6 +164,10 @@ class RunnerGrants:
 
     # -- grant.deposit
     async def deposit(self, workspace_id: str, plan: dict[str, Any], secret: str) -> dict[str, Any]:
+        async with self.lock(workspace_id, plan["person"]):
+            return await self._deposit(workspace_id, plan, secret)
+
+    async def _deposit(self, workspace_id: str, plan: dict[str, Any], secret: str) -> dict[str, Any]:
         table = self.table(workspace_id)
         did, gid, person = plan["deposit_id"], plan["grant"], plan["person"]
         base = {"grant": gid, "until": plan["until"], "scope": plan["scope"]}
@@ -170,6 +180,7 @@ class RunnerGrants:
                 return {**base, "deposit": outcome, **({"reason": seen["reason"]} if seen.get("reason") else {})}
         if gid in table.forgotten:
             raise HostError("grant.forgotten", f"{gid} was forgotten or replaced on this machine; issue a new one")
+        before = (table.current.get(person) or {}).get("grant")
         table.deposits[did] = {"grant": gid, "person": person, "outcome": "pending", "reason": None, "at": _iso(
             time.time())}  # fmt: skip
         table.save()  # durable before the secret leaves: a status query after a crash says unknown, never none
@@ -191,8 +202,29 @@ class RunnerGrants:
             return {**base, "deposit": "rejected", "reason": exc.code}
         if res.get("grant") != gid:
             return {**base, "deposit": "unknown"}
+        now = (table.current.get(person) or {}).get("grant")
+        if gid in table.forgotten or now not in (before, gid, None):
+            # forgotten or replaced meanwhile (a hello settled another grant): never confirmed, dropped at the runner;
+            # the runner's one slot for this person held ``gid`` last, so the other grant is gone there too
+            table.deposits[did].update(outcome="rejected", reason="grant.forgotten")
+            if now is not None and now != gid:
+                self._forget_current(table, person, "replaced_meanwhile")
+            table.save()
+            self._audit("grant.deposit", workspace_id=workspace_id, grant=gid, person=person, deposit_id=did,
+                        outcome="rejected", reason="grant.forgotten")  # fmt: skip
+            await self._drop(gid)
+            return {**base, "deposit": "rejected", "reason": "grant.forgotten"}
         self._confirm(table, person, gid, plan["until"], plan["scope"], did)
         return {**base, "deposit": "confirmed"}
+
+    def _forget_current(self, table: GrantTable, person: str, reason: str) -> str | None:
+        """Clear the person's current grant and mark it forgotten (a dropped grant never comes back)."""
+        cur = table.current.pop(person, None)
+        if cur is None:
+            return None
+        table.forgotten[cur["grant"]] = str(cur.get("until") or "")
+        self._audit("grant.drop", workspace_id=table.workspace_id, grant=cur["grant"], person=person, reason=reason)
+        return str(cur["grant"])
 
     def _confirm(self, table: GrantTable, person: str, gid: str, until: str, scope: str, did: str) -> None:
         old = table.current.get(person)
@@ -209,6 +241,10 @@ class RunnerGrants:
 
     # -- grant.forget
     async def forget(self, workspace_id: str, person: str, gid: str, until: str) -> dict[str, Any]:
+        async with self.lock(workspace_id, person):
+            return await self._forget(workspace_id, person, gid, until)
+
+    async def _forget(self, workspace_id: str, person: str, gid: str, until: str) -> dict[str, Any]:
         table = self.table(workspace_id)
         cur = table.current.get(person)
         was = cur is not None and cur.get("grant") == gid
@@ -251,6 +287,9 @@ class RunnerGrants:
                     if cur is None or cur.get("grant") != rep["grant"]:
                         self._confirm(table, dep["person"], rep["grant"], rep["until"], self._scope(wid, rep["grant"]),
                                       did)  # fmt: skip
+                    else:  # already current (a repeated deposit of it): this deposit settles too (Codex P2 #3)
+                        dep.update(outcome="confirmed", reason=None)
+                        changed = True
                 else:
                     dep.update(outcome="rejected", reason="runner_restarted")
                     changed = True
@@ -337,13 +376,18 @@ class RunnerGrants:
                 await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
             # dashboard execution switched off: the runner gives up the workspace's grants too (fail closed)
             off = not enablement.state_of(self.hub.host.state_dir, wid, self.hub.host.host_uid)["enabled"]
-            for person, cur in list(table.current.items()):
-                if off or service is None or self.valid(service, person, cur["grant"]) is not None:
-                    table.current.pop(person, None)
-                    with contextlib.suppress(HostError):
-                        table.save()
-                    self._audit("grant.drop", workspace_id=wid, grant=cur["grant"], person=person, reason="ended")
-                    await self._drop(cur["grant"])
+            for person in list(table.current):
+                async with self.lock(wid, person):  # never in the middle of a deposit or a forget
+                    cur = table.current.get(person)
+                    if cur is None:
+                        continue
+                    forgotten = cur["grant"] in table.forgotten  # defence in depth: a forgotten id is never current
+                    if off or forgotten or service is None or self.valid(service, person, cur["grant"]) is not None:
+                        table.current.pop(person, None)
+                        with contextlib.suppress(HostError):
+                            table.save()
+                        self._audit("grant.drop", workspace_id=wid, grant=cur["grant"], person=person, reason="ended")
+                        await self._drop(cur["grant"])
         for rec in list(self.hub.store.records.values()):
             if not _watched(rec) or not rec.get("grant"):
                 continue

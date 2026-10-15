@@ -5725,6 +5725,10 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   is alarmed with its step and the next still runs, so the state directory's lock never leaks.
 - **L5:** tests pin `unlink_pending`'s fail-closed branches (a dangling symlink intent, an unreadable directory) and
   the open never falling through to a start after a failed unlink.
+- **Mutation pass, round 5:** 12 mutants (the reservation ignoring a pending unlink, a stale intent acted on, not
+  alarmed or kept, the open stopping after a stale discard, a corrupt intent accepted, an unserved start clearing the
+  marker, the release stopping at the first failing step, E13, E14, E22, a truthy gate in `start_blocker`): **12
+  killed**.
 - **Informational (accepted):** a seam factory that re-enters `relay_stop` (or `relay_start`) on the starter's thread
   now gets `none` from the re-entrant lock instead of deadlocking, and `_take_slot` still prevents a second worker of
   the workspace; if both `stopped.json` and `unlink-intent.json` are deleted by hand, the relay serves again once the

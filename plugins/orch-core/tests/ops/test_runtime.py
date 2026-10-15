@@ -423,17 +423,49 @@ def test_reading_a_found_roots_config_opens_nothing_outside_the_root(ws, monkeyp
     """CI regression of #509 (host-served ``orch status``: ``KeyError: 'workspace'``): ``_config`` opened the root's
     parent to walk down with ``O_NOFOLLOW``; a host serving the root allows nothing outside it, so the config read
     failed. Only the root (``O_NOFOLLOW`` on its last component) and what is below it are opened."""
+    import pytest
+
     root = os.path.realpath(ws.root)
-    real_os_open = os.open
+    real_os_open, real_os_close = os.open, os.close
+    allowed: set[int] = set()  # fds returned by allowed opens (and still open): the only valid dir_fd bases
 
     def only_inside(path, flags, mode=0o777, *, dir_fd=None):
         if dir_fd is None:
             p = os.path.abspath(os.fspath(path))
             assert p == root or p.startswith(root + os.sep), f"opened outside the root: {p}"
-        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+        else:
+            name = os.fspath(path)
+            assert dir_fd in allowed, f"dir_fd {dir_fd} did not come from an allowed open"
+            assert name not in ("", ".", "..") and "/" not in name, f"unsafe name below a dir_fd: {name!r}"
+            assert flags & os.O_NOFOLLOW, f"{name!r} below a dir_fd without O_NOFOLLOW"
+        fd = real_os_open(path, flags, mode, dir_fd=dir_fd)
+        allowed.add(fd)
+        return fd
+
+    def close(fd):
+        allowed.discard(fd)
+        real_os_close(fd)
 
     monkeypatch.setattr(os, "open", only_inside)
+    monkeypatch.setattr(os, "close", close)
     files = Files.direct()
     cfg = runtime._config(ws.root, files)
     assert cfg is not None and isinstance(cfg["workspace"]["id"], str)
     assert runtime.find_workspace({"ORCH_WORKSPACE": str(ws.root)}, None, files) == ws.root
+    # the guard itself: a walk out of the root through a dir_fd is caught, not waved through
+    d = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        for name in ("..", ".", "tickets/..", "a/b"):
+            with pytest.raises(AssertionError, match="unsafe name"):
+                os.open(name, flags, dir_fd=d)
+        with pytest.raises(AssertionError, match="without O_NOFOLLOW"):
+            os.open("tickets", os.O_RDONLY | os.O_DIRECTORY, dir_fd=d)
+        outside = real_os_open(os.path.dirname(root), os.O_RDONLY | os.O_DIRECTORY)  # not through the guard
+        try:
+            with pytest.raises(AssertionError, match="did not come from an allowed open"):
+                os.open("workspace", flags, dir_fd=outside)
+        finally:
+            real_os_close(outside)
+    finally:
+        os.close(d)

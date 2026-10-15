@@ -753,6 +753,13 @@ def test_an_unlink_that_times_out_is_reported_pending_not_internal(served, monke
         svc.relay_unlink()
     assert e.value.code == "lock.busy" and e.value.message.startswith("unlink_pending")
     assert svc.relay_reason == "unlink_pending"
+    # D-1: durable while queued: the intent and the marker are on disk, nothing may start, relay start is refused
+    assert relaylink.unlink_pending(svc.state_dir, served.wid) and relaylink.is_stopped(svc.state_dir, served.wid, UID)
+    assert relaylink.start_blocker(svc.state_dir, served.wid, UID) == "unlink_pending"
+    monkeypatch.undo()
+    with pytest.raises(HostError) as e:
+        svc.relay_start()
+    assert e.value.code == "lock.busy"
 
 
 def test_reserve_link_bounds_max_publication_bytes(served):  # noqa: F811

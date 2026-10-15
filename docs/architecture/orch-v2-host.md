@@ -7020,7 +7020,7 @@ relay's largest set is never held in memory: it is built and sent in pieces.
     persons' evidence refuses this person's revocation (`DEVICE_CERT`, `workspace.py:187`) and a device with no
     tombstone at all is `DEVICE_UNKNOWN`: both stay **held** and visible, with their own text.
   - **Standing of a row** (derived, re-judged by the host on every aux turn, and again after the aux turn that follows
-    a commit that can revoke, always under the store lock): `settled` (removed) | `stronger` (state holds a weaker
+    a commit that can revoke, always under the store lock; a store commit that can revoke (`device.revoked`, `member.removed`, a restore) also WAKES the R4 aux turn, still not synchronous): `settled` (removed) | `stronger` (state holds a weaker
     revocation of the pair) | `revoke` (the device is the person's and nothing revokes it) | `other` (the device is
     another person's, or a tombstone holds other persons' evidence only: `DEVICE_CERT`) | `unknown` (no device and no
     tombstone: `DEVICE_UNKNOWN`). Person-visible text per row: `revoke` "an owner signs a `device.revoked` for that
@@ -7030,8 +7030,7 @@ relay's largest set is never held in memory: it is built and sent in pieces.
     workspace to sign"; `unknown` "the device is not known to this workspace yet; nothing to sign until it is". Never an
     instruction to re-append an equal-strength revocation (relay obligation 5).
   - **Store result per item** (`Store.note_forwarded_revocation`, one lock): `unverifiable` (does not verify, parse,
-    fit the size caps, or an outer field differs from the signed objects), `dropped` (verified, but the person is no
-    member (current or past) and holds no device or tombstone here; counted as `unverifiable`, see the table),
+    fit the size caps, or an outer field differs from the signed objects), `dropped` (verified, but NO person key is known here: the person is neither a member nor a former member and has no tombstone entry; counted as `unverifiable`, see the table. A former member's device IS verifiable, the model verifies against `ws.members.get(p) or ws.former.get(p)` (`workspace.py:191`), so it is a normal ledger row settled by `pair_settled`),
     `settled` (state covers it), `held` (everything else: no revocation, a weaker one, `other`, `unknown`, no host
     state, a cap that kept the record out of `HostPins`). `pending` no longer exists: a member's pair is always
     visible. An exception is no result at all.
@@ -7048,7 +7047,8 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   | Item for a device that is only a restore tombstone, tombstone has THIS person's entry | by strength: `settled` (no row), or row `stronger` | `settled` / `held` | as above | as above | yes |
   | Same, but the tombstone holds only other persons' evidence, or the device is another person's | row `other` | `held` | `unpublished_held` | not ok: "cannot be settled here" | yes |
   | Item for a member's device the workspace does not know and no tombstone | row `unknown` | `held` | `unpublished_held` | not ok: "device not known yet" | yes |
-  | Item for a person that is no member and has no device or tombstone here | counted in `unverifiable` | `dropped` | `unpublished_unverifiable` (once per page) | not ok: "N items the relay serves could not be verified" | yes |
+  | Item for a FORMER member's device | normal row by standing (`settled` when state covers it, else as the rows above) | `held` / `settled` | as above | as above | yes |
+  | Item whose person key is unknown (neither member nor former member, no tombstone entry for that person) | counted in `unverifiable` | `dropped` | `unpublished_unverifiable` (once per page) | not ok: "N items the relay serves could not be verified" | yes |
   | Re-served EQUAL item (same pair, same reason) | unchanged | `held` or `settled` | none (not a new row) | unchanged | yes |
   | Re-served WEAKER item for a pair whose row needs more | unchanged: never lowers, never removes | `held`/`settled` by its own reason | none | unchanged | yes |
   | Re-served STRONGER item | row `need` raised to S | `held` | `unpublished_held` | text follows the new need | yes |
@@ -7058,12 +7058,12 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   | Restart, or a new holder generation | ledger kept; scan, `ack`, `resume`, counters restart; ledger re-seeded from `HostPins` (union) | none | none | unchanged | the old gen's ack is dropped |
   | A restored OLDER `unpublished.json` | fewer rows -> seeded back from `HostPins`, re-added by the next full read; an older cursor re-reads; a newer one gets `cursor_ahead` (restart) | `held` again, idempotent | `unpublished_held` for the re-added rows | not ok again | yes |
   | A LOST or unparseable `unpublished.json` | fresh record + seeding + full read from the start | as above | as above | as above | yes |
-  | A store commit that adds a revocation (`device.revoked`, a restore, an upgrade) | at the next aux turn `pair_standings` runs under the store lock: `settled` -> row removed; otherwise `state` rewritten (`revoke` -> `stronger`) | `pair_standings` (not `note_...`) | none | ok when the ledger is empty | n/a |
+  | A store commit that adds a revocation (`device.revoked`, `member.removed`, a restore, an upgrade; it WAKES the aux turn) | at the next aux turn `pair_standings` runs under the store lock: `settled` -> row removed; otherwise `state` rewritten (`revoke` -> `stronger`) | `pair_standings` (not `note_...`) | none | ok when the ledger is empty | n/a |
   | An exception inside the store job (`hold` or the judging job) | unchanged | none (no result) | the aux guard's one alarm per class | unchanged | NO: no ack, 30 s back-off, the page is read again |
   | No host state / store closed | judging returns `unknown` for every row, nothing is removed; a new verified item becomes a row `unknown` | `held` | `unpublished_held` | not ok | yes |
   | Ledger at 4,096 rows and a new pair arrives | NOT stored; `overflow` +1; nothing is ever evicted | `held` | `unpublished_overflow` (once per process) | not ok: "ledger full" (permanent until an owner reset: unreachable by design, the quota is the relay's) | yes |
 
-  - **Invariants (pinned by tests).** (1) Relay input can only ADD a row or RAISE its `need`: a full read, an omitted
+  - **Invariants (pinned by tests).** (0) Raising a row's `need` uses a comparison INJECTED by `relayr4` (host side, built on `orch.identity.certs.revoke_strength`; `orch.relay` cannot import `orch.identity`, and no second strength table exists); a test pins that the injected function agrees with `revoke_strength` for all 3x3 reason pairs. (1) Relay input can only ADD a row or RAISE its `need`: a full read, an omitted
     item, a re-served weaker item, a restarted page, a new holder gen or a lost file never remove or lower anything.
     (2) Only `Store.pair_settled` (the store's own verified state, `ws.revocations[device][person]`, the one
     `revoke_strength`) removes a row, re-judged by the host, never driven by what the relay says. (3) Every item

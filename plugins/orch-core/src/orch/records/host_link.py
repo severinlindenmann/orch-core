@@ -35,15 +35,15 @@ class Resolved:
     close: Callable[[], None] = lambda: None
 
 
-def _find_here(env: Mapping[str, str]) -> tuple[str | None, Path | None]:
+def _find_here(env: Mapping[str, str]) -> tuple[str | None, Path | None, Any]:
+    """The workspace id here, its root and the :class:`~orch.ops.runtime.Workspace` that found it (the config as
+    discovery read it, never again by path)."""
     from orch.ops.caps import Files
-    from orch.ops.runtime import _config, find_workspace
+    from orch.ops.runtime import Workspace
 
-    files = Files.direct()
-    here = find_workspace(env, os.getcwd(), files)
-    cfg = _config(here, files) if here is not None else None
-    wid = ((cfg or {}).get("workspace") or {}).get("id")
-    return (wid if isinstance(wid, str) else None), here
+    ws = Workspace(env, cwd=os.getcwd(), files=Files.direct())
+    wid = ((ws.config or {}).get("workspace") or {}).get("id")
+    return (wid if isinstance(wid, str) else None), ws.root, ws
 
 
 def resolve(
@@ -62,9 +62,9 @@ def resolve(
     from orch.ops.runtime import _config, state_dir
 
     state = Path(state) if state is not None else state_dir(env)
-    wid, here = workspace, None
+    wid, here, here_ws = workspace, None, None
     if wid is None:
-        wid, here = _find_here(env)
+        wid, here, here_ws = _find_here(env)
     if not isinstance(wid, str) or not _WS.fullmatch(wid):
         raise RecordsError("records.unsupported", "no workspace: pass --workspace ID or run it in the workspace")
     tips = ValidatedTips(state / "records.json")
@@ -75,17 +75,27 @@ def resolve(
 
         from .direct import DirectLink
 
+        ident = None
         if root is None:
-            found_wid, here = _find_here(env) if here is None else (wid, here)
+            found_wid, here, here_ws = _find_here(env) if here is None else (wid, here, here_ws)
             root = here if found_wid == wid else None
         if root is None:
             raise RecordsError(
                 "records.unsupported", "no host serves this workspace and it is not the one here: run it there"
             )
-        cfg = _config(Path(root), Files.direct())
+        if here_ws is not None and root == here:  # found here: the config discovery read, the root's identity
+            from orch.ops.errors import OrchError
+
+            try:
+                here_ws.verify_root()
+            except OrchError as exc:
+                raise RecordsError("records.unsupported", str(exc.message), exit_=3) from None
+            cfg, ident = here_ws.config, here_ws.ident
+        else:  # the auto entry's root: named, not discovered
+            cfg = _config(Path(root), Files.direct())
         if ((cfg or {}).get("workspace") or {}).get("id") != wid:
             raise RecordsError("records.unsupported", "the directory is not this workspace")
-        direct = DirectLink(Path(root), wid, state)
+        direct = DirectLink(Path(root), wid, state, ident=ident)
         return Resolved(wid, Path(root), direct, tips, state, "direct", direct.close)
     host_uid = entry.get("host_uid")
     if type(host_uid) is not int:

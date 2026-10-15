@@ -33,10 +33,12 @@ class _Holder:
 class DirectLink:
     """``link(op, args)`` for a workspace in direct mode."""
 
-    def __init__(self, root: Path, workspace_id: str, state: Path) -> None:
+    def __init__(self, root: Path, workspace_id: str, state: Path, *, ident: tuple[int, int] | None = None) -> None:
         if os.name == "nt":
             raise RecordsError("records.unsupported", "direct-mode records do not run on Windows yet (D-P2-38)")
         self.root, self.workspace_id, self.state = Path(root), workspace_id, Path(state)
+        #: the root's identity when it was discovered here: checked before the store opens below it
+        self.ident = ident
         self._store: Any = None
         self._holder = _Holder()
 
@@ -56,10 +58,15 @@ class DirectLink:
                 exit_=3,
             )
         if self._store is None:
+            from orch.discovery import same_root
             from orch.host.ownership import DirectGuard
             from orch.ops.errors import OrchError
             from orch.store import Store, StoreError
 
+            if self.ident is not None and not same_root(self.root, self.ident):
+                raise RecordsError(
+                    "records.unsupported", f"{self.root} is no longer the workspace directory that was found", exit_=3
+                )
             try:
                 self._store = Store.open(
                     self.root,

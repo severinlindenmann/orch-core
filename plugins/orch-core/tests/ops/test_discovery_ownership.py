@@ -208,3 +208,68 @@ def test_an_ancestor_that_cannot_be_opened_stops_the_walk(ws, tmp_path, mode):
     finally:
         os.chmod(shut, 0o755)
     assert runtime.find_workspace({}, str(shut / "x"), FILES) == tmp_path / "top" / "orchestrator"
+
+
+def _no_path_open_of_config(monkeypatch):
+    """Any open of ``config.json`` by path (``os.open`` without ``dir_fd``, ``open``, ``io.open``) fails the test."""
+    import builtins
+    import io as _io
+
+    real_os_open, real_open, real_io_open = os.open, builtins.open, _io.open
+
+    def bad(path) -> bool:
+        return isinstance(path, (str, os.PathLike)) and os.fspath(path).endswith("config.json")
+
+    def os_open(path, flags, mode=0o777, *, dir_fd=None):
+        assert dir_fd is not None or not bad(path), f"config.json opened by path: {path}"
+        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+    def py_open(file, *a, **kw):
+        assert not bad(file), f"config.json opened by path: {file}"
+        return real_open(file, *a, **kw)
+
+    def io_open(file, *a, **kw):
+        assert not bad(file), f"config.json opened by path: {file}"
+        return real_io_open(file, *a, **kw)
+
+    monkeypatch.setattr(os, "open", os_open)
+    monkeypatch.setattr(builtins, "open", py_open)
+    monkeypatch.setattr(_io, "open", io_open)
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_after_discovery_opening_the_store_reads_no_config_json_by_path(ws, monkeypatch, explicit):
+    """The config discovery read from the checked fd is what ``Workspace._open`` (and ``Store.open``'s workspace id
+    check) uses: no path open of ``config.json`` after discovery."""
+    env = ws.env()
+    if not explicit:
+        env.pop("ORCH_WORKSPACE")
+    w = runtime.Workspace(env, cwd=str(ws.root), files=FILES)
+    assert w.root == ws.root and w.config["workspace"]["id"] == ws.store.workspace_id
+    with monkeypatch.context() as m:
+        _no_path_open_of_config(m)
+        store = w.store
+        assert store.workspace_id == ws.store.workspace_id
+        assert w.config["workspace"]["id"] == store.workspace_id
+    store.close()
+
+
+@pytest.mark.parametrize("how", ["replaced", "symlink"])
+def test_a_root_swapped_after_discovery_is_refused(ws, tmp_path, how):
+    """Before the store opens below the root, the root must still be the directory discovery found (dev/ino): a
+    directory renamed away and replaced (by a copy, or by a symlink to it) refuses, and nothing is opened."""
+    env = ws.env()
+    env.pop("ORCH_WORKSPACE")
+    w = runtime.Workspace(env, cwd=str(ws.root), files=FILES)
+    assert w.root == ws.root and w.ident == (os.stat(ws.root).st_dev, os.stat(ws.root).st_ino)
+    old = ws.root.with_name(ws.root.name + "-was")
+    ws.root.rename(old)
+    if how == "replaced":
+        shutil.copytree(old, ws.root, symlinks=True)
+    else:
+        ws.root.symlink_to(old, target_is_directory=True)
+    with pytest.raises(runtime.OrchError) as e:
+        w.store  # noqa: B018
+    assert e.value.code == "not_found" and "no longer the workspace directory" in e.value.message
+    with pytest.raises(runtime.OrchError):
+        w.verify_root()

@@ -31,6 +31,10 @@ export interface ClickView {
   auth: string
   device: string
   artifacts: 'checked' | 'unseen' | null
+  /** M7b: a runner grant prepared in the deposit-only mode (section 0.8.6 item 6). Absent on every other View. */
+  deposit?: boolean
+  /** Core's constant `DEPOSIT_LINE`, when `deposit` is true. */
+  deposit_line?: string
 }
 
 export interface ClickViewAnswer {
@@ -46,7 +50,38 @@ export interface ClickSigned {
   duplicate: boolean
   key?: string
   seq?: number
+  /** M7b, a runner grant only: where the secret went (the secret itself never leaves the signer). */
+  deposit?: DepositOutcome
+  /** The request's ULID (`hr_` stripped): ask `grant.deposit_status` with it, never mint another. */
+  deposit_id?: string | null
+  /** The grant's id (`gr_…`): what Revoke and Forget name. */
+  grant?: string | null
+  /** H11c-2, only when `deposit` is `rejected`: a closed code, never host text. */
+  deposit_reason?: DepositReason
 }
+
+export type DepositOutcome = 'confirmed' | 'rejected' | 'unknown'
+export type DepositReason = 'grant.forgotten' | 'grant.not_runner' | 'grant.verbs' | 'grant.expiring' | 'rate.limited' | 'runner.unavailable' | 'other'
+
+/** M7b: the runner grant, a click request of its own (never a terminal hand-off). The signer sets label and verbs. */
+export interface RunnerGrantAction {
+  action: 'runner_grant'
+  hours: number
+  scope: 'workable' | 'all'
+}
+
+/** Every typed action a click request may carry. */
+export type ClickAction = HandoffAction | RunnerGrantAction
+
+/** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
+export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
+/** The owner's risk sentence for the runner grant (D-P2-27), verbatim. */
+export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for up to 12 hours.'
+
+/** A deposit View is shown with a Sign button only when it says so and carries both constants (the server checks too). */
+export const depositViewOk = (view: ClickView): boolean =>
+  view.deposit === true && view.deposit_line === DEPOSIT_LINE && view.lines.includes(DEPOSIT_LINE) && view.lines.includes(DEPOSIT_RISK) &&
+  view.confirm.kind === 'word' && /^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}\/GRANT$/.test(view.confirm.word)
 
 /** The flag of a workspace: the signer says click-to-sign is on and it can sign there now (real host only). */
 export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): boolean => !!w?.click && w.click.enabled && w.click.available
@@ -59,7 +94,7 @@ const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'details', 'section',
   'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke',
 ])
-export const clickEligible = (a: HandoffAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
+export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 
 export type ClickNext =
   /** Sign again (the review is unchanged). */

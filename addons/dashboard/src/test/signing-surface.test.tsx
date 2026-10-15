@@ -738,3 +738,38 @@ it('records current-destination confirmation warning preserves the exact URL thr
   expect(warning.textContent).toBe('Push publishes every ticket in this workspace to https://git.example.test/records\\u{202e}.git, restricted ones included.')
   expect(warning.textContent).not.toContain('last known')
 })
+
+// M7b: Start agent (Tier A, no signature) shows exactly the host's preview and posts exactly the previewed values plus
+// its spec; the runner grant (the one signed step) is the signer's View with the deposit line and the typed word.
+describe('start agent', () => {
+  it('posts exactly what the preview showed, and the grant View carries the deposit line before Sign', async () => {
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { agentsApi } = await import('@/api/agents')
+    const { CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK } = await import('@/api/click')
+    const { StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
+    const WS = 'b'.repeat(32)
+    const display = "codex 'work on DEMO-7'‮"
+    vi.spyOn(agentsApi, 'preview').mockResolvedValue({
+      spec: 'e'.repeat(64), ticket: 'DEMO-7', display, display_hidden: false, cwd: { kind: 'workspace' }, cwd_path: '/w/demo', cwd_path_hidden: false,
+      will_create_worktree: false, login_shell: false, env: ['TERM'], grant: null, warnings: [],
+      blocked: { code: 'launch.no_grant', message: 'none', detail: { reason: 'none' } },
+    })
+    vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
+    const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '1'.repeat(26), expires_at: new Date(Date.now() + 6e5).toISOString(), op: 'grant', confirm: 'word' })
+    vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'd'.repeat(64), view: {
+      risk: CLICK_RISK, op: 'grant', workspace: { id: WS, name: 'demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', checks: [], artifacts: null,
+      lines: ['grant', '', DEPOSIT_RISK, DEPOSIT_LINE], confirm: { kind: 'word', word: 'DEMO~bbbbbbbb/GRANT' }, expires_at: new Date(Date.now() + 6e5).toISOString(),
+      auth: 'convenience', device: 'd_x', deposit: true, deposit_line: DEPOSIT_LINE } })
+    vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
+    render(<QueryClientProvider client={new QueryClient()}><StartAgentDialog ws={WS} ticket="DEMO-7" open onClose={() => {}} /></QueryClientProvider>)
+    const shown = await screen.findByTestId('agent-preview', {}, T)
+    expect(shown.textContent).toContain("codex 'work on DEMO-7'\\u{202e}") // escaped, never repaired
+    screen.getByTestId('runner-grant-issue').click()
+    const panel = await screen.findByTestId('click-panel', {}, T)
+    expect(panel.textContent).toContain(DEPOSIT_LINE)
+    expect(panel.textContent).toContain(DEPOSIT_RISK)
+    expect(within(panel).getByText(/To confirm, type/).textContent).toContain('DEMO~bbbbbbbb/GRANT')
+    expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
+    vi.restoreAllMocks()
+  })
+})

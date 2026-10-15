@@ -526,6 +526,11 @@ async function run(send, close) {
               ['real-host-terminal-take', 'terminal-take', [['the Take control banner', '[data-lease="busy"]']]],
               ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
               ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
+              // M7b: core's Start agent dialog (fixture preview, runner and grant answers; nothing reaches a host).
+              ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the preview', '[data-testid="agent-preview"]'], ['the current grant', '[data-testid="runner-grant-current"]']]],
+              ['real-host-agent-blocked', 'agent-blocked', [['the blocked reason', '[data-testid="agent-blocked"]'], ['the execution-off line', '[data-testid="runner-grant-off"]']]],
+              ['real-host-agent-grant', 'agent-grant', [['the grant card', '[data-testid="runner-grant-card"]'], ['Issue runner grant', '[data-testid="runner-grant-issue"]'], ['the risk sentence', '[data-testid="runner-grant-risk"]']]],
+              ['real-host-agent-outcomes', 'agent-outcomes', [['the unknown outcome', '[data-testid="runner-grant-unknown"]']]],
               // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
               ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
               ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],

@@ -21,11 +21,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from orch import canon, crypto
-from orch.crypto.labels import L
 
 from .certs import SCOPE_ORDER
 from .errors import Refused
-from .pairing import MAX_EPOCH, _bad, _id, _pub, _raw
+from .pairing import MAX_EPOCH, _bad, _id, _pub, _raw, _verify_signed
 
 __all__ = [
     "FIRST_EPOCH_MAX",
@@ -54,25 +53,6 @@ MEMBER_LIST_FIELDS = frozenset(
 MEMBER_FIELDS = frozenset({"device_id", "person_id", "scopes"})
 GRANT_FIELDS = frozenset({"v", "suite", "kind", "workspace_id", "device_id", "epoch", "sealed"})
 SEALED_KEY_LEN = crypto.PUB_LEN + 32 + 16  # eph_pub || AES-GCM(32-byte key) || tag: a sealed WK or CK
-
-_KIND_LABEL = {"member_list": "sig_member_list", "wk_grant": "sig_wk_grant"}
-
-
-def _verify(pub: bytes, signed: object, kind: str) -> dict[str, Any] | None:
-    """``o`` if ``signed`` is exactly ``{o, sig}`` with ``v: 2``, this suite and ``kind``, and ``sig`` verifies under
-    ``pub`` over ``label(kind) || cj(o)`` (proto §2.4); ``None`` otherwise."""
-    try:
-        if type(signed) is not dict or set(signed) != {"o", "sig"}:
-            return None
-        o = signed["o"]
-        if type(o) is not dict or o.get("v") != 2 or o.get("suite") != crypto.SUITE_ID or o.get("kind") != kind:
-            return None
-        if type(o["v"]) is not int or type(o["suite"]) is not int:
-            return None
-        sig = crypto.unb64u(signed["sig"], crypto.SIG_LEN)
-        return o if crypto.verify(pub, sig, L[_KIND_LABEL[kind]] + canon.dumps(o)) else None
-    except (crypto.EncodingError, crypto.CryptoError, canon.JcsError, ValueError, KeyError, TypeError):
-        return None
 
 
 def _epoch(epoch: object) -> int:
@@ -214,7 +194,7 @@ def check_member_list(signed: object, wsk_pub: bytes, workspace_id: str) -> Memb
     D2 alarms) or certificates and grants (checks 8 and 9): those need the caller's previous list and directory."""
     wsk = _pub(wsk_pub, "wsk_pub")
     ws = crypto.hex_id(_id(workspace_id, "workspace_id"))
-    o = _verify(wsk, signed, "member_list")
+    o = _verify_signed(wsk, signed, "member_list")
     if o is None:
         raise Refused("bad_signature", "member_list")
     if set(o) != MEMBER_LIST_FIELDS:
@@ -322,7 +302,7 @@ def check_wk_grant(signed: object, wsk_pub: bytes, workspace_id: str, device_id:
     wsk = _pub(wsk_pub, "wsk_pub")
     ws = crypto.hex_id(_id(workspace_id, "workspace_id"))
     dev = crypto.hex_id(_id(device_id, "device_id"))
-    o = _verify(wsk, signed, "wk_grant")
+    o = _verify_signed(wsk, signed, "wk_grant")
     if o is None:
         raise Refused("bad_signature", "wk_grant")
     if o.get("workspace_id") != ws or o.get("device_id") != dev:

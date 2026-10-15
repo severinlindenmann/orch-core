@@ -32,7 +32,18 @@ from orch.crypto.labels import L
 
 from .certs import SCOPE_ORDER, SKEW_MS, scopes_ok
 from .errors import Refused
-from .pairing import CHALLENGE_FIELDS, _b64_pub, _bad, _id, _pub, _raw, cert_code, clean_label
+from .pairing import (
+    _SIG_LABEL,
+    CHALLENGE_FIELDS,
+    _b64_pub,
+    _bad,
+    _id,
+    _pub,
+    _raw,
+    _verify_signed,
+    cert_code,
+    clean_label,
+)
 from .wscard import VerifiedCard
 
 __all__ = [
@@ -80,35 +91,13 @@ REJECTION_FIELDS = frozenset(
      "expires_ms"}
 )  # fmt: skip
 _REQUEST_IDS = ("request_id", "workspace_id", "person_id", "primary_device_id", "offer_id", "attempt", "device_id")
-_KIND_LABEL = {
-    "cert_request": "sig_cert_request",
-    "cert_challenge": "sig_cert_challenge",
-    "cert_rejection": "sig_cert_rejection",
-}
 
 Signer = Callable[[bytes], bytes]
 Unseal = Callable[[bytes, bytes], bytes]
 
 
-def _verify(pub: bytes, signed: object, kind: str) -> dict[str, Any] | None:
-    """``o`` if ``signed`` is exactly ``{o, sig}`` with ``v: 2``, this suite and ``kind``, and ``sig`` verifies under
-    ``pub`` over ``label(kind) || cj(o)`` (proto §2.4); ``None`` otherwise."""
-    try:
-        if type(signed) is not dict or set(signed) != {"o", "sig"}:
-            return None
-        o = signed["o"]
-        if type(o) is not dict or o.get("v") != 2 or o.get("suite") != crypto.SUITE_ID or o.get("kind") != kind:
-            return None
-        if type(o["v"]) is not int or type(o["suite"]) is not int:
-            return None
-        sig = crypto.unb64u(signed["sig"], crypto.SIG_LEN)
-        return o if crypto.verify(pub, sig, L[_KIND_LABEL[kind]] + canon.dumps(o)) else None
-    except (crypto.EncodingError, crypto.CryptoError, canon.JcsError, ValueError, KeyError, TypeError):
-        return None
-
-
 def _sign(o: dict[str, Any], sign: Signer) -> dict[str, Any]:
-    sig = sign(L[_KIND_LABEL[o["kind"]]] + canon.dumps(o))
+    sig = sign(L[_SIG_LABEL[o["kind"]]] + canon.dumps(o))
     if type(sig) is not bytes or len(sig) != crypto.SIG_LEN:
         raise Refused("malformed", "signer returned a bad signature")
     return {"o": o, "sig": crypto.b64u(sig)}
@@ -292,9 +281,11 @@ def check_cert_request(
     ws, owner, wsk, hosted = card.workspace_id, card.owner_person_id, card.wsk_pub, card.client_hosted
     if owner != me_person:
         raise Refused("other_person", "the card is another person's")
-    o = _verify(wsk, signed, "cert_request")
+    o = _verify_signed(wsk, signed, "cert_request")
     if o is None or o.get("workspace_id") != ws:
         raise Refused("bad_signature", "cert_request")
+    if any(k in o and type(o[k]) is not str for k in (*_REQUEST_IDS, "dk_hash", "sealed")):
+        raise Refused("malformed", "cert_request: an id is not a string")  # before any set or dict lookup (Opus L1)
     if o.get("primary_device_id") != me or o.get("person_id") != me_person:
         raise Refused("not_for_this_device", "cert_request")
     created = _int(o.get("created_ms"), "created_ms")
@@ -382,6 +373,12 @@ def _request_clear(request_o: object) -> dict[str, Any]:
     """A cert request object with the exact field set and well-formed clear fields (the caller's own, verified)."""
     if type(request_o) is not dict or set(request_o) != REQUEST_FIELDS:
         raise _bad("request field set")
+    if (request_o["v"], request_o["suite"], request_o["kind"]) != (2, crypto.SUITE_ID, "cert_request") or any(
+        type(request_o[k]) is not int for k in ("v", "suite", "created_ms", "expires_ms")
+    ):
+        raise _bad("request v, suite, kind or times")
+    if type(request_o["sealed"]) is not str:
+        raise _bad("request sealed")
     for k in _REQUEST_IDS:
         _id(request_o[k], k)
     try:
@@ -497,7 +494,7 @@ def check_cert_challenge(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     its own §8.4 step 5 checks again."""
     pk = _pub(pk_pub, "pk_pub")
     req = _request_clear(dict(request_o) if isinstance(request_o, Mapping) else request_o)
-    o = _verify(pk, signed, "cert_challenge")
+    o = _verify_signed(pk, signed, "cert_challenge")
     if o is None:
         raise Refused("bad_signature", "cert_challenge")
     if set(o) != CHALLENGE_FIELDS:
@@ -538,7 +535,7 @@ def check_cert_rejection(signed: object, pk_pub: bytes, request_o: Mapping[str, 
     (``not_for_this_device``)."""
     pk = _pub(pk_pub, "pk_pub")
     req = _request_clear(dict(request_o) if isinstance(request_o, Mapping) else request_o)
-    o = _verify(pk, signed, "cert_rejection")
+    o = _verify_signed(pk, signed, "cert_rejection")
     if o is None:
         raise Refused("bad_signature", "cert_rejection")
     if set(o) != REJECTION_FIELDS:

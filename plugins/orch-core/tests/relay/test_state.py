@@ -176,12 +176,12 @@ def test_two_ledgers_on_one_directory_lose_no_update(tmp_path):
     a, b = FileSignLedger(st), FileSignLedger(st)
     barrier = threading.Barrier(2)
 
-    def rec(led, key):
+    def rec(led, base):
         barrier.wait()
         for i in range(20):
-            led.record("card", f"{key}{i}", "aa", "s")
+            led.record("card", str(base + i), "aa", "s")
 
-    ts = [threading.Thread(target=rec, args=(a, "a")), threading.Thread(target=rec, args=(b, "b"))]
+    ts = [threading.Thread(target=rec, args=(a, 1)), threading.Thread(target=rec, args=(b, 101))]
     for t in ts:
         t.start()
     for t in ts:
@@ -464,3 +464,48 @@ def test_a_null_or_malformed_ledger_entry_is_a_state_error_not_nothing_signed(tm
         with pytest.raises(StateError, match="sign ledger"):
             led.record("card", "10", "bb", "sig")
         assert st.read(FileSignLedger.FILE) == bad
+
+
+NONCANONICAL_CARD_KEYS = ["010", " 10", "10 ", "+10", "-10", "1_0", "abc", "", "\uff11\uff10", "10\n", "1e1", "0x0a"]
+
+
+@pytest.mark.parametrize("key", NONCANONICAL_CARD_KEYS)
+def test_a_noncanonical_card_key_is_a_state_error_never_a_value_error_or_accepted(tmp_path, key):
+    """Round 10, R9-1: a card key must be the canonical decimal ``record`` writes (``str(seq)``); ``"010"`` or ``" 10"``
+    is int()-equal to 10 but missed by the exact lookup, so it fails closed on every read and on record, and the file
+    is never rewritten over it."""
+    import json
+
+    bad = json.dumps({"card": {key: {"digest": "aa", "sig": "s"}}}).encode()
+    with StateDir(tmp_path / "relay") as st:
+        st.write(FileSignLedger.FILE, bad)
+        led = FileSignLedger(st)
+        for read in (
+            lambda: led.get("card", "10"),
+            lambda: led.keys("card"),
+            lambda: led.record("card", "10", "b", "s"),
+        ):
+            with pytest.raises(StateError, match="sign ledger key"):
+                read()
+        with pytest.raises(StateError, match="sign ledger key"):
+            FileSignLedger(st).record("card", key, "aa", "s")
+        assert st.read(FileSignLedger.FILE) == bad
+
+
+@pytest.mark.parametrize("kind", ["Card", "", "c d"])
+def test_a_kind_record_would_never_write_is_a_state_error(tmp_path, kind):
+    import json
+
+    bad = json.dumps({kind: {}}).encode()
+    with StateDir(tmp_path / "relay") as st:
+        st.write(FileSignLedger.FILE, bad)
+        with pytest.raises(StateError, match="sign ledger key"):
+            FileSignLedger(st).keys("card")
+
+
+def test_canonical_card_keys_are_accepted(tmp_path):
+    with StateDir(tmp_path / "relay") as st:
+        led = FileSignLedger(st)
+        for k in ("0", "1", "10", "9223372036854775807"):
+            led.record("card", k, "aa", "s")
+        assert led.keys("card") == sorted(["0", "1", "10", "9223372036854775807"])

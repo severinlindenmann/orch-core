@@ -480,3 +480,79 @@ def test_a_concurrent_passing_preflight_cannot_mask_another_threads_state_error(
             with pytest.raises(StateError, match="null"):
                 d.get_card()
         assert len(m.seen) == n
+
+
+# -- round 10 (R9-3): the alarm is raised after the preflight lock is released; the lock is reentrant ----------------
+
+
+@pytest.fixture
+def hang_guard():
+    """Fail (never hang) when the test body blocks for 10 s: a deadlocked lock acquire is interrupted by SIGALRM."""
+    import signal
+
+    def boom(*_):
+        raise RuntimeError("hang: the preflight lock deadlocked")
+
+    old = signal.signal(signal.SIGALRM, boom)
+    signal.alarm(10)
+    yield
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, old)
+
+
+def test_an_alarm_sink_may_wait_on_another_thread_using_the_same_session(env, hang_guard):
+    """The sink hands a call on this Session to another thread and joins it: the preflight lock is no longer held
+    while the alarm is raised, so that thread is refused locally at once (nothing sent) instead of blocking."""
+    import threading
+
+    m, sim = env
+    out: list = []
+    s = None
+
+    def sink(code, detail):
+        def other():
+            try:
+                directory(s).get_card()
+            except Exception as e:  # noqa: BLE001 - recorded for the asserts
+                out.append(e)
+
+        t = threading.Thread(target=other, daemon=True)
+        t.start()
+        t.join(5)
+        out.append(("joined", not t.is_alive(), code))
+
+    s = make_session(m.origin(), holder=FAILING["copied"](), clock=Clock(sim), alarms=sink)
+    with pytest.raises(TakeoverRefused):
+        s.preflight()
+    assert isinstance(out[0], TakeoverRefused) and out[1] == ("joined", True, "relay_takeover_refused"), out
+    assert m.seen == []
+
+
+def test_the_preflight_lock_is_reentrant_for_the_same_thread(env, hang_guard):
+    """A same-thread re-entry while the lock is held (a holder store, or a signal handler, calling back into this
+    Session) runs instead of deadlocking; an alarm sink re-entering after a refusal is refused locally."""
+    m, sim = env
+    s = None
+    entered: list = []
+
+    class Reentering(Holder):
+        def load(self):
+            if not entered:
+                entered.append(True)
+                entered.append(s.preflight())  # re-enters preflight under the lock, same thread
+            return super().load()
+
+    s = make_session(m.origin(), holder=Reentering(gen=3), clock=Clock(sim))
+    assert s.preflight().gen == 3 and entered[1].gen == 3
+    seen: list = []
+
+    def sink(code, detail):
+        try:
+            r.preflight()
+        except TakeoverRefused as e:
+            seen.append(e)
+
+    r = make_session(m.origin(), holder=FAILING["pending"](), clock=Clock(sim), alarms=sink)
+    with pytest.raises(TakeoverRefused):
+        r.preflight()
+    assert len(seen) == 1 and m.seen == []

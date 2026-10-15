@@ -356,7 +356,19 @@ def test_two_signers_on_one_state_dir_never_return_two_cards_at_one_seq(tmp_path
     st.close()
 
 
-@pytest.mark.parametrize("bad", [b'{"card":{"10":null}}', b'{"card":{"10":[]}}', b'{"card":null}'])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        b'{"card":{"10":null}}',
+        b'{"card":{"10":[]}}',
+        b'{"card":null}',
+        # round 10, R9-1: an entry for another card under a non-canonical key for seq 10
+        *(
+            b'{"card":{"%s":{"digest":"%s","sig":"s"}}}' % (k.encode(), b"ab" * 32)
+            for k in ("010", " 10", "+10", "1_0", "abc", "", "\\uff11\\uff10")
+        ),
+    ],
+)
 def test_a_null_ledger_entry_never_lets_a_different_card_be_signed_at_that_seq(tmp_path, bad):
     """Round 9, equivocation: the ledger holds ``null`` (or a malformed entry) at card_seq 10; a request for a card at
     seq 10 is refused (StateError), no signature is made, and the ledger on disk is unchanged."""

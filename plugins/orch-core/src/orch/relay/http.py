@@ -295,6 +295,24 @@ class RelayConn:
         if self.proxy is not None:
             conn.set_tunnel(self.host, self.port)
         conn._create_connection = self._socket  # type: ignore[attr-defined]  # keep a dup for the watchdog
+        established = conn.connect
+
+        def connect() -> None:
+            # TCP, then the proxy tunnel (CONNECT) and the TLS handshake: recheck the clock once all of it is done and
+            # before the first request byte (round 10, R9-2), so a slow tunnel or handshake with a late watchdog
+            # cannot send past the deadline
+            established()
+            self._check_after_connect()
+
+        conn.connect = connect  # type: ignore[method-assign]
+        if self.proxy is not None:
+            tunnel = conn._tunnel  # type: ignore[attr-defined]
+
+            def tunnelled() -> None:  # and right after the tunnel, before the TLS ClientHello goes through it
+                tunnel()
+                self._check_after_connect()
+
+            conn._tunnel = tunnelled  # type: ignore[attr-defined]
         return conn
 
     # -- one call -----------------------------------------------------------------------------------------------

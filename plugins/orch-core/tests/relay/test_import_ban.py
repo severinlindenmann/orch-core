@@ -116,6 +116,7 @@ INTROSPECTION = {
 # (module file, private attribute on a non-self object) -> reason
 ALLOWED = {
     ("http.py", "_create_connection"): "http.client's hook that creates the socket; the deadline watchdog needs it",
+    ("http.py", "_tunnel"): "http.client's proxy CONNECT step; the deadline is rechecked right after it (round 10)",
 }
 
 

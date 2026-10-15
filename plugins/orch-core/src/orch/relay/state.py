@@ -51,6 +51,10 @@ log = logging.getLogger("orch.relay.state")
 MAX_FILE = 1 << 20
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _KEY = re.compile(r"[a-z0-9_.:-]{1,64}")
+# per-kind key rule of the sign ledger, on top of _KEY: a card is keyed by str(card_seq), the canonical decimal (round
+# 10, R9-1). "010", " 10", "+10", "1_0" or a fullwidth digit would be int()-equal to a seq yet missed by the exact
+# lookup, so a different card could be signed at that seq; the reader accepts only what record() writes.
+_LEDGER_KEY = {"card": re.compile(r"0|[1-9][0-9]*")}
 
 
 class StateError(Exception):
@@ -341,6 +345,12 @@ class StateDir:
 os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
+def _ledger_key_ok(kind: str, key: str) -> bool:
+    """``key`` matches ``_KEY`` and its kind's own rule (``card``: canonical decimal, ASCII digits only)."""
+    rule = _LEDGER_KEY.get(kind)
+    return bool(_KEY.fullmatch(key)) and (rule is None or bool(rule.fullmatch(key)))
+
+
 class FileSignLedger:
     """``sign-ledger.json``: ``{kind: {key: {"digest", "sig"}}}``, rewritten atomically on every record."""
 
@@ -351,16 +361,19 @@ class FileSignLedger:
 
     def _load(self) -> dict[str, dict[str, dict[str, str]]]:
         """The whole ledger, every kind and entry type-checked: a ``null`` or malformed kind or entry (``{"card":
-        {"10": null}}``, ``{"card": []}``, a non-string digest or sig) is a StateError, never "nothing signed",
-        so a different card can never be signed at that seq (round 9, fail closed)."""
+        {"10": null}}``, ``{"card": []}``, a non-string digest or sig, a kind or key ``record`` would never write,
+        such as card ``"010"``) is a StateError, never "nothing signed", so a different card can never be signed at
+        that seq (rounds 9 and 10, fail closed)."""
         obj = self._s.read_json(self.FILE)
         if obj is None:
             return {}
         if type(obj) is not dict:
             raise StateError("sign ledger shape")
-        for entries in obj.values():
+        for kind, entries in obj.items():
             if type(entries) is not dict:
                 raise StateError("sign ledger shape")
+            if not _KEY.fullmatch(kind) or any(not _ledger_key_ok(kind, k) for k in entries):
+                raise StateError("sign ledger key")
             for e in entries.values():
                 if type(e) is not dict or type(e.get("digest")) is not str or type(e.get("sig")) is not str:
                     raise StateError("sign ledger entry")
@@ -376,7 +389,7 @@ class FileSignLedger:
         return sorted(self._load().get(kind, {}))
 
     def record(self, kind: str, key: str, digest: str, sig: str) -> None:
-        if not _KEY.fullmatch(kind) or not _KEY.fullmatch(key):
+        if not _KEY.fullmatch(kind) or not _ledger_key_ok(kind, key):
             raise StateError("sign ledger key")
         with self._s.lock:
             obj = self._load()

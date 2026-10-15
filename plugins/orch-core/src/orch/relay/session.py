@@ -88,6 +88,12 @@ class TakeoverRefused(Fenced):
     takeover."""
 
 
+class _Refusal(Exception):  # noqa: N818 - internal: a preflight refusal recorded under the lock, alarmed after it
+    def __init__(self, why: str) -> None:
+        super().__init__(why)
+        self.why = why
+
+
 class RelayMisbehaving(SessionError):
     """A success answer that is malformed or contradicts what was sent (alarm ``relay_misbehaving``)."""
 
@@ -125,8 +131,9 @@ class Session:
         self._mono, self._sleep, self._stop = mono, sleep, stop
         self._login_lock = threading.Lock()
         # serialises preflight() (round 9): a passing run cannot set _checked after another thread's StateError. A leaf
-        # lock: preflight does no network I/O and takes no other Session lock; reentrant so an alarm sink that calls
-        # back into this Session (refused by then) cannot deadlock it
+        # lock: preflight does no network I/O and takes no other Session lock, and raises its alarm only after
+        # releasing it (round 10). Reentrant so a same-thread re-entry (a signal handler, or a holder store calling
+        # back into this Session) cannot deadlock it
         self._preflight_lock = threading.RLock()
         self._token: str | None = None
         self._relogin_at = 0.0
@@ -397,31 +404,42 @@ class Session:
         with self._preflight_lock:
             if self._refused is not None:
                 raise TakeoverRefused(self._refused)
-            # Not passed until this run passes (round 8, R7-2): a StateError raised now, after an earlier pass, makes
-            # every later call run the preflight again, and fail again while the state stays unreadable.
-            self._checked = False
-            why = self._holder.binding_problem()
+            try:
+                return self._preflight_checks()
+            except _Refusal as r:
+                why = r.why
+        # the alarm is raised after the lock is released (round 10, R9-3): a sink that hands work to another thread
+        # using this Session, and waits for it, does not block on the lock. The refusal is already recorded.
+        self._alarm("relay_takeover_refused", why)
+        raise TakeoverRefused(why)
+
+    def _preflight_checks(self) -> HolderRecord | None:
+        """The body of :meth:`preflight`, run under ``_preflight_lock``; a failure raises :class:`_Refusal`."""
+        # Not passed until this run passes (round 8, R7-2): a StateError raised now, after an earlier pass, makes
+        # every later call run the preflight again, and fail again while the state stays unreadable.
+        self._checked = False
+        why = self._holder.binding_problem()
+        if why is not None:
+            self._refuse_locked(f"{why}; confirm with `orch host relay takeover`")
+        rec = self._holder.load()
+        if rec is None:
+            why = self._holder.history_problem()
             if why is not None:
-                self._refuse(f"{why}; confirm with `orch host relay takeover`")
-            rec = self._holder.load()
-            if rec is None:
-                why = self._holder.history_problem()
-                if why is not None:
-                    self._refuse(f"{why}; recover with `orch host relay takeover`")
-            else:
-                if rec.pending is not None:
-                    self._refuse("pending takeover record: possibly our own interrupted takeover; confirm with "
-                                     "`orch host relay takeover`")  # fmt: skip
-                if not rec.last_holder:
-                    self._refuse("(a) holder.json does not say this state directory was the last holder")
-                if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
-                    self._refuse(
-                        "(b) holder.json was written under another instance id (a restored or copied state directory)"
-                    )
-                if rec.gen is None:
-                    self._refuse("no stored gen to check the takeover against")
-            self._checked = True
-            return rec
+                self._refuse_locked(f"{why}; recover with `orch host relay takeover`")
+        else:
+            if rec.pending is not None:
+                self._refuse_locked("pending takeover record: possibly our own interrupted takeover; confirm with "
+                                    "`orch host relay takeover`")  # fmt: skip
+            if not rec.last_holder:
+                self._refuse_locked("(a) holder.json does not say this state directory was the last holder")
+            if not wire.ct_equal(rec.instance_id.encode(), self._holder.instance_id().encode()):
+                self._refuse_locked(
+                    "(b) holder.json was written under another instance id (a restored or copied state directory)"
+                )
+            if rec.gen is None:
+                self._refuse_locked("no stored gen to check the takeover against")
+        self._checked = True
+        return rec
 
     def operator_takeover(self, *, deadline_s: float = SMALL_DEADLINE_S) -> Hold:
         """The explicit operator takeover (R5 wires it to ``orch host relay takeover``): ``take_over: true``, then the
@@ -439,6 +457,12 @@ class Session:
         self._holder.save(HolderRecord(True, got.gen, self._holder.instance_id(), None))
         self._gen, self._fenced = got.gen, False
         return got
+
+    def _refuse_locked(self, why: str) -> None:
+        """Record the refusal under ``_preflight_lock``; :meth:`preflight` alarms once the lock is released."""
+        self._fenced = True
+        self._refused = why
+        raise _Refusal(why)
 
     def _refuse(self, why: str) -> None:
         self._fenced = True

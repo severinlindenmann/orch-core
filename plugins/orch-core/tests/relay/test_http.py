@@ -728,3 +728,92 @@ def test_a_deadline_passed_during_connect_sends_no_byte_even_if_the_watchdog_is_
     finally:
         peer.close()
     assert got == b"", got
+
+
+# -- round 10 (R9-2): the clock is rechecked after the TLS handshake and the proxy tunnel; connect errors past the
+# deadline stop the address loop ------------------------------------------------------------------------------------
+
+
+def test_a_deadline_passed_during_the_tls_handshake_sends_no_request_byte(tls_relay):
+    """The injected clock passes the deadline inside the TLS handshake (the watchdog, a real 30 s timer, has not
+    fired): the recheck after the handshake fails the call as a deadline, and the relay sees no request."""
+    now = [100.0]
+
+    class SlowHandshake(ssl.SSLContext):
+        def wrap_socket(self, *a, **kw):
+            s = super().wrap_socket(*a, **kw)
+            now[0] += 60
+            return s
+
+    def factory(**kw):
+        ctx = SlowHandshake(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.load_verify_locations(cafile=kw["cafile"])
+        return ctx
+
+    c = http.RelayConn(
+        tls_relay.origin("localhost"), ca_file=str(tls_relay.ca_file), mono=lambda: now[0], context_factory=factory
+    )
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=30)
+    assert e.value.kind == "deadline"
+    assert tls_relay.seen == []
+
+
+def test_a_deadline_passed_during_the_proxy_tunnel_sends_nothing_through_it(listener):
+    """The clock passes the deadline while the proxy answers CONNECT: the recheck right after the tunnel fails the call
+    before the TLS ClientHello (let alone a request byte) goes through it; the proxy gets only the CONNECT."""
+    now = [100.0]
+    got: dict = {}
+
+    def proxy():
+        peer, _ = listener.accept()
+        peer.settimeout(5)
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            buf += peer.recv(4096)
+        got["connect"] = buf
+        now[0] += 60
+        peer.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        try:
+            got["after"] = peer.recv(65536)
+        except (ConnectionResetError, TimeoutError):
+            got["after"] = b""
+        peer.close()
+
+    t = threading.Thread(target=proxy, daemon=True)
+    t.start()
+    c = http.RelayConn("https://relay.example", proxy=f"127.0.0.1:{listener.getsockname()[1]}", mono=lambda: now[0])
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=30)
+    t.join(5)
+    assert e.value.kind == "deadline"
+    assert got["connect"].startswith(b"CONNECT relay.example:443 ")
+    assert got["after"] == b"", got
+
+
+def test_a_connect_error_past_the_deadline_tries_no_further_address(listener):
+    """Two addresses; the first is refused while the clock passes the deadline: only that one is tried, the call fails
+    as a deadline, and the second (a live listener) never sees a connection."""
+    import socket
+
+    now = [100.0]
+    dead = ("127.0.0.1", 9)
+    tried: list = []
+
+    def resolve(host, port, *a, **kw):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", sa) for sa in (dead, listener.getsockname())]
+
+    class RefusedLate(http.RelayConn):
+        def _connect(self, sock, sa):
+            tried.append(sa)
+            if sa == dead:
+                now[0] += 60
+                raise ConnectionRefusedError("refused")
+            sock.connect(sa)
+
+    c = RefusedLate("http://localhost:1", mono=lambda: now[0], resolve=resolve)
+    with pytest.raises(http.TransportError) as e:
+        call(c, deadline_s=30)
+    assert e.value.kind == "deadline"
+    assert tried == [dead]
+    assert not _accepted(listener)

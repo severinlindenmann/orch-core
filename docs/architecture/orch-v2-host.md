@@ -5700,10 +5700,7 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   - **R6c:** the `relay.pair_device` source registration (the hook that lets the outcome reconciler roll a pending
     pairing forward) must be registered in `WorkspaceService.open` **before** `human.recover` (`host/workspace.py`, the
     `recover(self)` call); the relay starter runs at the end of `open`, too late for it.
-  - **H12d-3:** `link_reservation(…, relay_level=)` has its natural slot in the guard closure that `reserve_link`
-    passes to `store.relay_link` (`host/relayhook.py`, `guard=lambda: link_reservation(service)`).
-  - **Rebase dependency: #555** (H12d-3, orch-52, in review) changes `observe_relay_level` to take `origin=` (the
-    session's link origin) and adds the `relay-link.lock` handling; R5 rebases onto it when it merges.
+  - **H12d-3:** wired in round 6 (below).
 - **Mutation pass, round 4:** 9 mutants (no fsync between the archive and the unlink, the old fsync order, the unlink
   before the archive, the same-file reuse removed or disabled, no marker in recovery, the marker only in the rename
   branch, the intent cleared before the rename, no fsync after the unlink): 8 killed; the last is equivalent
@@ -5733,6 +5730,21 @@ transport is not a seam: production always uses `RelayConn` with `link.json`'s `
   now gets `none` from the re-entrant lock instead of deadlocking, and `_take_slot` still prevents a second worker of
   the workspace; if both `stopped.json` and `unlink-intent.json` are deleted by hand, the relay serves again once the
   gate is open (operator action on the state directory, as with any marker).
+
+**Round 6 (15 Oct 2026): the H12d-3 wiring (#555, merged).**
+- **Link step 1.** `relayhook.link_step1(service, origin=, max_publication_bytes=, ca_file=, proxy=)` reads
+  `info = fetch_relay_info(conn)` on the caller's thread (network I/O never runs on the workspace's worker thread),
+  then runs `reserve_link(…, relay_level=info.reader)` as a worker job, whose guard is
+  `lambda: relaylink.link_reservation(service, relay_level=relay_level)`: the reservation is refused
+  (`sign.convenience_readers`) for a relay whose level is below the workspace's required reader level, and the level
+  is stored with the link. Still not exposed as a control op (the reservation is permanent; see above).
+- **Every login.** The starter builds the one `Session` with `relay_info=observe`, where `observe(level)` calls
+  `relaylink.observe_relay_level(state_dir, ws, host_uid, level, alarms, origin=origin)` with the origin exactly as
+  `link.json` stored it when the worker started: a login of a former relay after a relink, or a `link.json` that names
+  another origin, writes nothing. The session never fails a login on the hook (#555 F5).
+- **Lock order (whole R5 path):** `relay_cond` → the workspace store lock → `relay-link.lock` (the reservation's guard
+  and the observer) → R6's seal lock → the `RidStore` lock. The observer takes only `relay-link.lock` (a leaf: no store
+  lock, no `relay_cond`), so it never waits for a holder of either (test). The stored level survives a restart (test).
 
 **Design inconsistencies found (15 Oct 2026).**
 - 11A.4 "The hook" says `open` ends with `relay.worker.start(service)`; H12a built a starter under `relay_lock`

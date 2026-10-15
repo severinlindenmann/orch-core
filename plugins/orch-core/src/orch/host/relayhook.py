@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Seams",
     "convenience_block",
+    "link_step1",
     "make_starter",
     "relay_state_path",
     "reserve_link",
@@ -229,6 +230,7 @@ def start_worker(
     from orch.relay.state import FileHolderStore, FileSignLedger, StateDir
     from orch.store import BackendSigner
 
+    from . import relaylink
     from .relayentry import RelayEntry
 
     if not relay_worker.r6_ready():  # the host checked it (start_blocker); checked again before anything is opened
@@ -272,7 +274,13 @@ def start_worker(
                 return transport(origin, link)
             return http.RelayConn(origin, ca_file=link.get("ca_file"), proxy=link.get("proxy"))
 
-        session = Session(conn(), signer, holder=FileHolderStore(state), alarm=alarms, stop=stop)
+        def observe(level: int) -> None:
+            # H12d-3 9.8: every login re-reads the relay's reader level; stored only while link.json still names THIS
+            # origin, exactly as link.json stores it (#555 F2), under relay-link.lock (a leaf lock: no store lock,
+            # no relay_cond; it runs on a relay thread under the session's login lock)
+            relaylink.observe_relay_level(service.state_dir, ws, service.host_uid, level, alarms, origin=origin)
+
+        session = Session(conn(), signer, holder=FileHolderStore(state), alarm=alarms, stop=stop, relay_info=observe)
 
         holder: dict[str, RelayWorker] = {}
 
@@ -360,11 +368,14 @@ def reserve_link(
     max_publication_bytes: int,
     ca_file: str | None = None,
     proxy: str | None = None,
+    relay_level: int | None = None,
 ) -> dict[str, Any]:
     """11A.5 step 1, on the worker thread: ``link.json`` (state ``linking``) through ``store.relay_link`` with
     :func:`orch.host.relaylink.link_reservation` as the guard: the store lock, then the host-wide lock, then the
-    ``sign.convenience_readers`` and ``host.limit`` refusals, held across the write; ``relay.link_exists`` for an
-    existing link. Returns the record written. Nothing is sent: the network steps run in the worker."""
+    ``sign.convenience_readers`` refusal against ``relay_level`` (the relay's reader level from ``GET
+    /v2/relay-info``, read by :func:`link_step1` before this job; ``None``: not read, counts as 0) and ``host.limit``,
+    held across the write; ``relay.link_exists`` for an existing link. Returns the record written. Nothing is sent
+    from here."""
     from orch.relay import wire
 
     from .relaylink import link_reservation
@@ -386,8 +397,35 @@ def reserve_link(
         link["ca_file"] = ca_file
     if proxy is not None:
         link["proxy"] = proxy
-    store.relay_link(link, guard=lambda: link_reservation(service))
+    store.relay_link(link, guard=lambda: link_reservation(service, relay_level=relay_level))
     return {**link, "state": "linking"}
+
+
+def link_step1(
+    service: WorkspaceService,
+    *,
+    origin: str,
+    max_publication_bytes: int,
+    ca_file: str | None = None,
+    proxy: str | None = None,
+    transport: Callable[[str, Mapping[str, Any]], Any] | None = None,
+) -> dict[str, Any]:
+    """11A.5 step 1 with H12d-3 (§0.8.6 item 9.8): ``info = fetch_relay_info(conn)`` on the CALLER's thread (never the
+    workspace's worker thread: it is network I/O), then :func:`reserve_link` as a worker job with
+    ``relay_level=info.reader``. ``transport`` is for tests only. Not exposed as a control op yet (11A.4 "As built
+    in R5")."""
+    from orch.relay import http
+    from orch.relay.session import fetch_relay_info
+
+    link = {"origin": origin, "ca_file": ca_file, "proxy": proxy}
+    conn = transport(origin, link) if transport is not None else http.RelayConn(origin, ca_file=ca_file, proxy=proxy)
+    info = fetch_relay_info(conn)
+    return service.submit(
+        lambda: reserve_link(
+            service, origin=origin, max_publication_bytes=max_publication_bytes, ca_file=ca_file, proxy=proxy,
+            relay_level=info.reader,
+        )
+    ).result(timeout=60)  # fmt: skip
 
 
 # -- unlink (11A.6: the reservation is permanent) ---------------------------------------------------------------------

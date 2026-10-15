@@ -1140,3 +1140,128 @@ def test_an_unserved_relay_start_never_clears_the_marker_under_an_intent(served)
         services[served.wid] = held
     assert res["ok"] is False and res["error"]["code"] == "lock.busy"
     assert relaylink.is_stopped(svc.state_dir, served.wid, UID)
+
+
+# -- round 6: H12d-3 (#555) wiring ------------------------------------------------------------------------------------
+
+
+def test_link_step1_reads_relay_info_off_the_worker_and_the_reservation_gets_its_level(served, monkeypatch):  # noqa: F811
+    from orch.relay import session as relay_session
+    from orch.relay.session import RelayInfo
+    from orch.store.readerrecs import read_relay_level
+
+    svc = served.service
+    seen: list[str] = []
+    levels: list[Any] = []
+
+    def fetch(conn, **kw):
+        seen.append(threading.current_thread().name)
+        return RelayInfo(1, None)
+
+    real = relaylink.link_reservation
+
+    def reservation(service, **kw):
+        levels.append(kw.get("relay_level"))
+        return real(service, **kw)
+
+    monkeypatch.setattr(relay_session, "fetch_relay_info", fetch)
+    monkeypatch.setattr(relaylink, "link_reservation", reservation)
+    rec = relayhook.link_step1(svc, origin="https://r.example", max_publication_bytes=MIB4,
+                               transport=lambda o, lk: object())  # fmt: skip
+    assert rec["state"] == "linking" and levels == [1]
+    assert seen and not seen[0].startswith("orch-ws-")  # the network read is never on the worker thread
+    assert read_relay_level(svc.state_dir, served.wid, UID) == 1
+
+
+def test_link_step1_with_a_level_zero_relay_is_refused_under_convenience(served, monkeypatch):  # noqa: F811
+    from orch.host import convenience
+    from orch.relay import session as relay_session
+    from orch.relay.session import RelayInfo
+
+    svc = served.service
+    convenience.set_enabled(svc.state_dir, served.wid, True, UID)
+    monkeypatch.setattr(relay_session, "fetch_relay_info", lambda conn, **kw: RelayInfo(0, None))
+    with pytest.raises(HostError) as e:
+        relayhook.link_step1(svc, origin="https://r.example", max_publication_bytes=MIB4,
+                             transport=lambda o, lk: object())  # fmt: skip
+    assert e.value.code == "sign.convenience_readers"
+    assert not relaylink.link_path(svc.state_dir, served.wid).exists()
+
+
+def test_the_session_observer_is_bound_to_the_exact_stored_origin(served, loopback, monkeypatch):  # noqa: F811
+    """Every login re-reads the reader level; the hook writes only while link.json names the origin exactly as it was
+    stored when the worker started (a changed origin, a relink: no write)."""
+    from orch.host.custody import read_json, write_private
+    from orch.relay import session as relay_session
+    from orch.store.readerrecs import read_relay_level
+
+    svc = served.service
+    hooks: list[Any] = []
+    real = relay_session.Session
+
+    class Spy(real):  # type: ignore[misc, valid-type]
+        def __init__(self, *a, **kw):
+            hooks.append(kw.get("relay_info"))
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr(relay_session, "Session", Spy)
+    assert svc.relay_start() == "started"
+    assert _wait(lambda: loopback["sim"].polls >= 1)
+    (hook,) = hooks
+    assert callable(hook)
+    hook(1)
+    assert read_relay_level(svc.state_dir, served.wid, UID) == 1
+    path = relaylink.link_path(svc.state_dir, served.wid)
+    link = read_json(path, UID)
+    write_private(path, {**link, "origin": link["origin"] + "/"})  # not the stored origin any more
+    hook(0)
+    assert read_relay_level(svc.state_dir, served.wid, UID) == 1  # nothing written for another origin
+    write_private(path, link)
+    assert svc.relay_stop() == "stopped"
+
+
+def test_the_observer_takes_only_the_relay_link_lock_never_the_store_lock_or_relay_cond(served):  # noqa: F811
+    """Lock order: relay_cond -> store lock -> relay-link.lock (the reservation's guard); the observer, on a relay
+    thread under the session's login lock, takes only relay-link.lock (a leaf), so it never waits for a holder of
+    relay_cond or the store lock."""
+    from orch.store.readerrecs import read_relay_level
+
+    svc = served.service
+    _reserve(served)
+    origin = "https://relay.example"
+    held, release = threading.Event(), threading.Event()
+
+    def holder():
+        with svc.relay_cond, svc.store.locked():
+            held.set()
+            release.wait(10)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert held.wait(5)
+    done: list[bool] = []
+
+    def observe() -> None:
+        done.append(relaylink.observe_relay_level(svc.state_dir, served.wid, UID, 1, lambda c, d: None, origin=origin))
+
+    obs = threading.Thread(target=observe)
+    obs.start()
+    obs.join(3)
+    release.set()
+    t.join(5)
+    assert done == [False] and read_relay_level(svc.state_dir, served.wid, UID) == 1
+
+
+def test_a_restart_keeps_the_observed_level(host_lab):
+    from orch.store.readerrecs import read_relay_level
+
+    hl = host_lab
+    with hl.host() as h, h.client() as c:
+        wid = ok(hl.register(c))["data"]["workspace_id"]
+        svc = h.host.services[wid]
+        svc.submit(lambda: relayhook.reserve_link(svc, origin="https://r.example", max_publication_bytes=MIB4,
+                                                  relay_level=1)).result(30)  # fmt: skip
+        relaylink.observe_relay_level(hl.state, wid, UID, 2, lambda c, d: None, origin="https://r.example")
+        assert read_relay_level(hl.state, wid, UID) == 2
+    with hl.host():
+        assert read_relay_level(hl.state, wid, UID) == 2

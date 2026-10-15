@@ -5,7 +5,7 @@ from typing import Any
 from orch.ops._dsl import INT, STR, B, arr, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Call, Workspace, _config
+from orch.ops.runtime import Call, Workspace
 
 _SHOWN = 20
 
@@ -28,7 +28,8 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
             store=c.store, sees=c.sees,
         )  # fmt: skip
         return _result(found, lines)
-    cfg = _config(root, ctx.caps.files)
+    cfg = ws.config  # as discovery read it; then the root must still be the directory found
+    root = ws.verify_root()
     if cfg is None:
         raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
     wid = cfg["workspace"]["id"]

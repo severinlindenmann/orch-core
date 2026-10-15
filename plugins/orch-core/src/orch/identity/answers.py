@@ -14,8 +14,7 @@ import re
 
 from orch import canon, crypto
 
-from . import _mint
-from .certreq import CertChallenge, CertRejection
+from .certreq import CertChallenge, CertRejection, require_minted
 from .pairing import _MAX_SAFE_INT, MAX_EPOCH, _bad, _pub, _raw, clean_label
 
 __all__ = [
@@ -90,7 +89,7 @@ def answer_cert_pending(wsk_pub: bytes, *, primary_label: str, pk_pub: bytes, ch
         raise _bad("primary_label")
     pk = _pub(pk_pub, "pk_pub")
     if challenge is not None:
-        _mint.check(challenge, CertChallenge)
+        require_minted(challenge, CertChallenge)
         if challenge.pk_pub != pk:
             raise _bad("challenge: a CertChallenge verified under pk_pub")
     return {
@@ -158,7 +157,7 @@ def answer_rejected_short(wsk_pub: bytes) -> dict:
 def answer_rejected_long(wsk_pub: bytes, *, rejection: CertRejection) -> dict:
     """``{"state":"rejected", "wsk_pub", "pk_pub", "rejection"}`` (G3b): the primary's PK-signed ``cert_rejection`` as
     a :class:`CertRejection` (11A.15.6 7d), relayed unchanged with the ``PK`` it was verified under."""
-    _mint.check(rejection, CertRejection)
+    require_minted(rejection, CertRejection)
     return {
         "state": "rejected",
         "wsk_pub": _wsk(wsk_pub),

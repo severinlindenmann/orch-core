@@ -70,6 +70,9 @@ class FileBackend:
             raise CustodyError("a file-tier key never signs person events or person-key objects")
         return crypto.sign(self._load(key_id), payload)
 
+    def unseal(self, key_id: str, purpose: str, object_id: bytes, epoch: int, extra: bytes, sealed: bytes) -> bytes:
+        raise CustodyError("the file tier holds no key-exchange key")
+
     def presence(self) -> str:
         return self.auth or "none"
 

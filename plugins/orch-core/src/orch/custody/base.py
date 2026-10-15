@@ -31,7 +31,10 @@ from orch.crypto import labels
 __all__ = [
     "AUTH_VALUES",
     "HOST_LABELS",
+    "KX_PURPOSES",
+    "KX_PURPOSE_RULES",
     "PERSON_KEY_LABELS",
+    "PRIMARY_SIG_LABELS",
     "PERSON_LABELS",
     "DEVICE_KEY_LABELS",
     "ROLE_LABELS",
@@ -147,11 +150,25 @@ HOST_LABELS: tuple[bytes, ...] = (  # WSK: host events and workspace-signed obje
     _p("sig_relay_auth"),
     _p("sig_drop_object"),
 )
+PRIMARY_SIG_LABELS: tuple[bytes, ...] = (_p("sig_relay_auth"),)
+"""The primary's ``dk_sig`` (orch-v2-host 11A.15.1): it only logs in to the relay as the account's device (protocol
+§12.2, ``POST /v2/accounts``, ``PUT /v2/devices``). The primary is never an F1 member, so it signs no person event,
+decision or bridge request; certificates, challenges and rejections are ``PK``'s (``PERSON_KEY_LABELS``)."""
 ROLE_LABELS: dict[str, tuple[bytes, ...]] = {
     "person": PERSON_KEY_LABELS,
     "device": DEVICE_KEY_LABELS,
     "workspace": HOST_LABELS,
+    "primary": PRIMARY_SIG_LABELS,
+    "kx": (),  # a key-exchange key signs nothing; a signing key never does ECDH (11A.15.1)
 }
+
+KX_PURPOSES: tuple[str, ...] = ("cert-request",)
+"""The seal purposes (protocol §5.3) a custody ``kx`` key may hold, fixed per key at creation in its authenticated
+header. v1.7 has one ``kx`` key, the primary's, and it opens cert requests only (11A.15.1, C2): never ``wk``,
+``card`` or ``ws-envelope`` (the primary is never a member). A new purpose is added here with its own rule below."""
+KX_PURPOSE_RULES: dict[str, tuple[int, bytes]] = {"cert-request": (0, b"")}
+"""Per purpose, the only ``(epoch, extra_aad)`` an unseal accepts: a cert request is sealed at epoch 0 with no extra
+AAD (protocol §8.4 step 1)."""
 PERSON_LABELS = PERSON_KEY_LABELS + DEVICE_KEY_LABELS  # every label a human-factor key may sign (either role)
 
 
@@ -181,6 +198,12 @@ class Backend(Protocol):
 
     def presence(self) -> str:
         """The factor a signature needs: always ``auth`` if it is set, else ``"none"`` (the file tier)."""
+
+    def unseal(self, key_id: str, purpose: str, object_id: bytes, epoch: int, extra: bytes, sealed: bytes) -> bytes:
+        """Open ``sealed`` (protocol §5.3) with the ``kx`` key ``key_id``, to the recipient fixed in its file. Refuses
+        (:class:`CustodyError`, before any prompt) a key that is not ``kx``, a ``purpose`` the key does not hold, and
+        an ``(epoch, extra)`` the purpose does not allow; a blob that does not open raises
+        :class:`cryptography.exceptions.InvalidTag`. Backends without ``kx`` keys refuse every call."""
 
     def exists(self, key_id: str) -> bool: ...
 

@@ -3944,6 +3944,17 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     built yet, so they are `null`/`false` until then. Which members and devices a viewer gets is unchanged; `label` is
     `null` for G and N (persons only, orch-52). `read_ext/3` lists `read_ext/1` and `read_ext/2`
     too. No F1, schema or op version change.
+48. **Primary key custody and minted cert requests (H12c-c, §11A.15.10 item 9, #501; the number may be renumbered when
+    a parallel change lands first):** the custody roles `primary` (signs `sig_relay_auth` only) and `kx` (purposes and
+    recipient in the authenticated header; `cert-request` only, epoch 0); `Backend.unseal`; the one-command unlock
+    `PassphraseBackend.primary_unlocked` and `orch.custody.primary` (`init`, `load`, `status`, `unlocked`,
+    `cert_request_unseal`, `backend_cert_request_unseal`; passphrase custody only, convenience refused with
+    `sign.convenience_unavailable`, reason `primary`); `orch keys primary init|status`. `CertRequest` and `CertInner`
+    are minted (the inner carries its `request_id`); `make_cert_challenge(pk_pub, sign, request, inner, nonce)` and
+    `make_cert_rejection(pk_pub, sign, request)` take them and refuse an inner from another request; a boundary test
+    keeps `_mint` to `wscard.py` and `certreq.py`; `create` refuses `primary` and `kx` keys
+    (only `create_primary` makes them). Details: §11A.15.10 "As built in H12c-c". No wire, hash,
+    contract or schema change; existing key files keep their shape.
 
 49. **Reader records, invariant I, `reader.declare`/`reader.list`, `signer` in the views (H12d-2, §0.8.6 item 9 "As
     built in H12d-2"; the number may be renumbered when a parallel change lands first):** `member.add` takes
@@ -7129,6 +7140,52 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   `orch.relay.wire`, which must therefore **stay import-light** (no I/O, no threads, no heavy imports at module level);
   a test pins it (`relay_wire_stays_import_light`, N9).
 - **R6 TODO:** `tests/relay/test_coverage.py` still lists `wk_commit` as an R6 item; update it when #476 merges.
+
+**As built in H12c-c (item 9, 15 Oct 2026).**
+- **Key types.** The passphrase backend holds two more roles: `primary` (the primary's `dk_sig`; signs
+  `PRIMARY_SIG_LABELS` = `sig_relay_auth` only, since the primary is never an F1 member) and `kx` (a key-exchange
+  key; signs nothing). A `kx` file carries `purposes` and `recipient` (the 16-byte device id the seals name) in the
+  authenticated header (the AEAD's AAD), so a changed purpose or recipient never opens. `KX_PURPOSES` is
+  `["cert-request"]` in v1.7, and `KX_PURPOSE_RULES` fixes it to epoch 0 with no extra AAD. `kx` and `primary` keys
+  are generated in custody, never imported, never exported for a custody change; the public `create` refuses
+  them, so only `create_primary` makes them (one prompt, recipient = the pair's device id). `unlocked` (the importer's batch)
+  now needs a `device` key. Files of the existing roles keep their exact shape.
+- **`Backend.unseal(key_id, purpose, object_id, epoch, extra, sealed) -> bytes`.** The passphrase backend checks
+  the role, purpose, epoch and extra AAD **before** the prompt (kind `unseal`, one prompt per call). A blob that does
+  not open raises `InvalidTag`; a wrong passphrase raises `custody.wrong_passphrase`. The file, convenience and
+  planned backends refuse every call.
+- **One-command unlock.** `PassphraseBackend.primary_unlocked(sig_key_id, kx_key_id, *, action, fields)` asks one
+  passphrase (kind `primary`; the prompt says it may log in to the relay and open cert requests until the command
+  ends, and signs nothing else). Both files must be a pair: the `kx` recipient is the signing key's device id. It
+  yields a `PrimarySession` (`device_id`, `dk_sig_pub`, `dk_kx_pub`, `sign`, `unseal`) whose capabilities are dropped
+  and whose scalars are zeroised when the block ends; core dumps and debugger attach are off as for the batch. Only
+  `orch/custody/primary.py` calls it (a test pins this).
+- **`orch.custody.primary`.** The pair is stored in `<person state>/person/primary/keys/` (`primary-sig`,
+  `primary-kx`; 0700 directories checked as convenience custody's, files 0600) under one passphrase. `init` writes
+  both into a private temporary directory and renames it into place, so it is all or nothing; it first removes
+  `.keys.tmp<pid>.<8 hex>` directories an interrupted init left (that name only, a real directory by `lstat`, owned
+  by this user, and not of a live other process: a concurrent init keeps its directory and the loser gets
+  `KeyExists`; a folder changed mid-sweep is a `CustodyError`). When the passphrase opens the signing key but not the kx key, the unlock reports damaged files, not
+  a wrong passphrase. Any custody but
+  passphrase is refused with `sign.convenience_unavailable`, reason `primary`, and the module reads no environment
+  variable (11A.15.11 N8a). `unlocked(state, action=...)` is the one-command unlock;
+  `cert_request_unseal(session)` is `open_cert_request`'s `unseal(object_id, sealed)` (purpose `cert-request`,
+  epoch 0); `backend_cert_request_unseal(state)` is the same contract through `Backend.unseal`. A custody refusal
+  is a `CustodyError`, which `open_cert_request` does not catch: it is never reported as a malformed request.
+- **CLI.** `orch keys primary init` (human-only, the person's terminal) makes the pair; `orch keys primary status`
+  shows public facts only (device id, both public keys, purposes, custody) and never prompts. **Not yet:**
+  `init`'s `--relay`/`--invite`, the certificate (needs the `PersonKeySource`, item 10), the relay registration
+  (item 11) and `relay.primary_set`. `status` reports `certificate` and `relay` as `null` until they exist.
+- **Minted cert requests (#501, Opus D2-1, D2-2 on #495).** `CertRequest` (from `check_cert_request`) and
+  `CertInner` (from `open_cert_request`, carrying the `request_id` it was opened from) are minted like
+  `VerifiedCard`. `make_cert_challenge(pk_pub, sign, request, inner, primary_nonce)` takes both and refuses, with
+  `not_for_this_device` and before any person-key operation, an inner whose `request_id` or clear binding (offer,
+  attempt, device, `dk_hash`) is not the request's; `make_cert_rejection(pk_pub, sign, request)` takes the minted
+  request. A raw `request_o` or a hand-built inner is `malformed`. `tests/identity/test_mint_boundary.py` (AST over
+  `orch`) refuses any occurrence of the identifier `_mint` (import name or path segment, attribute, name)
+  outside `identity/_mint.py`, `identity/wscard.py` and `identity/certreq.py`, and a `"_mint"` string everywhere
+  (Codex P2 on #512: re-exports and attribute chains through the minting modules). Other consumers re-check a minted
+  type with `certreq.require_minted(obj, cls)` (`answers.py`).
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 

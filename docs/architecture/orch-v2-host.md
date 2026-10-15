@@ -446,6 +446,9 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
+| `event.expired` | 3 | no | stays | `relay.submit`: the event id's ULID time is outside [host now − 900 s, host now + 300 s] at job time (§11A.14 P6; H12e `admission.check_window`). Definite, nothing landed (class C-review) | — |
+| `event.abandoned` | 3 | no | stays | `relay.submit`: a restore abandoned the event with this id (in the replayed log's ids, not in its lines; §11A.14 L3; H12e `admission.dedup`). Class C-review | — |
+| `ticket.key_not_next` | 3 | no | stays | `relay.submit` of a `ticket.created` whose `key` is not exactly the store's next key (§11A.14 L5; H12e `admission.check_target`); `detail.next_key` is advisory, never a reservation. Class C-auto | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
 drops. The host never sends it.

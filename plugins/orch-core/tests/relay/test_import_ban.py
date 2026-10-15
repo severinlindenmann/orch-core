@@ -113,6 +113,13 @@ INTROSPECTION = {
     "__getstate__", "__reduce__", "__reduce_ex__", "__loader__", "__spec__", "__defaults__", "__kwdefaults__",
     "__wrapped__", "sys",
 }  # fmt: skip
+# R6a (11A.15.3): the one place in orch.relay that draws a key pair is R6's key custody, for WXK (an exchange key
+# for the card, never a signing key): (module path, crypto entry point) -> reason. Honest limit: the AST cannot tell
+# what the drawn key is used for; the custody code is reviewed, and nothing else in orch.relay may draw one.
+KEYGEN_ALLOWED = {
+    ("r6/keystore.py", "generate_private_key"): "WXK_v is drawn and claimed in keys/wxk-<v>.json (11A.15.5)",
+    ("r6/keystore.py", "private_scalar"): "the WXK private scalar is written to its 0600 key file, nothing else",
+}
 # (module file, private attribute on a non-self object) -> reason
 ALLOWED = {
     ("http.py", "_create_connection"): "http.client's hook that creates the socket; the deadline watchdog needs it",
@@ -196,7 +203,7 @@ def violations(tree: ast.AST, filename: str = "<src>", package: str = PKG_NAME) 
                     out.append(f"from {mod} import {a.name}")
                 if a.name in BANNED_NAMES or _banned_module(full):
                     out.append(f"from {mod} import {a.name}")
-                if _is_crypto(mod) and a.name in CRYPTO_ENTRY:
+                if _is_crypto(mod) and a.name in CRYPTO_ENTRY and (filename, a.name) not in KEYGEN_ALLOWED:
                     out.append(f"from {mod} import {a.name}")
                 if _is_crypto(full):
                     crypto_aliases.add(a.asname or a.name)
@@ -219,7 +226,7 @@ def violations(tree: ast.AST, filename: str = "<src>", package: str = PKG_NAME) 
                 out.append(f"reach .{node.attr}")
             if node.attr in DYNAMIC_CALLS - {"compile"}:  # re.compile is fine; builtins.compile needs builtins
                 out.append(f"dynamic .{node.attr}")
-            if node.attr in CRYPTO_ENTRY:
+            if node.attr in CRYPTO_ENTRY and (filename, node.attr) not in KEYGEN_ALLOWED:
                 v: ast.AST = node.value
                 chain = []
                 while isinstance(v, ast.Attribute):
@@ -815,3 +822,49 @@ def test_r3_measure_is_a_pure_counter():
     names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
     assert names <= {"wire", "segments", "s", "len", "Segment", "tuple", "int"}, names
     assert not any(isinstance(n, ast.Attribute) and n.attr.startswith("_") for n in ast.walk(fn))
+
+
+# -- R6a (11A.15.2, 11A.15.3) ----------------------------------------------------------------------------------------
+
+
+def test_r6_epoch_keys_are_reached_only_through_bridgekeys():
+    """11A.15.2: no call of ``.wk(`` or ``.refusal_key(`` outside ``keys.py`` (``BridgeKeys``), the key store's own
+    definitions excepted (they define, never call, them). Limit: a value alias (``f = src.wk; f(e)``) is not followed
+    (the R6-6 class)."""
+    users = {p.relative_to(PKG).as_posix() for p in MODULES if _calls_to(p, "wk") or _calls_to(p, "refusal_key")}
+    assert users <= {"keys.py"}, users
+
+
+def test_r6_key_store_is_imported_only_inside_r6():
+    """Only ``orch.relay.r6`` imports the key store; R2 and every other relay module reach it only as the
+    ``EpochKeySource`` R5 hands to ``BridgeKeys``."""
+    for p in MODULES:
+        rel = p.relative_to(PKG).as_posix()
+        if rel.startswith("r6/"):
+            continue
+        tree = ast.parse(p.read_text())
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom):
+                mod = resolve_from(n, package_of(p)) or ""
+                assert not (mod == "orch.relay.r6" or mod.startswith("orch.relay.r6.")), rel
+                assert not (mod == "orch.relay" and any(a.name == "r6" for a in n.names)), rel
+            elif isinstance(n, ast.Import):
+                assert not any(a.name.startswith("orch.relay.r6") for a in n.names), rel
+
+
+def test_r6_key_generation_is_allowed_in_the_key_store_only():
+    """The KEYGEN_ALLOWED exception is per file: the same call anywhere else in orch.relay is refused."""
+    src = "from orch import crypto\nk = crypto.generate_private_key()\nd = crypto.private_scalar(k)\n"
+    assert violations(ast.parse(src), "r6/keystore.py") == []
+    assert violations(ast.parse(src), "r6/firstcard.py") != []
+    assert violations(ast.parse(src), "bridge.py") != []
+
+
+def test_r6_never_imports_convenience_or_keychain_custody():
+    """Owner rule Q4 (11A.15.6, 11A.6): the membership keys have no convenience custody; ``orch.custody`` (and so
+    its convenience and keychain backends) is banned in all of orch.relay, r6 included."""
+    for p in MODULES:
+        if p.relative_to(PKG).as_posix().startswith("r6/"):
+            text = p.read_text()
+            assert "convenience" not in _imports(p) and not any("custody" in m for m in _imports(p)), p.name
+            assert "keychain" not in text.lower(), p.name

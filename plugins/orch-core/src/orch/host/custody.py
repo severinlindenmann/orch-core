@@ -197,6 +197,29 @@ def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_u
             item = _lstat_owned(keys / name, host_uid)
             if item is not None and (not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o077):
                 raise unsafe(f"{keys / name}: a key must be a 0600 file")
+
+    # R6a (11A.15.3): every directory under membership/ is a 0700 directory and every file a 0600 regular file (WK,
+    # WXK, CK and S are secrets: refused, never repaired, as the WSK above). Walked to depth 3, so R6c's grants/<e>/,
+    # devices/ and pairing/ (and primary.json, alarms.json) are checked by the same rule when they exist; anything
+    # deeper is refused.
+    def _membership(d: Path, depth: int) -> None:
+        info = _lstat_owned(d, host_uid)
+        if info is None:
+            return
+        if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+            raise unsafe(f"{d}: expected a 0700 directory")
+        for name in os.listdir(d):
+            item = _lstat_owned(d / name, host_uid)
+            if item is None:
+                continue
+            if stat.S_ISDIR(item.st_mode):
+                if depth >= 2:
+                    raise unsafe(f"{d / name}: membership directories nest at most three deep")
+                _membership(d / name, depth + 1)
+            elif not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o077:
+                raise unsafe(f"{d / name}: a membership file must be a 0600 file")
+
+    _membership(hosts / "membership", 0)
     if _lstat_owned(hosts, host_uid) is not None:
         for name in os.listdir(hosts):
             item = _lstat_owned(hosts / name, host_uid)

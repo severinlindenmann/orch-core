@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import calendar
 import contextlib
+import copy
 import hashlib
 import json
 import logging
@@ -284,6 +285,13 @@ class Store:
         #: subscription journal). ``None``: no hook (direct mode).
         self.before_append: Callable[[], None] | None = None
         self.on_commit: Callable[[str, dict[str, Any]], None] | None = None
+        #: R6a (11A.15.2) THE RELAY GATE INVARIANT: a device whose F1 standing goes from ``ok`` to not ``ok``, by any
+        #: means (an append of any event type, a restore, a foreign append or a recovered pending append that a reload
+        #: picks up), raises R6's seal gate before the store lock is released. Enforced in one place: the ``_state``
+        #: setter (:meth:`_gate_lost_standing`), the only way the model state changes; a ``held`` forwarded
+        #: revocation (``HostPins``, not model state) calls the same :meth:`_raise_relay_gate`. Set by
+        #: ``R6Gate.install``; the host's journal never replaces it; :meth:`close` clears it (R6 is then gated).
+        self.relay_gate: Callable[[str, str], None] | None = None
         #: how often a lock found a log changed on disk that this store did not write (or a crashed append to
         #: finish): the host's cheap foreign-append signal (F11)
         self.outside_changes = 0
@@ -308,7 +316,8 @@ class Store:
         self._logs: dict[str, LogInfo] = {}
         self._loaded: set[str] = set()
         self._load_budget: int | None = None
-        self._state: State | None = None
+        self._state_v: State | None = None
+        self._relay_pregated: State | None = None  # _commit's new state whose losses were gated before its write
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
         self._genesis_event: dict[str, Any] | None = None
@@ -448,7 +457,58 @@ class Store:
                 self._after_open_heal(eager)
             self._maybe_index()
 
+    @property
+    def _state(self) -> State | None:
+        return self._state_v
+
+    @_state.setter
+    def _state(self, new: State | None) -> None:
+        """The ONE place the model state changes (``_load`` and ``_commit``), so the relay gate invariant is enforced
+        here: assign, then raise the gate for every device whose standing was lost. Always under the store lock."""
+        old, self._state_v = self._state_v, new
+        pregated, self._relay_pregated = self._relay_pregated, None
+        if self.relay_gate is not None and old is not None and new is not None and old is not new:
+            if new is not pregated:  # _commit raised it already, before the event became durable
+                self._gate_lost_standing(old, new)
+
+    @staticmethod
+    def _standing_ok(state: State, device: str) -> bool:
+        return device_standing_ok(state, device)
+
+    def lock_held(self) -> bool:
+        """This thread holds the store lock now (inside :meth:`locked`). R6's stale gate-reason prune requires it: it
+        judges a state snapshot that must not change before its compare-and-swap write (store, then R6's writer)."""
+        return self._lock.held_by_me()
+
+    def _gate_lost_standing(self, old: State, new: State) -> None:
+        for device in list(old.workspace.devices):
+            if self._standing_ok(old, device) and not self._standing_ok(new, device):
+                self._raise_relay_gate(device, "f1_standing")
+
+    def _raise_relay_gate(self, device: str, reason: str) -> None:
+        """Call ``relay_gate`` with the 32-hex id (``""``, every device, for an unparseable one). R6 raises its
+        in-memory gate before anything can fail; an error here is logged (by class) and never undoes the store's
+        state change."""
+        gate = self.relay_gate
+        if gate is None:
+            return
+        ok = (
+            type(device) is str
+            and len(device) == 34
+            and device.startswith("d_")
+            and all(c in "0123456789abcdef" for c in device[2:])
+        )
+        try:
+            gate(device[2:] if ok else "", reason)
+        except Exception as exc:  # noqa: BLE001 - the state change stands; R6's in-memory gate is already up
+            _log.error("relay gate raise failed (%s)", type(exc).__name__)
+            try:
+                gate("", "h7")  # once more with arguments R6 always accepts, so the raise is durable if it can be
+            except Exception as exc2:  # noqa: BLE001
+                _log.error("relay gate fallback failed (%s)", type(exc2).__name__)
+
     def close(self) -> None:
+        self.relay_gate = None  # a closed store's hook is gone: R6 (bound to the live store) is gated
         self._index.close()
         if self._pins is not None:
             self._pins.close()
@@ -675,6 +735,13 @@ class Store:
     def genesis(self) -> str | None:
         assert self._state is not None
         return self._state.workspace.genesis
+
+    def genesis_event(self) -> dict[str, Any] | None:
+        """A copy of the loaded ``workspace.created`` event (R6a: the owner's ``PK`` and the delegation for the first
+        card come from it, re-checked by the caller with ``identity.members.check_genesis``), or ``None``."""
+        if self._genesis_event is None:
+            return None
+        return copy.deepcopy(self._genesis_event)
 
     @property
     def diverged(self) -> Mapping[str, Divergence]:
@@ -950,7 +1017,11 @@ class Store:
         try:
             yield
         except LoadBudgetExceeded:
+            # rolls back to the state before the span (never a newer one, so a raised relay gate stays raised); the
+            # relay hook is NOT rolled back: a hook cleared or set meanwhile (close, R6Gate.install) stands (R6a)
+            gate = self.relay_gate
             self.__dict__.update(saved)
+            self.relay_gate = gate
             raise
         finally:
             self._load_budget = saved["_load_budget"]
@@ -1756,6 +1827,14 @@ class Store:
         if stat_sig(path, self.fs) != info_sig(info):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
+        # R6a round 4 (F-A): the relay gate goes up BEFORE the event can become durable, so no failure after the commit
+        # point (``_finish``, ``append_durable`` after its write) releases the lock with a lost standing ungated. The
+        # setter does not raise it twice. A write that fails before the commit point leaves a durable gate reason for
+        # a device that keeps its standing (fail closed); only the live-store prune (``relayr6._rebuild_gate``, R6b's
+        # planning: ``MembershipKeys.prune_stale_reasons``) or a real removal ends it, never a rotation that lists it.
+        if self.relay_gate is not None:
+            self._gate_lost_standing(old_state, new_state)
+            self._relay_pregated = new_state
         try:
             if ev["type"] == "restore":
                 transition = self._stage_transition(ev, log, old_state)
@@ -1766,6 +1845,7 @@ class Store:
             self._finish(manifest, ev, log, line)
         except BaseException:
             self._needs_reload = True  # whatever got half done, the next lock recovers from disk
+            self._relay_pregated = None  # the reload diffs (and gates) again; never skip a later state for this one
             raise
         self._state = new_state
         try:
@@ -3556,7 +3636,19 @@ class Store:
             if not kept:
                 _log.info("forwarded revocation dropped (%s, %s): over the caps", device, person)
                 return "dropped"
+            if result == "held":  # R6a: the relay gate invariant for HostPins evidence, under the store lock
+                self._raise_relay_gate(device, "held_evidence")
             return result
+
+
+def device_standing_ok(state: State, device: str, person: str | None = None) -> bool:
+    """THE F1 standing ``ok`` (R6a round 5, one implementation): ``device`` (``d_<hex>``) is known, belongs to
+    ``person`` (``p_<hex>``) when one is given, and is neither removed (also by ``member.removed``) nor revoked (also
+    by a restore's revocations). Certificate expiry is not part of it. Used by the store's relay-gate chokepoint
+    (the ``_state`` setter), R6's rebuild and prune (``relayr6._rebuild_gate``) and ``host.admission.device_standing``
+    (R2's per-request standing), so no two of them can disagree."""
+    view = state.workspace.devices.get(device)
+    return view is not None and (person is None or view.person == person) and not view.removed and not view.revoked
 
 
 def _restore_evidence(transition: Mapping[str, Any]) -> dict[str, Any]:

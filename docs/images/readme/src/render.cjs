@@ -4,7 +4,7 @@ const path = require("path");
 const { chromium } = require(process.argv[2] || "playwright");
 (async () => {
   const b = await chromium.launch({ channel: "chrome" });
-  for (const d of ["problems", "flow", "gates", "architecture", "factory", "evidence"]) for (const t of ["dark", "light"]) {
+  for (const d of ["problems", "flow", "gates", "architecture", "factory", "evidence", "levels"]) for (const t of ["dark", "light"]) {
     const p = await b.newPage({ viewport: { width: 1700, height: 1100 }, deviceScaleFactor: 2 });
     await p.goto("file://" + path.join(__dirname, "diagrams.html") + `?d=${d}&t=${t}`);
     await p.waitForSelector("body[data-ready]"); await p.waitForTimeout(300);
@@ -14,6 +14,9 @@ const { chromium } = require(process.argv[2] || "playwright");
     const box = await el.boundingBox();
     await p.screenshot({ path: path.join(__dirname, "..", `${d}-bare-${t}.png`), omitBackground: true,
       clip: { x: box.x, y: box.y + 160, width: box.width, height: box.height - 160 } });
+    // solid-background copy for LinkedIn (transparent PNGs can show up black there)
+    await p.evaluate((t) => { document.body.style.background = t === "light" ? "#ffffff" : "#0e1014"; }, t);
+    await el.screenshot({ path: path.join(__dirname, "..", `${d}-${t}-solid.png`) });
     await p.close(); console.log(d, t);
   }
   await b.close();

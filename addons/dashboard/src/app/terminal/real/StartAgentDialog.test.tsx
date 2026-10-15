@@ -7,7 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentsApi, type AgentPreview, type Runner } from '@/api/agents'
 import { api } from '@/api/client'
-import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, HOLD_MS, type ClickViewAnswer } from '@/api/click'
 import { mergeRunItems, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -151,11 +151,10 @@ const noGrant = (reason: 'none' | 'expiring' | 'scope' | 'revoked' = 'none') =>
 async function issueAndSign() {
   fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
   const panel = await screen.findByTestId('click-panel', {}, T)
-  fireEvent.change(within(panel).getByLabelText(/To confirm, type/), { target: { value: WORD } })
-  const sign = within(panel).getByRole('button', { name: 'Sign' })
+  const sign = within(panel).getByRole('button', { name: 'Hold to sign' })
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
-  fireEvent.pointerDown(sign)
-  fireEvent.click(sign)
+  fireEvent.pointerDown(sign) // held until the hold completes and the panel signs with the View's word
+  await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: HOLD_MS + 2000 })
 }
 
 describe('the runner grant', () => {

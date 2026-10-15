@@ -740,7 +740,7 @@ it('records current-destination confirmation warning preserves the exact URL thr
 })
 
 // M7b: Start agent (Tier A, no signature) shows exactly the host's preview and posts exactly the previewed values plus
-// its spec; the runner grant (the one signed step) is the signer's View with the deposit line and the typed word.
+// its spec; the runner grant (the one signed step) is the signer's View with the deposit line and the word, confirmed by holding Sign.
 describe('start agent', () => {
   it('posts exactly what the preview showed, and the grant View carries the deposit line before Sign', async () => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
@@ -768,7 +768,8 @@ describe('start agent', () => {
     const panel = await screen.findByTestId('click-panel', {}, T)
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
-    expect(within(panel).getByText(/To confirm, type/).textContent).toContain('DEMO~bbbbbbbb/GRANT')
+    expect(within(panel).getByTestId('click-hold-hint').textContent).toBe('Hold Sign to confirm DEMO~bbbbbbbb/GRANT')
+    expect(within(panel).getByRole('button', { name: 'Hold to sign' })).toBeInTheDocument()
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
     vi.restoreAllMocks()
   })

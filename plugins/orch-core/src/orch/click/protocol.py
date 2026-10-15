@@ -7,6 +7,7 @@ from typing import Any
 
 __all__ = [
     "CLICK_OPS",
+    "DETAIL_REASONS",
     "DEPOSIT_LINE",
     "DEPOSIT_REASONS",
     "DEPOSIT_MAX_HOURS",
@@ -18,6 +19,7 @@ __all__ = [
     "ClickError",
     "RISK",
     "WORD_OPS",
+    "click_detail",
     "op_class",
 ]
 
@@ -57,6 +59,15 @@ REFUSALS = (
     "already_signed",
     "record_unavailable",
 )
+#: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3)
+DETAIL_REASONS: dict[str, frozenset[str]] = {
+    "sign.convenience_unavailable": frozenset(REASONS),
+    "sign.convenience_readers": frozenset(
+        {"no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"}
+    ),
+}
+DETAIL_DEVICES_MAX = 64
+DEVICE = re.compile(r"d_[0-9a-f]{32}")
 FRAME_ID = re.compile(r"[A-Za-z0-9_-]{1,32}")
 WS_ID = re.compile(r"[0-9a-f]{32}")
 REQ = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
@@ -120,9 +131,33 @@ def op_class(op: str, events: list[dict[str, Any]] | None = None) -> str:
     return "terminal"
 
 
+def click_detail(code: str, detail: Any) -> dict[str, Any] | None:
+    """The ``detail`` the signer forwards for ``code`` (#517), re-validated whole: only the two convenience codes, only
+    the keys ``reason`` (from that code's closed set) and ``devices`` (a list of at most 64 device ids). Anything else,
+    or any invalid part, gives ``None``: never a partial detail."""
+    reasons = DETAIL_REASONS.get(code)
+    if reasons is None or type(detail) is not dict or not detail or not set(detail) <= {"reason", "devices"}:
+        return None
+    out: dict[str, Any] = {}
+    if "reason" in detail:
+        reason = detail["reason"]
+        if type(reason) is not str or reason not in reasons:
+            return None
+        out["reason"] = reason
+    if "devices" in detail:
+        devices = detail["devices"]
+        if type(devices) is not list or len(devices) > DETAIL_DEVICES_MAX:
+            return None
+        if not all(type(d) is str and DEVICE.fullmatch(d) for d in devices):
+            return None
+        out["devices"] = list(devices)
+    return out
+
+
 class ClickError(Exception):
     """One refused channel request: ``code`` (catalog), ``reason`` (for ``human.click_refused`` and
-    ``sign.convenience_unavailable``), display ``message``, ``retry_after_ms`` for ``rate.limited``."""
+    ``sign.convenience_unavailable``), display ``message``, ``retry_after_ms`` for ``rate.limited``, ``detail`` only
+    as :func:`click_detail` lets it through (#517)."""
 
     def __init__(
         self,
@@ -132,9 +167,11 @@ class ClickError(Exception):
         reason: str | None = None,
         retry_after_ms: int | None = None,
         retryable: bool = False,
+        detail: Any = None,
     ) -> None:
         self.code, self.message, self.reason = code, (message or code)[:400], reason
         self.retry_after_ms, self.retryable = retry_after_ms, retryable
+        self.detail = click_detail(code, detail)
         super().__init__(f"{code}{'/' + reason if reason else ''}: {self.message}")
 
     def error(self) -> dict[str, Any]:
@@ -143,6 +180,8 @@ class ClickError(Exception):
             out["reason"] = self.reason
         if self.retry_after_ms is not None:
             out["retry_after_ms"] = int(self.retry_after_ms)
+        if self.detail is not None:
+            out["detail"] = self.detail
         return out
 
     @classmethod
@@ -153,6 +192,7 @@ class ClickError(Exception):
             reason=error.get("reason"),
             retry_after_ms=error.get("retry_after_ms"),
             retryable=bool(error.get("retryable", False)),
+            detail=error.get("detail"),
         )
 
 

@@ -2457,7 +2457,12 @@ envelope.
   - request: `{"t":"req", "id":str/[A-Za-z0-9_-]{1,32}/, "op":"prepare"|"view"|"sign"|"cancel"|"status", "args":{…}}`;
   - answer: `{"t":"res", "id":<same>, "ok":true, "result":{…}}` or
     `{"t":"res", "id":<same>, "ok":false, "error":{"code":str, "message":str, "retryable":bool, "reason"?:str,
-    "retry_after_ms"?:int}}`. `message` is display text; clients branch on `code` and `reason` only.
+    "retry_after_ms"?:int, "detail"?:{reason?:str, devices?:[Device]{0..64}}}}`. `message` is display text; clients
+    branch on `code`, `reason` and `detail` only. **`detail` (#517)** is the host's `Error.detail` (§0.3), forwarded
+    only for `sign.convenience_unavailable` and `sign.convenience_readers` and re-validated whole first: only the keys
+    `reason` (from that code's closed set in §0.3) and `devices` (a list of at most 64 `d_` + 32 lowercase hex ids);
+    anything else drops the whole `detail` (never a partial one), and every other code answers without `detail`. No
+    contract change (`contract` stays 2): a client ignores unknown `Error` keys.
   - A malformed frame, an unknown `op` or bad `args` answers `invalid.input` (a framing error closes the channel).
 
 ```
@@ -3965,6 +3970,11 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `signer:{device, auth}`. New code `reader.decl_invalid`; `sign.convenience_readers` and
     `sign.convenience_unavailable` gain `Error.detail` `{reason, devices}` (seven codes may carry `detail` now).
     Additive for P clients while `required_reader` is 0.
+50. **The click signer forwards `Error.detail` (#517, §0.8.6 "Frames"; the number may be renumbered when a parallel
+    change lands first):** a channel `Error` carries the host's `detail` `{reason, devices}` for
+    `sign.convenience_unavailable` and `sign.convenience_readers` only, re-validated whole by the signer
+    (`orch.click.protocol.click_detail`; an invalid part drops all of it); every other code drops it. `ClickError`
+    gains `detail`. No wire, hash or schema change; the click `contract` stays 2.
 
 ---
 

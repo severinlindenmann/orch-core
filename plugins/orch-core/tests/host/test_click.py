@@ -180,7 +180,10 @@ def test_each_readers_reason_refuses_at_prepare(click, served, human, monkeypatc
         add_device(served.lab)
     else:
         monkeypatch.setattr(convenience, "_model_knows", lambda: False)
-    refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "sign.convenience_unavailable", why)
+    e = refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "sign.convenience_unavailable", why)
+    # #517: the host's detail reaches the dashboard over the real socket, re-validated
+    assert e.detail is not None and e.detail["reason"] == why
+    assert e.error()["detail"] == e.detail
 
 
 def test_the_condition_is_checked_again_at_binding_and_at_submit(click, served, human):
@@ -697,6 +700,77 @@ def test_the_unavailable_reason_is_one_of_the_known_five(click, served, human):
     click.tamper = odd
     e = refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "sign.convenience_unavailable")
     assert e.reason is None
+
+
+# --- #517: Error.detail for the two convenience codes, re-validated whole -----------------------------------------
+
+DEV = "d_" + "0123456789abcdef" * 2
+
+
+def _detail_from(click, human, code, detail):
+    from orch.host.errors import HostError
+
+    _, key = human.ticket()
+
+    def refuse(op, args, res):
+        exc = HostError(code, "x: y")
+        exc.detail = detail  # in-process: what the client would hold, unfiltered
+        raise exc
+
+    click.tamper = refuse
+    e = refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), code)
+    click.tamper = None
+    return e
+
+
+@pytest.mark.parametrize(
+    ("code", "detail"),
+    [
+        ("sign.convenience_unavailable", {"reason": "phone_device", "devices": [DEV]}),
+        ("sign.convenience_unavailable", {"reason": "disabled", "devices": []}),
+        ("sign.convenience_readers", {"reason": "reader_too_old", "devices": [DEV, "d_" + "f" * 32]}),
+        ("sign.convenience_readers", {"reason": "unknown_readers", "devices": [DEV] * 64}),
+    ],
+)
+def test_a_valid_convenience_detail_is_forwarded_unchanged(click, served, human, code, detail):
+    e = _detail_from(click, human, code, copy.deepcopy(detail))
+    assert e.detail == detail and e.error()["detail"] == detail
+    assert ClickError.of(e.error()).detail == detail  # the dashboard's client reads it back
+
+
+@pytest.mark.parametrize(
+    ("code", "detail"),
+    [
+        ("sign.convenience_unavailable", {"reason": "reader_too_old", "devices": [DEV]}),  # the other code's reason
+        ("sign.convenience_readers", {"reason": "disabled", "devices": [DEV]}),
+        ("sign.convenience_unavailable", {"reason": "nope", "devices": [DEV]}),
+        ("sign.convenience_readers", {"reason": "no_declaration", "devices": ["d_" + "A" * 32]}),
+        ("sign.convenience_readers", {"reason": "no_declaration", "devices": [DEV + "0"]}),
+        ("sign.convenience_readers", {"reason": "no_declaration", "devices": [DEV, 7]}),
+        ("sign.convenience_unavailable", {"reason": "phone_device", "devices": [DEV] * 65}),
+        ("sign.convenience_unavailable", {"reason": "phone_device", "devices": [DEV], "path": "/x"}),
+        ("sign.convenience_unavailable", {"reason": "phone_device", "devices": DEV}),
+        ("sign.convenience_readers", {"reason": "no_declaration", "devices": {DEV: 1}}),
+        ("sign.convenience_readers", {"reason": ["no_declaration"], "devices": [DEV]}),
+        ("sign.convenience_readers", {}),
+        ("sign.convenience_readers", ["no_declaration"]),
+    ],
+)
+def test_an_invalid_convenience_detail_gives_no_detail_at_all(click, served, human, code, detail):
+    e = _detail_from(click, human, code, detail)
+    assert e.detail is None and "detail" not in e.error()
+    assert ClickError.of({"code": code, "detail": detail}).detail is None
+
+
+def test_any_other_code_drops_its_detail(click, served, human):
+    e = _detail_from(click, human, "launch.no_grant", {"reason": "none"})
+    assert e.detail is None and "detail" not in e.error()
+    e = _detail_from(click, human, "sign.click_only", {"reason": "disabled", "devices": [DEV]})
+    assert e.detail is None and "detail" not in e.error()
+    assert (
+        ClickError("human.click_refused", "x", reason="busy", detail={"reason": "disabled"}).error().get("detail")
+        is None
+    )
 
 
 def _spawn_raw(tmp_path):

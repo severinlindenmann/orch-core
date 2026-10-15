@@ -120,7 +120,7 @@ def test_the_redirect_file_is_gone_after_redemption_and_a_second_read_fails(tmp_
     launcher.open_dashboard("/w/DEMO")
     redirect = Path(unquote(urlsplit(argvs[-1][0]).path))
     page = redirect.read_text()  # the person's browser reads it once
-    assert issued["code"] in page and 'content="no-store"' in page and "location.replace" in page
+    assert issued["code"] in page and "location.replace" in page and "Cache-Control" not in page
     assert [t.delay for t in timers] == [CODE_TTL] == [30]
     assert auth.exchange(issued["code"])[1] == 200
     assert not redirect.exists()
@@ -166,3 +166,146 @@ def test_the_startup_sweep_uses_the_code_lifetime(tmp_path):
     os.utime(young, (now - CODE_TTL + 1, now - CODE_TTL + 1))
     launcher.sweep_redirects(directory, now=now)
     assert not old.exists() and young.exists()
+
+
+# --- review of #548: control() refuses, cleanup invalidates once, a paused launcher writes nothing -------------------
+
+
+def test_control_refuses_to_mint_under_an_agents_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORCH_SESSION", "s")
+
+    def no_socket(*_a, **_k):
+        pytest.fail("no socket may be opened to mint a code under an agent's environment")
+
+    monkeypatch.setattr(launcher.socket, "socket", no_socket)
+    with pytest.raises(launcher.AgentRefused):
+        launcher.control(tmp_path / "ctl.sock", "launch")
+
+
+def test_control_still_sends_stop_under_an_agents_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORCH_GRANT", "x")
+    sent = []
+
+    class Sock:
+        def __init__(self, *_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def settimeout(self, _):
+            pass
+
+        def connect(self, _):
+            pass
+
+        def sendall(self, data):
+            sent.append(data)
+
+    monkeypatch.setattr(launcher.socket, "socket", Sock)
+    monkeypatch.setattr(launcher, "check_uid", lambda *_: None)
+    monkeypatch.setattr(launcher, "receive", lambda _: {"ok": True})
+    assert launcher.control(tmp_path / "ctl.sock", "stop") == {"ok": True} and len(sent) == 1
+
+
+class _Timer:
+    made = []
+
+    def __init__(self, delay, fn):
+        self.delay, self.fn = delay, fn
+        _Timer.made.append(self)
+
+    def start(self):
+        pass
+
+
+def _auth(tmp_path, monkeypatch, clock):
+    _Timer.made = []
+    monkeypatch.setattr("orch_dashboard.auth.threading.Timer", _Timer)
+    directory = tmp_path / "dashboard"
+    directory.mkdir(mode=0o700)
+    return Auth(clock=clock, directory=directory)
+
+
+def test_cleanup_invalidates_the_code_and_unlinks_exactly_once(tmp_path, monkeypatch):
+    now = [1000.0]
+    auth = _auth(tmp_path, monkeypatch, lambda: now[0])
+    issued = auth.launch(PORT)
+    path = Path(issued["redirect_file"])
+    path.write_text(issued["code"])
+    unlinked = []
+    real = Path.unlink
+
+    def counting(self, missing_ok=False):
+        unlinked.append(self)
+        return real(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", counting)
+    _Timer.made[-1].fn()  # the expiry timer, even before the clock says expired
+    assert not path.exists() and unlinked == [path]
+    assert auth.exchange(issued["code"])[1] == 401  # invalidated, not merely its file forgotten
+    _Timer.made[-1].fn()  # a second firing does nothing
+    assert unlinked == [path]
+
+
+def test_redemption_then_timer_unlinks_once(tmp_path, monkeypatch):
+    auth = _auth(tmp_path, monkeypatch, lambda: 1000.0)
+    issued = auth.launch(PORT)
+    path = Path(issued["redirect_file"])
+    path.write_text(issued["code"])
+    unlinked = []
+    real = Path.unlink
+    monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: unlinked.append(self) or real(self, missing_ok))
+    assert auth.exchange(issued["code"])[1] == 200
+    _Timer.made[-1].fn()
+    assert unlinked == [path] and not path.exists()
+
+
+def test_an_expired_launch_removes_its_file_on_the_next_mint(tmp_path, monkeypatch):
+    now = [1000.0]
+    auth = _auth(tmp_path, monkeypatch, lambda: now[0])
+    first = auth.launch(PORT)
+    Path(first["redirect_file"]).write_text(first["code"])
+    now[0] += CODE_TTL
+    auth.launch(PORT)
+    assert not Path(first["redirect_file"]).exists() and first["code"] not in auth.codes
+
+
+def test_the_launch_reply_carries_the_expiry(tmp_path, monkeypatch):
+    auth = _auth(tmp_path, monkeypatch, lambda: 1000.0)
+    assert auth.launch(PORT)["expires_at"] == 1000.0 + CODE_TTL
+
+
+def test_a_launcher_paused_past_expiry_writes_no_file(tmp_path, monkeypatch):
+    clock = [1000.0]
+    auth = _auth(tmp_path, monkeypatch, lambda: clock[0])
+    issued = auth.launch(PORT)
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(launcher, "control", lambda *_: issued)
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", _nothing)
+    # The launcher was paused for the code's whole life: the server's timer already ran (nothing to unlink yet).
+    clock[0] += CODE_TTL
+    _Timer.made[-1].fn()
+    monkeypatch.setattr(launcher.time, "time", lambda: 1000.0 + CODE_TTL)
+    with pytest.raises(RuntimeError, match="expired"):
+        launcher.open_dashboard()
+    assert not list((tmp_path / "dashboard").glob("launch-*.html"))
+    assert auth.exchange(issued["code"])[1] == 401
+
+
+def test_a_launcher_paused_during_the_write_removes_the_file(tmp_path, monkeypatch):
+    auth = _auth(tmp_path, monkeypatch, lambda: 1000.0)
+    issued = auth.launch(PORT)
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(launcher, "control", lambda *_: issued)
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", _nothing)
+    times = iter([1000.0, 1000.0 + CODE_TTL])  # before the write, then after a pause
+    monkeypatch.setattr(launcher.time, "time", lambda: next(times))
+    with pytest.raises(RuntimeError, match="expired"):
+        launcher.open_dashboard()
+    assert not list((tmp_path / "dashboard").glob("launch-*.html"))

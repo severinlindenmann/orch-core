@@ -29,6 +29,9 @@ from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
 
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
+# Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
+# covers the gap between the server's monotonic timer and the wall clock both sides read.
+EXPIRY_MARGIN = 1
 
 
 class AgentRefused(RuntimeError):
@@ -77,12 +80,20 @@ def locked(directory_fd):
 
 
 def control(path, command):
+    """One request on ctl.sock. ``launch`` mints a code, so it refuses under an agent's environment first (#542 item 1;
+    the socket itself cannot tell an agent of the same UID from the person: the accepted tier-A residual)."""
+    if command == "launch":
+        refuse_agent()
+        asked = time.time()  # the mint is later: asked + CODE_TTL never outlives the code
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.settimeout(2)
         sock.connect(str(path))
         check_uid(sock, os.getuid())
         sock.sendall(encode({"command": command}))
-        return receive(sock)
+        reply = receive(sock)
+    if command == "launch" and isinstance(reply, dict) and "expires_at" not in reply:
+        reply["expires_at"] = asked + CODE_TTL  # an older server: a conservative bound
+    return reply
 
 
 def stale_socket(path):
@@ -301,6 +312,11 @@ def open_dashboard(path="/", print_url=False):
     else:
         directory = Path(launch["redirect"]) if launch.get("redirect") else redirect_directory(directory)
         redirect = Auth(directory=directory).redirect_path(launch["code"])
+    # The server's timer invalidates the code and unlinks its file at `expires_at`. A launcher paused past it must not
+    # write (or keep) a file afterwards: the code in it would be dead, but nothing would delete it before a restart.
+    expires_at = float(launch.get("expires_at", 0))
+    if time.time() >= expires_at - EXPIRY_MARGIN:
+        raise RuntimeError("the launch code expired before the browser could be opened; run it again")
     with private_directory(directory, parents=False) as directory_fd:
         fd = os.open(redirect.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
         try:
@@ -308,10 +324,11 @@ def open_dashboard(path="/", print_url=False):
             with os.fdopen(fd, "w") as file:
                 file.write(
                     '<!doctype html><meta name="referrer" content="no-referrer">'
-                    '<meta http-equiv="Cache-Control" content="no-store">'
                     f'<meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}">'
                     f"<script>location.replace({json.dumps(url)});</script>"
                 )
+            if time.time() >= expires_at - EXPIRY_MARGIN:  # paused between the check and the write
+                raise RuntimeError("the launch code expired before the browser could be opened; run it again")
             # Only the file's path goes to the browser's argv, never the code: argv is readable by every UID (ps).
             if not webbrowser.open(redirect.resolve().as_uri()):
                 raise RuntimeError("no browser could be opened; use --print-url in your own terminal")

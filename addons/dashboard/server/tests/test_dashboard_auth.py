@@ -1,4 +1,5 @@
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -270,7 +271,14 @@ def test_launcher_uses_server_redirect_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "other"))
     opened = []
     monkeypatch.setattr(
-        launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code", "redirect": str(server)}
+        launcher,
+        "control",
+        lambda *_: {
+            "port": PORT,
+            "code": "demo-not-a-real-code",
+            "redirect": str(server),
+            "expires_at": time.time() + 30,
+        },
     )
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url) or True)

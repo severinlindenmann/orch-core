@@ -87,6 +87,7 @@ RUNNER_CODES = frozenset(
     {
         "launch.cwd_changed", "harness.not_found", "harness.shell_unsupported", "run.spawn_failed", "invalid.input",
         "not_found", "term.busy", "term.not_attachable",
+        "launch.no_grant", "launch.invalid",  # H11c: the runner's grant store, runner.json
         # H11d: worktree git (orch.runner.wtgit)
         "worktree.branch_in_use", "worktree.exists", "worktree.dirty", "worktree.git_failed",
         "observe.unavailable",  # the orch.gitsafe gate: the repo's own config could make git run a program
@@ -187,7 +188,7 @@ _REPORTED = _obj(
     },
     ("run", "workspace_id", "state"),
 )
-#: reserved for H11c (the runner's deposited grants, revalidated at hello); H11a accepts and ignores them
+#: the runner's deposited grants (ids and times, never a secret), revalidated at hello (H11c)
 _GRANT = _obj(
     {
         "workspace_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
@@ -409,8 +410,17 @@ class RunnerHub:
         self._starts: dict[str, list[float]] = {}
         #: ``term.attach`` mints per person: person -> [level, at]
         self._mints: dict[str, list[float]] = {}
+        #: agent starts in progress by run id (H11c): (spec, done); a same-idem request waits for the first
+        self.starting: dict[str, tuple[str, asyncio.Future[None]]] = {}
+        #: ``grant.deposit`` per person (H11c): person -> [level, at]
+        self._deposits: dict[str, list[float]] = {}
         self._save_lock = asyncio.Lock()
         self.ignored = 0
+        from .runnergrants import RunnerGrants
+
+        #: the runner grants (H11c): one per (workspace, person), the deposits and the forgotten ids
+        self.grants = RunnerGrants(self)
+        self._reported_grants: list[dict[str, Any]] = []
 
     # -- state
     @property
@@ -547,14 +557,24 @@ class RunnerHub:
         unknown = sum(1 for run in reported if run not in self.store.records)
         if unknown:
             LOG.warning("runner.hello reported %d run(s) this host does not know; not adopted", unknown)
-        # grants (§12.3.3) are H11c's: accepted by the schema, never stored or acted on here
+        # grants (§12.3.3): revalidated right after the answer (_after_hello), never adopted as they are
+        self._reported_grants = list(args.get("grants") or [])
         LOG.info(
             "runner connected: uid %s gen %s epoch %s (previous gen %s)", uid, self.generation, self.epoch, previous
         )
         return {"sub": self.sub_id, "epoch": f"{self.instance}.{self.epoch}"}
 
     def _after_hello(self) -> None:
-        """After the hello's answer is queued: H11c revalidates the reported grants here (none in H11a)."""
+        """After the hello's answer is queued: the reported grants are revalidated (H11c): what the host no longer
+        allows is dropped at the runner, and the runner's word settles ``current`` and pending deposits."""
+        reported, self._reported_grants = self._reported_grants, []
+        asyncio.get_running_loop().create_task(self._reconcile_grants(reported))
+
+    async def _reconcile_grants(self, reported: list[dict[str, Any]]) -> None:
+        try:
+            await self.grants.reconcile(reported)
+        except Exception as exc:  # noqa: BLE001 - logged by type only; the watcher and the next hello retry
+            LOG.warning("runner grant reconciliation failed: %s", type(exc).__name__)
 
     async def _apply(self, rec: dict[str, Any], rep: dict[str, Any] | None) -> None:
         """Reconcile one live record with the runner's report of it (``None``: not reported)."""
@@ -741,6 +761,16 @@ class RunnerHub:
         run = fields.get("run") or new_run_id()
         if run in self.store.records:
             return view(self.store.records[run])
+        await self.intent(workspace_id, {**fields, "run": run}, payload)
+        return await self.dispatch(run, payload)
+
+    async def intent(
+        self, workspace_id: str, fields: dict[str, Any], payload: dict[str, Any], **audit: Any
+    ) -> dict[str, Any]:
+        """The launch intent (D-P2-37), durable before anything is created or sent: state ``starting``, bound to this
+        runner's UID and generation. A host restart before the spawn's ack reconciles it at ``runner.hello`` (a run
+        the runner does not report becomes ``lost``, never spawned again)."""
+        run = fields["run"]
         rec = {
             **{k: fields.get(k, VIEW_DEFAULTS[k]) for k in FIELDS},
             "cols": payload.get("cols", VIEW_DEFAULTS["cols"]),
@@ -755,15 +785,36 @@ class RunnerHub:
             "gen": self.generation,
             "dispatched": True,
         }
-        await self._save(rec)
+        if audit.get("spec"):  # an agent start: its idem names exactly this spec (a retry with another is a conflict)
+            rec["spec"] = audit["spec"]
+        saved = await self._save(rec)
+        if audit:
+            self._audit("run.intent", run=run, workspace_id=workspace_id, person=fields.get("person"), **audit)
+        return saved
+
+    async def fail(self, run: str, code: str) -> None:
+        """A launch that failed before its ``spawn`` was sent (a worktree that could not be created)."""
+        rec = self.store.records.get(run)
+        if rec is not None and rec.get("state") in LIVE:
+            await self._save({**rec, "state": "exited", "exit": _exit("spawn_failed", code), "cleanup": "complete"})
+
+    async def dispatch(self, run: str, payload: dict[str, Any], *, audit: bool = False) -> dict[str, Any]:
+        """Send ``spawn`` for a recorded intent and settle the record from the runner's answer."""
+        workspace_id = self.store.records[run]["workspace_id"]
+        if audit:
+            self._audit("run.dispatch", run=run, workspace_id=workspace_id)
         try:
             res = await self.command("spawn", {**payload, "run": run, "workspace_id": workspace_id})
         except HostError as exc:
             if exc.code in ("outcome.unknown", "runner.unavailable"):
+                if audit:
+                    self._audit("run.outcome", run=run, outcome="unknown")
                 raise HostError(
                     "outcome.unknown", f"the spawn of {run} was sent; the runner did not confirm it"
                 ) from None
             await self._save({**self.store.records[run], "state": "exited", "exit": _exit("spawn_failed", exc.code)})
+            if audit:
+                self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code)
             raise
         cur = self.store.records[run]
         pid = res.get("pid") if isinstance(res.get("pid"), int) and not isinstance(res.get("pid"), bool) else None
@@ -773,6 +824,8 @@ class RunnerHub:
         if cur.get("state") == "starting":
             # running until the runner's exit report says otherwise (that report carries the exit itself)
             await self._save({**cur, "state": "running", "pid": pid, "started_at": started})
+        if audit:
+            self._audit("run.outcome", run=run, outcome="started", pid=pid)
         return view(self.store.records[run])
 
     async def stop(self, run: str, grace_ms: int = 10_000) -> dict[str, Any]:
@@ -1003,12 +1056,14 @@ class RunnerHub:
             return True
         return column == "G" and rec.get("kind") == "agent" and bool(rec.get("ticket"))
 
-    def runner_state(self, workspace_id: str) -> dict[str, Any]:
+    def runner_state(self, workspace_id: str, person: str | None = None) -> dict[str, Any]:
         from orch.runner import enablement
 
         state = enablement.state_of(self.host.state_dir, workspace_id, self.host.host_uid)
+        cur = self.grants.current(workspace_id, person) if person else None
+        grant = {"id": cur["grant"], "until": cur["until"], "scope": cur["scope"]} if cur else None
         return {"connected": self.connected, "enabled": state["enabled"], "terminals": state["terminals"],
-                "gen": self.generation if self.connected else None, "grant": None}  # grant: H11c  # fmt: skip
+                "gen": self.generation if self.connected else None, "grant": grant}  # fmt: skip
 
     def publish(self, rec: dict[str, Any]) -> None:
         for sub in list(self.subs.values()):
@@ -1216,8 +1271,8 @@ def serve(call: Call) -> dict[str, Any]:
         offset = int(page[1:])
     window = shown[offset : offset + 256]
     more = offset + 256 < len(shown)
-    runner = hub.runner_state(service.workspace_id) if hub is not None else {"connected": False, "enabled": False,
-                                                                              "terminals": False, "gen": None,
-                                                                              "grant": None}  # fmt: skip
+    from .terms import runner_info
+
+    runner = runner_info(service, person)
     runs = [view(r) | {"out_bytes": int(r.get("out") or 0)} for r in window]
     return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})

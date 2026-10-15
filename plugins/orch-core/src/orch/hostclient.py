@@ -664,6 +664,16 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
                 files=wire,
             )
             return dry_text(op, doc["data"])
+        on_secret = None
+        if op.name == "grant" and args.get("runner"):  # H11c: the secret goes to the orch runner, never on screen
+            from orch.identity import new_ulid
+
+            deposit_id = new_ulid()
+
+            def on_secret(secret: str) -> list[str]:
+                out = signer.hand_over(lambda o, a, **kw: link[0].call(o, a, **kw), secret, deposit_id)
+                return signer.deposit_lines(out)
+
         res = signer.run(
             _durable(target, link, idem),
             op.name,
@@ -678,6 +688,7 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
             show_secret=human.show_secret,
             idem=idem,
             files=wire,
+            on_secret=on_secret,
         )
         return in_schema_order(op, result_from(res))
     except OrchError:

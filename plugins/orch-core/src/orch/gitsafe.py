@@ -107,6 +107,7 @@ import re
 import signal
 import stat
 import subprocess
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -382,39 +383,60 @@ _SLOT = re.compile(r"<(rev|path|context)>")
 #: (and through it ``ops/caps.Git``, ``hostclient`` and the dashboard's dev host), ``ops/health`` and
 #: ``runner/wtgit.read_git``. There is no free argv: no caller can add a global option (``-c``, ``-C``,
 #: ``--git-dir``, ``--work-tree``, ``--exec-path``, ``--namespace``, ``-p``, ``--config-env``), an option of its own
-#: or a subcommand; revisions are followed by ``--``. No operation can reach the network. Submodules: ``status`` and
-#: every diff run with ``--ignore-submodules=all`` (git never opens one) and ``status`` refuses a populated one
-#: anyway; the one exception is ``staged_raw`` (``diff --cached``, index against ``HEAD``, never opens a
-#: submodule), which keeps ``=dirty`` so ``orch check --staged`` still sees a staged gitlink.
+#: or a subcommand. Every revision comes after ``--end-of-options`` (git 2.32 is required anyway), so even a
+#: validator miss cannot become an option, and a diff's revisions are followed by ``--``. No operation can reach the
+#: network. Submodules: ``status`` and every diff run with ``--ignore-submodules=all`` (git never opens one) and
+#: ``status`` refuses a populated one anyway; the one exception is ``staged_raw`` (``diff --cached``, index against
+#: ``HEAD``, never opens a submodule), which keeps ``=dirty`` so ``orch check --staged`` still sees a staged gitlink.
 OPS: dict[str, Op] = {
     "head": Op(("rev-parse", "--verify", "-q", "HEAD^{commit}")),
     "symbolic_head": Op(("symbolic-ref", "-q", "HEAD")),
     "toplevel": Op(("rev-parse", "--show-toplevel")),
-    "ref": Op(("rev-parse", "--verify", "-q", "<rev>")),
-    "commit": Op(("rev-parse", "--verify", "-q", "<rev>^{commit}")),
-    "parent": Op(("rev-parse", "--verify", "-q", "<rev>^1")),
-    "merge_base": Op(("merge-base", "<rev>", "<rev>", "--")),
+    "ref": Op(("rev-parse", "--verify", "-q", "--end-of-options", "<rev>")),
+    "commit": Op(("rev-parse", "--verify", "-q", "--end-of-options", "<rev>^{commit}")),
+    "parent": Op(("rev-parse", "--verify", "-q", "--end-of-options", "<rev>^1")),
+    "merge_base": Op(("merge-base", "--end-of-options", "<rev>", "<rev>")),  # merge-base takes no "--"
     "status": Op(("status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=all"),
                  person=STATUS_KEYS, tree=True),
     "index_flags": Op(("ls-files", "-v")),
     "staged_raw": Op(("diff", "--cached", "--raw", "-z", "--no-renames", "--relative", "--ignore-submodules=dirty")),
     "staged_blob": Op(("cat-file", "blob", ":0:<path>")),
-    "diff_numstat": Op(("diff", "--numstat", "-M50%", "--ignore-submodules=all", "<rev>", "<rev>", "--")),
-    "diff_names": Op(("diff", "--name-status", "-M50%", "--ignore-submodules=all", "<rev>", "<rev>", "--")),
-    "diff_patch": Op(("diff", "-U<context>", "-M50%", "--ignore-submodules=all", "<rev>", "<rev>", "--")),
+    "diff_numstat": Op(("diff", "--numstat", "-M50%", "--ignore-submodules=all", "--end-of-options", "<rev>", "<rev>",
+                         "--")),
+    "diff_names": Op(("diff", "--name-status", "-M50%", "--ignore-submodules=all", "--end-of-options", "<rev>", "<rev>",
+                         "--")),
+    "diff_patch": Op(("diff", "-U<context>", "-M50%", "--ignore-submodules=all", "--end-of-options", "<rev>", "<rev>",
+                         "--")),
 }  # fmt: skip
-#: a revision operand: ``HEAD``, a full commit id or a branch ref; never a leading ``-``, ``..``, ``@{``, ``//`` or
-#: a trailing ``/`` or ``.``: what git can only read as one object name
-_REV = re.compile(
-    r"HEAD|[0-9a-f]{40}|[0-9a-f]{64}|refs/heads/(?!.*\.\.)(?!.*@\{)(?!.*//)[A-Za-z0-9_+@][A-Za-z0-9._+@/-]{0,199}(?<![/.])"
-)
+#: a revision operand: ``HEAD``, a full commit id, or ``refs/heads/<name>`` with ``<name>`` checked by
+#: :func:`_branch_ok` (git's own ref rules, Unicode allowed)
+_REV = re.compile(r"HEAD|[0-9a-f]{40}|[0-9a-f]{64}|refs/heads/(?P<name>.+)", re.DOTALL)
+#: never in a branch name (git's ref rules, check-ref-format): ``..``, ``@{``, ``//``, ``: \ ~ ^ ? * [`` and whitespace
+_REF_BAD = re.compile(r"\.\.|@\{|//|[:\\~^?*\[]|\s")
+
+
+def _branch_ok(name: str) -> bool:
+    """git's ref rules for a branch name (any non-control Unicode): no leading ``-``, no ``..``, ``@{``, ``//``,
+    ``: \\ ~ ^ ? * [``, whitespace or control character, no component starting with ``.``, no trailing ``/``, ``.``
+    or ``.lock``, not ``@``, at most 255 bytes."""
+    return (
+        bool(name)
+        and not name.startswith("-")
+        and _REF_BAD.search(name) is None
+        and not any(unicodedata.category(c) in ("Cc", "Cs") for c in name)
+        and not any(part.startswith(".") or not part for part in name.split("/"))
+        and not name.endswith(("/", ".", ".lock"))
+        and name != "@"
+        and len(name.encode("utf-8", "surrogatepass")) <= 255
+    )
 
 
 def _check(kind: str, value: object) -> str:
     if not isinstance(value, str) or not value or "\0" in value or "\n" in value:
         raise Unsafe("invalid git operand")
     if kind == "rev":
-        if not _REV.fullmatch(value) or value.endswith(".lock"):
+        m = _REV.fullmatch(value)
+        if m is None or (m.group("name") is not None and not _branch_ok(m.group("name"))):
             raise Unsafe("invalid revision")
     elif kind == "context":
         if not re.fullmatch(r"[0-9]|10", value):
@@ -604,7 +626,10 @@ def git_version(own: Mapping[str, str], *, timeout: float = GATE_SECONDS) -> tup
         got = (int(m.group(1)), int(m.group(2)))
         _VERSIONS[key] = got
     if got < MIN_GIT:
-        raise Unsafe(f"git {got[0]}.{got[1]} is too old: orch needs git 2.32 or newer to keep its configuration out")
+        raise Unsafe(
+            f"git {got[0]}.{got[1]} is too old: orch needs git 2.32 or newer (older git silently ignores "
+            "GIT_CONFIG_GLOBAL, so the person's configuration could not be kept out); update git"
+        )
     return got
 
 

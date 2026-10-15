@@ -595,3 +595,39 @@ def test_every_revision_of_a_diff_operation_is_validated_and_followed_by_the_end
     with pytest.raises(gitsafe.Unsafe):  # the context is 0 to 10 lines, nothing else
         gitsafe.command(str(repo), "diff_patch", os.environ, operand=("11", head, head))
     assert observe.git(repo, "diff_numstat", rev=(head, head)) == ""
+
+
+def test_a_unicode_branch_name_works_and_its_revision_follows_end_of_options(world):
+    w = world
+    repo = make_repo(w, "r")
+    for name in ("übung", "feat/Ärger-ß", "日本語/ブランチ", "a.b_c+d@e"):
+        w.git(repo, "branch", name)
+        head = observe.git(repo, "commit", rev=f"refs/heads/{name}")
+        assert head is not None and head == observe.head(repo), name
+        argv, _env = gitsafe.command(str(repo), "commit", os.environ, operand=f"refs/heads/{name}")
+        assert argv[-2:] == ["--end-of-options", f"refs/heads/{name}^{{commit}}"]
+    assert observe.git(repo, "merge_base", rev=(observe.head(repo), "refs/heads/übung")) == observe.head(repo)
+    for op in ("ref", "commit", "parent", "merge_base", "diff_numstat", "diff_names", "diff_patch"):
+        argv, _env = gitsafe.command(str(repo), op, os.environ, operand=sample_operands(gitsafe.OPS[op]))
+        first_rev = next(i for i, a in enumerate(argv) if a.startswith("refs/heads/"))
+        assert argv[first_rev - 1] == "--end-of-options" or argv[first_rev - 2] == "--end-of-options", op
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["-x", "a..b", "a@{1}", "a:b", "a\\b", "a~1", "a^", "a?", "a*", "a[b", "a b", "a\tb", "a b", "a b",
+     "x.lock", "x/", "a//b", "a\x01b", "a\x7fb", "a\u0085b", ".hidden", "a/.b", "x.", "@", "", "a" * 256],
+)  # fmt: skip
+def test_each_form_git_refuses_in_a_branch_name_is_refused(world, name):
+    repo = make_repo(world, "r")
+    with pytest.raises(gitsafe.Unsafe):
+        gitsafe.command(str(repo), "commit", os.environ, operand=f"refs/heads/{name}")
+    assert observe.git(repo, "commit", rev=f"refs/heads/{name}") is None
+
+
+def test_the_too_old_message_says_what_is_needed(monkeypatch):
+    path = gitsafe.isolated_env(os.environ)["PATH"]
+    monkeypatch.setitem(gitsafe._VERSIONS, path, (2, 31))
+    with pytest.raises(gitsafe.Unsafe) as e:
+        gitsafe.git_version(os.environ)
+    assert "2.32 or newer" in e.value.reason and "update git" in e.value.reason

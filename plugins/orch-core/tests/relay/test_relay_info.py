@@ -108,3 +108,13 @@ def test_a_failed_read_at_login_keeps_the_last_level_and_the_login(relay, reply)
     relay.expect(*login_expects(), info_expect(*reply))
     s.login()
     assert seen == [] and s.logged_in
+
+
+def test_a_hook_that_raises_never_fails_the_login(relay):
+    def boom(level: int) -> None:
+        raise RuntimeError("hook failed")
+
+    s = make_session(relay.origin(), V_ORIGIN, relay_info=boom)
+    relay.expect(*login_expects(), fixture_expect("relay_info", "success"))
+    s.login()
+    assert s.logged_in

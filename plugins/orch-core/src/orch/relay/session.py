@@ -374,7 +374,10 @@ class Session:
             log.info("relay-info not read at login (%s); the last level stays", type(exc).__name__)
             return
         assert self._relay_info is not None
-        self._relay_info(info.reader)
+        try:
+            self._relay_info(info.reader)
+        except Exception as exc:  # noqa: BLE001 - #555 review F5: the hook never fails the login
+            log.error("relay-info hook failed at login (%s); the last level stays", type(exc).__name__)
 
     def logout(self, deadline_s: float = 5.0) -> None:
         """Best effort; the token is forgotten whatever the answer. After a refusal nothing is sent, not even the logout

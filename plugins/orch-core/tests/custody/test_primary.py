@@ -67,14 +67,14 @@ def test_init_refuses_a_second_primary_and_changes_nothing(tmp_path, prov):
 
 
 def test_a_failed_init_leaves_no_half_pair(tmp_path, monkeypatch, prov):
-    real = PassphraseBackend.create
+    real = PassphraseBackend._create_key
 
     def fail_kx(self, key_id, **kw):
         if kw.get("role") == "kx":
             raise CustodyError("disk full")
         return real(self, key_id, **kw)
 
-    monkeypatch.setattr(PassphraseBackend, "create", fail_kx)
+    monkeypatch.setattr(PassphraseBackend, "_create_key", fail_kx)
     with pytest.raises(CustodyError):
         primary.init(tmp_path)
     assert not primary.keys_dir(tmp_path).exists()

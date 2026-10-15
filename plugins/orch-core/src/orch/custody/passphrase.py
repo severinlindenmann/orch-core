@@ -449,6 +449,21 @@ class PassphraseBackend:
         purposes: tuple[str, ...] | None = None,
         recipient: bytes | None = None,
     ) -> bytes:
+        """See :meth:`_create_key`."""
+        return self._create_key(
+            key_id, secret=secret, role=role, passphrase=passphrase, purposes=purposes, recipient=recipient
+        )
+
+    def _create_key(
+        self,
+        key_id: str,
+        *,
+        secret: bytes | None,
+        role: str,
+        passphrase: str | None,
+        purposes: tuple[str, ...] | None,
+        recipient: bytes | None,
+    ) -> bytes:
         """Create the key. ``passphrase`` is for a caller that has already asked the person itself on the terminal
         (``orch init`` offers a generated one); without it the backend's own prompt asks (twice). Either way the text
         must pass :func:`orch.custody.strength.check_strength`.
@@ -670,22 +685,27 @@ class PassphraseBackend:
             _zeroise(scalar)
             key = None  # noqa: F841
 
-    def create_primary(
-        self, sig_key_id: str, kx_key_id: str, *, purposes: tuple[str, ...], passphrase: str | None = None
-    ) -> tuple[bytes, bytes]:
-        """The primary key pair under one passphrase (one prompt, asked twice): ``sig_key_id`` (role ``primary``)
-        and ``kx_key_id`` (role ``kx``, ``purposes``, recipient = the protocol device id of the signing key). If the
-        second key cannot be made, the first is removed. Returns ``(dk_sig_pub, dk_kx_pub)``."""
+    def create_primary(self, sig_key_id: str, kx_key_id: str, *, purposes: tuple[str, ...]) -> tuple[bytes, bytes]:
+        """The primary key pair under one passphrase (the backend's own prompt, once, asked twice): ``sig_key_id``
+        (role ``primary``) and ``kx_key_id`` (role ``kx``, ``purposes``, recipient = the protocol device id of the
+        signing key). If the second key cannot be made, the first is removed. Returns ``(dk_sig_pub, dk_kx_pub)``.
+        No caller supplies the passphrase (only ``orch init`` does that, for the workspace key)."""
         check_key_id(sig_key_id)
         check_key_id(kx_key_id)
         if sig_key_id == kx_key_id:
             raise CustodyError("the primary's two keys need two key ids")
-        if passphrase is None:
-            passphrase = self._provider(PassphraseRequest("create", sig_key_id, "", ""))
-        sig_pub = self.create(sig_key_id, role="primary", passphrase=passphrase)
+        passphrase = self._provider(PassphraseRequest("create", sig_key_id, "", ""))
+        sig_pub = self._create_key(
+            sig_key_id, secret=None, role="primary", passphrase=passphrase, purposes=None, recipient=None
+        )
         try:
-            kx_pub = self.create(
-                kx_key_id, role="kx", purposes=purposes, recipient=crypto.device_id(sig_pub), passphrase=passphrase
+            kx_pub = self._create_key(
+                kx_key_id,
+                secret=None,
+                role="kx",
+                passphrase=passphrase,
+                purposes=purposes,
+                recipient=crypto.device_id(sig_pub),
             )
         except BaseException:
             with contextlib.suppress(KeyNotFound):

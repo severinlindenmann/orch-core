@@ -141,11 +141,10 @@ def load(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
     return _info(_open(state_dir))
 
 
-def init(state_dir: str | os.PathLike[str], *, passphrase: str | None = None) -> PrimaryInfo:
+def init(state_dir: str | os.PathLike[str]) -> PrimaryInfo:
     """Make the primary key pair under passphrase custody (one prompt, asked twice), all or nothing: both keys are
     written into a private temporary directory that is then renamed into place, so a crash or a refusal leaves no
-    half pair. Refuses an existing primary (:class:`KeyExists`). ``passphrase`` is for a caller that has already
-    asked the person on the terminal."""
+    half pair. Refuses an existing primary (:class:`KeyExists`). The passphrase is asked by the backend's own prompt."""
     root = primary_root(state_dir)
     final = keys_dir(state_dir)
     if final.exists():
@@ -154,7 +153,7 @@ def init(state_dir: str | os.PathLike[str], *, passphrase: str | None = None) ->
     tmp = root / f".keys.tmp{os.getpid()}.{os.urandom(4).hex()}"
     try:
         backend = _passphrase_only(open_backend(tmp))
-        backend.create_primary(SIG_KEY, KX_KEY, purposes=PURPOSES, passphrase=passphrase)
+        backend.create_primary(SIG_KEY, KX_KEY, purposes=PURPOSES)
         info = _info(backend)
         try:
             os.rename(tmp, final)  # refuses a non-empty target: a concurrent init wins once

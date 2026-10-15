@@ -139,3 +139,12 @@ def test_items_are_shape_checked():
     assert [i.n for i in _items({"items": [good, *bad]})] == [1]
     assert _items({"items": "nope"}) == []
     assert isinstance(_items({"items": [good]})[0], Item)
+
+
+def test_held_evidence_arriving_between_receipt_and_run_refuses_inside_the_job(w):
+    env = w.phone.request(w.wk, w.new_ticket())
+    adm = w.bridge.receive(w.item(env))
+    w.host.standings[("d_" + w.phone.device, "p_" + w.phone.person)] = "revoked"
+    w.bridge.run(adm)
+    assert _meta(w, w.post.for_rid(env[40:56]))["refusal"] == "op.not_allowed"
+    assert w.host.runs == [] and w.host.log == {}

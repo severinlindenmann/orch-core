@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from orch import crypto
+from orch import canon, crypto
 from orch.relay import framing, submit
 from orch.relay.framing import Identity, Refusal
 
@@ -83,21 +83,33 @@ def test_the_event_id_must_be_fresh():
     assert check(_args(eid=ulid(T0 + framing.FRESH_FUTURE_MS)))
 
 
+def _signed_by(phone, log, ev):
+    ev = {k: v for k, v in ev.items() if k != "sig"}
+    ev["sig"] = crypto.b64u(crypto.sign(phone.dk, canon.person_signing_bytes(WS, log, ev)))
+    return ev
+
+
 def test_the_actor_must_be_exactly_the_requesting_device_and_person():
+    """An event naming P as actor, validly signed by another member's device that sends it: op.not_allowed."""
     other = Phone()
     a = _args()
+    a["events"][0] = _signed_by(other, a["log"], a["events"][0])
     ident = Identity(WS, "d_" + other.device, "p_" + other.person, IDENT.cert_digest, 2, IDENT.list_hash)
     assert code(lambda: check(a, ident=ident, pub=other.dk_pub)) == "op.not_allowed"
+    mine = dict(a["events"][0], actor={"kind": "person", "id": ident.person_id, "device": ident.device_id})
+    a["events"][0] = _signed_by(other, a["log"], mine)
+    assert check(a, ident=ident, pub=other.dk_pub)  # the control: its own actor passes
 
 
 @pytest.mark.parametrize("auth", ["convenience", "secure-enclave", "webauthn", None])
 def test_only_the_column_r_auth_kinds(auth):
     a = _args()
-    ev = a["events"][0]
+    ev = dict(a["events"][0])
     if auth is None:
         del ev["auth"]
     else:
         ev["auth"] = auth
+    a["events"][0] = _signed_by(P, a["log"], ev)  # validly signed: only the auth rule refuses it
     assert code(lambda: check(a)) == "op.not_allowed"
 
 

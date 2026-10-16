@@ -11,6 +11,19 @@ export const DEV_BADGE_LABEL = 'Dev sandbox host: Simulator convenience answers 
 export function DevBadge() {
   const info = useQuery(queries.hostInfo())
   const dev = info.data?.dev
+  // A safety cue must not fail open: when the read fails, a dev host would look like a normal one. Say so (it is retried).
+  if (info.isError && !info.data)
+    return (
+      <span
+        role="status"
+        aria-label="Host status unavailable: this host may be a dev sandbox host."
+        data-testid="dev-status-unavailable"
+        className="inline-flex max-w-full shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface-3 px-2 py-1 text-[11px] font-medium text-text-muted"
+      >
+        <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+        <span>Host status unavailable</span>
+      </span>
+    )
   if (!dev) return null
   return (
     <span
@@ -35,7 +48,7 @@ export function alarmText(a: HostAlarm): { text: string; code: string | null } {
   if (a.code === SANDBOX_REGISTERED)
     return { text: 'This normal host skipped a throwaway dev sandbox workspace at start, so it is not served here.', code: null }
   if (a.code === DEV_CONVENIENCE_REFUSED)
-    return { text: `A dev convenience answer was refused${a.count !== null ? ` (${a.count} so far)` : ''}.`, code: null }
+    return { text: 'A dev convenience answer was refused.', code: null }
   return { text: 'unknown alarm', code: a.code }
 }
 

@@ -10,7 +10,6 @@ export interface HostAlarm {
   code: string
   /** Only when it is 32 lowercase hex (checked here). */
   workspace_id: string | null
-  count: number | null
 }
 export interface HostInfo {
   dev: HostDev | null
@@ -43,7 +42,6 @@ export function hostInfoOf(raw: unknown): HostInfo {
       alarms.push({
         code: o.code,
         workspace_id: typeof o.workspace_id === 'string' && WORKSPACE_ID.test(o.workspace_id) ? o.workspace_id : null,
-        count: typeof o.count === 'number' && Number.isSafeInteger(o.count) && o.count >= 0 ? o.count : null,
       })
     }
   }

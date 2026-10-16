@@ -26,10 +26,11 @@ describe('hostInfoOf', () => {
     expect(hostInfoOf({ dev: { sim_convenience: true, sandbox: '<b>x</b>' } }).dev).toEqual({ sandbox: null })
   })
   it('validates alarms: a bad code is dropped, a bad workspace id is dropped', () => {
-    const got = hostInfoOf({ alarms: [{ code: 'sandbox_workspace_registered', workspace_id: 'f'.repeat(32) }, { code: 'sandbox_workspace_registered', workspace_id: '../x' }, { code: 'A b' }, 3] })
+    const got = hostInfoOf({ alarms: [{ code: 'sandbox_workspace_registered', workspace_id: 'f'.repeat(32) }, { code: 'sandbox_workspace_registered', workspace_id: '../x' }, { code: 'A b' }, 3, { code: 'dev_convenience_refused', count: 7, text: 'x' }] })
     expect(got.alarms).toEqual([
-      { code: 'sandbox_workspace_registered', workspace_id: 'f'.repeat(32), count: null },
-      { code: 'sandbox_workspace_registered', workspace_id: null, count: null },
+      { code: 'sandbox_workspace_registered', workspace_id: 'f'.repeat(32) },
+      { code: 'sandbox_workspace_registered', workspace_id: null },
+      { code: 'dev_convenience_refused', workspace_id: null }, // unknown fields (count, text) are dropped
     ])
   })
 })
@@ -56,6 +57,15 @@ describe('the DEV SANDBOX badge', () => {
   })
 })
 
+describe('a failed host status read', () => {
+  it('shows a neutral "Host status unavailable" indicator instead of looking like a normal host', async () => {
+    renderApp('/__layout/dev-status-failed')
+    const note = await screen.findByTestId('dev-status-unavailable', {}, T)
+    expect(note).toHaveTextContent('Host status unavailable')
+    expect(screen.queryByTestId('dev-badge')).toBeNull()
+  })
+})
+
 describe('the alarms', () => {
   it('shows each known code as a sentence, an unknown one as "unknown alarm" plus the code only', async () => {
     renderApp('/__layout/dev-alarms')
@@ -64,7 +74,7 @@ describe('the alarms', () => {
     expect(rows[0]).toMatch(/skipped a throwaway dev sandbox workspace/)
     expect(rows[0]).toContain('f'.repeat(32))
     expect(rows[1]).not.toContain('not-a-workspace-id') // an invalid workspace id is not shown
-    expect(rows[2]).toMatch(/refused \(3 so far\)/)
+    expect(rows[2]).toMatch(/answer was refused\.$/)
     expect(rows[3]).toBe('unknown alarm some_future_alarm')
     expect(list.textContent).not.toContain('<b>')
     expect(rows).toHaveLength(4) // the code with invalid characters is dropped

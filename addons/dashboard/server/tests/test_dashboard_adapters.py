@@ -132,7 +132,7 @@ def test_host_info_passes_only_the_closed_dev_shape():
             "alarms": [
                 {"code": "sandbox_workspace_registered", "workspace_id": wid, "text": "<b>x</b>"},
                 {"code": "sandbox_workspace_registered", "workspace_id": "../../etc"},
-                {"code": "dev_convenience_refused", "count": 3},
+                {"code": "dev_convenience_refused", "count": 3, "first": "x", "text": "<i>"},
                 {"code": "Not A Code!"},
                 {"code": "something_new"},
                 "junk",
@@ -144,7 +144,7 @@ def test_host_info_passes_only_the_closed_dev_shape():
         "alarms": [
             {"code": "sandbox_workspace_registered", "workspace_id": wid},
             {"code": "sandbox_workspace_registered"},
-            {"code": "dev_convenience_refused", "count": 3},
+            {"code": "dev_convenience_refused"},
             {"code": "something_new"},
         ],
     }

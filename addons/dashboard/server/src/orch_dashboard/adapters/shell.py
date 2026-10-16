@@ -116,9 +116,6 @@ def host_info(data):
             wid = alarm.get("workspace_id")
             if isinstance(wid, str) and WORKSPACE_ID.fullmatch(wid):
                 row["workspace_id"] = wid
-            count = alarm.get("count")
-            if isinstance(count, int) and not isinstance(count, bool) and 0 <= count <= 10**9:
-                row["count"] = count
             rows.append(row)
         if rows:
             out["alarms"] = rows

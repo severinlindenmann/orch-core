@@ -22,7 +22,7 @@ export const queries = {
   workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running }),
   workspacesAll: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),
   /** Core D1 (#582): is this host a dev sandbox host, and which alarms does it raise. Checked by `hostInfoOf`. */
-  hostInfo: () => queryOptions({ queryKey: ['host-info'], queryFn: async () => hostInfoOf(await api.getHostInfo()), staleTime: 30_000, retry: false }),
+  hostInfo: () => queryOptions({ queryKey: ['host-info'], queryFn: async () => hostInfoOf(await api.getHostInfo()), staleTime: 30_000, retry: false, refetchInterval: (q) => (q.state.status === 'error' ? 15_000 : false) }),
   addons: () => queryOptions({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 }),
   devDataset: () => queryOptions({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() }),
   today: (ws: string) => queryOptions({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }),

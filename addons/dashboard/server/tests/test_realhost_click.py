@@ -157,7 +157,9 @@ def approve(world, which="one", gate="requirements"):
 def test_the_workspace_card_and_the_flag(world, click):
     ws = click.workspace()
     assert "click" in ws["features"], (ws["click"], ws["features"])
-    assert ws["click"] == {"custody": "convenience", "enabled": True, "available": True}
+    card = dict(ws["click"])
+    assert re.fullmatch(r"d_[0-9a-f]{32}", card.pop("device"))  # the validated device key (#578), never a raw value
+    assert card == {"custody": "convenience", "enabled": True, "available": True}
     card = world.client.get(click.url("status"), headers=click.headers(False)).json()
     assert card["custody"] == "convenience"
 

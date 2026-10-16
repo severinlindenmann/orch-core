@@ -80,6 +80,7 @@ export const LAYOUT_SCENARIOS = [
   'dev-badge',
   'dev-badge-long',
   'dev-alarms',
+  'dev-status-failed', // the host status read fails: a neutral "Host status unavailable" cue, never a normal-looking host
   'dev-refused',
   // Drop (proposed drop/1): Workspace → Drop with the fixture drop api.
   'drop-unavailable',
@@ -497,7 +498,10 @@ function install() {
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
   // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
   // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.
-  set('getHostInfo', async () => hostInfoFor(current))
+  set('getHostInfo', async () => {
+    if (current === 'dev-status-failed') throw new ApiError(502, { code: 'host.unavailable', message: 'fixture: no answer', retryable: true })
+    return hostInfoFor(current)
+  })
   set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
   set('switchClick', async (...args: never[]) => {
     if (!current.startsWith('signing-')) return original.switchClick(...args)

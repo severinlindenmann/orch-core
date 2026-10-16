@@ -46,7 +46,7 @@ def make_ctx(dp, base, *, sim):
 
 
 @pytest.mark.parametrize("sim", [True, False], ids=["sim-convenience", "plain"])
-def test_init_host_register_and_down(dp, base, sim):
+def test_init_host_register_and_down(dp, base, sim, capsys):
     ctx = make_ctx(dp, base, sim=sim)
     root = ctx.root
     try:
@@ -77,6 +77,13 @@ def test_init_host_register_and_down(dp, base, sim):
         assert dp.host_listening(root)
         if sim:
             dp.pty_cmd(ctx, ctx.orch("keys", "reader", "declare", "--workspace", ctx.workspace_id), "reader declare")
+            # ask: a grant, a ticket and a free-text question as the agent; nobody has answered yet
+            capsys.readouterr()
+            assert dp.main(["ask", "--root", str(root), "--nonce", "ab12cd34"]) == 0
+            made = json.loads(capsys.readouterr().out)
+            assert made["question"] == "Q1" and made["ticket"].startswith("SBX-") and "GRANT" not in json.dumps(made)
+            assert dp.main(["check-answer", "--root", str(root), "--nonce", "ab12cd34", "--timeout", "0"]) == 1
+            assert json.loads(capsys.readouterr().out)["answered"] is False
         # no secret in the logs
         for log in (root / "logs").iterdir():
             text = log.read_text()

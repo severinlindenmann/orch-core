@@ -5,6 +5,8 @@
                                  [--scopes look,decide] [--open-simulator] [--expect-code-from FIFO]
                                  [--json-fd N] [--sim-convenience]
     uv run scripts/dev-pair down --root DIR [--keep]
+    uv run scripts/dev-pair ask --root DIR --nonce N
+    uv run scripts/dev-pair check-answer --root DIR --nonce N [--timeout S]
 
 Specified in orch-v2-host 11A.15.11 (``up``/``down``, the sandbox, the allow-list environment, the codes) and 11A.17
 (``--sim-convenience``: the reserved ``SBX`` prefix, the manifest's person and workspaces, the workspace marker,
@@ -20,6 +22,12 @@ re-validated (pid, start time, executable, working directory inside the root) ju
 SIGKILL after 10 s; it never uses ``pkill`` or ``simctl erase``/``delete``. Refused: an origin outside the allow-list,
 running as root, under ``ORCH_GRANT``, with a host already listening on the root. **The manifest is accident
 prevention, not containment**: same-UID code can forge it.
+
+``ask`` and ``check-answer`` are the end-to-end helpers (batch B3): ``ask`` plays the agent in a running sandbox (the
+host's ``orch grant`` typed with the sandbox's own passphrase, then ``orch new`` and a free-text ``orch ask``) and
+prints ``{"ticket", "question", "nonce"}``; ``check-answer`` reads the sandbox workspace's own event logs until a
+``question.answered`` with the text ``e2e-ok-<N>`` for that question, signed by a paired device that is neither the
+owner's nor the primary's. Both print JSON on stdout and never a secret (the grant stays in this process).
 
 The owner's side (account, primary certificate, cert-request queue) and the reference phone are the test tree's
 (``tests/relay/owner.py``, ``tests/relay/phone.py``); this script imports the owner from there, so it runs from a
@@ -1323,6 +1331,207 @@ def up(args: argparse.Namespace) -> int:
         raise
 
 
+# -- ask / check-answer (the end-to-end helpers; the pure parts are unit-tested) ---------------------------------------
+
+NONCE = re.compile(r"[A-Za-z0-9]{4,32}")
+_ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_GRANT = re.compile(r"ORCH_GRANT=(\S+)")
+_QID = re.compile(r"Q[0-9]+")
+
+
+def check_nonce(nonce: str) -> str:
+    if type(nonce) is not str or not NONCE.fullmatch(nonce):
+        raise Refused("--nonce: 4 to 32 letters or digits")
+    return nonce
+
+
+def new_session_id() -> str:
+    """A fresh agent session id (``s_`` and 26 Crockford characters, the first one 0-7: a 128-bit ULID)."""
+    return "s_" + secrets.choice("01234567") + "".join(secrets.choice(_ULID_ALPHABET) for _ in range(25))
+
+
+def parse_grant(transcript: bytes | bytearray | str) -> str | None:
+    """The ``ORCH_GRANT`` secret ``orch grant`` prints (held in memory only; never logged or printed here)."""
+    text = transcript if isinstance(transcript, str) else bytes(transcript).decode("utf-8", "replace")
+    m = _GRANT.search(_ANSI.sub("", text).replace("\r", ""))
+    return m.group(1) if m else None
+
+
+def asked_text(nonce: str) -> str:
+    """The free-text question the phone looks for: it contains the nonce."""
+    return f"e2e {nonce}: type the answer e2e-ok-{nonce}"
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """The complete JSON lines of an event log (a torn last line is skipped; a missing file is empty)."""
+    out: list[dict[str, Any]] = []
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return out
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in raw.splitlines():
+        try:
+            doc = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(doc, dict):
+            out.append(doc)
+    return out
+
+
+def paired_devices(workspace_events: Sequence[Mapping[str, Any]], excluded: Sequence[str]) -> set[str]:
+    """The devices added to the workspace by ``device.added`` minus the owner's genesis device and the primary's."""
+    devices = (e.get("device") for e in workspace_events if e.get("type") == "device.added")
+    return {d for d in devices if isinstance(d, str) and d not in excluded}
+
+
+def find_question(ticket_events: Sequence[Mapping[str, Any]], nonce: str) -> str | None:
+    """The id (``Q<n>``) of the question asked in this ticket whose text contains the nonce."""
+    for e in ticket_events:
+        q = e.get("question")
+        if e.get("type") == "question.asked" and isinstance(q, Mapping) and nonce in str(q.get("text", "")):
+            qid = q.get("id")
+            if isinstance(qid, str) and _QID.fullmatch(qid):
+                return qid
+    return None
+
+
+def find_answer(
+    ticket_events: Sequence[Mapping[str, Any]], qid: str, nonce: str, phones: set[str]
+) -> dict[str, Any] | None:
+    """The ``question.answered`` for ``qid`` whose text is ``e2e-ok-<nonce>`` and whose actor is a person signing with
+    one of the paired ``phones`` (never the owner's or the primary's device), or ``None``."""
+    for e in ticket_events:
+        a = e.get("actor") or {}
+        if (e.get("type") == "question.answered" and e.get("question") == qid and e.get("text") == f"e2e-ok-{nonce}"
+                and a.get("kind") == "person" and a.get("device") in phones):  # fmt: skip
+            return {"question": qid, "text": e["text"], "device": a["device"], "person": a.get("id"), "at": e.get("at")}
+    return None
+
+
+def scan_answer(ws: Path, nonce: str, primary_device: str) -> dict[str, Any] | None:
+    """One pass over the workspace logs: the answer to the question carrying the nonce, or ``None``."""
+    wsev = read_jsonl(ws / "events" / "workspace.jsonl")
+    created = next((e for e in wsev if e.get("type") == "workspace.created"), {})
+    excluded = [d for d in (primary_device, (created.get("actor") or {}).get("device")) if d]
+    phones = paired_devices(wsev, excluded)
+    try:
+        dirs = sorted(d for d in (ws / "tickets").iterdir() if d.is_dir() and not d.is_symlink())
+    except OSError:
+        return None
+    for d in dirs:
+        events = read_jsonl(d / "events.jsonl")
+        qid = find_question(events, nonce)
+        if qid is None:
+            continue
+        hit = find_answer(events, qid, nonce, phones)
+        if hit is not None:
+            return {**hit, "ticket": events[0].get("key")}
+    return None
+
+
+def primary_device_id(root: Path) -> str:
+    """``d_<device id>`` of the primary certificate ``up`` wrote (``primary-cert.json``), or ``""``."""
+    try:
+        doc = json.loads((root / "primary-cert.json").read_text(encoding="utf-8"))
+        return "d_" + str(doc["o"]["device_id"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
+def _sandbox_ctx(root_arg: str) -> Ctx:
+    """A context for a RUNNING sandbox (``up`` finished): the root is validated against its manifest, the passphrase is
+    read from ``secrets/``, the workspace is the manifest's."""
+    root = check_root_path(root_arg)
+    try:
+        doc = _devsandbox().check_manifest(root)
+    except Exception as exc:  # noqa: BLE001 - SandboxRefused: not a dev-pair sandbox
+        raise Refused(f"{root} is not a dev-pair sandbox ({type(exc).__name__})") from None
+    if not doc.get("workspaces"):
+        raise Refused("this sandbox has no workspace yet (run up with --sim-convenience first)")
+    path_env, py, uv = pinned_path()
+    fd, st = _devsandbox().open_root(root)
+    sb = Sandbox(root, fd, st.st_dev, st.st_ino, doc["id"])
+    ctx = Ctx(sb=sb, args=argparse.Namespace(), path_env=path_env, py=py, uv=uv, ws_dir=str(root / "ws"),
+              workspace_id=doc["workspaces"][0]["id"], person_id=doc.get("person_id", ""))  # fmt: skip
+    try:
+        if not host_listening(root):
+            raise Refused("no host is listening in this sandbox (is `up` still running?)")
+        try:
+            ctx.passphrase = sb.read("secrets/passphrase").decode().strip()
+        except Exception:  # noqa: BLE001
+            raise Refused("secrets/passphrase is missing") from None
+    except BaseException:
+        sb.close()
+        raise
+    return ctx
+
+
+def _agent(ctx: Ctx, grant: str, session: str, *argv: str) -> dict[str, Any]:
+    env = ctx.env(extra={"ORCH_GRANT": grant, "ORCH_SESSION": session})
+    r = subprocess.run(ctx.orch("--json", *argv), cwd=ctx.ws_dir, env=env, capture_output=True, text=True, timeout=120,
+                       check=False, stdin=subprocess.DEVNULL)  # fmt: skip
+    try:
+        doc = json.loads(r.stdout)
+    except ValueError:
+        doc = {}
+    if r.returncode != 0 or not isinstance(doc, dict) or not doc.get("ok"):
+        code = ((doc.get("error") or {}).get("code") if isinstance(doc, dict) else None) or ""
+        raise Refused(f"orch {argv[0]} failed (exit {r.returncode}{', ' + code if code else ''})")
+    return doc
+
+
+def ask(args: argparse.Namespace) -> int:
+    """Play the agent: a grant (typed with the sandbox's passphrase), a ticket, a free-text question with the nonce."""
+    nonce = check_nonce(args.nonce)
+    ctx = _sandbox_ctx(args.root)
+    try:
+        argv = ctx.orch("grant", "--hours", "2", "--label", "e2e agent")
+        rc, transcript = run_pty(argv, env=ctx.env(no_convenience=True), cwd=ctx.ws_dir,
+                                 responders=passphrase_responders(ctx), timeout=180)  # fmt: skip
+        grant = parse_grant(transcript)
+        if rc != 0 or not grant:
+            raise Refused(
+                f"orch grant failed (exit {rc}{error_code(transcript)}); the terminal transcript is not shown"
+            )
+        session = new_session_id()
+        made = _agent(ctx, grant, session, "new", f"e2e ticket {nonce}", "--type", "feature")
+        key = made.get("key")
+        if not isinstance(key, str):
+            raise Refused("orch new returned no ticket key")
+        asked = _agent(ctx, grant, session, "ask", asked_text(nonce), "--ref", key)
+        m = _QID.search(json.dumps(asked.get("data", {})))
+        if m is None:
+            raise Refused("orch ask returned no question id")
+        print(json.dumps({"ticket": key, "question": m.group(0), "nonce": nonce}))
+        return 0
+    finally:
+        ctx.sb.close()
+
+
+def check_answer(args: argparse.Namespace, sleep: Callable[[float], None] = time.sleep) -> int:
+    """Wait for the phone's answer in the host's own logs; JSON on stdout, exit 0 found / 1 not found in time."""
+    nonce = check_nonce(args.nonce)
+    root = check_root_path(args.root)
+    try:
+        _devsandbox().check_manifest(root)
+    except Exception as exc:  # noqa: BLE001
+        raise Refused(f"{root} is not a dev-pair sandbox ({type(exc).__name__})") from None
+    primary = primary_device_id(root)
+    end = time.monotonic() + float(args.timeout)
+    while True:
+        hit = scan_answer(root / "ws", nonce, primary)
+        if hit is not None:
+            print(json.dumps({"answered": True, **hit}))
+            return 0
+        if time.monotonic() >= end:
+            print(json.dumps({"answered": False, "nonce": nonce, "timeout_s": float(args.timeout)}))
+            return 1
+        sleep(1.0)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dev-pair", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1338,6 +1547,13 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("down", allow_abbrev=False)
     d.add_argument("--root", required=True)
     d.add_argument("--keep", action="store_true", help="stop the processes, keep the root for debugging")
+    a = sub.add_parser("ask", allow_abbrev=False, help="e2e: a ticket and a free-text question as the agent")
+    a.add_argument("--root", required=True)
+    a.add_argument("--nonce", required=True)
+    c = sub.add_parser("check-answer", allow_abbrev=False, help="e2e: wait for the phone's answer in the host log")
+    c.add_argument("--root", required=True)
+    c.add_argument("--nonce", required=True)
+    c.add_argument("--timeout", type=float, default=240.0)
     return p
 
 
@@ -1347,6 +1563,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         refuse_environment(os.environ, os.geteuid())
         if args.cmd == "up":
             return up(args)
+        if args.cmd == "ask":
+            return ask(args)
+        if args.cmd == "check-answer":
+            return check_answer(args)
         return down(args.root, keep=args.keep)
     except Refused as exc:
         print(f"dev-pair: {exc}", file=sys.stderr)

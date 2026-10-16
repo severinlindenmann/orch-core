@@ -544,10 +544,9 @@ class Builder:
             "gate": gate,
             "input": thaw(view.gates[gate].input or {}),
             "policy": thaw(view.gates[gate].policy),
-            "texts": {
-                sid: text
-                for sid, text in self.store.body_sections(view.uid).items()
-                if sid in ((view.gates[gate].input or {}).get("sections") or {})
+            "texts": {  # every section the gate binds, an empty one as "" (the real host's material, P1)
+                sid: self.store.body_sections(view.uid).get(sid, "")
+                for sid in sorted((view.gates[gate].input or {}).get("sections") or {})
             },
             "ticket": {"key": view.key, "uid": view.uid},
         }

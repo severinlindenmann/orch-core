@@ -17,6 +17,7 @@ secret on the person's own terminal.
 from __future__ import annotations
 
 import copy
+import os
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
@@ -25,7 +26,7 @@ from typing import Any
 from orch import canon
 from orch.identity import pairdevice
 
-from . import review
+from . import review, signcontent
 
 __all__ = [
     "Signed",
@@ -114,6 +115,23 @@ def check(
         _refuse("the fingerprint does not match")
 
 
+def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
+    """The part of :func:`check` that needs no person and no device (a reader that only shows a request, like the
+    dashboard server): the shape, the hashes the material binds (gate, policy, question, sections), every ``before``
+    against the event's ``base_rev``, every review recomputed from the events and the material. Raises
+    :class:`SignerRefused`. It vouches for the material; it is not a substitute for :func:`check` before a signature."""
+    try:
+        person = prepared["events"][0]["actor"]["id"]  # whose request it is; the signer's own check compares it
+    except (KeyError, IndexError, TypeError):
+        _refuse("the request carries no events")
+    _shape(prepared, workspace_id=workspace_id, person=person, device=None, auth=None)
+    _formats(prepared)
+    _hashes(prepared, workspace_id)
+    check_reviews(prepared["material"], prepared["events"])
+    if prepared.get("review_digest") != review.review_digest(prepared["material"]):
+        _refuse("review_digest does not match the material")
+
+
 def _formats(prepared: Mapping[str, Any]) -> None:
     """Every identifier the review shows or the person types is checked against its F1 format before anything is
     rendered: a host string can never carry a terminal control sequence into the header or the confirmation word."""
@@ -173,7 +191,7 @@ _SET_FIELDS = frozenset(
 #: what the host person ops (H6b, §0.8) may change
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
-_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "repos"})
+_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos"})
 
 
 def _person_op(prepared: Mapping[str, Any]) -> None:
@@ -619,6 +637,52 @@ def render(
     return text
 
 
+class Review(str):
+    """The text the person reads first (the plain view: headline, content, no hashes) with the full review of
+    :func:`render` as :attr:`details` (``d`` at the prompt, ``--details`` or ``ORCH_SIGN_DETAILS=1`` shows it first)."""
+
+    details: str = ""
+    details_first: bool = False
+
+
+def plain(
+    prepared: Mapping[str, Any],
+    workspace: Callable[[str], tuple[str, str] | None],
+    *,
+    artifacts: str | None = None,
+    prefix: str = "",
+) -> Review:
+    """B6 (owner decision E): the review in three layers. The plain view is :func:`signcontent.text` of the request's
+    own events and material (so it is exactly what is signed); the details are today's full :func:`render`, which
+    also runs here, so every refusal of the full review still comes before any prompt. A relay pairing keeps the full
+    review as its only view (the code the person compared is part of what it binds)."""
+    full = render(prepared, workspace, artifacts=artifacts)
+    if prepared["material"].get("kind") == pairdevice.MATERIAL_KIND:
+        out = Review(prefix + full)
+        out.details = ""
+        return out
+    known = workspace(prepared["workspace_id"])
+    try:
+        lines = signcontent.text(
+            signcontent.build(prepared, verified=True),
+            _clean,
+            workspace=f"{known[0]} ({known[1]})" if known is not None else None,
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):  # a shape the plain view does not know: the full review
+        return Review(prefix + full)
+    if artifacts in ("unseen", "checked") and any(e["type"] in ARTIFACT_TYPES for e in prepared["events"]):
+        lines += [_clean(UNSEEN if artifacts == "unseen" else SEEN), ""]
+    for c in prepared.get("checks") or []:
+        lines.append(f"check: {_clean(c.get('repo'))} clean (attested by the worker, best effort)")
+    body = "\n".join(lines).rstrip("\n") + "\n"
+    if any(unicodedata.category(c) in ("Cc", "Cf") and c != "\n" for c in body):
+        _refuse("the review would carry a control character")
+    out = Review(prefix + body)
+    out.details = prefix + full
+    out.details_first = os.environ.get("ORCH_SIGN_DETAILS") == "1"  # `orch sign --details` sets it
+    return out
+
+
 def _pair_content(material: Mapping[str, Any]) -> list[str]:
     """H12c-e (11A.15.6 step 9): what the ``relay.pair_device`` review binds, every field on its own line. The label
     is the cleaned label exactly as recorded, shown "named by the device": it is not signed (``device.added`` carries
@@ -838,7 +902,7 @@ def finish(
         check(prepared, workspace_id=workspace_id, person=person, device=device, auth=backend.auth)
         if files is not None:
             check_uploads(prepared, files)
-        text = prefix + render(prepared, workspace, artifacts=artifacts)
+        text = plain(prepared, workspace, artifacts=artifacts, prefix=prefix)
         if not confirm(text, confirm_word(prepared, workspace)):
             _refuse("not confirmed")
         signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)

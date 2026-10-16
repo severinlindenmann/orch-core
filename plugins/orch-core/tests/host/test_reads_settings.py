@@ -72,7 +72,16 @@ def test_the_cap_settings_1_is_in_the_welcome(w):
 
 def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
     data = ok(w.client().req("workspace.settings"))
-    assert set(data) == {"settings", "next_page", "gates", "defaults", "settings_at", "policy_at", "sub_cursor"}
+    assert set(data) == {
+        "settings",
+        "next_page",
+        "gates",
+        "defaults",
+        "sign_methods",
+        "settings_at",
+        "policy_at",
+        "sub_cursor",
+    }
     assert data["settings"] == {"grant_hours": 8, "claim_ttl_min": 120, "lease_ttl_min": 60, "repos": {}}
     assert data["defaults"] == ["grant_hours", "claim_ttl_min", "lease_ttl_min"]
     assert data["next_page"] is None and data["settings_at"] is None and data["policy_at"] is None
@@ -206,7 +215,14 @@ def test_no_person_gets_less_and_only_repos_a_visible_ticket_links(w):
     as_agent_class(w)
     for call in (c.req("workspace.settings"), c.req("workspace.settings", grant=wrong_secret(w.grant))):
         got = ok(call)
-        assert set(got) == {"settings", "next_page", "gates", "defaults", "sub_cursor"}  # no settings_at, policy_at
+        assert set(got) == {
+            "settings",
+            "next_page",
+            "gates",
+            "defaults",
+            "sign_methods",
+            "sub_cursor",
+        }  # no settings_at, policy_at
         assert got["settings"]["repos"] == {"proj": {"default_branch": "main"}}  # linked by a visible ticket only
         assert got["settings"]["grant_hours"] == 4 and got["defaults"] == ["claim_ttl_min", "lease_ttl_min"]
         assert list(got["gates"]) == ["requirements", "plan", "verify", "code"]

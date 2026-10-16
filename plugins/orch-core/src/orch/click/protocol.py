@@ -131,7 +131,8 @@ def op_class(op: str, events: list[dict[str, Any]] | None = None) -> str:
     if op == "settings.set" and events is not None:
         for ev in events:
             changed = ev.get("set")
-            if not isinstance(changed, dict) or any(str(k).split(".")[0] == "repos" for k in changed):
+            # B6: sign_methods decides which signatures the workspace accepts: a typed word, like repos
+            if not isinstance(changed, dict) or any(str(k).split(".")[0] in ("repos", "sign_methods") for k in changed):
                 return "word"
         return "click"
     if op in CLICK_OPS:

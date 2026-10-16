@@ -43,13 +43,15 @@ class Shown:
     """The person's terminal: what the review showed, and the word typed (the right one unless told otherwise)."""
 
     def __init__(self, answer: bool = True) -> None:
-        self.texts: list[str] = []
+        self.texts: list[str] = []  # the full review (the details behind `d`); `plain` is what is shown first
+        self.plain: list[str] = []
         self.words: list[str] = []
         self.secrets: list[str] = []
         self.answer = answer
 
     def confirm(self, text: str, word: str) -> bool:
-        self.texts.append(text)
+        self.texts.append(getattr(text, "details", "") or text)
+        self.plain.append(str(text))
         self.words.append(word)
         return self.answer
 

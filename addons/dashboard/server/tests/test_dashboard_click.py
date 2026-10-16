@@ -206,7 +206,7 @@ def test_the_signer_is_one_child_started_on_first_use_with_a_clean_environment(c
     env = script.started[0]
     assert env["ORCH_STATE_DIR"] == str(gateway.state) and "PYTHONPATH" not in env
     assert "click" in got[0]["features"]
-    assert got[0]["click"] == {"custody": "convenience", "enabled": True, "available": True}
+    assert got[0]["click"] == {"custody": "convenience", "enabled": True, "available": True, "risk_ack": None}
 
 
 def test_pythonpath_is_not_passed_to_the_signer(monkeypatch, tmp_path):
@@ -527,7 +527,13 @@ def test_no_route_but_the_click_routes_calls_the_signer():
 
 def test_the_status_route_is_the_card_only(client, token, stub, script):
     res = client.get(url(stub, "status"), headers=hdr(token, False))
-    assert res.json() == {"custody": "convenience", "enabled": True, "available": True, "switchable": False}
+    assert res.json() == {
+        "custody": "convenience",
+        "enabled": True,
+        "available": True,
+        "risk_ack": None,
+        "switchable": False,
+    }
     script.available = False
     assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["problem"] == "disabled"
 
@@ -1712,7 +1718,13 @@ def test_switching_on_sends_the_passphrase_to_the_signer_only(client, token, stu
     caplog.set_level(logging.DEBUG)
     res = switch(client, token, stub, {"on": True, "passphrase": PASSPHRASE})
     assert res.status_code == 200, res.text
-    assert res.json() == {"custody": "convenience", "enabled": True, "available": True, "switchable": True}
+    assert res.json() == {
+        "custody": "convenience",
+        "enabled": True,
+        "available": True,
+        "risk_ack": None,
+        "switchable": True,
+    }
     calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
     assert calls == [("custody_on", {"workspace_id": stub.ws, "passphrase": PASSPHRASE})]
     out, err = capfd.readouterr()

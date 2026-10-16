@@ -186,6 +186,15 @@ class ClickSigner:
 
         return enabled(self.state, entry["workspace_id"], int(entry["host_uid"]))
 
+    def _risk_ack(self, entry: dict[str, Any]) -> str | None:
+        """B6: when the risk notice was acknowledged at enable time (``None``: enabled before B6, or off)."""
+        from orch.host.convenience import risk_ack
+
+        try:
+            return risk_ack(self.state, entry["workspace_id"], int(entry["host_uid"]))
+        except (OSError, ValueError):
+            return None
+
     def _default_execution(self, entry: dict[str, Any]) -> bool:
         from orch.runner import enablement
 
@@ -732,6 +741,7 @@ class ClickSigner:
             "custody": st["custody"],
             "device": st["device"],
             "enabled": bool(self._enabled(e)),
+            "risk_ack": self._risk_ack(e),
         }
         problem = st.get("problem") or self.problems.get(wid)
         if problem is None and st["custody"] != "convenience":

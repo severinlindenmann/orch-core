@@ -393,3 +393,23 @@ def test_evidence_of_receipts_is_bound_into_the_verify_hash(w):
         uid, "task.done", a, task="T1", receipt={"cmd": "make test", "exit": 0, "ms": 9, "repo": "dbt", "commit": SHA1}
     )
     assert w.view(uid).gates["verify"].hash != h
+
+
+def test_solo_owner_gives_the_verdict_on_the_ticket_they_claimed():
+    """B5b: a one-member workspace has nobody to separate duties from; the default verify policy (reviewers, not
+    assignees) would otherwise lock the owner out of their own ticket."""
+    s = World().bootstrap({})
+    uid = s.ticket()
+    s.to_testing(uid)  # sev claims: assignee, never a reviewer
+    assert s.view(uid).gates["verify"].eligible == (s.people["sev"],)
+    assert s.decide(uid, "sev", "verify", try_=True)[1].__class__.__name__ == "Ok"
+    assert s.view(uid).status == "done"
+
+
+def test_two_member_workspace_still_enforces_reviewers_and_not_assignees(w):
+    uid = w.ticket()
+    w.to_testing(uid)  # sev is an assignee, not a reviewer
+    assert w.decide(uid, "sev", "verify", try_=True)[1].code == Code.GATE_NOT_ELIGIBLE
+    assert w.decide(uid, "mara", "verify", try_=True)[1].code == Code.GATE_NOT_ELIGIBLE  # not a reviewer either
+    w.tev(uid, "people.changed", "sev", role="reviewers", add=[w.people["mara"]], remove=[])
+    assert w.decide(uid, "mara", "verify", try_=True)[1].__class__.__name__ == "Ok"

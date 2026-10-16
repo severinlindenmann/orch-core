@@ -107,6 +107,22 @@ def eligible(policy: dict[str, Any], tokens: set[str]) -> bool:
     return bool(tokens & set(policy["approvers"])) and not tokens & set(policy["not"])
 
 
+def solo(ws: WsCore) -> bool:
+    """A workspace with exactly one member: separation of duties has nobody to separate (B5b)."""
+    return len(ws.members) == 1
+
+
+def may_decide(ws: WsCore, t: TCore, gate: str, person: str, pol: dict[str, Any] | None = None) -> bool:
+    """Token eligibility for a decision. In a one-member workspace that member (unless a viewer) may decide every
+    gate, so a solo owner can give a verdict on a ticket they claimed. With two or more members the policy's
+    ``approvers`` and ``not`` apply as written. ``independent`` is checked separately and is not relaxed."""
+    pol = effective(ws, t, gate) if pol is None else pol
+    if solo(ws):
+        m = ws.members.get(person)
+        return m is not None and m.role != "viewer"
+    return eligible(pol, person_tokens(ws, t, person))
+
+
 def eligible_persons(ws: WsCore, t: TCore, gate: str) -> list[str]:
     p = effective(ws, t, gate)
-    return sorted(m for m in ws.members if eligible(p, person_tokens(ws, t, m)))
+    return sorted(m for m in ws.members if may_decide(ws, t, gate, m, p))

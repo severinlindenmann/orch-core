@@ -84,7 +84,8 @@ def test_init_host_register_and_down(dp, base, sim, capsys):
             made = json.loads(capsys.readouterr().out)
             assert made["question"] == "Q1" and made["ticket"].startswith("SBX-") and "GRANT" not in json.dumps(made)
             assert dp.main(["check-answer", "--root", str(root), "--nonce", "ab12cd34", "--timeout", "0"]) == 1
-            assert json.loads(capsys.readouterr().out)["answered"] is False
+            captured = capsys.readouterr()  # no phone has paired in this sandbox: refused, nothing is scanned
+            assert "refused" in captured.err and "answered" not in captured.out
         # no secret in the logs
         for log in (root / "logs").iterdir():
             text = log.read_text()

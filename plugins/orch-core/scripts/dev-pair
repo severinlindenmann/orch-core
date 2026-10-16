@@ -1122,6 +1122,23 @@ def error_code(transcript: bytes | bytearray) -> str:
     return f", {m.group(1) or m.group(2)}" if m else ""
 
 
+def record_paired_device(ctx: Ctx, call: Any, pair: dict[str, Any]) -> None:
+    """Pin the phone: the device the host allocated for THIS sandbox's offer goes into ``pair.json`` (``device``), which
+    ``check-answer`` requires. Failing to learn it leaves ``pair.json`` without it, and check-answer then refuses."""
+    try:
+        offers = call("host.relay_pair_list", {"workspace_id": ctx.workspace_id})["offers"]
+        mine = next((o for o in offers if o.get("offer_id") == pair["offer_id"]), None)
+        dev = str((mine or {}).get("device_id") or "")
+        if not dev:
+            print("dev-pair: the host did not report the paired device; check-answer will refuse", file=sys.stderr)
+            return
+        pair = {**pair, "device": dev if dev.startswith("d_") else "d_" + dev}
+        ctx.sb.write("pair.json", json.dumps(pair, sort_keys=True).encode(), exclusive=False)
+    except Exception as exc:  # noqa: BLE001 - never fails the pairing itself
+        print(f"dev-pair: could not record the paired device ({type(exc).__name__}); check-answer will refuse",
+              file=sys.stderr)  # fmt: skip
+
+
 def step_pair(ctx: Ctx) -> int:
     """Steps 8 and 9: ``orch host relay pair --primary external`` through the pseudo-terminal; the SAS typed from the
     human or the FIFO, the primary's side by the owner client; ``pair.json`` (0600) and ``--json-fd`` get the link."""
@@ -1157,6 +1174,7 @@ def step_pair(ctx: Ctx) -> int:
                     subprocess.run(["xcrun", "simctl", "openurl", "booted", pair["native_link"]], check=False,
                                    timeout=60)  # fmt: skip
                 state["pair"] = {k: v for k, v in pair.items() if k not in ("link", "native_link")}
+                state["pair_full"] = pair
                 print(f"dev-pair: offer {pair['offer_id']} written to {ctx.root}/pair.json (the link is not printed)")
             if "state" in obj:
                 state["state"] = obj["state"]
@@ -1219,6 +1237,7 @@ def step_pair(ctx: Ctx) -> int:
     ]
     argv = ctx.orch("host", "relay", "pair", "--workspace", ctx.workspace_id, "--primary", "external", "--json",
                     "--json-fd", str(w_json), "--scopes", a.scopes, "--no-qr")  # fmt: skip
+    rc = -1
     try:
         rc, _ = run_pty(argv, env=ctx.env(), cwd=ctx.ws_dir, responders=responders, timeout=900, pass_fds=(w_json,),
                         watch=(r_json,), on_watch=on_json, idle=idle)  # fmt: skip
@@ -1230,6 +1249,8 @@ def step_pair(ctx: Ctx) -> int:
         os.close(w_json)
         os.close(r_json)
         owner.close()
+        if rc == 0 and state.get("pair_full"):
+            record_paired_device(ctx, call, state["pair_full"])
         call.close()
     final = state["state"]
     print(f"dev-pair: pairing {'approved' if rc == 0 else (final or 'failed')}")
@@ -1428,12 +1449,16 @@ def find_answer(
     return None
 
 
-def scan_answer(ws: Path, nonce: str, primary_device: str) -> dict[str, Any] | None:
-    """One pass over the workspace logs: the answer to the question carrying the nonce, or ``None``."""
+def genesis_device(ws: Path) -> str:
+    """The owner's genesis device (the ``workspace.created`` actor), or ``""`` when the log cannot be read."""
     wsev = read_jsonl(ws / "events" / "workspace.jsonl")
     created = next((e for e in wsev if e.get("type") == "workspace.created"), {})
-    excluded = [d for d in (primary_device, (created.get("actor") or {}).get("device")) if d]
-    phones = paired_devices(wsev, excluded)
+    return str((created.get("actor") or {}).get("device") or "")
+
+
+def scan_answer(ws: Path, nonce: str, phone: str) -> dict[str, Any] | None:
+    """One pass over the workspace logs: the answer to the question carrying the nonce, signed by ``phone`` (the one
+    device paired for this sandbox's offer), or ``None``."""
     try:
         dirs = sorted(d for d in (ws / "tickets").iterdir() if d.is_dir() and not d.is_symlink())
     except OSError:
@@ -1443,10 +1468,34 @@ def scan_answer(ws: Path, nonce: str, primary_device: str) -> dict[str, Any] | N
         qid = find_question(events, nonce)
         if qid is None:
             continue
-        hit = find_answer(events, qid, nonce, phones)
+        hit = find_answer(events, qid, nonce, {phone})
         if hit is not None:
             return {**hit, "ticket": events[0].get("key")}
     return None
+
+
+def pinned_phone(root: Path) -> str:
+    """The phone ``check-answer`` accepts, or a :class:`Refused` (fail closed): the device that joined for this
+    sandbox's offer (``pair.json``) must be known, and must be neither the primary (``primary-cert.json``) nor the
+    owner's genesis device (``workspace.created``), both of which must be readable, and must have a ``device.added``."""
+    primary = primary_device_id(root)
+    if not primary:
+        raise Refused("primary-cert.json is missing or unreadable: cannot tell the phone from the primary (refusing)")
+    genesis = genesis_device(root / "ws")
+    if not genesis:
+        raise Refused("the genesis device (workspace.created) cannot be read: refusing")
+    try:
+        doc = json.loads((root / "pair.json").read_text(encoding="utf-8"))
+        phone = doc["device"]
+    except (OSError, ValueError, KeyError, TypeError):
+        phone = ""
+    if not isinstance(phone, str) or not re.fullmatch(r"d_[0-9a-f]{32}", phone):
+        raise Refused("pair.json names no device paired for this sandbox's offer (did `up` finish?): refusing")
+    if phone in (primary, genesis):
+        raise Refused("the paired device is the primary or the genesis device: refusing")
+    if phone not in paired_devices(read_jsonl(root / "ws" / "events" / "workspace.jsonl"), [primary, genesis]):
+        raise Refused("the paired device has no device.added in the workspace log: refusing")
+    return phone
 
 
 def primary_device_id(root: Path) -> str:
@@ -1488,8 +1537,11 @@ def _sandbox_ctx(root_arg: str) -> Ctx:
 
 def _agent(ctx: Ctx, grant: str, session: str, *argv: str) -> dict[str, Any]:
     env = ctx.env(extra={"ORCH_GRANT": grant, "ORCH_SESSION": session})
-    r = subprocess.run(ctx.orch("--json", *argv), cwd=ctx.ws_dir, env=env, capture_output=True, text=True, timeout=120,
-                       check=False, stdin=subprocess.DEVNULL)  # fmt: skip
+    try:
+        r = subprocess.run(ctx.orch("--json", *argv), cwd=ctx.ws_dir, env=env, capture_output=True, text=True,
+                           timeout=120, check=False, stdin=subprocess.DEVNULL)  # fmt: skip
+    except subprocess.TimeoutExpired:
+        raise Refused(f"orch {argv[0]} timed out after 120 s (is the sandbox host healthy?)") from None
     try:
         doc = json.loads(r.stdout)
     except ValueError:
@@ -1551,10 +1603,14 @@ def check_answer(args: argparse.Namespace, sleep: Callable[[float], None] = time
         _devsandbox().check_manifest(root)
     except Exception as exc:  # noqa: BLE001
         raise Refused(f"{root} is not a dev-pair sandbox ({type(exc).__name__})") from None
-    primary = primary_device_id(root)
+    try:
+        phone = pinned_phone(root)
+    except Refused as exc:  # fail closed: exit 1, never a shorter exclusion list
+        print(f"dev-pair: check-answer refused: {exc}", file=sys.stderr)
+        return 1
     end = time.monotonic() + float(args.timeout)
     while True:
-        hit = scan_answer(root / "ws", nonce, primary)
+        hit = scan_answer(root / "ws", nonce, phone)
         if hit is not None:
             print(json.dumps({"answered": True, **hit}))
             return 0

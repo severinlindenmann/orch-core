@@ -109,20 +109,20 @@ def test_scan_answer_reads_the_logs(dp, scratch):
     ws = scratch / "ws"
     write_log(ws / "events" / "workspace.jsonl", WS)
     write_log(ws / "tickets" / "T1" / "events.jsonl", [ev("ticket.created", key="SBX-0001"), asked()])
-    assert dp.scan_answer(ws, N, PRIMARY) is None
+    assert dp.scan_answer(ws, N, PHONE) is None
     write_log(ws / "tickets" / "T1" / "events.jsonl", [ev("ticket.created", key="SBX-0001"), asked(), answered()])
-    hit = dp.scan_answer(ws, N, PRIMARY)
+    hit = dp.scan_answer(ws, N, PHONE)
     assert hit["ticket"] == "SBX-0001" and hit["question"] == "Q1" and hit["device"] == PHONE
-    assert dp.scan_answer(ws, "ffffffff", PRIMARY) is None
+    assert dp.scan_answer(ws, "ffffffff", PHONE) is None
     # an answer signed by the primary's device is not counted
     write_log(
         ws / "tickets" / "T1" / "events.jsonl", [ev("ticket.created", key="K"), asked(), answered(device=PRIMARY)]
     )
-    assert dp.scan_answer(ws, N, PRIMARY) is None
+    assert dp.scan_answer(ws, N, PHONE) is None
 
 
 def test_scan_without_a_workspace_is_none(dp, scratch):
-    assert dp.scan_answer(scratch / "nope", N, PRIMARY) is None
+    assert dp.scan_answer(scratch / "nope", N, PHONE) is None
 
 
 def test_primary_device_id(dp, scratch):
@@ -149,6 +149,76 @@ def test_check_answer_times_out_with_json(dp, scratch, capsys, monkeypatch):
     monkeypatch.setattr(dp, "_devsandbox", lambda: type("D", (), {"check_manifest": staticmethod(lambda r: {})}))
     monkeypatch.setattr(dp, "check_root_path", lambda r: scratch)  # /tmp is sticky: the real rule is tested elsewhere
     root = scratch
+    sandbox_files(root)
     args = dp.build_parser().parse_args(["check-answer", "--root", str(root), "--nonce", N, "--timeout", "0"])
     assert dp.check_answer(args, sleep=lambda s: None) == 1
     assert json.loads(capsys.readouterr().out) == {"answered": False, "nonce": N, "timeout_s": 0.0}
+
+
+OTHER = "d_" + "4" * 32
+
+
+def sandbox_files(root, *, primary=True, genesis=True, phone=PHONE, events=None):
+    """A sandbox root as `up` leaves it: primary-cert.json, the workspace log, pair.json naming the paired device."""
+    if primary:
+        (root / "primary-cert.json").write_text(json.dumps({"o": {"device_id": PRIMARY[2:]}, "sig": "x"}))
+    evs = events if events is not None else WS
+    if not genesis:
+        evs = [e for e in evs if e["type"] != "workspace.created"]
+    write_log(root / "ws" / "events" / "workspace.jsonl", evs)
+    doc = {"offer_id": "o1"} if phone is None else {"offer_id": "o1", "device": phone}
+    (root / "pair.json").write_text(json.dumps(doc))
+
+
+def test_pinned_phone_is_the_offers_device(dp, scratch):
+    sandbox_files(scratch)
+    assert dp.pinned_phone(scratch) == PHONE
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"primary": False},  # primary-cert.json unreadable: never shrink the exclusion list
+        {"genesis": False},  # no workspace.created
+        {"phone": None},  # pair.json names no device
+        {"phone": PRIMARY},
+        {"phone": OWNER},
+        {"phone": OTHER},  # named, but never added to the workspace
+        {"phone": "not-a-device"},
+    ],
+)
+def test_pinned_phone_fails_closed(dp, scratch, kw):
+    sandbox_files(scratch, **kw)
+    with pytest.raises(dp.Refused):
+        dp.pinned_phone(scratch)
+
+
+def test_check_answer_refuses_without_the_primary_cert(dp, scratch, monkeypatch, capsys):
+    monkeypatch.setattr(dp, "_devsandbox", lambda: type("D", (), {"check_manifest": staticmethod(lambda r: {})}))
+    monkeypatch.setattr(dp, "check_root_path", lambda r: scratch)
+    sandbox_files(scratch, primary=False)
+    args = dp.build_parser().parse_args(["check-answer", "--root", str(scratch), "--nonce", N, "--timeout", "0"])
+    assert dp.check_answer(args, sleep=lambda s: None) == 1
+    out = capsys.readouterr()
+    assert "primary-cert.json" in out.err and out.out == ""
+
+
+def test_another_added_device_is_not_the_phone(dp, scratch):
+    ws = scratch / "ws"
+    write_log(ws / "events" / "workspace.jsonl", [*WS, ev("device.added", device=OTHER)])
+    write_log(ws / "tickets" / "T1" / "events.jsonl", [ev("ticket.created", key="K"), asked(), answered(device=OTHER)])
+    assert dp.scan_answer(ws, N, PHONE) is None
+    assert dp.scan_answer(ws, N, OTHER)["device"] == OTHER
+
+
+def test_agent_timeout_is_refused(dp, monkeypatch):
+    import subprocess
+
+    ctx = type("C", (), {"env": lambda self, extra=None: {}, "orch": lambda self, *a: ["orch", *a], "ws_dir": "/"})()
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired("orch", 120)
+
+    monkeypatch.setattr(dp.subprocess, "run", boom)
+    with pytest.raises(dp.Refused, match="timed out"):
+        dp._agent(ctx, "g", "s", "new", "x")

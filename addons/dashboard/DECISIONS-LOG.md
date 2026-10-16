@@ -1907,3 +1907,9 @@ Decision: Requirements and plan decisions can send an unsigned host hint to a pa
 Why: This follows the B10 phase 1 wire contract. Status remains authoritative after cancellation/expiry because an in-flight decision may still land. Polling and ticket query updates refresh the result without claiming an authentication strength.
 
 Revert: Remove the phone routes, host capability and dialog integration; keep the disabled B6 method stub.
+
+### 2026-10-17 — B10 phone requests: dashboard session trust boundary
+
+- **Decision:** B10 phone requests: the trust boundary is the dashboard session token, same as every dashboard write; the server's own env/peer check does not describe the HTTP caller. Show phone information as reported by your Mac. Stop polling immediately on done or status 404/403; allow at most 60 seconds after cancelled, expired or stale for an in-flight decision to land. Scope retry keys to the workspace, ticket, gate and generation.
+- **Why:** Server process checks cannot identify an HTTP caller. Plain copy avoids implying a verified signature, and bounded polling catches late decisions without watching ended requests forever.
+- **Revert:** Restore the previous phone copy and polling behavior; remove request identity tracking in `usePhone`.

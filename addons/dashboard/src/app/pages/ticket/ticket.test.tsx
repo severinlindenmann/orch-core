@@ -368,5 +368,5 @@ it.each([{ via: 'phone' as const, sig_ok: true }, { presence: 'secure-enclave-un
   await user.click(screen.getByTestId('gate-plan'))
   const pop = await screen.findByRole('dialog', { name: /Plan/ })
   expect(pop.textContent).not.toMatch(/verified|presence|secure-enclave|signature|signed on phone/i)
-  expect(within(pop).getByText(/Approved by Severin/)).toHaveTextContent('per host, not signed')
+  expect(within(pop).getByText(/Approved by Severin/)).toHaveTextContent('as reported by your Mac')
 })

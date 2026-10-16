@@ -14,6 +14,8 @@ export function usePhone(ws: string | undefined) {
   const lock = useRef(false)
   const revision = useRef(0)
   const idem = useRef(crypto.randomUUID())
+  const requestIdentity = useRef<string | null>(null)
+  const terminalDeadline = useRef<number | null>(null)
   const liveHint = useRef<PhoneHint | null>(null)
   liveHint.current = hint
   const mounted = useRef(true)
@@ -30,6 +32,11 @@ export function usePhone(ws: string | undefined) {
       : e instanceof Error ? e.message : 'Could not reach the host. Try again.')
   const start = async (request: PhoneRequest) => {
     if (!ws || lock.current || hint) return
+    const identity = JSON.stringify([ws, request.ref, request.gate, request.gate_gen])
+    if (requestIdentity.current !== identity) {
+      requestIdentity.current = identity
+      idem.current = crypto.randomUUID()
+    }
     lock.current = true; setBusy(true); setError(null); pinned.current = ws
     try {
       const result = await api.phoneRequest(ws, { ...request, idem: idem.current })
@@ -57,29 +64,41 @@ export function usePhone(ws: string | undefined) {
   }
   useEffect(() => {
     if (!hint || !pinned.current || hint.state === 'done') return
+    if (hint.state !== 'open') terminalDeadline.current ??= Date.now() + 60_000
     let active = true, polling = false
     const poll = async () => {
-      if (polling || lock.current) return
+      if (!active || polling || lock.current || (terminalDeadline.current !== null && Date.now() >= terminalDeadline.current)) return
       polling = true
       const version = revision.current
       try {
         const result = await api.phoneStatus(pinned.current!, hint.id)
         if (active && version === revision.current && result.hints[0]) {
+          if (result.hints[0].state === 'done') stop()
           setHint(result.hints[0]); setError(null)
         }
-      } catch (e) { if (active && version === revision.current) report(e) }
+      } catch (e) {
+        if (active && version === revision.current) {
+          if (e instanceof ApiError && (e.status === 404 || e.status === 403)) {
+            setError(e.status === 404 ? 'This phone request is no longer available.' : 'You no longer have access to this phone request.')
+            stop()
+          } else report(e)
+        }
+      }
       finally { polling = false }
     }
     const timer = setInterval(() => void poll(), 2000)
     const unsubscribe = qc.getQueryCache().subscribe(event => {
       if (event.type === 'updated' && event.query.queryKey[0] === 'ticket') void poll()
     })
-    return () => { active = false; clearInterval(timer); unsubscribe() }
-  }, [hint?.id, hint?.state, qc]) // Keep watching cancelled/expired hints: an in-flight decision can still land.
+    const timeout = terminalDeadline.current === null ? undefined
+      : setTimeout(() => stop(), Math.max(0, terminalDeadline.current - Date.now()))
+    function stop() { active = false; clearInterval(timer); clearTimeout(timeout); unsubscribe() }
+    return stop
+  }, [hint?.id, hint?.state, qc]) // Allow up to one minute for an in-flight decision to land.
   useEffect(() => {
     if (hint?.state === 'done') {
       for (const key of ['ticket', 'tickets', 'today', 'board', 'events']) void qc.invalidateQueries({ queryKey: [key] })
     }
   }, [hint?.state, qc])
-  return { hint, error, busy, needsPair, start, cancel, switched: (!!hint || busy) && ws !== pinned.current, reset: () => { revision.current += 1; setHint(null); setError(null); setNeedsPair(false); idem.current = crypto.randomUUID() } }
+  return { hint, error, busy, needsPair, start, cancel, switched: (!!hint || busy) && ws !== pinned.current, reset: () => { revision.current += 1; terminalDeadline.current = null; setHint(null); setError(null); setNeedsPair(false); idem.current = crypto.randomUUID() } }
 }

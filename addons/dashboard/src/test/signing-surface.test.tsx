@@ -847,7 +847,7 @@ it('phone handoff sends only the displayed gate and generation, leaving the deci
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: 'Approve on your phone' }))
   await screen.findByText('Waiting for your phone…')
-  expect(screen.getByText(/generation 7 · per host, not signed/)).toBeVisible()
+  expect(screen.getByText(/Version 7 of this step \(as reported by your Mac\)/)).toBeVisible()
   expect(sent).toHaveBeenCalledWith('ws', { ...request, idem: expect.any(String) })
   expect(screen.getByText(/choose Approve or Request changes there/)).toBeVisible()
   vi.restoreAllMocks()

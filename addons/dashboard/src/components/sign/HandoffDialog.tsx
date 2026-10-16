@@ -263,7 +263,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
         {phoneRun.busy && <p role="status">Contacting your phone…</p>}
         {phoneRun.needsPair && phoneRun.hint?.state === 'open' && <p role="alert">Pair a phone first. You can cancel this request and choose another way.</p>}
         {phoneRun.error && <p role="alert">{phoneRun.error}</p>}
-        {method === 'phone' && p.phoneRequest && <p className="text-[12px] text-text-muted"><Raw>{phoneRun.hint?.ref ?? p.phoneRequest.ref}</Raw> · generation {phoneRun.hint?.gate_gen ?? p.phoneRequest.gate_gen} · per host, not signed</p>}
+        {method === 'phone' && p.phoneRequest && <p className="text-[12px] text-text-muted"><Raw>{phoneRun.hint?.ref ?? p.phoneRequest.ref}</Raw> · Version {phoneRun.hint?.gate_gen ?? p.phoneRequest.gate_gen} of this step (as reported by your Mac)</p>}
         {method === 'phone' && !phone && <p className="text-[13px] text-text-muted">Review and choose on your phone. If you request changes, enter the text there.</p>}
         {phase === 'idle' && !clickOpen && !phone && method !== 'phone' && p.children}
         {phase === 'idle' && !clickOpen && method === 'click' && <ClickBadge />}

@@ -117,7 +117,7 @@ def _parser() -> argparse.ArgumentParser:
     relay = sub.add_parser(
         "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
     )
-    relay.add_argument("action", choices=("stop", "start", "unlink", "pair", "primary"))
+    relay.add_argument("action", choices=("stop", "start", "unlink", "pair", "primary", "genesis-pin"))
     relay.add_argument("sub", nargs="?", help="pair: list|cancel|abandon (none: make an offer); primary: set")
     relay.add_argument("--workspace", required=True, help="workspace id or prefix")
     relay.add_argument("--state", type=Path)
@@ -709,7 +709,7 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
 
     state = _state(args.state, env)
     uid = os.getuid()
-    if args.action in ("pair", "primary"):
+    if args.action in ("pair", "primary", "genesis-pin"):
         from . import paircli
 
         return paircli.main(args, env, out, state=state, control=_control_path(args.run, state, env))

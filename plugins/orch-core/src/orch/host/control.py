@@ -134,6 +134,9 @@ _SCHEMAS = {
     "host.relay_primary_set": _closed(
         {"workspace_id": _WS, "cert": {"type": "object"}, "label": {"type": "string", "minLength": 1, "maxLength": 200}}
     ),
+    # B1 (11A.2): the genesis pin's person path; human-only like pairing, no idem, no outcome record
+    "host.relay_genesis_pin_facts": _closed({"workspace_id": _WS}),
+    "host.relay_genesis_pin_submit": _closed({"workspace_id": _WS, "pin": {"type": "object"}}),
     "host.outcome": _closed({"idem": {"type": "string", "pattern": r"^a_" + frames.ULID + "$"}}),
     "host.bootstrap": _closed(
         {
@@ -145,6 +148,7 @@ _SCHEMAS = {
     ),
 }
 PAIR_OPS = frozenset(op for op in _SCHEMAS if op.startswith("host.relay_pair_") or op == "host.relay_primary_set")
+GENESIS_OPS = frozenset({"host.relay_genesis_pin_facts", "host.relay_genesis_pin_submit"})
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
 CONTROL_OPS = {op: 1 for op in _SCHEMAS}
 WRITES = CONTROL_WRITES
@@ -522,6 +526,20 @@ class ControlOps:
             raise HostError("unknown_command", op)
         return ok_result(data)
 
+    # -- B1: the genesis pin (11A.2)
+    def relay_genesis_pin(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
+        from . import relaygenesis
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        if op == "host.relay_genesis_pin_facts":
+            return ok_result({"workspace_id": workspace_id, "facts": relaygenesis.facts(service)})
+        return ok_result(relaygenesis.submit(service, args["pin"]))
+
     # -- host.bootstrap
     def bootstrap(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
         root = os.path.realpath(args["root"])
@@ -876,6 +894,7 @@ class ControlGate:
                 "host.relay_start": lambda: ops.relay_start(args),
                 "host.relay_unlink": lambda: ops.relay_unlink(args),
                 **{name: (lambda n=name: ops.relay_pair(n, args)) for name in PAIR_OPS},
+                **{name: (lambda n=name: ops.relay_genesis_pin(n, args)) for name in GENESIS_OPS},
             }[op]
             result = await asyncio.to_thread(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})

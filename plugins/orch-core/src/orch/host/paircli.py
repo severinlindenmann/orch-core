@@ -30,7 +30,7 @@ from typing import Any, TextIO
 
 from .errors import HostError
 
-__all__ = ["main", "parse_ttl"]
+__all__ = ["main", "parse_ttl", "sign_genesis_pin"]
 
 TERMINAL = ("rejected", "expired", "cancelled", "failed")
 STATES = frozenset({"open", "pending", "confirmed", "cert_pending", "allocated", "published", "approved", *TERMINAL})
@@ -243,6 +243,51 @@ def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Cal
     return run
 
 
+def sign_genesis_pin(
+    call: Callable[[str, dict[str, Any]], dict[str, Any]],
+    workspace_id: str,
+    *,
+    backend: Any,
+    key_id: str,
+    name: str,
+    confirm: Callable[[str, str], bool],
+) -> dict[str, Any]:
+    """The genesis pin's person path (11A.2, ``relay.genesis_pin``), the terminal signer. The host sends facts (its own
+    ``workspace.created`` event and the relay origin); the signer recomputes the pin from them
+    (:func:`orch.identity.genesispin.check_facts`: this workspace, this genesis device), shows the review, signs only
+    after ``confirm(text, word)``, and sends the signed pin back. Reusable by an owner client (the dev path, T2)."""
+    from orch.identity import genesispin
+    from orch.identity.errors import Refused
+
+    from .signer import SignerRefused
+
+    facts = call("host.relay_genesis_pin_facts", {"workspace_id": workspace_id})["facts"]
+    try:
+        verified = genesispin.check_facts(
+            facts, workspace_id=workspace_id, device_pub=bytes(backend.public_key(key_id))
+        )
+    except Refused as exc:
+        raise SignerRefused(f"refusing to sign: {exc.code}: {exc.detail}") from None
+    if not confirm(genesispin.render(verified, name=safe(name)), genesispin.confirm_word(workspace_id)):
+        raise SignerRefused("not confirmed")
+    pin = genesispin.sign_pin(backend, key_id, verified)
+    return call("host.relay_genesis_pin_submit", {"workspace_id": workspace_id, "pin": pin})
+
+
+def _genesis_pin_run(
+    call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapping[str, Any], state: Path
+) -> dict:
+    from orch.ops import human
+
+    wid = entry["workspace_id"]
+    directory = human.keys_dir(state, wid)
+    if not (directory / human.KEY_FILE).is_file():
+        raise HostError("custody.no_key", "this machine holds no device key of yours for this workspace")
+    backend = human.open_backend(directory)
+    name = Path(str(entry.get("root") or wid)).name
+    return sign_genesis_pin(call, wid, backend=backend, key_id=human.KEY_ID, name=name, confirm=human.review_prompt)
+
+
 class _Step9Failed(HostError):
     """A step-9 refusal; ``main`` prints that the offer stays and how to sign it later."""
 
@@ -253,6 +298,26 @@ class _Step9Failed(HostError):
 
 def _cut(text: object) -> str:
     return safe(str(text), 200)
+
+
+def _genesis_guard(run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """The genesis pin's errors as :class:`HostError` (never a traceback), as :func:`_guarded` does for step 9."""
+    from orch.custody.base import CustodyError
+    from orch.ops.errors import OrchError
+
+    from . import frames
+    from .signer import SignerRefused
+
+    try:
+        return run()
+    except SignerRefused as exc:
+        raise HostError("invalid.input", _cut(f"{exc}; nothing was signed")) from None
+    except CustodyError as exc:
+        raise HostError(str(getattr(exc, "code", "custody")), _cut(str(exc))) from None
+    except OrchError as exc:
+        raise HostError(str(exc.code), _cut(str(exc))) from None
+    except (OSError, ConnectionError, TimeoutError, frames.FrameError) as exc:
+        raise HostError("host.unavailable", _cut(f"lost the connection to the orch host ({exc})")) from None
 
 
 def _guarded(step9: Callable[[str], None]) -> Callable[[str], None]:
@@ -341,6 +406,10 @@ def main(
             raise HostError("host.unavailable", f"the orch host is not reachable ({type(exc).__name__})") from None
         with client:
             call = _caller(client)
+            if args.action == "genesis-pin":
+                data = _genesis_guard(lambda: _genesis_pin_run(call, entry, state))
+                out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                return 0
             if args.action == "primary":
                 if sub != "set" or not args.cert or not args.label:
                     raise HostError(

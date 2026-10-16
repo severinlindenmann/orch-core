@@ -103,6 +103,7 @@ _READS = frozenset(
         # R6c-2: relay pairing (no idem, no outcome record: the offer's link is only in its direct answer)
         "host.relay_pair_offer", "host.relay_pair_show", "host.relay_pair_list", "host.relay_pair_answer",
         "host.relay_pair_cancel", "host.relay_pair_abandon", "host.relay_pair_cert", "host.relay_primary_set",
+        "host.relay_genesis_pin_facts", "host.relay_genesis_pin_submit",  # B1: the genesis pin (11A.2)
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a; ``relay.submit`` through the

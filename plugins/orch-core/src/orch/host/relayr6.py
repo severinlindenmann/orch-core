@@ -175,6 +175,7 @@ def link_source(service: Any) -> Any:
     from orch.relay.sign import LinkContext, RelaySigner
     from orch.store import BackendSigner
 
+    from . import relaygenesis
     from .custody import read_json
 
     ws = service.workspace_id
@@ -201,4 +202,5 @@ def link_source(service: Any) -> Any:
     return R6LinkSource.from_genesis(
         mk, signer, genesis_event=genesis, part=default_part(str(genesis.get("prefix", ""))),
         now_ms=lambda: _now_ms(service), blocked=lambda: _convenience_block(service),
+        genesis_pin=relaygenesis.pin_source(service),
     )  # fmt: skip

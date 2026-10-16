@@ -1636,14 +1636,24 @@ class PairThread:
         return self._thread.is_alive() and not self._stop.is_set()
 
     def _call(self, fn: Callable[[], Any], timeout: float = 30.0) -> Any:
-        """Run ``fn`` on the pair thread and return (or raise) its result."""
+        """Run ``fn`` on the pair thread and return (or raise) its result. A call that times out **before it runs**
+        is dropped (it never runs later: the caller was told ``workspace.unavailable``, so nothing was applied); one
+        that times out **while it runs** is ``outcome.unknown`` (look at the offer before acting again). Opus review
+        of #589, L2."""
         if threading.current_thread() is self._thread:
             return fn()
         done = threading.Event()
         box: dict[str, Any] = {}
         self._q.put(("call", fn, (done, box)))
         if not done.wait(timeout):
-            raise PairRefused("workspace.unavailable", "the pair thread did not answer in time")
+            with self._lock:
+                started = box.get("started", False)
+                if not started:
+                    box["dropped"] = True
+            if not started:
+                raise PairRefused("workspace.unavailable", "the pair thread did not answer in time; nothing was done")
+            if not done.wait(0):
+                raise PairRefused("outcome.unknown", "the call is still running: look at the offer before retrying")
         if "error" in box:
             raise box["error"]
         return box.get("result")
@@ -1702,6 +1712,11 @@ class PairThread:
                             self._done.add(n)
                 elif kind == "call":
                     done, box = extra
+                    with self._lock:
+                        dropped = box.get("dropped", False)
+                        box["started"] = not dropped
+                    if dropped:  # the caller gave up before it started: never run later
+                        continue
                     try:
                         box["result"] = fn()
                     except BaseException as e:  # noqa: BLE001 - handed back to the caller

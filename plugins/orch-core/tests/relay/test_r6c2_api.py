@@ -71,3 +71,43 @@ def test_pairing_dropped_is_counted_durably_at_most_once_a_minute(kit):
     kit.clock.ms += 60_000
     kit.engine.tick()
     assert kit.store.alarms()["alarms"]["pairing_dropped"]["count"] == 3
+
+
+def test_a_call_that_times_out_before_it_runs_is_dropped_never_applied_later(kit):
+    """Opus review of #589, L2: the caller got workspace.unavailable, so the job must not run afterwards (an offer
+    whose link nobody saw would block pairing)."""
+    t = PairThread(kit.engine, name="orch-relay-r6p-test")  # not started yet: the job waits in the queue
+    with pytest.raises(PairRefused) as e:
+        t.api("offer", timeout=0.05)
+    assert e.value.code == "workspace.unavailable"
+    t.start()
+    try:
+        assert t.api("list_offers") == []  # the queued offer was dropped, never made
+        assert kit.store.offer_ids() == []
+    finally:
+        t.stop()
+        t.join(5)
+
+
+def test_a_call_that_times_out_while_it_runs_is_outcome_unknown(kit):
+    import threading
+
+    t = PairThread(kit.engine, name="orch-relay-r6p-test")
+    gate, entered = threading.Event(), threading.Event()
+    real = kit.engine.list_offers
+
+    def slow():
+        entered.set()
+        gate.wait(5)
+        return real()
+
+    kit.engine.list_offers = slow  # type: ignore[method-assign]
+    t.start()
+    try:
+        with pytest.raises(PairRefused) as e:
+            t.api("list_offers", timeout=0.2)
+        assert entered.is_set() and e.value.code == "outcome.unknown"
+    finally:
+        gate.set()
+        t.stop()
+        t.join(5)

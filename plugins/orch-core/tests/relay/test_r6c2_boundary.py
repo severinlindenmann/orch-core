@@ -86,3 +86,69 @@ def test_the_cli_never_names_a_settlement_path():
     for n in ast.walk(tree):
         if isinstance(n, ast.Attribute):
             assert n.attr not in NAMES, n.attr
+
+
+# -- Opus review of #589, L3: attributes and strings too (getattr, aliases), paircli, and PairThread._call -------------
+
+
+#: the pairing modules proper (the wider scan: every attribute and string constant, not only calls)
+PAIRING_MODULES = ("relay/r6/pair.py", "relay/r6/pairstore.py", "relay/r6/pairrelay.py", "host/relaypair.py",
+                   "host/paircli.py", "host/pairdevice.py")  # fmt: skip
+
+
+#: the string "refused" as a PairRelayError kind (a relay's definite refusal), not the settlement method
+RELAY_KIND = {
+    ("relay/r6/pair.py", "PairEngine._post_request", "refused"),
+    ("relay/r6/pair.py", "PairEngine.publish", "refused"),
+    ("relay/r6/pairrelay.py", "SessionPairRelay._call", "refused"),
+    ("relay/r6/pairrelay.py", "SessionPairRelay.post_baseline", "refused"),
+    ("relay/r6/pairrelay.py", "_id", "refused"),
+}
+
+
+def _all_mentions() -> set[tuple[str, str, str]]:
+    """Every ``x.<name>`` (called or not: an alias ``f = e.settle`` counts) and every string constant equal to a
+    settlement name (``getattr(e, "settle")``), in the pairing modules, with its module and enclosing function."""
+    out: set[tuple[str, str, str]] = set()
+    for rel in PAIRING_MODULES:
+        text = (ROOT / rel).read_text()
+
+        def visit(node: ast.AST, ctx: list[str], rel: str = rel) -> None:
+            for ch in ast.iter_child_nodes(node):
+                c = ctx + [ch.name] if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else ctx
+                if isinstance(ch, ast.Attribute) and ch.attr in NAMES:
+                    out.add((rel, ".".join(c), ch.attr))
+                if isinstance(ch, ast.Constant) and isinstance(ch.value, str) and ch.value in NAMES:
+                    out.add((rel, ".".join(c), ch.value))
+                visit(ch, c, rel)
+
+        visit(ast.parse(text), [])
+    return out
+
+
+def test_no_alias_or_dynamic_lookup_of_a_settlement_path():
+    assert _all_mentions() == {a for a in ALLOWED if a[0] in PAIRING_MODULES} | RELAY_KIND
+
+
+def test_paircli_never_names_a_settlement_path():
+    tree = ast.parse((ROOT / "host" / "paircli.py").read_text())
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute):
+            assert n.attr not in NAMES and n.attr not in ("_call", "api_table", "engine"), n.attr
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            assert n.value not in NAMES, n.value
+
+
+def test_pair_thread_call_is_used_only_by_pair_thread_api():
+    for rel in ("relay/r6/pair.py", "host/relaypair.py", "host/control.py", "host/paircli.py"):
+
+        def visit(node: ast.AST, ctx: list[str], rel: str = rel) -> None:
+            for ch in ast.iter_child_nodes(node):
+                c = ctx + [ch.name] if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else ctx
+                if isinstance(ch, ast.Attribute) and ch.attr == "_call":
+                    assert (rel, ".".join(c)) == ("relay/r6/pair.py", "PairThread.api"), (rel, c)
+                if isinstance(ch, ast.Constant) and ch.value == "_call":
+                    raise AssertionError((rel, c))
+                visit(ch, c, rel)
+
+        visit(ast.parse((ROOT / rel).read_text()), [])

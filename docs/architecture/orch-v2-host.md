@@ -4283,7 +4283,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     answer), `orch host relay pair [--primary external]`, `pair list|cancel|abandon`, `primary set`, the internal API
     as pair-thread jobs (`relaypair.api`, an allowlist that never reaches the settlement paths, pinned by AST), the
     pairing block in `host.status.relay` (`pairing`, additive, no secret) and a durable `pairing_dropped` counter. No
-    new code; no wire, hash or F1 change. `--primary inline` is refused until it is built.
+    new code; no wire, hash or F1 change. `--primary inline` is refused until it is built. The pairing control ops
+    are open to every host-UID control-socket client (tier A; the `ORCH_GRANT` refusal is the CLI's: an accepted
+    residual, stated in §11A.15.21) and have outcome-unknown semantics on cancel or timeout.
 
 ---
 
@@ -9471,6 +9473,33 @@ code; a link is printed only when it is printable ASCII; errors are cleaned the 
 built by the JSON encoder (ASCII, every control character escaped). Tests: `\x1b[2J`, a bidi override, a newline,
 zero-width and C1 characters in a device label (the attached loop, `pair list` text and JSON) and in a host error
 and a relayed refusal.
+
+**Opus review of #589 (16 Oct 2026, CHANGES; fixed).**
+- **M1, step 9's errors** (a declined review, `SignerRefused` "not confirmed"; `CustodyError`; `OrchError`/
+  `HostFailure`; `FrameError`; `OSError`/`TimeoutError`; anything else) end in a cleaned refusal, never a
+  traceback (`paircli._guarded`, as `hostclient._human` maps them); a decline says nothing was signed; the CLI says
+  the offer stays and how to sign later (`--resume --offer O`).
+- **L1, accepted residual, stated (as R5 for `host.relay_unlink`).** The `host.relay_pair_*` ops and
+  `host.relay_primary_set` are open to every control-socket client of the host UID; the `ORCH_GRANT` refusal is the
+  CLI's. A same-UID tier-A agent can make an offer and read its link, answer the SAS for a phone it controls,
+  cancel or abandon the person's offers (a denial of service), set a primary certificate (it still verifies under the
+  genesis `PK`) and hand in certificates, rejections or challenges (each verified under the pinned `PK`; an invalid
+  one raises a `relay_misbehaving` alarm that names the relay, not the local caller). "The SAS is typed at the
+  terminal" is a CLI property, not a host-enforced boundary against same-UID code. Completion still needs the
+  PK-signed certificate (the separate primary, whose human compares `cert_code`) and the passphrase-signed
+  `relay.pair_device`. Tier-A trust (the control socket admits only the host UID), not person authorization.
+- **L2, state-changing ops classed as reads.** The pairing ops have no idem and no outcome record (the offer's link
+  must never be persisted), so they have **outcome-unknown semantics**: a cancelled or timed-out call may still have
+  applied; look at the offer (`orch host relay pair list`) before acting again. A retried wrong code uses one more of
+  the 3 attempts; a retried offer refuses `relay.pair_open` while the first (whose link was lost) lives: cancel it.
+  `PairThread._call` drops a call that timed out **before it ran** (answer `workspace.unavailable`: never run
+  later) and answers `outcome.unknown` for one that timed out **while running**.
+- **L3:** the boundary test also scans `paircli.py`, flags every attribute and string constant equal to a settlement
+  name (an alias, a `getattr`), and pins that `PairThread._call` is referenced only in `PairThread.api`.
+- **L4:** `--json-fd` must be a pipe or a socket (`fstat`) above fd 2; a regular file or fd 0 to 2 is refused before
+  any offer exists.
+- **L6 (info):** the phone's cleaned, capped label is visible to agents (classes P and G) through
+  `host.status.relay.pairing`: a small prompt-text channel; no secret. L5 (a `CONTROL_ERRORS` tuple) is not done.
 
 **Judgement calls.**
 - J-R6c2-1 **`--primary inline` is refused** (`invalid.input`, the fix names `--primary external`) until the inline

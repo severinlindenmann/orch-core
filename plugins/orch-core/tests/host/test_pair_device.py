@@ -320,8 +320,8 @@ def test_a_handoff_request_binds_to_a_convenience_signer_when_allowed(served, hu
     prepared = human.prepare("relay.pair_device", {"offer_id": OFFER}, handoff=True)
     convenience.set_enabled(served.lab.state, served.wid, True, UID)
     res = human.get(prepared["request"]["id"], signer=_conv_signer(human))
-    # the hand-off itself is refused while the flag is on (sign.click_only, §0.8.6 item 8): never a pair_device reason
-    assert "pair_device" not in json.dumps(res)
+    # the hand-off itself is refused while the flag is on (sign.click_only, §0.8.6 item 8), never for pair_device
+    assert err(res) == "sign.click_only"
 
 
 def test_the_signer_accepts_a_convenience_backend_and_convenience_events_for_pair_device(served, human, pairing):

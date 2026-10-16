@@ -646,6 +646,10 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
     try:
+        if (
+            args.switch == "on"
+        ):  # B10: before the lock (like custody_on): never leave the flag on with every click refused
+            convenience.refuse_turn_on(state, match[0], uid)
         with convenience.workspace_lock(state, wid, uid):  # against a hand-off prepare in the host (§0.8.6 item 8)
             if args.switch == "on":
                 waiting = convenience.pending_handoffs(state, wid, uid, clock=_clock)
@@ -658,8 +662,6 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                         f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
                         hint="let them expire (10 minutes), then switch convenience on",
                     )
-            if args.switch == "on":  # B10: never leave the flag on with every click refused (names the devices)
-                convenience.refuse_turn_on(state, match[0], uid)
             convenience.set_enabled(state, wid, args.switch == "on", uid)
     except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)

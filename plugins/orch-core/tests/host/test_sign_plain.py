@@ -222,7 +222,7 @@ def test_details_first_shows_the_dump_without_d(monkeypatch):
 
 def test_a_review_without_details_keeps_the_old_prompt(monkeypatch):
     ok, shown = _prompt(monkeypatch, "plain text\n", ["DEMO-0001/ABCD1234"])
-    assert ok and "and Enter to continue to the passphrase; anything else stops: " in shown
+    assert ok and "and Enter to continue; anything else stops: " in shown
 
 
 # --- the invariant: nothing that carries authority or identity is left out of the plain view -----------------------------

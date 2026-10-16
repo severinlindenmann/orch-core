@@ -539,7 +539,8 @@ class ClickSigner:
             del secret, signed  # best effort: Python cannot wipe a str; nothing keeps a reference to it
 
     def _deposit_args(self, entry: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
-        """A deposit grant's arguments: ``hours`` 1..12 (default 8) and ``scope``; the signer sets ``label:"runner"``
+        """A deposit grant's arguments: ``hours`` 1..168 (the workspace grant_hours; default 8) and
+        ``scope``; the signer sets ``label:"runner"``
         and ``verbs:"agent"`` itself. Refused (``terminal_only``) unless this machine has dashboard execution on."""
         unknown = set(inner) - {"hours", "scope", "label", "verbs", "runner", "extend"}
         if inner.get("runner", True) is not True:
@@ -553,7 +554,7 @@ class ClickSigner:
             raise refused("terminal_only", f"a click grant lasts at most {DEPOSIT_MAX_HOURS} hours; use the terminal")
         if not self._execution(entry):
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
-        # runner:true makes the op itself a runner grant (label runner, at most 12 h, verbs agent, no ORCH_GRANT hint)
+        # runner:true makes the op itself a runner grant (label runner, workspace grant_hours cap, verbs agent, no hint)
         out: dict[str, Any] = {"hours": hours, "scope": scope, "verbs": "agent", "label": "runner", "runner": True}
         if "extend" in inner:  # B8: the grant this one replaces; the op checks it is yours and live
             if not (isinstance(inner["extend"], str) and GRANT_ID.fullmatch(inner["extend"])):

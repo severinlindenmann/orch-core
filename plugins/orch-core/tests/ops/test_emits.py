@@ -8,7 +8,8 @@ import json
 import orch.ops as ops
 from orch.model import emits
 
-DIGEST_V1 = "01ccface9a9524cf50c0b6286550a34c0fe8d1d66891140ee1c66a25a44d6a2e"
+DIGEST_V1 = "dc086fd5ad0dee3afff93646a3d4f9a0369d1be6037ef969e2d74b36131bfe8a"
+DIGEST_V2 = "01ccface9a9524cf50c0b6286550a34c0fe8d1d66891140ee1c66a25a44d6a2e"
 HUMAN_ONLY_V1 = "63726a5fa56ebeabd06dbfc4f5b8a81d88c512c1544dc99e602b815ae58c7676"
 
 
@@ -25,6 +26,11 @@ def test_v1_is_frozen():
     assert emits.EMITS_V1["task.done"] == {"task.done", "artifact.added"}  # a CI grant for task done runs --run
     assert emits.EMITS_V1["handoff"] == {"handoff.written", "claim.released"}
     assert emits.EMITS_V1["log"] == {"log.added"} and "set" in emits.EMITS_V1 and "log.added" not in emits.EMITS_V1
+
+
+def test_v2_pinned_and_differs_from_v1_only_in_human_only_keys():
+    assert digest(emits.EMITS_V2) == DIGEST_V2 and emits.CURRENT is emits.EMITS_V2
+    assert {k for k in emits.EMITS_V2 if emits.EMITS_V2[k] != emits.EMITS_V1.get(k)} <= emits.HUMAN_ONLY
 
 
 def test_the_live_registry_matches_the_current_table():

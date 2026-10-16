@@ -71,14 +71,14 @@ _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host
 
 
 def person_op_types(op: str) -> frozenset[str] | None:
-    """The event types the person op ``op`` may emit (``EMITS_V1[op]``, the frozen table, F1 §10.7), or ``None`` when
+    """The event types the person op ``op`` may emit (``CURRENT[op]``, F1 §10.7), or ``None`` when
     ``op`` is not an op a person runs through ``human.prepare``."""
-    from orch.model.emits import EMITS_V1, HUMAN_ONLY
+    from orch.model.emits import CURRENT, HUMAN_ONLY
     from orch.ops.actors import allows
 
     if op in HOST_PERSON_OPS:  # not in EMITS_V1 (a grant verb never covers a person event): the host's own table
         return HOST_PERSON_OPS[op]
-    types = EMITS_V1.get(op)
+    types = CURRENT.get(op)
     if types is None or op in _NOT_PERSON:
         return None
     if op in HUMAN_ONLY:

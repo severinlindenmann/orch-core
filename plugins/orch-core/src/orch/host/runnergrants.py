@@ -2,7 +2,8 @@
 
 **Deposit.** ``grant.deposit {deposit_id}`` is the one op that needs both a person and a grant: a person-class caller
 whose UID maps to a valid member (evaluated as P) **and** a verified ``auth.grant`` naming a grant of that same person
-whose ``grant.issued`` carries ``label:"runner"``, ``verbs:"agent"``, at most 12 hours and at least 15 minutes left.
+whose ``grant.issued`` carries ``label:"runner"``, ``verbs:"agent"``, at most the workspace grant_hours (168) and
+at least 15 minutes left.
 It is sent by the process that drew the secret (the click signer in deposit-only grant mode, ``orch grant --runner``,
 ``orch sign`` "hand to the runner"). The host forwards the secret **once** to the runner (``grant.put``), keeps no copy
 (the request's :class:`~orch.host.auth.Redactor` removes it from every answer), and records only the outcome per

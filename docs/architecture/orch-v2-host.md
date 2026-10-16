@@ -4423,8 +4423,8 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     already issued (revoke it). The runner grant cap is `min(grant_hours, 168)` (was 12 h), checked at prepare and at
     `grant.deposit`. `settings.set` that contains `grant_hours` is typed-word class. `orch grant --days N` (1 to 7)
     alternatively to `--hours`; `orch grant --runner --extend GRANT` and the click signer's deposit grant may carry a second
-    event, `grant.revoked` of the replaced runner grant (`events_fit`; `EMITS_V1["grant"]` gains `grant.revoked`, no verb
-    covers a human-only operation so no replay verdict changes; digest re-pinned). The `DEPOSIT_RISK` sentence no longer
+    event, `grant.revoked` of the replaced runner grant (`events_fit`; `EMITS_V2` (= V1 + `grant.revoked` on the human-only `grant` op; V1 frozen), no verb
+    covers a human-only operation so no replay verdict changes). The `DEPOSIT_RISK` sentence no longer
     names a number of hours. The signing views read lengths as days and hours.
 ---
 

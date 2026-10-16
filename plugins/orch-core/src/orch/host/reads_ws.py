@@ -422,15 +422,12 @@ def _repo_entry(raw: dict[str, Any], manager: bool) -> dict[str, Any]:
     return entry
 
 
-def sign_methods(service: Any, ws: Any) -> list[str]:
-    """B6: the workspace's allowed ways to sign. The explicit ``settings.sign_methods`` when a signed
-    ``settings.changed`` set it; else ``terminal``, plus ``click`` where click-to-sign is switched on."""
-    from . import convenience
-
-    if "sign_methods" in ws.settings:
-        return list(ws.settings["sign_methods"])
-    on = convenience.enabled(service.state_dir, service.workspace_id, service.host_uid)
-    return ["terminal", "click"] if on else ["terminal"]
+def sign_methods(service: Any, ws: Any) -> list[str] | None:
+    """B6: the workspace's signed ``settings.sign_methods``, or ``None`` when no ``settings.changed`` ever set it.
+    ``None`` means "not set": the model then judges no way, so every way is allowed; a reader must not invent a
+    narrower default."""
+    methods = ws.settings.get("sign_methods")
+    return None if methods is None else list(methods)
 
 
 def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:

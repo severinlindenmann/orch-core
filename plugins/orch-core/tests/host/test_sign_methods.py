@@ -56,37 +56,60 @@ def test_the_owner_sets_sign_methods_through_a_signed_settings_change(human, ser
     assert err(human.prepare_res("settings.set", {"set": {"sign_methods": ["terminal", "touchid"]}})) == "invalid.input"
 
 
-def test_the_default_is_terminal_plus_click_where_click_to_sign_is_on(served):
+def test_an_unset_sign_methods_reads_as_null_not_a_narrower_default(served):
+    """MEDIUM-2: nothing set it, so the model judges no way (every way is allowed) and the read says "not set"."""
     ws = served.lab.ws.other()
     try:
         state = ws.state.workspace
-        assert reads_ws.sign_methods(served.service, state) == ["terminal"]
+        assert reads_ws.sign_methods(served.service, state) is None
         convenience.set_enabled(served.service.state_dir, served.service.workspace_id, True, served.service.host_uid)
-        assert reads_ws.sign_methods(served.service, state) == ["terminal", "click"]
+        assert reads_ws.sign_methods(served.service, state) is None
     finally:
         ws.close()
 
 
 def test_a_workspace_that_excludes_click_refuses_convenience_signing(human, served):
     svc = served.service
-    convenience.set_enabled(svc.state_dir, svc.workspace_id, True, svc.host_uid)
     person = human.person.ref
-    assert (
-        convenience.reason(svc.store, svc.state_dir, svc.workspace_id, svc.host_uid, person, human.person.device)
-        != "disabled"
-    )
+
+    def why():
+        svc.store.refresh()
+        return convenience.reason(svc.store, svc.state_dir, svc.workspace_id, svc.host_uid, person, human.person.device)
+
     human.run("settings.set", {"set": {"sign_methods": ["terminal", "phone"]}})
-    svc.store.refresh()
-    assert (
-        convenience.reason(svc.store, svc.state_dir, svc.workspace_id, svc.host_uid, person, human.person.device)
-        == "disabled"
-    )
+    convenience.set_enabled(svc.state_dir, svc.workspace_id, True, svc.host_uid)
+    assert why() == "disabled"
+    convenience.set_enabled(svc.state_dir, svc.workspace_id, False, svc.host_uid)
     human.run("settings.set", {"set": {"sign_methods": ["terminal", "click"]}})
-    svc.store.refresh()
-    assert (
-        convenience.reason(svc.store, svc.state_dir, svc.workspace_id, svc.host_uid, person, human.person.device)
-        != "disabled"
-    )
+    convenience.set_enabled(svc.state_dir, svc.workspace_id, True, svc.host_uid)
+    assert why() != "disabled"
+
+
+def test_click_cannot_be_removed_while_the_key_is_in_convenience_custody(human, served):
+    """HIGH-2 (2): the change would lock the honest signer out; the refusal names the way back."""
+    svc = served.service
+    convenience.set_enabled(svc.state_dir, svc.workspace_id, True, svc.host_uid)
+    res = human.prepare_res("settings.set", {"set": {"sign_methods": ["terminal", "phone"]}})
+    assert err(res) == "invalid.input"
+    assert "orch keys custody passphrase" in res["error"]["hint"]
+    human.prepare("settings.set", {"set": {"sign_methods": ["terminal", "click"]}})  # keeping click is fine
+    convenience.set_enabled(svc.state_dir, svc.workspace_id, False, svc.host_uid)
+    human.run("settings.set", {"set": {"sign_methods": ["terminal", "phone"]}})  # key back in passphrase custody
+
+
+def test_custody_not_the_label_decides_while_click_is_left_out(human, served):
+    """HIGH-2 (1): with the flag on (the key is in convenience custody) and click left out, an event lands from this
+    machine's person path under no label, however it declares itself."""
+    svc = served.service
+    human.run("settings.set", {"set": {"sign_methods": ["terminal", "phone"]}})
+    assert convenience.refuse_excluded_click_custody(svc) is None  # flag off: nothing to refuse
+    convenience.set_enabled(svc.state_dir, svc.workspace_id, True, svc.host_uid)
+    refused = convenience.refuse_excluded_click_custody(svc)
+    assert refused is not None and refused.code == "sign.convenience_unavailable"
+    from orch.host import human as host_human
+
+    landed, error = host_human.append_signed(svc, "workspace", [], [], signed_by=None)
+    assert landed == [] and error is not None and error.code == "sign.convenience_unavailable"
 
 
 def test_a_sign_methods_change_is_signed_with_a_typed_word_not_a_click():
@@ -129,6 +152,6 @@ def test_the_model_refuses_a_settings_change_without_terminal_even_when_the_sche
 def test_the_settings_read_carries_sign_methods(human, served):
     from tests.host.human_helpers import ok
 
-    assert ok(human.c.req("workspace.settings", {}))["data"]["sign_methods"] == ["terminal"]
+    assert ok(human.c.req("workspace.settings", {}))["data"]["sign_methods"] is None
     human.run("settings.set", {"set": {"sign_methods": ["phone", "terminal", "click"]}})
     assert ok(human.c.req("workspace.settings", {}))["data"]["sign_methods"] == ["terminal", "click", "phone"]

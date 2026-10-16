@@ -74,7 +74,7 @@ def settings(host, store, ws, person: str, args: dict[str, Any]) -> dict[str, An
         "next_page": nxt,
         "gates": thaw(ws.policies),
         "defaults": [k for k in DURATIONS if k not in set_by_event],
-        "sign_methods": list(ws.settings.get("sign_methods") or ["terminal"]),  # B6: the allowed ways to sign
+        "sign_methods": list(ws.settings["sign_methods"]) if "sign_methods" in ws.settings else None,  # B6: null: not set
         "settings_at": _last(store, "settings.changed"),
         "policy_at": _last(store, "policy.changed"),
         "sub_cursor": host.cursor,

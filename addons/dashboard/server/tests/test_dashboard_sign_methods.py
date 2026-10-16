@@ -24,7 +24,7 @@ def handoff(world, body):
 def test_the_settings_read_says_which_ways_are_allowed(worlds, owner):
     world = worlds(owner.owner.ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert got["sign_methods"] == ["terminal"]  # nothing set, click-to-sign off: the terminal only
+    assert "sign_methods" not in got  # never set: every way is allowed (the model judges none); nothing is invented
 
 
 def test_sign_methods_is_a_typed_owner_setting_and_terminal_is_always_there(worlds, owner):
@@ -46,7 +46,14 @@ def test_sign_methods_is_a_typed_owner_setting_and_terminal_is_always_there(worl
 def test_a_default_is_per_person_and_only_for_an_allowed_way(worlds, owner):
     world = worlds(owner.owner.ref)
     url = f"/api/w/{world.stub.ws}/me/sign_default"
-    assert world.get(url).json() == {"method": "terminal", "is_default": True, "allowed": ["terminal"]}
+    every = ["terminal", "click", "phone"]  # never set: every way is allowed
+    assert world.get(url).json() == {"method": "terminal", "is_default": True, "allowed": every}
+    owner.tick()
+    owner.store.append(
+        owner.person_event(owner.owner, "workspace", "settings.changed", set={"sign_methods": ["terminal"]}),
+        log="workspace",
+    )
+    assert world.get(url).json()["allowed"] == ["terminal"]
     refused = world.put(url, {"method": "click"})
     assert refused.status_code == 400 and refused.json()["error"]["code"] == "invalid.input"
     assert world.put(url, {"method": "terminal", "fallback": "terminal"}).status_code in (400, 422)

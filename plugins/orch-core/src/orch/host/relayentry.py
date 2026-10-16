@@ -169,6 +169,9 @@ class RelayEntry:
 
             with store.locked():  # the one span; the store is re-read first
                 self._call(identity, "relay.submit", args, recheck, idem).authorize()
+                methods = store.state.workspace.settings.get("sign_methods")
+                if methods is not None and "phone" not in methods:  # B6: every column R device is a paired phone
+                    raise HostError("op.not_allowed", "this workspace does not allow signing with a phone")
                 return service.outcomes.execute(identity.principal, idem, "relay.submit", args, apply, planned=None)
         except (HostError, StoreError) as exc:
             raise _refusal(exc) from None

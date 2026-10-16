@@ -437,6 +437,7 @@ class HumanOps:
         prepared, extras = self._build(call, name, log, capture, store, now)
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         convenience.refuse_reader_op(service, name, events=prepared["events"], readers=capture.readers)
+        convenience.refuse_click_removal(service, name, prepared["events"])  # B6: never lock the honest signer out
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
@@ -1303,6 +1304,8 @@ def append_signed(
     elif getattr(service, "dev", None) is not None and any(e.get("auth") == "convenience" for e in events):
         # §11A.17.2 F3: a dev host has no click signer; its only convenience path is column R's dev gate
         return [], convenience.unavailable("dev_host", [])
+    if signed_by is None and (refused_custody := convenience.refuse_excluded_click_custody(service)) is not None:
+        return [], refused_custody  # B6: by custody, not by the event's own auth label
     store = service.store
     ids = {(log, e["id"]) for e in events}
     landed: list[int] = []

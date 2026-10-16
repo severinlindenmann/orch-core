@@ -45,7 +45,7 @@ def claimed(s):
     path = str(s.path)
     st, out, _ = call(path, "POST", "/launch", {"dir": s.workdir})
     assert st == 200
-    st, c, _ = call(path, "POST", "/claim", {"code": out["code"]})
+    st, c, _ = call(path, "POST", "/claim", {"code": out["code"], "port": 8765})
     assert st == 200
     return path, c["token"], out
 
@@ -57,15 +57,15 @@ def test_socket_is_private(srv):
 
 def test_no_launch_no_token(srv):
     st, out, _ = call(str(srv.path), "GET", "/api/setup/state", token="x")
-    assert st == 401 and out["error"]["code"] == "setup.token"
+    assert st in (401, 403) and out["error"]["code"] in ("setup.token", "setup.host")
 
 
 def test_claim_is_single_use_and_second_browser_refused(srv):
     path = str(srv.path)
     _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
-    st, c, _ = call(path, "POST", "/claim", {"code": out["code"]})
+    st, c, _ = call(path, "POST", "/claim", {"code": out["code"], "port": 8765})
     assert st == 200 and "browser connected" in srv.events
-    st, e, _ = call(path, "POST", "/claim", {"code": out["code"]})
+    st, e, _ = call(path, "POST", "/claim", {"code": out["code"], "port": 8765})
     assert st == 409 and e["error"]["code"] == "setup.claimed"
     assert any("second browser" in x for x in srv.events)
 
@@ -74,7 +74,7 @@ def test_code_expires_after_30_seconds(srv):
     path = str(srv.path)
     _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
     srv.clock_obj.t += 31
-    st, e, _ = call(path, "POST", "/claim", {"code": out["code"]})
+    st, e, _ = call(path, "POST", "/claim", {"code": out["code"], "port": 8765})
     assert st == 403 and e["error"]["code"] == "setup.code_invalid"
 
 
@@ -82,8 +82,8 @@ def test_wrong_code_five_times_kills_the_code(srv):
     path = str(srv.path)
     _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
     for _ in range(5):
-        assert call(path, "POST", "/claim", {"code": "nope"})[0] == 403
-    assert call(path, "POST", "/claim", {"code": out["code"]})[0] == 403
+        assert call(path, "POST", "/claim", {"code": "nope", "port": 8765})[0] == 403
+    assert call(path, "POST", "/claim", {"code": out["code"], "port": 8765})[0] == 403
 
 
 def test_token_required_and_checked(srv):
@@ -154,3 +154,71 @@ def test_oversized_body_refused(srv):
 def test_a_launch_while_claimed_is_refused(srv):
     path, _, _ = claimed(srv)
     assert call(path, "POST", "/launch", {"dir": srv.workdir})[0] == 409
+
+
+def test_the_code_goes_to_a_0600_file_not_a_url(srv):
+    path = str(srv.path)
+    _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
+    f = srv.code_path
+    assert f.parent == srv.path.parent and stat.S_IMODE(os.stat(f).st_mode) == 0o600
+    import json
+
+    doc = json.loads(f.read_text())
+    assert doc["code"] == out["code"] and doc["setup_id"] == out["setup_id"] and doc["expires_at"] > 0
+    assert call(path, "POST", "/claim", {"code": out["code"], "port": 8765})[0] == 200
+    assert not f.exists()  # deleted at the claim
+
+
+def test_code_file_is_removed_on_expiry_wrong_tries_stop_and_a_new_launch(srv):
+    path = str(srv.path)
+    call(path, "POST", "/launch", {"dir": srv.workdir})
+    srv.clock_obj.t += 31
+    srv.check_idle()
+    assert not srv.code_path.exists()
+    call(path, "POST", "/launch", {"dir": srv.workdir})
+    for _ in range(5):
+        call(path, "POST", "/claim", {"code": "nope", "port": 8765})
+    assert not srv.code_path.exists()
+    _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
+    first = srv.code_path.read_text()
+    _, out2, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
+    assert srv.code_path.read_text() != first and out2["code"] != out["code"]
+    srv.stop()
+    assert not srv.code_path.exists()
+
+
+def test_claim_needs_the_dashboards_port_and_binds_the_browser_to_it(srv):
+    path = str(srv.path)
+    _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
+    assert call(path, "POST", "/claim", {"code": out["code"]})[0] == 400  # no port
+    assert call(path, "POST", "/claim", {"code": out["code"], "port": 0})[0] == 400
+    st, c, _ = call(path, "POST", "/claim", {"code": out["code"], "port": 9000})
+    assert st == 200
+    assert call(path, "GET", "/api/setup/state", token=c["token"], host="127.0.0.1:8765")[0] == 403
+    assert call(path, "GET", "/api/setup/state", token=c["token"], host="localhost:9000")[0] == 200
+
+
+def test_a_launch_that_named_a_port_only_claims_with_that_port(srv):
+    path = str(srv.path)
+    _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir, "port": 9000})
+    assert call(path, "POST", "/claim", {"code": out["code"], "port": 9001})[0] == 403
+    assert call(path, "POST", "/claim", {"code": out["code"], "port": 9000})[0] == 200
+
+
+def test_the_opener_puts_no_code_in_the_path_or_the_arguments(monkeypatch):
+    import subprocess
+
+    from orch.cli import dashboard as dash
+    from orch.setup import flow as flow_mod
+
+    seen = {}
+    monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+
+    def run(argv, **kw):
+        seen["argv"], seen["env"] = argv, kw.get("env")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert flow_mod._open_browser({"PATH": "/usr/bin"}, None, {"setup_id": "su_1", "code": "SECRETCODE"})
+    assert seen["argv"] == ["orch-dashboard", "open", "/setup"]
+    assert "SECRETCODE" not in repr(seen)

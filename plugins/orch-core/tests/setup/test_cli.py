@@ -104,9 +104,16 @@ def test_the_whole_command_over_the_socket(tmp):
     sock = str(tmp.root / "run" / "setup.sock")
     result = {}
 
+    def shutdown():
+        import contextlib
+        import http.client
+
+        with contextlib.suppress(OSError, http.client.HTTPException):  # the command may already be gone
+            call(sock, "POST", "/shutdown", {})
+
     def browser(env, err, launch):
         def drive():
-            st, c, _ = call(sock, "POST", "/claim", {"code": launch["code"]})
+            st, c, _ = call(sock, "POST", "/claim", {"code": launch["code"], "port": 8765})
             tok = c["token"]
             api = lambda m, r, b=None: call(sock, m, "/api/setup/" + r, b, token=tok)  # noqa: E731
             assert api("POST", "profile", {**PROFILE, "addons": ["dashboard", "quick"]})[0] == 200
@@ -125,7 +132,7 @@ def test_the_whole_command_over_the_socket(tmp):
             result["progress"] = p
             st, fin, _ = api("POST", "finish", {})
             result["finish"] = (st, fin)
-            call(sock, "POST", "/shutdown", {})  # never leave the command waiting, whatever happened above
+            shutdown()  # never leave the command waiting, whatever happened above
 
         def wait_flow():
             return holder["flow"]
@@ -135,7 +142,7 @@ def test_the_whole_command_over_the_socket(tmp):
                 drive()
             except BaseException as e:  # noqa: BLE001 - a failed assertion must end the command, not hang it
                 result["error"] = repr(e)
-                call(sock, "POST", "/shutdown", {})
+                shutdown()
 
         threading.Thread(target=safe, daemon=True).start()
         return True

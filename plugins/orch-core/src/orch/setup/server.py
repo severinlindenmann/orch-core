@@ -1,13 +1,16 @@
 """The setup process's socket server: HTTP/1.1 over ``<run>/setup.sock`` (0600, in a 0700 directory).
 
 * Socket-only routes (the CLI and the dashboard server, never a browser): ``POST /launch {dir, port?}`` ->
-  ``{setup_id, code}``, ``POST /claim {code}`` -> ``{token, setup_id}``, ``POST /shutdown``.
+  ``{setup_id, code}``, ``POST /claim {code, port}`` -> ``{token, setup_id}``, ``POST /shutdown``.
 * Browser routes ``/api/setup/*`` (proxied unchanged): the ``X-Setup-Token`` header the claim returned, the ``Host``
   header named explicitly (127.0.0.1 or localhost, with the dashboard's port), on a POST the ``Origin`` equal to
   ``http://<Host>`` and a JSON content type. Every answer is ``Cache-Control: no-store``.
 
 Session binding: the launch code is single use, lives 30 s and is bound to the ``setup_id``; the first claim wins, a
-second one is refused (409) and reported to the terminal. The session dies on done, cancel or 10 minutes without a
+second one is refused (409) and reported to the terminal. The code never travels in a URL or an argument: it is written
+to ``<run>/setup.code`` (0600, in the 0700 run directory), which the dashboard server reads and deletes, and claimed
+over this socket together with the dashboard's own port; the browser is bound to that port (``Host``/``Origin``), and
+no browser request is answered before a claim named one. The session dies on done, cancel or 10 minutes without a
 request, never while a run is in progress (the flow says so through ``busy``).
 """
 
@@ -73,7 +76,8 @@ class SetupServer:
         self._tries = 0
         self._token: bytes | None = None
         self._last = 0.0
-        self.ports: frozenset[str] | None = None  # the dashboard's host names (host:port) when launch named a port
+        self.ports: frozenset[str] | None = None  # the dashboard's host names (host:port), set by the claim
+        self.launch_port: int | None = None
         self.ended: str | None = None
         self.stop_event = threading.Event()
         self._srv: socketserver.BaseServer | None = None
@@ -102,6 +106,7 @@ class SetupServer:
 
     def stop(self) -> None:
         self.stop_event.set()
+        self._remove_code_file()
         if self._srv is not None:
             self._srv.shutdown()
             self._srv.server_close()
@@ -115,6 +120,9 @@ class SetupServer:
 
     def check_idle(self) -> None:
         with self._lock:
+            if self._code_hash is not None and self.clock() >= self._code_until:
+                self._code_hash = None
+                self._remove_code_file()
             if self._token is None or self.ended or self.flow.busy:
                 return
             if self.clock() - self._last < self.idle_seconds:
@@ -126,6 +134,7 @@ class SetupServer:
             if self.ended:
                 return
             self.ended, self._token, self._code_hash = why, None, None
+        self._remove_code_file()
         self.flow.end(why)
         self.notify(f"setup session ended ({why})")
         self.stop_event.set()
@@ -150,14 +159,36 @@ class SetupServer:
             self._code_hash = hashlib.sha256(code.encode()).digest()
             self._code_until = self.clock() + self.code_seconds
             self._tries = 0
-            if port is not None:
-                self.ports = frozenset({f"127.0.0.1:{port}", f"localhost:{port}"})
+            self.ports = None
+            self.launch_port = port
+            self._write_code_file(code)
             return {"setup_id": self.setup_id, "code": code}
+
+    # -- the code file: the one way the code reaches the dashboard server (never a URL, never an argument)
+    @property
+    def code_path(self) -> Path:
+        return self.path.parent / "setup.code"
+
+    def _write_code_file(self, code: str) -> None:
+        self._remove_code_file()
+        doc = json.dumps({"setup_id": self.setup_id, "code": code, "expires_at": time.time() + self.code_seconds})
+        fd = os.open(self.code_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.write(fd, doc.encode())
+        finally:
+            os.close(fd)
+
+    def _remove_code_file(self) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            self.code_path.unlink()
 
     def _claim(self, body: Any) -> dict[str, Any]:
         code = body.get("code") if isinstance(body, dict) else None
+        port = body.get("port") if isinstance(body, dict) else None
         if not isinstance(code, str) or len(code) > 200:
             raise SetupError("invalid.input", "claim takes code")
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise SetupError("invalid.input", "claim takes the dashboard's port")
         with self._lock:
             if self.ended:
                 raise SetupError("setup.ended", "this setup has ended", 410)
@@ -165,13 +196,19 @@ class SetupServer:
                 self.notify("a second browser tried to connect to this setup and was refused")
                 raise SetupError("setup.claimed", "a browser is already connected to this setup", 409)
             if self._code_hash is None or self.clock() >= self._code_until:
+                self._remove_code_file()
                 raise SetupError("setup.code_invalid", "the launch code expired or was used", 403)
+            if self.launch_port is not None and port != self.launch_port:
+                raise SetupError("setup.code_invalid", "the launch code is for another dashboard port", 403)
             if not hmac.compare_digest(hashlib.sha256(code.encode()).digest(), self._code_hash):
                 self._tries += 1
                 if self._tries >= CODE_TRIES:
                     self._code_hash = None
+                    self._remove_code_file()
                 raise SetupError("setup.code_invalid", "the launch code is wrong", 403)
             self._code_hash = None  # single use
+            self._remove_code_file()
+            self.ports = frozenset({f"127.0.0.1:{port}", f"localhost:{port}"})
             token = secrets.token_urlsafe(32)
             self._token = hashlib.sha256(token.encode()).digest()
             self._last = self.clock()
@@ -182,7 +219,7 @@ class SetupServer:
     def _check_browser(self, method: str, headers: Any) -> None:
         host = headers.get("Host", "")
         m = _HOST.fullmatch(host)
-        if m is None or int(m.group(1)) > 65535 or (self.ports is not None and host not in self.ports):
+        if m is None or int(m.group(1)) > 65535 or self.ports is None or host not in self.ports:
             raise SetupError("setup.host", "wrong Host header", 403)
         if method == "POST":
             if headers.get("Origin") != f"http://{host}":

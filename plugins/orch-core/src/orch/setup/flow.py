@@ -464,8 +464,8 @@ USAGE = "usage: orch setup   (run it in the folder you want to make a workspace;
 
 
 def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) -> bool:
-    """Open the dashboard on ``/setup`` with the single-use setup code. The code travels in the query of the dashboard's
-    own launch path, which the page strips with ``history.replaceState`` before any request (R8)."""
+    """Open the dashboard on ``/setup``. The launch code is NOT in the path or in any argument: it is in the 0600 file
+    ``<run>/setup.code`` that the dashboard server reads and deletes, and claims with its own port."""
     import subprocess
 
     from orch.cli.dashboard import find_entry_point
@@ -473,10 +473,9 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) 
     cmd = find_entry_point(environ, err)
     if cmd is None:
         return False
-    path = f"/setup?code={launch['code']}&id={launch['setup_id']}"
     try:
         res = subprocess.run(
-            [*cmd, "open", path],
+            [*cmd, "open", "/setup"],
             env=dict(environ),
             stdin=subprocess.DEVNULL,
             capture_output=True,

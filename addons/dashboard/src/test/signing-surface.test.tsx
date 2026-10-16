@@ -830,3 +830,34 @@ it('shows the host refusal and recovery hint when removing one click would stran
   expect(prepare).toHaveBeenCalledWith('w', { action: 'settings_set', sign_methods: ['terminal', 'phone'] }, 0)
   expect(click).not.toHaveBeenCalled()
 })
+
+it('setup Create posts the review digest shown with core rows and terminal fingerprint', async () => {
+  const { Setup } = await import('@/setup/Setup')
+  const { SetupAPI } = await import('@/api/setup')
+  const { fireEvent } = await import('@testing-library/react')
+  const posted: unknown[] = []
+  const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    let value: unknown = {ok:true}
+    if (String(url).endsWith('/state')) value = {
+      phase:'profile',mode:'finish',dir:'/demo',dir_name:'demo',suggested:{name:'Demo',prefix:'TST'},
+      addons:[],methods:['terminal'],click_available:false,click_reason:'',agent_hours:[8],
+      relay:{available:false,enabled:false},missing:['settings'],
+    }
+    if (String(url).endsWith('/review')) value = {
+      review_id:'demo-review',digest:'demo-bound-digest',fingerprint:['demo','not','real'],
+      items:[{id:'settings',title:'Settings',lines:['Agents: 8 hours'],details:['Exact settings'],volatile:['set at signing']}],
+      runner_grant:null,flags:[],risk:null,typed_word:null,tty_confirm:true,
+    }
+    if (String(url).endsWith('/create')) { posted.push(JSON.parse(String(init?.body))); value = {run_id:'demo-run'} }
+    if (String(url).includes('/progress')) value = {steps:[],done:false,error:null,retry:[],workspace:null}
+    return new Response(JSON.stringify(value))
+  })
+  render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch)}/>)
+  await screen.findByRole('heading',{name:'Finish setup in demo'})
+  for (let i=0;i<4;i++) fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
+  await screen.findByRole('heading',{name:'Review your setup'})
+  expect(screen.getByText('Agents: 8 hours')).toBeVisible()
+  expect(screen.getByText('demo not real')).toBeVisible()
+  fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))
+  await waitFor(() => expect(posted).toEqual([{review_id:'demo-review',digest:'demo-bound-digest'}]))
+})

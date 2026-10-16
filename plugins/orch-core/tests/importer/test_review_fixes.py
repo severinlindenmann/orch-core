@@ -312,7 +312,8 @@ def test_only_the_importer_unlocks_a_batch():
         # ``primary.unlocked(`` is orch.custody.primary's one-command unlock (H12c-c), not a backend batch unlock
         if re.search(r"(?<!\bprimary)\.unlocked\(", p.read_text()) or 'getattr(backend, "unlocked"' in p.read_text()
     )
-    assert users == ["ops/import_run.py"]
+    # B9: ``orch setup`` opens its own generated passphrase once for the reviewed batch (setup/steps.py)
+    assert users == ["ops/import_run.py", "setup/steps.py"]
 
 
 def test_a_backend_that_cannot_sign_a_batch_has_its_own_code(hws, me, v1, monkeypatch):  # noqa: F811

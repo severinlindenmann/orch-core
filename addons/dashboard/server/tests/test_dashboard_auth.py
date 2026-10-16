@@ -386,3 +386,30 @@ def test_exchange_and_timer_delete_the_exact_handed_out_file(tmp_path, monkeypat
         assert not redirect.exists()
     assert not auth.files
     assert not list(server_dir.glob("launch-*.html"))
+
+
+def test_setup_launcher_uses_the_login_link_path_with_a_setup_nonce(tmp_path, monkeypatch):
+    """The launcher mints a SETUP-kind code and opens the same redirect file as `orch dashboard open`: the nonce is
+    only ever in the file/fragment, never in argv or the request line; the page then POSTs it to /auth/setup."""
+    from orch_dashboard import __main__ as launcher
+
+    opened, asked = [], []
+    (tmp_path / "dashboard").mkdir(mode=0o700)
+    auth = Auth(directory=tmp_path / "dashboard")
+    issued = {}
+
+    def control(path, command, kind=None):
+        asked.append((command, kind))
+        issued.update(auth.launch(PORT, setup=kind == "setup"))
+        return dict(issued)
+
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(launcher, "control", control)
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url) or True)
+    launcher.open_dashboard("/setup")
+    assert asked == [("launch", "setup")]
+    assert len(opened) == 1 and opened[0].startswith("file://") and issued["code"] not in opened[0]
+    page = auth.files[issued["code"]].read_text()
+    assert "launch=" + issued["code"] in page and "to=%2Fsetup" in page
+    assert auth.exchange(issued["code"])[0] is None and auth.exchange_setup(issued["code"]) is True

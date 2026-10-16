@@ -407,6 +407,13 @@ class PassphraseBackend:
         (the scrypt floor included) is production's."""
         return CustodyChangeBackend(cls(directory, _passphrase_provider=lambda _request: passphrase))
 
+    @classmethod
+    def generated(cls, directory: str | Path, passphrase: str) -> PassphraseBackend:
+        """A full backend whose prompt is answered with ``passphrase``: the one ``orch setup``'s own process generated
+        in memory for this run (B9). It can sign and unlock one batch. Only :func:`orch.custody.select.setup_backend`
+        calls it (an AST test pins that); a passphrase from a browser, an argument or a file never reaches it."""
+        return cls(directory, _passphrase_provider=lambda _request: passphrase)
+
     # -- file format --------------------------------------------------------------------------------------------------
 
     @staticmethod

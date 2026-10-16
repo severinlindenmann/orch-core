@@ -133,7 +133,10 @@ def _fail(code: str, message: str, exit_: int, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "exit": exit_, "error": {"code": code, "message": message[:400], "retryable": False}, **extra}
 
 
-def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dict[str, Any]:
+def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, confirmed: bool = False) -> dict[str, Any]:
+    """``confirmed``: the caller (``orch setup``) already showed :data:`enablement.CARD_TEXT` (the runner flag of its
+    review; :func:`enablement.risk_text` embeds it) and has the person's consent for exactly that text; the typed-prefix
+    prompt is skipped. Nothing else changes."""
     from orch.host import cli as host_cli
     from orch.host import enable as svc
     from orch.host.custody import ensure_private_dir
@@ -183,13 +186,14 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
         )
     terminals = not args.no_terminals
     text = enablement.risk_text(prefix or wid[:8], wid, terminals)
-    try:
-        TERMINAL.show(text)
-        typed = TERMINAL.ask(f"Type the workspace prefix {prefix} to turn on dashboard execution: ")
-    except Exception as exc:  # noqa: BLE001 - no terminal: refuse (never stdin, which an agent may hold)
-        return _fail("human_only", f"orch runner enable needs your own terminal ({exc})", 3)
-    if typed.strip() != prefix or not prefix:
-        return _fail("invalid.input", "the prefix did not match; dashboard execution stays off", 5)
+    if not confirmed:
+        try:
+            TERMINAL.show(text)
+            typed = TERMINAL.ask(f"Type the workspace prefix {prefix} to turn on dashboard execution: ")
+        except Exception as exc:  # noqa: BLE001 - no terminal: refuse (never stdin, which an agent may hold)
+            return _fail("human_only", f"orch runner enable needs your own terminal ({exc})", 3)
+        if typed.strip() != prefix or not prefix:
+            return _fail("invalid.input", "the prefix did not match; dashboard execution stays off", 5)
     try:
         install_release(target=releases_dir(dict(env)))
     except (ReleaseError, OSError) as exc:

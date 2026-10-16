@@ -339,24 +339,43 @@ def proc_identity(pid: int) -> dict[str, Any] | None:
     return {"pid": pid, "start": start.strip(), "exe": exe, "cwd": cwd}
 
 
-def validate_record(rec: Mapping[str, Any], root: str | os.PathLike[str],
-                    inspect: Callable[[int], dict[str, Any] | None] = proc_identity) -> bool:  # fmt: skip
-    """Whether the process now at ``rec['pid']`` is the one recorded: the same start time and executable, and a working
-    directory inside the root. Anything unreadable is ``False`` (nothing is signalled)."""
+def record_mismatch(
+    rec: Mapping[str, Any],
+    root: str | os.PathLike[str],
+    inspect: Callable[[int], dict[str, Any] | None] = proc_identity,
+) -> str | None:
+    """Why the process now at ``rec['pid']`` is not the one recorded (``None``: it is): another start time (PID
+    reuse), executable or working directory outside the root; anything unreadable counts as a mismatch."""
     try:
         pid = rec["pid"]
         if type(pid) is not int or pid <= 1:
-            return False
+            return "bad pid"
         now = inspect(pid)
     except (KeyError, TypeError):
-        return False
-    if now is None or now["pid"] != pid or now["start"] != rec.get("start") or now["exe"] != rec.get("exe"):
-        return False
+        return "bad record"
+    if now is None:
+        return "unreadable"
+    if now["pid"] != pid:
+        return "pid"
+    if now["start"] != rec.get("start"):
+        return "start time"
+    if now["exe"] != rec.get("exe"):
+        return "executable"
     try:
         Path(now["cwd"]).relative_to(os.path.realpath(root))
     except ValueError:
-        return False
-    return True
+        return "working directory"
+    return None
+
+
+def validate_record(
+    rec: Mapping[str, Any],
+    root: str | os.PathLike[str],
+    inspect: Callable[[int], dict[str, Any] | None] = proc_identity,
+) -> bool:
+    """Whether the process now at ``rec['pid']`` is the one recorded: the same start time and executable, and a working
+    directory inside the root. Anything unreadable is ``False`` (nothing is signalled)."""
+    return record_mismatch(rec, root, inspect) is None
 
 
 def record_process(root: str | os.PathLike[str], role: str, pid: int) -> dict[str, Any]:
@@ -402,9 +421,15 @@ def stop_recorded(records: Sequence[Mapping[str, Any]], root: str | os.PathLike[
         if inspect(rec["pid"]) is None:
             out[tag] = "gone"
             continue
-        if not validate_record(rec, root, inspect):
+        why = record_mismatch(rec, root, inspect)
+        for _ in range(3):  # a momentary unreadable answer from ps/lsof must not leave our process running
+            if why is None:
+                break
+            sleep(0.2)
+            why = record_mismatch(rec, root, inspect)
+        if why is not None:
             out[tag] = "not-ours"  # the pid now belongs to something else: never signalled
-            log(f"{tag}: the process is not the one dev-pair started; not signalled")
+            log(f"{tag}: NOT signalled: the process is not the one dev-pair started ({why} differs); check it by hand")
             continue
         try:
             kill(rec["pid"], signal.SIGTERM)
@@ -979,10 +1004,20 @@ def make_owner(ctx: Ctx) -> Any:
 
 
 def pty_cmd(ctx: Ctx, argv: Sequence[str], what: str, timeout: float = 180) -> None:
-    rc, _ = run_pty(argv, env=ctx.env(no_convenience=True), cwd=ctx.ws_dir, responders=passphrase_responders(ctx),
-                    timeout=timeout)  # fmt: skip
+    rc, transcript = run_pty(argv, env=ctx.env(no_convenience=True), cwd=ctx.ws_dir,
+                             responders=passphrase_responders(ctx), timeout=timeout)  # fmt: skip
     if rc != 0:
-        raise Refused(f"{what} failed (exit {rc}); the terminal transcript is not shown")
+        raise Refused(f"{what} failed (exit {rc}{error_code(transcript)}); the terminal transcript is not shown")
+
+
+_ERR_CODE = re.compile(r'"code": "([a-z][a-z0-9_.]{2,40})"|^err ([a-z][a-z0-9_.]{2,40})\b', re.M)
+
+
+def error_code(transcript: bytes | bytearray) -> str:
+    """The orch error code of a failed command (``err <code> ...``), the only part of a transcript ever shown: a code
+    is a fixed token, never a secret."""
+    m = _ERR_CODE.search(_ANSI.sub("", bytes(transcript).decode("utf-8", "replace")).replace("\r", ""))
+    return f", {m.group(1) or m.group(2)}" if m else ""
 
 
 def step_pair(ctx: Ctx) -> int:
@@ -1120,11 +1155,14 @@ def up(args: argparse.Namespace) -> int:
         step_host(ctx)
         if sim:
             pty_cmd(ctx, ctx.orch("keys", "reader", "declare", "--workspace", ctx.workspace_id), "reader declare")
+        # The code refuses `primary set` before the link (relay.not_linked), so the link comes first (the design lists
+        # the primary at step 6 and the link at 7): account, host, [declare], link, primary, pair.
+        link = ctx.orch("host", "relay", "link", "--workspace", ctx.workspace_id, "--relay", ctx.origin,
+                        "--max-publication-bytes", str(MAX_PUBLICATION))  # fmt: skip
+        pty_cmd(ctx, link, "relay link", timeout=300)
         cmd = ctx.orch("host", "relay", "primary", "set", "--workspace", ctx.workspace_id, "--cert", str(cert),
                        "--label", "orch dev sandbox primary")  # fmt: skip
         pty_cmd(ctx, cmd, "primary set")
-        pty_cmd(ctx, ctx.orch("host", "relay", "link", "--workspace", ctx.workspace_id, "--relay", ctx.origin,
-                              "--max-publication-bytes", str(MAX_PUBLICATION)), "relay link", timeout=300)  # fmt: skip
         print(f"dev-pair: sandbox {sid[:8]} at {root}; relay {ctx.origin}")
         rc = step_pair(ctx)
         if rc != 0:

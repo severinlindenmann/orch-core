@@ -1367,3 +1367,26 @@ def test_the_handle_refuses_copy_and_deepcopy(kit):
     for fn in (copy.copy, copy.deepcopy):
         with pytest.raises(TypeError):
             fn(h)
+
+
+def test_an_answer_whose_first_post_failed_is_posted_again_by_the_tick_without_a_resend(kit):
+    kit.relay.fail["answer"] = "retry"  # the first POST dies (a stale keep-alive, a 503)
+    h, phone = offer(kit)
+    got, env, rid = send(kit, phone)
+    assert got.startswith("answer:")
+    sent = kit.relay.answers[-1][2]
+    n = len(kit.relay.answers)
+    assert kit.store.answers(h.offer_id)[0]["posted"] is False
+    kit.engine.tick()  # inside the re-post spacing: not hammered
+    assert len(kit.relay.answers) == n
+    kit.clock.ms += 2_500
+    kit.engine.tick()  # still failing: tried again, still unposted
+    assert len(kit.relay.answers) == n + 1 and kit.store.answers(h.offer_id)[0]["posted"] is False
+    del kit.relay.fail["answer"]
+    kit.clock.ms += 2_500
+    kit.engine.tick()  # the phone never resent: the stored bytes go out
+    assert len(kit.relay.answers) == n + 2 and kit.relay.answers[-1][2] == sent
+    assert kit.store.answers(h.offer_id)[0]["posted"] is True
+    kit.clock.ms += 2_500
+    kit.engine.tick()
+    assert len(kit.relay.answers) == n + 2  # posted: nothing more

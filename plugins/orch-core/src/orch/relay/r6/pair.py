@@ -52,7 +52,7 @@ from orch.identity.pairdevice import PHONE_SCOPES, PairDeviceFacts, PairDeviceIn
 from .. import wire
 from ..sign import RelaySigner, SignerRefused
 from ..state import StateError
-from .pairstore import PairStore, PairStoreError
+from .pairstore import ANSWER_LIFE_MS, PairStore, PairStoreError
 
 __all__ = [
     "LIVE",
@@ -92,6 +92,7 @@ TOMBSTONE_MS = 7 * 86_400_000  # the record shrinks to a tombstone after 7 days 
 WINDOW_MS = 300_000  # ±300 s (proto §8.3 step 3.4)
 REFUSALS_PER_MIN = 5  # each offer's own refusal budget (in memory; past it, silence)
 SAS_TRIES = 3  # typed SAS attempts per offer (N3c)
+REPOST_EVERY_MS = 2_000  # a stored answer whose POST failed is posted again at most this often
 POLL_EVERY_MS = 10_000  # GET cert-requests/{id} fallback, at most every 10 s
 BASELINE_RETRY_MS = 30_000
 #: any other failed baseline POST (the relay does not hold the host's held checkpoint yet because the publisher has not
@@ -527,6 +528,7 @@ class PairEngine:
         self.now_ms, self.post, self._draw = now_ms, post, draw
         self._budget: dict[str, collections.deque[int]] = {}
         self._last_poll: dict[str, int] = {}
+        self._reposted: dict[tuple[str, str, str], int] = {}
         self._retry_at: dict[str, int] = {}
         self.dropped = 0  # silent drops (unknown offer, bad tag, budget, overflow), counted (alarm pairing_dropped)
         self._dropped_flushed = 0
@@ -932,7 +934,7 @@ class PairEngine:
         if stored is not None:
             if stored.get("digest") != _digest(envelope):
                 return self._drop("rid_conflict")  # other bytes under an answered rid: the relay keeps one answer
-            self._post(offer_id, rid, crypto.unb64u(stored["env"]))  # an identical resend: byte for byte (Opus L1)
+            self._post(offer_id, rid, crypto.unb64u(stored["env"]), h.device.hex())  # an identical resend: byte for byte (Opus L1)
             return "replay"
         self._req_digest = _digest(envelope)
         try:
@@ -1071,13 +1073,38 @@ class PairEngine:
             if stored is None:
                 raise
             env = crypto.unb64u(stored["env"])
-        self._post(rec["offer_id"], rid, env)
+        self._post(rec["offer_id"], rid, env, dev)
 
-    def _post(self, offer_id: str, rid: str, env: bytes) -> None:
+    def _post(self, offer_id: str, rid: str, env: bytes, device: str | None = None) -> None:
         try:
             self.routes.post_answer(offer_id, rid, env)
         except PairRelayError as e:
-            log.info("pairing: answer POST %s", e.kind)  # the device resends; the rid replays these bytes
+            # stays unposted while the failure is transient: the tick posts the stored bytes again (_repost); a phone
+            # resend replays the same bytes too
+            log.info("pairing: answer POST %s", e.kind)
+            if device is not None:
+                self._reposted[(offer_id, device, rid)] = self.now_ms()
+            if e.kind != "retry" and device is not None:
+                self.store.mark_answer_posted(offer_id, device, rid)  # refused for good: never retried
+            return
+        if device is not None:
+            self.store.mark_answer_posted(offer_id, device, rid)
+
+    def _repost(self, now: int) -> None:
+        """Re-POST every stored answer whose POST failed transiently, until the relay takes it or its rid lifetime
+        (:data:`ANSWER_LIFE_MS`) ends: the phone's resend is not what the answer depends on."""
+        for oid in self.store.offer_ids():
+            try:
+                pending = [a for a in self.store.answers(oid) if a.get("posted") is False]
+            except PairStoreError:
+                continue
+            for a in pending:
+                if now - int(a.get("at_ms", 0)) >= ANSWER_LIFE_MS:
+                    continue
+                key = (oid, a["device"], a["rid"])
+                if now - self._reposted.get(key, 0) < REPOST_EVERY_MS:
+                    continue
+                self._post(oid, a["rid"], crypto.unb64u(a["env"]), a["device"])
 
     # -- 7b: the cert request; 7c: the challenge; 7d: the cert or the rejection ------------------------------------
 
@@ -1522,6 +1549,7 @@ class PairEngine:
         out = self.store.outstanding()
         if out is not None and now > int(out["expires_ms"]) + OUTSTANDING_GRACE_MS:
             self.store.clear_outstanding(out["request_id"])
+        self._repost(now)
         self._flush_dropped(now)
 
     def _flush_dropped(self, now: int) -> None:

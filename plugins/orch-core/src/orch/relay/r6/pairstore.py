@@ -141,8 +141,19 @@ class PairStore:
             kept = [a for a in self.answers(offer_id) if at_ms - int(a.get("at_ms", 0)) < ANSWER_LIFE_MS]
             if any(a.get("rid") == rid and a.get("device") == device for a in kept):
                 raise PairStoreError("an answer for this rid is stored already")
-            kept.append({"rid": rid, "device": device, "digest": digest, "at_ms": at_ms, "env": env_b64})
+            kept.append({"rid": rid, "device": device, "digest": digest, "at_ms": at_ms, "env": env_b64,
+                         "posted": False})  # fmt: skip
             self._dir.write_json(f"{offer_id}.answers", {"v": 1, "answers": kept[-_MAX_ANSWERS:]})
+
+    def mark_answer_posted(self, offer_id: str, device: str, rid: str) -> None:
+        """The relay took this answer (or refused it for good): the tick no longer re-posts it."""
+        with self.lock:
+            kept = self.answers(offer_id)
+            for a in kept:
+                if a.get("rid") == rid and a.get("device") == device and a.get("posted") is False:
+                    a["posted"] = True
+                    self._dir.write_json(f"{offer_id}.answers", {"v": 1, "answers": kept})
+                    return
 
     # -- the outstanding relay cert request (Codex 2, Opus L2) ---------------------------------------------------------
 

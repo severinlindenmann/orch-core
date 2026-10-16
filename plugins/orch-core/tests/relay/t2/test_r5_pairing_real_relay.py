@@ -6,10 +6,12 @@ is opened by the test only (``R6_READY`` stays False in the code)."""
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -66,7 +68,9 @@ class LiveServed(Served):
         self.clients = []
 
 
-def test_a_served_workspace_links_pairs_a_phone_and_takes_its_answer(relay: RelayProcess, tmp_path, monkeypatch):
+@contextlib.contextmanager
+def paired_world(relay: RelayProcess, tmp_path, monkeypatch):
+    """A served workspace linked to ``relay`` with the reference phone paired and joined (shared with the push T2)."""
     monkeypatch.setattr(relay_worker, "R6_READY", True)
     # the sandbox person: its recovery code is the workspace owner's person key
     root = tmp_path / "sbx"
@@ -186,6 +190,17 @@ def test_a_served_workspace_links_pairs_a_phone_and_takes_its_answer(relay: Rela
         # -- the phone joins (R6b published the membership), reads, and answers
         wks = wait_for(lambda: _join(phone, net), "the phone's join", 120)
         assert phone.scopes == ("look", "decide") and wks
+        yield SimpleNamespace(served=served, lab=lab, owner=owner, wid=wid, phone=phone, net=net)
+    finally:
+        owner.close()
+        if served is not None:
+            served.close()
+        lab.close()
+
+
+def test_a_served_workspace_links_pairs_a_phone_and_takes_its_answer(relay: RelayProcess, tmp_path, monkeypatch):
+    with paired_world(relay, tmp_path, monkeypatch) as w:
+        served, lab, phone, net = w.served, w.lab, w.phone, w.net
         meta, data = phone.whoami(net)
         assert meta == {"status": "ok"}, (meta, data)
         relay_caps = _find(data, "relay")
@@ -204,11 +219,6 @@ def test_a_served_workspace_links_pairs_a_phone_and_takes_its_answer(relay: Rela
         events = wait_for(lambda: [e for e in lab.ws.read_events(uid) if e["type"] == "question.answered"],
                           "the answer on the host", 60)  # fmt: skip
         assert events[0]["actor"]["device"] == "d_" + phone.device_id
-    finally:
-        owner.close()
-        if served is not None:
-            served.close()
-        lab.close()
 
 
 def _data(res: dict) -> dict:

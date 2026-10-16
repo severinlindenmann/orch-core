@@ -857,10 +857,14 @@ class MembershipKeys:
                 oe = old["new_epoch"]
                 if oe is not None:
                     burned[oe] = epoch if rotation and epoch > oe else min(max(ehw, epoch) + 1, MAX_EPOCH)
+            holders = {k: list(v) for k, v in head["holders"].items()}
+            # H5: every device this body grants the epoch's key to is a holder of it from now on, accepted or not
+            holders[str(epoch)] = sorted({*holders.get(str(epoch), []), *adds})
             new = {
                 **head,
                 "lhw": list_seq,
                 "ehw": max(ehw, epoch),
+                "holders": holders,
                 "exposed": {"list_seq": list_seq, "epoch": epoch, "new_epoch": epoch if rotation else None,
                             "body": crypto.b64u(body), "digest": digest, "adds": sorted(set(adds)),
                             "first_send_ms": None, "attempts": 0},
@@ -918,9 +922,13 @@ class MembershipKeys:
                     self._gate_up = False
             return True
 
-    def abandon(self) -> None:
+    def abandon(self, *, exclude: Mapping[str, str] | None = None) -> None:
         """Abandon the exposed body (H4: a content or divergence refusal): its ``list_seq`` is burned, and its epoch
-        if it introduced one (named ``EHW + 1``). One atomic write."""
+        if it introduced one (named ``EHW + 1``). One atomic write, which also puts ``exclude`` (``{device: reason}``,
+        the devices that body newly added; 11A.15.4 "the exclusion set") into ``excluded``."""
+        exclude = dict(exclude or {})
+        if any(not _HEX32.fullmatch(d) or type(r) is not str or not r for d, r in exclude.items()):
+            raise CustodyRefused("exclude")
         with self._write():
             ex = self._head["exposed"]
             if ex is None:
@@ -931,13 +939,50 @@ class MembershipKeys:
             if ex["new_epoch"] is not None:
                 burned[ex["new_epoch"]] = min(ehw + 1, MAX_EPOCH)
             seqs = sorted({*self._head["burned"]["list_seqs"], ex["list_seq"]})
-            new = {**self._head, "exposed": None,
+            excluded = dict(self._head["excluded"])
+            for d, reason in exclude.items():
+                excluded.setdefault(d, {"reason": reason[:60], "at_ms": self._now_ms()})
+            new = {**self._head, "exposed": None, "excluded": excluded,
                    "burned": {"epochs": {str(e): n for e, n in sorted(burned.items())}, "list_seqs": seqs}}  # fmt: skip
             self._dir.write_json(HEAD, new)
             self._head = new
             self._fault("after_abandon")
             with self._seal:
                 self._burned, self._pending = burned, None
+
+    def exclude(self, device: str, reason: str) -> None:
+        """Put ``device`` into ``excluded`` (a pairing that ended after the allocation, 11A.15.4): durable relay
+        ineligibility, one atomic write. It never leaves except by a fresh pairing (R6c's re-admission)."""
+        if not _HEX32.fullmatch(device if type(device) is str else "") or type(reason) is not str or not reason:
+            raise CustodyRefused("exclude")
+        with self._write():
+            if device in self._head["excluded"]:
+                return
+            new = {**self._head, "excluded": {**self._head["excluded"],
+                                              device: {"reason": reason[:60], "at_ms": self._now_ms()}}}  # fmt: skip
+            self._dir.write_json(HEAD, new)
+            self._head = new
+            self._fault("after_exclude")
+
+    def set_h8(self, count: int, alarm: bool) -> None:
+        """§11 H8 (11A.15.4): the consecutive refusals and whether the alarm is raised, in ``head.json``."""
+        if not _int(count, 0, MAX_SAFE_INT) or type(alarm) is not bool:
+            raise CustodyRefused("h8")
+        with self._write():
+            h8 = {"count": count, "alarm": alarm}
+            if self._head["h8"] == h8:
+                return
+            new = {**self._head, "h8": h8}
+            self._dir.write_json(HEAD, new)
+            self._head = new
+
+    def committed_record(self) -> dict[str, Any] | None:
+        """A copy of ``head.json`` ``committed`` (``None``: none, or the state is unsafe). Lock-free: ``_head`` is
+        replaced whole by every write, never mutated, so this is safe inside a seal span and on R2's threads."""
+        if self._forked() or self._unsafe is not None:
+            return None
+        c = self._head["committed"]
+        return None if c is None else json.loads(_doc(c))
 
     # -- the first card (11A.15.5, C6) -----------------------------------------------------------------------------
 

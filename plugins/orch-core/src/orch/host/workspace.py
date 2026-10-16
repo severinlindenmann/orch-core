@@ -392,13 +392,51 @@ class WorkspaceService:
                 self._judge()
             return
         self.journal, self.journal_failed = journal, ""
-        store.before_append, store.on_commit = journal.check, journal.committed
+        store.before_append, store.on_commit = journal.check, self._committed_hook(journal)
         if self.store is not None:
             self._judge()
         if audit:
             self._relay_audit()
         if self.publish is not None:
             self.publish(batch)
+
+    #: event types whose commit can revoke a device (11A.9, 11A.5 "Wake chaining (B1)"): the relay unpublished
+    #: consumer re-judges its ledger at once after one of these
+    _REVOKING_COMMITS = frozenset({"device.revoked", "member.removed", "restore"})
+
+    def _committed_hook(self, journal: Any) -> Callable[[str, dict[str, Any]], None]:
+        """``Store.on_commit``: the journal's, then the relay wakes (11A.5 "Wake chaining (B1)"): the publisher on every
+        append (it publishes now, not at its next idle check), the membership thread (it re-plans) and the
+        unpublished consumer after a commit that can revoke. Called inside the store's critical section; the wakes only
+        set events and never raise."""
+        committed = journal.committed
+
+        def hook(log: str, event: dict[str, Any]) -> None:
+            try:
+                committed(log, event)
+            finally:
+                self._relay_wake(event)
+
+        return hook
+
+    def _relay_wake(self, event: Any) -> None:
+        worker = self.relay
+        if worker is None:
+            return
+        try:
+            wake = getattr(getattr(worker, "publisher", None), "wake", None)  # NoPublisher has none
+            if callable(wake):
+                wake()
+            for companion in getattr(worker, "companions", ()):  # R6b's membership thread re-plans on any commit
+                wake = getattr(companion, "wake", None)
+                if callable(wake):
+                    wake()
+            if isinstance(event, dict) and event.get("type") in self._REVOKING_COMMITS:
+                wake = getattr(getattr(worker, "unpublished", None), "wake", None)
+                if callable(wake):
+                    wake()
+        except Exception:  # noqa: BLE001 - a wake is a hint: never fail the store's commit
+            LOG.exception("relay wake of %s failed", self.workspace_id)
 
     def _relay_audit(self) -> None:
         """§11A.6 "Foreign appends": after a refresh that loaded events this host did not append, a running relay

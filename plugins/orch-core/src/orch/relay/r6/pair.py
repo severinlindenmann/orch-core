@@ -94,6 +94,9 @@ REFUSALS_PER_MIN = 5  # each offer's own refusal budget (in memory; past it, sil
 SAS_TRIES = 3  # typed SAS attempts per offer (N3c)
 POLL_EVERY_MS = 10_000  # GET cert-requests/{id} fallback, at most every 10 s
 BASELINE_RETRY_MS = 30_000
+#: any other failed baseline POST (the relay does not hold the host's held checkpoint yet because the publisher has not
+#: uploaded it, or a transient answer such as rate_limited): ask again soon, the phone's deadline is running
+BASELINE_SOON_MS = 2_000
 OUTSTANDING_GRACE_MS = 60_000
 PAIR_SCOPES = PHONE_SCOPES  # look, decide: operate and type are refused for a phone offer in v1.7 (N1)
 NEVER_CONNECTED_MS = 86_400_000
@@ -1445,7 +1448,7 @@ class PairEngine:
         try:
             self.routes.post_baseline(cp["hash"], offer_id)
         except PairRelayError as e:
-            self._retry_at[offer_id] = now + BASELINE_RETRY_MS
+            self._retry_at[offer_id] = now + (BASELINE_RETRY_MS if e.kind == "quota" else BASELINE_SOON_MS)
             if e.kind == "quota":
                 self._alarm("pairing_baseline_quota", offer_id)
             return

@@ -307,7 +307,9 @@ def close(service: Any) -> None:
         engine.store.close()
 
 
-def start_thread(service: Any, session: Any, conn: Callable[[], Any], checkpoint: Any = None) -> Any:
+def start_thread(
+    service: Any, session: Any, conn: Callable[[], Any], checkpoint: Any = None, *, worker: Any = None
+) -> Any:
     """The pair thread ``orch-relay-r6p-<id8>`` for the relay worker (started and stopped by the bridge loop): the
     engine attached to the worker's session (its own connection, 11A.7) and to the membership seam. ``None`` when
     the workspace has no ``membership/`` (pair items are then dropped, as before R6c)."""
@@ -320,6 +322,9 @@ def start_thread(service: Any, session: Any, conn: Callable[[], Any], checkpoint
         LOG.info("relay pairing: no pair thread (%s)", e.code)
         return None
     membership = MEMBERSHIP(service) if MEMBERSHIP is not None else UnavailableMembership()
+    attach = getattr(membership, "attach", None)
+    if worker is not None and callable(attach):
+        attach(worker)  # R6b (B1): the membership thread becomes a companion of the worker, started and stopped with it
     engine.routes = SessionPairRelay(session, service.workspace_id, conn=conn)
     engine.membership = membership
     engine.host.checkpoint_source = checkpoint

@@ -4286,6 +4286,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     new code; no wire, hash or F1 change. `--primary inline` is refused until it is built. The pairing control ops
     are open to every host-UID control-socket client (tier A; the `ORCH_GRANT` refusal is the CLI's: an accepted
     residual, stated in §11A.15.21) and have outcome-unknown semantics on cancel or timeout.
+65. **B1: the host side of pairing (§11A.15.22 "As built in B1"):** the four relay seams are installed at host start
+    (`relayhook.install_seams`: `r6`, `link_source`, `publisher` = the new `host/relayr3.py`, `unpublished`), the
+    publisher and the unpublished consumer are woken by a chained `Store.on_commit`, `card_accepted` follows the first
+    accepted `PUT card`, and R6b is built: `orch.relay.r6.membership.MembershipPublisher` (the real `MembershipQueue`
+    and the `orch-relay-r6m-<id8>` thread, a `RelayWorker` companion), the real `R6View`
+    (`orch.relay.r6.view.CommittedView`), `PUT membership` and the H7 `GET members` check. The R6 gate stays closed
+    (`R6_READY` is its own PR). B1 also builds the genesis-pin person path (`relay.genesis_pin`, `sig_genesis_pin` in
+    `DEVICE_KEY_LABELS`) and the entry points `host.relay_link`, `host.relay_status`, `host.relay_genesis_pin_facts|submit`
+    with `orch host relay link|genesis-pin`. No wire, hash, F1 or error-code change.
 
 ---
 
@@ -5754,10 +5763,9 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
 - **The reader reservation.** `relayhook.reserve_link(service, origin=, max_publication_bytes=, ca_file=, proxy=)` (a
   worker job) is 11A.5 step 1: `store.relay_link({v:1, workspace_id, origin, max_publication_bytes, linked_at,
   card_seq: 1, …}, guard=lambda: relaylink.link_reservation(service))`. (J) `linked_at` is stamped at the reservation
-  (the store's `relay_mark_linked` only flips the state). (J) **Not exposed as a control op or CLI yet:** `link.json`
-  is a permanent reservation (11A.6), and until R6a's card keys and the genesis-pin person path exist the link can
-  never complete; an operator would burn the workspace's convenience signing for nothing. `orch host relay link`
-  lands with R6e's dev path (11A.15.11).
+  (the store's `relay_mark_linked` only flips the state). (J) **Exposed by B1** (11A.15.22): `host.relay_link` and
+  `orch host relay link`. `link.json` is a permanent reservation (11A.6); it is exposed now that R6a's card keys and the
+  genesis-pin person path exist, so the link can complete.
 - **Unlink.** `host.relay_unlink {workspace_id}` (no idem; `orch host relay unlink --workspace W`, human only, host
   required): stop the worker (refused `lock.busy` while its threads live, nothing renamed), then one worker job holding
   `relay_cond` and the store lock renames `link.json` to `unlinked-<linked_at>.json` with `os.link` + `unlink`, never
@@ -5786,7 +5794,7 @@ order: (1) R6 merged: the real `EpochKeySource` (`seal_snapshot`, `refusal_key`,
 in the store's critical sections), the real `R6View` (the committed list re-verified at load) and `R6Pairing` for
 `pair` items; (2) `relayhook.SEAMS.r6` set to R6's builder, `SEAMS.link_source` to R6a's card keys and the
 genesis-pin person path, `SEAMS.publisher` to R3 (else the first link stops at `publish` and never reaches `linked`)
-and `SEAMS.unpublished` to R4 (`relayr4.unpublished`; still unwired today, so R4 runs only in tests until the flip); (3) R6's integration tests against the real relay pass in the `relay-t2` job,
+and `SEAMS.unpublished` to R4 (`relayr4.unpublished`); B1 installs all four at host start (`relayhook.install_seams`, 11A.15.22), so the flip is the literal alone; (3) R6's integration tests against the real relay pass in the `relay-t2` job,
 including an R5 T2 test: a served workspace linked through the hook with the test owner client
 (`tests/relay/owner.py`, 11A.15.11, 11A.15.14 step 4), a paired device, a column-R read and a write through the
 worker; (4) the Opus security review and orch-52's review of R5 and of the R6 groups; (5) the flip is its own PR that
@@ -8816,8 +8824,10 @@ code (N6, 15 Oct 2026):** `tests/relay/owner.py` and the product inline primary 
    privately** (into memory, never echoed or logged, also on failure; Opus L12c, Codex 4).
 5. **Host.** `orch host run` in the foreground under the sandbox environment (no launchd/systemd unit), then `orch host
    register`. Its control socket is under `<root>/run`.
-6. **Owner account and primary.** `tests/relay/owner.py` creates the account (`POST /v2/accounts` with the invite, the
-   sandbox `PK` and a sandbox primary device), then `orch host relay primary set` with its certificate.
+6. **Owner account.** `tests/relay/owner.py` creates the account (`POST /v2/accounts` with the invite, the sandbox `PK`
+   and a sandbox primary device). **The order of the next two is link, then primary (B1, as built):** `orch host relay
+   primary set` answers `relay.not_linked` before the link exists, so step 7 comes first and the primary's certificate
+   is set after it (`link` → `primary set` → `pair`).
 7. **Link.** `orch host relay link --workspace W --relay ORIGIN --max-publication-bytes 4194304` (R5), with the genesis
    pin signed through the pty.
 8. **Pair.** `orch host relay pair --workspace W --primary external --json-fd N --scopes …` through the pty, with
@@ -9195,8 +9205,9 @@ R2's `relay/keys.py`).
   only the exposed body; a late 2xx is `False`), `abandon` (H4), `flush_gate`, `card_accepted`, `card_key_wrap`.
 - `EpochKeySource`: `current_epoch`, `wk`, `refusal_key`, `seal_state`, `seal_snapshot`, `serialised`, as the 11A.15.2
   table (an exposed uncommitted epoch: nothing; a burned epoch above `e_c`: `refusal_key` only; `e_c` under the gate:
-  `refusal_key` too). `R6Gate.raise_for(device, reason)` and `R6Gate.on_commit(log, event)` (a `Store.on_commit`-shaped
-  hook for `device.removed`/`device.revoked`; an unparseable device raises the gate for all).
+  `refusal_key` too). `R6Gate.raise_for(device, reason)`, the hook the store calls inside its critical sections through
+  `Store.relay_gate` (an unparseable device raises the gate for all). The event-type `R6Gate.on_commit` was removed in
+  round 3 (J-R6a-16): `Store.on_commit` stays the host's journal, chained with the relay wakes (11A.15.22).
 - `RelaySigner.member_list` (the H4 floor: burned epoch refused through R6's `is_burned` callback, below the highest
   `wk_commit` epoch refused, one `wk_commit` per epoch; one list per `list_seq`, none below the highest) and
   `RelaySigner.wk_grant` (the device in the list recorded at that `list_seq`, one grant per `(device, epoch)`).
@@ -9724,6 +9735,137 @@ and a relayed refusal.
 hard rule by AST), `tests/host/test_relay_pair_ops.py` (the ops on a real host's control socket, the status block),
 `tests/host/test_relay_pair_cli.py` (the attached loop, the refusals, the end-to-end CLI run with a scripted phone and
 external primary, `--json-fd`, resume, the argparse front, the production step-9 driver).
+
+#### 11A.15.22 As built in B1 (16 Oct 2026; the host side of pairing)
+
+B1 wires what R3, R4, R5 and R6a built into one host that can link and pair, and builds R6b. The gate `R6_READY` is
+untouched (its own PR, 11A.4); tests open it with `monkeypatch`.
+
+**Seams at host start.** `relayhook.install_seams()` (called by `Host.serve` before the starter is built; idempotent; a
+seam a test already set is kept) replaces `relayhook.SEAMS` with `r6 = relayr6.r6`, `link_source = relayr6.link_source`,
+`publisher = relayr3.publisher`, `unpublished = relayr4.unpublished`, and sets `relaypair.MEMBERSHIP =
+relayr6b.membership` when unset. A worker starts only with the gate open, as before.
+
+**R3 factory (`host/relayr3.py`).** Judgement calls (fail closed): `owner_pk_pub` is the owner's `PK` from the
+workspace's own genesis (`members.check_genesis`), never from the relay; `wsk_pub` is the public key of `keys/wsk` in
+the host's custody (as `start_worker` reads it); `max_publication_bytes` is `link.json`'s, read through the worker's
+state directory; `conn` is `worker.conn`, the link's connection factory (new: `RelayWorker(conn=)`, set by
+`start_worker`; one transport per thread, 11A.7), so the publisher and the membership thread honour `ca_file`/`proxy`
+and a test's `transport=`; `relay_level` is `readerrecs.relay_level(state_dir, ws, host_uid)` read fresh; `store` is the
+open workspace store and every call is a `worker.job`; the factory waits for no job. `on_error` raises
+`relay_publisher_stopped` and stops the worker. **Gap (follow-up):** `on_diverged` only alarms `chain.diverged` (R3
+already holds publication); no store API degrades the host (11A.5 "As built in R3").
+
+**Wake chaining.** `WorkspaceService._committed_hook(journal)` is the new `Store.on_commit` (the journal's `committed`
+first, then the wakes, never raising): every commit wakes the publisher (`Publisher.wake`) and the worker's companions
+(the membership thread re-plans); a commit of type `device.revoked`, `member.removed` or `restore` also wakes the
+`UnpublishedConsumer`. The stale line that named `R6Gate.on_commit` is corrected in 11A.15.18: R6 reacts through
+`Store.relay_gate`, not `on_commit`.
+
+**`card_accepted`.** `R6LinkSource.card_accepted()` moves the pending first card to accepted (a no-op when nothing is
+pending); `_LinkSteps.publish` calls it just before the first publication, which R1 runs only after `PUT card`, login,
+hold and `PUT genesis` were accepted. A source without the method (a test fake) is skipped. The genesis pin is still
+the person path of 11A.2; until it exists, `link-genesis.json` in the relay state directory (write-once, re-sent as
+stored) is how an owner client supplies it.
+
+**R6b** (`orch/relay/r6/membership.py`, `view.py`; host wiring `host/relayr6b.py`):
+- *Companions.* `RelayWorker.companions` are threads started after the loop and the publisher, stopped by `stop()` and
+  joined before the release. `relaypair.start_thread(..., worker=)` gives `HostMembership.attach(worker)` the worker,
+  which builds the `MembershipPublisher` and appends it. Without a worker `HostMembership` is
+  `UnavailableMembership` (never ready, every addition `refused(publisher_unavailable)`).
+- *The plan* (`plan_publication`): wanted = devices of `devices/` with F1 standing `ok` for the exact pair, no
+  forwarded `HostPins` evidence, a valid certificate at the host clock (ONE worker job under the store lock,
+  `relayr6b.standing`), minus `excluded`, minus every device of a gate reason. A rotation when a listed device left,
+  the gate is up, or a holder of the committed epoch is not wanted (the holder invariant); an addition at the committed
+  epoch when only additions exist; the first list and the empty rotation are rotations.
+- *Write-ahead.* `flush_gate()`, then `new_epoch_key` (rotation), `member_list_o`, `RelaySigner.member_list`, one
+  `wk_grant` per wanted device (`sealed_wk`, claimed write-once in `membership/grants/g<e>-<device>.json` BEFORE the
+  expose: a flat directory instead of `grants/<e>/`, a judgement call), `card_key_wrap`s for devices new to the list
+  once a card is accepted, one atomic `expose`. A same-epoch addition carries every grant of the epoch, the old ones
+  byte for byte. The key store gained: `expose` records `holders[e]` (every granted device, accepted or not, H5),
+  `abandon(exclude=)` (the burn and the exclusions in one write), `exclude`, `set_h8`, and the lock-free `committed_record()`.
+- *Outcomes.* 2xx with the body's `{list_seq, epoch}`: `commit` and `on_committed` (a repost for a device already
+  committed is answered at once). Transient (transport, 5xx, `rate_limited`, malformed 2xx): the exact bytes again
+  after a backoff and a scheduled `GET members`. A content or divergence refusal: `abandon` (burn), the devices that
+  body added into `excluded`, `on_refused`, H8 count, next plan rotates; never retried. `quota_exceeded`: the same plus
+  `membership_quota` and `ready()` false. Only the §7.2/§7.3 content codes abandon (`ABANDON_CODES`); an auth answer or an
+  unknown code backs off with the same bytes (`membership_refused_other`). `stale_card`/`wrap_conflict`: alarm
+  `membership_card_refused`, then the SAME list and grants are resent without `card_key_wraps` (a send-time variant, the
+  exposed body is unchanged); the wraps are persisted write-once per `(card_seq, device)` (`w<seq>-<device>.json`,
+  §19.7) and reused on every re-exposure. The unsigned grant (sealed bytes) is persisted write-once (`u<e>-<device>.json`)
+  BEFORE it is signed, so a crash before `grants.keep` re-signs the same bytes (the signer returns the recorded
+  signature). A plan whose `EHW` is above the committed epoch is a rotation (H4), never an addition at `e_c`. A failing
+  device store or standing job is `membership_local` with a backoff, not the end of the worker. Fence or
+  session error: the thread ends and stops the worker.
+- *H7.* `reconcile()` reads `GET members` (verified under the WSK by R1's `Directory`) and calls `recover_h7` when the
+  relay holds a list above `LHW`/`EHW` or another body at a `list_seq` this host exposed. It runs at thread start when
+  the gate holds an `h7` reason and after a transient failure. The relay's list is never adopted.
+- *`R6View`* (`CommittedView`): `head.json` `committed` plus the signature the R6 signer ledger recorded for its
+  `list_seq`, re-checked whenever the committed record changes (WSK signature and shape, `list_seq`, `epoch`,
+  `wk_commit` against the local key, `list_hash`, the owner as the one person, scope prefix, `check_cert` of
+  `devices/<id>.json` bound to the entry, scopes within `scopes_max`). Any failure serves no member
+  (`membership_view_refused`). The cache follows the key store's committed epoch.
+
+**The genesis pin (`relay.genesis_pin`, 11A.2, as built).** A NON-event person path: nothing is appended and it does not
+go through `human.prepare`/`human.submit` (those are event machinery: material hashes, `review_digest`, the append
+choke point). The same guarantees are kept by a smaller path:
+- `host.relay_genesis_pin_facts` returns `{v:1, workspace_id, genesis_event, origin}`: the workspace's own
+  `workspace.created` event and the stored relay origin. **No pin and no hash from the host is trusted.**
+- The signer (`paircli.sign_genesis_pin`, using `orch.identity.genesispin.check_facts`) recomputes everything from the
+  event: `members.check_genesis` (owner, delegation, host signature, device certificate with `operate`, signature),
+  `event_head` for the genesis hash, the WSK public key of the event, the workspace id it asked about (its own
+  registry), and that the signing key IS the genesis device's `dk_sig`; an exact field set, a printable ASCII origin.
+  It builds the pin object itself (`{v:2, suite, kind:"genesis_pin", workspace_id, wsk_pub, genesis}`) and signs
+  `"orch/v2/sig/genesis-pin|" || cj(o)`. The relay origin is shown for review and not signed (it is not in the pin).
+  Refusals happen before any prompt: another workspace, extra or missing fields, a swapped key or hash (the event then
+  fails its own signatures), a key that is not the genesis device.
+- Review and confirmation: the terminal signer (`/dev/tty`) shows the workspace, relay, genesis hash, WSK, signing
+  device, then `Type <last 8 hex of the workspace id>/GENESIS and Enter to continue to the passphrase; anything else
+  stops: `; then the passphrase backend's prompt (its fields come from `describe_payload`, which now knows
+  `sig_genesis_pin`: `signs: genesis-pin`, `workspace_id`, `wsk_pub`, `genesis`) ending `Passphrase: `.
+- `host.relay_genesis_pin_submit {workspace_id, pin}`: the host recomputes the expected pin from its own state, requires
+  the submitted object to be exactly it, verifies the signature under the genesis device, and keeps
+  `hosts/<ws>/relay/genesis-pin.json` (0600, atomic). `relayr6.link_source` passes `genesis_pin=` so
+  `R6LinkSource.genesis()` returns `(pin, cert, genesis)` from that file (`GenesisPathMissing` while it is absent or
+  stale: the worker then stops with that class). R1 keeps it in `link-genesis.json` before the first `PUT genesis`
+  (a test owner signs through the same path, never by pre-writing that file). The pin passes
+  `Directory.check_genesis_pin` (a test pins it).
+- `sig_genesis_pin` is in `DEVICE_KEY_LABELS` only (not the WSK, not the person key, not the primary).
+
+**Linking.** `host.relay_link {workspace_id, origin, max_publication_bytes[, ca_file, proxy]}`: `GET /v2/relay-info` on
+the caller's thread (never the worker thread), then the reservation as a worker job (`link.json`, `linking`); it starts
+nothing. A failure to read the relay, a store refusal (`relay.link_exists`, shown as `invalid.input` with that code in
+the text; no new host code) and a bad origin or cap leave no link. `host.relay_status` returns `host.status.relay`
+over the control socket. `orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N [--ca-file F]
+[--proxy U]` runs: reservation, the genesis-pin signature at the terminal, `host.relay_start`, then waits (90 s) for
+`linked` and prints `{link, worker, reason, start}`; with the R6 gate closed it ends `worker: off`. `orch host relay
+genesis-pin --workspace W` signs the pin alone (a restart after `link` stopped at the pin). `host.status.relay` carries
+`genesis_pin: "needed" | "signed"` while the link is `linking`, and an `attention` entry
+(`{what, fix, actionable}`) while it is needed; that entry is the dashboard's hook (host-originated `needs` items are
+#572). **Not built:** the dashboard UI and a click-to-sign path for the pin (the pin is terminal-signed only; the
+dashboard can show the attention entry and name the command). `orch host relay unlink` exists (R5). Unlink-then-link
+leaves the stop marker; `link` clears it through `host.relay_start`.
+
+**Order and the primary's reader declaration.** `primary set` needs the link (`relay.not_linked` otherwise), so the order
+is `link`, `primary set`, `pair`. The spec (11A.17 D2, O4) says the sandbox primary gets a level-1 `reader_decl` from the
+pure builders but defines no host op that accepts one: the primary is not a member and never reads, and the phone's
+`reader_decl` travels in the pair meta. Nothing is wired; if a primary declaration is needed, the spec must name its
+carrier first.
+
+**Not built (follow-ups).** Re-admission of an excluded device through a new approved offer (R6c's allocation does not
+yet call a key-store clear); the container-only recovery (`GET card`, rebuilt wraps); `first_send_ms`/`attempts` are
+kept in memory, not in `head.json`; recovering from an unsafe key store (`MembershipUnsafe` refuses the worker start,
+so `recover_h7` is reachable only for the in-flight cases above); the `needs` item for a failed pairing is R6c's; a
+store API for `on_diverged`; relay-learned revocations (`notices.revocations_cursor`, 403 `revoked` on a chunk) do not
+yet feed the gate (R4's held evidence and the F1 hook do); the baseline checkpoint source of the pair engine still
+falls back to the host's own held checkpoint.
+
+**Tests.** `tests/relay/test_b1_membership.py` (the plan, the first list, a same-epoch addition with byte-identical
+grants, card wraps, resend, content refusal and the rotation after it, standing loss and the empty rotation, quota,
+exclusions, a repost, the thread, the view's refusals, H7, the key store's new transitions),
+`tests/host/test_b1_genesis_pin.py` and `tests/host/test_b1_link.py` (the pin and the link),
+`tests/host/test_b1_wiring.py` (the seam install, `card_accepted`, the R3 factory, the wake chaining, the attach and the
+standing job), `tests/relay/test_worker.py` (companions).
 
 ### 11A.16 H13: push and Drop, host end (the H13 design of record)
 

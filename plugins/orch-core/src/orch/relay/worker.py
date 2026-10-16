@@ -251,8 +251,15 @@ class RelayWorker:
         unpublished: Unpublished | None = None,
         on_ended: Callable[[], None] = lambda: None,
         mono: Callable[[], float] = time.monotonic,
+        conn: Callable[[], Any] | None = None,
     ) -> None:
         self.workspace_id, self.id8 = workspace_id, workspace_id[:8]
+        #: the connection factory of this link (one transport per thread, 11A.7): the seam factories of the host
+        #: (R3's publisher, R6b's membership thread) build their own connection through it (B1)
+        self.conn = conn
+        #: threads that live and die with the worker beside the publisher (R6b's membership thread): objects with
+        #: ``start()``, ``stop()`` and ``join(timeout) -> bool``; added before :meth:`start`
+        self.companions: list[Any] = []
         self.state, self.session, self.alarm = state, session, alarms
         self._submit, self._stop_event = submit, stop_event
         self._link_state, self._precheck, self._first_link = link_state, precheck, first_link
@@ -346,6 +353,10 @@ class RelayWorker:
             self.publisher.start()
             if self._stopping:  # a stop between the lock and here: tell it (again; stop is idempotent)
                 self.publisher.stop()
+            for companion in self.companions:
+                companion.start()
+                if self._stopping:
+                    companion.stop()
         except WorkerStopped:
             return
         except Exception as e:  # noqa: BLE001 - the start failed: the worker stops, by class only
@@ -376,6 +387,8 @@ class RelayWorker:
             self.loop.stop()
         if running:
             self.publisher.stop()
+        for companion in self.companions:
+            companion.stop()
 
     def join(self, timeout: float) -> bool:
         """True when every relay thread ended within ``timeout`` (shared): the start thread, the loop (joined twice:
@@ -407,6 +420,8 @@ class RelayWorker:
             ended = self.loop.join(left()) and ended
             ended = self.loop.join(left()) and ended
         ended = self.publisher.join(left()) and ended
+        for companion in self.companions:
+            ended = companion.join(left()) and ended
         return ended
 
     def _reap(self) -> None:

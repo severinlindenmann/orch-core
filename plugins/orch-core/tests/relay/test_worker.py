@@ -508,6 +508,35 @@ def test_join_waits_for_the_publisher_before_releasing_anything(tmp_path, gate):
     r.close()
 
 
+def test_a_companion_starts_after_the_publisher_stops_with_the_worker_and_is_joined_before_the_release(tmp_path, gate):
+    """B1: R6b's membership thread is a companion: started after the loop and the publisher, stopped by ``stop()`` and
+    joined (bounded) before anything is released."""
+    done = threading.Event()
+    log: list[str] = []
+
+    class Companion:
+        def start(self) -> None:
+            log.append("start")
+
+        def stop(self) -> None:
+            log.append("stop")
+
+        def join(self, timeout: float) -> bool:
+            return done.wait(timeout)
+
+    r = Rig(tmp_path)
+    r.w.companions.append(Companion())
+    r.w.start()
+    r.wait_started()
+    assert _wait(lambda: log == ["start"])
+    r.w.stop()
+    assert "stop" in log
+    assert r.w.join(0.2) is False and r.ended == 0 and r.w.alive() is True
+    done.set()
+    assert _wait(lambda: r.ended == 1)
+    r.close()
+
+
 def test_a_publisher_whose_start_submits_a_job_does_not_deadlock_the_start(tmp_path, gate):
     got: list[int] = []
     box: dict = {}

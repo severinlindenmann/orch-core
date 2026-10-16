@@ -30,22 +30,27 @@ def _write_held(svc, pairs, **extra):
     write_private(path, {**doc, **extra})
 
 
+def _held_notes(rel):
+    """R4's attention notes: the first link's genesis-pin note (B1) is not about held evidence."""
+    return [n for n in rel["attention"] if "genesis pin" not in n["what"]]
+
+
 def test_host_status_relay_shows_held_evidence_with_what_to_do(served):  # noqa: F811
     svc = served.service
     _reserve(served)
     rel = relayhook.status(svc)
-    assert rel["held_evidence"] == [] and rel["attention"] == []
+    assert rel["held_evidence"] == [] and _held_notes(rel) == []
     _write_held(svc, [HELD])
     rel = relayhook.status(svc)
     assert rel["held_evidence"] == [{**HELD, "actionable": True}]
-    (note,) = rel["attention"]
+    (note,) = _held_notes(rel)
     assert f"d_{'ab' * 16}" in note["what"] and "compromised" in note["what"] and "not published" in note["what"]
     assert "device.revoked" in note["fix"] and "#572" in note["fix"]
     _write_held(svc, [], unverifiable={"n": 2, "first_ms": 1, "last_seen_ms": 1, "clean_scans": 0})
-    (note,) = relayhook.status(svc)["attention"]
+    (note,) = _held_notes(relayhook.status(svc))
     assert "2 items the relay serves could not be verified" in note["what"] and rel["ledger"]["unverifiable"] == 0
     _write_held(svc, [], rebuilding=True)
-    assert "being rebuilt" in relayhook.status(svc)["attention"][0]["what"]
+    assert "being rebuilt" in _held_notes(relayhook.status(svc))[0]["what"]
 
 
 def test_orch_host_status_names_held_evidence_as_a_problem(served):  # noqa: F811

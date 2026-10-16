@@ -107,12 +107,15 @@ _SIGNED_OBJECT_FIELDS: dict[str, tuple[str, ...]] = {
     "ws_delegation": ("workspace_id", "wsk_pub", "owner_person_id", "client_hosted", "issued_ms"),
     # H12d-2 (orch-v2-host §0.8.6 item 9.3): the device's own reader declaration, every field shown
     "reader_decl": ("workspace_id", "device_id", "dk_hash", "who", "reader", "kat", "bind", "created_ms"),
+    # B1 (11A.2, relay.genesis_pin): the pin an owner device signs for a first link, every field shown
+    "genesis_pin": ("workspace_id", "wsk_pub", "genesis"),
 }
 _OBJECT_LABEL_KIND = {
     "sig_device_cert": "device_cert",
     "sig_revocation": "revocation",
     "sig_ws_delegation": "ws_delegation",
     "sig_reader_decl": "reader_decl",
+    "sig_genesis_pin": "genesis_pin",
 }
 _EMBEDDED = {
     "delegation": "ws_delegation",

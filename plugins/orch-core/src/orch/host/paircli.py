@@ -30,7 +30,7 @@ from typing import Any, TextIO
 
 from .errors import HostError
 
-__all__ = ["main", "parse_ttl"]
+__all__ = ["main", "parse_ttl", "sign_genesis_pin"]
 
 TERMINAL = ("rejected", "expired", "cancelled", "failed")
 STATES = frozenset({"open", "pending", "confirmed", "cert_pending", "allocated", "published", "approved", *TERMINAL})
@@ -118,9 +118,11 @@ def _qr(link: str) -> str | None:
 def _tty_ask(prompt: str) -> str:
     """One line from the person's terminal (``/dev/tty``; never stdin, which a script may feed)."""
     try:
-        with open("/dev/tty", "r+", encoding="utf-8") as tty:
-            tty.write(prompt)
-            tty.flush()
+        # two handles, not "r+": a terminal is not seekable, so a read-write text file on it raises
+        # UnsupportedOperation (an OSError) on macOS and the prompt could never be answered
+        with open("/dev/tty", "w", encoding="utf-8") as out, open("/dev/tty", encoding="utf-8") as tty:
+            out.write(prompt)
+            out.flush()
             return tty.readline().strip()
     except OSError:
         raise HostError("custody.no_prompt", "the code is typed at a terminal: run this in one") from None
@@ -243,6 +245,51 @@ def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Cal
     return run
 
 
+def sign_genesis_pin(
+    call: Callable[[str, dict[str, Any]], dict[str, Any]],
+    workspace_id: str,
+    *,
+    backend: Any,
+    key_id: str,
+    name: str,
+    confirm: Callable[[str, str], bool],
+) -> dict[str, Any]:
+    """The genesis pin's person path (11A.2, ``relay.genesis_pin``), the terminal signer. The host sends facts (its own
+    ``workspace.created`` event and the relay origin); the signer recomputes the pin from them
+    (:func:`orch.identity.genesispin.check_facts`: this workspace, this genesis device), shows the review, signs only
+    after ``confirm(text, word)``, and sends the signed pin back. Reusable by an owner client (the dev path, T2)."""
+    from orch.identity import genesispin
+    from orch.identity.errors import Refused
+
+    from .signer import SignerRefused
+
+    facts = call("host.relay_genesis_pin_facts", {"workspace_id": workspace_id})["facts"]
+    try:
+        verified = genesispin.check_facts(
+            facts, workspace_id=workspace_id, device_pub=bytes(backend.public_key(key_id))
+        )
+    except Refused as exc:
+        raise SignerRefused(f"refusing to sign: {exc.code}: {exc.detail}") from None
+    if not confirm(genesispin.render(verified, name=safe(name)), genesispin.confirm_word(workspace_id)):
+        raise SignerRefused("not confirmed")
+    pin = genesispin.sign_pin(backend, key_id, verified)
+    return call("host.relay_genesis_pin_submit", {"workspace_id": workspace_id, "pin": pin})
+
+
+def _genesis_pin_run(
+    call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapping[str, Any], state: Path
+) -> dict:
+    from orch.ops import human
+
+    wid = entry["workspace_id"]
+    directory = human.keys_dir(state, wid)
+    if not (directory / human.KEY_FILE).is_file():
+        raise HostError("custody.no_key", "this machine holds no device key of yours for this workspace")
+    backend = human.open_backend(directory)
+    name = Path(str(entry.get("root") or wid)).name
+    return sign_genesis_pin(call, wid, backend=backend, key_id=human.KEY_ID, name=name, confirm=human.review_prompt)
+
+
 class _Step9Failed(HostError):
     """A step-9 refusal; ``main`` prints that the offer stays and how to sign it later."""
 
@@ -253,6 +300,72 @@ class _Step9Failed(HostError):
 
 def _cut(text: object) -> str:
     return safe(str(text), 200)
+
+
+LINK_WAIT_S = 90.0
+OFF_GRACE_S = 5.0
+
+
+def _link_run(call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapping[str, Any], state: Path, args: Any,
+          out: TextIO, sleep: Callable[[float], None]) -> dict[str, Any]:  # fmt: skip
+    """``orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N [--ca-file F] [--proxy U]``
+    (11A.4, 11A.5, 11A.15.11 step 7): the reservation (relay-info first), the owner's genesis-pin signature at this
+    terminal (:func:`sign_genesis_pin`), then ``host.relay_start``: the worker drives the card, login, hold, genesis,
+    the first publication and ``linked``. Waits (bounded) for ``linked`` and says where it stopped otherwise."""
+    wid = entry["workspace_id"]
+    if not args.relay or not args.max_publication_bytes:
+        raise HostError("invalid.input", "orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N")
+    req: dict[str, Any] = {
+        "workspace_id": wid,
+        "origin": args.relay,
+        "max_publication_bytes": args.max_publication_bytes,
+    }
+    if args.ca_file:
+        req["ca_file"] = args.ca_file
+    if args.proxy:
+        req["proxy"] = args.proxy
+    reserved = call("host.relay_link", req)
+    out.write(f"reserved: relay {_cut(reserved.get('origin'))} (the workspace is now permanently relay-linked)\n")
+    out.flush()
+    _genesis_pin_run(call, entry, state)
+    started = call("host.relay_start", {"workspace_id": wid})
+    begun = time.monotonic()
+    deadline = begun + LINK_WAIT_S
+    relay: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        relay = call("host.relay_status", {"workspace_id": wid}).get("relay") or {}
+        # "off" right after the start can be the starter thread not having registered the worker yet: it ends the
+        # wait only when the start itself answered "off" or after OFF_GRACE_S
+        off = relay.get("worker") == "off" and (
+            started.get("worker") == "off" or time.monotonic() - begun >= OFF_GRACE_S
+        )
+        if relay.get("link") == "linked" or relay.get("worker") == "failed" or off:
+            break
+        sleep(POLL_S)
+    return {
+        "workspace_id": wid, "link": _word(relay.get("link")), "worker": _word(relay.get("worker")),
+        "reason": _cut(relay.get("reason")) if relay.get("reason") else None, "start": _word(started.get("worker")),
+    }  # fmt: skip
+
+
+def _genesis_guard(run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """The genesis pin's errors as :class:`HostError` (never a traceback), as :func:`_guarded` does for step 9."""
+    from orch.custody.base import CustodyError
+    from orch.ops.errors import OrchError
+
+    from . import frames
+    from .signer import SignerRefused
+
+    try:
+        return run()
+    except SignerRefused as exc:
+        raise HostError("invalid.input", _cut(f"{exc}; nothing was signed")) from None
+    except CustodyError as exc:
+        raise HostError(str(getattr(exc, "code", "custody")), _cut(str(exc))) from None
+    except OrchError as exc:
+        raise HostError(str(exc.code), _cut(str(exc))) from None
+    except (OSError, ConnectionError, TimeoutError, frames.FrameError) as exc:
+        raise HostError("host.unavailable", _cut(f"lost the connection to the orch host ({exc})")) from None
 
 
 def _guarded(step9: Callable[[str], None]) -> Callable[[str], None]:
@@ -341,6 +454,14 @@ def main(
             raise HostError("host.unavailable", f"the orch host is not reachable ({type(exc).__name__})") from None
         with client:
             call = _caller(client)
+            if args.action == "link":
+                data = _genesis_guard(lambda: _link_run(call, entry, state, args, out, sleep))
+                out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                return 0
+            if args.action == "genesis-pin":
+                data = _genesis_guard(lambda: _genesis_pin_run(call, entry, state))
+                out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                return 0
             if args.action == "primary":
                 if sub != "set" or not args.cert or not args.label:
                     raise HostError(

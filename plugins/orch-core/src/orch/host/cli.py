@@ -117,7 +117,7 @@ def _parser() -> argparse.ArgumentParser:
     relay = sub.add_parser(
         "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
     )
-    relay.add_argument("action", choices=("stop", "start", "unlink", "pair", "primary"))
+    relay.add_argument("action", choices=("stop", "start", "unlink", "pair", "primary", "genesis-pin", "link"))
     relay.add_argument("sub", nargs="?", help="pair: list|cancel|abandon (none: make an offer); primary: set")
     relay.add_argument("--workspace", required=True, help="workspace id or prefix")
     relay.add_argument("--state", type=Path)
@@ -133,6 +133,10 @@ def _parser() -> argparse.ArgumentParser:
     relay.add_argument(
         "--primary", choices=("inline", "external"), help="pair: who signs the phone's certificate (inline: not built)"
     )
+    relay.add_argument("--relay", help="link: the relay origin, scheme://host[:port], stored verbatim")
+    relay.add_argument("--max-publication-bytes", type=int, help="link: the checkpoint cap C (1 MiB to 1 GiB)")
+    relay.add_argument("--ca-file", help="link: a PEM file of the relay's CA (a private relay)")
+    relay.add_argument("--proxy", help="link: an http proxy URL")
     relay.add_argument("--cert", help="primary set: the primary's certificate file (JSON)")
     relay.add_argument("--label", help="primary set: your name for the primary")
     rdr = sub.add_parser(
@@ -709,7 +713,7 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
 
     state = _state(args.state, env)
     uid = os.getuid()
-    if args.action in ("pair", "primary"):
+    if args.action in ("pair", "primary", "genesis-pin", "link"):
         from . import paircli
 
         return paircli.main(args, env, out, state=state, control=_control_path(args.run, state, env))

@@ -95,6 +95,20 @@ _SCHEMAS = {
     "host.relay_stop": _closed({"workspace_id": _WS}),
     "host.relay_start": _closed({"workspace_id": _WS}),
     "host.relay_unlink": _closed({"workspace_id": _WS}),
+    "host.relay_status": _closed({"workspace_id": _WS}),  # B1: host.status.relay over the control socket (the CLI link)
+    # B1 (11A.5 step 1): the reservation of a first link; human-only, no idem, no outcome record
+    "host.relay_link": {
+        "type": "object",
+        "properties": {
+            "workspace_id": _WS,
+            "origin": {"type": "string", "minLength": 8, "maxLength": 256},
+            "max_publication_bytes": {"type": "integer", "minimum": 1 << 20, "maximum": 1 << 30},
+            "ca_file": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "proxy": {"type": "string", "minLength": 1, "maxLength": 512},
+        },
+        "required": ["workspace_id", "origin", "max_publication_bytes"],
+        "additionalProperties": False,
+    },
     # R6c-2 (11A.15.9): relay pairing, human-only (the CLI refuses under ORCH_GRANT); none is a write (no idem, no
     # outcome record): the offer's link exists only in its direct answer
     "host.relay_pair_offer": {
@@ -134,6 +148,9 @@ _SCHEMAS = {
     "host.relay_primary_set": _closed(
         {"workspace_id": _WS, "cert": {"type": "object"}, "label": {"type": "string", "minLength": 1, "maxLength": 200}}
     ),
+    # B1 (11A.2): the genesis pin's person path; human-only like pairing, no idem, no outcome record
+    "host.relay_genesis_pin_facts": _closed({"workspace_id": _WS}),
+    "host.relay_genesis_pin_submit": _closed({"workspace_id": _WS, "pin": {"type": "object"}}),
     "host.outcome": _closed({"idem": {"type": "string", "pattern": r"^a_" + frames.ULID + "$"}}),
     "host.bootstrap": _closed(
         {
@@ -145,6 +162,7 @@ _SCHEMAS = {
     ),
 }
 PAIR_OPS = frozenset(op for op in _SCHEMAS if op.startswith("host.relay_pair_") or op == "host.relay_primary_set")
+GENESIS_OPS = frozenset({"host.relay_genesis_pin_facts", "host.relay_genesis_pin_submit"})
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
 CONTROL_OPS = {op: 1 for op in _SCHEMAS}
 WRITES = CONTROL_WRITES
@@ -482,6 +500,47 @@ class ControlOps:
         name = service.relay_unlink()
         return ok_result({"workspace_id": workspace_id, "unlinked": name})
 
+    def relay_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        from .relayhook import status
+
+        workspace_id = args["workspace_id"]
+        service = self.host.services.get(workspace_id)
+        if self.host.registry.get(workspace_id) is None or service is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not served")
+        return ok_result({"workspace_id": workspace_id, "relay": status(service)})
+
+    def relay_link(self, args: dict[str, Any]) -> dict[str, Any]:
+        """``orch host relay link`` step 1 (11A.5): ``GET /v2/relay-info`` for the reader level (on this thread, never
+        the workspace's worker thread), then the reservation as a worker job (``link.json``, state ``linking``; the
+        permanent reader reservation of 11A.6). It starts nothing: the owner signs the genesis pin, then
+        ``host.relay_start`` runs the first link."""
+        from orch.relay.http import TransportError
+        from orch.relay.retry import RelayRefused
+        from orch.relay.session import SessionError
+        from orch.store import StoreError
+
+        from .relayhook import link_step1
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        try:
+            link = link_step1(
+                service, origin=args["origin"], max_publication_bytes=args["max_publication_bytes"],
+                ca_file=args.get("ca_file"), proxy=args.get("proxy"),
+            )  # fmt: skip
+        except (TransportError, RelayRefused, SessionError, OSError) as exc:
+            raise HostError(
+                "invalid.input", f"the relay could not be read ({type(exc).__name__}); nothing was linked"
+            ) from None
+        except StoreError as exc:  # relay.link_exists (the permanent reservation), validation.relay_link
+            raise HostError("invalid.input", f"{exc.code}: {str(exc)[:160]}") from None
+        return ok_result({"workspace_id": workspace_id, "state": link["state"], "origin": link["origin"],
+                          "max_publication_bytes": link["max_publication_bytes"]})  # fmt: skip
+
     # -- R6c-2: relay pairing (11A.15.9), thin wrappers over the internal API (relaypair.api)
     def relay_pair(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
         from dataclasses import asdict
@@ -521,6 +580,20 @@ class ControlOps:
         else:  # pragma: no cover - the schema table names every op
             raise HostError("unknown_command", op)
         return ok_result(data)
+
+    # -- B1: the genesis pin (11A.2)
+    def relay_genesis_pin(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
+        from . import relaygenesis
+
+        workspace_id = args["workspace_id"]
+        if self.host.registry.get(workspace_id) is None:
+            raise HostError("not_found", f"workspace {workspace_id} is not registered")
+        service = self.host.services.get(workspace_id)
+        if service is None:
+            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        if op == "host.relay_genesis_pin_facts":
+            return ok_result({"workspace_id": workspace_id, "facts": relaygenesis.facts(service)})
+        return ok_result(relaygenesis.submit(service, args["pin"]))
 
     # -- host.bootstrap
     def bootstrap(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
@@ -875,7 +948,10 @@ class ControlGate:
                 "host.relay_stop": lambda: ops.relay_stop(args),
                 "host.relay_start": lambda: ops.relay_start(args),
                 "host.relay_unlink": lambda: ops.relay_unlink(args),
+                "host.relay_link": lambda: ops.relay_link(args),
+                "host.relay_status": lambda: ops.relay_status(args),
                 **{name: (lambda n=name: ops.relay_pair(n, args)) for name in PAIR_OPS},
+                **{name: (lambda n=name: ops.relay_genesis_pin(n, args)) for name in GENESIS_OPS},
             }[op]
             result = await asyncio.to_thread(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})

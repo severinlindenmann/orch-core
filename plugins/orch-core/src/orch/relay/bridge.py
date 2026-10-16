@@ -104,6 +104,7 @@ BUDGET_WINDOW_MS = 60_000
 CHUNK_ROOM = wire.MAX_CHUNK - wire.OVERHEAD  # plaintext of one chunk
 QUEUE_ITEMS, QUEUE_BYTES = 16, 4 << 20
 POLL_WAIT_S, POLL_DEADLINE_S, POLL_CAP = 25, 40.0, 4 << 20
+SEEN_POLL_PAUSE_S = 0.25  # a poll that returned only already-queued items waits this long before the next
 POST_DEADLINE_S, POST_CAP = 30.0, 16 * 1024
 RENEW_EVERY_S = 15.0
 AUX_HOLD_DEADLINE_S = 10.0
@@ -1133,9 +1134,11 @@ class BridgeLoop:
                 ids = _cert_request_ids(obj)
                 if ids:
                     self.pairing.notice(ids)
+            fresh = False
             for item in _items(obj):
                 if item.n <= self._highest:
                     continue  # already queued (non-consuming poll)
+                fresh = True
                 with self._qlock:
                     full = self._queue.qsize() >= QUEUE_ITEMS or self._queued_bytes >= QUEUE_BYTES
                 if full:
@@ -1144,6 +1147,11 @@ class BridgeLoop:
                 with self._qlock:
                     self._queued_bytes += len(item.envelope)
                 self._queue.put(item)
+            if not fresh and _items(obj):
+                # only items already queued (not yet answered, so the cursor has not moved): the relay answers a poll
+                # that has items at once, so without this the loop spins and its own rate limit refuses the host's
+                # other calls (membership, checkpoint, baselines)
+                self._stop.wait(SEEN_POLL_PAUSE_S)
 
     # -- responder and jobs ---------------------------------------------------------------------------------------
 

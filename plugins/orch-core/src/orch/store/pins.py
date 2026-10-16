@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch.identity.certs import revoke_strength
 
 from .errors import StoreError
 from .fsio import loads, read_or_none, write_atomic
@@ -46,7 +47,6 @@ MAX_FORWARDED_TOTAL = 1024  # forwarded evidence records in total (the eviction 
 MAX_FORWARDED_HARD = 1536  # non-owner forwarded records in total (members over MAX_FORWARDED_TOTAL included)
 MAX_FORWARDED_PER_PERSON_HARD = 256  # forwarded records per person, the pinned owner included
 MAX_FORWARDED_RECORD_BYTES = 6144  # one forwarded record as stored (cj); a larger one is dropped
-_STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}  # compromised > lost = retired (§5.10)
 
 
 def pair(rec: dict[str, Any]) -> tuple[str, str]:
@@ -176,18 +176,18 @@ class HostPins:
             "device_cert": device_cert,
             "pk_pub": pk_pub,
         }
-        stronger = old is None or _STRENGTH[reason] > _STRENGTH[old["reason"]]
+        stronger = old is None or revoke_strength(reason) > revoke_strength(old["reason"])
         if chain:
             if old is not None and not is_forwarded(old) and not stronger:
                 return True  # same or weaker chain evidence: the earliest of the highest reason stays
             if old is not None:
                 carry = old.get("upgrade") if not is_forwarded(old) else old
-                if carry is not None and _STRENGTH[carry["reason"]] > _STRENGTH[reason]:
+                if carry is not None and revoke_strength(carry["reason"]) > revoke_strength(reason):
                     new["upgrade"] = {k: carry[k] for k in ("at", "reason", "revocation", "device_cert", "pk_pub")}
         else:
             if old is not None and not is_forwarded(old):
                 held = old.get("upgrade", old)
-                if _STRENGTH[reason] > _STRENGTH[held["reason"]]:
+                if revoke_strength(reason) > revoke_strength(held["reason"]):
                     old["upgrade"] = new  # kept beside the chain record, never replacing it
                     self._write(records)
                 return True

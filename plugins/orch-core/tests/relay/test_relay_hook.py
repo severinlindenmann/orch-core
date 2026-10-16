@@ -492,7 +492,8 @@ def test_orch_host_status_names_the_dormant_relay_worker(served, monkeypatch):  
     assert host_status._relay(svc.state_dir, served.wid, UID) is None  # noqa: SLF001 - never linked: no relay part
     _reserve(served)
     got = host_status._relay(svc.state_dir, served.wid, UID)  # noqa: SLF001
-    assert got == {"linked": True, "blocker": relay_worker.R6_GATE_REASON, "outbox_pending": 0}
+    assert got.pop("ledger")["held"] == []  # R4's ledger view (11A.9), clean
+    assert got == {"linked": True, "blocker": relay_worker.R6_GATE_REASON, "outbox_pending": 0, "held": []}
     relaylink.mark_stopped(svc.state_dir, served.wid, UID)
     assert host_status._relay(svc.state_dir, served.wid, UID)["blocker"] == "stopped"  # noqa: SLF001
     rep = {

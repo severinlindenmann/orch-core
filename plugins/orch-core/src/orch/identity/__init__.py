@@ -20,6 +20,7 @@ from .certs import (
     open_device_label,
     person_ref,
     person_scope_ok,
+    revoke_strength,
     scopes_ok,
     seal_device_label,
     sign_object,
@@ -53,6 +54,7 @@ from .verifier import CryptoVerifier
 
 __all__ = [
     "REVOKE_REASONS",
+    "revoke_strength",
     "SCOPE_ORDER",
     "SKEW_MS",
     "CryptoVerifier",

@@ -15,6 +15,7 @@ extension, reftable, a populated submodule, ...) is ``None``: "cannot be told", 
 
 from __future__ import annotations
 
+import base64
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -26,6 +27,7 @@ from orch.gitread.local import READER
 
 __all__ = [
     "dirty", "dirty_refusal", "head", "observe", "refusal", "repo_identity", "repo_path", "symbolic_head", "toplevel",
+    "tree_state",
 ]  # fmt: skip
 
 
@@ -88,6 +90,24 @@ def dirty_refusal(path: Path, env: Mapping[str, str] | None = None) -> str | Non
     except Unavailable as exc:
         return exc.reason
     return None
+
+
+def tree_state(
+    path: Path, *, pins: Any = None, env: Mapping[str, str] | None = None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """HEAD and the tree in ONE read (#583, L4): ``({head, head_ref, dirty}, None)``, ``dirty`` as :func:`dirty`
+    answers it, or ``(None, reason)`` when it cannot be told. ``pins``: a registered worktree's
+    :class:`~orch.gitread.fs.RepoPins`, read exactly (never found again by path)."""
+    from orch.gitread.treejob import escape_path
+
+    try:
+        raw = READER.tree_check(path, env, pins=pins)
+    except Unavailable as exc:
+        return None, exc.reason
+    lines = [f"{c['why']}: {escape_path(base64.b64decode(c['path_b64']), c['cut'])}" for c in raw["changed"]]
+    if raw["more"]:
+        lines.append("and more")
+    return {"head": raw["head"], "head_ref": raw["head_ref"], "dirty": "\n".join(lines)}, None
 
 
 def repo_path(root: Path, repos: Mapping[str, Mapping[str, str]], name: str) -> Path | None:

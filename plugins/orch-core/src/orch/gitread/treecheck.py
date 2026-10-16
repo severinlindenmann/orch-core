@@ -12,9 +12,9 @@ What it compares:
   unchanged counts as changed (conservative). Any other file type (FIFO, socket, device) at a tracked path is
   ``why: "type"`` and is never opened.
 * **Untracked files**: the worktree is walked minus the ``.gitignore`` files and ``info/exclude`` (git's pattern
-  rules; ``core.excludesFile`` is config and is not read here, so a file only it ignores counts as untracked. In
-  direct mode the caller may pass the person's own global ignore file as data, ``excludes``, at the lowest
-  precedence: :mod:`orch.gitread.local`, #565).
+  rules, matched by :mod:`orch.gitread.wildmatch` without backtracking; ``core.excludesFile`` is config and is not
+  read here, so a file only it ignores counts as untracked. In direct mode the caller may pass the person's own global
+  ignore file as data, ``excludes``, at the lowest precedence: :mod:`orch.gitread.local`, #565).
 * **Flags**: ``skip-worktree`` and ``assume-unchanged`` (``assume-valid``) entries are reported as ``why: "flag"``.
 
 No config key other than the reader's three, and no attributes, filter, ``core.fsmonitor``, hook or
@@ -26,6 +26,7 @@ unread, so nothing in the repository can make this spawn a process or skip a fil
 required index extension, a populated submodule (its own ``HEAD`` is not checked here), a tree deeper than
 :data:`MAX_DEPTH`, more than :data:`~orch.gitread.limits.INDEX_ENTRIES` index entries or an index over
 :data:`~orch.gitread.limits.INDEX_MAX`, more than :data:`~orch.gitread.limits.WALK_ENTRIES` worktree entries, a
+direct-mode check past its work budget (:class:`~orch.gitread.wildmatch.Budget`), a
 detached or unreadable ``HEAD``.
 
 The answer is raw (paths as base64 of their bytes); :mod:`orch.gitread.treejob` turns it into the escaped
@@ -38,7 +39,6 @@ import base64
 import errno
 import hashlib
 import os
-import re
 import stat
 import struct
 from typing import Any
@@ -47,6 +47,7 @@ from . import limits
 from .errors import Unavailable
 from .fs import Dir
 from .repo import Repo, canon_mode
+from .wildmatch import Budget, Glob, compile_glob
 
 __all__ = ["MAX_CHANGED", "MAX_DEPTH", "check", "parse_index", "parse_ignore"]
 
@@ -237,16 +238,16 @@ def parse_index(data: bytes, algo: str) -> list[Entry]:
 
 
 class Pattern:
-    __slots__ = ("base", "rx", "negate", "dir_only", "anchored")
+    __slots__ = ("base", "glob", "negate", "dir_only", "anchored")
 
-    def __init__(self, base: bytes, rx: re.Pattern[bytes], negate: bool, dir_only: bool, anchored: bool) -> None:
+    def __init__(self, base: bytes, glob: Glob, negate: bool, dir_only: bool, anchored: bool) -> None:
         self.base = base
-        self.rx = rx
+        self.glob = glob
         self.negate = negate
         self.dir_only = dir_only
         self.anchored = anchored
 
-    def match(self, path: bytes, is_dir: bool) -> bool:
+    def match(self, path: bytes, is_dir: bool, budget: Budget | None = None) -> bool:
         if self.dir_only and not is_dir:
             return False
         if self.base:
@@ -255,82 +256,7 @@ class Pattern:
             path = path[len(self.base) + 1 :]
         if not self.anchored:
             path = path.rsplit(b"/", 1)[-1]
-        return self.rx.fullmatch(path) is not None
-
-
-def _glob(pat: bytes) -> re.Pattern[bytes] | None:
-    """A gitignore glob as a regex over a path relative to its base; ``None``: the pattern never matches (a trailing
-    backslash, git calls it invalid). Unsure constructs never widen a match: a ``[`` without its ``]`` is literal."""
-    out: list[bytes] = []
-    i, n = 0, len(pat)
-    while i < n:
-        c = pat[i : i + 1]
-        if c == b"*":
-            j = i
-            while j < n and pat[j : j + 1] == b"*":
-                j += 1
-            starts = i == 0 or pat[i - 1 : i] == b"/"
-            if j - i == 2 and starts and pat[j : j + 1] == b"/":
-                out.append(b"(?:.*/)?")  # "**/": zero or more directories
-                i = j + 1
-            elif j - i == 2 and starts and j == n:
-                out.append(b".*")  # "/**" at the end (or a lone "**"): everything inside
-                i = j
-            else:
-                out.append(b"[^/]*")
-                i = j
-        elif c == b"?":
-            out.append(b"[^/]")
-            i += 1
-        elif c == b"[":
-            k = i + 1
-            neg = False
-            if k < n and pat[k : k + 1] in (b"!", b"^"):
-                neg = True
-                k += 1
-            items: list[bytes] = []
-            first = True
-            closed = False
-            while k < n:
-                ch = pat[k : k + 1]
-                if ch == b"]" and not first:
-                    closed = True
-                    break
-                if ch == b"\\" and k + 1 < n:
-                    k += 1
-                    ch = pat[k : k + 1]
-                if pat[k + 1 : k + 2] == b"-" and k + 2 < n and pat[k + 2 : k + 3] != b"]":
-                    hi = pat[k + 2 : k + 3]
-                    if hi == b"\\" and k + 3 < n:
-                        hi = pat[k + 3 : k + 4]
-                        k += 1
-                    if hi < ch:
-                        return None  # an empty range: git matches nothing
-                    items.append(re.escape(ch) + b"-" + re.escape(hi))
-                    k += 3
-                else:
-                    items.append(re.escape(ch))
-                    k += 1
-                first = False
-            if not closed:
-                out.append(re.escape(b"["))
-                i += 1
-                continue
-            body = b"".join(items)
-            out.append((b"(?![/])[^" + body + b"]") if neg else (b"(?![/])[" + body + b"]"))
-            i = k + 1
-        elif c == b"\\":
-            if i + 1 >= n:
-                return None
-            out.append(re.escape(pat[i + 1 : i + 2]))
-            i += 2
-        else:
-            out.append(re.escape(c))
-            i += 1
-    try:
-        return re.compile(b"".join(out), re.DOTALL)
-    except re.error:
-        return None
+        return self.glob.match(path, budget)
 
 
 def parse_ignore(data: bytes, base: bytes) -> list[Pattern]:
@@ -354,21 +280,25 @@ def parse_ignore(data: bytes, base: bytes) -> list[Pattern]:
         anchored = b"/" in line
         if line.startswith(b"/"):
             line = line[1:]
-        rx = _glob(line)
-        if rx is not None:
-            out.append(Pattern(base, rx, negate, dir_only, anchored))
+        glob = compile_glob(line)  # git's wildmatch, no backtracking (#583, M1); None: git matches nothing with it
+        if glob is not None:
+            out.append(Pattern(base, glob, negate, dir_only, anchored))
     return out
 
 
 class _Ignores:
-    def __init__(self) -> None:
+    def __init__(self, budget: Budget | None = None) -> None:
         self.levels: list[list[Pattern]] = []
+        self.budget = budget
 
     def ignored(self, path: bytes, is_dir: bool) -> bool:
         """The last matching pattern decides; deeper files win over shallower ones, ``info/exclude`` is lowest."""
+        budget = self.budget
         for pats in reversed(self.levels):
             for p in reversed(pats):
-                if p.match(path, is_dir):
+                if budget is not None:
+                    budget.spend()
+                if p.match(path, is_dir, budget):
                     return not p.negate
         return False
 
@@ -388,8 +318,18 @@ def _read_ignore(d: Dir, rel: str) -> bytes | None:
 
 
 class _Check:
-    def __init__(self, repo: Repo, worktree: Dir, *, detached_ok: bool = False, excludes: bytes | None = None) -> None:
+    def __init__(
+        self,
+        repo: Repo,
+        worktree: Dir,
+        *,
+        detached_ok: bool = False,
+        excludes: bytes | None = None,
+        budget: Budget | None = None,
+    ) -> None:
         self.repo = repo
+        #: direct mode (#583, M1/L5): the work allowed (a deadline); the host's child has its own wall clock
+        self.budget = budget
         self.worktree = worktree
         #: direct mode (#565): a detached ``HEAD`` is compared like a branch (``head_ref`` ``None``); host mode refuses
         self.detached_ok = detached_ok
@@ -602,6 +542,8 @@ class _Check:
                 raise Unavailable(f"a directory of the working tree cannot be listed ({why})") from None
             for name in names:
                 self.walked += 1
+                if self.budget is not None:
+                    self.budget.spend()
                 if self.walked > limits.WALK_ENTRIES:
                     raise Unavailable(f"the working tree has more than {limits.WALK_ENTRIES} entries")
                 bname = os.fsencode(name)
@@ -661,7 +603,7 @@ class _Check:
                 self.dirs.add(p)
 
     def _walk_all(self) -> None:
-        ignores = _Ignores()
+        ignores = _Ignores(self.budget)
         if self.excludes is not None:  # git's order: core.excludesFile, then info/exclude, then .gitignore files
             ignores.levels.append(parse_ignore(self.excludes, b""))
         exclude = _read_ignore(self.repo.commondir, "info/exclude")
@@ -698,8 +640,15 @@ class _Check:
         }
 
 
-def check(repo: Repo, worktree: Dir, *, detached_ok: bool = False, excludes: bytes | None = None) -> dict[str, Any]:
+def check(
+    repo: Repo,
+    worktree: Dir,
+    *,
+    detached_ok: bool = False,
+    excludes: bytes | None = None,
+    budget: Budget | None = None,
+) -> dict[str, Any]:
     """The raw ``tree.check`` answer for the repository ``repo`` whose pinned working copy is ``worktree``.
     ``detached_ok`` and ``excludes``: direct mode only (:mod:`orch.gitread.local`, #565); the host's ``tree_check``
     request passes neither (a detached ``HEAD`` is unknown there, and no file outside the pins is read)."""
-    return _Check(repo, worktree, detached_ok=detached_ok, excludes=excludes).run()
+    return _Check(repo, worktree, detached_ok=detached_ok, excludes=excludes, budget=budget).run()

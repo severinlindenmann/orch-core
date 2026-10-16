@@ -317,13 +317,18 @@ def test_no_key_of_the_persons_config_reaches_any_operation(world, op):
 
 
 def test_dirty_honours_the_persons_global_ignore_file_and_runs_nothing(world):
-    """#565: the reader reads the person's ``core.excludesFile`` as data (their idea of "clean"), nothing else."""
+    """#565: the reader reads the person's ``core.excludesFile`` as data (their idea of "clean"), nothing else. With
+    an ``include`` in that config (the hostile one has one) it ignores nothing of the person's: git would follow the
+    include, the reader cannot, so it fails toward dirtier (#583, Opus M2)."""
     w = world
     _all_hostile(w)
     (w.home / "ignore").write_text("*.ignored\n")
     repo = make_repo(w, "r")
     (repo / "x.ignored").write_text("x\n")
     (repo / "y.other").write_text("y\n")
+    status = observe.dirty(repo)
+    assert status is not None and "x.ignored" in status and "a.g" in status and "y.other" in status
+    (w.home / ".gitconfig").write_text(f"[core]\n\texcludesFile = {w.home / 'ignore'}\n")  # no include: honoured
     status = observe.dirty(repo)
     assert status is not None and "x.ignored" not in status and "a.g" in status and "y.other" in status
     assert w.fired() == set()

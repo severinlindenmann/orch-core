@@ -143,7 +143,8 @@ def test_only_a_clones_remote_head_symref_is_tolerated_and_never_followed(make_r
     got = observe(r)
     assert got["head_sha"]
     with Repo(pin_repo(os.path.realpath(r.path), None)) as repo:
-        assert repo.refs.resolve(name) is None  # skipped, never followed
+        with pytest.raises(Unavailable, match="never follows"):  # skipped, never followed, never answered (L3)
+            repo.refs.resolve(name)
 
 
 # ---------------------------------------------------------------- extensions, reftable

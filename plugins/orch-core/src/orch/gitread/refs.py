@@ -118,6 +118,8 @@ class RefStore:
         self.hexlen = hexlen
         self.loose: dict[str, str] = {}
         self.packed: dict[str, str] = {}
+        #: skipped loose symrefs (git clone's refs/remotes/<r>/HEAD): never followed, never answered (#583, L3)
+        self.symrefs: set[str] = set()
         self._hex = re.compile(rb"[0-9a-f]{%d}" % hexlen)
         if commondir.kind("refs") == "dir":
             with commondir.sub("refs") as refs:
@@ -134,7 +136,7 @@ class RefStore:
                 raise Unavailable(f"the refs {other!r} and {name!r} differ only in case")
         #: the loose refs by their folded name: on a case-insensitive or normalising file system git's open of a
         #: name that differs only so finds this file (parser differential 2, #583)
-        self._folded = {_fold(n): n for n in self.loose}
+        self._folded = {_fold(n): n for n in (*self.loose, *self.symrefs)}
 
     def _walk(self, d: Dir, prefix: str) -> None:
         for name in sorted(d.listdir()):
@@ -155,6 +157,7 @@ class RefStore:
             data = d.read(name, limits.SMALL_FILE_MAX)
             if data.startswith(b"ref:"):
                 if _remote_head(full, data):
+                    self.symrefs.add(full)
                     continue  # git clone's refs/remotes/<r>/HEAD: never followed, never a ref here (#565)
                 raise Unavailable(f"the loose ref {full!r} is a symbolic ref")
             if len(data) != self.hexlen + 1 or data[-1:] != b"\n" or not self._hex.fullmatch(data[:-1]):
@@ -198,6 +201,8 @@ class RefStore:
         """The object id ``name`` points at, or ``None`` when there is no such ref."""
         if not check_refname(name):
             raise Unavailable(f"invalid ref name {name!r}")
+        if name in self.symrefs:  # git would follow it (and it wins over packed-refs): unknown here, never a guess
+            raise Unavailable(f"the ref {name!r} is a symbolic ref, which the reader never follows")
         if name in self.loose:
             return self.loose[name]
         alias = self._folded.get(_fold(name))

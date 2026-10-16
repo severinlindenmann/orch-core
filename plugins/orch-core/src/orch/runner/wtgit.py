@@ -324,9 +324,12 @@ def run_git(
         # between. Why that is accepted here, per command:
         # * remove: always `--force` (git_argv), after orch's own clean check with the reader (no git process), so
         #   git's own `status` never runs and no clean filter is read; `remove --force` checks out nothing.
+        #   The cost: git's own second clean check at remove time is gone (it was that same filter-running status);
+        #   a file written between orch's check and this remove is deleted with the worktree (data, not code).
         # * prune: reads only <repo>/.git/worktrees; no checkout, no status, no filter.
         # * add: NOT closed (residual, #565). TIER-A NOTE: an agent that commits a repo config in its worktree,
-        #   then a column-G worktree.create runs its smudge filter; the UID is the boundary in tier A (D-P2-31); fix
+        #   then a column-G worktree.create runs its smudge filter (once per checked-out file it selects, on every add
+        #   that hits the window); the UID is the boundary in tier A (D-P2-31); fix
         #   tracked in #584. (A checkout runs the smudge filters configuration names when git reads it, by design:
         #   the person's LFS, selected by the tree's own .gitattributes; filters cannot be disabled by command-scope
         #   config. A linked worktree's commondir is the declared repo's .git, so its config is the agent's to write,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -478,3 +479,57 @@ def test_d58_direct_refuses_a_registered_worktree_with_a_populated_submodule(pro
     got = problems.run()
     assert any("submodule" in p for p in got), got
     assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    "gitconfig,xdg",
+    [("[include]\n\tpath = ~/.gc2\n", None), ('[includeIf "gitdir:/"]\n\tpath = ~/.gc2\n', None),
+     (None, "[core]\n\texcludesFile =\n")],
+    ids=["include", "includeIf", "empty"],
+)  # fmt: skip
+def test_remove_refuses_a_file_git_shows_whatever_the_persons_ignore_config(d, gitconfig, xdg):
+    """Opus M2 on #583: git's own remove runs --force since #565, so orch's clean check is the only guard. When the
+    person's config sets excludesFile through an include, or sets it empty, git does not use its default ignore file;
+    the reader must not either, or z.def (untracked to git) would be deleted with the worktree."""
+    home = Path(os.environ["HOME"])
+    (home / ".config" / "git").mkdir(parents=True, exist_ok=True)
+    (home / ".config" / "git" / "ignore").write_text("*.def\n")
+    (home / ".gc2").write_text(f"[core]\n\texcludesFile = {home / '.gi_other'}\n")
+    (home / ".gi_other").write_text("*.oth\n")
+    for p, text in ((home / ".gitconfig", gitconfig), (home / ".config" / "git" / "config", xdg)):
+        if text is not None:
+            p.write_text(text)
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "z.def"), "w").write("keep me\n")
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty", got
+    assert os.path.exists(os.path.join(path, "z.def"))
+    assert d.run("remove", d.key, "--force").code == 0  # the person's explicit force still removes it
+
+
+def test_d58_direct_reads_head_and_tree_in_one_read_of_the_registered_pins(problems, monkeypatch):
+    """Opus L4 on #583: direct D58 takes HEAD, its branch and the tree from ONE reader call on the registration's
+    pins (as host mode's tree.check), never from separate reads that find the repository by path again."""
+    from orch.gitread import local
+    from orch.ops.caps import Git
+
+    problems.d.run("create", problems.d.key)
+
+    def no(*a, **k):
+        raise AssertionError("a separate read")
+
+    monkeypatch.setattr(Git, "head", no)
+    monkeypatch.setattr(Git, "symbolic_head", no)
+    monkeypatch.setattr(Git, "dirty", no)
+    seen = []
+    real = local.LocalGitReader.tree_check
+
+    def tree_check(self, path, env=None, *, pins=None):
+        seen.append(pins)
+        return real(self, path, env, pins=pins)
+
+    monkeypatch.setattr(local.LocalGitReader, "tree_check", tree_check)
+    got = problems.run()
+    assert any("not recorded" in p for p in got), got  # judged (nothing is signed here), no "cannot be read"
+    assert not any("cannot be read" in p for p in got), got
+    assert len(seen) == 1 and seen[0] is not None  # one read, of the registered pins

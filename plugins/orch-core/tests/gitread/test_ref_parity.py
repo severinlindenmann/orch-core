@@ -219,3 +219,31 @@ def test_head_as_a_symref_or_a_detached_id(make_repo, content, expect):
         assert got == REFUSED
     else:
         assert got[1] == git_head and got == (("refs/heads/main", second) if expect == "branch" else (None, first))
+
+
+def test_head_on_a_branch_git_cannot_find_in_a_falsely_sorted_file_is_unknown(make_repo):
+    """Opus L2: HEAD -> main, main only in a packed-refs that says sorted and is not: git calls HEAD unborn."""
+    r, first, second = repo(make_repo)
+    lines = [f"{first} refs/heads/z{i:03d}" for i in range(100)]
+    lines.insert(60, f"{second} refs/heads/main")  # out of order among the z refs (Opus's probe 8b)
+    packed(r, b"# pack-refs with: peeled fully-peeled sorted \n" + "".join(x + "\n" for x in lines).encode())
+    assert git_commit(r, "HEAD") is None  # positive control: git's binary search misses main
+    with pytest.raises(Unavailable, match="sorted"):
+        READER.head(r.path)
+    with pytest.raises(Unavailable):
+        READER.tree_check(r.path, r.env)
+
+
+def test_the_skipped_remote_head_symref_is_never_answered_and_changes_nothing_else(make_repo):
+    """Opus L3: git follows a loose refs/remotes/<r>/HEAD (it wins over packed-refs); the reader never follows it,
+    so a lookup of it is unknown, never the packed value or "no such ref". HEAD and refs/heads are unaffected."""
+    r, first, second = repo(make_repo)
+    put(r, "refs/remotes/origin/main", (second + "\n").encode())
+    put(r, "packed-refs", f"{first} refs/remotes/origin/HEAD\n".encode())
+    put(r, "refs/remotes/origin/HEAD", b"ref: refs/remotes/origin/main\n")
+    assert git_commit(r, "refs/remotes/origin/HEAD") == second  # git follows the loose symref
+    assert mine(r, "refs/remotes/origin/HEAD") == REFUSED
+    assert mine(r, "refs/remotes/origin/head") == REFUSED  # nor by another case
+    assert READER.head(r.path) == ("refs/heads/main", second)
+    assert same_or_refused(r, "refs/heads/main") == second
+    assert same_or_refused(r, "refs/remotes/origin/main") == second

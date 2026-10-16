@@ -10372,7 +10372,10 @@ Built in orch-core (branch `feat/b4-host-push`); the relay side is B4-R. Kinds `
   409 `fenced` raises through `Session.call` and ends the worker.
 - **`auth_gen`.** `Store.auth_gen` is raised in the `_state` setter on every state change (conservative: it is not
   limited to authorization events); an AST test pins that it is assigned nowhere else. The audience is recomputed at
-  every seal and send regardless, so the counter is recorded evidence, not the trigger.
+  every seal and send regardless, so the counter is recorded evidence, not the trigger. It is **audit-only**: nothing
+  decides on it, and a push already sealed or sent is never recalled by it. The relay still enforces membership and
+  revocation at its own send (a non-member or revoked device is skipped there), and the label is sealed under `K_push`,
+  so a device that lost standing between the audience check and the relay cannot read a push it was not addressed to.
 - **Wiring.** `Seams.push` (optional, not part of `missing()`), set by `install_seams`; `start_worker` builds it after the
   RID store and appends it to `worker.companions`, so it starts after the loop and the publisher (only after the first
   link reached `linked` and the gate is open), stops and joins with them (`join` closes the outbox), and is woken by the

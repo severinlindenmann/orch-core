@@ -11,7 +11,8 @@ Tables (none of it is F1)::
 
 ``state``: ``planned`` (to be sealed), ``sealed`` (outer persisted; to be sent, resent unchanged), and the final
 states ``sent``, ``dropped``, ``failed``, ``merged`` (a newer intent of the same id took its place), ``invalidated``
-(its event is no longer in the log). A final state never moves again.
+(its event is no longer in the log). A final state never moves again and its ``label`` is cleared (the label text
+is user content: it lives only while the push can still be sent).
 
 **Opening** is R2's checked open (:class:`orch.relay.rids.RidStore`): the database and both sidecars relative to the
 locked state directory (``O_NOFOLLOW``, 0600, owner, ``nlink == 1``; the fds stay open), ``sqlite3.connect``, WAL,
@@ -254,7 +255,7 @@ class OutboundStore:
             n = 0
             for k in invalidate:
                 db.execute(
-                    f"UPDATE push_intent SET state='invalidated', reason='abandoned' WHERE key=? "
+                    f"UPDATE push_intent SET state='invalidated', reason='abandoned', label='' WHERE key=? "
                     f"AND state NOT IN ({','.join('?' * len(FINAL))})",
                     (k, *FINAL),
                 )
@@ -270,13 +271,13 @@ class OutboundStore:
                     "label, priority, deadline_ms, state, reason, created_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (it.key, it.log, it.seq, it.event_hash, it.kind, it.id, it.ticket,
                      None if it.narrow is None else json.dumps(sorted(it.narrow)), json.dumps(sorted(it.exclude)),
-                     it.label, it.priority, it.deadline_ms, "merged" if both else "planned",
+                     "" if both else it.label, it.priority, it.deadline_ms, "merged" if both else "planned",
                      "answered_before_seal" if both else None, it.created_ms),
                 )  # fmt: skip
                 if cur.rowcount:
                     n += 1
                     for k, _ in older:
-                        db.execute("UPDATE push_intent SET state='merged', reason=? WHERE key=?",
+                        db.execute("UPDATE push_intent SET state='merged', reason=?, label='' WHERE key=?",
                                    ("answered_before_seal" if both else "newer_for_id", k))  # fmt: skip
             db.execute(
                 "INSERT INTO push_cursor(log, seq, head) VALUES (?,?,?) "
@@ -383,13 +384,13 @@ class OutboundStore:
         return self._set(key, "targets=?, auth_gen=?", (json.dumps(list(targets)), auth_gen), only=("sealed",))
 
     def drop(self, key: str, reason: str) -> bool:
-        return self._set(key, "state='dropped', reason=?", (reason,), only=("planned", "sealed"))
+        return self._set(key, "state='dropped', reason=?, label=''", (reason,), only=("planned", "sealed"))
 
     def fail(self, key: str, reason: str) -> bool:
-        return self._set(key, "state='failed', reason=?", (reason,), only=("planned", "sealed"))
+        return self._set(key, "state='failed', reason=?, label=''", (reason,), only=("planned", "sealed"))
 
     def sent(self, key: str, accepted: int, now_ms: int) -> bool:
-        return self._set(key, "state='sent', accepted=?, sent_ms=?, reason=NULL", (accepted, now_ms), only=("sealed",))
+        return self._set(key, "state='sent', accepted=?, sent_ms=?, reason=NULL, label=''", (accepted, now_ms), only=("sealed",))
 
     def retry(self, key: str, next_ms: int, reason: str) -> bool:
         """The same outer again later: ``attempts + 1``, nothing else changes."""
@@ -417,7 +418,7 @@ class OutboundStore:
 
         def body(db: sqlite3.Connection) -> int:
             return db.execute(
-                "UPDATE push_intent SET state='dropped', reason=? WHERE state IN ('planned','sealed')", (reason,)
+                "UPDATE push_intent SET state='dropped', reason=?, label='' WHERE state IN ('planned','sealed')", (reason,)
             ).rowcount
 
         with self._lock:

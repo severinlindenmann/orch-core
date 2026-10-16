@@ -76,7 +76,7 @@ def test_an_answer_is_a_closed_intent_narrowed_like_the_question(kit):
     kit.plan()
     q, closed = intents(kit)
     assert (q.state, q.reason) == ("merged", "answered_before_seal")  # nothing was sealed: nothing is shown
-    assert (closed.kind, closed.id, closed.label, closed.state) == ("question.closed", qid, "Answered", "merged")
+    assert (closed.kind, closed.id, closed.label, closed.state) == ("question.closed", qid, "", "merged")
     assert closed.exclude == {kit.env.owner.device[2:]}  # the answering device already knows
 
 
@@ -268,6 +268,7 @@ def test_a_send_posts_the_persisted_outer_with_the_holder(kit):
     assert 0 < body["ttl_s"] <= 86_400
     done = kit.ob.get(it.key)
     assert (done.state, done.accepted) == ("sent", 1)
+    assert it.label and done.label == ""  # a final intent keeps no label text (user content)
 
 
 def test_a_transport_error_resends_the_same_bytes_with_backoff(kit):
@@ -317,6 +318,7 @@ def test_404_drops_open_intents_and_probes_hourly(kit):
     kit.session.script = [refused(404, "not_found"), None]
     kit.thread.step()
     assert kit.thread.state == "off_at_relay" and [i.reason for i in intents(kit)] == ["off_at_relay"]
+    assert [i.label for i in intents(kit)] == [""]  # dropped: no label kept
     kit.advance(1)
     kit.ask("Q2", "next?")
     kit.plan()
@@ -342,6 +344,7 @@ def test_malformed_fails_the_intent_and_alarms(kit):
     kit.session.script = [refused(400, "malformed")]
     kit.thread.step()
     assert (kit.ob.get(it.key).state, "push_malformed" in kit.alarms.codes()) == ("failed", True)
+    assert kit.ob.get(it.key).label == ""
     kit.thread.step()
     assert len(kit.session.calls) == 1  # never sent again
 

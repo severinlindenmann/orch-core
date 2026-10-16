@@ -1221,6 +1221,7 @@ Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `e
 To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
 
 
+B10 Part B phase 1: POST `/api/w/:ws/phone/request` forwards `phone.request {ref,gate,gate_gen}` with the browser attempt's idem; POST `phone/cancel` forwards `phone.cancel {id}`; GET `phone/status/:id` forwards `phone.status {id}`. GET `phone/available` counts the pinned person's valid decide-only (plus look) devices. These are person-only, unsigned hints, never events. Requirements/plan only; no operation choice or change text is sent. The host's outcome is authoritative, including after cancel/expiry. Other methods remain available.
 ## B9 setup HTTP boundary (16 Oct 2026)
 
 The browser opens plain `/setup` and bypasses dashboard shared sessions. `POST /auth/setup {}` reads and deletes the core's private 0600 `<run>/setup.code`, then calls socket-only `POST /claim {code,port}` using the listening port. Only a successful claim registers the returned token as a setup-only hashed credential. The browser keeps that token in memory and sends X-Setup-Token. No launch code is read from a URL or browser body. Core enforces 30-second single-use launch codes and 10-minute idle expiry except while running.

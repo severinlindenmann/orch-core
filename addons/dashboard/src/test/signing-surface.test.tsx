@@ -1,3 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import userEvent from '@testing-library/user-event'
 // The signing and core-confirm paths of the mock, in one table (the list is exactly the CASES below):
 //  (a) the dialog's title and its Covers hold core's words only: nothing the addon wrote, except its name as
 //      "Title (package id)"; what the addon wrote is shown, in full, in a labelled "From the addon" region instead;
@@ -829,6 +832,25 @@ it('shows the host refusal and recovery hint when removing one click would stran
   expect(screen.getByText(hint)).toBeVisible()
   expect(prepare).toHaveBeenCalledWith('w', { action: 'settings_set', sign_methods: ['terminal', 'phone'] }, 0)
   expect(click).not.toHaveBeenCalled()
+})
+
+
+it('phone handoff sends only the displayed gate and generation, leaving the decision to the phone', async () => {
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'phone', is_default: false, allowed: ['terminal', 'phone'] })
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
+  const request = { ref: 'DEMO-0044', gate: 'plan' as const, gate_gen: 7 }
+  const sent = vi.spyOn(api, 'phoneRequest').mockResolvedValue({ ...request, id: 'ph_' + '0'.repeat(26), uid: 'uid', state: 'open', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString(), phones: 1 })
+  vi.spyOn(api, 'phoneCancel').mockResolvedValue({ id: 'ph_' + '0'.repeat(26), state: 'cancelled' })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><HandoffDialog ws="ws" title="Request changes on plan" action={{ action: 'request_changes', key: request.ref, gate: 'plan', message: 'local text' }} phoneRequest={request} hint="Say what should change" onClose={() => {}} /></QueryClientProvider>)
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Approve on your phone' }))
+  await screen.findByText('Waiting for your phone…')
+  expect(screen.getByText(/Version 7 of this step \(as reported by your Mac\)/)).toBeVisible()
+  expect(sent).toHaveBeenCalledWith('ws', { ...request, idem: expect.any(String) })
+  expect(screen.getByText(/choose Approve or Request changes there/)).toBeVisible()
+  vi.restoreAllMocks()
 })
 
 it('setup Create posts the review digest shown with core rows and terminal fingerprint', async () => {

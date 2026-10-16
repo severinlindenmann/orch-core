@@ -1,3 +1,6 @@
+import { api } from '@/api/client'
+import type { PhoneRequest } from '@/api/phone'
+import { usePhone } from './usePhone'
 import { OtherWays, PhoneWaiting, useSignMethods } from './SignMethods'
 import { methodLabel, type SignMethod } from '@/api/signing'
 // Core's signing dialog in hand-off mode. Same place, same core words in the title and the buttons as the simulated
@@ -62,6 +65,7 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
 export interface HandoffDialogProps {
   /** Core's title: "Approve plan", "Comment", "Close DEMO-0043". */
   title: string
+  phoneRequest?: PhoneRequest
   ws: string | undefined
   /** What to prepare. Null while the form is not complete (the button stays off). */
   action: HandoffAction | null
@@ -103,23 +107,32 @@ export function HandoffDialog(p: HandoffDialogProps) {
   })
   const methods = useSignMethods(p.ws)
   const [chosen, setChosen] = useState<SignMethod | null>(null)
-  const [phone, setPhone] = useState(false)
+  const phoneRun = usePhone(p.ws)
+  useEffect(() => {
+    if (phoneRun.switched) p.onClose()
+  }, [phoneRun.switched, p.onClose])
+  const phone = !!phoneRun.hint || phoneRun.busy
+  const phones = useQuery({ queryKey: ['phone-available', p.ws], queryFn: () => api.phoneAvailable(p.ws!), enabled: !!p.ws && !!p.phoneRequest, retry: false })
+  const canPhone = !!p.phoneRequest && (phones.data?.phones ?? 0) > 0
   const [switching, setSwitching] = useState(false)
   const terminalRequired = p.action?.action === 'settings_set' && !!p.action.sign_methods
   const canClick = !terminalRequired && clickReady(here) && clickEligible(p.action)
   const allowed = methods.allowed?.filter(m => terminalRequired ? m === 'terminal' : m !== 'click' || canClick)
   const preferred = methods.preference?.method
   const fallback = methods.preference?.fallback
-  const available = (m: SignMethod) => m !== 'phone' && (m !== 'click' || canClick)
-  const method: SignMethod = chosen && available(chosen) && allowed?.includes(chosen) ? chosen
+  const available = (m: SignMethod) => (m !== 'phone' || canPhone) && (m !== 'click' || canClick)
+  const method: SignMethod = phone ? 'phone' : chosen && available(chosen) && allowed?.includes(chosen) ? chosen
     : allowed ? (preferred && allowed.includes(preferred) && available(preferred) ? preferred
       : fallback && allowed.includes(fallback) && available(fallback) ? fallback
         : !preferred && canClick && allowed.includes('click') ? 'click' : 'terminal')
     : canClick ? 'click' : 'terminal'
   const startMethod = (m: SignMethod, retryFloor = 0) => {
     if (!p.action) return
-    if (m === 'phone') setPhone(true)
-    else if (m === 'click') void click.start(p.action, retryFloor)
+    if (m === 'phone') {
+      if (p.phoneRequest && canPhone && allowed?.includes('phone')) void phoneRun.start(p.phoneRequest)
+      return
+    }
+    if (m === 'click') void click.start(p.action, retryFloor)
     else void run.prepare(p.action, retryFloor)
   }
   const selectMethod = async (m: SignMethod) => {
@@ -128,10 +141,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
     const retryFloor = Math.max(run.retry, click.retry) + (phase === 'waiting' || click.phase === 'ready' ? 1 : 0)
     if (phase === 'waiting') { await run.cancel(); run.reset() }
     if (click.phase === 'ready') { await click.cancel(); click.reset() }
-    setPhone(false)
+    if (phone && !(await phoneRun.cancel())) { setSwitching(false); return }
+    phoneRun.reset()
     setChosen(m)
     setSwitching(false)
-    startMethod(m, retryFloor)
+    if (m === 'phone' || !p.hint) startMethod(m, retryFloor)
   }
   useEffect(() => {
     if (!switching && (click.phase === 'cancelled' || (click.phase === 'failed' && click.problem?.next !== 'check'))) p.onInterrupted?.()
@@ -176,7 +190,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   }, [click.leftUnsettled])
 
   const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
-  const open = phase === 'preparing' || phase === 'waiting' || clickLive
+  const open = phase === 'preparing' || phase === 'waiting' || clickLive || phoneRun.busy || phoneRun.hint?.state === 'open'
   useEffect(() => {
     p.onPending?.(open)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,6 +201,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
   }, [click.problem])
 
   const close = async () => {
+    if (phoneRun.busy) return
+    if (phoneRun.hint?.state === 'open') { await phoneRun.cancel(); return }
     if (phase === 'waiting' || phase === 'invalid') await run.cancel()
     // Only Cancel cancels. When the outcome is unknown, closing must not cancel: the signature may be on its way.
     if (click.prepared && click.problem?.next !== 'check' && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
@@ -243,8 +259,13 @@ export function HandoffDialog(p: HandoffDialogProps) {
         </DialogHeader>
 
         {!(click.view?.view.content || run.request?.content) && p.summary}
-        {phone && <PhoneWaiting />}
-        {phase === 'idle' && !clickOpen && p.children}
+        {phoneRun.hint && <PhoneWaiting hint={phoneRun.hint} />}
+        {phoneRun.busy && <p role="status">Contacting your phone…</p>}
+        {phoneRun.needsPair && phoneRun.hint?.state === 'open' && <p role="alert">Pair a phone first. You can cancel this request and choose another way.</p>}
+        {phoneRun.error && <p role="alert">{phoneRun.error}</p>}
+        {method === 'phone' && p.phoneRequest && <p className="text-[12px] text-text-muted"><Raw>{phoneRun.hint?.ref ?? p.phoneRequest.ref}</Raw> · Version {phoneRun.hint?.gate_gen ?? p.phoneRequest.gate_gen} of this step (as reported by your Mac)</p>}
+        {method === 'phone' && !phone && <p className="text-[13px] text-text-muted">Review and choose on your phone. If you request changes, enter the text there.</p>}
+        {phase === 'idle' && !clickOpen && !phone && method !== 'phone' && p.children}
         {phase === 'idle' && !clickOpen && method === 'click' && <ClickBadge />}
 
 
@@ -332,23 +353,23 @@ export function HandoffDialog(p: HandoffDialogProps) {
         )}
 
         {allowed && (phase === 'idle' || phase === 'waiting') && (!clickOpen || click.phase === 'ready') && (
-          <OtherWays allowed={allowed} current={method} disabled={switching || !p.action || !!p.hint} onSelect={m => void selectMethod(m)} />
+          <OtherWays phoneAvailable={canPhone} phonePhaseOne={!!p.phoneRequest} allowed={allowed} current={method} disabled={switching || phoneRun.busy || phoneRun.hint?.state === 'done' || !p.action} onSelect={m => void selectMethod(m)} />
         )}
         <DialogFooter className="items-center gap-2 sm:justify-between">
           <span aria-live="polite" className="text-[12px] text-text-muted">
-            {phase === 'idle' && p.hint}
+            {phase === 'idle' && method !== 'phone' && p.hint}
             {phase === 'waiting' && 'Waiting for your signature'}
           </span>
           <div className="flex flex-wrap gap-2">
             {phase === 'idle' && !clickOpen && (
               <>
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
-                  Cancel
+                  {phoneRun.hint && phoneRun.hint.state !== 'open' ? 'Close' : 'Cancel'}
                 </Button>
                 {(
                   <Button
                     onClick={() => startMethod(method)}
-                    disabled={!p.action || !p.ws || !!p.hint || methods.loading || switching || phone || (method === 'click' && !canClick)}
+                    disabled={!p.action || !p.ws || (method !== 'phone' && !!p.hint) || methods.loading || switching || phone || (method === 'click' && !canClick)}
                   >
                     {method === 'click' ? 'Sign' : allowed ? methodLabel[method] : (p.confirmLabel ?? p.title)}
                   </Button>

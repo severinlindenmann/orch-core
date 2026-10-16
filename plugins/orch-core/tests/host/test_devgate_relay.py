@@ -162,10 +162,13 @@ def test_whoami_relay_dev_only_on_dev_gated_workspace(dev_served, normal_served,
         monkeypatch.setattr(relay_worker, "R6_READY", ready)
         got = _on_worker(dev_served, lambda: dev_entry.read(_ident(dev_served, rd), "whoami", {}, lambda: True))
         assert got["data"]["relay"] == {
-            "ops": {"answer": 1, "new_ticket": 1}, "r6_ready": ready, "dev": {"sim_convenience": True, "sandbox": id8},
+            "ops": {"answer": 1, "approve": 1, "changes": 1, "new_ticket": 1}, "r6_ready": ready, "dev": {"sim_convenience": True, "sandbox": id8},
         }  # fmt: skip
         got = _on_worker(normal_served, lambda: normal_entry.read(_ident(normal_served), "whoami", {}, lambda: True))
-        assert got["data"]["relay"] == {"ops": {"answer": 1, "new_ticket": 1}, "r6_ready": ready}
+        assert got["data"]["relay"] == {
+            "ops": {"answer": 1, "approve": 1, "changes": 1, "new_ticket": 1},
+            "r6_ready": ready,
+        }
     # the gate goes away (ORCH_NO_CONVENIENCE): dev is gone at the next read, never cached
     monkeypatch.setenv("ORCH_NO_CONVENIENCE", "1")
     got = _on_worker(dev_served, lambda: dev_entry.read(_ident(dev_served, rd), "whoami", {}, lambda: True))

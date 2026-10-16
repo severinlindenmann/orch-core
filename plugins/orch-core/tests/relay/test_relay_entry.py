@@ -101,9 +101,9 @@ def test_column_r_whoami_carries_relay_caps_with_the_live_r6_gate(served, monkey
         return _on_worker(served, lambda: entry.read(_ident(served, owner), "whoami", {}, lambda: True))["data"]
 
     monkeypatch.setattr(relay_worker, "R6_READY", False)
-    assert whoami()["relay"] == {"ops": {"answer": 1, "new_ticket": 1}, "r6_ready": False}
+    assert whoami()["relay"] == {"ops": {"answer": 1, "approve": 1, "changes": 1, "new_ticket": 1}, "r6_ready": False}
     monkeypatch.setattr(relay_worker, "R6_READY", True)  # read at answer time, not cached
-    assert whoami()["relay"] == {"ops": {"answer": 1, "new_ticket": 1}, "r6_ready": True}
+    assert whoami()["relay"] == {"ops": {"answer": 1, "approve": 1, "changes": 1, "new_ticket": 1}, "r6_ready": True}
 
 
 def test_a_read_whose_identity_no_longer_holds_is_refused(served):  # noqa: F811

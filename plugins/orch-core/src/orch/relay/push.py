@@ -75,6 +75,13 @@ UNKNOWN_FAILURES_MAX = 10  # consecutive unclassified failures before the push t
 SEND_DEADLINE_S = 30.0
 ROUTE = "POST /v2/workspaces/{ws}/push"
 _FALLBACK_LABEL = "New question"
+#: B10 Part B: the phone-approval hint's push. The generic wake: a fixed label, the hint's opaque id, nothing else
+HINT_LOG = "phone.hint"
+HINT_LABEL = "Needs your approval"
+HINT_KIND = "phone.request"
+#: ``hints(after)`` -> ``(highest counter seen, [open hint dicts with a counter above after])`` (the host's; it reads
+#: the hint file and the log under the store lock the planner already holds)
+HintSource = Callable[[int], tuple[int, list[dict[str, Any]]]]
 
 
 class PushStore(Protocol):
@@ -164,8 +171,8 @@ def _intents_for(
 class Planner:
     """The per-workspace planner state (the marks of the logs already read)."""
 
-    def __init__(self, store: PushStore, ob: OutboundStore) -> None:
-        self.store, self.ob = store, ob
+    def __init__(self, store: PushStore, ob: OutboundStore, hints: HintSource | None = None) -> None:
+        self.store, self.ob, self.hints = store, ob, hints
         self._marks: dict[str, tuple[int, int]] = {}
 
     def run(self, now_ms: int) -> int:
@@ -204,7 +211,28 @@ class Planner:
                     if len(evs) < PLAN_LIMIT:
                         break
                 self._marks[log_name] = marks[log_name]
+            total += self._plan_hints(now_ms)
         return total
+
+    def _plan_hints(self, now_ms: int) -> int:
+        """B10 Part B: one ``phone.request`` intent per new OPEN phone-approval hint (cursor ``phone.hint``, the hint
+        counter). The intent holds no ticket text: the push is a wake, the phone asks ``phone.requests``."""
+        if self.hints is None:
+            return 0
+        cur = self.ob.cursor(HINT_LOG)
+        after = cur[0] if cur else 0
+        top, fresh = self.hints(after)
+        if top <= after:
+            return 0
+        new = [
+            NewIntent(
+                log=HINT_LOG, seq=h["n"], event_hash=h["id"], kind=HINT_KIND, id=h["id"], ticket=h["uid"],
+                narrow=frozenset({h["person"]}), exclude=frozenset(), label=HINT_LABEL, priority="high",
+                deadline_ms=int(h["expires"]) * 1000, created_ms=now_ms,
+            )
+            for h in fresh
+        ]  # fmt: skip
+        return self.ob.plan(HINT_LOG, top, None, new)
 
     def _rewritten(self, log_name: str, start_s: int) -> tuple[int, str | None]:
         """The log no longer holds the cursor's point (a restore abandoned a tail): every unsent intent whose
@@ -361,12 +389,13 @@ class PushThread:
         on_error: Callable[[BaseException], None] | None = None,
         now_ms: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
         id8: str | None = None,
+        hints: HintSource | None = None,
     ) -> None:
         self.store, self.ob, self.keys, self.signer, self.view = store, ob, keys, signer, view
         self.standing, self.alarm = standing, alarm
         self._job, self._session, self._conn_factory, self._on_error, self._now = job, session, conn, on_error, now_ms
         self.id8 = id8 or session.workspace_id[:8]
-        self.planner = Planner(store, ob)
+        self.planner = Planner(store, ob, hints)
         self._conn: Any = None
         self._stop = threading.Event()
         self._wake = threading.Event()

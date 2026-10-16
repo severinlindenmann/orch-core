@@ -379,7 +379,7 @@ def test_the_table_is_closed_and_every_read_is_a_relay_op():
     from orch.host.columns import RELAY_OPS
 
     assert {s.backend for s in framing.OPS.values()} <= RELAY_OPS
-    assert {k for k, s in framing.OPS.items() if s.kind == "write"} == {"new_ticket", "answer"}
+    assert {k for k, s in framing.OPS.items() if s.kind == "write"} == {"new_ticket", "answer", "approve", "changes"}
     assert all(s.backend == "relay.submit" for s in framing.OPS.values() if s.kind == "write")
 
 

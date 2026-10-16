@@ -54,8 +54,8 @@ __all__ = [
     "seal_push",
 ]
 
-PUSH_KINDS = ("question", "question.closed", "ticket.update", "drop.new", "peer.ticket", "join")
-HOST_PUSH_KINDS = ("question", "question.closed", "drop.new")
+PUSH_KINDS = ("question", "question.closed", "ticket.update", "drop.new", "peer.ticket", "join", "phone.request")
+HOST_PUSH_KINDS = ("question", "question.closed", "drop.new", "phone.request")
 MAX_PUSH = 3072
 MAX_LABEL = 80
 MAX_ID_BYTES = 128

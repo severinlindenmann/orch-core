@@ -173,6 +173,7 @@ def test_relay_ops_are_the_spec_table_and_track_the_registry_reads():
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings", "quick.list",
         "reader.list",  # H12d-2 (§0.8.6 item 9.11): P and R
+        "phone.requests", "gate.input",  # B10 Part B: the viewer's own phone requests; the gate-hash input
     }  # fmt: skip
     own = {"whoami", "outcome.get", "relay.submit", "reader.declare"}  # reader.declare: H12d-3, the device's own
     assert columns.RELAY_OPS == frozenset(reads | host | own)

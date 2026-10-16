@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from orch import crypto
+from orch.host import relayr4
 from orch.identity import certs
 from orch.relay import unpublished as up
 from orch.relay.state import StateDir
@@ -48,12 +49,12 @@ def test_a_real_unpublished_revocation_is_read_verified_and_acked(relay, R, tmp_
 
     try:
         c = up.UnpublishedConsumer(
-            workspace_id=corpus.IDS["workspace_a"], session=sess, state=state, hold=hold,
+            workspace_id=corpus.IDS["workspace_a"], session=sess, state=state, hold=hold, stronger=relayr4.stronger,
             notices=lambda: {"unpublished": None}, alarm=lambda code, d: alarms.append((code, d)), now_ms=now_ms,
         )  # fmt: skip
         c.step()  # a new holder generation: the full read
         assert len(held) == 1 and held[0]["revocation"] == rev
-        st = c.load()
+        st = c.load()[0]
         assert st["scan"] is None and st["cursor"] and st["held"][0]["device_id"] == DEVICE
         assert ("unpublished_held",) == alarms[-1][:1]
         c.step()

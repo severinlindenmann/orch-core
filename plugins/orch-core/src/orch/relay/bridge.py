@@ -108,6 +108,7 @@ SEEN_POLL_PAUSE_S = 0.25  # a poll that returned only already-queued items waits
 POST_DEADLINE_S, POST_CAP = 30.0, 16 * 1024
 RENEW_EVERY_S = 15.0
 AUX_HOLD_DEADLINE_S = 10.0
+AUX_TICK_S = 1.0  # the aux thread's cadence: a failed renewal is tried again at the next tick, until the lease lapses
 JOBS = 2
 HANDOFF_S = 0.25  # the responder's and job threads' queue wait: they see stop() within this
 REPLAY_EVERY_MS, REPLAY_MAX, REPLAY_TRACKED = 10_000, 8, 4096
@@ -1224,10 +1225,10 @@ class BridgeLoop:
 
     def _aux_main(self) -> None:
         last_sweep = 0.0
-        while not self._stop.wait(1.0):
+        conn = self._new_conn()  # the renewal's own connection: never queued behind another thread's call (11A.7)
+        while not self._stop.wait(AUX_TICK_S):
             if self._mono() - self._last_poll >= RENEW_EVERY_S:
-                self.session.hold(deadline_s=AUX_HOLD_DEADLINE_S)
-                self._last_poll = self._mono()
+                self._renew_lease(conn)
             if self._mono() - last_sweep >= 60.0:
                 last_sweep = self._mono()
                 self._aux_step("sweep", self.bridge.sweep)
@@ -1235,6 +1236,24 @@ class BridgeLoop:
             self._aux_step("flush", self.bridge.flush)
             for what, fn in list(self.aux_steps):
                 self._aux_step(what, fn)
+
+    def _renew_lease(self, conn: Transport) -> None:
+        """Renew the holder lease; a transport failure or a relay refusal other than ``fenced`` never ends the aux
+        thread. The renewal is idempotent (``{gen, take_over: false}``), so a failed attempt is retried at once on a
+        fresh connection (a failed request closes its connection; the relay closes an idle keep-alive after a few
+        seconds, so the first request after 15 s of silence on a reused connection can fail), then at every tick
+        until the lease would lapse. ``Fenced`` (and any other ``SessionError``) still stops the worker."""
+        for attempt in (1, 2):
+            try:
+                self.session.renew(deadline_s=AUX_HOLD_DEADLINE_S, transport=conn)
+            except (TransportError, RelayRefused) as e:
+                if self._stop.is_set():
+                    return
+                if attempt == 2:
+                    self._item_failed("renew", e)
+                continue
+            self._last_poll = self._mono()
+            return
 
     def _aux_step(self, what: str, fn: Callable[[], None]) -> None:
         """One aux step; an exception is logged (bounded) and the aux thread goes on: lease renewal never stops for

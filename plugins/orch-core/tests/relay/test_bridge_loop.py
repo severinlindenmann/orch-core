@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import threading
 import time
+import types
 
 import pytest
 
@@ -145,3 +146,63 @@ def test_the_loop_keeps_the_last_polls_notices_for_r4(env):
     loop.start()
     assert _wait(lambda: sim.polls >= 1 and loop.notices is not None)
     assert loop.notices == {"revocations_cursor": 0, "cert_requests": [], "rotation_due": [], "unpublished": None}
+
+
+# -- the aux thread's lease renewal survives failures (idle link: stale keep-alive on the renewal's connection) -------
+
+
+class _RenewSession:
+    """Just the renewal surface of a Session: ``renew`` raises the scripted errors in order, then succeeds."""
+
+    def __init__(self, script: list[BaseException]) -> None:
+        self.script, self.calls, self.transports = list(script), 0, []
+        self.ok = threading.Event()
+
+    def renew(self, *, deadline_s: float, transport=None):
+        self.calls += 1
+        self.transports.append(transport)
+        if self.script:
+            raise self.script.pop(0)
+        self.ok.set()
+
+
+def _aux_loop(monkeypatch, script):
+    from orch.relay import bridge as bridge_mod
+
+    monkeypatch.setattr(bridge_mod, "AUX_TICK_S", 0.01)
+    sess = _RenewSession(script)
+    clock = [0.0]
+    loop = BridgeLoop(
+        types.SimpleNamespace(sweep=lambda: None, retry_stuck=lambda: None, flush=lambda: None, alarm=lambda *a: None),
+        sess, conn=lambda: object(), workspace_id=WS, mono=lambda: clock[0],
+    )  # fmt: skip
+    loop._last_poll = 0.0
+    clock[0] = bridge_mod.RENEW_EVERY_S + 1  # a renewal is due: the long-poll has been silent for the whole interval
+    return loop, sess, clock
+
+
+def test_aux_renewal_retries_a_transport_failure_on_its_own_connection_and_keeps_the_thread(monkeypatch):
+    err = http.TransportError("request", "POST /v2/workspaces/{ws}/host/hold")  # a stale keep-alive, reset on send
+    loop, sess, clock = _aux_loop(monkeypatch, [err, err, err])  # attempt 1+2 fail, the next tick's attempt 1 fails
+    t = threading.Thread(target=loop._aux_main, daemon=True)
+    t.start()
+    try:
+        assert sess.ok.wait(5), "the renewal never succeeded: the aux thread died or gave up"
+        assert t.is_alive(), "the aux thread must survive failed renewals"
+        assert sess.calls == 4
+        assert loop.error is None
+        assert len({id(c) for c in sess.transports}) == 1 and sess.transports[0] is not None  # its own connection
+        assert loop._last_poll == clock[0]  # renewed: the next one is a full interval away
+    finally:
+        loop._stop.set()
+        t.join(5)
+
+
+def test_aux_renewal_fenced_still_stops_the_worker(monkeypatch):
+    from orch.relay.session import Fenced
+
+    loop, sess, _ = _aux_loop(monkeypatch, [Fenced("fenced")])
+    loop._spawn("aux", loop._aux_main)
+    assert _wait(lambda: loop.error is not None, 5)
+    assert isinstance(loop.error, Fenced)
+    assert loop.join(5)

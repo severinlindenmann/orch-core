@@ -268,7 +268,7 @@ def test_workspace_invalid():
     bad("workspace", mut(ex.WORKSPACE, lambda o: o["workspace"].update(id=ex.WS.upper())), "/workspace/id")
     bad("workspace", mut(ex.WORKSPACE, lambda o: o["workspace"].update(prefix="demo")), "/workspace/prefix")
     bad("workspace", mut(ex.WORKSPACE, lambda o: o["host"].update(wsk_pub="p256:abc")), "/host/wsk_pub")
-    bad("workspace", mut(ex.WORKSPACE, lambda o: o["settings"].update(grant_hours=25)), "/settings/grant_hours")
+    bad("workspace", mut(ex.WORKSPACE, lambda o: o["settings"].update(grant_hours=169)), "/settings/grant_hours")
     bad("workspace", mut(ex.WORKSPACE, lambda o: o["settings"].update(claim_ttl_min=14)), "/settings/claim_ttl_min")
     bad("workspace", mut(ex.WORKSPACE, lambda o: o["settings"].update(lease_ttl_min=4)), "/settings/lease_ttl_min")
     bad(
@@ -1140,7 +1140,7 @@ def test_settings_and_grants():
     S = "settings.changed"
     bad("event", ev(S, set={}), "/set")
     bad("event", ev(S, set={"grant_hours": 0}), "/set/grant_hours")
-    bad("event", ev(S, set={"grant_hours": 25}), "/set/grant_hours")
+    bad("event", ev(S, set={"grant_hours": 169}), "/set/grant_hours")
     bad("event", ev(S, set={"claim_ttl_min": 14}), "/set/claim_ttl_min")
     bad("event", ev(S, set={"claim_ttl_min": 1441}), "/set/claim_ttl_min")
     bad("event", ev(S, set={"lease_ttl_min": 4}), "/set/lease_ttl_min")
@@ -1158,7 +1158,7 @@ def test_settings_and_grants():
     bad("event", ev(G, verbs=["Task Done"]), "/verbs/0")
     V("event", ev(G, verbs=["task.done", "ask"]), log="workspace")
     bad("event", ev(G, hours=0, expires_at="2026-10-09T09:10:00Z"), "/hours")
-    bad("event", ev(G, hours=25, expires_at="2026-10-10T10:10:00Z"), "/hours")
+    bad("event", ev(G, hours=169, expires_at="2026-10-17T11:10:00Z"), "/hours")
     bad("event", ev(G, expires_at="2026-10-09T18:10:00Z"), "/expires_at", "3600")
     bad("event", ev(G, hours=8.0), "/hours", "floats")
     bad("event", ev(G, issued_at="2026-10-09T09:00:00Z", expires_at="2026-10-09T17:00:00Z"), "/issued_at", "300")

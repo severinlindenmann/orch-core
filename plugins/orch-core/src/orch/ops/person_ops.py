@@ -26,6 +26,7 @@ from typing import Any
 
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
+from orch.model.types import GRANT_MAX_HOURS
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -66,7 +67,7 @@ _REPO = {
 _SET = {
     "type": "object",
     "properties": {
-        "grant_hours": {"type": "integer", "minimum": 1, "maximum": 24},
+        "grant_hours": {"type": "integer", "minimum": 1, "maximum": GRANT_MAX_HOURS},
         "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
         "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
         "sign_methods": {  # B6: terminal always; touchid is reserved

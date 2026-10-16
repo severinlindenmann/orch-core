@@ -113,13 +113,13 @@ describe('Agents page', () => {
     // Mock now 11:30 UTC + 8 h.
     expect(covers).toHaveTextContent('Duration: 8 h, until 9 Oct 2026 19:30 UTC')
   })
-  it('an owner can sign 1 to 24 h; a grant that crosses midnight says the date', async () => {
+  it('an owner can sign 1 to 168 h; a grant that crosses midnight says the date', async () => {
     const { user } = renderApp('/agents')
     await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))
     const dialog = await screen.findByRole('dialog', { name: /Issue a grant/ })
     const slider = within(dialog).getByRole('slider')
     expect(slider).toHaveAttribute('min', '1')
-    expect(slider).toHaveAttribute('max', '24')
+    expect(slider).toHaveAttribute('max', '168')
     fireEvent.change(slider, { target: { value: '24' } })
     const covers = within(dialog).getByText('Covers').nextElementSibling!
     expect(covers).toHaveTextContent('Duration: 24 h, until 10 Oct 2026 11:30 UTC')

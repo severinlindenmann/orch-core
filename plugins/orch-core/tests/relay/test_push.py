@@ -558,6 +558,52 @@ def test_a_non_session_error_alarms_and_retries_without_stopping_the_thread(kit)
     assert "push_error" in kit.alarms.codes() and not stopped and kit.session.calls  # retried, then sent
 
 
+def _drive(kit, exc_factory, until, secs=30):
+    import time
+
+    kit.thread.step = lambda: (_ for _ in ()).throw(exc_factory())  # every pass fails
+    stopped = []
+    kit.thread._on_error = stopped.append  # noqa: SLF001
+    kit.thread.start()
+    deadline = time.time() + secs
+    while not until() and time.time() < deadline:
+        time.sleep(0.02)
+        kit.thread.wake()
+    return stopped
+
+
+def test_a_custody_refusal_stops_the_push_thread_without_retry(kit):
+    from orch.relay.keys import SealRefused
+
+    stopped = _drive(kit, lambda: SealRefused("gate up"), lambda: ("push_stopped", "SealRefused") in kit.alarms)
+    assert kit.thread.join(10)  # the thread ended; no push_error, no retry, the worker's on_error was not called
+    assert "push_error" not in kit.alarms.codes() and not stopped and kit.thread.state == "stopped"
+
+
+def test_a_state_error_also_stops_the_push_thread(kit):
+    from orch.relay.state import StateError
+
+    _drive(kit, lambda: StateError("custody"), lambda: ("push_stopped", "StateError") in kit.alarms)
+    assert kit.thread.join(10) and "push_error" not in kit.alarms.codes()
+
+
+def test_a_transient_error_alarms_push_error_and_never_stops_the_thread(kit):
+    stopped = _drive(kit, lambda: sqlite3.OperationalError("locked"), lambda: "push_error" in kit.alarms.codes())
+    alive = kit.thread._thread.is_alive()  # noqa: SLF001
+    kit.thread.stop()
+    kit.thread.join(5)
+    assert "push_error" in kit.alarms.codes() and "push_stopped" not in kit.alarms.codes() and alive and not stopped
+
+
+def test_an_unknown_error_retries_then_stops_after_ten_consecutive_failures(kit, monkeypatch):
+    from orch.relay import push
+
+    monkeypatch.setattr(push, "BACKOFF_MAX_S", 0.0)
+    _drive(kit, lambda: RuntimeError("odd"), lambda: ("push_stopped", "RuntimeError") in kit.alarms)
+    assert kit.thread.join(10)
+    assert kit.alarms.codes().count("push_error") == push.UNKNOWN_FAILURES_MAX - 1
+
+
 def test_a_session_error_stops_the_thread(kit):
     import time
 

@@ -71,6 +71,7 @@ PROBE_EVERY_MS = 3_600_000  # ... up to hourly (and at once on every relay (re)l
 PLAN_LIMIT = 256
 SKEW_S = 60  # a log whose mtime is older than the fence by more than this cannot hold a post-fence event
 BACKOFF_MAX_S = 60.0
+UNKNOWN_FAILURES_MAX = 10  # consecutive unclassified failures before the push thread stops (fail closed)
 SEND_DEADLINE_S = 30.0
 ROUTE = "POST /v2/workspaces/{ws}/push"
 _FALLBACK_LABEL = "New question"
@@ -322,6 +323,23 @@ def dispatch_step(ctx: _Ctx, key: str, now_ms: int, *, off_until_ms: int = 0) ->
 # -- the push thread --------------------------------------------------------------------------------------------------
 
 
+def _is_custody_refusal(e: BaseException) -> bool:
+    """Key, seal and custody refusals: the push thread never retries them (a refused control stays refused). The R6
+    key store's ``MembershipUnsafe`` is matched by name: only r6 imports that module (test_import_ban.py)."""
+    from .state import StateError
+
+    named = type(e).__name__ == "MembershipUnsafe"
+    return named or isinstance(e, (cpush.PushError, SealRefused, KeyMissing, StateError))
+
+
+def _is_transient(e: BaseException) -> bool:
+    """Known-transient failures: a database error (sqlite3, matched by module: only the stores open sqlite), a
+    transport error, a worker-job timeout."""
+    if type(e).__module__ == "sqlite3" and type(e).__name__ == "OperationalError":
+        return True
+    return isinstance(e, (TransportError, OSError, TimeoutError))
+
+
 class PushThread:
     """The worker companion ``orch-relay-push-<id8>`` (``start``, ``stop``, ``join``, ``wake``). ``job(fn)`` runs
     ``fn`` on the workspace's worker thread. :meth:`step` is one pass (plan, seal, send what is due) and returns the
@@ -433,11 +451,19 @@ class PushThread:
                     errors = 0
                 except (WorkerStopped, SessionError):  # Fenced is a SessionError: the session's path
                     raise
-                except Exception as e:  # noqa: BLE001 - push is auxiliary: alarm and retry, never end the thread
+                except Exception as e:  # noqa: BLE001 - classified below: fail closed on a custody refusal
+                    name = type(e).__name__
                     errors += 1
+                    if _is_custody_refusal(e) or (not _is_transient(e) and errors >= UNKNOWN_FAILURES_MAX):
+                        # (a) a key/seal/custody refusal, or (c) an unknown failure that kept happening: the PUSH thread
+                        # ends (reads, writes and the relay worker keep running); a refused control is never retried
+                        self.state = "stopped"
+                        log.error("relay push thread stopped: %s", name)
+                        self.alarm("push_stopped", name)
+                        return
                     wait = min(BACKOFF_MAX_S, 2.0 ** min(errors, 10))
-                    log.error("relay push step failed: %s", type(e).__name__)
-                    self.alarm("push_error", type(e).__name__)
+                    log.error("relay push step failed: %s", name)
+                    self.alarm("push_error", name)
                 self._wake.wait(wait)
                 self._wake.clear()
         except WorkerStopped:

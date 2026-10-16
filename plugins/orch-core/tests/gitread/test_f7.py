@@ -323,7 +323,8 @@ def test_case_colliding_refs_are_unavailable(make_repo):
     r.git("pack-refs", "--all")
     packed = (r.gitdir / "packed-refs").read_text()
     sha = r.sha("feat")
-    (r.gitdir / "packed-refs").write_text(packed + f"{sha} refs/heads/FEAT\n")
+    unsorted = packed.replace(" sorted", "")  # FEAT is appended out of order: drop the claim (#583, differential 1)
+    (r.gitdir / "packed-refs").write_text(unsorted + f"{sha} refs/heads/FEAT\n")
     with pytest.raises(Unavailable, match="differ only in case"):
         observe(r)
 

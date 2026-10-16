@@ -62,6 +62,12 @@ def check_refname(name: str) -> bool:
     return not name.startswith("refs/heads/") or branch_ok(name[len("refs/heads/") :])
 
 
+def _fold(name: str) -> str:
+    """The name a case-insensitive, normalising file system (APFS, HFS+, NTFS) stores ``name`` as: NFC, then
+    case-folded."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
 def _utf8(raw: bytes) -> str:
     """A ref name's bytes as text: UTF-8, with ``surrogateescape`` for bytes that are not (which
     :func:`check_refname` then refuses: the name is unknown, never a crash and never another name)."""
@@ -123,10 +129,12 @@ class RefStore:
             self._parse_packed(raw)
         seen: dict[str, str] = {}
         for name in (*self.loose, *self.packed):
-            low = unicodedata.normalize("NFC", name).lower()  # one file on a folding/normalising file system
-            other = seen.setdefault(low, name)
+            other = seen.setdefault(_fold(name), name)
             if other != name:
                 raise Unavailable(f"the refs {other!r} and {name!r} differ only in case")
+        #: the loose refs by their folded name: on a case-insensitive or normalising file system git's open of a
+        #: name that differs only so finds this file (parser differential 2, #583)
+        self._folded = {_fold(n): n for n in self.loose}
 
     def _walk(self, d: Dir, prefix: str) -> None:
         for name in sorted(d.listdir()):
@@ -160,8 +168,11 @@ class RefStore:
             raise Unavailable("packed-refs does not end with a newline")
         lines = raw[:-1].split(b"\n")
         last: str | None = None
+        traits: set[bytes] = set()
+        order: list[bytes] = []
         for i, line in enumerate(lines):
             if i == 0 and line.startswith(b"# pack-refs with:"):
+                traits = set(line[len(b"# pack-refs with:") :].split())
                 continue
             if line.startswith(b"^"):
                 if last is None or not self._hex.fullmatch(line[1:]):
@@ -175,7 +186,13 @@ class RefStore:
             if name in self.packed:
                 raise Unavailable(f"packed-refs names {name!r} twice")
             self.packed[name] = hexid.decode("ascii")
+            order.append(name_b)
             last = name
+        # Parser differential 1 (#583): a file whose header says ``sorted`` is binary-searched by git, so an entry out
+        # of order can be missing for git and present here. git writes sorted files; one that claims it and is not
+        # was written by someone else: unknown, never a different answer.
+        if b"sorted" in traits and any(a >= b for a, b in zip(order, order[1:], strict=False)):
+            raise Unavailable("packed-refs says it is sorted and is not")
 
     def resolve(self, name: str) -> str | None:
         """The object id ``name`` points at, or ``None`` when there is no such ref."""
@@ -183,4 +200,7 @@ class RefStore:
             raise Unavailable(f"invalid ref name {name!r}")
         if name in self.loose:
             return self.loose[name]
+        alias = self._folded.get(_fold(name))
+        if alias is not None:  # git may open that file under this name (differential 2): unknown, never "no such ref"
+            raise Unavailable(f"the ref {name!r} differs from the loose ref {alias!r} only in case or normalisation")
         return self.packed.get(name)

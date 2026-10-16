@@ -805,3 +805,24 @@ describe('approval methods policy', () => {
     expect(click).not.toHaveBeenCalled()
   })
 })
+
+it('shows the host refusal and recovery hint when removing one click would strand a custody key', async () => {
+  const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+  const { HandoffDialog } = await import('@/components/sign/HandoffDialog')
+  const { ApiError } = await import('@/api/types')
+  const message = 'sign_methods cannot leave out click while click-to-sign is on for this workspace: the key is in convenience custody'
+  const hint = 'move the key back first: orch host convenience off --workspace W and orch keys custody passphrase --workspace W --in-place'
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click', 'phone'] })
+  const prepare = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(400, { code: 'invalid.input', message, hint, retryable: false }))
+  const click = vi.spyOn(api, 'prepareClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws="w" title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'phone'] }} autoStart onClose={() => {}} /></QueryClientProvider>)
+  const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
+  await waitFor(() => expect(button).toBeEnabled())
+  button.click()
+  expect(await screen.findByText(message)).toBeVisible()
+  expect(screen.getByText(hint)).toBeVisible()
+  expect(prepare).toHaveBeenCalledWith('w', { action: 'settings_set', sign_methods: ['terminal', 'phone'] }, 0)
+  expect(click).not.toHaveBeenCalled()
+})

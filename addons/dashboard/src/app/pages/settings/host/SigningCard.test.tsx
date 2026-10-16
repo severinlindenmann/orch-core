@@ -280,3 +280,11 @@ it('describes the Other ways menu and keeps the full risk notice for older ackno
   await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent('Other ways'))
   expect(screen.getByTestId('click-risk')).toHaveTextContent('Convenience signing:')
 })
+
+it('shows the ISO risk acknowledgement as a date in Settings', async () => {
+  const at = '2026-10-16T18:30:00Z'
+  mount({ ...ON, risk_ack: at })
+  const notice = await screen.findByText(/Risk notice acknowledged on/)
+  expect(notice.querySelector('time')).toHaveAttribute('datetime', at)
+  expect(notice).toHaveTextContent(new Date(at).toLocaleString())
+})

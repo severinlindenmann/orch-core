@@ -477,10 +477,10 @@ describe('every error code and reason has an honest message', () => {
   })
 })
 
-it('uses the personal default and offers other allowed methods, including the phone stub', async () => {
+it.each([null, ['terminal', 'click', 'phone']])('uses the personal default with allowed methods %j, including the phone stub', async (sign_methods) => {
   s.prepare.mockResolvedValue(fakeRequest())
   s.get.mockResolvedValue(state(fakeRequest()))
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'phone', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
   const { dialog } = await open()
   const phone = await within(dialog).findByRole('button', { name: 'Approve on your phone' })

@@ -322,7 +322,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
               </p>
             )}
             {run.error?.fix && <p><Raw>{typeof run.error.fix === 'string' ? run.error.fix : JSON.stringify(run.error.fix)}</Raw></p>}
-            {run.error?.hint && phase === 'error' && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
+            {run.error?.hint && <p className="text-text-faint"><Raw>{run.error.hint}</Raw></p>}
           </div>
         )}
 

@@ -9,7 +9,7 @@ import { Section } from '../../ticket/shared'
 import { useSettingsHandoff } from './useSettingsHandoff'
 
 export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
-  const { allowed, preference, loading } = useSignMethods(ws)
+  const { allowed, unrestricted, preference, loading } = useSignMethods(ws)
   const qc = useQueryClient()
   const [draft, setDraft] = useState<SignMethod[] | null>(null)
   const [method, setMethod] = useState<SignMethod | null>(null)
@@ -37,6 +37,7 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
   return <>
     <Section title="Allowed ways to approve">
       <div className="space-y-3 text-[13px]">
+        {unrestricted && <p>All ways allowed (not restricted)</p>}
         <p className="text-text-muted">Choose which methods people can use in this workspace.</p>
         {(['terminal', 'click', 'phone'] as const).map(m => <label key={m} className="flex items-center gap-2"><input type="checkbox" checked={selected.includes(m)} disabled={!owner || !allowed || m === 'terminal'} onChange={e => setDraft(e.target.checked ? [...selected, m] : selected.filter(x => x !== m))} />{m === 'terminal' ? 'Terminal (always)' : m === 'click' ? 'One click on this computer' : 'Phone (Face ID)'}</label>)}
         <label className="flex items-center gap-2 text-text-muted"><input type="checkbox" disabled />Touch ID on this Mac · coming</label>

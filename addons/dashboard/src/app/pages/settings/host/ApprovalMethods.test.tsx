@@ -7,9 +7,9 @@ import { ApprovalMethods } from './ApprovalMethods'
 const ask = vi.fn()
 vi.mock('./useSettingsHandoff', () => ({ useSettingsHandoff: () => ({ ask, dialog: null }) }))
 afterEach(() => { cleanup(); vi.restoreAllMocks(); ask.mockReset() })
-function mount(owner = true, supported = true) {
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue((supported ? { sign_methods: ['terminal', 'click', 'phone'] } : {}) as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockImplementation(async () => { if (!supported) throw new Error('Absent'); return { method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false } })
+function mount(owner = true, supported: boolean | null = true) {
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue((supported === null ? { sign_methods: null } : supported ? { sign_methods: ['terminal', 'click', 'phone'] } : {}) as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockImplementation(async () => { if (supported === false) throw new Error('Absent'); return { method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false } })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ApprovalMethods ws="w" owner={owner} /></QueryClientProvider>)
 }
 it('saves allowed methods through the signed settings flow and keeps reserved methods disabled', async () => {
@@ -41,4 +41,14 @@ it('is read-only with an explanation when the APIs are absent', async () => {
   expect(screen.getByLabelText('Default')).toBeDisabled()
   expect(screen.getByLabelText('One click on this computer')).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Save my preference' })).toBeDisabled()
+})
+
+it('treats explicit null as unrestricted and lets the owner set a restriction', async () => {
+  mount(true, null)
+  await screen.findByText('All ways allowed (not restricted)')
+  for (const label of ['Terminal (always)', 'One click on this computer', 'Phone (Face ID)']) expect(screen.getByLabelText(label)).toBeChecked()
+  expect(screen.getByLabelText('Default')).toBeEnabled()
+  fireEvent.click(screen.getByLabelText('One click on this computer'))
+  fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
+  expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'phone'] } }))
 })

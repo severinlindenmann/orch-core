@@ -9,7 +9,6 @@ from .agents_md import AGENTS_MAX_LINES, INSTRUCTIONS_REV, render_agents_md, sta
 from .harness import (
     UnsafePath,
     check_targets,
-    claude_plugin_enabled,
     plugin_files,
     safe_read,
     workspace_files,
@@ -28,7 +27,6 @@ __all__ = [
     "Skill",
     "UnsafePath",
     "check_targets",
-    "claude_plugin_enabled",
     "safe_read",
     "builtin_skills",
     "check_sidecar",

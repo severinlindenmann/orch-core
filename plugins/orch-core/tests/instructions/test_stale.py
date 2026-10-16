@@ -177,7 +177,7 @@ def test_an_r1_workspace_is_stale_and_sync_migrates_it_to_the_new_layout(ws):
     )
     code, out, err = cli(ws, "instructions", "sync")
     assert code == 0, out + err
-    assert (root / "CLAUDE.md").read_text() == "@AGENTS.md\n"
+    assert (root / "CLAUDE.md").read_text() == "@AGENTS.md\n@AGENTS.orch.md\n"
     assert (root / "AGENTS.md").read_text().startswith("mine\n<!-- orch:begin -->\n")
     assert (root / ".agents/skills/orch-tickets/SKILL.md").is_file()
     assert cli(ws, "check")[0] == 0

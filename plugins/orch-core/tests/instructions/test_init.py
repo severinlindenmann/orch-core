@@ -71,7 +71,7 @@ def test_init_creates_workspace_keys_pin_and_instructions(where, term, passphras
         ".agents/skills/orch-tickets/orch.skill.json",
         ".agents/skills/orch-work-on-ticket/SKILL.md",
         ".agents/skills/orch-refine-ticket/SKILL.md",
-        ".claude/skills/orch-tickets/SKILL.md",  # the generated copy: the orch plugin is not enabled here
+        ".claude/skills/orch-tickets/SKILL.md",  # the generated copy, always written
     ):
         assert (root / rel).is_file(), rel
     assert "@AGENTS.md" in (root / "CLAUDE.md").read_text().split("\n")
@@ -335,7 +335,7 @@ def test_existing_agents_and_claude_files_are_extended_not_replaced(where, term,
     run_init(where)
     a = (where["root"] / "AGENTS.md").read_text()
     assert a.startswith("# Repo rules\nBe kind.\n") and "AGENTS.orch.md" in a
-    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.md\n"
+    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.md\n@AGENTS.orch.md\n"
     assert (where["root"] / ".gitignore").read_text() == "node_modules/\n.state/\n"
 
 

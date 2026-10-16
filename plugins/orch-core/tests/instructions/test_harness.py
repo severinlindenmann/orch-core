@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from orch.instructions import UnsafePath, claude_plugin_enabled, plugin_files, workspace_files, write_workspace_files
+from orch.instructions import UnsafePath, check_targets, plugin_files, workspace_files, write_workspace_files
 from orch.instructions.harness import AGENTS_BLOCK, CLAUDE_IMPORT, COPY_HEADER
 from orch.instructions.skills import SKILL_NAMES
 
@@ -36,7 +36,6 @@ def skill_files(base):
 def test_workspace_files_are_the_instructions_the_skills_and_the_generated_claude_copy():
     files = workspace_files()
     assert set(files) == {"AGENTS.orch.md"} | skill_files(".agents/skills") | skill_files(".claude/skills")
-    assert set(workspace_files(claude_copy=False)) == {"AGENTS.orch.md"} | skill_files(".agents/skills")
     for n in SKILL_NAMES:  # the copy is the same skill with one header line after the frontmatter
         canon, copy = files[f".agents/skills/{n}/SKILL.md"], files[f".claude/skills/{n}/SKILL.md"]
         assert COPY_HEADER not in canon and copy.replace(COPY_HEADER + "\n", "", 1) == canon
@@ -52,7 +51,7 @@ def test_writing_is_idempotent_and_repairs_a_damaged_file(tmp_path):
     (tmp_path / "AGENTS.orch.md").write_text("tampered\n")
     assert write_workspace_files(tmp_path, pointers=False) == (["AGENTS.orch.md"], [])
     assert (tmp_path / "AGENTS.md").read_text() == AGENTS_BLOCK + "\n"
-    assert (tmp_path / "CLAUDE.md").read_text() == CLAUDE_IMPORT + "\n" == "@AGENTS.md\n"
+    assert (tmp_path / "CLAUDE.md").read_text() == "@AGENTS.md\n@AGENTS.orch.md\n" and CLAUDE_IMPORT == "@AGENTS.md"
 
 
 def test_the_agents_md_block_is_appended_once_and_replaced_in_place(tmp_path):
@@ -83,50 +82,98 @@ def test_sync_alone_creates_no_agents_md_or_claude_md(tmp_path):
 
 def test_unbalanced_block_markers_are_refused_not_guessed(tmp_path):
     (tmp_path / "AGENTS.md").write_text("<!-- orch:begin -->\nmy text\n")
-    with pytest.raises(ValueError, match="markers"):
+    with pytest.raises(UnsafePath, match="markers"):
         write_workspace_files(tmp_path, pointers=False)
     assert (tmp_path / "AGENTS.md").read_text() == "<!-- orch:begin -->\nmy text\n"
 
 
-def test_claude_md_imports_agents_md_and_the_old_import_is_replaced(tmp_path):
-    (tmp_path / "CLAUDE.md").write_text("# mine\n@AGENTS.orch.md\n@other.md\n")
+def test_claude_md_gets_both_imports_and_an_older_file_is_completed(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("# mine\n@AGENTS.orch.md\n@other.md\n")  # what r1 wrote (plus user lines)
     changed, _ = write_workspace_files(tmp_path, pointers=False)
     assert "CLAUDE.md" in changed and "AGENTS.md" in changed  # AGENTS.md gets its block so the import resolves
-    assert (tmp_path / "CLAUDE.md").read_text() == "# mine\n@AGENTS.md\n@other.md\n"
+    assert (tmp_path / "CLAUDE.md").read_text() == "# mine\n@AGENTS.md\n@AGENTS.orch.md\n@other.md\n"
     assert write_workspace_files(tmp_path, pointers=False) == ([], [])
-    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n@AGENTS.orch.md\n")  # both: the old one is dropped
-    write_workspace_files(tmp_path, pointers=False)
-    assert (tmp_path / "CLAUDE.md").read_text() == "@AGENTS.md\n"
-    (tmp_path / "CLAUDE.md").write_text("only mine")  # user content without any import is appended to
+    (tmp_path / "CLAUDE.md").write_text("only mine")  # init appends both to user content
     write_workspace_files(tmp_path)
-    assert (tmp_path / "CLAUDE.md").read_text() == "only mine\n@AGENTS.md\n"
+    assert (tmp_path / "CLAUDE.md").read_text() == "only mine\n@AGENTS.md\n@AGENTS.orch.md\n"
+    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\nmine\n")  # one line there: init adds the other, sync does not
+    assert write_workspace_files(tmp_path, pointers=False)[0] == []
+    write_workspace_files(tmp_path)
+    assert (tmp_path / "CLAUDE.md").read_text() == "@AGENTS.md\nmine\n@AGENTS.orch.md\n"
 
 
-def test_plugin_detection_reads_the_project_settings(tmp_path):
-    assert not claude_plugin_enabled(tmp_path)
-    (tmp_path / ".claude").mkdir()
+def test_the_claude_copy_is_always_written_and_never_deleted(tmp_path):
+    write_workspace_files(tmp_path)
     (tmp_path / ".claude/settings.json").write_text('{"enabledPlugins": {"orch-core@orch": true}}')
-    assert claude_plugin_enabled(tmp_path)
-    (tmp_path / ".claude/settings.json").write_text('{"enabledPlugins": {"orch-core@orch": false}}')
-    assert not claude_plugin_enabled(tmp_path)
-    (tmp_path / ".claude/settings.json").write_text("not json")
-    assert not claude_plugin_enabled(tmp_path)
-
-
-def test_with_the_plugin_enabled_no_claude_copy_is_written_and_an_old_one_moves(tmp_path):
-    write_workspace_files(tmp_path)  # a copy exists (plugin not enabled)
-    (tmp_path / ".claude/settings.json").write_text('{"enabledPlugins": {"orch-core@orch": true}}')
-    mine = tmp_path / ".claude/skills/orch-tickets/SKILL.md"
-    extra = tmp_path / ".claude/skills/orch-refine-ticket/notes.txt"
-    extra.write_text("mine")
-    mine.write_text(mine.read_text() + "my rule\n")  # hand-edited: stays
     changed, kept = write_workspace_files(tmp_path, pointers=False)
-    assert changed == []
+    assert changed == [] and kept == []
+    assert skill_files(".claude/skills") <= {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")}
+    for n in SKILL_NAMES:
+        (tmp_path / f".claude/skills/{n}/SKILL.md").unlink()
+    changed, _ = write_workspace_files(tmp_path, pointers=False)
+    assert sorted(changed) == sorted(f".claude/skills/{n}/SKILL.md" for n in SKILL_NAMES)
+
+
+def test_an_edited_claude_copy_is_kept_and_the_canonical_one_still_written(tmp_path):
+    write_workspace_files(tmp_path)
+    mine = tmp_path / ".claude/skills/orch-tickets/SKILL.md"
+    mine.write_text(mine.read_text() + "my rule\n")
+    shutil.rmtree(tmp_path / ".agents")
+    changed, kept = write_workspace_files(tmp_path, pointers=False)
     assert any(x.startswith("kept .claude/skills/orch-tickets (edited by hand") for x in kept)
-    assert "moved .claude/skills/orch-work-on-ticket to .agents/skills/orch-work-on-ticket" in kept
-    assert not (tmp_path / ".claude/skills/orch-work-on-ticket").exists()
-    assert extra.read_text() == "mine"  # a directory with other files is not removed
-    assert (tmp_path / ".agents/skills/orch-work-on-ticket/SKILL.md").is_file()
+    assert ".agents/skills/orch-tickets/SKILL.md" in changed and "my rule" in mine.read_text()
+
+
+def test_a_skill_folder_without_a_sidecar_is_the_users_unless_it_is_the_shipped_text(tmp_path):
+    for base in (".agents/skills", ".claude/skills"):
+        d = tmp_path / base / "orch-tickets"
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text("my own skill with an orch name\n")
+    changed, kept = write_workspace_files(tmp_path)
+    assert "kept .agents/skills/orch-tickets (no sidecar, not orch's)" in kept
+    assert "kept .claude/skills/orch-tickets (no sidecar, not orch's)" in kept
+    assert (tmp_path / ".agents/skills/orch-tickets/SKILL.md").read_text() == "my own skill with an orch name\n"
+    assert not (tmp_path / ".agents/skills/orch-tickets/orch.skill.json").exists()
+    assert ".agents/skills/orch-work-on-ticket/SKILL.md" in changed
+    # --force does not make a foreign skill orch's
+    write_workspace_files(tmp_path, force=True)
+    assert (tmp_path / ".claude/skills/orch-tickets/SKILL.md").read_text() == "my own skill with an orch name\n"
+    # exactly the shipped text without a sidecar is orch's: the sidecar is added
+    shipped = workspace_files()[".agents/skills/orch-tickets/SKILL.md"]
+    (tmp_path / ".agents/skills/orch-tickets/SKILL.md").write_text(shipped)
+    changed, kept = write_workspace_files(tmp_path)
+    assert ".agents/skills/orch-tickets/orch.skill.json" in changed
+    assert not any(".agents/skills/orch-tickets" in x for x in kept)
+
+
+def test_unsafe_pointer_files_fail_before_anything_is_written(tmp_path):
+    (tmp_path / "AGENTS.md").write_bytes(b"\xff\xfe not utf-8")
+    with pytest.raises(UnsafePath, match="UTF-8"):
+        write_workspace_files(tmp_path)
+    (tmp_path / "AGENTS.md").write_text("fine\n")
+    (tmp_path / "CLAUDE.md").write_bytes(b"x" * ((1 << 20) + 1))
+    with pytest.raises(UnsafePath, match="larger"):
+        write_workspace_files(tmp_path)
+    (tmp_path / "CLAUDE.md").unlink()
+    elsewhere = tmp_path.parent / (tmp_path.name + "-other.md")
+    elsewhere.write_text("x\n")
+    (tmp_path / "CLAUDE.md").symlink_to(elsewhere)
+    with pytest.raises(UnsafePath):
+        write_workspace_files(tmp_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["AGENTS.md", "CLAUDE.md"]  # nothing else was written
+    assert (tmp_path / "AGENTS.md").read_text() == "fine\n"
+
+
+def test_a_claude_md_linked_to_agents_md_is_skipped_not_fatal(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("# rules\n")
+    (tmp_path / "CLAUDE.md").symlink_to("AGENTS.md")
+    assert check_targets(tmp_path) == []
+    changed, kept = write_workspace_files(tmp_path)
+    assert "CLAUDE.md" not in changed and "AGENTS.md" in changed
+    assert any(x.startswith("kept CLAUDE.md (a link to AGENTS.md") for x in kept)
+    assert (tmp_path / "CLAUDE.md").is_symlink()
+    assert (tmp_path / "AGENTS.md").read_text().startswith("# rules\n\n<!-- orch:begin -->")
+    assert write_workspace_files(tmp_path)[0] == []
 
 
 def test_legacy_claude_skills_without_the_header_are_orch_built_not_edited(tmp_path):
@@ -143,7 +190,6 @@ def test_a_user_skill_next_to_the_orch_ones_is_never_touched(tmp_path):
     (tmp_path / ".agents/skills/mine/SKILL.md").write_text("mine\n")
     (tmp_path / ".claude/skills/theirs").mkdir(parents=True)
     (tmp_path / ".claude/skills/theirs/SKILL.md").write_text("theirs\n")
-    (tmp_path / ".claude/settings.json").write_text('{"enabledPlugins": {"orch-core@orch": true}}')
     write_workspace_files(tmp_path)
     assert (tmp_path / ".agents/skills/mine/SKILL.md").read_text() == "mine\n"
     assert (tmp_path / ".claude/skills/theirs/SKILL.md").read_text() == "theirs\n"
@@ -151,7 +197,6 @@ def test_a_user_skill_next_to_the_orch_ones_is_never_touched(tmp_path):
 
 def test_a_symlinked_skills_folder_is_refused(tmp_path):
     write_workspace_files(tmp_path)
-    (tmp_path / ".claude/settings.json").write_text('{"enabledPlugins": {"orch-core@orch": true}}')
     other = tmp_path.parent / (tmp_path.name + "-elsewhere")
     other.mkdir()
     (other / "orch-tickets").mkdir()

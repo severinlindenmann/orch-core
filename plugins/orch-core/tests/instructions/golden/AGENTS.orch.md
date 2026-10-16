@@ -20,8 +20,8 @@ Parallel subagents: set ORCH_SESSION=<yours>.<n>; each takes one task with `orch
 Ask: `orch ask "…" --options a,b --rec a`, then run `orch wait` before going on.
 
 ## Never
-Edit tickets/**, sign for the human, or ignore retry:false.
-Approve, verdict and close are the person's.
+Never edit tickets/** or ignore retry:false.
+Never approve, give a verdict, close or grant: those are the person's, signed by them.
 
 ## If orch refuses
 retry:false means stop and tell the user.

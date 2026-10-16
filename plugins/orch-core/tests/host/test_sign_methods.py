@@ -173,8 +173,12 @@ def test_a_key_left_in_convenience_custody_counts_as_click_even_with_the_flag_of
     monkeypatch.setattr(convenience, "enabled", lambda *a: False)
     monkeypatch.setattr(select, "read_selection", lambda *a: {"custody": "convenience"})
     assert convenience.refuse_excluded_click_custody(svc) is not None
-    monkeypatch.setattr(select, "read_selection", lambda *a: {"custody": "passphrase"})
+    monkeypatch.setattr(select, "read_selection", lambda *a: {"custody": "passphrase", "transition": None})
     assert convenience.refuse_excluded_click_custody(svc) is None
+    monkeypatch.setattr(
+        select, "read_selection", lambda *a: {"custody": "passphrase", "transition": {"to": "convenience"}}
+    )
+    assert convenience.refuse_excluded_click_custody(svc) is not None
 
     def boom(*a):
         raise select.CustodyError("bad")

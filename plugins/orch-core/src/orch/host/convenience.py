@@ -115,7 +115,8 @@ def _click_custody(service: Any) -> bool:
         sel = select.read_selection(service.state_dir, service.workspace_id)
     except Exception:  # noqa: BLE001 - fail closed on an unreadable or invalid selection
         return True
-    return sel is not None and sel.get("custody") == "convenience"
+    # a custody transition in progress (either direction) counts too: the convenience copy may already exist
+    return sel is not None and (sel.get("custody") == "convenience" or sel.get("transition") is not None)
 
 
 def refuse_click_removal(service: Any, op: str, events: list[dict[str, Any]]) -> None:

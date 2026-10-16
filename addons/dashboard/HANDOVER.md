@@ -1220,3 +1220,5 @@ Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `e
 `src/dev/layoutGuardPages.test.ts`. No new dependency.
 To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
 
+
+B10 Part B phase 1: POST `/api/w/:ws/phone/request` forwards `phone.request {ref,gate,gate_gen}` with the browser attempt's idem; POST `phone/cancel` forwards `phone.cancel {id}`; GET `phone/status/:id` forwards `phone.status {id}`. GET `phone/available` counts the pinned person's valid decide-only (plus look) devices. These are person-only, unsigned hints, never events. Requirements/plan only; no operation choice or change text is sent. The host's outcome is authoritative, including after cancel/expiry. Other methods remain available.

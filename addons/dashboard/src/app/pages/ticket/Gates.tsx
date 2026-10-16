@@ -12,6 +12,9 @@ const gatesOf = (t: TicketDocument): GateName[] =>
 /** The words for a verdict nobody reviewed: auto-approved under the factory charter (owner decision 2026-10-10). */
 export const CHARTER_VERDICT = 'Verdict: via the factory charter — no person reviewed this'
 
+// Phase 1 phone decisions have no authentication label (the reader declaration covers answers only).
+const phoneDecision = (a: GateStatus['approvals'][number]) => a.via === 'phone' || a.presence === 'secure-enclave-unlocked'
+
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone', factory_charter: 'the factory charter' }
 
 type Tone = 'success' | 'warning' | 'danger' | 'neutral'
@@ -49,7 +52,7 @@ function Approvals({ gate, viewer }: { gate: GateStatus; viewer: Viewer }) {
           {a.via === 'factory_charter' ? ' · auto-approved under the factory charter' : ''}
           {a.source_sha ? ` · commit ${a.source_sha}` : ''}
           {' · '}
-          {a.sig_ok === undefined ? (
+          {phoneDecision(a) ? <span className="text-text-muted">per host, not signed</span> : a.sig_ok === undefined ? (
             <span className="text-text-muted">signature not checked</span>
           ) : (
             <span className={a.sig_ok ? 'text-success' : 'text-danger'}>{a.sig_ok ? 'verified signature' : 'signature failed'}</span>
@@ -100,8 +103,10 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
                 <div key={i}>
                   <dt className="inline text-text-faint">{viewer.name(a.by)} </dt>
                   <dd className="inline">
-                    {fmtExact(a.at)} · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
-                    {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? presenceLabel(a.presence) : 'unknown'}`}
+                    {fmtExact(a.at)}
+                    {phoneDecision(a) ? ' · per host, not signed' : <> · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
+                      {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? presenceLabel(a.presence) : 'unknown'}`}
+                    </>}
                   </dd>
                 </div>
               ))}

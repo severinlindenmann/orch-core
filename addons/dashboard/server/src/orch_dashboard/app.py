@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, addon_routes, agents, click, handoff, reads, settings, signprefs, terminals
+from . import adapters, addon_routes, agents, click, handoff, phone, reads, settings, signprefs, terminals
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .gateway import Gateway
@@ -146,6 +146,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     click.register(app, gateway)
     settings.register(app, gateway)
     signprefs.register(app, gateway)
+    phone.register(app, gateway)
     addon_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)

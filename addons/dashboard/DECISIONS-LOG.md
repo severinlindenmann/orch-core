@@ -1899,3 +1899,11 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** Hunk headers in the Changes tab show only the line ranges (`@@ -12,4 +12,5 @@`), no longer the function context git prints after them. A diff that git cannot produce (it failed, was refused or ran past its 30 s limit) is an error the tab shows as "Diff unavailable", never counts with an empty patch.
 - **Why:** The function context comes from the repository's own `diff.<driver>.xfuncname`/`funcname`, which orch now pins (a backtracking regex stalled the diff until the timeout) and strips: a person reviewing the diff must not read repo-chosen text as orch's. The empty patch hid that failure.
 - **Revert:** Drop `plain_hunk_headers` in `plugins/orch-core/src/orch/store/observe.py` and the `xfuncname`/`funcname` pins in `gitsafe._driver_pins`; in `devhost/reads.py` map `None` to `""` again (not recommended).
+
+### 2026-10-17 — B10 Part B phase 1 phone requests
+
+Decision: Requirements and plan decisions can send an unsigned host hint to a paired phone, using the person's preferred method. Code and verdict phone methods remain coming soon. The phone chooses the decision and collects change text; the dashboard sends only ref, gate and the displayed generation. Human-only server routes forward phone.request/cancel/status; the dashboard never signs this path. Phone decisions have no authentication or signature-strength label in gate details; approver information is labelled per host, not signed.
+
+Why: This follows the B10 phase 1 wire contract. Status remains authoritative after cancellation/expiry because an in-flight decision may still land. Polling and ticket query updates refresh the result without claiming an authentication strength.
+
+Revert: Remove the phone routes, host capability and dialog integration; keep the disabled B6 method stub.

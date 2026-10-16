@@ -138,6 +138,10 @@ export function createApi(transport: Transport) {
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
+    phoneAvailable: (ws: string) => call<{ phones: number }>('GET', `/api/w/${ws}/phone/available`),
+    phoneRequest: (ws: string, body: import('./phone').PhoneRequest & { idem: string }) => call<import('./phone').PhoneHint & { phones: number }>('POST', `/api/w/${ws}/phone/request`, body),
+    phoneCancel: (ws: string, id: string) => call<{ id: string; state: import('./phone').PhoneHint['state'] }>('POST', `/api/w/${ws}/phone/cancel`, { id }),
+    phoneStatus: (ws: string, id: string) => call<{ hints: import('./phone').PhoneHint[] }>('GET', `/api/w/${ws}/phone/status/${id}`),
     getSignDefault: (ws: string) => call<import('./signing').SignDefault>('GET', `/api/w/${ws}/me/sign_default`),
     putSignDefault: (ws: string, body: { method: import('./signing').SignMethod; fallback?: import('./signing').SignMethod }) => call<import('./signing').SignDefault>('PUT', `/api/w/${ws}/me/sign_default`, body),
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),

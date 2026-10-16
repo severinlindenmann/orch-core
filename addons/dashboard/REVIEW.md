@@ -640,3 +640,5 @@ Fixtures only (`npm run dev`):
 
 On a real host: Settings → General's Signing card says why click-to-sign is paused (`readers_old`) with **See which devices need
 an update**; Settings → Devices shows the levels when the host serves `reader/1`.
+
+B10 phone approvals (phase 1): on a host with phone/1, pair a phone and allow Phone in workspace sign methods. Set How I approve to Phone, open a requirements/plan approval or request-changes dialog, and press Approve on your phone. Review/choose on the phone; the dashboard shows the ten-minute countdown and eventual Approved / Changes requested result. Try Cancel, Other ways, generation changes, expiry and an in-flight decision after cancellation. Code and verdict keep the disabled coming-soon method. The demo has no paired phone; component tests supply the host responses.

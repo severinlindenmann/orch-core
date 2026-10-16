@@ -335,5 +335,5 @@ def test_unlock_labels_cover_every_event_the_batch_signs(monkeypatch):
 
     seen = []
     monkeypatch.setattr(hashing, "signed_context", lambda key, *a, **k: seen.append(key) or b"")
-    hashing.person_signing_bytes("w" * 32, "workspace", {"type": "settings.changed"})
+    hashing.person_signing_bytes("w" * 32, "workspace", {"hash_v": 1, "type": "settings.changed"})
     assert [canon.LABELS[k].encode("ascii") for k in seen] == list(steps.batch_labels())

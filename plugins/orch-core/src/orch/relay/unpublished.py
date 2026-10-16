@@ -91,7 +91,7 @@ _SIG = re.compile(r"[0-9a-f]{64}")
 #: relay codes this module handles or can name; any other relay text reaches an alarm/status detail only as "other"
 KNOWN_CODES = frozenset({
     "cursor_ahead", "rate_limited", "malformed", "bad_request", "unauthorized", "forbidden", "not_found", "conflict",
-    "unavailable", "internal", "not_holder", "fenced", "too_large",
+    "unavailable", "internal", "not_holder", "fenced", "too_large", "overloaded", "quota_exceeded",
 })  # fmt: skip
 _HEX16 = re.compile(r"[0-9a-f]{16}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -703,7 +703,11 @@ def ledger_view(state_doc: object, now_ms: int) -> dict[str, Any]:
     failed = doc.get("failed_turns") if type(doc.get("failed_turns")) is int else 0
     overflow = doc.get("overflow") if type(doc.get("overflow")) is int else 0
     po = doc.get("person_overflow")
-    persons = {k: v for k, v in po.items() if type(k) is str and type(v) is int} if type(po) is dict else {}
+    persons = (
+        {k: v for k, v in po.items() if type(k) is str and _HEX32.fullmatch(k) and type(v) is int}
+        if type(po) is dict
+        else {}
+    )
     overflow += sum(persons.values())
     first = doc.get("first_scan_ms") if type(doc.get("first_scan_ms")) is int else 0
     # stale: failed turns, or no COMPLETE scan for 48 h (counted from the last one, else from the first attempt):

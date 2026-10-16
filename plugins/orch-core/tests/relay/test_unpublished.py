@@ -1890,25 +1890,120 @@ def test_a_relay_refusal_code_reaches_the_alarm_only_as_a_known_code_or_other(st
     assert up.safe_status(JUNK) == 0 and up.safe_status(429) == 429
 
 
-def test_no_alarm_or_status_detail_is_built_from_a_raw_relay_string():
+def _raw_relay_uses(source):
+    """Raw relay-controlled values (``e.code``, ``e.status``, ``str(e)``...) inside any alarm/backoff/log call that are
+    not wrapped directly in safe_code/safe_status (a numeric ``float(e.retry_after)`` delay is not detail text)."""
     import ast
+
+    sinks = {"_alarm", "_alarm_once", "_backoff", "alarm"}
+    raw_attrs = {"code", "status", "retry_after", "message", "args"}
+
+    def is_sink(call):
+        f = call.func
+        name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+        base = f.value.id if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else ""
+        return name in sinks or base in ("log", "logger", "logging")
+
+    def walk(node, out):
+        for ch in ast.iter_child_nodes(node):
+            if isinstance(ch, ast.Call) and getattr(ch.func, "id", "") in ("safe_code", "safe_status", "float"):
+                continue
+            if isinstance(ch, ast.Call) and getattr(ch.func, "id", "") in ("str", "repr"):
+                if ch.args and isinstance(ch.args[0], ast.Name) and ch.args[0].id == "e":
+                    out.append(ast.unparse(ch))
+            if isinstance(ch, ast.Attribute) and ch.attr in raw_attrs:
+                if isinstance(ch.value, ast.Name) and ch.value.id == "e":
+                    out.append(ast.unparse(ch))
+            walk(ch, out)
+
+    bad: list[str] = []
+    for n in ast.walk(ast.parse(source)):
+        if isinstance(n, ast.Call) and is_sink(n):
+            walk(n, bad)
+    return bad
+
+
+def test_no_alarm_status_or_log_detail_is_built_from_a_raw_relay_string():
     import inspect
 
     from orch.host import relayr4
 
     for mod in (up, relayr4):
-        tree = ast.parse(inspect.getsource(mod))
-        for n in ast.walk(tree):
-            if (
-                isinstance(n, ast.Attribute)
-                and n.attr == "code"
-                and isinstance(n.value, ast.Name)
-                and n.value.id == "e"
-            ):
-                parent_src = ast.unparse(n)
-                assert parent_src == "e.code"
-        src = inspect.getsource(mod)
-        for line in src.splitlines():
-            if "_backoff(" in line or "self._alarm(" in line:
-                assert "e.code" not in line.replace("safe_code(e.code)", ""), line
-                assert "str(e" not in line, line
+        assert _raw_relay_uses(inspect.getsource(mod)) == [], mod.__name__
+
+
+def test_the_guard_catches_unmapped_uses_in_every_kind_of_sink():
+    src = (
+        "def f(e):\n"
+        "    self._alarm('x', f'{e.code}')\n"
+        "    log.info('m %s', e.status)\n"
+        "    self._alarm_once('y', str(e))\n"
+        "    self._alarm(\n        'z',\n        f'{safe_code(e.code)} {e.status}',\n    )\n"
+        "    self._backoff('b', safe_code(e.code), float(e.retry_after))\n"
+    )
+    assert _raw_relay_uses(src) == ["e.code", "e.status", "str(e)", "e.status"]
+
+
+class _Fmt(str):
+    def __format__(self, spec):
+        return JUNK
+
+    def __str__(self):
+        return JUNK
+
+
+@pytest.mark.parametrize("odd", [[1], {"a": 1}, {1}, None, b"fenced", 3.0, _Fmt("fenced"), _Fmt("zzz")])
+def test_safe_code_odd_types_are_other(odd):
+    assert up.safe_code(odd) == "other"
+
+
+@pytest.mark.parametrize("odd", [10**9, -1, 99, 600, True, 429.0, "429", None, [429]])
+def test_safe_status_out_of_range_is_zero(odd):
+    assert up.safe_status(odd) == 0
+
+
+def test_all_known_codes_map_to_themselves():
+    assert all(up.safe_code(k) == k for k in up.KNOWN_CODES)
+
+
+def _all_text(alarms, caplog):
+    return " ".join(d for _, d in alarms) + " " + caplog.text
+
+
+def test_junk_on_a_refused_ack_never_reaches_alarm_or_log(state, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    relay = Relay(state, {None: ([], pos(1), True), pos(1): ([], pos(2), False)})
+    c, _, clock, alarms = fake(state, relay)
+    for _ in range(up.ACK_REFUSALS_MAX):
+        relay.fail[ACK] = RelayRefused(400, JUNK)
+        c.step()
+        clock.mono += up.BACKOFF_S + 1
+    t = _all_text(alarms, caplog)
+    assert "\x1b" not in t and "xxx" not in t and any(a[0] == "unpublished_ack_dropped" for a in alarms)
+
+
+@pytest.mark.parametrize("status", [429, 500, 400, 503])
+def test_junk_status_and_code_never_reach_log(state, caplog, status):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    relay = Relay(state)
+    relay.fail[GET] = RelayRefused(status, JUNK, retry_after=5)
+    c, _, _, alarms = fake(state, relay)
+    c.step()
+    t = _all_text(alarms, caplog)
+    assert "\x1b" not in t and "xxx" not in t
+
+
+def test_transport_message_never_reaches_alarm_or_log(state, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    relay = Relay(state)
+    relay.fail[GET] = TransportError(JUNK, JUNK)
+    c, _, _, alarms = fake(state, relay)
+    c.step()
+    t = _all_text(alarms, caplog)
+    assert "\x1b" not in t and "xxx" not in t

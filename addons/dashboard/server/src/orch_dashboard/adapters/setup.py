@@ -16,7 +16,7 @@ import urllib.parse
 from pathlib import Path
 
 from fastapi import Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ..hostlink import check_uid
 
@@ -204,7 +204,20 @@ def register(app, auth, proxy, port):
         finally:
             body[:] = b"\0" * len(body)
             body.clear()
-        if reply.status in (401, 410) or (route in ("cancel", "finish") and reply.status == 200):
+        if reply.status == 410:
+            # 410 is also the ordinary "shown once" / "secrets gone" answer of a live session: only the end of the
+            # session itself ends the setup credential. The small error body is read here and sent on unchanged.
+            data = await asyncio.to_thread(reply.read, 4097)
+            reply.close()
+            conn.close()
+            try:
+                code = json.loads(data).get("error", {}).get("code")
+            except Exception:
+                code = None
+            if code in ("setup.ended", None):
+                auth.forget_setup(request.state.token)
+            return Response(data, status_code=410, media_type="application/json", headers={"Cache-Control": "no-store"})
+        if reply.status == 401 or (route in ("cancel", "finish") and reply.status == 200):
             auth.forget_setup(request.state.token)
         if route == "finish" and reply.status == 200:
             # The setup scope ends here, so hand the browser a normal signed-in session the way `orch dashboard open`

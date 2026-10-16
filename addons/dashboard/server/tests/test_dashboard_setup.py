@@ -44,6 +44,8 @@ def setup(tmp_path):
                 else:
                     facts["claimed"] = True
                     out = {"token": token, "setup_id": "demo-not-a-real-setup"}
+            elif facts.get("gone"):
+                status, out = 410, {"error": {"code": "setup.ended", "message": "ended"}}
             elif (
                 facts["ended"]
                 or self.headers.get("X-Setup-Token") != token
@@ -168,7 +170,7 @@ def test_localhost_duplicates_csrf_and_size(setup):
 
 
 def test_no_retention_logging_or_cache_one_shot(setup, caplog, capsys):
-    client, auth, proxy, *_ = setup
+    client, auth, proxy, facts, _ = setup
     headers = claim(client)
     res = client.post("/api/setup/secrets/reveal", json={}, headers=headers)
     assert res.json()["recovery_words"] == [SECRET] * 24
@@ -176,8 +178,14 @@ def test_no_retention_logging_or_cache_one_shot(setup, caplog, capsys):
     assert "set-cookie" not in res.headers
     assert client.post("/api/setup/profile", json={"name": SECRET}, headers=headers).status_code == 200
     assert SECRET not in repr(proxy.__dict__) + repr(auth.__dict__) + caplog.text + str(capsys.readouterr())
-    assert client.post("/api/setup/secrets/reveal", json={}, headers=headers).status_code == 410
-    assert not auth.valid_setup(headers["X-Setup-Token"])
+    second = client.post("/api/setup/secrets/reveal", json={}, headers=headers)
+    assert second.status_code == 410 and second.json()["error"]["code"] == "secrets.shown"
+    # "shown once" is an ordinary answer of a live session: the credential survives it (a double reveal from the
+    # page must not kill the setup)
+    assert auth.valid_setup(headers["X-Setup-Token"])
+    facts["gone"] = True
+    assert client.get("/api/setup/state", headers=headers).status_code == 410
+    assert not auth.valid_setup(headers["X-Setup-Token"])  # the session itself ended: the credential goes
 
 
 def test_launch_expiry_idle_and_run_exception(setup):

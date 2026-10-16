@@ -257,6 +257,10 @@ def main(
         from orch.cli.dashboard import main as dashboard_main
 
         return dashboard_main(args[1:], env=env, err=err)
+    if args[:2] == ["addon", "manifest"]:  # the manifests shipped in the package (orch.addons.builtin): offline, no store
+        from orch.addons.builtin import main as manifest_main
+
+        return manifest_main(args[2:], out=out, err=err)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 

@@ -118,9 +118,11 @@ def _qr(link: str) -> str | None:
 def _tty_ask(prompt: str) -> str:
     """One line from the person's terminal (``/dev/tty``; never stdin, which a script may feed)."""
     try:
-        with open("/dev/tty", "r+", encoding="utf-8") as tty:
-            tty.write(prompt)
-            tty.flush()
+        # two handles, not "r+": a terminal is not seekable, so a read-write text file on it raises
+        # UnsupportedOperation (an OSError) on macOS and the prompt could never be answered
+        with open("/dev/tty", "w", encoding="utf-8") as out, open("/dev/tty", encoding="utf-8") as tty:
+            out.write(prompt)
+            out.flush()
             return tty.readline().strip()
     except OSError:
         raise HostError("custody.no_prompt", "the code is typed at a terminal: run this in one") from None

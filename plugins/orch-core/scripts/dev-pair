@@ -55,6 +55,7 @@ LOCAL_RELAY = "local"
 DEV_RELAY = "https://relay.dev.severin.io"
 SOCKET_LIMIT = 100  # orch.host.listener.SOCKET_PATH_LIMIT
 KILL_GRACE_S = 10.0
+REVIEW_DELAY_S = 0.5  # the review prompt flushes typed-ahead input (TCIFLUSH) after it paints: answer after that
 SAS_WAIT_S = 600.0  # how long the SAS prompt waits for a code before it rejects
 RUN_MODE = 0o711  # the host checks its run directory for exactly this (orch.host.listener)
 MAX_PUBLICATION = 4 * 1024 * 1024
@@ -814,7 +815,7 @@ def passphrase_responders(ctx: Ctx) -> list[Responder]:
         Responder(re.compile(r"Passphrase: "), lambda m: ctx.passphrase),
         Responder(
             re.compile(r"Type (\S+) and Enter to continue to the passphrase; anything else stops: "),
-            lambda m: m.group(1),
+            lambda m: (time.sleep(REVIEW_DELAY_S), m.group(1))[1],
         ),  # fmt: skip
     ]
 

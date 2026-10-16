@@ -101,3 +101,43 @@ def test_the_cli_link_reserves_asks_for_the_pin_then_starts_and_reports_where_it
         with pytest.raises(paircli.HostError):
             paircli._link_run(call, entry, lab.state, SimpleNamespace(relay=None, max_publication_bytes=None,  # noqa: SLF001
                           ca_file=None, proxy=None), out, lambda s: None)  # fmt: skip
+
+
+def test_the_tty_ask_works_on_a_real_terminal(tmp_path):
+    """Found by the real dev-pair run: ``open('/dev/tty', 'r+')`` raises UnsupportedOperation on macOS, so the SAS
+    prompt of ``orch host relay pair`` could never be answered. A child with a pseudo-terminal as its controlling
+    terminal asks and gets the typed line."""
+    import os
+    import select
+    import subprocess
+    import sys
+    import time
+
+    master, slave = os.openpty()
+    code = (
+        "import fcntl, os, sys, termios\n"
+        "fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+        "from orch.host import paircli\n"
+        "print('GOT:' + paircli._tty_ask('code: '), flush=True)\n"  # noqa: SLF001
+    )
+    proc = subprocess.Popen([sys.executable, "-c", code], stdin=slave, stdout=slave, stderr=slave,
+                            start_new_session=True)  # fmt: skip
+    os.close(slave)
+    out = b""
+    sent = False
+    end = time.monotonic() + 30
+    try:
+        while time.monotonic() < end and b"GOT:" not in out:
+            if select.select([master], [], [], 0.2)[0]:
+                try:
+                    out += os.read(master, 4096)
+                except OSError:
+                    break
+            if not sent and b"code: " in out:
+                os.write(master, b"ABC234\n")
+                sent = True
+        assert b"GOT:ABC234" in out, out
+    finally:
+        proc.kill()
+        proc.wait()
+        os.close(master)

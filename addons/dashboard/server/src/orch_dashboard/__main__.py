@@ -83,7 +83,7 @@ def locked(directory_fd):
         os.close(fd)
 
 
-def control(path, command):
+def control(path, command, kind=None):
     """One request on ctl.sock. ``launch`` mints a code, so it refuses under an agent's environment first (#542 item 1;
     the socket itself cannot tell an agent of the same UID from the person: the accepted tier-A residual)."""
     if command == "launch":
@@ -93,7 +93,7 @@ def control(path, command):
         sock.settimeout(2)
         sock.connect(str(path))
         check_uid(sock, os.getuid())
-        sock.sendall(encode({"command": command}))
+        sock.sendall(encode({"command": command, **({"kind": kind} if kind else {})}))
         reply = receive(sock)
     if command == "launch" and isinstance(reply, dict) and "expires_at" not in reply:
         reply["expires_at"] = asked + CODE_TTL  # an older server: a conservative bound
@@ -216,6 +216,8 @@ def _serve(directory, lock_fd=None):
                     req = receive(conn)
                     if req == {"command": "launch"}:
                         conn.sendall(encode({**auth.launch(port), "redirect": str(redirects)}))
+                    elif req == {"command": "launch", "kind": "setup"}:
+                        conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
@@ -280,13 +282,14 @@ def verify_probe(launch, fetch=None):
 def open_dashboard(path="/", print_url=False):
     refuse_agent()  # before anything is started or minted
     path = safe_path(path)
+    kind = "setup" if path == "/setup" else None  # setup's nonce opens no normal session
     if print_url and not sys.stdout.isatty():
         raise RuntimeError("--print-url requires a terminal")  # before anything is started or minted
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd, locked(fd):
         try:
-            launch = control(directory / "ctl.sock", "launch")
+            launch = control(directory / "ctl.sock", "launch", kind)
         except OSError as exc:
             if exc.errno not in (errno.ENOENT, errno.ECONNREFUSED):
                 raise
@@ -302,7 +305,7 @@ def open_dashboard(path="/", print_url=False):
                 if child.poll() is not None:
                     raise RuntimeError("dashboard could not start")
                 try:
-                    launch = control(directory / "ctl.sock", "launch")
+                    launch = control(directory / "ctl.sock", "launch", kind)
                     break
                 except (FileNotFoundError, ConnectionRefusedError):
                     time.sleep(0.05)
@@ -317,14 +320,6 @@ def open_dashboard(path="/", print_url=False):
             if attempt == 19:
                 raise
             time.sleep(0.05)
-    if path == "/setup":
-        # Setup's separate code travels only through setup.code and the socket claim.
-        url = f"http://127.0.0.1:{launch['port']}/setup"
-        if print_url:
-            print(url)
-        elif not webbrowser.open(url):
-            raise RuntimeError("no browser could be opened; use --print-url in your own terminal")
-        return
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
     url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
     if print_url:

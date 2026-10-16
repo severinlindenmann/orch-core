@@ -100,8 +100,17 @@ def setup(tmp_path):
     short.cleanup()
 
 
-def claim(client):
-    res = client.post("/auth/setup", json={}, headers={"Origin": ORIGIN})
+def attempt(client):
+    """A claim with a fresh, valid browser nonce (the core's answer decides)."""
+    nonce = client.app.state.auth.launch(PORT, setup=True)["code"]
+    return client.post("/auth/setup", json={"nonce": nonce}, headers={"Origin": ORIGIN})
+
+
+def claim(client, auth=None):
+    auth = auth or client.app.state.auth
+    res = client.post(
+        "/auth/setup", json={"nonce": auth.launch(PORT, setup=True)["code"]}, headers={"Origin": ORIGIN}
+    )
     assert res.status_code == 200
     return {"X-Setup-Token": res.json()["token"], "Origin": ORIGIN}
 
@@ -116,7 +125,7 @@ def test_scope_claim_and_no_workspace(setup):
     assert client.get("/api/workspaces", headers={"Authorization": f"Bearer {token}"}).status_code == 401
     normal = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
     assert client.get("/api/setup/state", headers={"X-Setup-Token": normal}).status_code == 401
-    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
+    assert attempt(client).status_code == 403
     assert client.get("/api/setup/state", headers=headers).json()["phase"] == "profile"
     for path in ("launch", "claim", "shutdown", "../shutdown"):
         assert client.post("/api/setup/" + path, json={}, headers=headers).status_code in (401, 404)
@@ -186,7 +195,7 @@ def test_launch_expiry_idle_and_run_exception(setup):
 def test_code_ttl_and_cancel(setup):
     client, _, _, _, now = setup
     now[0] = 30
-    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
+    assert attempt(client).status_code == 403
 
 
 def test_cancel_revokes_and_socket_permissions(setup):
@@ -201,13 +210,13 @@ def test_cancel_revokes_and_socket_permissions(setup):
     )
     (proxy.path.parent / "setup.code").chmod(0o600)
     proxy.path.chmod(0o666)
-    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 503
+    assert attempt(client).status_code == 503
 
 
 def test_agent_refused(setup, monkeypatch):
     client, *_ = setup
     monkeypatch.setenv("ORCH_GRANT", "demo-not-a-real-grant")
-    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
+    assert attempt(client).status_code == 403
 
 
 def test_code_file_consumed_and_browser_codes_refused(setup):
@@ -220,7 +229,33 @@ def test_code_file_consumed_and_browser_codes_refused(setup):
     assert path.exists()
     claim(client)
     assert not path.exists()
-    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
+    assert attempt(client).status_code == 403
+
+
+def test_nonce_required_wrong_reused_expired(setup):
+    client, auth, proxy, facts, now = setup
+    path = proxy.path.parent / "setup.code"
+    post = lambda body: client.post("/auth/setup", json=body, headers={"Origin": ORIGIN})  # noqa: E731
+    # no nonce / empty body / wrong / login code / not a string: refused, and the code file is NOT touched
+    assert post({}).status_code == 400
+    assert post({"nonce": "x" * 43}).status_code == 403
+    assert post({"nonce": 7}).status_code == 403
+    assert post({"nonce": "x" * 43, "code": "y"}).status_code == 400
+    login = auth.launch(PORT)["code"]  # a normal login code is not a setup nonce
+    assert post({"nonce": login}).status_code == 403
+    assert path.exists() and not facts["claimed"]
+    # a setup nonce opens no normal session
+    nonce = auth.launch(PORT, setup=True)["code"]
+    assert auth.exchange(nonce)[0] is None
+    assert client.post("/auth/session", json={"code": nonce}, headers={"Origin": ORIGIN}).status_code == 401
+    # correct: bound once; the same nonce again is refused
+    res = post({"nonce": nonce})
+    assert res.status_code == 200 and auth.valid_setup(res.json()["token"])
+    assert post({"nonce": nonce}).status_code == 403
+    # an expired nonce is refused too
+    late = auth.launch(PORT, setup=True)["code"]
+    auth.clock = lambda: 10**10
+    assert post({"nonce": late}).status_code == 403
 
 
 @pytest.mark.parametrize("kind", ["expired", "permissions", "symlink"])
@@ -237,7 +272,7 @@ def test_unsafe_or_expired_code_refused(setup, kind):
         target = path.with_name("other.code")
         path.rename(target)
         path.symlink_to(target)
-    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code in (403, 503)
+    assert attempt(client).status_code in (403, 503)
     assert not facts["claimed"]
 
 

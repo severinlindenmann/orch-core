@@ -85,16 +85,26 @@ export class SetupAPI {
   }
 }
 export async function bootstrapSetup(fetcher: typeof fetch = fetch): Promise<SetupAPI> {
+  // The one-time nonce of the launch link (same exposure as `orch dashboard open`): read from the fragment, which is
+  // stripped before any request, and presented once. Without it nothing is claimed.
+  const nonce = new URLSearchParams(location.hash.slice(1)).get('launch')
+  history.replaceState(null, '', '/setup')
   if (navigator.serviceWorker?.controller) throw new SetupError('setup.service_worker')
+  if (!nonce) throw new SetupError('session.required')
   const res = await fetcher('/auth/setup', {
     method: 'POST',
     credentials: 'omit',
     cache: 'no-store',
     redirect: 'error',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ nonce }),
   })
   if (!res.ok) throw new SetupError('session.required')
   const value = (await res.json()) as { token: string }
   return new SetupAPI(value.token, fetcher)
+}
+
+/** The launch link opens the root with `to=/setup` in its fragment (the shared login-link path); a reload is `/setup`. */
+export function isSetupPage(): boolean {
+  return location.pathname === '/setup' || new URLSearchParams(location.hash.slice(1)).get('to') === '/setup'
 }

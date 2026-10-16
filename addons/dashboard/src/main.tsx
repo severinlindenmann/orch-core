@@ -1,4 +1,4 @@
-import { bootstrapSetup } from './api/setup'
+import { bootstrapSetup, isSetupPage } from './api/setup'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -6,7 +6,7 @@ import { RouterProvider } from '@tanstack/react-router'
 import { createAppRouter } from './app/router'
 import './styles/tokens.css'
 
-if (location.pathname === '/setup') {
+if (isSetupPage()) {
   const session = bootstrapSetup()
   void session.catch(() => {})
   void import('./setup/Setup').then(({mount}) => mount(session))

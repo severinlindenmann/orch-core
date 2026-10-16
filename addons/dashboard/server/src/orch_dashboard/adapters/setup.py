@@ -146,9 +146,15 @@ def register(app, auth, proxy, port):
             return refusal("setup.agent", 403)
         body = await body_bytes(request)
         try:
-            # No browser-supplied launch material, including query parameters.
-            if request.url.query or json.loads(body or b"{}") != {}:
+            # The only browser-supplied material is the one-time nonce from the launch link's fragment (the core's own
+            # code never leaves the 0600 file). No query parameters; no nonce, a wrong, used or expired one: refused
+            # BEFORE the code file is touched, so a stray local request cannot take the setup session.
+            value = json.loads(body or b"{}")
+            if request.url.query or not isinstance(value, dict) or set(value) != {"nonce"}:
                 return refusal("invalid.input", 400)
+            nonce = value["nonce"]
+            if not isinstance(nonce, str) or len(nonce) != 43 or not auth.exchange_setup(nonce):
+                return refusal("setup.code_invalid", 403)
             status, value = await asyncio.to_thread(proxy.claim, port)
             if status == 200:
                 if not isinstance(value.get("token"), str) or not isinstance(value.get("setup_id"), str):

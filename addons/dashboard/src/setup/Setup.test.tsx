@@ -137,12 +137,12 @@ afterEach(() => {
   localStorage.clear()
 })
 
-test('claims through the server without reading launch material or storing tokens', async () => {
-  history.replaceState(null, '', '/setup#launch=demo-not-a-real-code&to=/elsewhere')
+test('presents the one-time nonce from the fragment (stripped first) and stores no token', async () => {
+  history.replaceState(null, '', '/#launch=demo-not-a-real-code&to=/setup')
   const fetcher = vi.fn(async (_url, init) => {
-    expect(location.hash).toBe('#launch=demo-not-a-real-code&to=/elsewhere')
+    expect(location.hash).toBe('')
     expect(location.pathname).toBe('/setup')
-    expect(init.body).toBe('{}')
+    expect(init.body).toBe('{"nonce":"demo-not-a-real-code"}')
     return new Response(JSON.stringify({ token: 'demo-not-a-real-token' }))
   })
   await bootstrapSetup(fetcher as typeof fetch)
@@ -287,6 +287,13 @@ test('long access cannot be submitted when core omits its required typed word', 
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
   expect(screen.getByRole('alert')).toHaveTextContent('typed confirmation is required')
+})
+
+test('without a nonce nothing is claimed', async () => {
+  history.replaceState(null, '', '/setup')
+  const fetcher = vi.fn()
+  await expect(bootstrapSetup(fetcher)).rejects.toThrow('session.required')
+  expect(fetcher).not.toHaveBeenCalled()
 })
 
 test('a service-worker-controlled page refuses the exchange', async () => {

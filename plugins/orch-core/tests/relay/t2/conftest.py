@@ -43,7 +43,8 @@ class _Budget:
 
 @pytest.fixture(params=LIMITS, ids=["cap4MiB", "cap16MiB-default"])
 def relay(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory):
-    long = request.node.get_closest_marker("t2_long")  # @pytest.mark.t2_long(seconds): a test that must idle in real time
+    # @pytest.mark.t2_long(seconds): a test that must idle in real time
+    long = request.node.get_closest_marker("t2_long")
     if long is not None and request.param is not None:
         pytest.skip("a real-time idle test runs once, against the relay's default cap")
     d = relay_dir()

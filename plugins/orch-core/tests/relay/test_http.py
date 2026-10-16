@@ -962,6 +962,17 @@ def _server(second: str):
                 if not d:
                     return
                 buf += d
+            head, _, rest = buf.partition(b"\r\n\r\n")
+            length = next(
+                (int(x.split(b":")[1]) for x in head.split(b"\r\n") if x.lower().startswith(b"content-length:")), 0
+            )
+            while (
+                len(rest) < length
+            ):  # the COMPLETE request is read: an unread byte at close would turn the FIN into a RST
+                d = s.recv(4096)
+                if not d:
+                    return
+                rest += d
             buf = b""
             hits.append(1)
             n += 1
@@ -979,7 +990,9 @@ def _server(second: str):
             elif second == "partial_headers":
                 s.sendall(b"HTTP/1.1 200 OK\r\nContent-Le")
                 time.sleep(0.1)
-            if second != "fin":
+            if second == "fin":
+                s.shutdown(socket.SHUT_WR)  # a clean FIN on every OS
+            else:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, rst)
             s.close()
             return

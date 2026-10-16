@@ -264,7 +264,6 @@ def test_the_relay_ends_when_the_process_that_started_it_dies(tmp_path):
     orphan_test(["relay", str(tmp_path / "data"), str(d), "5"], tmp_path)
 
 
-@pytest.mark.slow
 @pytest.mark.t2_long(150)
 def test_an_idle_linked_host_keeps_its_lease_and_its_aux_thread_for_two_lease_periods(bridged):
     """Bug: the aux thread's renewal (15 s into an idle long-poll) met the relay's closed idle keep-alive
@@ -313,6 +312,5 @@ def test_a_read_after_a_quiet_spell_is_answered_on_the_first_attempt_with_no_tra
     assert len(side.loop.for_rid(rid)) == 1  # the answer's POST went out once: no retry, no phone resend
     assert time.monotonic() - t0 < 10
     assert side.loop.error is None and not side.alarms
-    bad = [r.getMessage() for r in caplog.records if "TransportError" in r.getMessage() or "poll failed" in r.getMessage()
-           or "failed" in r.getMessage()]  # fmt: skip
+    bad = [r.getMessage() for r in caplog.records if "failed" in r.getMessage() or "TransportError" in r.getMessage()]
     assert not bad, bad

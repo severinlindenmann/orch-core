@@ -271,8 +271,10 @@ class Session:
                 if self._gen is None:
                     raise NotHolder("no holder generation")
                 headers["Orch-Holder"] = str(self._gen)
-            extra = {} if resend_ok else {"resend_ok": False}  # the transport never resends this one on a stale connection
-            r = conn.request(method, path, route=route, headers=headers, body=data, deadline_s=deadline_s, cap=cap, **extra)
+            extra = {} if resend_ok else {"resend_ok": False}  # the transport never resends this one
+            r = conn.request(
+                method, path, route=route, headers=headers, body=data, deadline_s=deadline_s, cap=cap, **extra
+            )
             if 200 <= r.status < 300:
                 try:
                     obj = wire.loads_body(r.body, cap=cap)

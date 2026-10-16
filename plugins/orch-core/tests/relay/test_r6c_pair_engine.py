@@ -1402,7 +1402,7 @@ def _unposted(kit, n):
 
 
 def test_the_repost_stops_at_the_first_transient_failure_of_a_tick(kit):
-    h = _unposted(kit, 3)
+    _unposted(kit, 3)
     base = len(kit.relay.answers)
     kit.clock.ms += 2_500
     kit.engine.tick()
@@ -1410,7 +1410,7 @@ def test_the_repost_stops_at_the_first_transient_failure_of_a_tick(kit):
 
 
 def test_the_repost_is_capped_per_tick(kit):
-    h = _unposted(kit, 6)
+    _unposted(kit, 6)
     del kit.relay.fail["answer"]
     base = len(kit.relay.answers)
     kit.clock.ms += 2_500
@@ -1422,7 +1422,7 @@ def test_the_repost_is_capped_per_tick(kit):
 
 
 def test_a_failing_store_write_in_the_repost_does_not_end_the_tick_or_unthrottle_it(kit, monkeypatch):
-    h = _unposted(kit, 1)
+    _unposted(kit, 1)
     del kit.relay.fail["answer"]
 
     def boom(*a, **kw):

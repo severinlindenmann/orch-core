@@ -935,7 +935,8 @@ class PairEngine:
         if stored is not None:
             if stored.get("digest") != _digest(envelope):
                 return self._drop("rid_conflict")  # other bytes under an answered rid: the relay keeps one answer
-            self._post(offer_id, rid, crypto.unb64u(stored["env"]), h.device.hex())  # an identical resend: byte for byte (Opus L1)
+            # an identical resend: byte for byte (Opus L1)
+            self._post(offer_id, rid, crypto.unb64u(stored["env"]), h.device.hex())
             return "replay"
         self._req_digest = _digest(envelope)
         try:

@@ -39,9 +39,9 @@ pytestmark = pytest.mark.relay_t2
 
 HERE = Path(__file__).resolve()
 BASE = HERE.parents[5]  # the checkout root: a real directory below the user's home, not /tmp
-# the host's control socket is `<root>/run/<32 hex>/host.sock` and must fit 100 UTF-8 bytes (listener.SOCKET_PATH_LIMIT);
-# the root is `.t2b` + 8 random characters, so a checkout nested deeper than this (a worktree under ~/orch-dev/.worktrees)
-# cannot hold it: the install then goes below the account's home directory instead
+# the host's control socket is `<root>/run/<32 hex>/host.sock` and must fit 100 UTF-8 bytes
+# (listener.SOCKET_PATH_LIMIT); the root is `.t2b` + 8 random characters, so a checkout nested deeper than this (a
+# worktree under ~/orch-dev/.worktrees) cannot hold it: the install then goes below the account's home instead
 _SOCK_TAIL = len("/run//host.sock") + 32 + len(".t2b") + 8 + 1
 SOCKET_PATH_LIMIT = 100
 
@@ -54,6 +54,8 @@ def install_base() -> Path | None:
             if len(str(base).encode()) + _SOCK_TAIL <= SOCKET_PATH_LIMIT:
                 return base
     return None
+
+
 MIB4 = 4 << 20
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 PRIMARY_PASS = "primary-pass-Tq7!mPx2-vL9rTb"

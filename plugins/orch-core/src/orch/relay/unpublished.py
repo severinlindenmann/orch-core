@@ -176,8 +176,8 @@ class Ledger:
 
     def _count_overflow(self, row: Mapping[str, Any], person: str | None) -> None:
         """A pair that could not be listed counts ONCE (a rescan or a restart re-delivers the same pair): its short
-        digest joins ``overflow_seen`` (bounded by ``OVERFLOW_SEEN_MAX``; beyond that the count is only a lower
-        bound: the text says "at least")."""
+        digest joins ``overflow_seen`` (bounded by ``OVERFLOW_SEEN_MAX``). The count is approximate: the text says
+        "up to N", as it may overcount once that list is full or lost, or after a pair is later listed."""
         key = hashlib.sha256(f"{row['device_id']}:{row['person_id']}".encode()).hexdigest()[:16]
         seen = self._st["overflow_seen"]
         if key in seen:

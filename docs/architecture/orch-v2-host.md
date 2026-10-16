@@ -471,6 +471,10 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
 | `relay.not_linked` | 3 | no | stays | `host.relay_unlink` on a workspace with no `relay/link.json` (R5, §11A.6; 11A.15.9 lists it for R6's ops too) | — |
+| `relay.pair_open` | 3 | no | stays | a relay pairing offer while a live offer or an outstanding cert request exists (R6c, 11A.15.6 step 1, 11A.15.9A `offer`); cancel it or wait for it to end | — |
+| `relay.no_primary` | 3 | no | stays | a relay pairing offer without a verified `membership/primary.json` (R6c, 11A.15.1); `orch host relay primary set` | — |
+| `relay.quota` | 3 | no | stays | a relay pairing offer under the `membership_quota` alarm or with the relay-reachable device count at the member-list cap (R6c, 11A.15.6 step 1) | — |
+| `relay.pair_closed` | 3 | no | stays | a pairing step the offer's state does not allow: cancel of an allocated offer, an answer or certificate for an offer not waiting for it, `relay.pair_device` outside step 9 or within 2 minutes of the phone's deadline, or without a membership publisher (R6c, 11A.15.6, 11A.15.9A) | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
 | `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` (v1.9: on the `Error` only where the host knows the reason; a preview's `blocked.detail` always has it) | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |
@@ -4264,6 +4268,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `host.dev_refused` (§0.6, both catalogs); additive fields `host.status.dev`, column-R `whoami.relay.dev`,
     `host.list.dev`/`sandbox`/`alarms` (absent elsewhere); the alarm `dev_convenience_refused`; one R2 vector.
     `dev-pair` (D2) and the phone part are not in it.
+63. **R6c-1: pairing, host side (§11A.15.6, 11A.15.9A; "As built in R6c", §11A.15.20; the number may be renumbered
+    when a parallel change lands first):** the offer engine and the pair thread in `orch.relay.r6.pair` (the record's
+    states as ONE transition function: an edge table, compare-and-set on a record version, guards, set-once fields),
+    the pairing state under `membership/pairing/` and `membership/devices/`, the 9A internal API (`offer`, `answer`,
+    `cancel`, `list_offers`, plus `abandon` and `pair_cert`), the R6b seam `MembershipQueue` (fail closed without R6b:
+    `UnavailableMembership`), `RelaySigner.pair_answer` and `cert_request`, the `relay.pair_device` source registered
+    at open before `human.recover`, and `relay.primary_set`'s body. **New host codes** (§0.6): `relay.pair_open`,
+    `relay.no_primary`, `relay.quota`, `relay.pair_closed` (both catalogs). Everything stays behind the R6 gate (`R6_READY` false):
+    nothing is served on a socket yet; the CLI and the control ops are R6c-2. No wire, hash or F1 change.
 
 ---
 
@@ -7057,7 +7070,7 @@ relay's largest set is never held in memory: it is built and sent in pieces.
     standing of a new row is asked of the store before the caps are applied; actionable rows do not count against that
     budget). A pair beyond a bound is NOT stored: a visible counter instead (`person_overflow[person]` for the per-person
     cap, at most 256 persons, the rest in `overflow`; `overflow` for the other two; each pair counts ONCE, by a bounded
-    set of short digests, and the text says "at least N" and names up to five persons), an alarm
+    set of short digests, and the text says "up to N" (it may overcount once the list is full or lost, or after a pair is later listed) and names up to five persons), an alarm
     `unpublished_overflow`, `orch host status` not ok, and `actionable: true` while any overflow is open (unlisted
     obligations may exist). Pairs beyond a bound are neither settled nor raised; their evidence is in `HostPins`
     within ITS caps. The counters never clear by relay behaviour (those pairs were delivered and not listed). With an
@@ -9472,6 +9485,149 @@ paragraph disagree, the item wins.
     `p.scopes_max`), then `q.sign(rid, pk)` or `q.reject(rid, pk)` and `relay.pair_cert`; `q.finish_uploads()`. The
     account: `client.create_account(invite, owner_pk, primary_certificate(...))`. Test doubles in
     `tests/relay_owner/kit.py`. A boundary test bans `orch.relay` and `orch.host` from importing `orch.relay_owner`.
+
+#### 11A.15.20 As built in R6c (16 Oct 2026; R6c-1: the engine, the pair thread, step 9 and publication)
+
+**Split (JUDGEMENT CALL).** R6c is split in two PRs: **R6c-1** (this one) builds everything below the socket; **R6c-2**
+adds the control ops (`relay.pair_offer`, `relay.pair_answer`, `relay.pair_cancel`, `relay.pair_abandon`,
+`relay.pair_list`, `relay.primary_set`, `relay.pair_cert`) and the CLI of 11A.15.9 (`orch host relay pair
+[--primary external]`, `pair list|cancel|abandon`, `primary set`) as thin wrappers over the internal API. The inline
+primary (`--primary inline`, through `orch.relay_owner`) follows R6c-2.
+
+**Modules.**
+- `orch/relay/r6/pair.py`: `PairEngine` (the offer state machine, synchronous, as R2's `Bridge`), `PairThread`
+  (`orch-relay-r6p-<id8>`: one job queue and a 1 s timer, no sleep; R2's `R6Pairing` as `handle(n, envelope, rid,
+  device)`, `completed(n)`, `notice(ids)`, `forget_below(n)`), the seams `PairHost`, `PairRelay`, `MembershipQueue`
+  and `MembershipEvents`, `UnavailableMembership`, `OfferHandle`, `status_answer`/`resend_answer`.
+- `orch/relay/r6/pairstore.py`: `PairStore` (`pairing/<offer>.json`, `pairing/<offer>.answers`,
+  `pairing/outstanding.json`, `pairing/alarms.json`, `devices/<id>.json`), every file through `StateDir`.
+- `orch/relay/r6/pairrelay.py`: `SessionPairRelay`, the five routes over R1's `Session` with a 5 s deadline.
+- `orch/relay/sign.py`: `pair_answer` (direction 2, epoch 0, exactly one chunk: `seq` 0, `LAST` or
+  `LAST|REFUSAL`; `stream` an offer R6 holds live, the `pair_live` callback; 64 KiB) and `cert_request` (exact
+  fields, the pinned owner, the verified primary through `primary_device`, the clear binding through
+  `pair_binding`: the offer confirmed on path 7b by exactly that attempt, device and key pair; ≤ 10 min; ledger
+  `("cert_request", request_id)`).
+- `orch/relay/r6/keystore.py`: `read_primary`/`write_primary` (`membership/primary.json` is the key store's
+  directory).
+- `orch/host/relaypair.py`: `engine_for` (one engine per membership directory; **dormant** without a worker: routes
+  answer `retry`, membership is `UnavailableMembership`), `HostPairing` (the step-4 gate is
+  `convenience.pair_gate`; `revoked` is F1 removed/revoked or `HostPins` evidence; the primary re-verified under the
+  genesis `PK` at every use; the offer preconditions under the store lock), `R6PairDeviceSource`, `register`,
+  `start_thread`, `primary_set`, and **`MEMBERSHIP`, the R6b seam** (`fn(service) -> MembershipQueue`).
+- `orch/relay/bridge.py`: `BridgeLoop(pairing=)` starts, stops and joins the pair thread, hands it every
+  `route:"pair"` item, advances `after` only over completed pair items (`_advance`, also an aux step), and wakes it
+  on `notices.cert_requests`. `orch/host/relayhook.start_worker` builds it (`relaypair.start_thread`; `None` without
+  `membership/`, then pair items are dropped as before).
+- `orch/host/workspace.py`: `relaypair.register(self)` in `open`, **before** `human.recover`.
+
+**The transition function (orch-07's scan findings, folded in one structural fix).** Every durable write of an offer
+record goes through `PairEngine._commit(rec, to, **changes)`: under the pairing lock it re-reads the record and
+compares its `ver` (compare-and-set; the loser gets `StaleRecord`: a pair request is then a silent drop, an API call
+`relay.pair_closed`, a tick retries); a state change must be an edge of `EDGES` (open → pending | rejected | expired |
+cancelled; pending → confirmed | rejected | expired | cancelled; confirmed → cert_pending | allocated | failed |
+expired | cancelled; cert_pending → allocated | rejected | failed | expired | cancelled; allocated → published | failed
+| expired; published → approved | failed | expired; approved and the terminal states: none) and pass `_guard`
+(pending needs a consumed request that passed the step-4 gate; confirmed, cert_pending and allocated need the typed
+SAS; nothing forward past the phone's deadline; cert_pending needs the 7b request; allocated needs the certificate and
+the intent's event; published and approved need the acknowledged publication, the card and the baseline; open →
+rejected only for a gate refusal); a same-state write may change only the fields `FIELDS` lists for its state, never
+a set-once field (`consumed`, `challenge`, `cert`, `path`, `event_id`, `publication`, `rejection`), and a terminal
+record only drops its secrets. **Durable first:** the engine keeps no offer state in memory; every decision re-reads
+the record (`_get`, which refuses an unknown state or version like an unreadable record), and a failed write raises
+before anything acts on the new state. **Fail closed at open:** `quarantine()` turns every unreadable, unknown or
+corrupt record into a terminal `failed` record with no secret (alarm `pairing_state_corrupt`, a `needs` item), and
+clears an unreadable `outstanding.json`; an unreadable record blocks a new offer until then.
+
+**Opus review of #588 (16 Oct 2026, CHANGES; fixed).**
+- **Step 9 is exclusive (item 1, DECIDED).** Once the allocation intent is recorded, no tick, cancel, relay answer
+  or deadline may end or change the offer: `_commit` refuses every edge out of `confirmed`/`cert_pending` and every
+  field change but the intent's own unless the write carries the host-settlement token (`SETTLEMENT_EDGES`: to
+  `allocated` or `failed`), and `allocated` always needs it. The settlement paths are `committed` (→ `allocated`),
+  `refused` (→ `failed`), the open-time `recover`, and, past the phone's deadline, the tick's `settle`, which runs
+  through `PairHost.settle` **under the store lock** (no submit can be between its precommit and its append) and
+  settles by the log: the intent's event landed → `allocated`, else `failed` (a later resubmit fails precommit and
+  appends nothing). `cancel` refuses `relay.pair_closed` meanwhile.
+- **A verified certificate in hand wins over the relay (item 2):** no poll, and a relay `expired` or rejection is
+  ignored; only the host's deadline or settlement applies.
+- **An equal-repeat precommit runs the step-9 state and deadline checks first (item 3).**
+- **`recover` goes on past a failing offer (item 4)**: alarm `pairing_recovery_failed` and a `needs` item. A
+  re-admitted device whose write-once `devices/<id>.json` names the same identity (device, person, certificate,
+  scopes) keeps the stored record; other content is alarmed `pairing_device_conflict`, never overwritten, and the
+  offer fails with a `needs` item (the F1 device is removed by the human).
+- **An offer without `decide` is refused at step 1 (item 5, DECIDED)**: the phone ceiling is look+decide and answers
+  need decide (§11A.14), so the primary is never asked for a look-only phone certificate.
+- **An approved record becomes a tombstone after 7 days (item 6)**: `is_live` turns false and the signer's gate
+  closes for that offer. `OfferHandle` also refuses `copy`/`deepcopy`.
+
+**Judgement calls (fail closed).**
+- J-R6c-1 **The answers side file is keyed by `(device, rid)`** with the request's digest (as R2's rid store): the
+  corpus case `pair_resend_then_other_key` sends another device's request under an answered `rid`. Other bytes under
+  an answered `(device, rid)` are a silent drop (the relay keeps one answer per rid).
+- J-R6c-2 **`cert_pending` with no certificate in hand answers `expired` once the request's `expires_ms` passed**,
+  before the tick writes `expired` (proto §8.3 "cert_pending ran 10 minutes without a certificate"; corpus
+  `pair_status_cert_pending_expired`). With a certificate in hand the phone's deadline governs (11A.15.6).
+- J-R6c-3 **An open offer past `expires_ms` answers `pairing_closed`** to a new request (corpus `pair_expired_offer`);
+  only a cancelled open offer answers `expired` (orch-f1 S6). The phone's deadline is the request header's signed
+  `ts_ms` + 10 min.
+- J-R6c-4 **`MembershipQueue` has `ready()` and `post_exclusion`** besides `post_addition`: step 9 (`facts`) refuses
+  `relay.pair_closed` while no publisher is ready, so no F1 device is allocated that cannot be published; abandon, the
+  deadline and a refused add post the exclusion (R6b owns `head.json`'s `excluded`). **`post_addition` is posted, then
+  marked**, so R6b must treat it as idempotent per offer and device (a crash re-posts).
+- J-R6c-5 **R6c's alarms live in `pairing/alarms.json`** (`membership/` is the key store's locked directory);
+  `relaypair.status(service)` gives them with the offers and `needs` items (no secret), and R6c-2 adds that to
+  `host.status.relay`. Codes: `pairing_second_key`, `pairing_request_open`,
+  `pairing_request_replayed`, `pairing_request_refused`, `pairing_no_primary`, `pairing_cert_invalid`,
+  `pairing_cert_conflict`, `pairing_device_refused`, `pairing_publication_refused`, `pairing_publication_mismatch`,
+  `pairing_baseline_missing`, `pairing_baseline_quota`, `pairing_state_corrupt`, `relay_misbehaving`.
+- J-R6c-6 **`devices/<id>.json` carries `scopes` and `event_id`** (the reviewed allocation's), and `paired_ms` is the
+  intent's time, so a roll-forward rewrites the identical write-once record (a re-admission: Opus item 4 above).
+- J-R6c-7 **The step-9 code**: the SAS on 7a, `cert_code` of the verified stored challenge on 7b (`relay.pair_cert`
+  may hand the challenge with the certificate, Opus L4). No challenge recorded: `facts` refuses.
+- J-R6c-8 **The baseline** is the host's held checkpoint (`HostPins.held()`, `canon.checkpoint_hash`), or the
+  worker's verified one when `start_thread` is given a source.
+- J-R6c-9 **A definite relay refusal** of the cert request or of `PUT /v2/devices` (not `request_open`, `replayed`,
+  `expired`, `cert_conflict`) ends the offer `failed` and excludes an allocated device.
+- J-R6c-10 **Already in F1** (orch-f1 S3) is `R6PairDeviceSource.allocate_existing(offer)`: the step-9 driver
+  (R6c-2's CLI) calls it before `human.prepare`; it adopts the existing `device.added` (same certificate, same
+  person) as the intent's event, or refuses a removed or revoked id or one F1 holds for another person.
+- J-R6c-11 **Certificates, at every acceptance point (orch-07's fourth scan flag).** A presented certificate (3.5):
+  `verify_cert` under the pinned owner `PK` at the host clock (signature, exact fields, `device_id` of
+  `dk_sig_pub`, `person_id` of `PK`, not expired), no known revocation (F1 or `HostPins`), and exactly the request's
+  two keys, all before the offer is consumed; the one unverified read is the protocol's `other_person` refusal
+  code (proto §8.3 step 3.5, corpus `pair_with_another_persons_cert`), which only selects the refusal. The v1.7
+  phone ceiling (decide, at most look; N1) is step 8's, as 11A.15.6 places it: the corpus accepts a presented
+  four-scope certificate at 3.5 (`pair_with_existing_cert`), so such an offer ends `failed` after the SAS, before
+  any allocation. Step 8 repeats every check for both paths (7b: `scopes_max` equal to what was requested). A
+  relayed challenge or rejection is kept only after `check_cert_challenge`/`check_cert_rejection` under the pinned
+  `PK` against the stored request (workspace, person, request, offer, attempt, device, `dk_hash`, expiry). **The
+  primary** is accepted only with `verify_cert` at the host clock and `scopes_max == ["look"]` exactly, at
+  `relay.primary_set` and again at every use. Device certificates carry no workspace: the binding to this
+  workspace is the offer (`K_pair`, the gate's `bind`) and the material of step 9.
+
+**Seams for the next groups.**
+- **orch-47 (R6b):** set `orch.host.relaypair.MEMBERSHIP = fn(service) -> MembershipQueue`. `bind(events)` once;
+  `ready()`; `post_addition(offer_id, device_id, cert)` (idempotent; scopes from `devices/<id>.json`); answer through
+  `events.on_committed(offer_id, {list_seq, epoch, adds[, list_hash]})` for exactly the persisted publication the
+  relay acknowledged, or `events.on_refused(offer_id, reason)`; `post_exclusion(offer_id, device_id, reason)`. Never
+  block the caller; read pairing state only from `devices/`. Until then `UnavailableMembership` answers
+  `refused(publisher_unavailable)` (pinned by `test_unavailable_membership_is_the_fail_closed_default`).
+- **orch-9d (dashboard, 11A.15.9A):** the internal API is `relaypair.engine_for(service)`'s `offer(scopes, ttl_ms) ->
+  OfferHandle` (the link only in `handle.link`, never in `repr`/`public()`, not picklable), `answer(offer_id,
+  typed_code, approve) -> (state, attempts_left)`, `cancel(offer_id)`, `list_offers() -> [OfferSummary]` (no secret);
+  refusals are `PairRefused(code, message)` with the §0.6 host codes. Call them as jobs on the pair thread
+  (`PairThread.call`) once R6c-2 exposes the thread on the service; the `pair/1` wrappers are orch-52's.
+
+**Not yet (R6c-2 and later).** The control ops and the CLI (above); the inline primary; the baseline release on the
+device's first verified column-R request and the "paired but never connected" `needs` item (they need an R2 hook);
+the `pairing_dropped` alarm counter's durable write (the count is in memory, `PairEngine.dropped`).
+
+**Tests.** `tests/relay/test_r6c_signer.py`, `test_r6c_pair_corpus.py` (all 22 `bridge.host_cases` `pair_*`/
+`pair_status_*` cases), `test_r6c_pair_engine.py` (the 11A.15.14 pairing, deadline, allocation and publication vectors
+the engine owns; every edge outside the table; the guards; compare-and-set, also under threads; an injected write
+failure at each transition; a crash at each allocation step then recovery; corrupt records at start),
+`test_r6c_pairrelay.py` (the five routes' HTTP fixtures on a loopback mock), `test_r6c_pair_thread.py`, and
+`tests/host/test_relay_pair.py` (a served workspace end to end through `human.prepare`/`sign`/`submit`, step 9
+refused without R6b, a crash after the append rolled forward at open).
 
 ### 11A.16 H13: push and Drop, host end (the H13 design of record)
 

@@ -1668,7 +1668,7 @@ def test_one_person_cannot_crowd_out_another_persons_obligation(state, monkeypat
     assert any(a[0] == "unpublished_overflow" for a in alarms)
     view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)
     note = relayr4.held_attention("X", view["held"], view)
-    assert view["overflow"] == 2 and "at least 2 pairs" in note["what"] and f"p_{P2}" in note["what"]
+    assert view["overflow"] == 2 and "up to 2 pairs" in note["what"] and f"p_{P2}" in note["what"]
     assert note["fix"].count("no reset command") == 1
 
 
@@ -1693,7 +1693,7 @@ def test_a_flood_of_actionable_rows_goes_to_the_global_overflow_and_still_says_a
     assert len(doc["held"]) == 4 and doc["overflow"] == 3 and doc["person_overflow"] == {}
     view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)
     note = relayr4.held_attention("X", [], {**view, "held": []})
-    assert note["actionable"] is True and "at least 3 pairs" in note["what"]  # never "nothing to do" while open
+    assert note["actionable"] is True and "up to 3 pairs" in note["what"]  # never "nothing to do" while open
     assert any(a[0] == "unpublished_overflow" for a in alarms)
 
 
@@ -1802,7 +1802,7 @@ def test_pair_standings_reads_the_state_under_the_store_lock(ws, monkeypatch):  
 
 def test_the_overflow_alone_makes_the_status_not_ok_and_names_it(state):  # M40
     note = relayr4.held_attention("X", [], {"overflow": 3})
-    assert note is not None and "overflowed (at least 3 pairs" in note["what"] and note["fix"] == relayr4.FIX_OVERFLOW
+    assert note is not None and "overflowed (up to 3 pairs" in note["what"] and note["fix"] == relayr4.FIX_OVERFLOW
 
 
 def test_actionable_rows_do_not_use_up_the_non_actionable_budget(state, monkeypatch):
@@ -1861,3 +1861,15 @@ def test_a_damaged_overflow_seen_list_is_a_loss(state):
     doc["overflow_seen"] = ["zz"]
     state.write_json(up.FILE, doc)
     assert c.load()[1] is True
+
+
+def test_the_quiet_person_cap_does_not_count_that_persons_actionable_rows(state, monkeypatch):  # N2
+    monkeypatch.setattr(up, "PERSON_MAX", 2)
+    items = [_it(dev=f"{i:032x}", person=P2) for i in range(3)]
+    c, st, relay, clock, _ = _fill(state, items)
+    c.step()  # three ACTIONABLE rows for one person: above PERSON_MAX, all listed
+    relay.pages[None] = ([_it(dev=A, person=P2)], pos(1), False)
+    st.kind[("d_" + A, "p_" + P2)] = "unknown"
+    clock.ms += up.FULL_EVERY_MS
+    c.step()
+    assert rows(c)[(A, P2)]["state"] == "unknown" and c.load()[0]["person_overflow"] == {}

@@ -86,6 +86,7 @@ CLAMP = 2**16  # 11A.15.4: a rotation target is at most committed + 2^16
 H7_MARGIN = 1024  # §11 H7: both high-water marks raised by 1024 above everything known
 MAX_SAFE_INT = 2**53 - 1
 HEAD = "head.json"
+PRIMARY = "primary.json"  # R6c: the verified primary's certificate and the human's label (11A.15.1)
 log = logging.getLogger("orch.relay.r6")
 GATE_REASONS = frozenset(
     {"device.removed", "device.revoked", "held_evidence", "relay_revocation", "revoked_refusal", "rotation_due",
@@ -797,6 +798,22 @@ class MembershipKeys:
         """A deep copy of ``head.json`` (no secrets in it)."""
         with self._write():
             return json.loads(_doc(self._head))
+
+    # -- R6c: membership/primary.json (11A.15.1, 11A.15.3: written by relay.primary_set only) -----------------------
+
+    def read_primary(self) -> dict[str, Any] | None:
+        """``primary.json`` as stored (``None``: none set). The caller verifies it under the genesis ``PK`` before
+        every use (11A.15.1, Opus M7); an unreadable file raises (no primary: fail closed)."""
+        with self._write():
+            obj = self._dir.read_json(PRIMARY)
+        if obj is not None and type(obj) is not dict:
+            raise StateError("primary.json is not an object")
+        return obj
+
+    def write_primary(self, obj: Mapping[str, Any]) -> None:
+        """``relay.primary_set``'s write (the host verified the certificate and cleaned the label first)."""
+        with self._write():
+            self._dir.write_json(PRIMARY, dict(obj))
 
     def expose(self, *, list_seq: int, epoch: int, body: bytes, digest: str, adds: Sequence[str]) -> None:
         """11A.15.4 step 4, the ONE atomic ``head.json`` write before the first send: ``lhw := list_seq``; for a

@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "error": {
+    "code": "relay.pair_open",
+    "message": "a relay pairing is already in progress",
+    "hint": "one pairing at a time: cancel the live offer or wait for it and its cert request to end",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "relay",
+        "pair",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

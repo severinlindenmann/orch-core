@@ -164,7 +164,7 @@ def held_attention(
     if overflow:
         who = ledger.get("overflow_persons") or []
         parts.append(
-            f"the held list overflowed (at least {overflow} pair{'s' if overflow != 1 else ''} not listed"
+            f"the held list overflowed (up to {overflow} pair{'s' if overflow != 1 else ''} not listed"
             + (f"; persons {', '.join('p_' + p for p in who)}" if who else "")
             + "): there may be obligations this host cannot show"
         )

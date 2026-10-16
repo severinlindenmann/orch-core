@@ -56,7 +56,9 @@ from .pairstore import PairStore, PairStoreError
 __all__ = [
     "LIVE",
     "TERMINAL",
+    "EDGES",
     "GateRefused",
+    "IllegalTransition",
     "MembershipEvents",
     "MembershipQueue",
     "OfferHandle",
@@ -69,6 +71,7 @@ __all__ = [
     "PairRelay",
     "PairRelayError",
     "PrimaryInfo",
+    "StaleRecord",
     "UnavailableMembership",
     "resend_answer",
     "status_answer",
@@ -224,7 +227,8 @@ class MembershipQueue(Protocol):
     * :meth:`bind` once, before any post: the engine's events;
     * :meth:`ready`: whether a publisher runs that can add a device now (step 9 refuses otherwise);
     * :meth:`post_addition`: "publish the addition of ``device_id`` (certificate ``cert``) for ``offer_id``" (a
-      rotation if the gate is up; R6b reads the scopes from ``devices/<id>.json``);
+      rotation if the gate is up; R6b reads the scopes from ``devices/<id>.json``). **Idempotent per offer and
+      device**: after a crash the pair thread posts it again (it posts, then marks);
     * :meth:`post_exclusion`: "``device_id`` was allocated for ``offer_id`` but the pairing ended" (abandon, the
       deadline, a refused add): R6b puts it in ``excluded`` and the holder invariant rotates it out."""
 
@@ -404,6 +408,65 @@ INTENT_FIELDS = frozenset(
 )  # fmt: skip
 
 
+class StaleRecord(Exception):  # noqa: N818 - a verdict: the record moved on since it was read
+    """The compare-and-set of :meth:`PairEngine._commit` failed: another event wrote the offer first."""
+
+
+class IllegalTransition(Exception):  # noqa: N818 - a verdict on a transition
+    """An edge not in :data:`EDGES`, a guard that does not hold, or a field a state may not change."""
+
+
+#: every allowed edge of the offer record (11A.15.6); anything else is refused
+EDGES: dict[str, frozenset[str]] = {
+    "open": frozenset({"pending", "rejected", "expired", "cancelled"}),
+    "pending": frozenset({"confirmed", "rejected", "expired", "cancelled"}),
+    "confirmed": frozenset({"cert_pending", "allocated", "failed", "expired", "cancelled"}),
+    "cert_pending": frozenset({"allocated", "rejected", "failed", "expired", "cancelled"}),
+    "allocated": frozenset({"published", "failed", "expired"}),
+    "published": frozenset({"approved", "failed", "expired"}),
+    "approved": frozenset(),
+    **{t: frozenset() for t in ("rejected", "expired", "cancelled", "failed")},
+}
+#: the fields a same-state write may change, per state
+FIELDS: dict[str, frozenset[str]] = {
+    "open": frozenset(),
+    "pending": frozenset({"sas_tries", "second_key"}),
+    "confirmed": frozenset({"cert", "intent", "intent_ms", "second_key"}),
+    "cert_pending": frozenset({"request", "challenge", "cert", "intent", "intent_ms", "second_key"}),
+    "allocated": frozenset({"device_put", "addition_posted", "publication", "second_key"}),
+    "published": frozenset({"second_key"}),
+    "approved": frozenset({"second_key"}),
+    **{t: frozenset({"secret", "sas_nonce", "second_key"}) for t in ("rejected", "expired", "cancelled", "failed")},
+}
+#: set once, never changed: what the phone was shown or what the human compared stays what it was
+ONCE = ("consumed", "challenge", "cert", "path", "event_id", "publication", "rejection")
+_FORWARD = frozenset({"pending", "confirmed", "cert_pending"})
+
+
+def _guard(frm: str, to: str, new: Mapping[str, Any], now: int) -> None:
+    """What each forward edge needs in the record it writes (11A.15.6): the step a state stands for really ran."""
+    c = new.get("consumed")
+    if to == "pending" and (c is None or c.get("gated") is not True or new.get("phone_deadline_ms") is None):
+        raise IllegalTransition("pending needs a consumed request that passed the step-4 gate")
+    if to in ("confirmed", "cert_pending", "allocated") and new.get("sas_ok") is not True:
+        raise IllegalTransition(f"{to} needs the typed SAS (step 6)")
+    if to in _FORWARD and new.get("phone_deadline_ms") is not None and now > int(new["phone_deadline_ms"]):
+        raise IllegalTransition(f"{to} after the phone's deadline")
+    if to == "cert_pending" and (new.get("path") != "7b" or new.get("request") is None):
+        raise IllegalTransition("cert_pending needs a 7b cert request")
+    if to == "allocated":
+        intent = new.get("intent")
+        if new.get("cert") is None or intent is None or new.get("event_id") != intent.get("event_id"):
+            raise IllegalTransition("allocated needs the certificate and the intent's event")
+    if to == "published" and (new.get("publication") is None or new.get("baseline") is None or
+                              new.get("card_seq") is None):  # fmt: skip
+        raise IllegalTransition("published needs the acknowledged publication, the card and the baseline")
+    if to == "approved" and (new.get("publication") is None or new.get("baseline") is None):
+        raise IllegalTransition("approved needs the publication and the baseline")
+    if to == "rejected" and frm == "open" and (c is None or c.get("gated") is not False):
+        raise IllegalTransition("open -> rejected only for a request the step-4 gate refused")
+
+
 def _intent(alloc: Mapping[str, Any]) -> dict[str, Any]:
     """The allocation intent as stored (11A.15.6 step 9 (ii)): exactly the ``PairAllocation`` fields, JSON-shaped."""
     if not isinstance(alloc, Mapping) or set(alloc) != INTENT_FIELDS:
@@ -490,13 +553,45 @@ class PairEngine:
         mine = crypto.b64u(crypto.dk_hash(crypto.unb64u(c["dk_sig_pub"]), crypto.unb64u(c["dk_kx_pub"])))
         return (c["attempt"], c["device_id"], mine) == (attempt, device_id, dk_hash)
 
-    def _write(self, rec: dict[str, Any]) -> None:
-        self.store.put(rec)
+    def _commit(self, rec: Mapping[str, Any], to: str | None = None, **changes: Any) -> dict[str, Any]:
+        """**The one durable write of an offer record** (every transition and every field update goes through it).
 
-    def _terminal(self, rec: dict[str, Any], state: str, **extra: Any) -> dict[str, Any]:
-        rec = {**rec, **extra, "state": state, "terminal_ms": self.now_ms()}
-        self._write(rec)
-        return rec
+        Under the pairing lock: the record is re-read and must still carry the version ``rec`` was read at
+        (compare-and-set: two events on one offer, a relay answer and a deadline, a pair-thread job and the host's
+        step-9 hook, can never overwrite each other; the loser gets :class:`StaleRecord` and re-reads). ``to``, if
+        given and not the current state, must be an edge of :data:`EDGES` and pass :func:`_guard` on the resulting
+        record (no state is skipped: no ``pending`` without the step-4 gate, no ``confirmed`` without the typed
+        SAS, no ``allocated`` without a certificate and an intent, nothing forward past the phone's deadline). A
+        same-state write may change only the fields :data:`FIELDS` lists for that state, and never a field
+        :data:`ONCE` holds once set. The new version is the old plus one."""
+        with self.store.lock:
+            cur = self.store.get(rec["offer_id"])
+            if cur is None or cur.get("tombstone") or cur.get("ver", 0) != rec.get("ver", 0):
+                raise StaleRecord(rec["offer_id"])
+            frm = cur["state"]
+            new = {**cur, **changes}
+            if to is not None and to != frm:
+                if to not in EDGES.get(frm, ()):
+                    raise IllegalTransition(f"{frm} -> {to}")
+                new["state"] = to
+                if to in TERMINAL:
+                    new["terminal_ms"] = self.now_ms()
+                _guard(frm, to, new, self.now_ms())
+            else:
+                extra = set(changes) - FIELDS.get(frm, frozenset())
+                if extra:
+                    raise IllegalTransition(f"{frm}: {sorted(extra)} may not change")
+                if frm in TERMINAL and any(changes.get(k) is not None for k in ("secret", "sas_nonce")):
+                    raise IllegalTransition("a terminal record only drops its secrets")
+            for k in ONCE:
+                if cur.get(k) is not None and new.get(k) != cur.get(k):
+                    raise IllegalTransition(f"{k} is set once")
+            new["ver"] = int(cur.get("ver", 0)) + 1
+            self.store.put(new)
+            return new
+
+    def _move(self, rec: Mapping[str, Any], to: str | None, **changes: Any) -> dict[str, Any]:
+        return self._commit(rec, to, **changes)
 
     def _live_offer(self) -> str | None:
         """The live offer or the outstanding request that blocks a new offer (Q6), or ``None``."""
@@ -548,13 +643,26 @@ class PairEngine:
                 "challenge": None, "rejection": None, "cert": None, "intent": None, "event_id": None,
                 "publication": None, "card_seq": None, "baseline": None, "terminal_ms": None, "second_key": False,
                 "primary_label": None, "reason": None, "device_put": False, "addition_posted": False,
+                "sas_ok": False, "ver": 0,
             }  # fmt: skip
-            self._write(rec)  # the link is shown only after this write returns
+            self.store.put(rec)  # the link is shown only after this write returns
         https, native = pairing.pair_link(self.ctx.origin, self.ctx.workspace_id, offer_id, s, self.ctx.wsk_pub,
                                           self.ctx.owner_pk_pub)  # fmt: skip
         return OfferHandle(offer_id, "open", scopes, rec["expires_ms"], PairLinks(native=native, https=https))
 
     def answer(self, offer_id: str, typed_code: str, approve: bool) -> tuple[str, int]:
+        return self._api(self._answer_sas, offer_id, typed_code, approve)
+
+    def _api(self, fn: Callable[..., Any], *args: Any, **kw: Any) -> Any:
+        """The internal API's calls: a compare-and-set loss or a refused transition is a refusal, never a crash."""
+        try:
+            return fn(*args, **kw)
+        except StaleRecord:
+            raise PairRefused("relay.pair_closed", "the offer changed meanwhile: look at it again") from None
+        except IllegalTransition as e:
+            raise PairRefused("relay.pair_closed", f"not allowed now: {e}") from None
+
+    def _answer_sas(self, offer_id: str, typed_code: str, approve: bool) -> tuple[str, int]:
         """Step 6: approve only when ``typed_code`` (case-folded) equals the SAS; a wrong code counts one of the 3
         attempts; empty or ``approve=False`` rejects at once. Returns ``(state, attempts left)``. The typed code is
         never stored or logged."""
@@ -562,11 +670,11 @@ class PairEngine:
         if rec["state"] != "pending":
             raise PairRefused("relay.pair_closed", f"the offer is {rec['state']}, not waiting for the code")
         if self.now_ms() > int(rec["phone_deadline_ms"]):
-            rec = self._terminal(rec, "expired", reason="phone_deadline")
+            rec = self._move(rec, "expired", reason="phone_deadline")
             return rec["state"], 0
         code = typed_code.strip().upper() if type(typed_code) is str else ""
         if approve is not True or not code:
-            rec = self._terminal(rec, "rejected", reason="human")
+            rec = self._move(rec, "rejected", reason="human")
             return rec["state"], 0
         c = rec["consumed"]
         want = pairing.sas(self.ctx.workspace_id, offer_id, _pub(rec, "dk_sig_pub"), _pub(rec, "dk_kx_pub"),
@@ -574,12 +682,11 @@ class PairEngine:
         if not wire.ct_equal(code.encode(), want.encode()):
             tries = int(rec["sas_tries"]) + 1
             if tries >= SAS_TRIES:
-                rec = self._terminal(rec, "rejected", sas_tries=tries, reason="sas_mismatch")
+                rec = self._move(rec, "rejected", sas_tries=tries, reason="sas_mismatch")
                 return rec["state"], 0
-            self._write({**rec, "sas_tries": tries})
+            self._move(rec, None, sas_tries=tries)
             return "pending", SAS_TRIES - tries
-        rec = {**rec, "state": "confirmed"}
-        self._write(rec)
+        rec = self._move(rec, "confirmed", sas_ok=True)
         if c.get("cert") is not None:  # 7a: the presented certificate, step 8
             rec = self._cert_in_hand(rec, c["cert"])
         else:  # 7b: the cert request
@@ -589,22 +696,29 @@ class PairEngine:
     def cancel(self, offer_id: str) -> str:
         """11A.15.6 "Cancellation": any state before ``allocated``; later ``relay.pair_closed`` (use abandon, or
         remove the device). An outstanding cert request stays tracked."""
+        return self._api(self._cancel, offer_id)
+
+    def _cancel(self, offer_id: str) -> str:
         rec = self._get_or_refuse(offer_id)
         if rec["state"] in ("allocated", "published", "approved"):
             raise PairRefused("relay.pair_closed", "the device is allocated: use abandon, or remove the device")
         if rec["state"] in TERMINAL:
             return rec["state"]
-        return self._terminal(rec, "cancelled", reason="cancelled", cancelled_from=rec["state"])["state"]
+        return self._move(rec, "cancelled", reason="cancelled", cancelled_from=rec["state"])["state"]
 
     def abandon(self, offer_id: str) -> str:
         """11A.15.6 "Ending a stuck offer": an ``allocated`` or ``published`` offer ends ``failed``; the device
         enters ``excluded`` (R6b) and the ``needs`` item asks the human to remove it."""
+        return self._api(self._abandon, offer_id)
+
+    def _abandon(self, offer_id: str) -> str:
         rec = self._get_or_refuse(offer_id)
         if rec["state"] not in ("allocated", "published"):
             raise PairRefused("relay.pair_closed", f"only an allocated or published offer is abandoned, not "
                                                    f"{rec['state']}")  # fmt: skip
+        rec = self._move(rec, "failed", reason="abandoned")
         self._exclude(rec, "abandoned")
-        return self._terminal(rec, "failed", reason="abandoned")["state"]
+        return rec["state"]
 
     def list_offers(self) -> list[OfferSummary]:
         out = self.store.outstanding()
@@ -637,6 +751,9 @@ class PairEngine:
         """``relay.pair_cert`` (Opus L4): the inline primary hands the certificate it signed, or its rejection
         (and the challenge it posted, so ``cert_code`` is known even if the relay never served it). R6 verifies
         each itself (step 8, 7d)."""
+        return self._api(self._pair_cert, offer_id, cert=cert, rejection=rejection, challenge=challenge)
+
+    def _pair_cert(self, offer_id: str, *, cert: Any, rejection: Any, challenge: Any) -> str:
         rec = self._get_or_refuse(offer_id)
         if rec["state"] != "cert_pending" or rec.get("request") is None:
             raise PairRefused("relay.pair_closed", f"the offer is {rec['state']}, not waiting for a certificate")
@@ -663,7 +780,17 @@ class PairEngine:
 
     def receive(self, envelope: bytes, rid: str, device: str | None = None) -> str:
         """One ``route:"pair"`` poll item. Returns what happened (``drop:<why>``, ``replay``, ``refuse:<code>``,
-        ``answer:<state>``); every outcome is durable before this returns, so the item may be acknowledged."""
+        ``answer:<state>``); every outcome is durable before this returns, so the item may be acknowledged. A record
+        another event wrote meanwhile (compare-and-set) is a silent drop: the device resends."""
+        try:
+            return self._receive(envelope, rid, device)
+        except StaleRecord:
+            return self._drop("stale")
+        except IllegalTransition as e:
+            log.error("pairing: refused transition on a pair request: %s", e)
+            return self._drop("transition")
+
+    def _receive(self, envelope: bytes, rid: str, device: str | None) -> str:
         try:
             h, body, sig = wire.parse_envelope(envelope, direction=1)
         except wire.WireError:
@@ -737,9 +864,7 @@ class PairEngine:
                 return self._answer(rec, h, answers.answer_expired(self.ctx.wsk_pub))  # orch-f1 S6
             if rec["state"] != "open" or now >= int(rec["expires_ms"]):
                 if c is not None and not rec.get("second_key"):  # a second tag-valid key used the offer (Opus L10)
-                    with self.store.lock:
-                        cur = self.store.get(rec["offer_id"]) or rec
-                        self._write({**cur, "second_key": True})
+                    rec = self._move(rec, None, second_key=True)
                     self._alarm("pairing_second_key", rec["offer_id"])
                 return self._refuse(rec, h, "pairing_closed")
         if crypto.device_id(pm.dk_sig_pub) != h.device or not crypto.verify(
@@ -768,29 +893,26 @@ class PairEngine:
         consumed = {
             "device_id": pm.device_id, "dk_sig_pub": crypto.b64u(pm.dk_sig_pub),
             "dk_kx_pub": crypto.b64u(pm.dk_kx_pub), "attempt": pm.attempt, "label": pm.label, "cert": pm.cert,
-            "decl": None, "decl_who": None,
+            "decl": None, "decl_who": None, "gated": False,
         }  # fmt: skip
         # step 4: the reader gate (H12d-3), before the offer is consumed, the SAS shown or the primary asked; never
         # under the pairing lock (it takes the store lock)
         try:
             decl, decl_who = self.host.gate(pm, rec["offer_id"], who)
         except GateRefused as e:
-            with self.store.lock:
-                cur = self.store.get(rec["offer_id"])
-                if cur is None or cur["state"] != "open" or cur.get("consumed") is not None:
-                    return self._refuse(rec, h, "pairing_closed")
-                rec = self._terminal(cur, "rejected", consumed=consumed, path=path, reason=f"reader_gate:{e.code}",
-                                     phone_deadline_ms=h.ts_ms + PHONE_WINDOW_MS)  # fmt: skip
-            return self._answer(rec, h, answers.answer_rejected_short(self.ctx.wsk_pub))
-        consumed["decl"], consumed["decl_who"] = decl, decl_who
-        # step 5: consume, durably, before the pending answer (one write on the single pair thread)
-        with self.store.lock:
-            cur = self.store.get(rec["offer_id"])
-            if cur is None or cur["state"] != "open" or cur.get("consumed") is not None:
+            try:  # compare-and-set: the offer must still be the open one this request found
+                rec = self._move(rec, "rejected", consumed=consumed, path=path, reason=f"reader_gate:{e.code}",
+                                 phone_deadline_ms=h.ts_ms + PHONE_WINDOW_MS)  # fmt: skip
+            except (StaleRecord, IllegalTransition):
                 return self._refuse(rec, h, "pairing_closed")
-            rec = {**cur, "state": "pending", "consumed": consumed, "path": path,
-                   "phone_deadline_ms": h.ts_ms + PHONE_WINDOW_MS}  # fmt: skip
-            self._write(rec)
+            return self._answer(rec, h, answers.answer_rejected_short(self.ctx.wsk_pub))
+        consumed["decl"], consumed["decl_who"], consumed["gated"] = decl, decl_who, True
+        # step 5: consume, durably, before the pending answer (compare-and-set on the open record)
+        try:
+            rec = self._move(rec, "pending", consumed=consumed, path=path,
+                             phone_deadline_ms=h.ts_ms + PHONE_WINDOW_MS)  # fmt: skip
+        except (StaleRecord, IllegalTransition):
+            return self._refuse(rec, h, "pairing_closed")
         return self._answer(rec, h, resend_answer(rec, self.ctx))
 
     # -- answers on the wire ---------------------------------------------------------------------------------------
@@ -847,7 +969,7 @@ class PairEngine:
         primary = self.host.primary()
         if primary is None:
             self._alarm("pairing_no_primary", rec["offer_id"])
-            return self._terminal(rec, "failed", reason="no_primary")
+            return self._move(rec, "failed", reason="no_primary")
         c = rec["consumed"]
         now = self.now_ms()
         o = certreq.cert_request_o(
@@ -861,14 +983,13 @@ class PairEngine:
             sig = self.signer.cert_request(o)
         except SignerRefused as e:
             log.warning("pairing: the signer refused the cert request: %s", e)
-            return self._terminal(rec, "failed", reason="signer")
+            return self._move(rec, "failed", reason="signer")
         signed = {"o": o, "sig": sig}
         deadline = min(int(rec["phone_deadline_ms"]), o["expires_ms"] + CHALLENGE_GRACE_MS)
-        with self.store.lock:
-            rec = {**rec, "state": "cert_pending", "request": {"request_id": o["request_id"], "signed": signed,
-                   "expires_ms": o["expires_ms"], "posted": False}, "primary_label": primary.label,
-                   "phone_deadline_ms": deadline}  # fmt: skip
-            self._write(rec)
+        with self.store.lock:  # the record and outstanding.json, both before the POST
+            rec = self._move(rec, "cert_pending", primary_label=primary.label, phone_deadline_ms=deadline,
+                             request={"request_id": o["request_id"], "signed": signed, "expires_ms": o["expires_ms"],
+                                      "posted": False})  # fmt: skip
             self.store.set_outstanding(o["request_id"], rec["offer_id"], o["expires_ms"])
         return self._post_request(rec)
 
@@ -883,14 +1004,12 @@ class PairEngine:
             if e.kind == "replayed":
                 self._alarm("pairing_request_replayed", rec["offer_id"])
                 self.store.clear_outstanding(req["request_id"])
-                return self._terminal(rec, "failed", reason="replayed")
+                return self._move(rec, "failed", reason="replayed")
             if e.kind == "expired":
                 self.store.clear_outstanding(req["request_id"])
-                return self._terminal(rec, "expired", reason="request_expired")
+                return self._move(rec, "expired", reason="request_expired")
             return rec  # transient: the same bytes on the next tick
-        rec = {**rec, "request": {**req, "posted": True}}
-        self._write(rec)
-        return rec
+        return self._move(rec, None, request={**req, "posted": True})
 
     def notice(self, request_ids: list[str]) -> None:
         """A ``notices.cert_requests`` wake from R2's poll: read each request this workspace holds now."""
@@ -919,7 +1038,7 @@ class PairEngine:
             return self._rejection_in_hand(rec, got["rejection"])
         if got["state"] == "expired":
             self.store.clear_outstanding(req["request_id"])
-            return self._terminal(rec, "expired", reason="request_expired")
+            return self._move(rec, "expired", reason="request_expired")
         return rec
 
     def _store_challenge(self, rec: dict[str, Any], signed: Any) -> dict[str, Any]:
@@ -931,13 +1050,7 @@ class PairEngine:
         except (Refused, ValueError, TypeError, KeyError):
             self._alarm("relay_misbehaving", "unverifiable challenge")
             return rec
-        with self.store.lock:
-            cur = self.store.get(rec["offer_id"]) or rec
-            if cur.get("challenge") is not None:
-                return cur
-            rec = {**cur, "challenge": canon.loads_strict(canon.dumps(signed))}
-            self._write(rec)
-        return rec
+        return self._move(rec, None, challenge=canon.loads_strict(canon.dumps(signed)))
 
     def _rejection_in_hand(self, rec: dict[str, Any], signed: Any) -> dict[str, Any]:
         try:
@@ -945,8 +1058,9 @@ class PairEngine:
         except (Refused, ValueError, TypeError, KeyError):
             self._alarm("relay_misbehaving", "unverifiable rejection")
             return rec
+        rec = self._move(rec, "rejected", rejection=canon.loads_strict(canon.dumps(signed)), reason="primary")
         self.store.clear_outstanding(rec["request"]["request_id"])
-        return self._terminal(rec, "rejected", rejection=canon.loads_strict(canon.dumps(signed)), reason="primary")
+        return rec
 
     def _cert_in_hand(self, rec: dict[str, Any], cert: Any) -> dict[str, Any]:
         """Step 8: R6 verifies the certificate itself, never trusting the relay's state."""
@@ -971,17 +1085,13 @@ class PairEngine:
                 raise Refused("cert_invalid", "a phone certificate holds decide and at most look (N1)")
         except Refused as e:
             self._alarm("pairing_cert_invalid", e.code)
+            rec = self._move(rec, "failed", reason=f"cert:{e.code}")
             if rec.get("request") is not None:
                 self.store.clear_outstanding(rec["request"]["request_id"])
-            return self._terminal(rec, "failed", reason=f"cert:{e.code}")
-        with self.store.lock:
-            cur = self.store.get(rec["offer_id"]) or rec
-            if cur["state"] not in ("confirmed", "cert_pending"):
-                return cur
-            rec = {**cur, "cert": canon.loads_strict(canon.dumps(cert))}
-            self._write(rec)
-            if rec.get("request") is not None:
-                self.store.clear_outstanding(rec["request"]["request_id"])
+            return rec
+        rec = self._move(rec, None, cert=canon.loads_strict(canon.dumps(cert)))
+        if rec.get("request") is not None:
+            self.store.clear_outstanding(rec["request"]["request_id"])
         return rec
 
     # -- step 9: the R6 allocation (the host's PairDeviceSource calls these) ---------------------------------------
@@ -1042,7 +1152,7 @@ class PairEngine:
                                                        "certificate or scopes")  # fmt: skip
             if rec.get("intent") is not None and landed(rec["intent"]):
                 raise PairRefused("relay.pair_closed", "another allocation of this offer is in the log")
-            self._write({**rec, "intent": alloc, "intent_ms": self.now_ms()})
+            self._move(rec, None, intent=alloc, intent_ms=self.now_ms())
 
     def committed(self, alloc: Mapping[str, Any]) -> None:
         """(vi) and (vii): ``devices/<id>.json`` and the offer ``allocated``. Idempotent. The host checked the log
@@ -1058,8 +1168,7 @@ class PairEngine:
             if rec["state"] not in ("confirmed", "cert_pending"):
                 raise PairRefused("relay.pair_closed", f"the offer is {rec['state']}")
             self._device_record(rec, alloc)
-            rec = {**rec, "state": "allocated", "event_id": alloc["event_id"], "allocated_ms": self.now_ms()}
-            self._write(rec)
+            rec = self._move(rec, "allocated", event_id=alloc["event_id"], allocated_ms=self.now_ms())
             if rec.get("request") is not None:
                 self.store.clear_outstanding(rec["request"]["request_id"])
         self.post(lambda: self.publish(alloc["offer_id"]))
@@ -1071,7 +1180,7 @@ class PairEngine:
             rec = self.store.get(alloc["offer_id"])
             if rec is None or rec.get("intent") != alloc or rec["state"] not in ("confirmed", "cert_pending"):
                 return
-            self._terminal(rec, "failed", reason=f"allocation:{reason}"[:120])
+            self._move(rec, "failed", reason=f"allocation:{reason}"[:120])
 
     def adopt_existing(self, offer_id: str, alloc: Mapping[str, Any]) -> None:
         """ "Already in F1" (orch-f1 S3): the host found this exact device, keys and certificate in F1, valid; the
@@ -1084,7 +1193,7 @@ class PairEngine:
                 or alloc.get("device") != "d_" + rec["consumed"]["device_id"]
             ):
                 raise PairRefused("relay.pair_closed", "the existing device is not this offer's")
-            self._write({**rec, "intent": alloc, "intent_ms": self.now_ms()})
+            self._move(rec, None, intent=alloc, intent_ms=self.now_ms())
         self.committed(alloc)
 
     def recover(self, landed: Callable[[Mapping[str, Any]], bool]) -> list[str]:
@@ -1102,8 +1211,7 @@ class PairEngine:
             if landed(rec["intent"]):
                 with self.store.lock:
                     self._device_record(rec, rec["intent"])
-                    self._write({**rec, "state": "allocated", "event_id": rec["intent"]["event_id"],
-                                 "allocated_ms": self.now_ms()})  # fmt: skip
+                    self._move(rec, "allocated", event_id=rec["intent"]["event_id"], allocated_ms=self.now_ms())
                 out.append(oid)
         return out
 
@@ -1129,15 +1237,15 @@ class PairEngine:
             except PairRelayError as e:
                 if e.kind == "cert_conflict":
                     self._alarm("pairing_cert_conflict", offer_id)
+                    rec = self._move(rec, "failed", reason="cert_conflict")
                     self._exclude(rec, "cert_conflict")
-                    self._terminal(rec, "failed", reason="cert_conflict")
                 return  # transient: the next tick
-            rec = {**rec, "device_put": True}
-            self._write(rec)
+            rec = self._move(rec, None, device_put=True)
         if not rec.get("addition_posted"):
-            rec = {**rec, "addition_posted": True}
-            self._write(rec)  # before the post: a refused add is answered once
+            # post, then mark: a crash in between posts again on the next tick (R6b's post_addition is idempotent
+            # per offer and device); marking first would lose the addition and leave the offer to its deadline
             self.membership.post_addition(offer_id, device, rec["cert"])
+            self._move(rec, None, addition_posted=True)
 
     def membership_committed(self, offer_id: str, publication: Mapping[str, Any]) -> None:
         rec = self.store.get(offer_id)
@@ -1150,8 +1258,7 @@ class PairEngine:
             self._alarm("pairing_publication_mismatch", offer_id)
             return
         pub = {"list_seq": lseq, "epoch": epoch, "list_hash": publication.get("list_hash")}
-        rec = {**rec, "publication": pub}
-        self._write(rec)
+        self._move(rec, None, publication=pub)
         self.baseline(offer_id)
 
     def membership_refused(self, offer_id: str, reason: str) -> None:
@@ -1161,7 +1268,7 @@ class PairEngine:
         label = rec["consumed"]["label"]
         self._need(offer_id, f"pairing of {label} failed after it was added: remove the device")
         self._alarm("pairing_publication_refused", str(reason)[:60])
-        self._terminal(rec, "failed", reason=f"publication:{reason}"[:120])
+        self._move(rec, "failed", reason=f"publication:{reason}"[:120])
 
     def baseline(self, offer_id: str) -> None:
         rec = self.store.get(offer_id)
@@ -1183,9 +1290,8 @@ class PairEngine:
             if e.kind == "quota":
                 self._alarm("pairing_baseline_quota", offer_id)
             return
-        rec = {**rec, "state": "published", "card_seq": card_seq, "baseline": {"n": cp["n"], "hash": cp["hash"]}}
-        self._write(rec)
-        self._write({**rec, "state": "approved", "approved_ms": self.now_ms()})
+        rec = self._move(rec, "published", card_seq=card_seq, baseline={"n": cp["n"], "hash": cp["hash"]})
+        self._move(rec, "approved", approved_ms=self.now_ms())
 
     def _exclude(self, rec: Mapping[str, Any], reason: str) -> None:
         c = rec.get("consumed") or {}
@@ -1208,23 +1314,23 @@ class PairEngine:
             dl = rec.get("phone_deadline_ms")
             try:
                 if s == "open" and now >= int(rec["expires_ms"]):
-                    self._terminal(rec, "expired", reason="offer_expired")
+                    self._move(rec, "expired", reason="offer_expired")
                 elif (
                     s in ("pending", "confirmed", "cert_pending")
                     and dl is not None
                     and (now > int(dl) or (rec.get("cert") is not None and now > int(dl) - STEP9_MARGIN_MS))
                 ):
-                    self._terminal(rec, "expired", reason="phone_deadline")
+                    self._move(rec, "expired", reason="phone_deadline")
                 elif s in ("allocated", "published") and dl is not None and now > int(dl):
+                    rec = self._move(rec, "expired", reason="phone_deadline")
                     self._exclude(rec, "deadline")
-                    self._terminal(rec, "expired", reason="phone_deadline")
                 elif (
                     s == "cert_pending"
                     and rec.get("request") is not None
                     and rec.get("cert") is None
                     and now >= int(rec["request"]["expires_ms"])
                 ):
-                    self._terminal(rec, "expired", reason="request_expired")
+                    self._move(rec, "expired", reason="request_expired")
                 elif s == "cert_pending" and rec.get("request") is not None and rec.get("cert") is None:
                     if not rec["request"].get("posted"):
                         self._post_request(rec)
@@ -1239,6 +1345,10 @@ class PairEngine:
                     self._tail(rec, now)
             except PairStoreError:
                 log.warning("pairing: offer record unreadable during the tick")
+            except StaleRecord:
+                continue  # another event wrote it first: the next tick re-reads
+            except IllegalTransition as e:
+                log.error("pairing: refused transition in the tick: %s", e)
         out = self.store.outstanding()
         if out is not None and now > int(out["expires_ms"]) + OUTSTANDING_GRACE_MS:
             self.store.clear_outstanding(out["request_id"])
@@ -1248,12 +1358,17 @@ class PairEngine:
         if rec["state"] == "approved":
             return  # the pin release and the "never connected" item need R2's first verified request (R6c-2)
         if rec.get("secret") is not None and now > end + TAIL_MS:
-            self._write({**rec, "secret": None, "sas_nonce": None})
+            self._move(rec, None, secret=None, sas_nonce=None)
             self.store.remove_answers(rec["offer_id"])
         elif now > end + TOMBSTONE_MS:
             c = rec.get("consumed") or {}
-            self._write({"v": 1, "offer_id": rec["offer_id"], "state": rec["state"], "device_id": c.get("device_id"),
-                         "tombstone": True})  # fmt: skip
+            with self.store.lock:  # the tombstone replaces the record: compare-and-set too
+                cur = self.store.get(rec["offer_id"])
+                if cur is None or cur.get("ver", 0) != rec.get("ver", 0) or cur["state"] not in TERMINAL:
+                    raise StaleRecord(rec["offer_id"])
+                tomb = {"v": 1, "offer_id": rec["offer_id"], "state": rec["state"], "device_id": c.get("device_id"),
+                        "tombstone": True, "ver": int(cur.get("ver", 0)) + 1}  # fmt: skip
+                self.store.put(tomb)
 
 
 class _Events:

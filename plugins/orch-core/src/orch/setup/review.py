@@ -70,6 +70,7 @@ class Item:
     args: dict[str, Any]  # its arguments
     event: dict[str, Any]  # the planned payload (type + keys, volatile ones as PLACEHOLDER)
     hours: int | None = None
+    retry: bool = False  # M2: a grant issued before whose hand-over was never confirmed
 
 
 @dataclass
@@ -180,8 +181,11 @@ def plan(
 
     sets: dict[str, Any] = {}
     if profile["method"] == "click":
-        sets["sign_methods"] = ["terminal", "click"]  # terminal stays allowed until the conversion is done
-    if profile["agent_hours"] != 8:
+        if facts is None:
+            sets["sign_methods"] = ["terminal", "click"]  # terminal stays allowed until the conversion is done
+        elif facts.sign_methods is not None and "click" not in facts.sign_methods:
+            sets["sign_methods"] = [*facts.sign_methods, "click"]  # M1: only what is actually missing
+    if profile["agent_hours"] != 8 and (facts is None or not facts.grant_hours_set):
         sets["grant_hours"] = profile["agent_hours"]
     if sets and wanted("settings"):
         items.append(
@@ -213,7 +217,17 @@ def plan(
             "secret_hash": PLACEHOLDER,
         }
         args = {"hours": hours, "scope": RUNNER_GRANT_SCOPE, "verbs": "agent", "label": RUNNER_LABEL, "runner": True}
-        items.append(Item("runner_grant", "Agent access held by this machine", "grant", args, ev, hours))
+        items.append(
+            Item(
+                "runner_grant",
+                "Agent access held by this machine",
+                "grant",
+                args,
+                ev,
+                hours,
+                retry=not wanted("runner_grant"),
+            )
+        )
         runner_grant = {"hours": hours, "scope": RUNNER_GRANT_SCOPE, "holder": HOLDER}
     flags: list[dict[str, str]] = []
     wants_exec = profile["agent_grant"] or any(
@@ -264,6 +278,9 @@ def _rows(p: Plan, profile: Mapping[str, Any]) -> list[dict[str, Any]]:
         note = None
         if it.id == "runner_grant" and it.hours and it.hours > 24:
             note = f"Agents may work for {_days(it.hours)} on this machine."
+        if it.retry:
+            retry_note = "re-issues agent access; an earlier grant was not confirmed (or was revoked)"
+            note = f"{note}; {retry_note}" if note else retry_note
         volatile = [f"{k.replace('_', ' ')}: {PLACEHOLDER}" for k in sorted(VOLATILE.get(it.event["type"], ()))]
         row = {"id": it.id, "title": it.title, "lines": lines, "details": _details(it.event), "volatile": volatile}
         if note:

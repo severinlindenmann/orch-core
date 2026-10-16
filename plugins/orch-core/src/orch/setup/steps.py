@@ -315,7 +315,7 @@ class Creator:
             self._fail(SetupError("internal", f"setup failed ({type(e).__name__})", 500), post_genesis)
         finally:
             if self.run.error is not None:
-                self._rescue_passphrase()  # before the wipe: a one-click key must not be left under an unseen passphrase
+                self._rescue_passphrase()  # before the wipe: never leave a one-click key under an unseen passphrase
             self._passphrase = None
             if self.secrets is not None:
                 self.secrets.wipe()

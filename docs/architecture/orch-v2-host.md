@@ -12830,6 +12830,10 @@ sets `RLIMIT_CORE=0`, serves `<state>/setup/setup.sock` and stays until the page
   `click` with `relay` is `click_relay_unsupported`.
 * **Secrets** (`steps.Secrets`): generated in core, bytearrays, wiped at the end; reveal once (410), three words confirmed in
   core, five wrong tries end the session and the next one draws new secrets; the one-click path shows the recovery code only.
+  **R6 / lockout rule:** the one-click path never shows the passphrase up front, so any failure after the genesis and before
+  the conversion is done (signing mismatch, host error, Ctrl-C, internal error) shows it ONCE on the setup terminal before it
+  is wiped (`Creator._rescue_passphrase`); a passphrase the person typed in Finish is never shown back. Residual: SIGKILL or
+  SIGHUP of the setup process cannot run that code; the key then stays under the unseen passphrase and the recovery code is the way back.
 * **Review** (`review.py`): the plan is built in core and rendered with B6 `signcontent`; the digest (R1) covers the canonical
   profile, directory, every planned event (add-on manifest hashes included) and every row. Host-drawn values are "set at
   signing". R2: typed word `GRANT` (any runner grant) or `AGENTS` (more than 8 hours); R3: the three-word fingerprint is

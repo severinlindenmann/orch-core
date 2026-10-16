@@ -178,6 +178,8 @@ class Facts:
     #: a runner grant whose deposit was confirmed (see the runner's own record)
     runner_deposit_confirmed: bool = False
     convenience: bool = False
+    #: the workspace's explicit ``sign_methods`` (``None``: never set, click allowed)
+    sign_methods: tuple[str, ...] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -206,6 +208,7 @@ def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confi
                 terminals_enabled=bool(runner.get("terminals")),
                 runner_deposit_confirmed=deposit_confirmed,
                 convenience=convenience,
+                sign_methods=None if settings.get("sign_methods") is None else tuple(settings["sign_methods"]),
             )
     except SetupError:
         raise
@@ -229,7 +232,9 @@ def all_missing(facts: Facts, info: dict[str, AddonInfo]) -> list[str]:
 
 
 def missing_items(facts: Facts, profile: dict[str, Any], info: dict[str, AddonInfo]) -> list[str]:
-    """The item ids Finish setup still has to do for ``profile`` (R7: a step is done if ANY history exists)."""
+    """The item ids Finish setup still has to do for ``profile`` (R7: a step is done if ANY history exists). The facts
+    are re-read inside ``store.locked()`` before create; host admission (the host's own preconditions on every
+    submitted event) backstops that re-read, so a race can at worst be refused, never double-signed."""
     out: list[str] = []
     for a in profile["addons"]:
         if info[a].kind == "addon" and a not in facts.addons:
@@ -237,7 +242,12 @@ def missing_items(facts: Facts, profile: dict[str, Any], info: dict[str, AddonIn
     wants_runner = any(info[a].needs_runner or info[a].needs_terminals for a in profile["addons"])
     if wants_runner and not facts.runner_enabled:
         out.append("runner")
-    if not facts.grant_hours_set and profile["agent_hours"] != 8:
+    click_excluded = (
+        profile["method"] == "click" and facts.sign_methods is not None and "click" not in facts.sign_methods
+    )
+    # M1: converting the key to one-click on a workspace whose explicit sign_methods leave click out would make the host
+    # refuse every signature; the settings item adds click first
+    if (not facts.grant_hours_set and profile["agent_hours"] != 8) or click_excluded:
         out.append("settings")
     if profile["agent_grant"]:
         if not facts.grant_issued:

@@ -319,3 +319,44 @@ def test_finish_conversion_failure_never_shows_the_typed_passphrase_back(tmp):
     p = progress(f, out["run_id"])
     assert p["error"]["code"] == "custody.conversion_failed" and p["error"]["finishable"] is True
     assert not any("the-typed-passphrase" in t for t in ports.terminal.shown)
+
+
+def _review_rows(tmp, facts, profile):
+    f = finish_flow(tmp, FakePorts(), [facts])
+    f.dispatch("POST", "profile", {}, profile)
+    return f.dispatch("POST", "review", {}, {})[1]
+
+
+CLICK_PROF = {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8}
+
+
+def test_m1_one_click_on_a_workspace_whose_sign_methods_leave_click_out_adds_click_first(tmp):
+    done = dict(addons=frozenset({"dashboard"}), grant_hours_set=True)
+    rv = _review_rows(tmp, mkfacts(**done, sign_methods=("terminal",)), CLICK_PROF)
+    row = next(i for i in rv["items"] if i["id"] == "settings")
+    assert any("terminal" in ln and "click" in ln for ln in row["lines"] + row["details"])
+    assert not any("grant_hours" in ln for ln in row["lines"] + row["details"])  # only what is actually missing
+    # never set (click allowed by default) or already allowing click: no settings item
+    for methods in (None, ("terminal", "click")):
+        rv = _review_rows(tmp, mkfacts(**done, sign_methods=methods), CLICK_PROF)
+        assert "settings" not in [i["id"] for i in rv["items"]]
+
+
+def test_m2_a_runner_grant_retry_row_says_it_re_issues_access(tmp):
+    facts = mkfacts(addons=frozenset({"dashboard", "terminals"}), runner_enabled=True, grant_issued=True)
+    rv = _review_rows(tmp, facts, {**PROF, "addons": ["dashboard", "terminals"]})
+    row = next(i for i in rv["items"] if i["id"] == "runner_grant")
+    assert "re-issues agent access" in row["note"]
+    fresh = _review_rows(
+        tmp,
+        mkfacts(addons=frozenset({"dashboard", "terminals"}), runner_enabled=True),
+        {**PROF, "addons": ["dashboard", "terminals"]},
+    )
+    assert "note" not in next(i for i in fresh["items"] if i["id"] == "runner_grant") or "re-issues" not in fresh[
+        "items"
+    ][-1].get("note", "")
+
+
+def test_facts_read_the_explicit_sign_methods():
+    assert facts_of(ws(settings={"sign_methods": ["terminal"]})).sign_methods == ("terminal",)
+    assert facts_of(ws()).sign_methods is None

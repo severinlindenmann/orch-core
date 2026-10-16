@@ -134,8 +134,9 @@ def _fail(code: str, message: str, exit_: int, **extra: Any) -> dict[str, Any]:
 
 
 def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, confirmed: bool = False) -> dict[str, Any]:
-    """``confirmed``: the caller (``orch setup``) already showed :func:`enablement.risk_text` in its review and has the
-    person's consent for exactly that text; the typed-prefix prompt is skipped. Nothing else changes."""
+    """``confirmed``: the caller (``orch setup``) already showed :data:`enablement.CARD_TEXT` (the runner flag of its
+    review; :func:`enablement.risk_text` embeds it) and has the person's consent for exactly that text; the typed-prefix
+    prompt is skipped. Nothing else changes."""
     from orch.host import cli as host_cli
     from orch.host import enable as svc
     from orch.host.custody import ensure_private_dir

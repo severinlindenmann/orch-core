@@ -700,7 +700,7 @@ def test_answers_are_one_chunk_epoch_0_signed_by_the_wsk(kit):
     assert hd.device.hex() == phone.device_id and hd.stream.hex() == h.offer_id
 
 
-# -- the one transition function (orch-07's structural fix: an edge table, compare-and-set, guards) ---------------------
+# -- the one transition function (orch-07's structural fix: an edge table, compare-and-set, guards) --------------------
 
 ALL = sorted(P.EDGES)
 

@@ -4424,6 +4424,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     shipped text. The pointer files are checked before anything is written; a `CLAUDE.md` linked to `AGENTS.md` is skipped.
     `AGENTS.orch.md` has headings and up to 40 lines; `INSTRUCTIONS_REV` is 2, so `orch status` says `run orch
     instructions sync`. No wire, hash, F1 or error-code change.
+72. **B9: `orch setup` (16 Oct 2026; "As built in B9" at the end of this document; the number may be renumbered when a parallel change lands first):** a
+    CLI-side command, not a host op: it serves the onboarding page over `<run>/setup.sock` (HTTP, 0600), generates the passphrase and the recovery code
+    itself, and signs in-process through the existing host ops. No new host op, frame or error code; one hosted-bootstrap helper is shared with `orch init --host`.
 
 ---
 
@@ -12797,3 +12800,38 @@ Limits are in §0.11 (rows marked v1.6) and errors in the v1.6 table of §0.6.
 
 Order: H11a → H11b ∥ H11d → H11c; H11e may start first; H11f any time. Everything is built behind the
 off-by-default machine switch. The dashboard stream builds §12.11 against a stub of these ops.
+
+
+### 12.14 As built in B9 (16 Oct 2026; `orch setup`, Task C: the core side)
+
+`orch setup` (`orch.setup`, dispatched in `cli/main.py` like `runner`) is the **setup process**: refused under `ORCH_GRANT`
+or `ORCH_SESSION` and without `/dev/tty`; it runs `host enable` once if no host answers (a dev checkout is refused there),
+sets `RLIMIT_CORE=0`, serves `<run>/setup.sock` and stays until the page is finished, cancelled or Ctrl-C.
+
+* **Wire** (`protocol.py`, `server.py`): HTTP/1.1 over the unix socket. Browser routes are `/api/setup/*` only (the dashboard
+  proxies them); `/launch`, `/claim`, `/shutdown` have no such prefix. The launch code is single use, 30 s, bound to the
+  `setup_id`; the first `/claim` wins and a second one is refused and printed. Every browser call checks `X-Setup-Token`,
+  the `Host` header (127.0.0.1 or localhost, the dashboard's port when `launch` named it) and, on a POST, `Origin == http://<Host>`
+  and a JSON content type. The session dies on done, cancel or 10 minutes idle, never during a run.
+* **Profile** (`flow.py`, `facts.py`): a closed schema; refused directories are `$HOME`, its ancestors, `/`, the state and config
+  directories, symbolic-link paths and directories holding store files; a registered directory is Finish setup. R5: method
+  `click` with `relay` is `click_relay_unsupported`.
+* **Secrets** (`steps.Secrets`): generated in core, bytearrays, wiped at the end; reveal once (410), three words confirmed in
+  core, five wrong tries end the session and the next one draws new secrets; the one-click path shows the recovery code only.
+* **Review** (`review.py`): the plan is built in core and rendered with B6 `signcontent`; the digest (R1) covers the canonical
+  profile, directory, every planned event (add-on manifest hashes included) and every row. Host-drawn values are "set at
+  signing". R2: typed word `GRANT` (any runner grant) or `AGENTS` (more than 8 hours); R3: the three-word fingerprint is
+  also asked on the setup terminal for Finish setup, a runner grant and execution add-ons.
+* **Create** (`steps.Creator`): terminal confirm (R3), then genesis through `workspace_init._hosted_bootstrap` (the B5 path,
+  shared with `init --host`), add-on manifests, runner flags, the runner hello wait (R4: no hello, no grant), then the batch.
+  `human.prepare` is **one operation per request**, so a dependent chain cannot be prepared in one bundle; the written
+  fallback is used: prepare every request, check each with `host.signer.check` and against the review (`check_prepared`,
+  R1: every event equals its reviewed rows except the coded volatile fields), and only then ONE
+  `PassphraseBackend.unlocked` for `settings.changed`, `addon.granted` x N and `grant.issued` last, each submitted in
+  order; the runner grant is handed over in-process with `host.signer.hand_over`. One-click: the convenience flag, then the
+  conversion last (R6: retried once; still failing shows the passphrase once on the setup terminal only; Ctrl-C undoes the
+  staged copy).
+* **Finish** (R7): the facts are read inside `store.locked()` and again at create; a step is done if any history exists.
+* **Pinned seams updated:** `PassphraseBackend.generated` (called only from `custody.select.setup_backend`),
+  `.unlocked(` also in `setup/steps.py`, `stage_convenience(passphrase=...)` also in `setup/steps.py`: the passphrase is the
+  one the setup process generated itself, never text from a browser, argument or file.

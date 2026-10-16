@@ -228,6 +228,23 @@ def test_the_sealer_is_built_only_by_push_sealing_and_refuses_a_bad_payload(kit)
                 sealer.seal_push(bad)
 
 
+def test_the_signer_signs_a_push_only_for_a_held_epoch_a_host_kind_and_a_padded_label(kit):
+    from orch.crypto import push as cpush
+    from orch.relay.sign import SignerRefused
+
+    good = cpush.push_payload("question", "qid", "hello", 5)
+    assert len(kit.signer.push(1, good)) == 64
+    for bad_epoch in (0, 2, 9):
+        with pytest.raises(SignerRefused):
+            kit.signer.push(bad_epoch, good)
+    with pytest.raises(SignerRefused):
+        kit.signer.push(1, {**good, "label": "hello"})  # not padded
+    with pytest.raises(SignerRefused):
+        kit.signer.push(1, {**good, "kind": "join"})  # never sent by the host (D2)
+    with pytest.raises(SignerRefused):
+        kit.signer.push(1, {"kind": "question", "id": "x"})
+
+
 # -- the send classes -------------------------------------------------------------------------------------------------
 
 

@@ -340,6 +340,7 @@ class PushThread:
         self._conn: Any = None
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._woken = False  # a commit since the last planning pass (wake() sets it; step() consumes it)
         self._thread: threading.Thread | None = None
         self._closed = False
         self._last_plan_ms = 0
@@ -376,6 +377,10 @@ class PushThread:
         self._close()
         return True
 
+    def close(self) -> None:
+        """Close the outbox (``join`` does it once the thread ended; a start that failed does it directly)."""
+        self._close()
+
     def _close(self) -> None:
         if not self._closed:
             self._closed = True
@@ -383,9 +388,11 @@ class PushThread:
 
     def wake(self) -> None:
         """The store committed an event: plan now, not at the next 30 s check."""
+        self._woken = True
         self._wake.set()
 
-    def status(self) -> dict[str, Any]:
+    def push_status(self) -> dict[str, Any]:
+        """For ``host.status.relay``: the push state and the intent counts. No label, id or key."""
         out: dict[str, Any] = {"state": self.state}
         try:
             out["intents"] = self.ob.counts()
@@ -427,8 +434,8 @@ class PushThread:
         now = self._now()
         if self._stop.is_set():
             return 1.0
-        if self._wake.is_set() or now - self._last_plan_ms >= PLAN_EVERY_S * 1000 or self._last_plan_ms == 0:
-            self._last_plan_ms = now
+        if self._woken or now - self._last_plan_ms >= PLAN_EVERY_S * 1000 or self._last_plan_ms == 0:
+            self._woken, self._last_plan_ms = False, now
             self._job(lambda: self.planner.run(self._now()))
         while self._job(lambda: seal_step(self, self._now())):
             pass

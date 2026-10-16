@@ -76,7 +76,8 @@ class Seams:
     * ``r6(service) -> (EpochKeySource, R6View)``: R6 (11A.15.2), the real key source and member view;
     * ``publisher(service, worker) -> Publisher``: R3 (11A.5), the publisher thread and ``publish_first``;
     * ``unpublished(service, worker) -> Unpublished``: R4 (11A.9), one step on the aux thread;
-    * ``link_source(service) -> LinkSource``: R6a and the genesis-pin person path (11A.5 steps 2 and 3).
+    * ``link_source(service) -> LinkSource``: R6a and the genesis-pin person path (11A.5 steps 2 and 3);
+    * ``push(service, worker, keys, signer, view)``: H13a, the push thread (a worker companion, optional).
 
     The transport is not a seam here: production always uses :class:`orch.relay.http.RelayConn` with ``link.json``'s
     ``ca_file`` and ``proxy``; only a test passes ``transport=`` to :func:`make_starter` (an AST rule refuses it in
@@ -86,6 +87,9 @@ class Seams:
     publisher: Callable[[WorkspaceService, RelayWorker], Publisher] | None = None
     unpublished: Callable[[WorkspaceService, RelayWorker], Unpublished] | None = None
     link_source: Callable[[WorkspaceService], LinkSource] | None = None
+    #: H13a (11A.16.4): ``push(service, worker, keys, signer, view) -> companion`` (the push thread). Unset, no push
+    #: thread runs (the refusing default): not part of :meth:`missing`, a worker is complete without it
+    push: Callable[..., Any] | None = None
 
     def missing(self) -> list[str]:
         return [n for n in ("r6", "publisher", "unpublished", "link_source") if getattr(self, n) is None]
@@ -98,12 +102,13 @@ SEAMS = Seams()
 def install_seams() -> Seams:
     """Land the production seams at host start (B1; ``Host.serve`` calls it before the first starter is built):
     ``r6`` = :func:`relayr6.r6`, ``link_source`` = :func:`relayr6.link_source`, ``publisher`` =
-    :func:`relayr3.publisher`, ``unpublished`` = :func:`relayr4.unpublished`. A seam already set (a test's) is
+    :func:`relayr3.publisher`, ``unpublished`` = :func:`relayr4.unpublished`, ``push`` =
+    :func:`relaypush.push` (H13a). A seam already set (a test's) is
     kept, and calling it again changes nothing. The R6 gate (``relay_worker.R6_READY``) is a separate switch: with it
     closed no worker starts whatever the seams are. Also sets the R6b membership seam,
     :data:`orch.host.relaypair.MEMBERSHIP`, when it is unset."""
     global SEAMS
-    from . import relayr3, relayr4, relayr6
+    from . import relaypush, relayr3, relayr4, relayr6
 
     SEAMS = dataclasses.replace(
         SEAMS,
@@ -111,6 +116,7 @@ def install_seams() -> Seams:
         publisher=SEAMS.publisher or relayr3.publisher,
         unpublished=SEAMS.unpublished or relayr4.unpublished,
         link_source=SEAMS.link_source or relayr6.link_source,
+        push=SEAMS.push or relaypush.push,
     )
     from . import relaypair, relayr6b
 
@@ -278,6 +284,7 @@ def start_worker(
     state: Any = None
     rids: Any = None
     worker: Any = None
+    pusher: Any = None
     try:
         state = StateDir(relay_state_path(service))
         link = _link_record(state, ws)
@@ -336,6 +343,9 @@ def start_worker(
         worker.publisher = _conform(seams.publisher(service, worker), relay_worker.Publisher, "publisher")
         worker.unpublished = _conform(seams.unpublished(service, worker), relay_worker.Unpublished, "unpublished")
         rids = RidStore(state)
+        if seams.push is not None:  # H13a: the push thread, a companion started after the loop and the publisher
+            pusher = seams.push(service, worker, bkeys, signer, view)
+            worker.companions.append(pusher)
 
         def no_post(device: str, rid: str, envelope: bytes) -> str:
             raise RuntimeError("the loop installs the poster")  # replaced in the poll thread before any POST
@@ -354,6 +364,8 @@ def start_worker(
     except BaseException:
         if worker is not None and service.relay is worker:
             service.relay = None
+        if pusher is not None:
+            pusher.close()
         if rids is not None:
             rids.close()
         if state is not None:
@@ -682,6 +694,10 @@ def _status(service: WorkspaceService) -> dict[str, Any] | None:
         out["alarms"] = list(st.get("alarms") or [])
         if st.get("gen") is not None:
             out["gen"] = st["gen"]
+        for companion in getattr(worker, "companions", ()):  # H13a: the push thread's state and intent counts
+            push_status = getattr(companion, "push_status", None)
+            if callable(push_status):
+                out["push"] = push_status()
         return _with_held(service, out)
     if stuck:
         out.update(worker="stuck", alive=True, reason="relay_thread_stuck")

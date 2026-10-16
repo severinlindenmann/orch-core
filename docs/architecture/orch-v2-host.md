@@ -4314,6 +4314,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     screen once the phone connects. Six host codes (§0.6): `primary.invite_file`, `primary.invite_unusable`,
     `primary.account_exists`, `primary.account_failed`, `primary.relay_mismatch`, `primary.not_registered`. No wire,
     hash or F1 change.
+68. **B4-H: the host end of push (16 Oct 2026; §11A.16.4a "As built in B4"):** `Store.events_after`, `head_at`,
+    `seq_before`, `log_marks` and `auth_gen`; `RelaySigner.push`; `BridgeKeys.push_sealing`; `orch.relay.audience`
+    (the push form of the one audience function), `orch.relay.outbound` (`outbound.sqlite`), `orch.relay.push` (planner
+    over a durable cursor with the start fence and abandoned-branch invalidation, seal and dispatch steps, the push thread
+    `orch-relay-push-<id8>` as a worker companion with the 404, 409 `stale_epoch`, 409 `fenced` classes and the host
+    budgets) and the `push` relay-hook seam (`host/relaypush.py`). `host.status.relay` gains a `push` block (additive).
+    Kinds `question` and `question.closed`. No wire, hash, F1 or error-code change.
 
 ---
 
@@ -10329,6 +10336,55 @@ the reason `deadline`.
 - The planner, sealing and the dispatch steps run as worker jobs. The push thread `orch-relay-push-<id8>` and the Drop
   thread `orch-relay-drop-<id8>` never take the store lock.
 - Two more relay connections per workspace: 8 per workspace, 64 at the 8-workspace cap (11A.7).
+
+#### 11A.16.4a As built in B4 (16 Oct 2026; H13a, the host end of push)
+
+Built in orch-core (branch `feat/b4-host-push`); the relay side is B4-R. Kinds `question` and `question.closed` only;
+`drop.new` waits for H13b.
+
+- **Files.** `orch/relay/audience.py` (the push form of D4: `devices_for(state, members, PushContext(ticket, narrow,
+  exclude), standing=...)`; the Drop form is H13b's and refused here; `standing` is `device_standing_ok`, handed in by
+  the host because `orch.relay` may not import the store module), `orch/relay/outbound.py` (`outbound.sqlite`: `meta`,
+  `push_cursor`, `push_intent`, `push_ts`; R2's checked open; every transition one transaction), `orch/relay/push.py`
+  (planner, seal step, dispatch step, `PushThread`), `orch/host/relaypush.py` (the `push` seam factory),
+  `BridgeKeys.push_sealing(signer)` yielding the private `_PushSealer` (token-built; `seal_push` takes the unpadded
+  payload, pads to 80 code points, calls `RelaySigner.push(epoch, payload)` and seals under `K_push` of the snapshot's
+  epoch), and `Store.events_after|head_at|seq_before|log_marks|auth_gen`.
+- **Planner.** A worker job (`Planner.run`). Per ticket log: a cursor `(seq, head)` moved in the same transaction as the
+  intents; an unseen log starts at the fence (`Store.seq_before(log, start_ms // 1000)`), and a log whose mtime is older
+  than the fence by more than 60 s is skipped without being loaded; a log is read again only when its `(size, mtime)`
+  mark moved or a commit woke the thread. A cursor whose head no longer stands in the log (a restore) invalidates every
+  unsent intent whose `(seq, event_hash)` is gone (`invalidated`, reason `abandoned`) and restarts at the fence; a key
+  already planned is found by `INSERT OR IGNORE`. A `question.asked` whose question is answered, superseded by a re-ask
+  or unknown at plan time gets no intent. The addressees are `QuestionView.addressees` at plan time, minus the asking
+  or answering device; the label of `question.closed` is always `Answered` (the device label is sealed and not
+  reachable without a key).
+- **Merge.** A newer planned intent of an id replaces the older one (`merged`, `newer_for_id`); a `question.closed`
+  planned while the same id's `question` is still `planned` merges BOTH (`answered_before_seal`): nothing is shown.
+- **Seal and send.** Exactly as 11A.16.4. The seal job takes 32 intents, runs deadline and audience, and persists the
+  outers inside one `push_sealing` span. The dispatch step runs before every attempt (deadline, audience, the host
+  budgets, `auth_gen` recorded). Budgets: 6 pushes per 10 minutes per device (counted from `sent_ms` rows, so they survive
+  a restart) and one send per id per 60 s (a later intent waits, it is not dropped). Targets above 1,024 are sent in
+  chunks of 1,024 in one attempt. Backoff 1, 2, 4 ... 60 s, `Retry-After` a floor. 401 after the session's own
+  re-login, transport errors, 5xx and `RelayMisbehaving` retry the persisted bytes; other 4xx fail the intent
+  (`push_refused`). 404 sets `push.state = off_at_relay`, drops every open intent and probes at most hourly (an intent
+  inside the hour is dropped with that reason). A 409 `stale_epoch` reseals (at most 3 times, then `push_epoch_loop`); a
+  409 `fenced` raises through `Session.call` and ends the worker.
+- **`auth_gen`.** `Store.auth_gen` is raised in the `_state` setter on every state change (conservative: it is not
+  limited to authorization events); an AST test pins that it is assigned nowhere else. The audience is recomputed at
+  every seal and send regardless, so the counter is recorded evidence, not the trigger.
+- **Wiring.** `Seams.push` (optional, not part of `missing()`), set by `install_seams`; `start_worker` builds it after the
+  RID store and appends it to `worker.companions`, so it starts after the loop and the publisher (only after the first
+  link reached `linked` and the gate is open), stops and joins with them (`join` closes the outbox), and is woken by the
+  chained `Store.on_commit` like every companion. `host.status.relay.push` is `{state: on|off_at_relay, intents: {state:
+  count}}`.
+- **Restore.** The outbox records the state directory's `instance.json` id. A different id clears the tables and starts a
+  new fence at now (alarm `push_outbox_restarted`); the spec renames the files aside, this clears them (follow-up).
+- **Not built (follow-ups).** Drop's `drop.new`, `drop_obj|drop_up|drop_retire|drop_rewrap|drop_reserve` tables and
+  the Drop form of the audience; rename-aside of a lost outbox; `host.status` push counters beyond intent counts; the
+  `drop-auth.sqlite` journal.
+- No wire, hash or F1 change; no new error code (the alarms `push_epoch_loop`, `push_malformed`, `push_refused`,
+  `push_seal_failed`, `push_outbox_restarted`, `relay_push_stopped` are worker alarms, not wire codes).
 
 #### 11A.16.5 H13b: Drop
 

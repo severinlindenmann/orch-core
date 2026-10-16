@@ -1,0 +1,1 @@
+err relay.pair_open a relay pairing is already in progress · retry:false · next: one pairing at a time: cancel the live offer or wait for it and its cert request to end · fix: orch host relay pair list

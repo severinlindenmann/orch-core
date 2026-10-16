@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "error": {
+    "code": "relay.no_primary",
+    "message": "no verified primary for relay pairing",
+    "hint": "set the primary (the device that signs phone certificates) first",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "relay",
+        "primary",
+        "set"
+      ]
+    },
+    "retryable": false
+  }
+}

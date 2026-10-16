@@ -101,9 +101,16 @@ REAL_SERVICE_FILES = (
 )
 
 
+#: the release pointer is flipped by any other session's release install on this shared machine; this run cannot
+#: change it (``install_release`` refuses a real-home target via ``refuse_real_home``), so it is not compared
+SHARED_POINTERS = {(".local", "share", "orch", "releases", "current")}
+
+
 def _service_snapshot() -> dict[str, object]:
     out: dict[str, object] = {}
     for parts in REAL_SERVICE_FILES:
+        if parts in SHARED_POINTERS:
+            continue
         path = os.path.join(real_home(), *parts)
         try:
             st = os.lstat(path)

@@ -11,10 +11,13 @@ import pytest
 
 from orch.store import StoreError
 from orch.store.rootfs import RootFS
+from tests._fds import open_fds_on, tree_identities
 
 
-def _fds() -> int:
-    return len(os.listdir("/dev/fd"))
+def _fds(root: Path) -> int:
+    """The open descriptors that name a file or directory of this test's own tree (its ``tmp_path``), never the
+    process's whole table: other threads, xdist and late finalizers open and close fds of their own meanwhile."""
+    return open_fds_on(tree_identities(root.parent))
 
 
 @pytest.fixture
@@ -138,7 +141,7 @@ def test_fds_stay_bounded(ws):
     fs, root, _ = ws
     for name in CACHED:
         fs.mkdir(name)  # every cacheable top-level fd is open from here on: at most len(CACHED) of them
-    before = _fds()
+    before = _fds(root)
     for i in range(200):
         fs.write_atomic(f"tickets/T/f{i % 5}.txt", b"x")
         fs.read_or_none(f"tickets/T/f{i % 5}.txt")
@@ -146,9 +149,9 @@ def test_fds_stay_bounded(ws):
         fs.lexists("tickets/T/missing/deeper")
         with pytest.raises(StoreError):
             fs.read_or_none("../x")
-    assert _fds() == before
+    assert _fds(root) == before
     fs.close()
-    assert _fds() == before - 1 - len(CACHED)
+    assert _fds(root) == before - 1 - len(CACHED)
 
 
 # -- the automated scan's two classes: path traversal and resource bounds
@@ -219,11 +222,11 @@ def test_paths_and_trees_are_bounded_in_depth(ws):
     for _ in range(MAX_RM_DEPTH + 3):
         p = p / "d"
     p.mkdir(parents=True)
-    before = _fds()
+    before = _fds(root)
     with pytest.raises(OSError):
         fs.rmtree("deep")
     fs.rmtree("deep", ignore_errors=True)
-    assert _fds() == before
+    assert _fds(root) == before
     assert deep.exists()  # not removed, and no fd or stack spent on it beyond the cap
 
 
@@ -244,7 +247,7 @@ def test_no_fd_leaks_on_failure_paths(ws, tmp_path):
     (root / "tickets" / "T" / "file").write_bytes(b"x")
     os.mkfifo(root / "tickets" / "T" / "fifo")
     fs.listdir("tickets")  # the cached top-level fd is open before counting
-    before = _fds()
+    before = _fds(root)
     for _ in range(50):
         for call in (
             lambda: fs.read_or_none("tickets/T/sub/x"),
@@ -258,7 +261,7 @@ def test_no_fd_leaks_on_failure_paths(ws, tmp_path):
             with contextlib.suppress(OSError, StoreError):
                 call()
         assert fs.read_or_none("tickets/T/fifo") is None  # a FIFO never blocks a read
-    assert _fds() == before
+    assert _fds(root) == before
 
 
 def test_a_cached_top_level_fd_is_dropped_when_its_name_changes(ws, tmp_path):

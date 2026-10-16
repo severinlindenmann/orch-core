@@ -32,6 +32,13 @@ def _same_person(owner) -> Person:
 
 
 @pytest.fixture
+def closed_gate(monkeypatch):
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # these tests are about the closed gate
+
+
+@pytest.fixture
 def linked(served, monkeypatch):
     svc = served.service
     lp = link_path(served.lab.state, served.wid)
@@ -73,7 +80,7 @@ def _certified(served, engine, owner):
     return h, phone, cert
 
 
-def test_register_is_dormant_without_the_gate_or_a_pairing(served):
+def test_register_is_dormant_without_the_gate_or_a_pairing(closed_gate, served):
     relaypair.register(served.service)
     assert getattr(served.service, "pair_device", None) is None
     assert not relayr6.membership_path(served.service).exists()  # never creates membership/

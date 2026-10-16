@@ -275,7 +275,10 @@ def test_previously_linked_reads_link_card_and_fails_closed(tmp_path):
     assert relayr6._previously_linked(svc) is True  # noqa: SLF001
 
 
-def test_r6_rebinds_after_the_store_is_replaced(lab):
+def test_r6_rebinds_after_the_store_is_replaced(lab, monkeypatch):
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # the closed gate is what this test is about
     import types
 
     """X5 (R3): the key store follows the live service.store; a replaced store (reopen) gates until r6 runs again."""

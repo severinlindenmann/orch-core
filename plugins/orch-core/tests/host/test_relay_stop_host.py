@@ -45,6 +45,9 @@ class Worker:
 
 
 def test_relay_stop_stops_the_live_worker_and_persists_the_stop(lab, monkeypatch):
+    from orch.relay import worker as _w6
+
+    monkeypatch.setattr(_w6, "R6_READY", False)  # the closed gate is what this test is about
     with lab.host() as h, h.client() as c:
         wid = ok(lab.register(c))["data"]["workspace_id"]
         service = h.host.services[wid]

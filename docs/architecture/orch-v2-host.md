@@ -4292,9 +4292,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     accepted `PUT card`, and R6b is built: `orch.relay.r6.membership.MembershipPublisher` (the real `MembershipQueue`
     and the `orch-relay-r6m-<id8>` thread, a `RelayWorker` companion), the real `R6View`
     (`orch.relay.r6.view.CommittedView`), `PUT membership` and the H7 `GET members` check. The R6 gate stays closed
-    (`R6_READY` is its own PR). B1 also builds the genesis-pin person path (`relay.genesis_pin`, `sig_genesis_pin` in
+    in B1 (`R6_READY` is its own PR, changelog 66). B1 also builds the genesis-pin person path (`relay.genesis_pin`, `sig_genesis_pin` in
     `DEVICE_KEY_LABELS`) and the entry points `host.relay_link`, `host.relay_status`, `host.relay_genesis_pin_facts|submit`
     with `orch host relay link|genesis-pin`. No wire, hash, F1 or error-code change.
+66. **R6 gate flip (16 Oct 2026; §11A.4 "The R6 gate", "Flipped"):** `orch.relay.worker.R6_READY = True`, after B1 (#608), the
+    R5 T2 test `test_r5_pairing_real_relay` and the Opus review rounds 1-2 (checklist items 1-5). A linked workspace's relay
+    worker now starts; `whoami.relay.r6_ready` and `host.status.relay.gate.r6_ready` read `true`, `gate.reason` is null.
+    No wire, hash, F1 or error-code change.
 
 ---
 
@@ -5786,9 +5790,9 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
   mutation pass found the fork test hanging in 2 of 35 runs on exactly that; fixed and tested by forking while a
   thread holds the lock). Exec: the `StateDir` lock fd is close-on-exec (R1) and Python sockets are not inheritable.
 
-**The R6 gate.** `orch.relay.worker.R6_READY = False`, checked by `relaylink.start_blocker` (so `may_start` is false and
+**The R6 gate.** `orch.relay.worker.R6_READY = True` (flipped 16 Oct 2026; see "Flipped" below), checked by `relaylink.start_blocker` (so `may_start` is false and
 `host.status.relay` names `R6_GATE_REASON`), by `relayhook.start_worker` and by `RelayWorker.start` before any thread.
-An AST test pins it as the one module-level literal `False` that nothing under `orch/` assigns or names (honest limit:
+An AST test pins it as the one module-level literal `True` that nothing under `orch/` assigns or names (honest limit:
 same-process code can still set the attribute; tests open it with `monkeypatch`). **Flipping it requires**, in this
 order: (1) R6 merged: the real `EpochKeySource` (`seal_snapshot`, `refusal_key`, the seal lock and `R6Gate.raise_for`
 in the store's critical sections), the real `R6View` (the committed list re-verified at load) and `R6Pairing` for
@@ -5799,6 +5803,12 @@ including an R5 T2 test: a served workspace linked through the hook with the tes
 (`tests/relay/owner.py`, 11A.15.11, 11A.15.14 step 4), a paired device, a column-R read and a write through the
 worker; (4) the Opus security review and orch-52's review of R5 and of the R6 groups; (5) the flip is its own PR that
 changes only the literal and the pinning test.
+
+**Flipped (16 Oct 2026; PR: R6 gate flip, `feat/r6-gate-flip`).** Checklist items 1-5 are satisfied: (1)-(2) R6 merged and
+the four seams installed at host start by B1 (#608); (3) the R5 T2 test `tests/relay/t2/test_r5_pairing_real_relay.py`
+passes against the real relay; (4) the Opus review rounds 1-2 signed off; (5) this change is its own PR: the literal,
+the pinning test, and the tests that assumed a closed gate, which now close it with `monkeypatch` to keep testing the
+closed-gate behaviour.
 
 **The seams** (set on `orch.host.relayhook.SEAMS`; each `None` until its group lands):
 

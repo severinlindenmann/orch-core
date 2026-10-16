@@ -136,14 +136,15 @@ def request(
         ):
             raise inconsistent()
         first = events[0]
-        from orch.host import signcontent
+        from orch.host import signcontent, signer
 
-        try:  # B6: the plain view, derived from this very material and these events; unknown shapes get none
-            content = signcontent.clean_tree(
-                signcontent.build({"op": prepared["op"], "material": material, "events": events})
-            )
-        except (KeyError, TypeError, ValueError, AttributeError):
-            content = None
+        try:  # B6: the plain view, derived from this very material and these events, only after the signer's own
+            # material checks (gate, policy, question and section hashes, every `before` against base_rev) hold on them
+            checked = {"op": prepared["op"], "log": prepared["log"], "workspace_id": ws, **prepared}
+            signer.verify_material(checked, workspace_id=ws)
+            content = signcontent.clean_tree(signcontent.build(checked, verified=True))
+        except (signer.SignerRefused, KeyError, TypeError, ValueError, AttributeError):
+            content = None  # the UI falls back to the host's material preview, as before
         return {
             "id": info["id"],
             "code": info["code"],

@@ -217,36 +217,57 @@ def clean_tree(value: Any) -> Any:
     return value
 
 
-def headline(prepared: Mapping[str, Any]) -> str:
-    return build(prepared)["headline"]
+def headline(prepared: Mapping[str, Any], *, verified: bool) -> str:
+    return build(prepared, verified=verified)["headline"]
 
 
-def build(prepared: Mapping[str, Any]) -> dict[str, Any]:
+def build(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
     """The ``SignContent`` of a prepared request (see the module doc). Raises :class:`PlainUnavailable` for anything
-    it does not know how to show."""
+    it does not know how to show.
+
+    ``verified`` says whether the caller ran the signer's material checks (:func:`orch.host.signer.check` or
+    :func:`orch.host.signer.verify_material`: the gate, policy, question and section hashes, every ``before`` against
+    the event's ``base_rev``) on exactly this request. Without them nothing the host sent is vouched for: every
+    ``before`` is labelled "per host, not checked" and the gate's policy row is left out."""
     material, events = prepared["material"], list(prepared["events"])
     if not events:
         raise PlainUnavailable("a request without events")
     ticket = _ticket(material, events)
     out: dict[str, Any] = {"headline": ""}
+    ctx = _Ctx(verified)
     if ticket is not None:
         out["ticket"] = ticket
     kind = material.get("kind")
     if kind == "gate":
-        _gate(material, events, ticket, out)
+        _gate(material, events, ticket, out, ctx)
     elif kind == "question":
         _question(material, events, ticket, out)
     elif kind == "payload":
-        _payload(material, events, ticket, out)
+        _payload(material, events, ticket, out, ctx)
     else:
         raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
     return {k: v for k, v in out.items() if v not in (None, [], "")}
 
 
+class _Ctx:
+    """What the caller vouched for (``verified``) and the label of a ``before`` nothing signed binds."""
+
+    def __init__(self, verified: bool) -> None:
+        self.verified = verified
+
+    def note(self, bound: bool) -> str | None:
+        """The ``before_note`` of a ``before``: ``bound`` is "the event's ``base_rev`` binds it"."""
+        if not self.verified:
+            return "per host, not checked"
+        return None if bound else "per host, not signed"
+
+
 # --- gate decisions -------------------------------------------------------------------------------------------------
 
 
-def _gate(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
+def _gate(
+    material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any], ctx: _Ctx
+) -> None:
     if len(events) != 1:
         raise PlainUnavailable("a gate request holds one decision")
     ev = events[0]
@@ -302,7 +323,8 @@ def _gate(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: 
     policy = material.get("policy")
     if not isinstance(policy, Mapping):
         raise PlainUnavailable("a gate request without its policy")
-    _row(out, "rule for this gate", policy_words(policy))
+    if ctx.verified:  # the policy is shown only when the signer recomputed its hash from it
+        _row(out, "rule for this gate", policy_words(policy))
 
 
 def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
@@ -311,9 +333,9 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     ev = events[0]
     _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
     q = material.get("question") or {}
-    _check_keys("question keys", q, frozenset({"id", "text", "options"}))
+    _check_keys("question keys", q, frozenset({"id", "text", "options", "to", "blocking"}))
     for o in q.get("options") or []:
-        _check_keys("question option keys", o, frozenset({"key", "label"}))
+        _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
     opts = {_s(o.get("key")): _s(o.get("label")) for o in q.get("options") or []}
     picked = ev.get("option")
     answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
@@ -323,12 +345,24 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
         out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
+    for o in q.get("options") or []:
+        _row(
+            out,
+            f"option {_s(o.get('key'))}",
+            _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
+        )
+    # who it is addressed to and whether it blocks are the host's word: the question hash binds neither
+    for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket")):
+        if k in q:
+            _row(out, label, f"{_s(q[k])} (per host, not signed)")
 
 
 # --- everything else ------------------------------------------------------------------------------------------------
 
 
-def _payload(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
+def _payload(
+    material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any], ctx: _Ctx
+) -> None:
     before = material.get("before") or {}
     texts = material.get("texts") or {}
     ref = _ref(ticket)
@@ -338,7 +372,7 @@ def _payload(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticke
         if typ not in SHOWN:
             raise PlainUnavailable(f"the plain view does not know the event type {typ}")
         _check_keys(typ, ev, SHOWN[typ], TECHNICAL_KEYS)
-        heads.append(_event(typ, ev, ref, out, before, texts))
+        heads.append(_event(typ, ev, ref, out, before, texts, ctx))
     uniq = list(dict.fromkeys(heads))
     if len(uniq) == 1:
         out["headline"] = uniq[0]
@@ -349,7 +383,13 @@ def _payload(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticke
 
 
 def _event(
-    typ: str, ev: Mapping[str, Any], ref: str, out: dict[str, Any], before: Mapping[str, Any], texts: Mapping[str, str]
+    typ: str,
+    ev: Mapping[str, Any],
+    ref: str,
+    out: dict[str, Any],
+    before: Mapping[str, Any],
+    texts: Mapping[str, str],
+    ctx: _Ctx,
 ) -> str:
     """The headline of one event; everything it shows is added to ``out``."""
     if typ == "ticket.created":
@@ -359,7 +399,7 @@ def _event(
         _row(out, "owner", ev.get("owner"))
         return f"Create ticket {_s(ev.get('key'))} · {title}"
     if typ == "ticket.updated":
-        return _updated(ev, ref, out, before, texts)
+        return _updated(ev, ref, out, before, texts, ctx)
     if typ == "log.added":
         out.setdefault("sections", []).append({"id": "note", "title": "Note", "text": _s(ev.get("text"))})
         return f"Add a note to {ref}"
@@ -395,7 +435,7 @@ def _event(
         return f"Take back the agent access {_s(ev.get('grant'))}"
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
-            _row(out, key, value, before.get(key), "per host, not signed")
+            _row(out, key, value, before.get(key), ctx.note(False))
         return "Change the workspace settings"
     if typ == "policy.changed":
         for gate, p in sorted((ev.get("gates") or {}).items()):
@@ -454,7 +494,12 @@ def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:
 
 
 def _updated(
-    ev: Mapping[str, Any], ref: str, out: dict[str, Any], before: Mapping[str, Any], texts: Mapping[str, str]
+    ev: Mapping[str, Any],
+    ref: str,
+    out: dict[str, Any],
+    before: Mapping[str, Any],
+    texts: Mapping[str, str],
+    ctx: _Ctx,
 ) -> str:
     names: list[str] = []
     checked = set(ev.get("base_rev") or {})
@@ -475,7 +520,7 @@ def _updated(
             names.append("plan")
         else:
             # `before` is shown as checked only when the event's base_rev binds it; otherwise it is the host's word
-            _row(out, field, value, before.get(path), None if path in checked else "per host, not signed")
+            _row(out, field, value, before.get(path), ctx.note(path in checked))
             names.append(field)
     return f"Change the {', '.join(names)} of {ref}" if names else f"Change {ref}"
 

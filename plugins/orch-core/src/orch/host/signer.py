@@ -115,6 +115,23 @@ def check(
         _refuse("the fingerprint does not match")
 
 
+def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
+    """The part of :func:`check` that needs no person and no device (a reader that only shows a request, like the
+    dashboard server): the shape, the hashes the material binds (gate, policy, question, sections), every ``before``
+    against the event's ``base_rev``, every review recomputed from the events and the material. Raises
+    :class:`SignerRefused`. It vouches for the material; it is not a substitute for :func:`check` before a signature."""
+    try:
+        person = prepared["events"][0]["actor"]["id"]  # whose request it is; the signer's own check compares it
+    except (KeyError, IndexError, TypeError):
+        _refuse("the request carries no events")
+    _shape(prepared, workspace_id=workspace_id, person=person, device=None, auth=None)
+    _formats(prepared)
+    _hashes(prepared, workspace_id)
+    check_reviews(prepared["material"], prepared["events"])
+    if prepared.get("review_digest") != review.review_digest(prepared["material"]):
+        _refuse("review_digest does not match the material")
+
+
 def _formats(prepared: Mapping[str, Any]) -> None:
     """Every identifier the review shows or the person types is checked against its F1 format before anything is
     rendered: a host string can never carry a terminal control sequence into the header or the confirmation word."""
@@ -174,7 +191,7 @@ _SET_FIELDS = frozenset(
 #: what the host person ops (H6b, §0.8) may change
 _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
-_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "repos"})
+_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos"})
 
 
 def _person_op(prepared: Mapping[str, Any]) -> None:
@@ -647,7 +664,9 @@ def plain(
     known = workspace(prepared["workspace_id"])
     try:
         lines = signcontent.text(
-            signcontent.build(prepared), _clean, workspace=f"{known[0]} ({known[1]})" if known is not None else None
+            signcontent.build(prepared, verified=True),
+            _clean,
+            workspace=f"{known[0]} ({known[1]})" if known is not None else None,
         )
     except (KeyError, TypeError, ValueError, AttributeError):  # a shape the plain view does not know: the full review
         return Review(prefix + full)

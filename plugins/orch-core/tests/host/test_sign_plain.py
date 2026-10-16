@@ -4,6 +4,7 @@ page, the prompt; the full dump behind ``d`` / ``--details``. Same signed materi
 
 from __future__ import annotations
 
+import json
 import os
 import pty
 import threading
@@ -19,6 +20,11 @@ from tests.host.test_human import ready
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 WS = lambda w: ("Acme", "DEMO")  # noqa: E731
+
+
+def build(prepared, verified=True):
+    return signcontent.build(prepared, verified=verified)
+
 
 APPROVE = """\
 Approve the requirements of DEMO-0001
@@ -76,7 +82,7 @@ def test_the_content_comes_from_the_signed_events_and_material_only(human, serve
     _, key = human.ticket("Owner CLI test")
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
-    c = signcontent.build(p)
+    c = build(p)
     assert c["headline"] == "Approve the requirements of DEMO-0001"
     assert c["ticket"] == {"key": "DEMO-0001", "title": ""}  # a gate does not bind the title
     assert c["acceptance"] == [{"id": "AC1", "text": "it works", "checked": False}]
@@ -90,7 +96,7 @@ def test_the_content_comes_from_the_signed_events_and_material_only(human, serve
 def test_changed_fields_show_before_and_after_and_tasks_are_numbered(human, served):
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("set", {"ref": key, "pairs": ["priority=high"]})
-    c = signcontent.build(p)
+    c = build(p)
     assert c["fields_changed"] == [{"field": "priority", "before": "medium", "after": "high"}]
     assert c["headline"] == "Change the priority of DEMO-0001"
     plan = {  # the plan gate binds the tasks with their verify commands
@@ -111,7 +117,7 @@ def test_changed_fields_show_before_and_after_and_tasks_are_numbered(human, serv
             },
         },
     }
-    c = signcontent.build(plan)
+    c = build(plan)
     assert c["headline"] == "Approve the plan of DEMO-0001"
     assert c["tasks"] == [
         {"n": 1, "title": "write it (proves AC1)", "verify": ["pytest -q"]},
@@ -128,7 +134,7 @@ def test_a_control_character_never_reaches_the_plain_view(human, served):
     text = str(signer.plain(p, WS))
     assert "  line one\n  line two\n" in text
     esc = {**p, "events": [{**p["events"][0], "text": "x\x1b[2Jy"}]}
-    assert "\x1b" not in str(signcontent.text(signcontent.build(esc), signer._clean))
+    assert "\x1b" not in str(signcontent.text(build(esc), signer._clean))
 
 
 def test_the_view_of_a_click_carries_the_headline_and_the_content_next_to_the_unchanged_lines(human, served):
@@ -218,8 +224,6 @@ def test_a_review_without_details_keeps_the_old_prompt(monkeypatch):
 
 
 # --- the invariant: nothing that carries authority or identity is left out of the plain view -----------------------------
-
-import json  # noqa: E402
 
 from orch.host import review  # noqa: E402
 from orch.identity import GrantToken  # noqa: E402,F401
@@ -314,7 +318,7 @@ def flat(value) -> str:
 @pytest.mark.parametrize("typ", signable_types())
 def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
     event = sample(typ)
-    content = signcontent.build({"op": "x", "events": [event], "material": material_for(typ, event)})
+    content = build({"op": "x", "events": [event], "material": material_for(typ, event)})
     text = flat(content) + "\n".join(signcontent.text(content, signer._clean))
     for key in signcontent.SHOWN[typ]:
         value = event[key]
@@ -350,11 +354,11 @@ def test_a_key_the_plain_view_does_not_know_falls_back_to_the_full_review(human,
     event = {**p["events"][0], "future_field": {"x": 1}}
     future = {**p, "events": [event], "material": {**p["material"], "review": [review.of(event, p["material"])]}}
     with pytest.raises(signcontent.PlainUnavailable):
-        signcontent.build(future)
+        build(future)
     plain = signer.plain(future, WS)  # nothing is hidden: the whole review is the only view
     assert "future_field" in str(plain) and "fingerprint: " in str(plain) and not plain.details
     with pytest.raises(signcontent.PlainUnavailable):
-        signcontent.build({**p, "events": [{**p["events"][0], "type": "nonsense.event"}]})
+        build({**p, "events": [{**p["events"][0], "type": "nonsense.event"}]})
 
 
 def test_a_gate_input_key_the_plain_view_does_not_know_falls_back(human, served):
@@ -366,38 +370,89 @@ def test_a_gate_input_key_the_plain_view_does_not_know_falls_back(human, served)
         target = bad["material"]["input"] if where == "input" else bad["material"]["input"]["fields"]
         target["future_gate_key"] = 1
         with pytest.raises(signcontent.PlainUnavailable):
-            signcontent.build(bad)
+            build(bad)
 
 
 def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, served):
     g = sample("grant.issued")
-    c = signcontent.build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
+    c = build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["scope"] == "workable" and rows["verbs"] == "agent" and rows["until"] == "2026-10-16T17:00:00Z"
     assert "scope workable, verbs agent" in c["headline"]
     m = sample("member.added")
-    c = signcontent.build({"op": "member.add", "events": [m], "material": material_for("member.added", m)})
+    c = build({"op": "member.add", "events": [m], "material": material_for("member.added", m)})
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["person"] == m["person"] and rows["role"] == "maintainer" and len(rows["key fingerprint"]) == 12
     assert rows["device certificate device id"] == "e" * 32 and "look, decide" in rows["device certificate scopes max"]
     _, key = human.ticket("Owner CLI test")
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
-    rows = {r["field"]: r["after"] for r in signcontent.build(p)["fields_changed"]}
+    rows = {r["field"]: r["after"] for r in build(p)["fields_changed"]}
     assert "approval" in rows["rule for this gate"] and "owner" in rows["rule for this gate"]
 
 
 def test_a_before_the_host_alone_vouches_for_is_labelled(human, served):
     s = human.prepare("set", {"ref": human.ticket("T")[1], "pairs": ["priority=high"]})
-    (row,) = signcontent.build(s)["fields_changed"]
+    (row,) = build(s)["fields_changed"]
     assert row["before"] == "medium" and "before_note" not in row  # bound by the event's base_rev
     event = sample("settings.changed")
-    c = signcontent.build(
-        {"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)}
-    )
+    c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
     (row,) = c["fields_changed"]
     assert row["before"] == "8" and row["before_note"] == "per host, not signed"
     assert "(per host, not signed)" in "\n".join(signcontent.text(c, signer._clean))
     created = sample("ticket.created")
-    c = signcontent.build({"op": "new", "events": [created], "material": material_for("ticket.created", created)})
+    c = build({"op": "new", "events": [created], "material": material_for("ticket.created", created)})
     assert {"field": "owner", "before": None, "after": created["owner"]} in c["fields_changed"]
+
+
+# --- verified: what the caller vouched for ------------------------------------------------------------------------------
+
+
+def test_an_unverified_build_labels_every_before_and_leaves_out_the_policy(human, served):
+    _, key = human.ticket("Owner CLI test")
+    ready(human, key)
+    s = human.prepare("set", {"ref": key, "pairs": ["priority=high"]})
+    (row,) = build(s, verified=True)["fields_changed"]
+    assert row["before"] == "medium" and "before_note" not in row  # bound by the event's base_rev, and checked
+    (row,) = build(s, verified=False)["fields_changed"]
+    assert row["before_note"] == "per host, not checked"
+    p = human.prepare("approve", {"ref": key, "gate": "requirements"})
+    assert "rule for this gate" in {r["field"] for r in build(p, verified=True)["fields_changed"]}
+    assert "rule for this gate" not in {r["field"] for r in build(p, verified=False)["fields_changed"]}
+    settings = sample("settings.changed")
+    c = build(
+        {"op": "settings.set", "events": [settings], "material": material_for("settings.changed", settings)}, False
+    )
+    assert c["fields_changed"][0]["before_note"] == "per host, not checked"
+
+
+def test_a_question_shows_its_options_and_labels_what_the_question_hash_does_not_bind():
+    ev = {
+        "type": "question.answered",
+        "question": "q1",
+        "option": "a",
+        "text": "because",
+        "hash": "sha256:" + "ab" * 32,
+    }
+    material = {
+        "kind": "question",
+        "ticket": {"key": "DEMO-0001", "uid": UID},
+        "question": {
+            "id": "q1",
+            "text": "Which way?",
+            "options": [{"key": "a", "label": "Left", "cost": "1d"}, {"key": "b", "label": "Right"}],
+            "to": "p_" + "7" * 32,
+            "blocking": True,
+        },
+    }
+    c = build({"op": "answer", "events": [ev], "material": material})
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["option a"] == "Left (cost 1d)" and rows["option b"] == "Right"
+    assert (
+        rows["addressed to"].endswith("(per host, not signed)")
+        and rows["blocks the ticket"] == "true (per host, not signed)"
+    )
+    assert c["headline"] == "Answer “Which way?” on DEMO-0001 with Left"
+    material["question"]["future"] = 1
+    with pytest.raises(signcontent.PlainUnavailable):
+        build({"op": "answer", "events": [ev], "material": material})

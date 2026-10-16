@@ -129,7 +129,7 @@ def build(
         for c in prepared.get("checks") or []
     ]
     try:  # B6 (owner decision E): additive; `lines` stays the full review. Unknown shapes get no plain view at all
-        content = signcontent.clean_tree(signcontent.build(body))
+        content = signcontent.clean_tree(signcontent.build(body, verified=True))  # check_prepared ran
     except (KeyError, TypeError, ValueError, AttributeError):
         content = None
     view = {

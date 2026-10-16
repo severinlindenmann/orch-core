@@ -680,3 +680,46 @@ def test_submitted_failed_intent_never_claims_done(ready):
     assert "not signed into the log" in error["message"] and "signed_at" not in error
     fresh = post(client, token, stub, {**body, "retry": 1})
     assert fresh.status_code == 200 and fresh.json()["id"] != made
+
+
+@pytest.mark.parametrize("mutate", ["none", "before", "section_text", "policy"])
+def test_the_plain_view_is_shown_only_when_the_signers_material_checks_hold(ready, monkeypatch, mutate):
+    """B6: `content` is derived from the host's material, so the server first runs the signer's own material checks
+    (gate, policy and section hashes, every `before` against `base_rev`); one that fails leaves the preview as it was."""
+    client, token, stub, rich, signing = ready
+    from orch.host import review
+
+    from orch_dashboard import adapters
+
+    original = signing.stub.requests.prepare
+    action = (
+        {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
+        if mutate == "policy"
+        else {"action": "section", "key": "DEMO-0001", "section": "summary", "text": "New text."}
+    )
+
+    def tamper(store, views, args, opts):
+        out = original(store, views, args, opts)
+        m = out["material"]
+        if mutate == "before":
+            m["before"]["body.summary"] = "a text the event's base_rev does not bind"
+        elif mutate == "section_text":
+            m["texts"]["summary"] = "something else"
+        elif mutate == "policy":  # the host shows another policy than the one the gate hash binds
+            m["policy"] = {**m["policy"], "count": m["policy"]["count"] + 1}
+        m["review"] = [review.of(e, m) for e in out["events"]] if mutate in ("before", "policy") else m["review"]
+        digest = adapters.handoff.review_digest(m)
+        out["review_digest"], out["fingerprint"] = (
+            digest,
+            adapters.handoff.fingerprint(digest, out["events"], out["op"]),
+        )
+        return out
+
+    monkeypatch.setattr(signing.stub.requests, "prepare", tamper)
+    res = post(client, token, stub, action)
+    assert res.status_code == 200, res.text
+    got = res.json()
+    if mutate == "none":
+        assert got["headline"].startswith("Change the summary of") and got["content"]["sections"][0]["text"] == "New text."
+    else:
+        assert "content" not in got and "headline" not in got and got["material"]["review"]

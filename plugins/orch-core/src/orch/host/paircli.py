@@ -300,6 +300,45 @@ def _cut(text: object) -> str:
     return safe(str(text), 200)
 
 
+LINK_WAIT_S = 90.0
+
+
+def _link_run(call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapping[str, Any], state: Path, args: Any,
+          out: TextIO, sleep: Callable[[float], None]) -> dict[str, Any]:  # fmt: skip
+    """``orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N [--ca-file F] [--proxy U]``
+    (11A.4, 11A.5, 11A.15.11 step 7): the reservation (relay-info first), the owner's genesis-pin signature at this
+    terminal (:func:`sign_genesis_pin`), then ``host.relay_start``: the worker drives the card, login, hold, genesis,
+    the first publication and ``linked``. Waits (bounded) for ``linked`` and says where it stopped otherwise."""
+    wid = entry["workspace_id"]
+    if not args.relay or not args.max_publication_bytes:
+        raise HostError("invalid.input", "orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N")
+    req: dict[str, Any] = {
+        "workspace_id": wid,
+        "origin": args.relay,
+        "max_publication_bytes": args.max_publication_bytes,
+    }
+    if args.ca_file:
+        req["ca_file"] = args.ca_file
+    if args.proxy:
+        req["proxy"] = args.proxy
+    reserved = call("host.relay_link", req)
+    out.write(f"reserved: relay {_cut(reserved.get('origin'))} (the workspace is now permanently relay-linked)\n")
+    out.flush()
+    _genesis_pin_run(call, entry, state)
+    started = call("host.relay_start", {"workspace_id": wid})
+    deadline = time.monotonic() + LINK_WAIT_S
+    relay: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        relay = call("host.relay_status", {"workspace_id": wid}).get("relay") or {}
+        if relay.get("link") == "linked" or relay.get("worker") in ("failed", "off"):
+            break
+        sleep(POLL_S)
+    return {
+        "workspace_id": wid, "link": _word(relay.get("link")), "worker": _word(relay.get("worker")),
+        "reason": _cut(relay.get("reason")) if relay.get("reason") else None, "start": _word(started.get("worker")),
+    }  # fmt: skip
+
+
 def _genesis_guard(run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     """The genesis pin's errors as :class:`HostError` (never a traceback), as :func:`_guarded` does for step 9."""
     from orch.custody.base import CustodyError
@@ -406,6 +445,10 @@ def main(
             raise HostError("host.unavailable", f"the orch host is not reachable ({type(exc).__name__})") from None
         with client:
             call = _caller(client)
+            if args.action == "link":
+                data = _genesis_guard(lambda: _link_run(call, entry, state, args, out, sleep))
+                out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                return 0
             if args.action == "genesis-pin":
                 data = _genesis_guard(lambda: _genesis_pin_run(call, entry, state))
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")

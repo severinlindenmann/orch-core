@@ -190,6 +190,20 @@ def test_a_declined_review_signs_nothing_and_another_workspaces_facts_are_refuse
             paircli.sign_genesis_pin(_call(c), wid, backend=wrong_key, key_id="dk", name="d", confirm=lambda t, w: True)
 
 
+def test_the_passphrase_prompt_shows_the_pins_fields_and_refuses_a_pin_with_anything_else(lab):
+    from orch.custody.base import CustodyError
+    from orch.custody.describe import describe_payload
+
+    with lab.host() as h, h.client() as c:
+        wid, service, facts = _facts(lab, h, c)
+        v = genesispin.check_facts(facts, workspace_id=wid)
+        lines = dict(describe_payload(genesispin.pin_payload(v.o)))
+        assert lines["signs"] == "genesis-pin" and lines["workspace_id"] == wid and lines["genesis"] == v.o["genesis"]
+        assert lines["wsk_pub"] == v.o["wsk_pub"]
+        with pytest.raises(CustodyError):
+            describe_payload(genesispin.pin_payload({**v.o, "extra": 1}))
+
+
 def test_the_label_is_an_owner_device_label_and_nobody_elses():
     raw = L["sig_genesis_pin"]
     assert raw in DEVICE_KEY_LABELS and raw not in HOST_LABELS and raw not in PERSON_KEY_LABELS

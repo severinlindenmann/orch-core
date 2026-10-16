@@ -99,7 +99,7 @@ _READS = frozenset(
         "activity.list", "workspace.settings", "ticket.text",
         "records.snapshot", "records.export_check", "records.status", "reader.list",
         "run.list", "run.sub",
-        "host.relay_stop", "host.relay_start", "host.relay_unlink",
+        "host.relay_stop", "host.relay_start", "host.relay_unlink", "host.relay_link", "host.relay_status",
         # R6c-2: relay pairing (no idem, no outcome record: the offer's link is only in its direct answer)
         "host.relay_pair_offer", "host.relay_pair_show", "host.relay_pair_list", "host.relay_pair_answer",
         "host.relay_pair_cancel", "host.relay_pair_abandon", "host.relay_pair_cert", "host.relay_primary_set",

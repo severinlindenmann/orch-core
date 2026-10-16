@@ -4292,7 +4292,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     accepted `PUT card`, and R6b is built: `orch.relay.r6.membership.MembershipPublisher` (the real `MembershipQueue`
     and the `orch-relay-r6m-<id8>` thread, a `RelayWorker` companion), the real `R6View`
     (`orch.relay.r6.view.CommittedView`), `PUT membership` and the H7 `GET members` check. The R6 gate stays closed
-    (`R6_READY` is its own PR). No wire, hash, F1 or error-code change.
+    (`R6_READY` is its own PR). B1 also builds the genesis-pin person path (`relay.genesis_pin`, `sig_genesis_pin` in
+    `DEVICE_KEY_LABELS`) and the entry points `host.relay_link`, `host.relay_status`, `host.relay_genesis_pin_facts|submit`
+    with `orch host relay link|genesis-pin`. No wire, hash, F1 or error-code change.
 
 ---
 
@@ -5761,10 +5763,9 @@ until R6 lands). Judgement calls are marked (J), each the fail-closed reading.
 - **The reader reservation.** `relayhook.reserve_link(service, origin=, max_publication_bytes=, ca_file=, proxy=)` (a
   worker job) is 11A.5 step 1: `store.relay_link({v:1, workspace_id, origin, max_publication_bytes, linked_at,
   card_seq: 1, …}, guard=lambda: relaylink.link_reservation(service))`. (J) `linked_at` is stamped at the reservation
-  (the store's `relay_mark_linked` only flips the state). (J) **Not exposed as a control op or CLI yet:** `link.json`
-  is a permanent reservation (11A.6), and until R6a's card keys and the genesis-pin person path exist the link can
-  never complete; an operator would burn the workspace's convenience signing for nothing. `orch host relay link`
-  lands with R6e's dev path (11A.15.11).
+  (the store's `relay_mark_linked` only flips the state). (J) **Exposed by B1** (11A.15.22): `host.relay_link` and
+  `orch host relay link`. `link.json` is a permanent reservation (11A.6); it is exposed now that R6a's card keys and the
+  genesis-pin person path exist, so the link can complete.
 - **Unlink.** `host.relay_unlink {workspace_id}` (no idem; `orch host relay unlink --workspace W`, human only, host
   required): stop the worker (refused `lock.busy` while its threads live, nothing renamed), then one worker job holding
   `relay_cond` and the store lock renames `link.json` to `unlinked-<linked_at>.json` with `os.link` + `unlink`, never
@@ -8823,8 +8824,10 @@ code (N6, 15 Oct 2026):** `tests/relay/owner.py` and the product inline primary 
    privately** (into memory, never echoed or logged, also on failure; Opus L12c, Codex 4).
 5. **Host.** `orch host run` in the foreground under the sandbox environment (no launchd/systemd unit), then `orch host
    register`. Its control socket is under `<root>/run`.
-6. **Owner account and primary.** `tests/relay/owner.py` creates the account (`POST /v2/accounts` with the invite, the
-   sandbox `PK` and a sandbox primary device), then `orch host relay primary set` with its certificate.
+6. **Owner account.** `tests/relay/owner.py` creates the account (`POST /v2/accounts` with the invite, the sandbox `PK`
+   and a sandbox primary device). **The order of the next two is link, then primary (B1, as built):** `orch host relay
+   primary set` answers `relay.not_linked` before the link exists, so step 7 comes first and the primary's certificate
+   is set after it (`link` → `primary set` → `pair`).
 7. **Link.** `orch host relay link --workspace W --relay ORIGIN --max-publication-bytes 4194304` (R5), with the genesis
    pin signed through the pty.
 8. **Pair.** `orch host relay pair --workspace W --primary external --json-fd N --scopes …` through the pty, with
@@ -9796,6 +9799,52 @@ stored) is how an owner client supplies it.
   `devices/<id>.json` bound to the entry, scopes within `scopes_max`). Any failure serves no member
   (`membership_view_refused`). The cache follows the key store's committed epoch.
 
+**The genesis pin (`relay.genesis_pin`, 11A.2, as built).** A NON-event person path: nothing is appended and it does not
+go through `human.prepare`/`human.submit` (those are event machinery: material hashes, `review_digest`, the append
+choke point). The same guarantees are kept by a smaller path:
+- `host.relay_genesis_pin_facts` returns `{v:1, workspace_id, genesis_event, origin}`: the workspace's own
+  `workspace.created` event and the stored relay origin. **No pin and no hash from the host is trusted.**
+- The signer (`paircli.sign_genesis_pin`, using `orch.identity.genesispin.check_facts`) recomputes everything from the
+  event: `members.check_genesis` (owner, delegation, host signature, device certificate with `operate`, signature),
+  `event_head` for the genesis hash, the WSK public key of the event, the workspace id it asked about (its own
+  registry), and that the signing key IS the genesis device's `dk_sig`; an exact field set, a printable ASCII origin.
+  It builds the pin object itself (`{v:2, suite, kind:"genesis_pin", workspace_id, wsk_pub, genesis}`) and signs
+  `"orch/v2/sig/genesis-pin|" || cj(o)`. The relay origin is shown for review and not signed (it is not in the pin).
+  Refusals happen before any prompt: another workspace, extra or missing fields, a swapped key or hash (the event then
+  fails its own signatures), a key that is not the genesis device.
+- Review and confirmation: the terminal signer (`/dev/tty`) shows the workspace, relay, genesis hash, WSK, signing
+  device, then `Type <last 8 hex of the workspace id>/GENESIS and Enter to continue to the passphrase; anything else
+  stops: `; then the passphrase backend's prompt (its fields come from `describe_payload`, which now knows
+  `sig_genesis_pin`: `signs: genesis-pin`, `workspace_id`, `wsk_pub`, `genesis`) ending `Passphrase: `.
+- `host.relay_genesis_pin_submit {workspace_id, pin}`: the host recomputes the expected pin from its own state, requires
+  the submitted object to be exactly it, verifies the signature under the genesis device, and keeps
+  `hosts/<ws>/relay/genesis-pin.json` (0600, atomic). `relayr6.link_source` passes `genesis_pin=` so
+  `R6LinkSource.genesis()` returns `(pin, cert, genesis)` from that file (`GenesisPathMissing` while it is absent or
+  stale: the worker then stops with that class). R1 keeps it in `link-genesis.json` before the first `PUT genesis`
+  (a test owner signs through the same path, never by pre-writing that file). The pin passes
+  `Directory.check_genesis_pin` (a test pins it).
+- `sig_genesis_pin` is in `DEVICE_KEY_LABELS` only (not the WSK, not the person key, not the primary).
+
+**Linking.** `host.relay_link {workspace_id, origin, max_publication_bytes[, ca_file, proxy]}`: `GET /v2/relay-info` on
+the caller's thread (never the worker thread), then the reservation as a worker job (`link.json`, `linking`); it starts
+nothing. A failure to read the relay, a store refusal (`relay.link_exists`, shown as `invalid.input` with that code in
+the text; no new host code) and a bad origin or cap leave no link. `host.relay_status` returns `host.status.relay`
+over the control socket. `orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N [--ca-file F]
+[--proxy U]` runs: reservation, the genesis-pin signature at the terminal, `host.relay_start`, then waits (90 s) for
+`linked` and prints `{link, worker, reason, start}`; with the R6 gate closed it ends `worker: off`. `orch host relay
+genesis-pin --workspace W` signs the pin alone (a restart after `link` stopped at the pin). `host.status.relay` carries
+`genesis_pin: "needed" | "signed"` while the link is `linking`, and an `attention` entry
+(`{what, fix, actionable}`) while it is needed; that entry is the dashboard's hook (host-originated `needs` items are
+#572). **Not built:** the dashboard UI and a click-to-sign path for the pin (the pin is terminal-signed only; the
+dashboard can show the attention entry and name the command). `orch host relay unlink` exists (R5). Unlink-then-link
+leaves the stop marker; `link` clears it through `host.relay_start`.
+
+**Order and the primary's reader declaration.** `primary set` needs the link (`relay.not_linked` otherwise), so the order
+is `link`, `primary set`, `pair`. The spec (11A.17 D2, O4) says the sandbox primary gets a level-1 `reader_decl` from the
+pure builders but defines no host op that accepts one: the primary is not a member and never reads, and the phone's
+`reader_decl` travels in the pair meta. Nothing is wired; if a primary declaration is needed, the spec must name its
+carrier first.
+
 **Not built (follow-ups).** Re-admission of an excluded device through a new approved offer (R6c's allocation does not
 yet call a key-store clear); the container-only recovery (`GET card`, rebuilt wraps); `first_send_ms`/`attempts` are
 kept in memory, not in `head.json`; recovering from an unsafe key store (`MembershipUnsafe` refuses the worker start,
@@ -9807,6 +9856,7 @@ falls back to the host's own held checkpoint.
 **Tests.** `tests/relay/test_b1_membership.py` (the plan, the first list, a same-epoch addition with byte-identical
 grants, card wraps, resend, content refusal and the rotation after it, standing loss and the empty rotation, quota,
 exclusions, a repost, the thread, the view's refusals, H7, the key store's new transitions),
+`tests/host/test_b1_genesis_pin.py` and `tests/host/test_b1_link.py` (the pin and the link),
 `tests/host/test_b1_wiring.py` (the seam install, `card_accepted`, the R3 factory, the wake chaining, the attach and the
 standing job), `tests/relay/test_worker.py` (companions).
 

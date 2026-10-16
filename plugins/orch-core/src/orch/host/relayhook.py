@@ -614,7 +614,33 @@ def status(service: WorkspaceService) -> dict[str, Any] | None:
     pairing = relaypair.status(service)
     if out is not None and pairing is not None:
         out["pairing"] = pairing
+    if out is not None and out.get("link") == "linking":
+        extra = _genesis_pin_status(service)
+        out["genesis_pin"] = extra["genesis_pin"]
+        if "note" in extra:  # beside R4's held-evidence notes, never over them
+            out["attention"] = [*out.get("attention", []), extra["note"]]
     return out
+
+
+def _genesis_pin_status(service: WorkspaceService) -> dict[str, Any]:
+    """The first link waits for the owner's signature of the genesis pin (11A.5 step 3, ``relay.genesis_pin``):
+    ``genesis_pin: "needed"`` and an ``attention`` entry that names the command (the dashboard's click signer is a
+    follow-up), or ``"signed"``. Never a secret."""
+    from . import relaygenesis
+
+    try:
+        present = relaygenesis.pin_path(service).is_file()
+    except OSError:
+        present = False
+    if present:
+        return {"genesis_pin": "signed"}
+    note = {
+        "what": f"{service.entry.prefix}: the first relay link needs your signature of the workspace's genesis pin",
+        "fix": "run orch host relay genesis-pin --workspace W at your terminal (your passphrase signs it), then "
+        "orch host relay start --workspace W",
+        "actionable": True,
+    }
+    return {"genesis_pin": "needed", "note": note}
 
 
 def _status(service: WorkspaceService) -> dict[str, Any] | None:

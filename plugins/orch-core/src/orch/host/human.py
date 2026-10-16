@@ -1304,8 +1304,6 @@ def append_signed(
     elif getattr(service, "dev", None) is not None and any(e.get("auth") == "convenience" for e in events):
         # §11A.17.2 F3: a dev host has no click signer; its only convenience path is column R's dev gate
         return [], convenience.unavailable("dev_host", [])
-    if signed_by is None and (refused_custody := convenience.refuse_excluded_click_custody(service)) is not None:
-        return [], refused_custody  # B6: by custody, not by the event's own auth label
     store = service.store
     ids = {(log, e["id"]) for e in events}
     landed: list[int] = []
@@ -1321,6 +1319,10 @@ def append_signed(
         try:
             if hooks is not None:  # H12c-e: R6's (i) and (ii) first (11A.15.6 step 9), under this lock
                 error = hooks.before([e for e in events if store.logged_event(log, e.get("id")) is None])
+            if (
+                error is None and signed_by is None
+            ):  # B6: by custody, not by the label; under the lock, on the re-read state
+                error = convenience.refuse_excluded_click_custody(service)
             if error is None:
                 error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
             if error is None and any(e.get("auth") == "convenience" for e in events):

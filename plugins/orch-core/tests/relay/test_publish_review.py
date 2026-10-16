@@ -1089,11 +1089,14 @@ def test_f1_wake_never_retries_a_permanent_refusal(kit):
     k.sim.fault = lambda s: _err(403, "forbidden") if _final(s) else None
     p = k.make_publisher(mono=time.monotonic)
     p.start()
-    time.sleep(0.5)
+    end = time.monotonic() + 30  # the refused attempt is awaited by its effect, however slow the machine is
+    while not any(_final(s) for s in list(k.mock.seen)) and time.monotonic() < end:
+        time.sleep(0.01)
     before = sum(1 for s in k.mock.seen if _final(s))
+    assert before >= 1
     for _ in range(5):
         p.wake()
-        time.sleep(0.2)
+        time.sleep(0.05)
     assert sum(1 for s in k.mock.seen if _final(s)) == before
     p.stop()
     assert p.join(5)

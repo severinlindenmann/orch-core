@@ -115,6 +115,13 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "event.expired": (3, False),
     "event.abandoned": (3, False),
     "ticket.key_not_next": (3, False),
+    # B1b (11A.15.23), orch keys primary init: the primary's certificate and the relay account
+    "primary.invite_file": (5, False),
+    "primary.invite_unusable": (3, False),
+    "primary.account_exists": (3, False),
+    "primary.account_failed": (3, True),
+    "primary.relay_mismatch": (3, False),
+    "primary.not_registered": (3, False),
     # §11A.17 (D1), the Simulator dev gate: a dev-host start refused, or a dev-host or sandbox-workspace refusal
     "host.dev_refused": (3, False),
 }

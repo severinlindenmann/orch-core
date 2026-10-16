@@ -5,6 +5,8 @@
     orch keys custody passphrase --workspace W --in-place
     orch keys forget --workspace W                     # removes local convenience custody (not revocation)
     orch keys primary init                             # the person-level primary key pair (passphrase custody only)
+    orch keys primary init --workspace W --relay ORIGIN --invite-file F [--label TEXT]
+                                                       # + the primary's certificate and the relay account (B1b)
     orch keys primary status                           # its public facts: device id, public keys, purposes
     orch keys reader declare --workspace W             # H12d-2: declare this machine's device a reader (one prompt)
     orch keys reader declare --enrol --workspace-id ID --cert PATH --out PATH   # an invitee's declaration
@@ -65,6 +67,10 @@ def _parser() -> argparse.ArgumentParser:
     fg.add_argument("--json", action="store_true")
     pr = sub.add_parser("primary")
     pr.add_argument("action", choices=("init", "status"))
+    pr.add_argument("--workspace")
+    pr.add_argument("--relay")
+    pr.add_argument("--invite-file", type=Path)
+    pr.add_argument("--label")
     pr.add_argument("--state", type=Path)
     pr.add_argument("--json", action="store_true")
     return p
@@ -164,22 +170,89 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
 
 
 PRIMARY_NEXT = (
-    "the primary's certificate and its relay registration are not made yet "
-    "(orch-v2-host 11A.15.10 items 10 and 11); `orch keys primary status` shows them once they exist"
+    "the primary's certificate and its relay registration are not made yet: run "
+    "`orch keys primary init --workspace W --relay ORIGIN --invite-file F` (11A.15.23)"
 )
+
+
+def owner_pk_from_workspace(state: Path, entry: Mapping[str, Any]) -> bytes:
+    """The workspace owner's public key ``PK`` from the workspace's own genesis event (``members.check_genesis``, the
+    pin the host holds): never from the relay or a file. The expected person of the recovery code."""
+    from orch.identity.members import check_genesis
+    from orch.store import Store, StoreError
+    from orch.store.pins import HostPins
+
+    wid, root = entry["workspace_id"], entry.get("root")
+    if not isinstance(root, str):
+        raise _Fail("not_found", "the registry entry names no workspace root", 2)
+    pins = HostPins(state, wid)
+    try:
+        genesis = pins.genesis()
+    except StoreError as exc:
+        raise _Fail("not_found", f"no genesis pin for this workspace ({exc.code})", 2) from None
+    finally:
+        pins.close()
+    try:
+        store = Store.open(Path(root), expected_workspace_id=wid, expected_genesis=genesis, host_state_dir=None,
+                           load="lazy")  # fmt: skip
+    except StoreError as exc:
+        raise _Fail("not_found", f"the workspace could not be read ({exc.code})", 2) from None
+    try:
+        event = store.genesis_event()
+    finally:
+        store.close()
+    if event is None:
+        raise _Fail("not_found", "the workspace has no genesis event", 2)
+    try:
+        return bytes(check_genesis(event)["owner_pk_pub"])
+    except Exception as exc:  # noqa: BLE001 - any refusal: not a verifiable genesis
+        raise _Fail(
+            "not_found", f"the workspace genesis does not verify ({getattr(exc, 'code', 'refused')})", 2
+        ) from None
+
+
+def _client_factory(origin: str, session: Any) -> Any:
+    from orch.relay_owner import OwnerClient
+
+    return OwnerClient(origin, session)
+
+
+def _pk_factory(**kw: Any) -> Any:
+    from .personkey import RecoveryCodeSource
+
+    return RecoveryCodeSource(**kw)
 
 
 def _primary(args: argparse.Namespace, state: Path, env: Mapping[str, str], err: TextIO) -> Any:
     """``orch keys primary`` (orch-v2-host 11A.15.9): ``init`` makes the person-level primary key pair in passphrase
-    custody (never convenience); ``status`` shows public facts only and never prompts."""
-    from orch.custody import primary
+    custody (never convenience); with ``--workspace W --relay ORIGIN --invite-file F`` it also makes the primary's
+    certificate and the relay account (:mod:`orch.custody.primary_register`, B1b); ``status`` shows public facts only
+    and never prompts."""
+    from orch.custody import primary, primary_register
 
     if args.action == "status":
         return primary.status(state)
     _need_terminal(env)
-    primary.init(state)
-    err.write(PRIMARY_NEXT + "\n")
-    return primary.status(state)
+    if args.relay is None:
+        if args.workspace or args.invite_file or args.label:
+            raise _Fail("invalid.input", "--workspace, --invite-file and --label go with --relay", 5)
+        primary.init(state)
+        err.write(PRIMARY_NEXT + "\n")
+        return primary.status(state)
+    resuming = primary_register.read_cert(state) is not None
+    if not args.workspace or (args.invite_file is None and not resuming):
+        raise _Fail("invalid.input", "orch keys primary init --workspace W --relay ORIGIN --invite-file F", 5)
+    entry = _one(state, args.workspace)
+    owner_pk = owner_pk_from_workspace(state, entry)
+    try:
+        result = primary_register.register(
+            state, origin=args.relay, owner_pk=owner_pk, invite_file=args.invite_file, label=args.label,
+            pk_factory=_pk_factory, client_factory=_client_factory, say=lambda t: err.write(t + "\n"),
+        )  # fmt: skip
+    except primary_register.RegisterError as exc:
+        raise _Fail(exc.code, str(exc) + (f" ({exc.hint})" if exc.hint else ""), 3) from None
+    err.write("next: orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N\n")
+    return {**result, **primary.status(state)}
 
 
 #: bytes of a device certificate file (``--cert``), refused before it is parsed

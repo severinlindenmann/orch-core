@@ -461,7 +461,8 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
             # Exactly one `grant.issued`: label runner, verbs agent, the hours and scope asked for (the host applies
-            # the workspace setting), and the caller as its person (the actor). Anything else is not shown, so it is never signed (M7b).
+            # the workspace setting), and the caller as its person (the actor). Anything else is not shown, so it is
+            # never signed (M7b).
             if action.extend:  # B8: the new grant, then the revoke of exactly the one named (nothing else, no reason)
                 return lambda ev: (
                     len(ev) == 2

@@ -119,8 +119,6 @@ def test_digest_includes_the_manifest_hashes(tmp):
 
     import json
 
-    from orch.addons import builtin
-
     doc = json.loads(builtin.manifest_bytes("terminals"))
     other = json.dumps({**doc, "version": "9.9.9"}).encode()
     assert digest(builtin.manifest_bytes("terminals")) != digest(other)

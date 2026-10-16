@@ -56,9 +56,10 @@ class AddonInfo:
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
-    """The "Agents may" list. The three add-ons whose host code ships inside orch-core come with their capabilities from
-    their own manifest (the same bytes ``addon.grant`` will read); the dashboard is locked on and IS an event (its grant is what makes the workspace show up in the dashboard);
-    quick tasks are plain tickets and need no setting (a flag with no machine state)."""
+    """The "Agents may" list. The add-ons whose host code ships inside orch-core come with their capabilities from their
+    own manifest (the same bytes ``addon.grant`` will read). The dashboard is locked on and IS an event: its grant is
+    what makes the workspace show up in the dashboard. Quick tasks are plain tickets and need no setting (a flag with
+    no machine state)."""
     import json
 
     from orch.addons import builtin

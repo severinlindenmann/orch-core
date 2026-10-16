@@ -37,6 +37,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/click/custody",
         "/api/w/{ws}/settings",
+        "/api/w/{ws}/me/sign_default",
         "/api/w/{ws}/members",
         "/api/w/{ws}/readers",
         "/api/w/{ws}/grants",

@@ -43,11 +43,12 @@ export const POLL_MS = 2000
 const MAX_FAILED_POLLS = 5
 
 export interface HandoffRun {
+  retry: number
   phase: HandoffPhase
   request: HandoffRequest | null
   state: HandoffState | null
   error: ApiError | null
-  prepare: (action: HandoffAction) => Promise<void>
+  prepare: (action: HandoffAction, retryFloor?: number) => Promise<void>
   cancel: () => Promise<void>
   /** Back to the start (the person chose "Prepare again"). The previous request must already be settled or cancelled. */
   reset: (keepKey?: boolean) => void
@@ -86,13 +87,15 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   }, [qc])
 
   const prepare = useCallback(
-    async (action: HandoffAction) => {
+    async (action: HandoffAction, retryFloor = 0) => {
       if (!ws || busy.current || live.current.phase === 'waiting') return // a double click is one prepare
       busy.current = true
       setError(null)
       setPhase('preparing')
       const sig = JSON.stringify(action)
       if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
+      // An explicit change of signing method advances the shared action intent.
+      attempt.current.retry = Math.max(attempt.current.retry, retryFloor)
       const { retry } = attempt.current
       try {
         const got = await api.prepareHandoff(ws, action, retry)
@@ -275,5 +278,5 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     }
   }, [])
 
-  return { phase, request, state, error, prepare, cancel, reset, switched }
+  return { retry: attempt.current?.retry ?? 0, phase, request, state, error, prepare, cancel, reset, switched }
 }

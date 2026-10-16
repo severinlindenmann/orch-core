@@ -126,9 +126,10 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
     <Section title="Sign in the dashboard">
       <div data-testid="workspace-card-signing" className="space-y-3 text-[13px]">
         <ClickRisk />
+        {card?.risk_ack && <p>Risk notice acknowledged on <time dateTime={card.risk_ack}>{new Date(card.risk_ack).toLocaleString()}</time></p>}
         <p data-testid="signing-state">
           {on && card?.available
-            ? 'On: actions are signed here with one click. "Sign in the terminal instead" stays in every dialog.'
+            ? 'On: actions can be signed here with one click. Hosts with approval settings offer other allowed methods under Other ways.'
             : on
               ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Sign in the terminal.`
               : 'Off: every signature is made in the terminal with your passphrase.'}

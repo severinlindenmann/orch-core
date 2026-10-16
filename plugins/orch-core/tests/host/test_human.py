@@ -513,8 +513,10 @@ def test_the_composite_prompt_fields_equal_describe_payload_of_the_signed_bytes(
         ((text, word),) = shown
         assert (
             word == f"{key}/{s.lab.ws.uid(key)[-8:]}"
-            and "workspace: Acme (DEMO)" in text
-            and "self-declared, unverified" in text
+            and "in workspace Acme (DEMO)" in text  # the plain view first ...
+            and "self-declared" not in text
+            and "workspace: Acme (DEMO)" in text.details  # ... the full review behind `d`
+            and "self-declared, unverified" in text.details
         )
         event = s.lab.ws.events(key)[-1]
         assert event["text"] == "via the composite"

@@ -1,3 +1,4 @@
+import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
@@ -86,6 +87,8 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           )}
         </dl>
       </Section>
+
+      <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
 
       {/* A real host only (the mock never offers click-to-sign): the switch, with the risk line first. */}
       {workspace.click !== undefined && <SigningCard workspace={workspace} owner={role === 'owner'} />}

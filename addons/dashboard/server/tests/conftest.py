@@ -313,6 +313,9 @@ class World:
     def post(self, path, body):
         return self.client.post(path, json=body, headers=self.headers(True))
 
+    def put(self, path, body):
+        return self.client.put(path, json=body, headers=self.headers(True))
+
 
 @pytest.fixture
 def worlds(p1, tmp_path, monkeypatch):

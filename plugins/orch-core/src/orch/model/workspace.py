@@ -233,6 +233,10 @@ def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
+#: the ways to sign, in the canonical order a stored ``sign_methods`` has (B6); ``touchid`` is reserved
+SIGN_METHODS = ("terminal", "click", "phone")
+
+
 def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     if (r := _owner_only(ws, e)) is not None:
         return r
@@ -257,6 +261,11 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     for k in ("grant_hours", "claim_ttl_min", "lease_ttl_min"):
         if k in s:
             ws.settings[k] = s[k]
+    if "sign_methods" in s:  # B6: terminal always; touchid is reserved (the schema refuses it); canonical order
+        methods = set(s["sign_methods"])
+        if "terminal" not in methods:
+            return Refusal(Code.SETTINGS_INVALID, "sign_methods always contains terminal")
+        ws.settings["sign_methods"] = [m for m in SIGN_METHODS if m in methods]
     return None
 
 

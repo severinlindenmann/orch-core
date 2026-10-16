@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
-from orch.host import signer
+from orch.host import signcontent, signer
 
 from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, RISK, op_class, refused
 
@@ -128,6 +128,10 @@ def build(
         {"repo": signer._clean(c["repo"]), "clean": True, "attested_by": "worker", "at": signer._clean(c["at"])}
         for c in prepared.get("checks") or []
     ]
+    try:  # B6 (owner decision E): additive; `lines` stays the full review. Unknown shapes get no plain view at all
+        content = signcontent.clean_tree(signcontent.build(body, verified=True))  # check_prepared ran
+    except (KeyError, TypeError, ValueError, AttributeError):
+        content = None
     view = {
         "risk": RISK,
         "op": prepared["op"],
@@ -150,6 +154,8 @@ def build(
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
         view["deposit"] = True
         view["deposit_line"] = DEPOSIT_LINE
+    if content is not None:
+        view["headline"], view["content"] = content["headline"], content
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:
         raise refused("terminal_only", "the review is too large for the dashboard; use the terminal")
     return view

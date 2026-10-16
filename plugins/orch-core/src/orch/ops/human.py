@@ -150,23 +150,36 @@ def review_prompt(text: str, expect: str) -> bool:
     try:
         if not os.isatty(fd):
             raise NoPrompt("/dev/tty is not a terminal")
-        prompt = f"Type {expect} and Enter to continue to the passphrase; anything else stops: "
-        os.write(fd, ("\n=== orch: read before you sign ===\n" + text + prompt).encode())
+        details = getattr(text, "details", "") or ""  # B6: a plain view with the full review behind `d`
+        if not details:
+            prompt = f"Type {expect} and Enter to continue to the passphrase; anything else stops: "
+        else:
+            prompt = f"Type {expect} to continue (d = details): "
+        shown = text
+        if details and getattr(text, "details_first", False):  # --details: the full review first, no `d` needed
+            shown, details = details, ""
+        os.write(fd, ("\n=== orch: read before you sign ===\n" + shown + prompt).encode())
         import termios
 
-        termios.tcflush(fd, termios.TCIFLUSH)  # whatever was typed before the content appeared confirms nothing
-        line = bytearray()
-        try:
-            while True:
-                c = os.read(fd, 1)
-                if not c:
-                    return False  # end of input: no newline came
-                if c == b"\n":
-                    break
-                line += c
-        except (KeyboardInterrupt, OSError):
-            return False
-        return bytes(line).strip().decode("utf-8", "replace") == expect
+        while True:
+            termios.tcflush(fd, termios.TCIFLUSH)  # whatever was typed before the content appeared confirms nothing
+            line = bytearray()
+            try:
+                while True:
+                    c = os.read(fd, 1)
+                    if not c:
+                        return False  # end of input: no newline came
+                    if c == b"\n":
+                        break
+                    line += c
+            except (KeyboardInterrupt, OSError):
+                return False
+            answer = bytes(line).strip().decode("utf-8", "replace")
+            if details and answer == "d":  # the full review, then the same question
+                os.write(fd, ("\n=== details ===\n" + details + prompt).encode())
+                details = ""  # shown once; a second `d` is an answer that stops
+                continue
+            return answer == expect
     finally:
         os.close(fd)
 

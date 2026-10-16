@@ -202,11 +202,24 @@ class SettingsSet(Action):
     grant_hours: Annotated[int, Field(ge=1, le=24)] | None = None
     claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
     lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
+    #: B6 (owner decision F): the workspace's allowed ways to sign; `terminal` is always present, `touchid` is reserved
+    sign_methods: Annotated[list[Literal["terminal", "click", "phone"]], Field(min_length=1, max_length=3)] | None = (
+        None
+    )
 
     @model_validator(mode="after")
     def something(self):
-        if self.grant_hours is None and self.claim_ttl_min is None and self.lease_ttl_min is None:
-            raise ValueError("change at least one duration")
+        if (
+            self.grant_hours is None
+            and self.claim_ttl_min is None
+            and self.lease_ttl_min is None
+            and self.sign_methods is None
+        ):
+            raise ValueError("change at least one setting")
+        if self.sign_methods is not None and (
+            "terminal" not in self.sign_methods or len(set(self.sign_methods)) != len(self.sign_methods)
+        ):
+            raise ValueError("sign_methods always contains terminal, once each")
         return self
 
 
@@ -389,7 +402,7 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case WriteSection():
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
-            return "settings.set", {"set": action.model_dump(include=set(DURATIONS), exclude_none=True)}
+            return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
         case PolicySet():
             return "policy.set", {"gates": {action.gate: action.policy.canonical()}}
         case MemberAdd():

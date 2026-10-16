@@ -227,9 +227,9 @@ const RUNNER_LENGTHS: ReadonlyArray<readonly [number, string]> = [[1, '1 hour'],
  * grant" (hours up to the workspace setting, at most 168, scope) as a click request with the typed word. Its outcome comes from the signer's answer:
  * `confirmed`, `rejected` (a closed reason) or `unknown` (asked again a few times, then what to do).
  */
-export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial }: { initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
+export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initial, extend, onOutcome }: { extend?: { id: string; scope: 'all' | 'workable' }; onOutcome?: () => void; initial?: GrantStep; ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void }) {
   const [hours, setHours] = useState(8)
-  const [scope, setScope] = useState<'workable' | 'all'>('workable')
+  const [scope, setScope] = useState<'workable' | 'all'>(extend?.scope ?? 'workable')
   const [step, setStep] = useState<GrantStep>(initial ?? { kind: 'idle' })
   const [forgetting, setForgetting] = useState<'ask' | 'busy' | null>(null)
   const [forgetIdem, setForgetIdem] = useState(newIdem)
@@ -238,9 +238,14 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const revoke = useClickSign(ws)
   const changed = useRef(onChanged)
   changed.current = onChanged
+  const outcome = useRef(onOutcome)
+  outcome.current = onOutcome
+  useEffect(() => {
+    if (['polling', 'confirmed', 'rejected', 'unknown'].includes(step.kind)) outcome.current?.()
+  }, [step.kind])
   const grant = runner?.grant ?? null
   const enabled = runner?.enabled === true
-  const action: ClickAction = { action: 'runner_grant', hours, scope }
+  const action: ClickAction = { action: 'runner_grant', hours, scope, ...(extend ? { extend: extend.id } : {}) }
 
   // A signed grant: what the signer says happened to the secret.
   useEffect(() => {
@@ -312,7 +317,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       <p className="flex items-center gap-2 font-medium text-text"><KeyRound className="size-3.5 text-text-muted" aria-hidden />Runner grant</p>
       <p role="note" data-testid="runner-grant-risk" className="text-warning">{DEPOSIT_RISK}</p>
       {loading && <Skeleton className="h-6" />}
-      {grant && step.kind !== 'polling' && (
+      {grant && !extend && step.kind !== 'polling' && (
         <div className="flex flex-wrap items-center gap-2" data-testid="runner-grant-current">
           <span>Your runner holds a grant for {grant.scope} tickets until <time dateTime={grant.until}>{clock(grant.until)}</time>.</span>
           {forgetting === null && <Button size="xs" variant="ghost" onClick={() => setForgetting('ask')}>Forget runner grant</Button>}
@@ -326,18 +331,18 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
         </div>
       )}
       {blocked && <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>}
-      {!grant && !loading && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
+      {(!grant || extend) && !loading && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
         <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
           <select id="grant-hours" className="h-7 rounded border border-border bg-bg px-2" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
             {RUNNER_LENGTHS.map(([h, label]) => <option key={h} value={h}>{label}</option>)}
           </select>
           <Label htmlFor="grant-scope" className="text-xs text-text-muted">Tickets</Label>
-          <select id="grant-scope" className="h-7 rounded border border-border bg-bg px-2" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>
+          <select id="grant-scope" disabled={!!extend} className="h-7 rounded border border-border bg-bg px-2" value={scope} onChange={(e) => setScope(e.target.value as 'workable' | 'all')}>
             <option value="workable">workable</option>
             <option value="all">all</option>
           </select>
-          <Button size="xs" disabled={!enabled} onClick={() => void issue()} data-testid="runner-grant-issue">Issue runner grant</Button>
+          <Button size="xs" disabled={!enabled} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
           {!enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
         </div>
       )}

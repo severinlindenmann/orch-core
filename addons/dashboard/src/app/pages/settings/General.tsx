@@ -1,3 +1,4 @@
+import { AccessLength } from './AccessLength'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
@@ -116,17 +117,14 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
 
       <Section title="Agent grants">
         <div className="flex items-end gap-2">
-          <div className="max-w-[12rem] flex-1 space-y-1.5">
-            <Label htmlFor="grant-length">Agent grant length (hours)</Label>
-            <Input id="grant-length" name="grant-length" type="number" min={1} max={GRANT_MAX_HOURS} step={1} value={hoursValue} disabled={!canEdit} onChange={(e) => setHours(e.target.value)} />
-          </div>
+          <AccessLength value={hoursNum} disabled={!canEdit} onChange={(h) => setHours(String(h))} />
           <Button disabled={!canEdit || !hoursValid || hoursNum === current} onClick={saveHours} aria-describedby={canEdit ? undefined : 'grant-length-why'}>
             Save
           </Button>
           {!canEdit && <OwnerNote id="grant-length-why">Only owners can save.</OwnerNote>}
         </div>
         <p className="mt-2 text-[12px] text-text-muted">
-          What a grant lasts when nobody picks a length, and the longest a member signs for themselves. Owners and maintainers can sign 1 to {GRANT_MAX_HOURS} h. Signed with Touch ID.
+          What a grant lasts when nobody picks a length, and the longest a member signs for themselves. Owners and maintainers can sign up to 7 days.
         </p>
       </Section>
 

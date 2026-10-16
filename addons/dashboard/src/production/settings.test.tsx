@@ -31,7 +31,7 @@ it('Devices on a real host: pairing a phone is not available yet, and no pairing
 
 it('General shows what the host says, marks defaults and lists repositories read only', async () => {
   show('/w/DEMO/settings/general')
-  expect(await screen.findByLabelText(/Agent grant length/, {}, T)).toHaveValue(8)
+  expect(await screen.findByRole('button', { name: '8 h' }, T)).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByLabelText(/Claim lasts/)).toHaveValue(120)
   expect(screen.getAllByText(/The default\./).length).toBe(2) // claim and lease; the grant length is not a default here
   const repos = screen.getByRole('list', { name: 'Repositories' })
@@ -52,13 +52,12 @@ it('a host without the settings cap says so and shows no value', async () => {
 it('changing the grant length opens the hand-off with the typed action, and shows the host material, not the form', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
-  await user.clear(input)
-  await user.type(input, '12')
+  const input = await screen.findByRole('button', { name: '7 days' }, T)
+  await user.click(input)
   await user.click(screen.getByRole('button', { name: 'Save settings' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 12 }])
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 168 }])
   expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent('orch sign 7F3K-Q2MA')
   expect(dialog).toHaveTextContent('Change to the workspace settings')
   expect(dialog).toHaveTextContent('In your terminal you type DEMO~aaaaaaaa/SETTINGS to continue.')
@@ -73,10 +72,10 @@ it('changing the grant length opens the hand-off with the typed action, and show
 it('out-of-range durations never reach the host', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
+  const input = await screen.findByLabelText(/Claim lasts/, {}, T)
   await user.clear(input)
-  await user.type(input, '25')
-  expect(screen.getByRole('alert')).toHaveTextContent('whole number from 1 to 24')
+  await user.type(input, '999999')
+  expect(screen.getByRole('alert')).toHaveTextContent('whole number')
   expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
   expect(state.host.posts()).toEqual([])
 })
@@ -85,7 +84,7 @@ it('a member sees the settings and cannot save them', async () => {
   state.host.workspaces[0].me = TOM
   state.host.workspaces[0].role = 'member'
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
+  const input = await screen.findByRole('button', { name: '7 days' }, T)
   expect(input).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
   expect(screen.getByText('Only owners can save.')).toBeInTheDocument()
@@ -94,7 +93,7 @@ it('a member sees the settings and cannot save them', async () => {
 it('a host that does not list settings.set cannot change settings: the control says why', async () => {
   state.host.workspaces[0].features = READS
   show('/w/DEMO/settings/general')
-  const input = await screen.findByLabelText(/Agent grant length/, {}, T)
+  const input = await screen.findByRole('button', { name: '7 days' }, T)
   expect(input).toBeDisabled()
   expect(screen.getByText('This host cannot change settings yet.')).toBeInTheDocument()
 })

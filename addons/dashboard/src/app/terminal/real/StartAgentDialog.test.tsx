@@ -12,7 +12,7 @@ import { mergeRunItems, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { EXECUTION_LINE } from './executionLine'
-import { StartAgentDialog } from './StartAgentDialog'
+import { RunnerGrantCard, StartAgentDialog } from './StartAgentDialog'
 
 const WS = 'a'.repeat(32)
 const T = { timeout: 5000 }
@@ -343,4 +343,14 @@ describe('the live stream', () => {
     mergeRunItems(qc, WS, [{ t: 'runner', grant: null }])
     expect((qc.getQueryData(['runner', WS]) as { runner: Runner }).runner.grant).toBeNull()
   })
+})
+
+
+it('Extend preserves the runner scope and posts its id with the selected length', async () => {
+  render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard ws={WS} runner={runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } })} loading={false} blocked={null} extend={{ id: GRANT, scope: 'all' }} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
+  fireEvent.change(screen.getByLabelText('Length'), { target: { value: '168' } })
+  expect(screen.getByLabelText('Tickets')).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Extend access' }))
+  await waitFor(() => expect(s.prepare).toHaveBeenCalled())
+  expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 168, scope: 'all', extend: GRANT })
 })

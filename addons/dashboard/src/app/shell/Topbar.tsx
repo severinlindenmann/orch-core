@@ -1,3 +1,4 @@
+import { AgentAccess } from './AgentAccess'
 import { useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -5,7 +6,7 @@ import { Plus, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
-import { canAct, isRealHost } from '@/api/features'
+import { canAct, hasFeature, isRealHost } from '@/api/features'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -37,6 +38,7 @@ const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(naviga
 
 export function Topbar() {
   const { header } = useShellState()
+  const { workspace } = useWorkspace()
   const { openPalette, openNewTicket } = useShellActions()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const qc = useQueryClient()
@@ -71,7 +73,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4">
+    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b border-border bg-bg px-4">
       <div className="flex min-w-0 items-center gap-2 text-[13px]">
         {header.breadcrumb}
         <span className="truncate font-medium text-text" data-testid="topbar-title">
@@ -142,6 +144,7 @@ export function Topbar() {
           New ticket
         </Button>
       )}
+      {isRealHost() && workspace && hasFeature('agent_start', workspace.id) && <AgentAccess key={workspace.id} ws={workspace.id} />}
     </header>
   )
 }

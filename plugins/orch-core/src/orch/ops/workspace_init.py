@@ -553,7 +553,9 @@ def _empty_root(root: Path) -> None:
         names = os.listdir(root)
     except OSError as e:
         raise _refuse("invalid.input", f"cannot list {root}: {e.strerror}") from None
-    taken = sorted({*names} & {"config.json", "keys.jsonl", "events", "tickets", ".state", ".orch"})
+    from orch.host.control import _ROOT_FILES
+
+    taken = sorted({*names} & {*_ROOT_FILES, ".orch"})
     if taken:
         raise _refuse(
             "invalid.input",

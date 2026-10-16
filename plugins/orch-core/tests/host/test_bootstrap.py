@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -808,3 +809,35 @@ def test_the_key_sweep_skips_an_id_being_bootstrapped_and_deletes_it_afterwards(
             assert (lab.state / "hosts" / wid / "keys").is_dir()
         ok(c.call("host.wsk_create"))
         assert not (lab.state / "hosts" / wid).exists()
+
+
+def test_rollback_leaves_a_directory_the_user_made_after_validation(lab, tmp_path, monkeypatch):
+    from orch.store import StoreError, store
+
+    owner, root = Person(), fresh_root(tmp_path)
+
+    def append(self, *a, **k):  # the user replaces tickets/ with their own while the bootstrap runs
+        shutil.rmtree(root / "tickets")
+        (root / "tickets").mkdir()
+        (root / "tickets" / "mine.txt").write_text("keep")
+        raise StoreError("chain.broken", "no")
+
+    monkeypatch.setattr(store.Store, "append", append)
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem())) == "chain.broken"
+    assert (root / "tickets" / "mine.txt").read_text() == "keep"
+    assert not (root / "events").exists() and not (root / ".state").exists()
+
+
+def test_clean_root_removes_only_recorded_entries(tmp_path):
+    from orch.host.control import ControlOps as Control
+
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / "events").mkdir()
+    (root / "tickets").mkdir()
+    (root / "tickets" / "mine").write_text("x")
+    recorded = {"events": [os.lstat(root / "events").st_dev, os.lstat(root / "events").st_ino]}
+    Control._clean_root(str(root), recorded, None)
+    assert not (root / "events").exists() and (root / "tickets" / "mine").exists()

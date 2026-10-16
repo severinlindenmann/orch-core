@@ -542,6 +542,12 @@ async function run(send, close) {
               // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.
               ['real-host-readers-devices', 'readers-devices', [['the reader rows', '[data-testid="reader-row"]'], ['a device below the level', '[data-testid="reader-row"][data-below="true"]'], ['the required level', '[data-testid="readers-required"]']]],
               ['real-host-convenience-refusals', 'convenience-refusals', [['the refusals', '[data-testid="refusal-gallery"] [data-testid="click-problem"]'], ['the devices by label', '[data-testid="refusal-devices"]'], ['readers_old', '[data-testid="signer-readers-old"]']]],
+              // Core D1 (#582): the dev sandbox host. The badge sits in the topbar of every page.
+              ['real-host-dev-badge', 'dev-badge', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the sandbox id', '[data-testid="dev-badge-sandbox"]']]],
+              ['real-host-dev-badge-long', 'dev-badge-long', [['the DEV SANDBOX badge', '[data-testid="dev-badge"]'], ['the long workspace name', '[data-testid="workspace-card-signing"], h2']]],
+              ['real-host-dev-alarms', 'dev-alarms', [['the alarms', '[data-testid="host-alarms"] [data-testid="host-alarm"]']]],
+              ['real-host-dev-refused', 'dev-refused', [['the refusals', '[data-testid="dev-refused-gallery"] [data-testid="click-problem"]']]],
+              ['real-host-signing-dev-host', 'signing-dev-host', [['the signing card', '[data-testid="workspace-card-signing"]'], ['the dev-host explanation', '[data-testid="signing-dev-host"]'], ['the badge', '[data-testid="dev-badge"]']]],
               // Drop (proposed drop/1): Workspace → Drop from the fixture drop api.
               ['real-host-drop-unavailable', 'drop-unavailable', [['the not-available line', '[data-testid="drop-unavailable"]']]],
               ['real-host-drop-list', 'drop-list', [['the rows', '[data-testid="drop-row"]'], ['the upload zone', '[data-testid="drop-zone"]'], ['a disabled-download reason', '[data-testid="drop-download-reason"]'], ['the paging', '[data-testid="drop-next"]']]],

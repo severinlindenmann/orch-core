@@ -65,6 +65,17 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/)
   })
 
+  it('a dev sandbox host refusing the switch says why, and an unknown reason stays generic', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'host.dev_refused', message: 'x', retryable: false, detail: { reason: 'dev_host' } }))
+    mount(OFF)
+    await typeAndSubmit()
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/off on a dev sandbox host/)
+    sw.mockRejectedValue(new ApiError(409, { code: 'host.dev_refused', message: 'x', retryable: false, detail: { reason: 'brand_new_reason' } }))
+    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    await waitFor(() => expect(screen.getByTestId('signing-error')).not.toHaveTextContent(/brand_new/))
+  })
+
   it('too many wrong passphrases name the wait', async () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(429, { code: 'rate.limited', message: 'x', retryable: true, retry_after_ms: 600_000 }))
     mount(OFF)

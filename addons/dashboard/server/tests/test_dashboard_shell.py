@@ -17,6 +17,7 @@ def test_closed_route_allowlist():
         "/api/events",
         "/api/w/{ws}/head",
         "/api/workspaces",
+        "/api/host",
         "/api/me",
         "/api/w/{ws}/identity",
         "/api/w/{ws}/today",

@@ -84,7 +84,8 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
-        "grant.list", "workspace.settings", "ticket.text", "reader.list", "phone.requests", "phone.status", "gate.input",
+        "grant.list", "workspace.settings", "ticket.text", "reader.list", "phone.requests", "phone.status",
+        "gate.input",
     }  # fmt: skip
     assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set", "relay.pair_device"}  # H12c-e
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}

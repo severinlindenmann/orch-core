@@ -161,7 +161,7 @@ def main() -> None:
                                based_on="sha256:" + "1" * 64, auth="secure-enclave-unlocked")  # fmt: skip
             run("approve_write", {"op": "approve", "args": {"log": m["args"]["log"], "events": [ap]}, "idem": ap["id"]},
                 "B10 phase 1: relay.submit of one device-signed gate.approved on requirements (scope decide); the "
-                "fake host commits it, the real one judges gate_gen / hash / policy_hash (gate.stale, C-review)")  # fmt: skip
+                "fake host commits it, the real one judges gate_gen, hash, policy_hash (gate.stale)")  # fmt: skip
             ch = w.phone.event(m["args"]["log"], "gate.changes_requested", eid=ulid(T0), gate="plan", **gate,
                                text="Please split the plan.", based_on="sha256:" + "1" * 64,
                                auth="secure-enclave-unlocked")  # fmt: skip

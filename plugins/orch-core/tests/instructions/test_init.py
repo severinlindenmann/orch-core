@@ -67,13 +67,15 @@ def test_init_creates_workspace_keys_pin_and_instructions(where, term, passphras
         "AGENTS.md",
         "CLAUDE.md",
         ".gitignore",
-        ".claude/skills/orch-tickets/SKILL.md",
-        ".claude/skills/orch-tickets/orch.skill.json",
-        ".claude/skills/orch-work-on-ticket/SKILL.md",
-        ".claude/skills/orch-refine-ticket/SKILL.md",
+        ".agents/skills/orch-tickets/SKILL.md",
+        ".agents/skills/orch-tickets/orch.skill.json",
+        ".agents/skills/orch-work-on-ticket/SKILL.md",
+        ".agents/skills/orch-refine-ticket/SKILL.md",
+        ".claude/skills/orch-tickets/SKILL.md",  # the generated copy, always written
     ):
         assert (root / rel).is_file(), rel
-    assert "@AGENTS.orch.md" in (root / "CLAUDE.md").read_text().split("\n")
+    assert "@AGENTS.md" in (root / "CLAUDE.md").read_text().split("\n")
+    assert "<!-- orch:begin -->" in (root / "AGENTS.md").read_text().split("\n")
     assert ".state/" in (root / ".gitignore").read_text().split("\n")
     assert res.hints and res.hints[0].startswith("orch grant")
 
@@ -333,7 +335,7 @@ def test_existing_agents_and_claude_files_are_extended_not_replaced(where, term,
     run_init(where)
     a = (where["root"] / "AGENTS.md").read_text()
     assert a.startswith("# Repo rules\nBe kind.\n") and "AGENTS.orch.md" in a
-    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.orch.md\n"
+    assert (where["root"] / "CLAUDE.md").read_text() == "Use tabs.\n@AGENTS.md\n@AGENTS.orch.md\n"
     assert (where["root"] / ".gitignore").read_text() == "node_modules/\n.state/\n"
 
 
@@ -480,14 +482,14 @@ def test_a_failure_writing_the_instruction_files_keeps_the_workspace_and_says_so
 
 
 def test_a_kept_workspace_skill_is_announced(where, term, passphrases):
-    skill = where["root"] / ".claude" / "skills" / "orch-tickets"
+    skill = where["root"] / ".agents" / "skills" / "orch-tickets"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("mine\n")
     (skill / "orch.skill.json").write_text(
         json.dumps({"schema_version": 1, "skill_version": "1.0.0", "scope": "workspace", "connections": [], "env": []})
     )
     res = run_init(where)
-    assert any(x.startswith("kept .claude/skills/orch-tickets (scope workspace") for x in res.lines)
+    assert any(x.startswith("kept .agents/skills/orch-tickets (scope workspace") for x in res.lines)
     assert (skill / "SKILL.md").read_text() == "mine\n"
 
 
@@ -512,7 +514,9 @@ def test_init_refuses_a_symlinked_file_and_copies_nothing(where, term, passphras
     assert not where["state"].exists() and sorted(p.name for p in where["root"].iterdir()) == [name]
 
 
-@pytest.mark.parametrize("rel", [".claude", ".claude/skills", ".claude/skills/orch-tickets"])
+@pytest.mark.parametrize(
+    "rel", [".claude", ".claude/skills", ".claude/skills/orch-tickets", ".agents", ".agents/skills"]
+)
 def test_init_refuses_a_symlinked_directory_and_writes_nothing_outside(where, term, passphrases, tmp_path, rel):
     out = outside(tmp_path)
     link = where["root"] / rel

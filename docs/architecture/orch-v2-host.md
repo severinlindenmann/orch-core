@@ -4416,8 +4416,16 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (F1 `settings.sign_methods`, optional; `terminal` required, `touchid` reserved), and the model refuses a person event
     made a way it excludes (`sign.method`, by the state at the event's position).
 
+71. **B7: skills in `.agents/skills`, `AGENTS.md` block, `CLAUDE.md` imports, structured `AGENTS.orch.md` (owner decisions
+    A and B of 16 Oct 2026; ticket format §10.2 "Files written", harnesses §2):** `orch init` and `orch instructions sync`
+    write the skills to `.agents/skills/<name>/` (canonical) and always a generated copy in `.claude/skills` (never
+    deleted). `AGENTS.md` gets one `<!-- orch:begin -->`..`<!-- orch:end -->` block, `CLAUDE.md` the lines `@AGENTS.md` and
+    `@AGENTS.orch.md`; the old pointer line is migrated. A skill folder without a sidecar is the user's unless it is the
+    shipped text. The pointer files are checked before anything is written; a `CLAUDE.md` linked to `AGENTS.md` is skipped.
+    `AGENTS.orch.md` has headings and up to 40 lines; `INSTRUCTIONS_REV` is 2, so `orch status` says `run orch
+    instructions sync`. No wire, hash, F1 or error-code change.
 
-71. **B8: agent access 1 / 3 / 7 days (owner decision D of 16 Oct 2026; D60, D-P2-27):** `grant_hours` (workspace setting) and
+72. **B8: agent access 1 / 3 / 7 days (owner decision D of 16 Oct 2026; D60, D-P2-27):** `grant_hours` (workspace setting) and
     every grant range 1 to 168 h (`GRANT_MAX_HOURS`; schemas `grant.issued`, `settings.changed`, `workspace`); owners and
     maintainers issue up to 168 h whatever the setting, members up to the setting; a lowered setting never shortens a grant
     already issued (revoke it). The runner grant cap is `min(grant_hours, 168)` (was 12 h), checked at prepare and at
@@ -4426,6 +4434,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     event, `grant.revoked` of the replaced runner grant (`events_fit`; `EMITS_V2` (= V1 + `grant.revoked` on the human-only `grant` op; V1 frozen), no verb
     covers a human-only operation so no replay verdict changes). The `DEPOSIT_RISK` sentence no longer
     names a number of hours. The signing views read lengths as days and hours.
+
 ---
 
 ## 1. Process model

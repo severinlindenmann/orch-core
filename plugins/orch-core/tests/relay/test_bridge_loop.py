@@ -212,7 +212,7 @@ def test_aux_renewal_refusal_and_login_holdoff_wait_for_the_next_tick_and_keep_t
     from orch.relay.retry import RelayRefused
     from orch.relay.session import LoginHeldOff
 
-    refused = RelayRefused("POST hold", 503, "unavailable", None)
+    refused = RelayRefused(503, "unavailable", route="POST hold")
     loop, sess, clock = _aux_loop(monkeypatch, [LoginHeldOff("held"), refused])
     t = threading.Thread(target=loop._aux_main, daemon=True)
     t.start()

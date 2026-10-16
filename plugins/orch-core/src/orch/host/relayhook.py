@@ -236,7 +236,7 @@ def start_worker(
     from orch.relay.state import FileHolderStore, FileSignLedger, StateDir
     from orch.store import BackendSigner
 
-    from . import relaylink
+    from . import relaylink, relaypair
     from .relayentry import RelayEntry
 
     if not relay_worker.r6_ready():  # the host checked it (start_blocker); checked again before anything is opened
@@ -319,7 +319,9 @@ def start_worker(
             workspace_id=ws, rids=rids, keys=bkeys, signer=signer, r6=view, port=RelayEntry(service, backend),
             job=worker.job, post=no_post, now_ms=now_ms, alarm=alarms, convenience_gate=lambda: gated(service),
         )  # fmt: skip
-        worker.attach(BridgeLoop(bridge, session, conn=conn, workspace_id=ws), rids)
+        # R6c: the pair thread (11A.15.2 "Threads"), started and stopped with the bridge loop; its own connection
+        pairing = relaypair.start_thread(service, session, conn)
+        worker.attach(BridgeLoop(bridge, session, conn=conn, workspace_id=ws, pairing=pairing), rids)
         service.relay = worker  # before the start thread exists (review R1); the caller holds relay_lock
         worker.start()
     except BaseException:

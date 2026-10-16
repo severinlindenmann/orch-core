@@ -255,7 +255,12 @@ PAIR_DEVICE = operation(
     emits=("device.added",),
     text="ok device.added {device} seq={seq}\nnext: {next}",
     data=obj({"device": STR, "offer_id": STR, "attempt": STR}),
-    errors=(err("role.denied"), err("reader.decl_invalid"), err("sign.convenience_readers")),
+    errors=(
+        err("role.denied"),
+        err("reader.decl_invalid"),
+        err("sign.convenience_readers"),
+        err("relay.pair_closed"),  # R6c: the offer is not at step 9, the phone's deadline is near, no publisher
+    ),
     handler=handle_pair_device,
 )
 OPS: dict[str, Operation] = {op.name: op for op in (MOVE, POLICY_SET, SETTINGS_SET, PAIR_DEVICE)}

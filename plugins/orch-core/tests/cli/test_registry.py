@@ -152,8 +152,14 @@ def test_operation_errors_are_declared_once_known_and_complete():
             assert "grant.required" in codes
         if op.is_write:
             assert "lock.busy" in codes
+    from orch.ops import person_ops
+
+    for op in person_ops.OPS.values():  # the host person ops (served through human.*): their codes count as used
+        used |= {e["code"] for e in op.errors}
+    # R6c: returned by the host's control op host.relay_pair_offer (orch host relay pair), not by a registry op
+    control_only = {"relay.pair_open", "relay.no_primary", "relay.quota"}
     unused = (
-        set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"}
+        set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only
     )  # the latter: the CLI composite `quick add` (H11f)
     assert not unused, f"documented but no operation can return them: {sorted(unused)}"
 

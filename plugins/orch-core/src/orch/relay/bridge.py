@@ -986,8 +986,15 @@ class BridgeLoop:
         workspace_id: str,
         mono: Callable[[], float] = time.monotonic,
         id8: str | None = None,
+        pairing: Any = None,
     ) -> None:
         self.bridge, self.session, self.ws = bridge, session, workspace_id
+        #: R6c's ``R6Pairing`` (11A.15.2): the pair thread (``handle``, ``completed``, ``notice``, ``forget_below``,
+        #: ``start``/``stop``/``join``), started and stopped with this loop; ``None``: pair items are dropped
+        self.pairing = pairing
+        self._pair_open: set[int] = set()  # pair items handed over and not yet completed (the cursor waits for them)
+        self._handed = 0  # every item at or below this was handed over (bridge items: durable; pair items: queued)
+        self._ack_lock = threading.Lock()
         self._conn, self._mono = conn, mono
         self.id8 = id8 or workspace_id[:8]
         self._stop = threading.Event()
@@ -1014,6 +1021,10 @@ class BridgeLoop:
         if self._started:
             raise RuntimeError("started twice")
         self._started = True
+        if self.pairing is not None:
+            self.pairing.start()
+            self._threads.append(self.pairing.thread)
+            self.aux_steps.append(("pair_ack", self._advance))
         self._spawn("poll", self._poll_main)
 
     def stop(self) -> None:
@@ -1021,6 +1032,8 @@ class BridgeLoop:
         responder and the job threads wait on their queues at most :data:`HANDOFF_S` at a time, so a full job queue
         never keeps one alive (R2-9); admitted rids left queued are recovered at the next start."""
         self._stop.set()
+        if self.pairing is not None:
+            self.pairing.stop()
         for c in list(self._conns):
             try:
                 c.shutdown()
@@ -1111,6 +1124,10 @@ class BridgeLoop:
                 log.info("relay poll failed: %s", type(e).__name__)
                 self._stop.wait(1.0)
                 continue
+            if self.pairing is not None:
+                ids = _cert_request_ids(obj)
+                if ids:
+                    self.pairing.notice(ids)
             for item in _items(obj):
                 if item.n <= self._highest:
                     continue  # already queued (non-consuming poll)
@@ -1137,21 +1154,43 @@ class BridgeLoop:
                 self._queued_bytes -= len(item.envelope)
                 self._qlock.notify_all()
             adm = None
-            if item.route == "bridge":
+            if item.route == "pair" and self.pairing is not None:
+                with self._ack_lock:
+                    self._pair_open.add(item.n)
+                self.pairing.handle(item.n, item.envelope, item.rid, item.device or None)
+            elif item.route == "bridge":
                 try:
                     adm = self.bridge.receive(item)
                 except (Fenced, SessionError):
                     raise  # the session's own end (a takeover, a lost lease): the worker stops, the item stays (N3-1)
                 except Exception as e:  # noqa: BLE001 - one item never stops the loop; it is acknowledged (D2-1)
                     self._item_failed("receive", e)
-            # every outcome above is durable (dropped, refused, replayed or admitted at T1): acknowledge in order
-            self.bridge.rids.set_cursor(max(item.n, self.bridge.rids.cursor()))
+            # every outcome above is durable (dropped, refused, replayed or admitted at T1): acknowledge in order; a
+            # pair item counts once R6 has completed it (its offer transition durable, or a silent drop: 11A.15.2)
+            self._ack(item.n)
             while adm is not None and not self._stop.is_set():
                 try:  # at most JOBS in flight: waits while both job threads are busy, never past stop()
                     self._jobs.put(adm, timeout=HANDOFF_S)
                     adm = None
                 except queue.Full:
                     continue
+
+    def _ack(self, n: int) -> None:
+        with self._ack_lock:
+            self._handed = max(self._handed, n)
+        self._advance()
+
+    def _advance(self) -> None:
+        """The cursor ``after`` advances only over completed items: up to the lowest pair item R6 has not completed
+        (11A.15.2 ``completed(n)``, P3-D10). Bridge items are complete when handed over (durable at T1)."""
+        with self._ack_lock:
+            if self.pairing is not None and self._pair_open:
+                self._pair_open = {m for m in self._pair_open if not self.pairing.completed(m)}
+            target = min(self._handed, min(self._pair_open) - 1) if self._pair_open else self._handed
+            if target > self.bridge.rids.cursor():
+                self.bridge.rids.set_cursor(target)
+                if self.pairing is not None:
+                    self.pairing.forget_below(target)
 
     def _job_main(self) -> None:
         while not self._stop.is_set():
@@ -1249,6 +1288,16 @@ def classify_post(e: RelayRefused) -> PostResult:
     if e.status == 403:
         return "dropped"
     return "retry"  # 429, 503 and the rest: 11A.7 backoff, same bytes
+
+
+def _cert_request_ids(obj: dict[str, Any]) -> list[str]:
+    """``notices.cert_requests``: the request ids the relay says moved (a wake for the pair thread; it re-reads each
+    request itself and trusts nothing here)."""
+    notices = obj.get("notices")
+    ids = notices.get("cert_requests") if type(notices) is dict else None
+    if type(ids) is not list:
+        return []
+    return [i for i in ids[:64] if type(i) is str and len(i) == 32 and all(c in "0123456789abcdef" for c in i)]
 
 
 def _items(obj: dict[str, Any]) -> list[Item]:

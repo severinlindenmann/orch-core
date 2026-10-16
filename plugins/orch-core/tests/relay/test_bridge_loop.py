@@ -208,17 +208,25 @@ def test_aux_renewal_fenced_still_stops_the_worker(monkeypatch):
     assert loop.join(5)
 
 
-def test_aux_renewal_refusal_and_login_holdoff_wait_for_the_next_tick_and_keep_the_thread(monkeypatch):
+def test_aux_renewal_refusal_honours_retry_after_and_login_holdoff_waits_too(monkeypatch):
+    from orch.relay import bridge as bridge_mod
     from orch.relay.retry import RelayRefused
     from orch.relay.session import LoginHeldOff
 
-    refused = RelayRefused(503, "unavailable", route="POST hold")
-    loop, sess, clock = _aux_loop(monkeypatch, [LoginHeldOff("held"), refused])
+    refused = RelayRefused(429, "rate_limited", retry_after=7, route="POST hold")
+    loop, sess, clock = _aux_loop(monkeypatch, [refused, LoginHeldOff("held")])
     t = threading.Thread(target=loop._aux_main, daemon=True)
     t.start()
     try:
-        assert sess.ok.wait(5)
-        assert sess.calls == 3  # one attempt per tick: no immediate second attempt after a refusal or a hold-off
+        assert _wait(lambda: sess.calls == 1, 5)
+        time.sleep(0.2)  # many ticks pass: no second attempt inside the 7 s Retry-After
+        assert sess.calls == 1
+        clock[0] += 7.5
+        assert _wait(lambda: sess.calls == 2, 5)  # the login hold-off: the default backoff
+        time.sleep(0.2)
+        assert sess.calls == 2
+        clock[0] += bridge_mod.RENEW_BACKOFF_S + 0.5
+        assert sess.ok.wait(5) and sess.calls == 3
         assert t.is_alive() and loop.error is None
     finally:
         loop._stop.set()

@@ -928,3 +928,86 @@ def test_a_fresh_connection_that_fails_is_not_retried():
     finally:
         c.close()
         srv.close()
+
+
+def _rst_server(first_answer: bytes | None, *, then_partial: bool):
+    """Answer the first request fully (keep-alive); on the SECOND request on that connection send ``then_partial``'s
+    status-line prefix (or nothing) and reset the connection (RST). Counts the requests that arrived."""
+    import socket
+    import struct
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    hits = []
+
+    def serve(s) -> None:
+        n = 0
+        buf = b""
+        while True:
+            while b"\r\n\r\n" not in buf:
+                d = s.recv(4096)
+                if not d:
+                    return
+                buf += d
+            buf = b""
+            hits.append(1)
+            n += 1
+            if n == 1:
+                s.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                continue
+            if then_partial:
+                s.sendall(b"HTTP/1.1 200 OK\r\nContent-Le")
+                time.sleep(0.05)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            s.close()  # RST
+            return
+
+    def run() -> None:
+        while True:
+            try:
+                s, _ = srv.accept()
+            except OSError:
+                return
+            threading.Thread(target=serve, args=(s,), daemon=True).start()
+
+    threading.Thread(target=run, daemon=True).start()
+    return srv, hits
+
+
+def test_a_reset_after_response_bytes_is_never_resent_the_request_may_have_been_processed():
+    srv, hits = _rst_server(None, then_partial=True)
+    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
+    try:
+        assert call(c).status == 200
+        with pytest.raises(http.TransportError):
+            call(c)
+        assert len(hits) == 2  # the first request, and the second ONCE: not sent a third time
+    finally:
+        c.close()
+        srv.close()
+
+
+def test_a_reset_with_no_response_byte_on_a_reused_connection_is_resent_once_unless_resend_is_off():
+    srv, hits = _rst_server(None, then_partial=False)
+    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
+    try:
+        assert call(c).status == 200
+        c._last_used = c._mono()
+        # the resend lands on a new connection, whose first request is answered
+        assert call(c).status == 200
+        assert len(hits) == 3
+    finally:
+        c.close()
+        srv.close()
+    srv, hits = _rst_server(None, then_partial=False)
+    c = http.RelayConn(f"http://127.0.0.1:{srv.getsockname()[1]}")
+    try:
+        assert call(c).status == 200
+        with pytest.raises(http.TransportError):
+            c.request("POST", "/v2/x", route="POST /v2/x", headers={}, body=b"{}", deadline_s=5.0, cap=1024,
+                      resend_ok=False)  # fmt: skip
+        assert len(hits) == 2  # a non-idempotent call is never sent twice
+    finally:
+        c.close()
+        srv.close()

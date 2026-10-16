@@ -1,0 +1,240 @@
+"""What the setup flow reads: the directory it may use, the add-on catalog, and (Finish setup) the facts of a
+registered workspace, read inside ``store.locked()``.
+
+Fail closed (invariant 3): a path that cannot be resolved, a state that cannot be read, a value of an unknown shape is a
+refusal, never a guess. Nothing here writes.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .protocol import SetupError
+
+__all__ = [
+    "AddonInfo",
+    "Facts",
+    "catalog",
+    "check_dir",
+    "missing_items",
+    "read_facts",
+]
+
+#: names that make a directory "already an orch workspace or a half-made one" (same list as the host's bootstrap)
+STORE_NAMES = ("config.json", "keys.jsonl", "events", "tickets", ".state", ".orch", ".orch-init.lock")
+
+
+@dataclass(frozen=True)
+class AddonInfo:
+    id: str
+    title: str
+    desc: str
+    required: bool
+    default: bool
+    kind: str  # "addon" (an addon.granted event) | "flag" (a machine flag, nothing signed)
+    capabilities: tuple[str, ...] = ()
+    #: the machine flag a selected add-on needs: dashboard execution (agents/worktrees) or terminals
+    needs_runner: bool = False
+    needs_terminals: bool = False
+
+    def view(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "desc": self.desc,
+            "required": self.required,
+            "default": self.default,
+            "kind": self.kind,
+            "capabilities": list(self.capabilities),
+        }
+
+
+def catalog(manifest: Callable[[str], bytes] | None = None) -> list[AddonInfo]:
+    """The "Agents may" list. The three add-ons whose host code ships inside orch-core come with their capabilities from
+    their own manifest (the same bytes ``addon.grant`` will read); the dashboard is locked on and is not an event;
+    quick tasks are plain tickets and need no setting (a flag with no machine state)."""
+    import json
+
+    from orch.addons import builtin
+
+    read = manifest or builtin.manifest_bytes
+    texts = {
+        "start-agent": ("Start agents", "Agents can be started from the dashboard and run as you.", True, False),
+        "terminals": ("Terminals", "The dashboard can open a terminal on this machine, as you.", True, True),
+        "worktrees": ("Worktrees", "The dashboard can create git worktrees for tickets.", True, False),
+    }
+    out = [
+        AddonInfo(
+            "dashboard",
+            "Dashboard",
+            "This workspace's dashboard (locked on).",
+            required=True,
+            default=True,
+            kind="flag",
+        )
+    ]
+    for name in builtin.NAMES:
+        doc = json.loads(read(name))
+        title, desc, runner, terms = texts[name]
+        out.append(
+            AddonInfo(
+                name,
+                title,
+                desc,
+                required=False,
+                default=False,
+                kind="addon",
+                capabilities=tuple(str(c) for c in doc.get("capabilities") or ()),
+                needs_runner=runner,
+                needs_terminals=terms,
+            )
+        )
+    out.append(
+        AddonInfo(
+            "quick",
+            "Quick tasks",
+            "Small one-off tasks (plain tickets; nothing to switch on).",
+            required=False,
+            default=True,
+            kind="flag",
+        )
+    )
+    return out
+
+
+def suggest(env: dict[str, str], directory: Path) -> dict[str, str]:
+    """A name and prefix to start from (the user changes them): the login name, and the directory name upper-cased."""
+    name = env.get("USER") or "owner"
+    stem = re.sub(r"[^A-Za-z0-9]", "", directory.name).upper()
+    prefix = stem[:6] if re.fullmatch(r"[A-Z][A-Z0-9]{1,7}", stem[:6]) else "WORK"
+    return {"name": name, "prefix": prefix}
+
+
+def _inside(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def check_dir(
+    directory: str,
+    *,
+    home: Path,
+    state_dir: Path,
+    config_dirs: tuple[Path, ...] = (),
+    registered: Callable[[str], Any] | None = None,
+) -> tuple[Path, str]:
+    """``(realpath, mode)`` for the directory ``orch setup`` was started in, or ``setup.dir_refused``.
+
+    Refused: a path that is not absolute or whose spelling differs from its real path (a symbolic link), ``$HOME``,
+    any ancestor of ``$HOME`` (``/`` included), the state and config directories and anything inside or above them, and
+    a directory that already holds store files unless it is a registered workspace (then the mode is ``finish``)."""
+    if not isinstance(directory, str) or not directory.startswith("/") or "\x00" in directory:
+        raise SetupError("setup.dir_refused", "the directory is not an absolute path", 400)
+    try:
+        real = Path(os.path.realpath(directory, strict=True))
+        home_real = Path(os.path.realpath(home))
+    except OSError:
+        raise SetupError("setup.dir_refused", "the directory cannot be resolved", 400) from None
+    if os.path.normpath(directory) != str(real):
+        raise SetupError("setup.dir_refused", "the directory path goes through a symbolic link", 400)
+    if not real.is_dir():
+        raise SetupError("setup.dir_refused", "not a directory", 400)
+    if real == home_real or _inside(home_real, real):
+        raise SetupError("setup.dir_refused", "your home directory (or a folder above it) cannot be a workspace", 400)
+    for protected in (state_dir, *config_dirs):
+        p = Path(os.path.realpath(protected))
+        if _inside(real, p) or _inside(p, real):
+            raise SetupError("setup.dir_refused", "orch's own state or config directory cannot be a workspace", 400)
+    if registered is not None and registered(str(real)) is not None:
+        return real, "finish"
+    try:
+        names = set(os.listdir(real))
+    except OSError:
+        raise SetupError("setup.dir_refused", "the directory cannot be listed", 400) from None
+    if names & set(STORE_NAMES):
+        raise SetupError("setup.dir_refused", "this directory already holds orch files", 400)
+    return real, "new"
+
+
+@dataclass
+class Facts:
+    """What Finish setup knows about a registered workspace. Every field comes from one read in ``store.locked()``."""
+
+    workspace_id: str
+    prefix: str
+    name: str
+    person: str
+    #: add-on names with any history: granted, or revoked/removed/disabled/purged (never granted again behind the back)
+    addons: frozenset[str] = frozenset()
+    #: ``grant_hours`` differs from the default (someone set it)
+    grant_hours_set: bool = False
+    #: any grant issued by this person, even revoked or expired
+    grant_issued: bool = False
+    #: dashboard execution flag state on this machine
+    runner_enabled: bool = False
+    terminals_enabled: bool = False
+    #: a runner grant whose deposit was confirmed (see the runner's own record)
+    runner_deposit_confirmed: bool = False
+    convenience: bool = False
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confirmed: bool, convenience: bool) -> Facts:
+    """Facts of a registered workspace, inside ``store.locked()`` and from the freshly read state. Raises
+    ``setup.facts_unreadable`` for anything it cannot read (no half-answer)."""
+    from orch.model.types import DEFAULT_SETTINGS
+
+    try:
+        with store.locked():
+            ws = store.state.workspace
+            member = ws.members.get(person) or ws.former.get(person)
+            addons = frozenset(ws.addons)  # purged and removed ones stay in the map: they have history
+            settings = dict(ws.settings)
+            issued = any(g.person == person for g in ws.grants.values())
+            return Facts(
+                workspace_id=ws.workspace_id,
+                prefix=ws.prefix,
+                name=getattr(member, "name", "") or "",
+                person=person,
+                addons=addons,
+                grant_hours_set=settings.get("grant_hours", DEFAULT_SETTINGS["grant_hours"])
+                != DEFAULT_SETTINGS["grant_hours"],
+                grant_issued=issued,
+                runner_enabled=bool(runner.get("enabled")),
+                terminals_enabled=bool(runner.get("terminals")),
+                runner_deposit_confirmed=deposit_confirmed,
+                convenience=convenience,
+            )
+    except SetupError:
+        raise
+    except Exception:  # noqa: BLE001 - fail closed: nothing half-read
+        raise SetupError("setup.facts_unreadable", "the workspace state could not be read", 500) from None
+
+
+def missing_items(facts: Facts, profile: dict[str, Any], info: dict[str, AddonInfo]) -> list[str]:
+    """The item ids Finish setup still has to do for ``profile`` (R7: a step is done if ANY history exists)."""
+    out: list[str] = []
+    for a in profile["addons"]:
+        if info[a].kind == "addon" and a not in facts.addons:
+            out.append(f"addon:{a}")
+    wants_runner = any(info[a].needs_runner or info[a].needs_terminals for a in profile["addons"])
+    if wants_runner and not facts.runner_enabled:
+        out.append("runner")
+    if not facts.grant_hours_set and profile["agent_hours"] != 8:
+        out.append("settings")
+    if profile["agent_grant"]:
+        if not facts.grant_issued:
+            out.append("runner_grant")
+        elif not facts.runner_deposit_confirmed:  # issued before, hand-over never confirmed: an explicit retry item
+            out.append("runner_grant_retry")
+    if profile["method"] == "click" and not facts.convenience:
+        out.append("custody")
+    return out

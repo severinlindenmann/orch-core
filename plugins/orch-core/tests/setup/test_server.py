@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from orch.setup.flow import SetupFlow
+from orch.setup.flow import Env, SetupFlow
 from orch.setup.server import SetupServer
 
 from .helpers import call
@@ -30,7 +30,11 @@ def srv():
         run.mkdir(mode=0o700)
         clock = Clock()
         events: list[str] = []
-        s = SetupServer(run / "setup.sock", SetupFlow(), clock=clock, notify=events.append)
+        wk = Path(d) / "work"
+        wk.mkdir()
+        env = Env(env={"USER": "ann"}, home=Path(d) / "home", state_dir=Path(d) / "state")
+        s = SetupServer(run / "setup.sock", SetupFlow(env), clock=clock, notify=events.append)
+        s.workdir = str(wk.resolve())  # type: ignore[attr-defined]
         s.start()
         s.clock_obj, s.events = clock, events  # type: ignore[attr-defined]
         yield s
@@ -39,7 +43,7 @@ def srv():
 
 def claimed(s):
     path = str(s.path)
-    st, out, _ = call(path, "POST", "/launch", {"dir": "/x"})
+    st, out, _ = call(path, "POST", "/launch", {"dir": s.workdir})
     assert st == 200
     st, c, _ = call(path, "POST", "/claim", {"code": out["code"]})
     assert st == 200
@@ -58,7 +62,7 @@ def test_no_launch_no_token(srv):
 
 def test_claim_is_single_use_and_second_browser_refused(srv):
     path = str(srv.path)
-    _, out, _ = call(path, "POST", "/launch", {"dir": "/x"})
+    _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
     st, c, _ = call(path, "POST", "/claim", {"code": out["code"]})
     assert st == 200 and "browser connected" in srv.events
     st, e, _ = call(path, "POST", "/claim", {"code": out["code"]})
@@ -68,7 +72,7 @@ def test_claim_is_single_use_and_second_browser_refused(srv):
 
 def test_code_expires_after_30_seconds(srv):
     path = str(srv.path)
-    _, out, _ = call(path, "POST", "/launch", {"dir": "/x"})
+    _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
     srv.clock_obj.t += 31
     st, e, _ = call(path, "POST", "/claim", {"code": out["code"]})
     assert st == 403 and e["error"]["code"] == "setup.code_invalid"
@@ -76,7 +80,7 @@ def test_code_expires_after_30_seconds(srv):
 
 def test_wrong_code_five_times_kills_the_code(srv):
     path = str(srv.path)
-    _, out, _ = call(path, "POST", "/launch", {"dir": "/x"})
+    _, out, _ = call(path, "POST", "/launch", {"dir": srv.workdir})
     for _ in range(5):
         assert call(path, "POST", "/claim", {"code": "nope"})[0] == 403
     assert call(path, "POST", "/claim", {"code": out["code"]})[0] == 403
@@ -149,4 +153,4 @@ def test_oversized_body_refused(srv):
 
 def test_a_launch_while_claimed_is_refused(srv):
     path, _, _ = claimed(srv)
-    assert call(path, "POST", "/launch", {"dir": "/y"})[0] == 409
+    assert call(path, "POST", "/launch", {"dir": srv.workdir})[0] == 409

@@ -74,7 +74,10 @@ def deposit_checks(prepared: Mapping[str, Any]) -> None:
         )
     )
     if not ok:
-        raise refused("terminal_only", "only a runner grant of at most 12 hours is handed to the runner by a click")
+        raise refused(
+            "terminal_only",
+            "only a runner grant within the workspace grant_hours (at most 168) is handed to the runner by a click",
+        )
 
 
 def check_prepared(

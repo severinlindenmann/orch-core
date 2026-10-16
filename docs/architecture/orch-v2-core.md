@@ -10,7 +10,7 @@ The core is what an agent and a person need when nothing else is installed:
 - **The `orch` CLI.** It is written for agents first: terse output and as little context as possible.
 - **The workspace format:** `config.json`, `keys.jsonl`, and per ticket `ticket.json`, `body.md`, `events.jsonl` and
   `artifacts/`.
-- **The agent instructions:** `AGENTS.orch.md` (at most 25 lines), three short skills, and a session-start hook.
+- **The agent instructions:** `AGENTS.orch.md` (at most 40 lines), three short skills, and a session-start hook.
 - **The addon mechanism.** Everything optional plugs in here, the dashboard included.
 
 The core has **no web server and no daemon** (A2). The CLI runs the operation registry in-process, writes behind a
@@ -100,7 +100,7 @@ The test assets:
   bloat as well as breaking changes.
 - **Property tests for `model/`.** Random event sequences must never produce an impossible state: two claims, an
   approved gate on a changed hash, a done task without a lease holder.
-- **Context budget tests.** `AGENTS.orch.md` stays at 25 lines or fewer; the session-start text at 6 lines or fewer;
+- **Context budget tests.** `AGENTS.orch.md` stays at 40 lines or fewer; the session-start text at 6 lines or fewer;
   a default `orch show` stays under a fixed token count.
 
 ## 6. Task groups for the core phase

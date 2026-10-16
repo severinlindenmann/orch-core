@@ -466,6 +466,8 @@ def _event(
         return f"Give agents access for {span(hours)} (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
     if typ == "grant.revoked":
         _row(out, "grant id", ev.get("grant"))
+        if ev.get("reason") == "extended":  # B8: the old half of an Extend
+            out.setdefault("notes", []).append("Agents that are running now stop; new agents use the extended access.")
         if ev.get("reason"):
             _row(out, "reason", ev["reason"])
         return f"Take back the agent access {_s(ev.get('grant'))}"

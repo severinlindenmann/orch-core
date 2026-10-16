@@ -78,6 +78,7 @@ STALE_MS = 2 * FULL_EVERY_MS  # a status older than this (no complete scan) is s
 FAILED_TURNS_STALE = 3  # ... and so are this many failed turns in a row since the last complete scan
 ACK_REFUSALS_MAX = 5  # a pending ack the relay refuses this often (non-transient) is dropped, once alarmed
 JUDGE_EVERY_S = 2.0  # the ledger is re-judged against the store at most this often, unless woken
+JUDGE_BATCH = 256  # rows per judging job: one store-lock hold never covers the whole ledger
 STANDINGS = ("settled", "stronger", "revoke", "other", "unknown")  # Store.pair_standings' closed answer set
 _POSITION = re.compile(r"[A-Za-z0-9_-]{1,512}")  # an opaque b64u position, put into a query string unescaped
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -238,6 +239,7 @@ class UnpublishedConsumer:
         self._full_mono: float | None = None  # when this process last completed a full read (the wall clock may move)
         self._seeded = False
         self._judged_at: float | None = None
+        self._judge_next = 0  # the chunk the next judging turn starts at (a budget cut-off carries over)
         self._woken = True
 
     def __repr__(self) -> str:
@@ -444,34 +446,48 @@ class UnpublishedConsumer:
             led.add_or_raise(row_of(ev, now))
 
     def _rejudge(self, st: dict[str, Any], led: Ledger, *, force: bool = False) -> None:
-        """Ask the store for the standing of every row and let :meth:`Ledger.settle_from_store` act on it. A store
-        fault is no answer (nothing is removed); it backs off and reaches the aux guard."""
+        """Ask the store for the standing of every row and let :meth:`Ledger.settle_from_store` act on it. The rows go
+        in chunks of ``JUDGE_BATCH`` (one worker job, so one store-lock hold, each), within the per-turn budget: the
+        store lock is never held across the whole ledger and the aux thread never waits on it for long; what is left
+        carries to the next turn. A store fault is no answer (nothing is removed); it backs off and reaches the aux
+        guard."""
         rows = led.rows()
         if not rows or (
             not force and not self._woken and self._judged_at is not None
             and self._mono() - self._judged_at < JUDGE_EVERY_S
         ):  # fmt: skip
             return
-        pairs = [("d_" + r["device_id"], "p_" + r["person_id"], r["need"]) for r in rows]
-        try:
-            standings = self._judge(pairs) if self._judge is not None else ["unknown"] * len(rows)
-        except BaseException:
-            self._not_before = self._mono() + BACKOFF_S
-            raise
-        if type(standings) is not list or len(standings) != len(rows) or any(s not in STANDINGS for s in standings):
-            raise ValueError("pair_standings answered no known standing")
-        self._judged_at, self._woken = self._mono(), False
-        judged = [
-            {
-                "device_id": r["device_id"],
-                "person_id": r["person_id"],
-                "need": r["need"],
-                "ver": r["ver"],
-                "standing": s,
-            }
-            for r, s in zip(rows, standings, strict=True)
-        ]
-        if led.settle_from_store(judged):
+        started, changed = self._mono(), False
+        starts = list(range(0, len(rows), JUDGE_BATCH))
+        first = self._judge_next if self._judge_next < len(starts) else 0
+        for k in range(len(starts)):
+            idx = (first + k) % len(starts)
+            if k and self._mono() - started >= HOLD_BUDGET_S:
+                self._judge_next = idx  # the rest of the ledger carries to the next turn
+                if changed:
+                    self._save(st)
+                return
+            chunk = rows[starts[idx] : starts[idx] + JUDGE_BATCH]
+            pairs = [("d_" + r["device_id"], "p_" + r["person_id"], r["need"]) for r in chunk]
+            try:
+                standings = self._judge(pairs) if self._judge is not None else ["unknown"] * len(chunk)
+            except BaseException:
+                self._not_before = self._mono() + BACKOFF_S
+                raise
+            if (
+                type(standings) is not list
+                or len(standings) != len(chunk)
+                or any(s not in STANDINGS for s in standings)
+            ):
+                raise ValueError("pair_standings answered no known standing")
+            judged = [
+                {"device_id": r["device_id"], "person_id": r["person_id"], "need": r["need"], "ver": r["ver"],
+                 "standing": s}
+                for r, s in zip(chunk, standings, strict=True)
+            ]  # fmt: skip
+            changed = led.settle_from_store(judged) or changed
+        self._judged_at, self._woken, self._judge_next = self._mono(), False, 0
+        if changed:
             self._save(st)
 
     def _alarm_once(self, code: str, detail: str) -> None:

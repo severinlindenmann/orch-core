@@ -912,15 +912,22 @@ def test_cell_the_ledger_overflows_without_evicting(state, monkeypatch):
 
 def test_cell_status_goes_stale_after_failed_turns_or_an_old_scan(state):
     relay = Relay(state)
-    c, _, clock, _ = fake(state, relay)
+    note = {"unpublished": pos(1)}
+    c, _, clock, _ = fake(state, relay, notices=lambda: note)
     c.step()
-    for _ in range(up.FAILED_TURNS_STALE):
+    for k in range(up.FAILED_TURNS_STALE):
+        view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)
+        assert view["stale"] is (False if k < up.FAILED_TURNS_STALE else True) and view["failed_turns"] == k
         relay.fail[GET] = RelayRefused(500, "x")
-        clock.ms += up.FULL_EVERY_MS
+        note["unpublished"] = pos(10 + k)
         clock.mono += up.BACKOFF_S + 1
         c.step()
-    view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)
+    view = up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)  # well inside 48 h: only the failures count
     assert view["stale"] is True and relayr4.held_attention("X", [], view)["fix"] == relayr4.FIX_STALE
+    note["unpublished"] = pos(99)
+    clock.mono += up.BACKOFF_S + 1
+    c.step()  # a successful complete read resets the count
+    assert up.ledger_view(json.loads(state.read(up.FILE)), clock.ms)["failed_turns"] == 0
     doc = {"last_complete_ms": 1000}
     assert up.ledger_view(doc, 1000 + up.STALE_MS + 1)["stale"] is True
     assert up.ledger_view(doc, 1000 + up.STALE_MS)["stale"] is False
@@ -1487,3 +1494,121 @@ def test_model_based_the_ledger_never_loses_an_obligation_the_store_has_not_sett
 def rebuilding_started(sdir):
     doc = json.loads(sdir.read(up.FILE) or b"{}")
     return doc.get("rebuilding", False)
+
+
+# -- round 4 additions: pins for surviving mutants, bounded store-lock time ---------------------
+
+
+def test_the_ledger_and_its_mirror_are_written_in_one_critical_section_ledger_first(state, monkeypatch):
+    order = []
+    real = state.write_json
+
+    def spy(name, obj):
+        order.append((name, state.lock._is_owned()))  # noqa: SLF001
+        return real(name, obj)
+
+    monkeypatch.setattr(state, "write_json", spy)
+    c, _, _, _ = fake(state, Relay(state, {None: ([_it()], pos(1), False)}))
+    c.step()
+    names = [n for n, _ in order]
+    assert up.FILE in names and all(owned for _n, owned in order)  # every write under the state directory's lock
+    for k, name in enumerate(names):
+        if name == up.MIRROR:
+            assert k > 0 and names[k - 1] == up.FILE  # the ledger first, then its mirror
+
+
+def test_a_settled_item_never_even_transiently_becomes_a_row(state, monkeypatch):
+    docs = []
+    real = state.write_json
+    monkeypatch.setattr(
+        state, "write_json", lambda name, obj: (docs.append(json.loads(json.dumps(obj))), real(name, obj))[1]
+    )
+    relay = Relay(state, {None: ([_it(reason="lost")], pos(1), False)})
+    c, st, _, alarms = fake(state, relay)
+    st.state[("d_" + A, "p_" + P1)] = "lost"
+    c.step()
+    assert alarms == [] and all(d.get("held") == [] for d in docs if "held" in d)  # not on disk at any moment
+
+
+def test_one_clean_scan_never_clears_unverifiable_even_after_seven_days(state):
+    relay = Relay(state, {None: ([_it(bad=True)], pos(1), False)})
+    c, _, clock, _ = fake(state, relay)
+    c.step()
+    relay.pages[None] = ([], pos(1), False)
+    clock.ms += 8 * 86400 * 1000
+    tick(c, clock, 1)  # the first complete scan since: clean, and 8 days have passed
+    assert c.load()[0]["unverifiable"]["n"] == 1 and c.load()[0]["unverifiable"]["clean_scans"] == 1
+    clock.ms += up.FULL_EVERY_MS
+    tick(c, clock, 2)
+    assert c.load()[0]["unverifiable"]["n"] == 0  # the second clean scan clears it
+
+
+def test_a_sighting_resets_the_clean_scan_count(state):
+    relay = Relay(state, {None: ([_it(bad=True)], pos(1), False)})
+    c, _, clock, _ = fake(state, relay)
+    c.step()
+    relay.pages[None] = ([], pos(1), False)
+    clock.ms += up.FULL_EVERY_MS
+    tick(c, clock, 1)
+    assert c.load()[0]["unverifiable"]["clean_scans"] == 1
+    relay.pages[None] = ([_it(bad=True)], pos(1), False)
+    clock.ms += up.FULL_EVERY_MS
+    tick(c, clock, 1)
+    assert c.load()[0]["unverifiable"]["clean_scans"] == 0
+
+
+def test_a_standing_outside_the_closed_set_is_an_error_never_an_answer(state):
+    relay = Relay(state, {None: ([_it()], pos(1), False)})
+    c, st, clock, _ = fake(state, relay)
+    c.step()
+    c._judge = lambda pairs: ["bogus"] * len(pairs)  # noqa: SLF001
+    clock.mono += up.JUDGE_EVERY_S + 1
+    with pytest.raises(ValueError):
+        c.step()
+    assert (A, P1) in rows(c)
+
+
+def test_the_judging_job_never_covers_more_than_a_batch_of_rows(state):
+    n = up.JUDGE_BATCH * 2 + 5
+    items = [_it(dev=f"{i:032x}") for i in range(n)]
+    relay = Relay(state, {None: (items[:64], pos(1), False)})
+    c, st, clock, _ = fake(state, relay)
+    sizes = []
+    real = st.judge
+    c._judge = lambda pairs: sizes.append(len(pairs)) or real(pairs)  # noqa: SLF001
+    doc = c.load()[0]
+    led = up.Ledger(doc, relayr4.stronger)
+    for it_ in items:
+        led.add_or_raise(up.row_of(it_, 1))
+    c._save(doc)  # noqa: SLF001
+    c._seeded = True  # noqa: SLF001
+    c.step()
+    assert max(sizes) <= up.JUDGE_BATCH and sum(sizes) >= n
+
+
+def test_a_budget_cut_off_carries_the_rest_of_the_ledger_to_the_next_turn(state, monkeypatch):
+    monkeypatch.setattr(up, "HOLD_BUDGET_S", 0.0)
+    n = up.JUDGE_BATCH * 2 + 5
+    relay = Relay(state, {None: ([], pos(1), False)})
+    c, st, clock, _ = fake(state, relay)
+    c._seeded = True  # noqa: SLF001
+    c.step()
+    doc = c.load()[0]
+    led = up.Ledger(doc, relayr4.stronger)
+    for i in range(n):
+        led.add_or_raise(up.row_of(_it(dev=f"{i:032x}"), 1))
+    c._save(doc)  # noqa: SLF001
+    judged = []
+    real = st.judge
+    c._judge = lambda pairs: judged.append({d for d, _p, _r in pairs}) or real(pairs)  # noqa: SLF001
+    c.wake()
+    for _ in range(3):
+        clock.mono += 0.5  # inside the judging throttle: only an unfinished pass may continue
+        c.step()
+    assert len(judged) == 3 and all(len(j) <= up.JUDGE_BATCH for j in judged)
+    assert set().union(*judged) == {f"d_{i:032x}" for i in range(n)}  # every row, in three turns, none twice
+    assert sum(len(j) for j in judged) == n
+
+
+def test_the_ledger_is_bounded_and_a_page_is_bounded():
+    assert up.LEDGER_MAX == 4096 and up.PAGE_LIMIT == 64 and up.PAGE_CAP == 4 << 20 and up.JUDGE_BATCH <= 256

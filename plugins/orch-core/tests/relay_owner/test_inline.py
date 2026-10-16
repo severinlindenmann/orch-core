@@ -105,7 +105,8 @@ def test_no_recovery_prompt_before_the_request_is_pending_and_shown():
     out, shown, asked, pk = run(ev, queue)
     assert ev.index("pk:enter") > max(i for i, e in enumerate(ev) if e == "poll:pending")
     assert ev == ["poll:none"] * 3 + ["poll:pending", "pk:enter", "challenge", "ask", "sign", "pk:exit"]
-    assert shown[0].startswith("request from: [Sev's phone]") and "d_cccccccc" in shown[1]
+    assert shown.count("waiting for the phone's request…") == 1  # once, however many polls
+    assert shown[1].startswith("request from: [Sev's phone]") and "d_cccccccc" in shown[2]
     assert not out.rejected and out.cert["o"]["kind"] == "device_cert" and out.cert_code == "ABCDEF"
 
 
@@ -124,7 +125,7 @@ def test_wrong_cert_code_three_tries_then_reject_while_the_key_is_held():
     out, shown, *_ = run(ev, typed=("AAAAAA", "BBBBBB", "CCCCCC"))
     assert out.rejected and out.rejection["o"]["kind"] == "rejection"
     assert ev[-3:] == ["ask", "reject", "pk:exit"] and ev.count("ask") == 3 and "sign" not in ev
-    assert any("2 try/tries left" in t for t in shown) and any("0 try/tries left" in t for t in shown)
+    assert any("2 tries left" in t for t in shown) and any("no tries left" in t for t in shown)
 
 
 def test_right_code_on_the_second_try_signs():
@@ -207,13 +208,30 @@ def test_human_only_is_not_retried():
 
 
 def test_a_request_for_another_offer_or_device_is_refused_before_the_code():
-    for kw in ({"offer_id": "f" * 32}, {"device_id": "9" * 32}):
+    for kw in ({"offer_id": "f" * 32}, {"device_id": "9" * 32}, {"attempt": "9" * 32}):
         ev = Events()
         with pytest.raises(InlineRefused) as e:
             run(ev, **kw)
         assert e.value.code == "mismatch" and "pk:enter" not in ev
     ev = Events()
     run(ev, device_id="d_" + DEVICE)  # the host's d_ form is the same device
+    run(Events(), attempt="e" * 32)  # the attached attempt matches
+
+
+def test_the_cli_driver_without_a_device_id_fails_closed(tmp_path):
+    from orch.custody import pairinline, primary_register
+
+    st = tmp_path / "state"
+    (st / "person" / "primary").mkdir(parents=True, mode=0o700)
+    primary_register._write_private(
+        primary_register.relay_path(st), {"v": 1, "origin": "https://relay.example", "person_id": "0" * 32,
+                                          "device_id": "1" * 32, "label": "x"})  # fmt: skip
+    drive = pairinline.driver(st, {"workspace_id": "w" * 32}, show=lambda t: None, ask_timed=lambda p, t: None,
+                              link_check=lambda: None, fail=lambda c, m, hint=None: RuntimeError(c))  # fmt: skip
+    for offer in ({}, {"device_id": ""}, {"device_id": None}):
+        with pytest.raises(InlineRefused) as e:
+            drive("o" * 32, RID, offer)
+        assert e.value.code == "mismatch"
 
 
 def test_a_refused_target_request_ends_without_a_prompt():

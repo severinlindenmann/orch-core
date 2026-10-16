@@ -169,6 +169,8 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
     return {"workspace_id": wid, "custody": sel["custody"], "device": sel["device"], "gen": sel.gen}
 
 
+LINK_MAX_PUBLICATION_BYTES = 4194304
+
 PRIMARY_NEXT = (
     "the primary's certificate and its relay registration are not made yet: run "
     "`orch keys primary init --workspace W --relay ORIGIN --invite-file F` (11A.15.23)"
@@ -250,8 +252,13 @@ def _primary(args: argparse.Namespace, state: Path, env: Mapping[str, str], err:
             pk_factory=_pk_factory, client_factory=_client_factory, say=lambda t: err.write(t + "\n"),
         )  # fmt: skip
     except primary_register.RegisterError as exc:
-        raise _Fail(exc.code, str(exc) + (f" ({exc.hint})" if exc.hint else ""), 3) from None
-    err.write("next: orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N\n")
+        from orch.host.errors import disposition
+
+        raise _Fail(exc.code, str(exc) + (f" ({exc.hint})" if exc.hint else ""), disposition(exc.code)[0]) from None
+    err.write(
+        f"next: orch host relay link --workspace {entry['workspace_id']} --relay {result['origin']} "
+        f"--max-publication-bytes {LINK_MAX_PUBLICATION_BYTES}\n"
+    )
     return {**result, **primary.status(state)}
 
 

@@ -44,12 +44,18 @@ __all__ = [
     "PairOutcome",
     "normalize_code",
     "serve_request",
+    "tries_left",
     "stored_card",
 ]
 
 #: shown by the recovery-code prompt; fixed text, never the device's label (M2)
 RECOVERY_ACTION = "approve a new device (the phone you are pairing)"
-CERT_CODE_PROMPT = "step 2 of 2, compare code: type the 6 characters the phone shows now (empty: reject): "
+CERT_CODE_PROMPT = "compare code: type the 6 characters the phone shows now (empty: reject): "
+
+
+def tries_left(n: int) -> str:
+    """``2 tries left`` / ``1 try left`` / ``no tries left``."""
+    return "no tries left" if n <= 0 else "1 try left" if n == 1 else f"{n} tries left"
 
 
 class InlineRefused(Exception):
@@ -132,6 +138,7 @@ def serve_request(
     owner_pk: bytes,
     offer_id: str | None = None,
     device_id: str | None = None,
+    attempt: str | None = None,
     recovery_tries: int = 3,
     code_tries: int = 3,
     wait_s: float = 120.0,
@@ -142,10 +149,12 @@ def serve_request(
     """Work ``request_id`` (module doc). ``pk_factory(labels=, pk_pub=, action=)`` returns the person-key source (a
     context manager); ``ask_cert_code(prompt, pending, deadline_s)`` returns what the person typed or ``None`` (no
     answer in ``deadline_s`` seconds, or a reject); ``show`` writes one line to the person's terminal.
-    ``offer_id``/``device_id`` are what the host attached (L2); ``None`` skips that check (the sandbox owner)."""
+    ``offer_id``/``device_id``/``attempt`` are what the host attached (L2); ``None`` skips that check (the sandbox
+    owner)."""
     # 1. the request, verified, without the person key
     deadline = time.monotonic() + wait_s
     pending = None
+    waited = False
     while pending is None:
         poll = queue.poll(request_id, wait=poll_wait)
         for s in poll.skipped:
@@ -157,12 +166,15 @@ def serve_request(
         if pending is None:
             if time.monotonic() >= deadline:
                 raise InlineRefused("timeout", "the cert request did not reach the primary")
+            if not waited:
+                waited = True
+                show("waiting for the phone's request…")
             sleep(0.2)
 
     try:
         return _serve_pending(
             queue, request_id, pending, pk_factory=pk_factory, ask_cert_code=ask_cert_code, show=show,
-            owner_pk=owner_pk, offer_id=offer_id, device_id=device_id, recovery_tries=recovery_tries,
+            owner_pk=owner_pk, offer_id=offer_id, device_id=device_id, attempt=attempt, recovery_tries=recovery_tries,
             code_tries=code_tries, now_ms=now_ms,
         )  # fmt: skip
     except InlineRefused as exc:
@@ -182,6 +194,7 @@ def _serve_pending(
     owner_pk: bytes,
     offer_id: str | None,
     device_id: str | None,
+    attempt: str | None,
     recovery_tries: int,
     code_tries: int,
     now_ms: Callable[[], int],
@@ -193,6 +206,8 @@ def _serve_pending(
         raise InlineRefused("mismatch", "the request is for another offer than the one attached; nothing was signed")
     if device_id is not None and _bare(pending.device_id) != _bare(device_id):
         raise InlineRefused("mismatch", "the request is for another device than the one paired; nothing was signed")
+    if attempt is not None and pending.attempt != attempt:
+        raise InlineRefused("mismatch", "the request is for another attempt than the one attached; nothing was signed")
     if pending.client_hosted:
         show("WARNING: this request says it came from a page your relay operator hosts, not the app: reject unless "
              "you opened that page yourself")  # fmt: skip
@@ -222,7 +237,7 @@ def _serve_pending(
             if left <= 0:
                 queue.close(request_id, "cancelled")
                 raise InlineRefused("no_key", "no valid recovery code was entered; nothing was signed") from None
-            show(f"{left} try/tries left")
+            show(tries_left(left))
 
 
 def _bare(device: str) -> str:
@@ -264,7 +279,7 @@ def _decide(
             cert = queue.sign(request_id, pk)
             return PairOutcome(request_id, cert=cert, cert_code=expected, label=challenged.label,
                                scopes=challenged.scopes_max, device_id=challenged.device_id)  # fmt: skip
-        show(f"that is not the code: {tries - n - 1} try/tries left")
+        show(f"that is not the code: {tries_left(tries - n - 1)}")
     rejection = queue.reject(request_id, pk)
     return PairOutcome(request_id, cert=None, cert_code=expected, label=challenged.label, scopes=challenged.scopes_max,
                        rejection=rejection, device_id=challenged.device_id)  # fmt: skip

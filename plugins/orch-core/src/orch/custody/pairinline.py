@@ -43,6 +43,9 @@ def driver(
                 hint="orch keys primary init --workspace W --relay ORIGIN --invite-file F",
             )
         link_check()
+        device_id = str(offer.get("device_id") or "")
+        if not device_id:  # fail closed: without the consumed device the request cannot be bound to it (L2)
+            raise inline.InlineRefused("mismatch", "the host named no device for this offer; nothing was signed")
         try:
             owner_pk = owner_pk_from_workspace(state, entry)
         except _Fail as exc:
@@ -66,7 +69,7 @@ def driver(
                 queue.finish_uploads()  # a decision a crash left unsent goes out first
                 return inline.serve_request(
                     queue, rid, pk_factory=_pk_factory, ask_cert_code=ask_code, show=show, owner_pk=owner_pk,
-                    offer_id=offer_id, device_id=str(offer.get("device_id") or "") or None,
+                    offer_id=offer_id, device_id=device_id, attempt=offer.get("attempt") or None,
                 )  # fmt: skip
             finally:
                 client.close()

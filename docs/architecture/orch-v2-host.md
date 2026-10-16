@@ -9950,7 +9950,7 @@ request outstanding until its expiry plus a minute, `relay.pair_open` meanwhile)
 the rejection is signed while the key is held. **Input rules (M2):** the pairing code and `cert_code` must match
 `^[A-Z2-7]{6}$` after strip and upper-case; anything else is discarded, nothing is sent ("that did not look like the
 phone's code; nothing was sent", plus "never type your recovery code here" when it has two or more words); the SAS
-prompt and the `cert_code` prompt have distinct wording ("step 1 of 2" / "step 2 of 2"). **Deadline (L1):** the
+prompt and the `cert_code` prompt have distinct wording ("pairing code: ..." / "compare code: ...", no step counts; "2 tries left" / "1 try left"). **Deadline (L1):** the
 `cert_code` read ends at the request's `expires_ms` (a `select` on the terminal) and then rejects. A Ctrl-C leaves the
 request challenged and nothing signed; `pair --resume --offer O` re-enters the same step (journal first, a challenge is
 never signed twice, a new recovery-code prompt). If the primary step fails the offer is cancelled (no hang).
@@ -9960,6 +9960,13 @@ never signed twice, a new recovery-code prompt). If the primary step fails the o
   CLI compares in constant time. **Invariant:** the expected `cert_code` is computed from the CLI's own journaled
   challenge, never from `host.relay_pair_show` or anything the host or relay says.
 - The owner's `PK` comes from the workspace genesis, not the relay or a file; `primary set` re-checks device and person.
+- *Deviation (4):* Ctrl-C at the recovery prompt, then `pair --resume --offer O`, asks a **fresh** recovery code and gives
+  3 **new** `cert_code` tries (the try counters live in the process, not the journal); the journaled challenge is reused,
+  so the expected code is the same and a challenge is never signed twice.
+- If the primary signed a certificate (`queue.sign` PUT it) and the pairing then did not complete (`relay.pair_cert`
+  failed, or the offer ended), the CLI says "a certificate was issued for device d_xxxx but the pairing did not complete".
+  There is no CLI command that revokes or removes a device yet; the device holds no workspace membership (`device.added`
+  was never signed), so it cannot act in the workspace. *Follow-up:* a device revoke/remove command.
 - The relay-side `rejection` can reach R6's poll before `relay.pair_cert` does; a `relay.pair_closed` answer to the
   hand-over is then moot when the offer is already terminal or holds the certificate.
 - Cancelling an offer does not end its outstanding cert request (R6, 11A.15.6): a new pairing waits for the request to

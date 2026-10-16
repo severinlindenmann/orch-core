@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -54,6 +55,10 @@ def safe(text: object, cap: int = 80) -> str:
         return "?"
     kept = "".join(" " if c.isspace() else c for c in cleaned if c.isspace() or c.isprintable())
     return " ".join(kept.split())[:cap]
+
+
+def tries_left(n: int) -> str:
+    return "no tries left" if n <= 0 else "1 try left" if n == 1 else f"{n} tries left"
 
 
 def _word(value: object, allowed: frozenset[str] | None = None) -> str:
@@ -198,18 +203,21 @@ def attach(
     primary_done = False
     sas_bad = 0
     polls = 0
-    was_open = False
+    was_open = erase is not None  # armed from the moment the link block was printed (a fast phone is pending already)
+    issued: list[str] = []  # device ids a certificate was issued for by the inline primary
     while True:
         offer = call("host.relay_pair_show", {"workspace_id": wid, "offer_id": offer_id})["offer"]
         state = _word(offer.get("state"), STATES)
         scopes = ", ".join(_word(x, frozenset({"look", "decide"})) for x in offer.get("scopes") or [])
         label = safe(offer.get("label"))
         if state != last:
-            if was_open and erase is not None:
-                erase()  # L3: the QR and both link lines leave the screen once the phone has used the link
+            if was_open and erase is not None and state != "open":
+                # L3: the QR and both link lines leave the screen once the phone has used the link; without a
+                # "state: open" line printed yet (the first look already shows more) there is one line less to erase
+                erase(last is not None)
                 was_open = False
             last = state
-            was_open = state == "open"
+            was_open = was_open or state == "open"
             out.write(f"state: {state}\n")
             out.flush()
             if emit is not None:
@@ -219,6 +227,8 @@ def attach(
             return 0
         if state in TERMINAL:
             out.write(f"the pairing ended: {state}\n")
+            for dev in issued:
+                out.write(_issued_notice(dev))
             return 3
         if state == "pending":
             if offer.get("second_key"):
@@ -246,7 +256,7 @@ def attach(
             )
             if got["state"] == "pending":
                 left = got.get("attempts_left")
-                out.write(f"that is not the code: {left if type(left) is int else '?'} attempt(s) left\n")
+                out.write(f"that is not the code: {tries_left(left) if type(left) is int else '?'}\n")
             continue
         if state in ("confirmed", "cert_pending") and offer.get("has_cert") and not signed:
             signed = True
@@ -258,7 +268,7 @@ def attach(
             rid = offer.get("outstanding_request")
             if rid:
                 primary_done = True
-                if not _inline_primary_step(call, wid, offer_id, str(rid), offer, primary, out):
+                if not _inline_primary_step(call, wid, offer_id, str(rid), offer, primary, out, issued):
                     return 3
                 continue
         if state == "cert_pending" and not offer.get("has_cert") and primary is None and not waiting_shown:
@@ -270,7 +280,7 @@ def attach(
         sleep(POLL_S)
 
 
-SAS_PROMPT = "step 1 of 2, pairing code: type the 6 characters the phone shows (empty: reject): "
+SAS_PROMPT = "pairing code: type the 6 characters the phone shows (empty: reject): "
 
 
 def _describe(exc: BaseException) -> str:
@@ -304,6 +314,18 @@ def _when_new_offer(until_ms: object) -> str:
     )
 
 
+def _issued_notice(device_id: str) -> str:
+    """The owner is told when the primary signed a device certificate and the pairing then did not complete. There is
+    no command that revokes or removes a device (``device.removed`` has no CLI op yet), so the text says so."""
+    bare = _word(device_id[2:] if device_id.startswith("d_") else device_id)
+    short = "d_" + bare[:8] if bare != "?" else "?"
+    return (
+        f"a certificate was issued for device {short} but the pairing did not complete; there is no command to "
+        "revoke it yet. The device has no membership in the workspace (device.added was never signed), so it cannot "
+        "act in it; ask the relay operator to remove it if you want it gone\n"
+    )
+
+
 def _inline_primary_step(
     call: Callable[[str, dict[str, Any]], dict[str, Any]],
     wid: str,
@@ -312,11 +334,15 @@ def _inline_primary_step(
     offer: Mapping[str, Any],
     primary: Callable[..., Any],
     out: TextIO,
+    issued: list[str] | None = None,
 ) -> bool:
     """Run the inline primary and hand its certificate (or rejection) to R6 (``relay.pair_cert``, which verifies it
     itself). On any failure the offer is cancelled and the person is told a new pairing can start; ``False``."""
+    got = None
     try:
         got = primary(offer_id, rid, offer)
+        if issued is not None and getattr(got, "cert", None) is not None:
+            issued.append(str(getattr(got, "device_id", None) or "?"))
         args: dict[str, Any] = {"workspace_id": wid, "offer_id": offer_id}
         if got.cert is not None:
             args["cert"] = got.cert
@@ -339,6 +365,10 @@ def _inline_primary_step(
         raise
     except Exception as exc:  # noqa: BLE001 - any failure ends the pairing cleanly; nothing hangs
         out.write(f"the primary step ended: {_describe(exc)}\n")
+        if got is not None and getattr(got, "cert", None) is not None:
+            if issued is not None and issued:
+                issued.pop()  # told here; not again at a terminal state
+            out.write(_issued_notice(str(getattr(got, "device_id", None) or "?")))
         try:
             call("host.relay_pair_cancel", {"workspace_id": wid, "offer_id": offer_id})
             out.write("the pairing is cancelled; " + _when_new_offer(getattr(exc, "until_ms", None)) + "\n")
@@ -470,6 +500,11 @@ def _install_origin(state: Path, given: str | None) -> str | None:
         stored = primary_register.stored_origin(state)
     except primary_register.RegisterError as exc:
         raise HostError(exc.code, str(exc)) from None
+    if given is not None:
+        try:
+            given = primary_register.check_origin(given)
+        except primary_register.RegisterError as exc:
+            raise HostError(exc.code, str(exc)) from None
     if stored is None or given is None:
         return given or stored
     if given != stored:
@@ -690,8 +725,11 @@ def main(
     sleep: Callable[[float], None] = time.sleep,
     primary: Callable[[str, str, Mapping[str, Any]], Any] | None = None,
     ask_timed: Callable[[str, float | None], str | None] | None = None,
+    err: TextIO | None = None,
 ) -> int:
     from orch.custody.cli import write_error
+
+    err = sys.stderr if err is None else err
 
     from .control_client import ControlClient
 
@@ -711,6 +749,7 @@ def main(
             if args.action == "link":
                 data = _genesis_guard(lambda: _link_run(call, entry, state, args, out, sleep))
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                err.write(f"next: orch host relay primary set --workspace {wid}\n")
                 return 0
             if args.action == "genesis-pin":
                 data = _genesis_guard(lambda: _genesis_pin_run(call, entry, state))
@@ -722,6 +761,7 @@ def main(
                 cert, label = _primary_set_args(state, entry, args)
                 data = call("host.relay_primary_set", {"workspace_id": wid, "cert": cert, "label": label})
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                err.write(f"next: orch host relay pair --workspace {wid}\n")
                 return 0
             if sub == "list":
                 data = call("host.relay_pair_list", {"workspace_id": wid})
@@ -784,8 +824,8 @@ def main(
                     if _is_tty(out):
                         rows = _rows(text, _width())
 
-                        def erase(out: TextIO = out, rows: int = rows) -> None:
-                            _erase(out, rows + 1)  # + the "state: open" line printed after the block
+                        def erase(state_line: bool = True, out: TextIO = out, rows: int = rows) -> None:
+                            _erase(out, rows + (1 if state_line else 0))  # + the "state: open" line after the block
 
                 del link
             driver = _guarded(step9 or _step9(env, state, entry))

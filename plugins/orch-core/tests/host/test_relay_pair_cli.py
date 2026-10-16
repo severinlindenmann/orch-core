@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import fcntl
 import io
 import json
 import os
@@ -65,7 +66,7 @@ def test_attach_types_the_sas_waits_for_the_primary_signs_step_9_and_ends_approv
     text = out.getvalue()
     assert rc == 0 and s.answers == [("WRONGA", True), ("RIGHTA", True)] and signed == ["o" * 32]
     assert "someone else has this link" in text and "named by the device" in text
-    assert "that is not the code: 2 attempt(s) left" in text and "waiting for the primary" in text
+    assert "that is not the code: 2 tries left" in text and "waiting for the primary" in text
     assert "approved:" in text
 
 
@@ -92,8 +93,8 @@ class InlineScript(Script):
 
 
 class Outcome:
-    def __init__(self, cert=None, rejection=None):
-        self.cert, self.rejection = cert, rejection
+    def __init__(self, cert=None, rejection=None, device_id=None):
+        self.cert, self.rejection, self.device_id = cert, rejection, device_id
 
 
 def test_attach_inline_primary_runs_once_and_hands_the_certificate_to_r6():
@@ -188,12 +189,11 @@ def test_sas_is_normalised_before_it_is_sent():
 
 
 def test_the_two_prompts_are_worded_differently():
-    assert (
-        paircli.SAS_PROMPT != "step 2 of 2, compare code: type the 6 characters the phone shows now (empty: reject): "
-    )
     from orch.relay_owner.inline import CERT_CODE_PROMPT
 
-    assert CERT_CODE_PROMPT != paircli.SAS_PROMPT and "step 1 of 2" in paircli.SAS_PROMPT
+    assert paircli.SAS_PROMPT == "pairing code: type the 6 characters the phone shows (empty: reject): "
+    assert CERT_CODE_PROMPT == "compare code: type the 6 characters the phone shows now (empty: reject): "
+    assert "step" not in paircli.SAS_PROMPT + CERT_CODE_PROMPT
 
 
 def test_attach_empty_code_rejects_and_a_terminal_state_ends_with_3():
@@ -675,7 +675,7 @@ def test_json_fd_must_be_a_pipe_or_a_socket_never_0_to_2_or_a_file(host, tmp_pat
     f = None
     if which == "file":
         f = open(tmp_path / "link.txt", "w")  # noqa: SIM115 - closed below
-        fd = f.fileno()
+        fd = fcntl.fcntl(f.fileno(), fcntl.F_DUPFD, 10)  # a regular file on a descriptor above 3, whatever pytest holds
     else:
         fd = {"stdin": 0, "stdout": 1, "stderr": 2}[which]
     try:
@@ -683,6 +683,7 @@ def test_json_fd_must_be_a_pipe_or_a_socket_never_0_to_2_or_a_file(host, tmp_pat
     finally:
         if f is not None:
             f.close()
+            os.close(fd)
     assert rc != 0 and "invalid.input" in text and engine.list_offers() == []  # refused before any offer
     if which == "file":
         assert (tmp_path / "link.txt").read_text() == ""
@@ -751,8 +752,22 @@ def test_attach_erases_exactly_when_the_offer_leaves_open():
     s = Script([("open", False), ("open", False), ("pending", False), ("rejected", False)])
     calls, out = [], io.StringIO()
     paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "", step9=lambda o: None, sleep=lambda t: None,
-                   erase=lambda: calls.append(out.getvalue().count("state:")))  # fmt: skip
-    assert calls == [1]  # once, after "state: open" and before "state: pending"
+                   erase=lambda line=True: calls.append((out.getvalue().count("state:"), line)))  # fmt: skip
+    assert calls == [(1, True)]  # once, after "state: open" and before "state: pending"
+
+
+def test_attach_erases_when_the_first_look_is_already_past_open():
+    """A fast phone: the offer is pending at the first look, no "state: open" line was printed, the block is armed."""
+    s = Script([("pending", False), ("rejected", False)])
+    calls, out = [], io.StringIO()
+    paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "", step9=lambda o: None, sleep=lambda t: None,
+                   erase=lambda line=True: calls.append((out.getvalue().count("state:"), line)))  # fmt: skip
+    assert calls == [(0, False)]  # before the first state line, and without the extra "state: open" row
+    calls.clear()
+    s = Script([("open", False), ("open", False)])
+    paircli.attach(s, "w" * 32, "o" * 32, io.StringIO(), ask=lambda p: "", step9=lambda o: None,
+                   sleep=lambda t: None, max_polls=2, erase=lambda line=True: calls.append(line))  # fmt: skip
+    assert calls == []  # still open: nothing erased
 
 
 def test_a_failed_primary_step_says_when_a_new_offer_is_possible():
@@ -805,3 +820,60 @@ def test_a_rejection_that_r6_already_saw_is_not_a_failure():
     rc = paircli.attach(refuse_always, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
                         sleep=lambda t: None, primary=lambda *a: Outcome(rejection={"o": {}, "sig": "r"}))  # fmt: skip
     assert rc == 3 and "the host refused: relay.pair_closed" in out.getvalue() and s2.cancelled
+
+
+def test_a_certificate_issued_but_the_hand_over_failing_is_told_to_the_owner():
+    s = InlineScript([("pending", False), ("cert_pending", False)])
+    base = s.__call__
+
+    def refuse(op, args):
+        if op == "host.relay_pair_cert":
+            raise paircli._Refused({"code": "relay.quota"}, 3)
+        return base(op, args)
+
+    out = io.StringIO()
+    rc = paircli.attach(refuse, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
+                        sleep=lambda t: None, primary=lambda *a: Outcome(cert={"o": {}}, device_id="d_" + "ab" * 16),
+                        )  # fmt: skip
+    text = out.getvalue()
+    assert rc == 3 and "a certificate was issued for device d_abababab but the pairing did not complete" in text
+    assert "no command to revoke it yet" in text
+
+
+def test_a_certificate_issued_and_the_offer_then_ending_is_told_once():
+    s = InlineScript([("pending", False), ("cert_pending", False), ("cert_pending", False), ("failed", False)])
+    out = io.StringIO()
+    rc = paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
+                        sleep=lambda t: None, primary=lambda *a: Outcome(cert={"o": {}}, device_id="d_" + "cd" * 16),
+                        )  # fmt: skip
+    text = out.getvalue()
+    assert rc == 3 and "the pairing ended: failed" in text and text.count("a certificate was issued for device") == 1
+    assert "d_cdcdcdcd" in text
+    ok = InlineScript([("pending", False), ("cert_pending", False), ("cert_pending", True), ("approved", True)])
+    out = io.StringIO()
+    paircli.attach(ok, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None, sleep=lambda t: None,
+                   primary=lambda *a: Outcome(cert={"o": {}}, device_id="d_" + "cd" * 16))  # fmt: skip
+    assert "certificate was issued" not in out.getvalue()
+
+
+def test_install_origin_checks_the_given_relay_like_init_does(tmp_path):
+    from orch.custody import primary_register
+
+    st = tmp_path / "state"
+    (st / "person" / "primary").mkdir(parents=True, mode=0o700)
+    primary_register._write_private(
+        primary_register.relay_path(st), {"v": 1, "origin": ORIGIN, "person_id": "0" * 32, "device_id": "1" * 32,
+                                          "label": "x"})  # fmt: skip
+    assert paircli._install_origin(st, ORIGIN) == ORIGIN
+    with pytest.raises(Exception, match="--relay"):
+        paircli._install_origin(st, "not an origin")
+    with pytest.raises(Exception, match="--relay"):  # a path is not an origin: the same check as `primary init`
+        paircli._install_origin(st, ORIGIN + "/x")
+
+
+def test_link_and_primary_set_name_the_next_command(host, tmp_path, monkeypatch):
+    lab, h, wid, service, engine, owner, primary = host
+    _registered_primary(lab, lab.ws.owner, tmp_path, monkeypatch)
+    err = io.StringIO()
+    rc, text = run(lab, h, ns(action="primary", sub="set", workspace=wid), err=err)
+    assert rc == 0 and f"next: orch host relay pair --workspace {wid}\n" in err.getvalue()

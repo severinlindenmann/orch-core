@@ -42,8 +42,8 @@ BASE = HERE.parents[5]  # the checkout root: a real directory below the user's h
 MIB4 = 4 << 20
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 PRIMARY_PASS = "primary-pass-Tq7!mPx2-vL9rTb"
-SAS_PROMPT = "step 1 of 2, pairing code"
-CERT_PROMPT = "step 2 of 2, compare code"
+SAS_PROMPT = "pairing code: type the 6 characters"
+CERT_PROMPT = "compare code: type the 6 characters"
 TIMINGS: dict[str, float] = {}
 
 
@@ -200,7 +200,7 @@ class Install:
     def review(self) -> Responder:
         return Responder(
             re.compile(r"Type (\S+) and Enter to continue to the passphrase; anything else stops: "),
-            lambda m: (time.sleep(0.5), m.group(1))[1],
+            lambda m: m.group(1),  # the pattern is the whole prompt line: the answer goes out when it is complete
         )
 
     def passphrases(self, primary: str | None = None) -> list[Responder]:
@@ -449,7 +449,7 @@ def journal_states(inst: Install) -> list[str]:
         return [e.state for e in v.entries()]
 
 
-def test_the_real_owner_pairs_the_real_mac_with_the_product_cli(install: Install, monkeypatch):
+def test_the_real_owner_pairs_the_real_mac_with_the_product_cli(install: Install):
     inst = install
     assert not (inst.root / ".orch-dev-sandbox").exists()
     t_all = time.monotonic()
@@ -596,8 +596,6 @@ def test_a_second_install_of_the_same_person_joins_the_account_by_409(install: I
 
     class RealPK:
         """The person key of one command, from a test-sized derivation (the account is the same person)."""
-
-        pass
 
         def __init__(self, **kw):
             self.pk_pub = pk_pub

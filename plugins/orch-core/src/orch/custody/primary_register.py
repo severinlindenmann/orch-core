@@ -41,6 +41,7 @@ from .base import CustodyError
 __all__ = [
     "RegisterError",
     "cert_path",
+    "check_origin",
     "default_label",
     "read_cert",
     "read_invite_file",
@@ -51,6 +52,8 @@ __all__ = [
 ]
 
 INVITE_MAX = 512
+#: a login answered with one of these means "the relay does not know this primary" (anything else is not that)
+LOGIN_UNKNOWN = (401, 403, 404)
 _INVITE = re.compile(r"[\x21-\x7e]{1,256}")
 
 
@@ -189,7 +192,7 @@ def default_label() -> str:
     return clean_label(f"{host or 'this Mac'} (primary)")[:60]
 
 
-def _check_origin(origin: str) -> str:
+def check_origin(origin: str) -> str:
     from orch.relay import wire
 
     try:
@@ -225,7 +228,7 @@ def register(
     result ``{origin, person_id, device_id, label, resumed}``."""
     from orch.relay_owner import OwnerError, OwnerRefused, primary_certificate
 
-    origin = _check_origin(origin)
+    origin = check_origin(origin)
     person_id = crypto.person_id(owner_pk).hex()
     stored_rel, stored = read_relay(state), read_cert(state)
     for have in (stored_rel and stored_rel["origin"], stored and stored.get("origin")):
@@ -241,6 +244,7 @@ def register(
     if not primary.keys_dir(state).is_dir():
         say("making the primary key pair (you choose its passphrase)")
         primary.init(state)
+        say("enter the primary passphrase once more to unlock it")
 
     def failed(exc: OwnerError, what: str) -> RegisterError:
         # never the invite, never a relay body: the status and the documented code only
@@ -249,7 +253,7 @@ def register(
                 "primary.account_failed", f"the relay refused {what} ({exc.status} {exc.code or 'no code'})"
             )
         return RegisterError(
-            "primary.account_failed", f"{what} failed ({type(exc).__name__}); nothing was lost, run again"
+            "primary.account_failed", f"could not reach the relay {origin}; nothing was lost, run again"
         )
 
     with primary.unlocked(state, action="register your primary with the relay") as session:
@@ -259,9 +263,20 @@ def register(
                 cert = stored["cert"]
                 if cert["o"]["device_id"] != session.device_id.hex():
                     raise RegisterError("primary.not_registered", "the stored certificate is not for this primary")
+                if cert["o"].get("person_id") != person_id:
+                    raise RegisterError(
+                        "primary.not_registered", "the stored certificate is not for this workspace's owner"
+                    )
                 label = stored.get("label") or label
-                with contextlib.suppress(OwnerError):  # the account may exist already (a crash after the POST)
+                try:  # the account may exist already (a crash after the POST)
                     client.login()
+                except OwnerRefused as exc:
+                    if exc.status not in LOGIN_UNKNOWN:
+                        raise failed(exc, "the login") from None
+                    # a refusal: the relay does not know this primary yet, so the POST below goes out
+                except OwnerError as exc:  # transport: the relay was not reached; says nothing about the account
+                    raise failed(exc, "the login") from None
+                else:
                     return _mark(state, origin, person_id, cert, label, resumed=True)
             else:
                 if not invite_file:
@@ -335,9 +350,9 @@ def _join_existing(client: Any, cert: dict[str, Any], owner_pk: bytes) -> str:
         raise RegisterError(
             "primary.account_failed", f"the relay refused the primary's device ({exc.status} {exc.code or 'no code'})"
         ) from None
-    except OwnerError as exc:
+    except OwnerError:
         raise RegisterError(
-            "primary.account_failed", f"the primary's device could not be registered ({type(exc).__name__})"
+            "primary.account_failed", "could not reach the relay to register the primary's device; run again"
         ) from None
     return crypto.person_id(owner_pk).hex()
 

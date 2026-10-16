@@ -277,6 +277,46 @@ def test_other_primary_key_in_a_stored_cert_is_refused(tmp_path):
     assert e.value.code == "primary.not_registered"
 
 
+def test_resume_transport_error_on_login_is_not_an_unknown_primary(tmp_path):
+    with pytest.raises(primary_register.RegisterError):
+        reg(tmp_path, FakeClient({"create_account": OwnerTransportError("connect", "r")}))
+    second = FakeClient({"login": OwnerTransportError("connect", "r")})
+    with pytest.raises(primary_register.RegisterError) as e:
+        reg(tmp_path, second, invite_file=invite_file(tmp_path))
+    assert e.value.code == "primary.account_failed"
+    assert f"could not reach the relay {ORIGIN}" in str(e.value) and "Transport" not in str(e.value)
+    assert [c[0] for c in second.calls] == ["login"]  # no second POST on a mere network failure
+    assert primary_register.read_cert(tmp_path / "state")["registered"] is False
+
+
+def test_resume_other_login_refusal_is_not_an_unknown_primary_either(tmp_path):
+    with pytest.raises(primary_register.RegisterError):
+        reg(tmp_path, FakeClient({"create_account": OwnerTransportError("connect", "r")}))
+    second = FakeClient({"login": OwnerRefused("POST /v2/session/login", 500, "internal", None)})
+    with pytest.raises(primary_register.RegisterError) as e:
+        reg(tmp_path, second)
+    assert e.value.code == "primary.account_failed" and [c[0] for c in second.calls] == ["login"]
+
+
+def test_stored_cert_for_another_person_is_refused_before_any_call(tmp_path):
+    state = tmp_path / "state"
+    with pytest.raises(primary_register.RegisterError):
+        reg(tmp_path, FakeClient({"create_account": OwnerTransportError("connect", "r")}))
+    doc = json.loads(primary_register.cert_path(state).read_text())
+    doc["cert"]["o"]["person_id"] = "00" * 16
+    primary_register.cert_path(state).write_text(json.dumps(doc))
+    second = FakeClient()
+    with pytest.raises(primary_register.RegisterError) as e:
+        reg(tmp_path, second)
+    assert e.value.code == "primary.not_registered" and second.calls == []
+
+
+def test_first_init_says_the_passphrase_is_asked_once_more(tmp_path):
+    said = []
+    reg(tmp_path, FakeClient(), say=said.append)
+    assert "enter the primary passphrase once more to unlock it" in said
+
+
 # -- the CLI ----------
 
 
@@ -303,7 +343,12 @@ def test_cli_init_with_relay_registers(tmp_path, wired):
     assert code == 0, out
     res = json.loads(out)["result"]
     assert res["origin"] == ORIGIN and res["certificate"]["registered"] is True
-    assert INVITE not in out + err and "orch host relay link" in err
+    assert INVITE not in out + err
+    assert f"next: orch host relay link --workspace {'w' * 32} --relay {ORIGIN} --max-publication-bytes 4194304" in err
+    # a rerun (already registered) names the next step too
+    code, out, err = run("primary", "init", "--state", str(tmp_path / "s"), "--json", "--workspace", "w",
+                         "--relay", ORIGIN, "--invite-file", str(f))  # fmt: skip
+    assert code == 0 and json.loads(out)["result"]["already"] is True and "next: orch host relay link" in err
 
 
 def test_cli_requires_workspace_and_invite_and_terminal_and_not_grant(tmp_path, wired, monkeypatch):
@@ -334,6 +379,16 @@ def test_cli_error_codes_carry_a_hint_and_never_the_invite(tmp_path, wired):
     assert code == 3 and body["code"] == "primary.invite_unusable" and "new invite" in body["message"]
     assert INVITE not in out + err
     assert os.listdir(tmp_path / "s" / "person" / "primary")  # keys stay; a new invite resumes
+
+
+def test_cli_exit_codes_come_from_the_host_table(tmp_path, wired):
+    st = ("--state", str(tmp_path / "s"), "--json", "--workspace", "w")
+    code, out, _ = run(
+        "primary", "init", *st, "--relay", ORIGIN, "--invite-file", str(invite_file(tmp_path, mode=0o644))
+    )
+    assert code == 5 and json.loads(out)["error"]["code"] == "primary.invite_file"
+    code, out, _ = run("primary", "init", *st, "--relay", "ftp://nope", "--invite-file", str(invite_file(tmp_path)))
+    assert code == 5 and json.loads(out)["error"]["code"] == "invalid.input"
 
 
 def test_cli_plain_init_is_unchanged_and_names_the_next_step(tmp_path):

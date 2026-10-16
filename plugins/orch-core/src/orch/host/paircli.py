@@ -302,6 +302,81 @@ def _cut(text: object) -> str:
     return safe(str(text), 200)
 
 
+def _install_origin(state: Path, given: str | None) -> str | None:
+    """One relay per install (owner decision 15 Oct, 11A.15.23): the relay the primary was registered on
+    (``relay.json``, or the pending registration's) is the default for ``--relay``; another origin is
+    ``primary.relay_mismatch``. ``None`` and nothing stored: the caller asks for ``--relay``."""
+    from orch.custody import primary_register
+
+    try:
+        stored = primary_register.stored_origin(state)
+    except primary_register.RegisterError as exc:
+        raise HostError(exc.code, str(exc)) from None
+    if stored is None or given is None:
+        return given or stored
+    if given != stored:
+        raise HostError(
+            "primary.relay_mismatch",
+            "this install already uses another relay (one relay per install)",
+            hint=f"use --relay {safe(stored, 200)}",
+        )
+    return given
+
+
+def _primary_set_args(state: Path, entry: Mapping[str, Any], args: Any) -> tuple[dict[str, Any], str]:
+    """``orch host relay primary set --workspace W [--cert FILE --label TEXT]``: without ``--cert`` the certificate and
+    label are the registered primary's (``cert.json``/``relay.json``, made by ``orch keys primary init``), refused
+    unless the certificate is for **this** machine's primary device and the workspace owner's person, and the relay is
+    the one the workspace is linked to (R6 re-verifies the certificate anyway, S:7870)."""
+    from orch.custody import primary, primary_register
+    from orch.custody.base import CustodyError
+
+    if args.cert:  # an explicit certificate (an external primary, the dev path): as before; R6 verifies it
+        if not args.label:
+            raise HostError("invalid.input", "orch host relay primary set --workspace W [--cert FILE --label TEXT]")
+        return json.loads(Path(args.cert).read_text()), str(args.label)
+    try:
+        stored, rel = primary_register.read_cert(state), primary_register.read_relay(state)
+        if stored is None or rel is None or not stored["registered"]:
+            raise HostError(
+                "primary.not_registered",
+                "this install has no registered primary",
+                hint="orch keys primary init --workspace W --relay ORIGIN --invite-file F",
+            )
+        cert, label = stored["cert"], args.label or rel.get("label") or "primary"
+        o = cert.get("o") if isinstance(cert, dict) else None
+        if not isinstance(o, dict):
+            raise HostError("invalid.input", "the stored certificate is not a device certificate")
+        if o.get("device_id") != primary.load(state).device_id.hex():
+            raise HostError("invalid.input", "the stored certificate is not for this machine's primary device")
+        from orch import crypto
+        from orch.custody.cli import _Fail, owner_pk_from_workspace
+
+        try:
+            owner = owner_pk_from_workspace(state, entry)
+        except _Fail as exc:
+            raise HostError(exc.code, exc.message) from None
+        if o.get("person_id") != crypto.person_id(owner).hex():
+            raise HostError("invalid.input", "the stored certificate is not for the workspace owner's person")
+        _link_origin_check(state, entry)
+    except (CustodyError, primary_register.RegisterError) as exc:
+        raise HostError(str(getattr(exc, "code", "custody")), _cut(str(exc))) from None
+    return cert, str(label)
+
+
+def _link_origin_check(state: Path, entry: Mapping[str, Any]) -> None:
+    """The stored relay must be the one the workspace is linked to (a link of another relay: ``primary.relay_mismatch``)."""
+    from orch.custody import primary_register
+
+    from .custody import read_json
+    from .relaylink import link_path
+
+    link = read_json(link_path(state, entry["workspace_id"]), int(entry.get("host_uid", os.getuid())))
+    mine = primary_register.stored_origin(state)
+    if isinstance(link, dict) and mine is not None and link.get("origin") != mine:
+        raise HostError("primary.relay_mismatch", "the workspace is linked to another relay than this primary's")
+
+
 LINK_WAIT_S = 90.0
 OFF_GRACE_S = 5.0
 
@@ -313,11 +388,12 @@ def _link_run(call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapp
     terminal (:func:`sign_genesis_pin`), then ``host.relay_start``: the worker drives the card, login, hold, genesis,
     the first publication and ``linked``. Waits (bounded) for ``linked`` and says where it stopped otherwise."""
     wid = entry["workspace_id"]
-    if not args.relay or not args.max_publication_bytes:
+    origin = _install_origin(state, args.relay)
+    if not origin or not args.max_publication_bytes:
         raise HostError("invalid.input", "orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N")
     req: dict[str, Any] = {
         "workspace_id": wid,
-        "origin": args.relay,
+        "origin": origin,
         "max_publication_bytes": args.max_publication_bytes,
     }
     if args.ca_file:
@@ -463,12 +539,10 @@ def main(
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
                 return 0
             if args.action == "primary":
-                if sub != "set" or not args.cert or not args.label:
-                    raise HostError(
-                        "invalid.input", "orch host relay primary set --workspace W --cert FILE --label TEXT"
-                    )
-                cert = json.loads(Path(args.cert).read_text())
-                data = call("host.relay_primary_set", {"workspace_id": wid, "cert": cert, "label": args.label})
+                if sub != "set":
+                    raise HostError("invalid.input", "orch host relay primary set --workspace W")
+                cert, label = _primary_set_args(state, entry, args)
+                data = call("host.relay_primary_set", {"workspace_id": wid, "cert": cert, "label": label})
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
                 return 0
             if sub == "list":

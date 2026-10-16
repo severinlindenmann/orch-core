@@ -137,8 +137,11 @@ def _parser() -> argparse.ArgumentParser:
     relay.add_argument("--max-publication-bytes", type=int, help="link: the checkpoint cap C (1 MiB to 1 GiB)")
     relay.add_argument("--ca-file", help="link: a PEM file of the relay's CA (a private relay)")
     relay.add_argument("--proxy", help="link: an http proxy URL")
-    relay.add_argument("--cert", help="primary set: the primary's certificate file (JSON)")
-    relay.add_argument("--label", help="primary set: your name for the primary")
+    relay.add_argument(
+        "--cert",
+        help="primary set: the primary's certificate file (JSON); default: the one orch keys primary init made",
+    )
+    relay.add_argument("--label", help="primary set: your name for the primary; default: the one chosen at init")
     rdr = sub.add_parser(
         "readers",
         help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "

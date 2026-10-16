@@ -130,6 +130,89 @@ def run(lab, h, args, env=None, **kw):
     return rc, out.getvalue()
 
 
+def _registered_primary(lab, owner, tmp_path, monkeypatch, *, origin=ORIGIN, device_of=None):
+    """The install's primary as ``orch keys primary init`` leaves it: keys, a certificate for the on-disk primary
+    device signed by the workspace owner's person key, ``cert.json`` and ``relay.json``."""
+    from orch.custody import KdfParams, PassphraseBackend, primary_register
+    from orch.custody import primary as install_primary
+    from orch.identity import certs
+
+    fast = KdfParams(n=2**10)
+    monkeypatch.setattr(
+        install_primary, "open_backend",
+        lambda d: PassphraseBackend(d, _passphrase_provider=lambda r: "Zq7!mPx2-vL9#rTb4w", _kdf=fast, _min_n=2**10),
+    )  # fmt: skip
+    if not install_primary.keys_dir(lab.state).is_dir():
+        install_primary.init(lab.state)
+    info = install_primary.load(lab.state)
+    cert = certs.make_device_cert(
+        owner.pk_pub, owner.pk_sign, dk_sig_pub=device_of or info.dk_sig_pub, dk_kx_pub=info.dk_kx_pub,
+        label_sealed=b"x" * 40, created_ms=1_000, expires_ms=None, scopes_max=["look"],
+    )  # fmt: skip
+    pid = crypto.person_id(owner.pk_pub).hex()
+    primary_register._write_private(
+        primary_register.cert_path(lab.state),
+        {"v": 1, "registered": True, "origin": origin, "label": "Mac (primary)", "cert": cert},
+    )
+    primary_register._write_private(
+        primary_register.relay_path(lab.state),
+        {"v": 1, "origin": origin, "person_id": pid, "device_id": cert["o"]["device_id"], "label": "Mac (primary)"},
+    )
+    return cert
+
+
+def test_primary_set_defaults_to_the_registered_primary(host, tmp_path, monkeypatch):
+    lab, h, wid, service, engine, owner, primary = host
+    cert = _registered_primary(lab, lab.ws.owner, tmp_path, monkeypatch)
+    rc, text = run(lab, h, ns(action="primary", sub="set", workspace=wid))
+    assert rc == 0 and json.loads(text)["data"]["device_id"] == cert["o"]["device_id"], text
+
+
+def test_primary_set_default_refusals(host, tmp_path, monkeypatch):
+    lab, h, wid, service, engine, owner, primary = host
+    rc, text = run(lab, h, ns(action="primary", sub="set", workspace=wid))
+    assert rc != 0 and "primary.not_registered" in text  # nothing registered yet
+    _registered_primary(lab, lab.ws.owner, tmp_path, monkeypatch, origin="https://other.example")
+    rc, text = run(lab, h, ns(action="primary", sub="set", workspace=wid))
+    assert rc != 0 and "primary.relay_mismatch" in text  # the workspace is linked to ORIGIN
+    stranger = Person()  # a certificate of another person under the same on-disk device
+    _registered_primary(lab, stranger, tmp_path, monkeypatch)
+    rc, text = run(lab, h, ns(action="primary", sub="set", workspace=wid))
+    assert rc != 0 and "owner's person" in text
+    _registered_primary(lab, lab.ws.owner, tmp_path, monkeypatch, device_of=Person().sig_pub)
+    rc, text = run(lab, h, ns(action="primary", sub="set", workspace=wid))
+    assert rc != 0 and "not for this machine's primary" in text
+
+
+def test_link_defaults_to_the_stored_relay_and_refuses_another(tmp_path, monkeypatch):
+    from orch.custody import primary_register
+
+    st = tmp_path / "state"
+    (st / "person" / "primary").mkdir(parents=True, mode=0o700)
+    seen = []
+
+    def call(op, args):
+        seen.append(args["origin"])
+        raise paircli._Refused({"code": "stop"}, 1)
+
+    entry = {"workspace_id": "w" * 32}
+    a = lambda **kw: argparse.Namespace(**{"relay": None, "max_publication_bytes": 1 << 20, "ca_file": None,  # noqa: E731
+                                           "proxy": None, **kw})  # fmt: skip
+    with pytest.raises(Exception, match="--relay"):  # nothing stored and nothing given
+        paircli._link_run(call, entry, st, a(), io.StringIO(), lambda t: None)
+    primary_register._write_private(
+        primary_register.relay_path(st), {"v": 1, "origin": ORIGIN, "person_id": "0" * 32, "device_id": "1" * 32,
+                                          "label": "x"})  # fmt: skip
+    with pytest.raises(paircli._Refused):
+        paircli._link_run(call, entry, st, a(), io.StringIO(), lambda t: None)
+    with pytest.raises(paircli._Refused):
+        paircli._link_run(call, entry, st, a(relay=ORIGIN), io.StringIO(), lambda t: None)
+    assert seen == [ORIGIN, ORIGIN]
+    with pytest.raises(Exception, match="one relay per install"):
+        paircli._link_run(call, entry, st, a(relay="https://other.example"), io.StringIO(), lambda t: None)
+    assert seen == [ORIGIN, ORIGIN]  # nothing reached the host
+
+
 def test_primary_set_from_a_file_then_list_shows_no_offer(host, tmp_path):
     lab, h, wid, service, engine, owner, primary = host
     f = tmp_path / "primary-cert.json"

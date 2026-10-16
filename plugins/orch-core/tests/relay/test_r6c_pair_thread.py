@@ -138,3 +138,24 @@ def test_without_pairing_pair_items_are_acknowledged_as_before():
     loop._ack(1)
     loop._ack(2)
     assert loop.bridge.rids.cursor() == 2
+
+
+def test_a_tick_that_raises_is_not_run_again_at_once(kit, monkeypatch):
+    from orch.relay.r6 import pair as pair_mod
+
+    monkeypatch.setattr(pair_mod, "TICK_S", 0.4)
+    calls = []
+
+    def boom() -> None:
+        calls.append(time.monotonic())
+        raise RuntimeError("tick failed")
+
+    monkeypatch.setattr(kit.engine, "tick", boom)
+    t = PairThread(kit.engine, name="orch-relay-r6p-test")
+    t.start()
+    try:
+        time.sleep(1.0)
+    finally:
+        t.stop()
+        t.join(5)
+    assert 2 <= len(calls) <= 4, calls  # throttled by TICK_S, not a busy loop

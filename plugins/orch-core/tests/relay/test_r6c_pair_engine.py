@@ -1390,3 +1390,48 @@ def test_an_answer_whose_first_post_failed_is_posted_again_by_the_tick_without_a
     kit.clock.ms += 2_500
     kit.engine.tick()
     assert len(kit.relay.answers) == n + 2  # posted: nothing more
+
+
+def _unposted(kit, n):
+    """``n`` stored answers (distinct rids) whose POST failed transiently."""
+    kit.relay.fail["answer"] = "retry"
+    h, phone = offer(kit)
+    for _ in range(n):
+        send(kit, phone)
+    return h
+
+
+def test_the_repost_stops_at_the_first_transient_failure_of_a_tick(kit):
+    h = _unposted(kit, 3)
+    base = len(kit.relay.answers)
+    kit.clock.ms += 2_500
+    kit.engine.tick()
+    assert len(kit.relay.answers) == base + 1  # one attempt, then no more POSTs this tick
+
+
+def test_the_repost_is_capped_per_tick(kit):
+    h = _unposted(kit, 6)
+    del kit.relay.fail["answer"]
+    base = len(kit.relay.answers)
+    kit.clock.ms += 2_500
+    kit.engine.tick()
+    assert len(kit.relay.answers) == base + 4  # REPOSTS_PER_TICK
+    kit.engine.tick()
+    assert len(kit.relay.answers) == base + 6
+    assert not kit.engine._reposted  # posted: the throttle keys are dropped
+
+
+def test_a_failing_store_write_in_the_repost_does_not_end_the_tick_or_unthrottle_it(kit, monkeypatch):
+    h = _unposted(kit, 1)
+    del kit.relay.fail["answer"]
+
+    def boom(*a, **kw):
+        raise OSError("disk")
+
+    monkeypatch.setattr(kit.store, "mark_answer_posted", boom)
+    kit.clock.ms += 2_500
+    base = len(kit.relay.answers)
+    kit.engine.tick()  # does not raise
+    assert len(kit.relay.answers) == base + 1
+    kit.engine.tick()  # same instant: throttled by the key set before the POST
+    assert len(kit.relay.answers) == base + 1

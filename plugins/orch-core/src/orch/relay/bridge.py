@@ -1263,7 +1263,7 @@ class BridgeLoop:
                 # RENEW_BACKOFF_S), never later than the lease margin allows
                 if not self._stop.is_set():
                     self._item_failed("renew", e)
-                    after = getattr(e, "retry_after", None)
+                    after = e.retry_after if isinstance(e, RelayRefused) else None
                     delay = float(after) if type(after) is int and after > 0 else RENEW_BACKOFF_S
                     self._renew_not_before = self._mono() + min(delay, RENEW_MAX_BACKOFF_S)
                 return

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """B6 (owner decision E): the signing review in three layers: a headline, the content formatted like the ticket
 page, the prompt; the full dump behind ``d`` / ``--details``. Same signed material; only the layout changes."""
 
@@ -40,6 +41,7 @@ Acceptance criteria
 
 Fields
   type: feature
+  rule for this gate: 1 approval from owner; applies to all tickets
 """
 
 NEW = """\
@@ -48,6 +50,7 @@ in workspace Acme (DEMO)
 
 Fields
   type: chore
+  owner: <OWNER>
 """
 
 
@@ -66,7 +69,7 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
 def test_the_plain_view_of_a_new_ticket(human, served):
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("new", {"title": "Elefant Chart", "type": "chore"})
-    assert str(signer.plain(p, WS)) == NEW
+    assert str(signer.plain(p, WS)) == NEW.replace("<OWNER>", p["events"][0]["owner"])
 
 
 def test_the_content_comes_from_the_signed_events_and_material_only(human, served):
@@ -98,19 +101,25 @@ def test_changed_fields_show_before_and_after_and_tasks_are_numbered(human, serv
             "gate": "plan",
             "ticket": {"key": "DEMO-0001", "uid": "u"},
             "texts": {},
+            "policy": {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False},
             "input": {
                 "fields": {},
                 "tasks": [
-                    {"id": "T1", "text": "write it", "verify": {"cmd": "pytest -q"}},
-                    {"id": "T2", "text": "ship it", "verify": None},
+                    {"id": "T1", "text": "write it", "verify": {"cmd": "pytest -q"}, "proves": ["AC1"]},
+                    {"id": "T2", "text": "ship it", "verify": None, "proves": []},
                 ],
             },
         },
     }
     c = signcontent.build(plan)
     assert c["headline"] == "Approve the plan of DEMO-0001"
-    assert c["tasks"] == [{"n": 1, "title": "write it", "verify": ["pytest -q"]}, {"n": 2, "title": "ship it"}]
-    assert "  1. write it\n       verify: pytest -q\n  2. ship it\n" in "\n".join(signcontent.text(c, signer._clean))
+    assert c["tasks"] == [
+        {"n": 1, "title": "write it (proves AC1)", "verify": ["pytest -q"]},
+        {"n": 2, "title": "ship it"},
+    ]
+    assert "  1. write it (proves AC1)\n       verify: pytest -q\n  2. ship it\n" in "\n".join(
+        signcontent.text(c, signer._clean)
+    )
 
 
 def test_a_control_character_never_reaches_the_plain_view(human, served):
@@ -207,3 +216,188 @@ def test_a_review_without_details_keeps_the_old_prompt(monkeypatch):
     ok, shown = _prompt(monkeypatch, "plain text\n", ["DEMO-0001/ABCD1234"])
     assert ok and "and Enter to continue to the passphrase; anything else stops: " in shown
 
+
+# --- the invariant: nothing that carries authority or identity is left out of the plain view -----------------------------
+
+import json  # noqa: E402
+
+from orch.host import review  # noqa: E402
+from orch.identity import GrantToken  # noqa: E402,F401
+
+SCHEMA_STAMPS = frozenset({"seq", "at", "prev", "ws_seq", "host_sig"})
+UID = "01J9ZP0000000000000000000A"
+CERT = {
+    "o": {"person_id": "f" * 32, "device_id": "e" * 32, "scopes_max": ["look", "decide"], "expires_ms": 1234567},
+    "sig": "x",
+}
+POLICY = {"approvers": ["owner"], "count": 2, "not": ["author"], "applies": "all", "independent": True}
+
+
+def signable_types() -> list[str]:
+    from orch.model.emits import EMITS_V1
+
+    out: set[str] = set()
+    for op in [*EMITS_V1, *review.HOST_PERSON_OPS]:
+        out |= set(review.person_op_types(op) or ())
+    return sorted(out)
+
+
+def schema_properties(typ: str) -> set[str]:
+    from orch import schema
+
+    return set(schema.load(f"event.{typ}")["properties"]) - review.ENVELOPE - SCHEMA_STAMPS
+
+
+@pytest.mark.parametrize("typ", signable_types())
+def test_every_schema_property_of_a_person_event_is_classified(typ):
+    """A key added to an event schema fails here until it is either shown by the plain view or in TECHNICAL_KEYS."""
+    assert typ in signcontent.SHOWN, f"classify {typ} in signcontent.SHOWN"
+    unclassified = schema_properties(typ) - signcontent.SHOWN[typ] - signcontent.TECHNICAL_KEYS
+    assert not unclassified, f"{typ}: classify {sorted(unclassified)} in signcontent.SHOWN or TECHNICAL_KEYS"
+    assert signcontent.SHOWN[typ] <= schema_properties(typ) | {"set"}, f"{typ}: SHOWN names a key the schema lacks"
+
+
+VALUES = {
+    "name": "Marker-Name", "kind": "marker-kind", "label": "marker-label", "ac": "AC9", "task": "T9", "ref": "marker-ref",
+    "addon": "marker-addon", "bytes": 4242, "sha256": "sha256:" + "ab" * 32, "version": "9.9.9", "package_sha256": "sha256:" + "cd" * 32,
+    "capabilities": ["marker-cap"], "artifact_kinds": ["marker-akind"], "fields": ["marker-field"], "replaces": "marker-old",
+    "device": "d_" + "1" * 32, "cert": CERT, "device_cert": CERT, "pk_pub": "marker-pubkey", "person": "p_" + "2" * 32,
+    "role": "maintainer", "outcome": "pass", "text": "marker text", "source_sha": [{"repo": "app", "ref": "refs/heads/x", "sha": "a" * 40}],
+    "grant": "gr_" + "3" * 26, "scope": "workable", "verbs": "agent", "hours": 7, "issued_at": "2026-10-16T10:00:00Z",
+    "expires_at": "2026-10-16T17:00:00Z", "reason": "marker-reason", "question": "q1", "option": "a", "qid": "q9",
+    "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
+    "owner": "p_" + "4" * 32, "from": "open", "to": "backlog", "gate": "plan",
+    "gates": {"plan": POLICY}, "set": {"grant_hours": 5}, "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
+}  # fmt: skip
+
+
+def sample(typ: str) -> dict:
+    event = {k: VALUES[k] for k in sorted(signcontent.SHOWN[typ])}
+    if typ == "addon.granted":
+        event["sections"] = ["marker-section"]
+    if typ == "ticket.updated":
+        event["set"] = {"ticket.priority": "high", "ticket.acceptance": [{"id": "AC1", "text": "marker ac"}]}
+        event["base_rev"] = {"ticket.priority": "sha256:" + "11" * 32}
+    if typ == "question.asked":
+        event["question"] = "marker question"
+    if typ == "question.answered":
+        event["question"] = "q1"
+    return {"type": typ, "actor": {"kind": "person", "id": "p_" + "5" * 32, "device": "d_" + "6" * 32}, **event}
+
+
+def material_for(typ: str, event: dict) -> dict:
+    ticket = {"key": "DEMO-0001", "uid": UID}
+    if typ in ("gate.approved", "gate.changes_requested", "verdict.given"):
+        return {
+            "kind": "gate", "gate": "plan", "ticket": ticket, "policy": POLICY, "texts": {"summary": "marker summary"},
+            "input": {"fields": {"ticket_type": "chore", "size": "s", "acceptance": [{"id": "AC1", "text": "marker ac"}], "links": None, "addons": {}},
+                      "tasks": [], "artifacts": {}, "receipts": {}, "source_sha": [], "prior": {}},
+        }  # fmt: skip
+    if typ == "question.answered":
+        return {
+            "kind": "question",
+            "ticket": ticket,
+            "question": {"id": "q1", "text": "marker question?", "options": [{"key": "a", "label": "Marker option"}]},
+        }
+    return {
+        "kind": "payload",
+        "ticket": ticket,
+        "texts": {"summary": "marker summary"},
+        "before": {"ticket.priority": "low", "grant_hours": 8},
+    }
+
+
+def flat(value) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+@pytest.mark.parametrize("typ", signable_types())
+def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
+    event = sample(typ)
+    content = signcontent.build({"op": "x", "events": [event], "material": material_for(typ, event)})
+    text = flat(content) + "\n".join(signcontent.text(content, signer._clean))
+    for key in signcontent.SHOWN[typ]:
+        value = event[key]
+        needles = []
+        if isinstance(value, str) and value.startswith("sha256:"):
+            needles.append(value[7:19])  # a digest is shown short
+        elif key in ("pk_pub", "cert", "device_cert"):
+            needles.append(signcontent._fp(value))  # a key or certificate is shown by its fingerprint
+        elif key in ("sections", "set", "gates", "source_sha"):
+            needles.append(
+                "marker"
+                if key == "sections"
+                else {
+                    "set": "priority" if typ == "ticket.updated" else "grant_hours",
+                    "gates": "approval",
+                    "source_sha": "aaaaaaaaaaaa",
+                }[key]
+            )
+        elif key in ("gate", "question"):
+            needles.append("plan" if key == "gate" else "marker question")
+        elif key == "ticket_type":
+            needles.append("chore")
+        else:
+            needles.append(
+                str(value) if not isinstance(value, (list, dict)) else str(value[0]) if isinstance(value, list) else ""
+            )
+        assert all(n in text for n in needles), f"{typ}: {key} is not in the plain view"
+
+
+def test_a_key_the_plain_view_does_not_know_falls_back_to_the_full_review(human, served):
+    _, key = human.ticket("Owner CLI test")
+    p = human.prepare("log", {"ref": key, "text": "x"})
+    event = {**p["events"][0], "future_field": {"x": 1}}
+    future = {**p, "events": [event], "material": {**p["material"], "review": [review.of(event, p["material"])]}}
+    with pytest.raises(signcontent.PlainUnavailable):
+        signcontent.build(future)
+    plain = signer.plain(future, WS)  # nothing is hidden: the whole review is the only view
+    assert "future_field" in str(plain) and "fingerprint: " in str(plain) and not plain.details
+    with pytest.raises(signcontent.PlainUnavailable):
+        signcontent.build({**p, "events": [{**p["events"][0], "type": "nonsense.event"}]})
+
+
+def test_a_gate_input_key_the_plain_view_does_not_know_falls_back(human, served):
+    _, key = human.ticket("Owner CLI test")
+    ready(human, key)
+    p = human.prepare("approve", {"ref": key, "gate": "requirements"})
+    for where in ("input", "fields"):
+        bad = json.loads(json.dumps(p))
+        target = bad["material"]["input"] if where == "input" else bad["material"]["input"]["fields"]
+        target["future_gate_key"] = 1
+        with pytest.raises(signcontent.PlainUnavailable):
+            signcontent.build(bad)
+
+
+def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, served):
+    g = sample("grant.issued")
+    c = signcontent.build({"op": "grant", "events": [g], "material": material_for("grant.issued", g)})
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["scope"] == "workable" and rows["verbs"] == "agent" and rows["until"] == "2026-10-16T17:00:00Z"
+    assert "scope workable, verbs agent" in c["headline"]
+    m = sample("member.added")
+    c = signcontent.build({"op": "member.add", "events": [m], "material": material_for("member.added", m)})
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["person"] == m["person"] and rows["role"] == "maintainer" and len(rows["key fingerprint"]) == 12
+    assert rows["device certificate device id"] == "e" * 32 and "look, decide" in rows["device certificate scopes max"]
+    _, key = human.ticket("Owner CLI test")
+    ready(human, key)
+    p = human.prepare("approve", {"ref": key, "gate": "requirements"})
+    rows = {r["field"]: r["after"] for r in signcontent.build(p)["fields_changed"]}
+    assert "approval" in rows["rule for this gate"] and "owner" in rows["rule for this gate"]
+
+
+def test_a_before_the_host_alone_vouches_for_is_labelled(human, served):
+    s = human.prepare("set", {"ref": human.ticket("T")[1], "pairs": ["priority=high"]})
+    (row,) = signcontent.build(s)["fields_changed"]
+    assert row["before"] == "medium" and "before_note" not in row  # bound by the event's base_rev
+    event = sample("settings.changed")
+    c = signcontent.build(
+        {"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)}
+    )
+    (row,) = c["fields_changed"]
+    assert row["before"] == "8" and row["before_note"] == "per host, not signed"
+    assert "(per host, not signed)" in "\n".join(signcontent.text(c, signer._clean))
+    created = sample("ticket.created")
+    c = signcontent.build({"op": "new", "events": [created], "material": material_for("ticket.created", created)})
+    assert {"field": "owner", "before": None, "after": created["owner"]} in c["fields_changed"]

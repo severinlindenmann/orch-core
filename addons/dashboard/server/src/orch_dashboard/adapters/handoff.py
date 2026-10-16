@@ -138,9 +138,12 @@ def request(
         first = events[0]
         from orch.host import signcontent
 
-        content = signcontent.clean_tree(  # B6: the plain view, derived from this very material and these events
-            signcontent.build({"op": prepared["op"], "material": material, "events": events})
-        )
+        try:  # B6: the plain view, derived from this very material and these events; unknown shapes get none
+            content = signcontent.clean_tree(
+                signcontent.build({"op": prepared["op"], "material": material, "events": events})
+            )
+        except (KeyError, TypeError, ValueError, AttributeError):
+            content = None
         return {
             "id": info["id"],
             "code": info["code"],
@@ -151,8 +154,7 @@ def request(
             "fingerprint": prepared["fingerprint"],
             "review_digest": digest,
             "gate_hash": first.get("hash") if first.get("type") in GATE_EVENTS else None,
-            "headline": content["headline"],
-            "content": content,
+            **({"headline": content["headline"], "content": content} if content is not None else {}),
             "material": material,
             "events": events,
             "origin": prepared.get("origin"),

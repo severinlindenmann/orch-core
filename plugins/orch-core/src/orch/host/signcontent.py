@@ -4,32 +4,94 @@ ticket page, and (in the terminal) the confirm prompt; the full dump stays one k
 ``build`` is a **pure function of the request the signer already checked** (``events`` and ``material``): every word it
 shows is taken from those, never from host text outside them, so the content shown is the content that is signed. It
 adds nothing to the material and changes no hash; the fingerprint, the review digest and the signed bytes are exactly
-what they were. A payload key it does not account for is shown as a plain ``field: value`` line (nothing is dropped),
-and the details (today's full review) keep every raw value.
+what they were.
+
+**The invariant (security review of 16 Oct 2026).** The plain view shows every signed payload key that carries authority
+or identity. A key may stay out of it only if it is in :data:`TECHNICAL_KEYS`, an explicit, reviewed list of hashes,
+positions and attestations (they are in the details). For every event type the renderer names the keys it shows
+(:data:`SHOWN`); a payload, gate input or task key that is neither shown nor technical, or an event type this module
+does not know, raises :class:`PlainUnavailable` and the caller falls back to the full review (no plain view at all).
+``tests/host/test_sign_plain.py`` enumerates every event type a person can sign and every property of its schema, and
+fails when a key is added without being classified here.
 
 The shape (``SignContent``) is the contract the dashboard reads (batch-6.md "Contract")::
 
     {headline, ticket?: {key, title}, sections?: [{id, title, text}], acceptance?: [{id, text, checked?}],
-     tasks?: [{n, title, verify?: [str]}], fields_changed?: [{field, before, after}], note?: str}
+     tasks?: [{n, title, verify?: [str]}], fields_changed?: [{field, before, after, before_note?}], note?: str}
 
-The ticket title is shown only when a signed event states it (a ``ticket.created``): a gate does
-not bind the title, so a gate request has ``ticket.title == ""``.
+``before_note`` is set when ``before`` is the host's word and not checked against anything signed. The ticket title is
+shown only when a signed event states it (a ``ticket.created``): a gate does not bind the title, so ``ticket.title`` is
+``""`` for a gate request.
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
 
-__all__ = ["build", "clean_tree", "headline", "text"]
+__all__ = ["SHOWN", "TECHNICAL_KEYS", "PlainUnavailable", "build", "clean_tree", "headline", "text"]
 
-#: payload keys that are hashes, positions or attestations (they live in the details) or are shown as content
-_TECHNICAL = frozenset(
-    {"hash", "policy_hash", "gate_gen", "base_rev", "source_sha", "sha256", "bytes", "sections", "set", "secret_hash"}
+
+class PlainUnavailable(ValueError):
+    """The request holds something the plain view does not know how to show: the caller shows the full review."""
+
+
+#: payload keys that are envelope, stamps, hashes or attestations: never shown in the plain view, always in the details
+TECHNICAL_KEYS = frozenset(
+    {
+        # envelope and stamps
+        "v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig", "seq", "at", "prev", "ws_seq",
+        "host_sig",
+        # hashes and attestations the details carry
+        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash",
+    }
+)  # fmt: skip
+
+#: per event type, the payload keys the plain view shows (in a section, a list or a field row)
+SHOWN: dict[str, frozenset[str]] = {
+    "addon.disabled": frozenset({"name"}),
+    "addon.purged": frozenset({"name"}),
+    "addon.granted": frozenset(
+        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections"}
+    ),
+    "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
+    "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
+    "device.added": frozenset({"device", "cert"}),
+    "gate.approved": frozenset({"gate", "source_sha"}),
+    "gate.changes_requested": frozenset({"gate", "text"}),
+    "verdict.given": frozenset({"outcome", "text", "source_sha"}),
+    "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
+    "grant.revoked": frozenset({"grant", "reason"}),
+    "log.added": frozenset({"text"}),
+    "member.added": frozenset({"person", "name", "role", "pk_pub", "device_cert"}),
+    "member.removed": frozenset({"person"}),
+    "role.changed": frozenset({"person", "role"}),
+    "policy.changed": frozenset({"gates"}),
+    "question.answered": frozenset({"question", "option", "text"}),
+    "question.asked": frozenset({"qid", "question"}),
+    "settings.changed": frozenset({"set"}),
+    "ticket.closed": frozenset({"resolution", "duplicate_of", "text"}),
+    "ticket.created": frozenset({"key", "ticket_type", "title", "owner"}),
+    "ticket.moved": frozenset({"from", "to", "reason"}),
+    "ticket.reopened": frozenset({"text"}),
+    "ticket.updated": frozenset({"set", "sections"}),
+}
+
+#: the keys of a gate input the plain view shows, and the ones that are hashes; of its ``fields``, a task, an
+#: acceptance criterion, a policy, an artifact and a receipt, the ones it shows
+_INPUT_SHOWN = frozenset({"fields", "tasks", "artifacts", "receipts", "source_sha", "prior"})
+_INPUT_TECHNICAL = frozenset(
+    {"workspace_id", "uid", "gate", "schema", "hash_v", "sections", "policy_hash", "people_hash", "addon_packages"}
 )
-_ENVELOPE = frozenset({"type", "id", "actor", "auth", "hash_v", "roster_v", "based_on", "sig", "v"})
+_FIELDS_SHOWN = frozenset({"ticket_type", "size", "acceptance", "links", "addons"})
+_TASK_SHOWN = frozenset({"id", "text", "verify", "proves"})
+_AC_SHOWN = frozenset({"id", "text"})
+_POLICY_SHOWN = frozenset({"approvers", "count", "not", "applies", "independent"})
+_ARTIFACT_SHOWN = frozenset({"kind", "digest", "ac", "task"})
+_RECEIPT_SHOWN = frozenset({"event", "repo", "commit", "exit"})
 
 
 def _s(value: Any) -> str:
@@ -55,6 +117,24 @@ def _show(value: Any) -> str | None:
     return _s(value)
 
 
+def _short(digest: Any) -> str:
+    """The first 12 hex digits of a ``sha256:`` digest."""
+    return _s(digest).removeprefix("sha256:")[:12]
+
+
+def _fp(value: Any) -> str:
+    """A short fingerprint of a key or certificate: the first 12 hex of the sha256 of its canonical text."""
+    return hashlib.sha256(_s(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _check_keys(
+    where: str, got: Mapping[str, Any], shown: frozenset[str], technical: frozenset[str] = frozenset()
+) -> None:
+    extra = set(got) - shown - technical
+    if extra:
+        raise PlainUnavailable(f"the plain view does not know {where} {sorted(extra)}")
+
+
 def _ticket(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> dict[str, str] | None:
     t = material.get("ticket")
     if not isinstance(t, Mapping) or not isinstance(t.get("key"), str):
@@ -72,25 +152,56 @@ def _ref(ticket: Mapping[str, str] | None) -> str:
     return f"{ticket['key']} · {ticket['title']}" if ticket["title"] else ticket["key"]
 
 
+def _row(out: dict[str, Any], field: str, after: Any, before: Any = None, note: str | None = None) -> None:
+    row: dict[str, Any] = {"field": field, "before": _show(before), "after": _show(after)}
+    if note and before is not None:
+        row["before_note"] = note
+    out.setdefault("fields_changed", []).append(row)
+
+
 def _acceptance(items: Any) -> list[dict[str, Any]]:
-    return [
-        {"id": _s(a.get("id")), "text": _s(a.get("text")), "checked": False}
-        for a in items or []
-        if isinstance(a, Mapping)
-    ]
+    out = []
+    for a in items or []:
+        if not isinstance(a, Mapping):
+            raise PlainUnavailable("an acceptance criterion is not an object")
+        _check_keys("acceptance keys", a, _AC_SHOWN)
+        out.append({"id": _s(a.get("id")), "text": _s(a.get("text")), "checked": False})
+    return out
 
 
 def _tasks(items: Any) -> list[dict[str, Any]]:
     out = []
     for n, t in enumerate(items or [], 1):
         if not isinstance(t, Mapping):
-            continue
-        task: dict[str, Any] = {"n": n, "title": _s(t.get("text"))}
+            raise PlainUnavailable("a task is not an object")
+        _check_keys("task keys", t, _TASK_SHOWN)
+        title = _s(t.get("text"))
+        if t.get("proves"):
+            title += f" (proves {', '.join(_s(x) for x in t['proves'])})"
+        task: dict[str, Any] = {"n": n, "title": title}
         verify = t.get("verify")
+        if isinstance(verify, Mapping):
+            _check_keys("verify keys", verify, frozenset({"cmd"}))
+        elif verify is not None:
+            raise PlainUnavailable("a task verify is not an object")
         cmd = verify.get("cmd") if isinstance(verify, Mapping) else None
         if cmd:
             task["verify"] = [_s(cmd)]
         out.append(task)
+    return out
+
+
+def policy_words(policy: Mapping[str, Any]) -> str:
+    """A gate policy in plain words; every key of it is in the sentence."""
+    _check_keys("policy keys", policy, _POLICY_SHOWN)
+    approvers = ", ".join(_s(x) for x in policy.get("approvers") or []) or "nobody"
+    n = policy.get("count")
+    out = f"{n} approval{'s' if n != 1 else ''} from {approvers}"
+    if policy.get("not"):
+        out += f"; not by {', '.join(_s(x) for x in policy['not'])}"
+    applies = policy.get("applies")
+    out += "; applies to " + ("all tickets" if applies == "all" else "no ticket" if applies == "off" else _s(applies))
+    out += "; approvers independent of the author" if policy.get("independent") else ""
     return out
 
 
@@ -111,60 +222,123 @@ def headline(prepared: Mapping[str, Any]) -> str:
 
 
 def build(prepared: Mapping[str, Any]) -> dict[str, Any]:
-    """The ``SignContent`` of a prepared request (see the module doc)."""
+    """The ``SignContent`` of a prepared request (see the module doc). Raises :class:`PlainUnavailable` for anything
+    it does not know how to show."""
     material, events = prepared["material"], list(prepared["events"])
+    if not events:
+        raise PlainUnavailable("a request without events")
     ticket = _ticket(material, events)
     out: dict[str, Any] = {"headline": ""}
     if ticket is not None:
         out["ticket"] = ticket
-    ev = events[0]
-    ref = _ref(ticket)
     kind = material.get("kind")
     if kind == "gate":
-        gate = _title(_s(material.get("gate"))).lower()
-        verb = {
-            "gate.approved": f"Approve the {gate} of",
-            "gate.changes_requested": f"Ask for changes to the {gate} of",
-            "verdict.given": f"Give the verdict {_s(ev.get('outcome'))} on the {gate} of",
-        }.get(_s(ev.get("type")), f"Decide the {gate} of")
-        out["headline"] = f"{verb} {ref}"
-        out["sections"] = [
-            {"id": sid, "title": _title(sid), "text": body or ""}
-            for sid, body in sorted((material.get("texts") or {}).items())
-        ]
-        inp = material.get("input") or {}
-        fields = inp.get("fields") or {}
-        if fields.get("acceptance"):
-            out["acceptance"] = _acceptance(fields["acceptance"])
-        if inp.get("tasks"):
-            out["tasks"] = _tasks(inp["tasks"])
-        changed = [
-            {"field": "type", "before": None, "after": _show(fields.get("ticket_type"))},
-            {"field": "size", "before": None, "after": _show(fields.get("size"))},
-        ]
-        if fields.get("links") is not None:
-            changed.append({"field": "links", "before": None, "after": _show(fields["links"])})
-        out["fields_changed"] = [c for c in changed if c["after"] is not None]
-        return _tidy(out)
-    if kind == "question":
-        q = material.get("question") or {}
-        opts = {_s(o.get("key")): _s(o.get("label")) for o in q.get("options") or [] if isinstance(o, Mapping)}
-        picked = ev.get("option")
-        answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
-        out["headline"] = f"Answer “{_line1(q.get('text'), 60)}” on {ref} with {answer}"
-        out["sections"] = [{"id": "question", "title": "Question", "text": _s(q.get("text", ""))}]
-        if ev.get("text"):
-            out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
-        return _tidy(out)
-    heads: list[str] = []
+        _gate(material, events, ticket, out)
+    elif kind == "question":
+        _question(material, events, ticket, out)
+    elif kind == "payload":
+        _payload(material, events, ticket, out)
+    else:
+        raise PlainUnavailable(f"the plain view does not know the material kind {kind!r}")
+    return {k: v for k, v in out.items() if v not in (None, [], "")}
+
+
+# --- gate decisions -------------------------------------------------------------------------------------------------
+
+
+def _gate(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
+    if len(events) != 1:
+        raise PlainUnavailable("a gate request holds one decision")
+    ev = events[0]
+    typ = _s(ev.get("type"))
+    if typ not in ("gate.approved", "gate.changes_requested", "verdict.given"):
+        raise PlainUnavailable(f"a gate request cannot hold {typ}")
+    _check_keys(typ, ev, SHOWN[typ], TECHNICAL_KEYS)
+    gate_id = _s(material.get("gate"))
+    if "gate" in ev and ev["gate"] != gate_id:
+        raise PlainUnavailable("the event and the material name different gates")
+    gate = _title(gate_id).lower()
+    verb = {
+        "gate.approved": f"Approve the {gate} of",
+        "gate.changes_requested": f"Ask for changes to the {gate} of",
+        "verdict.given": f"Give the verdict {_s(ev.get('outcome'))} on the {gate} of",
+    }[typ]
+    out["headline"] = f"{verb} {_ref(ticket)}"
+    out["sections"] = [
+        {"id": sid, "title": _title(sid), "text": body or ""}
+        for sid, body in sorted((material.get("texts") or {}).items())
+    ]
+    if ev.get("text"):
+        out["sections"].append({"id": "comment", "title": "Your comment", "text": _s(ev["text"])})
+    inp = material.get("input")
+    if not isinstance(inp, Mapping):
+        raise PlainUnavailable("a gate request without its input")
+    _check_keys("gate input keys", inp, _INPUT_SHOWN, _INPUT_TECHNICAL)
+    fields = inp.get("fields") or {}
+    _check_keys("gate fields", fields, _FIELDS_SHOWN)
+    if fields.get("acceptance"):
+        out["acceptance"] = _acceptance(fields["acceptance"])
+    if inp.get("tasks"):
+        out["tasks"] = _tasks(inp["tasks"])
+    for name in ("ticket_type", "size", "links"):
+        if fields.get(name) is not None:
+            _row(out, "type" if name == "ticket_type" else name, fields[name])
+    for addon, value in sorted((fields.get("addons") or {}).items()):
+        _row(out, f"add-on {addon}", value)
+    for name, a in sorted((inp.get("artifacts") or {}).items()):
+        _check_keys("gate artifact keys", a, _ARTIFACT_SHOWN)
+        extra = "".join(f"; {k} {_s(a[k])}" for k in ("ac", "task") if a.get(k))
+        _row(out, f"file {name}", f"{_s(a.get('kind'))}, digest {_short(a.get('digest'))}{extra}")
+    for tid, r in sorted((inp.get("receipts") or {}).items()):
+        _check_keys("gate receipt keys", r, _RECEIPT_SHOWN)
+        _row(out, f"result of {tid}", f"{_s(r.get('repo'))} commit {_short(r.get('commit'))}, exit {_s(r.get('exit'))}")
+    for item in inp.get("source_sha") or []:
+        _row(out, "code", f"{_s(item.get('repo'))} {_s(item.get('ref'))} at {_short(item.get('sha'))}")
+    for item in ev.get("source_sha") or []:
+        _row(out, "code you decide on", f"{_s(item.get('repo'))} {_s(item.get('ref'))} at {_short(item.get('sha'))}")
+    for earlier, p in sorted((inp.get("prior") or {}).items()):
+        who = ", ".join(_s(x) for x in p.get("approvals") or []) or "nobody"
+        _row(out, f"earlier gate {earlier}", f"generation {_s(p.get('gen'))}, approved by {who}")
+    policy = material.get("policy")
+    if not isinstance(policy, Mapping):
+        raise PlainUnavailable("a gate request without its policy")
+    _row(out, "rule for this gate", policy_words(policy))
+
+
+def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
+    if len(events) != 1:
+        raise PlainUnavailable("a question request holds one answer")
+    ev = events[0]
+    _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
+    q = material.get("question") or {}
+    _check_keys("question keys", q, frozenset({"id", "text", "options"}))
+    for o in q.get("options") or []:
+        _check_keys("question option keys", o, frozenset({"key", "label"}))
+    opts = {_s(o.get("key")): _s(o.get("label")) for o in q.get("options") or []}
+    picked = ev.get("option")
+    answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
+    out["headline"] = f"Answer “{_line1(q.get('text'), 60)}” on {_ref(ticket)} with {answer}"
+    out["sections"] = [{"id": "question", "title": "Question", "text": _s(q.get("text", ""))}]
+    if ev.get("text"):
+        out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
+    if ev.get("question") != q.get("id"):
+        raise PlainUnavailable("the event and the material name different questions")
+
+
+# --- everything else ------------------------------------------------------------------------------------------------
+
+
+def _payload(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
     before = material.get("before") or {}
     texts = material.get("texts") or {}
+    ref = _ref(ticket)
+    heads: list[str] = []
     for ev in events:
-        h, used = _event(ev, ref, out, before, texts)
-        heads.append(h)
-        for k, v in sorted(ev.items()):
-            if k not in used and k not in _TECHNICAL and k not in _ENVELOPE:
-                out.setdefault("fields_changed", []).append({"field": k, "before": None, "after": _show(v)})
+        typ = _s(ev.get("type"))
+        if typ not in SHOWN:
+            raise PlainUnavailable(f"the plain view does not know the event type {typ}")
+        _check_keys(typ, ev, SHOWN[typ], TECHNICAL_KEYS)
+        heads.append(_event(typ, ev, ref, out, before, texts))
     uniq = list(dict.fromkeys(heads))
     if len(uniq) == 1:
         out["headline"] = uniq[0]
@@ -172,84 +346,138 @@ def build(prepared: Mapping[str, Any]) -> dict[str, Any]:
         out["headline"] = " and ".join(uniq)
     else:
         out["headline"] = f"{uniq[0]} (+{len(uniq) - 1} more changes)"
-    return _tidy(out)
-
-
-def _tidy(out: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in out.items() if v not in (None, [], "")}
 
 
 def _event(
-    ev: Mapping[str, Any], ref: str, out: dict[str, Any], before: Mapping[str, Any], texts: Mapping[str, str]
-) -> tuple[str, set[str]]:
-    """The headline of one event and the payload keys it accounted for; its content is added to ``out``."""
-    typ = _s(ev.get("type"))
+    typ: str, ev: Mapping[str, Any], ref: str, out: dict[str, Any], before: Mapping[str, Any], texts: Mapping[str, str]
+) -> str:
+    """The headline of one event; everything it shows is added to ``out``."""
     if typ == "ticket.created":
         title = _s(ev.get("title"))
         out["ticket"] = {"key": _s(ev.get("key")), "title": title}
-        out.setdefault("fields_changed", []).append(
-            {"field": "type", "before": None, "after": _show(ev.get("ticket_type"))}
-        )
-        return f"Create ticket {_s(ev.get('key'))} · {title}", {"key", "title", "ticket_type", "owner"}
+        _row(out, "type", ev.get("ticket_type"))
+        _row(out, "owner", ev.get("owner"))
+        return f"Create ticket {_s(ev.get('key'))} · {title}"
     if typ == "ticket.updated":
-        names: list[str] = []
-        for sid in sorted(ev.get("sections") or {}):
-            out.setdefault("sections", []).append({"id": sid, "title": _title(sid), "text": texts.get(sid, "")})
-            names.append(_title(sid).lower())
-        for path, value in sorted((ev.get("set") or {}).items()):
-            field = path[len("ticket.") :] if path.startswith("ticket.") else path
-            if field == "acceptance":
-                out["acceptance"] = _acceptance(value)
-                names.append("acceptance criteria")
-            elif field == "tasks":
-                out["tasks"] = _tasks(value)
-                names.append("plan")
-            else:
-                out.setdefault("fields_changed", []).append(
-                    {"field": field, "before": _show(before.get(path)), "after": _show(value)}
-                )
-                names.append(field)
-        return (f"Change the {', '.join(names)} of {ref}" if names else f"Change {ref}"), set()
+        return _updated(ev, ref, out, before, texts)
     if typ == "log.added":
-        out["sections"] = [{"id": "note", "title": "Note", "text": _s(ev.get("text"))}]
-        return f"Add a note to {ref}", {"text"}
-    if typ == "ticket.closed":
-        return f"Close {ref} as {_s(ev.get('resolution'))}", {"resolution", "message", "duplicate_of"}
-    if typ == "ticket.reopened":
-        return f"Reopen {ref}", {"message"}
+        out.setdefault("sections", []).append({"id": "note", "title": "Note", "text": _s(ev.get("text"))})
+        return f"Add a note to {ref}"
+    if typ in ("ticket.closed", "ticket.reopened"):
+        if ev.get("text"):
+            out.setdefault("sections", []).append({"id": "reason", "title": "Message", "text": _s(ev["text"])})
+        if ev.get("duplicate_of"):
+            _row(out, "duplicate of", ev["duplicate_of"])
+        if typ == "ticket.reopened":
+            return f"Reopen {ref}"
+        return f"Close {ref} as {_s(ev.get('resolution'))}"
     if typ == "ticket.moved":
-        return f"Move {ref} to {_s(ev.get('to'))}", {"to", "reason"}
+        _row(out, "from", ev.get("from"))
+        if ev.get("reason"):
+            _row(out, "reason", ev["reason"])
+        return f"Move {ref} to {_s(ev.get('to'))}"
     if typ == "grant.issued":
         hours = ev.get("hours")
-        out["note"] = f"Agents can act for you for {hours} hours (scope {_s(ev.get('scope'))})."
-        return f"Give agents access for {hours} hours", {"hours", "scope", "label", "verbs", "grant"}
+        _row(out, "who can use it", "agents working for you")
+        _row(out, "scope", ev.get("scope"))
+        _row(out, "verbs", ev.get("verbs"))
+        if ev.get("label"):
+            _row(out, "label", ev["label"])
+        _row(out, "from", ev.get("issued_at"))
+        _row(out, "until", ev.get("expires_at"))
+        _row(out, "grant id", ev.get("grant"))
+        out["note"] = f"Agents can act for you for {hours} hours, as far as the scope and verbs above allow."
+        return f"Give agents access for {hours} hours (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
     if typ == "grant.revoked":
-        return f"Take back the agent access {_s(ev.get('grant'))}", {"grant", "reason"}
+        _row(out, "grant id", ev.get("grant"))
+        if ev.get("reason"):
+            _row(out, "reason", ev["reason"])
+        return f"Take back the agent access {_s(ev.get('grant'))}"
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
-            out.setdefault("fields_changed", []).append(
-                {"field": key, "before": _show(before.get(key)), "after": _show(value)}
-            )
-        return "Change the workspace settings", set()
+            _row(out, key, value, before.get(key), "per host, not signed")
+        return "Change the workspace settings"
     if typ == "policy.changed":
-        out["fields_changed"] = [{"field": "gate rules", "before": None, "after": _show(ev.get("gates"))}]
-        head = "Change the approval rules" + (f" of {ref}" if ref != "the workspace" else "")
-        return head, {"gates"}
+        for gate, p in sorted((ev.get("gates") or {}).items()):
+            _row(out, f"rule for {gate}", policy_words(p))
+        return "Change the approval rules" + (f" of {ref}" if ref != "the workspace" else "")
     if typ == "member.added":
-        return f"Add {_s(ev.get('name'))} as {_s(ev.get('role'))}", {"name", "role", "person", "device_cert", "pk_pub"}
+        _row(out, "person", ev.get("person"))
+        _row(out, "name", ev.get("name"))
+        _row(out, "role", ev.get("role"))
+        _row(out, "key fingerprint", _fp(ev.get("pk_pub")))
+        _cert_rows(out, "device certificate", ev.get("device_cert"))
+        return f"Add {_s(ev.get('name'))} as {_s(ev.get('role'))}"
     if typ == "member.removed":
-        return f"Remove member {_s(ev.get('person'))}", {"person"}
+        _row(out, "person", ev.get("person"))
+        return f"Remove member {_s(ev.get('person'))}"
     if typ == "role.changed":
-        return f"Make {_s(ev.get('person'))} {_s(ev.get('role'))}", {"person", "role"}
+        _row(out, "person", ev.get("person"))
+        return f"Make {_s(ev.get('person'))} {_s(ev.get('role'))}"
     if typ in ("artifact.added", "artifact.replaced"):
-        out["note"] = "The file itself is not shown here; its fingerprint is in the details (d)."
-        verb = "Add" if typ == "artifact.added" else "Replace"
-        return f"{verb} the file {_s(ev.get('name'))} on {ref}", {"name", "kind"}
-    if typ.startswith("addon."):
-        return f"{typ.split('.')[1].capitalize()} the add-on {_s(ev.get('name'))}", {"name"}
+        for k in ("kind", "label", "ref", "addon", "ac", "task", "replaces"):
+            if ev.get(k) is not None:
+                _row(out, k, ev[k])
+        _row(out, "size", f"{_s(ev.get('bytes'))} bytes")
+        _row(out, "digest", _short(ev.get("sha256")))
+        out["note"] = "The file itself is not shown here; compare the digest with the file you meant (details: d)."
+        return f"{'Add' if typ == 'artifact.added' else 'Replace'} the file {_s(ev.get('name'))} on {ref}"
+    if typ in ("addon.disabled", "addon.purged", "addon.granted"):
+        verb = {"addon.granted": "Grant", "addon.disabled": "Disable", "addon.purged": "Purge"}[typ]
+        if typ == "addon.granted":
+            _row(out, "version", ev.get("version"))
+            _row(out, "package digest", _short(ev.get("package_sha256")))
+            for k in ("capabilities", "artifact_kinds", "fields", "sections"):
+                if ev.get(k) is not None:
+                    _row(out, k.replace("_", " "), ev[k])
+        return f"{verb} the add-on {_s(ev.get('name'))}"
     if typ == "device.added":
-        return "Add a paired device to your devices", {"device", "cert"}
-    return typ.replace(".", " ") + (f" on {ref}" if ref != "the workspace" else ""), set()
+        _row(out, "device", ev.get("device"))
+        _cert_rows(out, "certificate", ev.get("cert"))
+        return "Add a paired device to your devices"
+    if typ == "question.asked":
+        out.setdefault("sections", []).append({"id": "question", "title": "Question", "text": _s(ev.get("question"))})
+        _row(out, "question id", ev.get("qid"))
+        return f"Ask a question on {ref}"
+    raise PlainUnavailable(f"the plain view does not know the event type {typ}")
+
+
+def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:
+    """A device certificate: the fingerprint of the whole certificate and the fields that decide what it may do."""
+    _row(out, f"{label} fingerprint", _fp(cert))
+    o = cert.get("o") if isinstance(cert, Mapping) else None
+    if not isinstance(o, Mapping):
+        raise PlainUnavailable("a certificate without its signed part")
+    for k in ("person_id", "device_id", "scopes_max", "expires_ms"):
+        if o.get(k) is not None:
+            _row(out, f"{label} {k.replace('_', ' ')}", o[k])
+
+
+def _updated(
+    ev: Mapping[str, Any], ref: str, out: dict[str, Any], before: Mapping[str, Any], texts: Mapping[str, str]
+) -> str:
+    names: list[str] = []
+    checked = set(ev.get("base_rev") or {})
+    for sid, entry in sorted((ev.get("sections") or {}).items()):
+        if isinstance(entry, Mapping):
+            _check_keys("section keys", entry, frozenset({"hash", "refs"}))
+            if entry.get("refs"):
+                _row(out, f"{_title(sid)} references", list(entry["refs"]))
+        out.setdefault("sections", []).append({"id": sid, "title": _title(sid), "text": texts.get(sid, "")})
+        names.append(_title(sid).lower())
+    for path, value in sorted((ev.get("set") or {}).items()):
+        field = path[len("ticket.") :] if path.startswith("ticket.") else path
+        if field == "acceptance":
+            out["acceptance"] = _acceptance(value)
+            names.append("acceptance criteria")
+        elif field == "tasks":
+            out["tasks"] = _tasks(value)
+            names.append("plan")
+        else:
+            # `before` is shown as checked only when the event's base_rev binds it; otherwise it is the host's word
+            _row(out, field, value, before.get(path), None if path in checked else "per host, not signed")
+            names.append(field)
+    return f"Change the {', '.join(names)} of {ref}" if names else f"Change {ref}"
 
 
 # --- the terminal text ---------------------------------------------------------------------------------------------
@@ -286,7 +514,8 @@ def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: 
             if c["before"] is None:
                 out.append(f"  {clean(c['field'])}: {new}")
             else:
-                out.append(f"  {clean(c['field'])}: {clean(c['before'])} -> {new}")
+                note = f" ({clean(c['before_note'])})" if c.get("before_note") else ""
+                out.append(f"  {clean(c['field'])}: {clean(c['before'])}{note} -> {new}")
         out.append("")
     if content.get("note"):
         out += [clean(content["note"]), ""]

@@ -128,11 +128,12 @@ def build(
         {"repo": signer._clean(c["repo"]), "clean": True, "attested_by": "worker", "at": signer._clean(c["at"])}
         for c in prepared.get("checks") or []
     ]
-    content = signcontent.build(body)  # B6 (owner decision E): additive; `lines` stays the full review
+    try:  # B6 (owner decision E): additive; `lines` stays the full review. Unknown shapes get no plain view at all
+        content = signcontent.clean_tree(signcontent.build(body))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        content = None
     view = {
         "risk": RISK,
-        "headline": canon.clean(content["headline"]),
-        "content": signcontent.clean_tree(content),
         "op": prepared["op"],
         "workspace": {
             "id": prepared["workspace_id"],
@@ -153,6 +154,8 @@ def build(
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
         view["deposit"] = True
         view["deposit_line"] = DEPOSIT_LINE
+    if content is not None:
+        view["headline"], view["content"] = content["headline"], content
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:
         raise refused("terminal_only", "the review is too large for the dashboard; use the terminal")
     return view

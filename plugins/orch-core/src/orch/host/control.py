@@ -622,8 +622,9 @@ class ControlOps:
         check_tree(Path(root), self.host_uid)
         if not stat.S_ISDIR(os.lstat(root).st_mode):
             raise unsafe(f"{root}: not a directory")
-        if os.listdir(root):
-            raise HostError("invalid.input", f"{root} is not empty")
+        taken = sorted({*os.listdir(root)} & {*_ROOT_FILES, ".orch"})
+        if taken:  # an existing project is fine; a directory that already holds store names is not (rollback owns them)
+            raise HostError("invalid.input", f"{root} already holds orch files ({', '.join(taken)})")
 
     def _validate_bootstrap(self, args: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], Any]:
         """Every check that needs no change on disk; returns (peers, the key backend)."""

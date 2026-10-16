@@ -609,6 +609,12 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 | `host.unregister` | `not_found` |
 | `host.bootstrap` | `host.busy` (id already has a genesis or a registration, N5), `not_found` (id not from `wsk_create`), `custody.unsafe_mode`, the genesis model codes |
 
+**As built in B5 (16 Oct 2026).** The "new empty directory" rule of `host.bootstrap` existed so that the rollback (`_clean_root`)
+can never delete a person's files. Rollback removes only the five store names (`config.json`, `keys.jsonl`, `events`, `tickets`,
+`.state`), never the root and never any other file. So `root` may be an existing project with files as long as none of those
+names (nor `.orch`) is already there, which the host checks before any write; otherwise `invalid.input` `<root> already holds orch
+files (...)`. The D-P2-17 owner and ancestor checks are unchanged. `orch init --host` makes the same check on the client first.
+
 `custody.unsafe_mode` (exit 3, not retryable, stays): the root or an ancestor fails the D-P2-17 checks.
 
 
@@ -1823,7 +1829,8 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    key after click-to-sign: `custody.select.device_backend`, public key only), matched against the workspace's devices. A
    removed, revoked or expired key, one without `decide`, or one whose person left counts as none: then `--peer` is
    required. The host checks the mapping again (F8). From then on the thin CLI (H4b) and the dashboard serve the workspace through the
-   host; `orch init` itself stays direct (see §3), and `orch init --host` remains for an empty directory.
+   host; `orch init` itself stays direct (see §3), and `orch init --host` remains for a new directory or an existing project
+   (**As built in B5:** see the note under `host.bootstrap` below).
 3. **`orch host status`** (alias `doctor`, `--json` for the document): the service (unit present, current, loaded,
    running, or none on this platform), whether a host answers on the control socket, every registered workspace (the
    host's state, whether its socket answers, the mapped person, click-to-sign on or off), the mode the CLI uses for the
@@ -4321,6 +4328,10 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `orch-relay-push-<id8>` as a worker companion with the 404, 409 `stale_epoch`, 409 `fenced` classes and the host
     budgets) and the `push` relay-hook seam (`host/relaypush.py`). `host.status.relay` gains a `push` block (additive).
     Kinds `question` and `question.closed`. No wire, hash, F1 or error-code change.
+69. **B5: `init --host` in an existing project (16 Oct 2026; §3 "As built in B5"):** `host.bootstrap` accepts a root that
+    already holds files; it refuses only a root holding a store name (`config.json`, `keys.jsonl`, `events`, `tickets`,
+    `.state`) or `.orch`. The 24-word recovery code is shown numbered (4 rows of 6) and the input accepts the plain or the
+    numbered form. No wire, hash, F1 or error-code change.
 
 ---
 

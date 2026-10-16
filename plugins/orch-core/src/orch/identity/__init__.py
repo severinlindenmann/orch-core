@@ -46,6 +46,7 @@ from .recovery import (
     check_recovery_code,
     code_from_entropy,
     derive_person_key,
+    format_code_numbered,
     generate_recovery_code,
     normalise_code,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "derive_person_key",
     "device_ref",
     "format_grant",
+    "format_code_numbered",
     "generate_recovery_code",
     "make_delegation",
     "make_device_cert",

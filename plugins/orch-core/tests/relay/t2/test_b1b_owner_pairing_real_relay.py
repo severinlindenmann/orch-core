@@ -254,14 +254,14 @@ def init_workspace(inst: Install) -> None:
     confirmed; the passphrase and the code are kept in memory only (this is the owner's own paper)."""
     st: dict = {"pass": None, "code": None, "all": ""}
     phrase = re.compile(r"Your generated passphrase:\s*\n\s*\n\s+(.+?)\s*\n")
-    code_re = re.compile(r"shown now, once\.\s*\n\s*\n((?:[a-z]+ ){23}[a-z]+)\s*\n")
+    code_re = re.compile(r"shown now, once\.\s*\n\s*\n((?: *\d+ [a-z]+(?: +\d+ [a-z]+)*\n){4})")
 
     def observe(chunk: str) -> None:
         st["all"] = (st["all"] + chunk)[-8192:]
         if st["pass"] is None and (m := phrase.search(st["all"])):
             st["pass"] = m.group(1).strip()
         if m2 := code_re.search(st["all"]):
-            st["code"] = m2.group(1)
+            st["code"] = " ".join(re.findall(r"\d+ ([a-z]+)", m2.group(1)))
 
     def word(m):
         words = (st["code"] or "").split()

@@ -292,10 +292,10 @@ def test_cli_init_host_refuses_a_non_empty_directory_before_calling_the_host(
     lab, tmp_path, monkeypatch, term, passphrases, recording
 ):
     root = fresh_root(tmp_path, "work")
-    (root / "README.md").write_text("x")
+    (root / ".orch").mkdir()
     with pytest.raises(OrchError) as e:
         wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
-    assert e.value.code == "invalid.input" and "empty directory" in e.value.message
+    assert e.value.code == "invalid.input" and "already holds orch files" in e.value.message
     assert recording.sent == [] and term.shown == []  # no host call, no secret shown
 
 
@@ -330,17 +330,42 @@ def test_cli_init_host_passes_a_host_refusal_on_and_drops_its_device_key(
 # --- 3. bootstrap refusals: non-empty root, foreign owner, an id not from wsk_create ---------------------------
 
 
-def test_bootstrap_refuses_a_non_empty_root_and_changes_nothing(lab, tmp_path):
+def test_bootstrap_refuses_a_root_that_holds_store_names_and_changes_nothing(lab, tmp_path):
     owner, root = Person(), fresh_root(tmp_path)
     (root / "keep.txt").write_text("x")
+    (root / "tickets").mkdir()
     with lab.host() as h, h.client() as c:
         created = ok(c.call("host.wsk_create"))["data"]
         idem = new_idem()
         assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=idem)) == "invalid.input"
         assert err(c.call("host.outcome", {"idem": idem})) == "outcome.unknown_idem"  # refused before the intent
         assert ok(c.call("host.list"))["data"]["workspaces"] == []
-    assert os.listdir(root) == ["keep.txt"]
+    assert sorted(os.listdir(root)) == ["keep.txt", "tickets"]
     assert (lab.state / "hosts" / created["workspace_id"] / "keys" / "wsk.filekey.json").is_file()
+
+
+def test_bootstrap_accepts_an_existing_project_and_rollback_keeps_its_files(lab, tmp_path, monkeypatch):
+    from orch.store import StoreError, store
+
+    owner, root = Person(), fresh_root(tmp_path)
+    (root / "README.md").write_text("mine")
+    (root / "src").mkdir()
+    (root / "src" / "a.py").write_text("x")
+    real_append = store.Store.append
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+
+        def boom(self, *a, **k):
+            raise StoreError("chain.broken", "no")
+
+        monkeypatch.setattr(store.Store, "append", boom)
+        assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem())) == "chain.broken"
+        assert sorted(os.listdir(root)) == ["README.md", "src"]  # only the store's own names went
+        assert (root / "src" / "a.py").read_text() == "x"
+        monkeypatch.setattr(store.Store, "append", real_append)
+        created = ok(c.call("host.wsk_create"))["data"]
+        ok(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem()))
+    assert (root / "config.json").is_file() and (root / "README.md").read_text() == "mine"
 
 
 def test_bootstrap_refuses_a_root_owned_by_another_uid(lab, tmp_path, monkeypatch):

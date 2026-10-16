@@ -45,6 +45,7 @@ from orch.identity import (
     Refused,
     derive_person_key,
     device_ref,
+    format_code_numbered,
     generate_recovery_code,
     new_ulid,
     person_ref,
@@ -292,7 +293,9 @@ def _confirm_recovery_code(code: str) -> None:
             "\n=== orch init: your recovery code ===\n"
             "These 24 words are the only way back to your person key if you lose this machine or its passphrase.\n"
             "orch does not store the person key: without the code you can never add or revoke a device.\n"
-            "Write them down in order and keep them somewhere safe. They are shown now, once.\n\n" + code + "\n\n"
+            "Write them down in order and keep them somewhere safe. They are shown now, once.\n\n"
+            + format_code_numbered(code)
+            + "\n\n"
         )
         TERMINAL.wait("Press Enter when you have written the code down: ")
         positions = sorted(secrets.SystemRandom().sample(range(1, 25), CODE_WORDS_ASKED))
@@ -550,11 +553,12 @@ def _empty_root(root: Path) -> None:
         names = os.listdir(root)
     except OSError as e:
         raise _refuse("invalid.input", f"cannot list {root}: {e.strerror}") from None
-    if names:
+    taken = sorted({*names} & {"config.json", "keys.jsonl", "events", "tickets", ".state", ".orch"})
+    if taken:
         raise _refuse(
             "invalid.input",
-            "init --host creates the workspace in an empty directory; nothing was created",
-            "run it in a new, empty directory",
+            f"{root} already holds orch files ({', '.join(taken)}); nothing was created",
+            "if it is already an orch workspace run `orch host register .`",
         )
 
 

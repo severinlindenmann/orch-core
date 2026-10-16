@@ -49,18 +49,18 @@ def test_no_stamp_is_stale(root):
 
 
 def test_an_older_skill_version_is_stale(root):
-    side = root / ".claude/skills/orch-tickets/orch.skill.json"
+    side = root / ".agents/skills/orch-tickets/orch.skill.json"
     doc = json.loads(side.read_text())
     doc["skill_version"] = "0.9.0"
     side.write_text(json.dumps(doc))
-    assert where(stale_findings(root)) == {".claude/skills/orch-tickets": "v0.9.0, this orch ships v1.0.0"}
+    assert where(stale_findings(root)) == {".agents/skills/orch-tickets": "v0.9.0, this orch ships v1.0.0"}
 
 
 def test_a_hand_edited_builtin_skill_is_reported_and_a_taken_over_one_is_not(root):
-    skill = root / ".claude/skills/orch-tickets/SKILL.md"
+    skill = root / ".agents/skills/orch-tickets/SKILL.md"
     skill.write_text(skill.read_text() + "- my own rule\n")
-    assert ".claude/skills/orch-tickets" in where(stale_findings(root))
-    side = root / ".claude/skills/orch-tickets/orch.skill.json"
+    assert ".agents/skills/orch-tickets" in where(stale_findings(root))
+    side = root / ".agents/skills/orch-tickets/orch.skill.json"
     side.write_text(json.dumps({**json.loads(side.read_text()), "scope": "workspace"}))
     assert stale_findings(root) == []  # the owner took it over: not checked
     write_workspace_files(root, pointers=False, owned=workspace_files())  # and a sync leaves it alone
@@ -68,10 +68,10 @@ def test_a_hand_edited_builtin_skill_is_reported_and_a_taken_over_one_is_not(roo
 
 
 def test_a_broken_sidecar_is_reported(root):
-    (root / ".claude/skills/orch-tickets/orch.skill.json").write_text("{not json")
-    assert where(stale_findings(root)) == {".claude/skills/orch-tickets": "sidecar unreadable"}
-    (root / ".claude/skills/orch-tickets/orch.skill.json").unlink()
-    assert where(stale_findings(root)) == {".claude/skills/orch-tickets": "no orch.skill.json"}
+    (root / ".agents/skills/orch-tickets/orch.skill.json").write_text("{not json")
+    assert where(stale_findings(root)) == {".agents/skills/orch-tickets": "sidecar unreadable"}
+    (root / ".agents/skills/orch-tickets/orch.skill.json").unlink()
+    assert where(stale_findings(root)) == {".agents/skills/orch-tickets": "no orch.skill.json"}
 
 
 # ---------------------------------------------------------------------------------------------- through the commands
@@ -125,24 +125,24 @@ def test_sync_dry_run_writes_nothing_and_force_is_needed_for_a_hand_edited_skill
     code, out, _ = cli(ws, "instructions", "sync", "--dry-run")
     assert code == 0 and "would write AGENTS.orch.md" in out and not (ws.root / "AGENTS.orch.md").exists()
     cli(ws, "instructions", "sync")
-    skill = ws.root / ".claude/skills/orch-tickets/SKILL.md"
+    skill = ws.root / ".agents/skills/orch-tickets/SKILL.md"
     skill.write_text(skill.read_text() + "- my own rule\n")
     code, out, _ = cli(ws, "instructions", "sync")
-    assert code == 0 and "kept .claude/skills/orch-tickets (edited by hand; --force overwrites it" in out
+    assert code == 0 and "kept .agents/skills/orch-tickets (edited by hand; --force overwrites it" in out
     assert "my own rule" in skill.read_text()
     code, out, _ = cli(ws, "instructions", "sync", "--dry-run", "--force")
-    assert "would write .claude/skills/orch-tickets/SKILL.md" in out and "my own rule" in skill.read_text()
+    assert "would write .agents/skills/orch-tickets/SKILL.md" in out and "my own rule" in skill.read_text()
     code, out, _ = cli(ws, "instructions", "sync", "--force")
-    assert "wrote .claude/skills/orch-tickets/SKILL.md" in out and "my own rule" not in skill.read_text()
+    assert "wrote .agents/skills/orch-tickets/SKILL.md" in out and "my own rule" not in skill.read_text()
     assert cli(ws, "check")[0] == 0
 
 
 def test_an_old_skill_version_is_upgraded_without_force(ws):
     cli(ws, "instructions", "sync")
-    side = ws.root / ".claude/skills/orch-tickets/orch.skill.json"
+    side = ws.root / ".agents/skills/orch-tickets/orch.skill.json"
     side.write_text(json.dumps({**json.loads(side.read_text()), "skill_version": "0.1.0"}))
-    (ws.root / ".claude/skills/orch-tickets/SKILL.md").write_text("an old text\n")
-    assert "wrote .claude/skills/orch-tickets/SKILL.md" in cli(ws, "instructions", "sync")[1]
+    (ws.root / ".agents/skills/orch-tickets/SKILL.md").write_text("an old text\n")
+    assert "wrote .agents/skills/orch-tickets/SKILL.md" in cli(ws, "instructions", "sync")[1]
 
 
 def test_stale_check_does_not_follow_a_symlink(root, tmp_path):
@@ -150,3 +150,35 @@ def test_stale_check_does_not_follow_a_symlink(root, tmp_path):
     (root / "AGENTS.orch.md").unlink()
     (root / "AGENTS.orch.md").symlink_to(tmp_path / "secret")
     assert "symbolic link" in where(stale_findings(root))["AGENTS.orch.md"]
+
+
+def test_an_r1_workspace_is_stale_and_sync_migrates_it_to_the_new_layout(ws):
+    """A workspace written by r1: skills in .claude/skills, a one-line AGENTS.md pointer, old CLAUDE.md import."""
+    root = ws.root
+    cli(ws, "instructions", "sync")
+    for n in ("orch-tickets", "orch-work-on-ticket", "orch-refine-ticket"):  # move the skills to where r1 wrote them
+        old = root / ".claude/skills" / n
+        old.mkdir(parents=True, exist_ok=True)
+        for f in ("SKILL.md", "orch.skill.json"):
+            text = (root / ".agents/skills" / n / f).read_text()
+            (old / f).write_text(text.replace("<!-- generated by orch from .agents/skills — do not edit -->\n", ""))
+    import shutil
+
+    shutil.rmtree(root / ".agents")
+    (root / "AGENTS.md").write_text("mine\nBefore working on tickets, read AGENTS.orch.md (orch).\n")
+    (root / "CLAUDE.md").write_text("@AGENTS.orch.md\n")
+    p = root / "AGENTS.orch.md"
+    p.write_text(p.read_text().replace(f"(instructions r{INSTRUCTIONS_REV})", "(instructions r1)"))
+    code, out, _ = cli(ws, "check")
+    assert (
+        code == 5
+        and "AGENTS.orch.md: r1, this orch writes r2" in out
+        and out.splitlines()[-1] == ("next: orch instructions sync")
+    )
+    code, out, err = cli(ws, "instructions", "sync")
+    assert code == 0, out + err
+    assert (root / "CLAUDE.md").read_text() == "@AGENTS.md\n"
+    assert (root / "AGENTS.md").read_text().startswith("mine\n<!-- orch:begin -->\n")
+    assert (root / ".agents/skills/orch-tickets/SKILL.md").is_file()
+    assert cli(ws, "check")[0] == 0
+    assert cli(ws, "instructions", "sync")[1].count("already current") == 1

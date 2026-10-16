@@ -29,7 +29,7 @@ def command_references(text: str) -> list[tuple[str, object, list[str]]]:
     out = []
     for m in _START.finditer(text):
         tail = text[m.end() :]
-        if re.match(r"v\d", tail):
+        if re.match(r"(v\d|in this project|refuses)", tail):
             continue
         end = _END.search(tail)
         body = tail[: end.start()] if end else tail

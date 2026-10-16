@@ -216,7 +216,9 @@ def plan(
         items.append(Item("runner_grant", "Agent access held by this machine", "grant", args, ev, hours))
         runner_grant = {"hours": hours, "scope": RUNNER_GRANT_SCOPE, "holder": HOLDER}
     flags: list[dict[str, str]] = []
-    wants_exec = any(info[a].needs_runner or info[a].needs_terminals for a in profile["addons"])
+    wants_exec = profile["agent_grant"] or any(
+        info[a].needs_runner or info[a].needs_terminals for a in profile["addons"]
+    )
     if wants_exec and wanted("runner"):
         from orch.runner import enablement
 

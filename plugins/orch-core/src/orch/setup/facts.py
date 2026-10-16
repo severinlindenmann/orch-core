@@ -19,6 +19,7 @@ from .protocol import SetupError
 __all__ = [
     "AddonInfo",
     "Facts",
+    "all_missing",
     "catalog",
     "check_dir",
     "missing_items",
@@ -217,6 +218,21 @@ def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confi
         raise
     except Exception:  # noqa: BLE001 - fail closed: nothing half-read
         raise SetupError("setup.facts_unreadable", "the workspace state could not be read", 500) from None
+
+
+def all_missing(facts: Facts, info: dict[str, AddonInfo]) -> list[str]:
+    """What a registered workspace lacks before the person has chosen anything (the page's first view of Finish setup):
+    every add-on and switch with no history. The profile then narrows it (:func:`missing_items`)."""
+    out = [f"addon:{a.id}" for a in info.values() if a.kind == "addon" and a.id not in facts.addons]
+    if not facts.runner_enabled:
+        out.append("runner")
+    if not facts.grant_hours_set:
+        out.append("settings")
+    if not facts.grant_issued:
+        out.append("runner_grant")
+    if not facts.convenience:
+        out.append("custody")
+    return out
 
 
 def missing_items(facts: Facts, profile: dict[str, Any], info: dict[str, AddonInfo]) -> list[str]:

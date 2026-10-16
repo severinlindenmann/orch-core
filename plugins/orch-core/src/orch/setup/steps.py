@@ -369,8 +369,8 @@ class Creator:
         assert self.wid is not None
         wants = any(f["id"] == "runner" for f in self.plan.flags)
         grant = next((i for i in self.items if i.id == "runner_grant"), None)
-        if not wants:
-            if grant is not None:  # a grant needs the runner: without its flags it is not signed
+        if not wants:  # nothing to switch on (already on, Finish setup): a grant still waits for the runner's hello
+            if grant is not None and not self.ports.runner_hello(self.wid, HELLO_SECONDS):
                 self._skip_grant()
             return
         self.run.set("runner", "doing")

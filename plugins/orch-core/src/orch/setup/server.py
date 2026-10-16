@@ -134,11 +134,16 @@ class SetupServer:
     def _launch(self, body: Any) -> dict[str, Any]:
         if not isinstance(body, dict) or not isinstance(body.get("dir"), str):
             raise SetupError("invalid.input", "launch takes dir")
-        port = body.get("port")
+        return self.launch(body["dir"], body.get("port"))
+
+    def launch(self, directory: str, port: Any = None) -> dict[str, Any]:
+        """Check the directory (the flow refuses), then mint the single-use code bound to a new ``setup_id``."""
+        if port is not None and (type(port) is not int or not 1 <= port <= 65535):
+            raise SetupError("invalid.input", "port")
         with self._lock:
             if self._token is not None and not self.ended:
                 raise SetupError("setup.claimed", "a browser is already connected to this setup", 409)
-        self.flow.launch(body["dir"])  # raises its own refusals (setup.dir_refused ...)
+        self.flow.launch(directory)  # raises its own refusals (setup.dir_refused ...)
         code = secrets.token_urlsafe(24)
         with self._lock:
             self.setup_id = "su_" + secrets.token_hex(8)
@@ -146,8 +151,6 @@ class SetupServer:
             self._code_until = self.clock() + self.code_seconds
             self._tries = 0
             if port is not None:
-                if type(port) is not int or not 1 <= port <= 65535:
-                    raise SetupError("invalid.input", "port")
                 self.ports = frozenset({f"127.0.0.1:{port}", f"localhost:{port}"})
             return {"setup_id": self.setup_id, "code": code}
 

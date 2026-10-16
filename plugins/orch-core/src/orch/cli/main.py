@@ -264,6 +264,10 @@ def main(
         from orch.addons.builtin import main as manifest_main
 
         return manifest_main(args[2:], out=out, err=err)
+    if args[:1] == ["setup"]:  # one command to a working workspace and its onboarding page (B9): not a registry op
+        from orch.setup.flow import main as setup_main
+
+        return setup_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 

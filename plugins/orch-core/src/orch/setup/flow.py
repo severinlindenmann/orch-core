@@ -148,8 +148,12 @@ class SetupFlow:
         if self.facts is not None:
             sug = {"name": self.facts.name, "prefix": self.facts.prefix}
         missing: list[str] = []
-        if self.mode == "finish" and self.facts is not None and self.profile is not None:
-            missing = facts.missing_items(self.facts, self.profile, self.addons)
+        if self.mode == "finish" and self.facts is not None:
+            missing = (
+                facts.missing_items(self.facts, self.profile, self.addons)
+                if self.profile is not None
+                else facts.all_missing(self.facts, self.addons)
+            )
         return {
             "phase": self.phase,
             "mode": self.mode,
@@ -322,7 +326,9 @@ class SetupFlow:
         return out
 
     def _finish(self, _body: Any) -> dict[str, Any]:
-        if self.phase != "done" or self.run is None or self.run.workspace is None and self.mode == "new":
+        if self.run is None or not self.run.done or self.phase == "cancelled":
+            raise SetupError("setup.phase", "setup is not finished", 409)
+        if self.mode == "new" and self.run.workspace is None:
             raise SetupError("setup.phase", "setup is not finished", 409)
         wid = (self.run.workspace or {}).get("id") or (self.entry or {}).get("workspace_id", "")
         self._closed = True
@@ -365,3 +371,222 @@ class SetupFlow:
         self._drop_secrets()
         self.phase = "cancelled"
         return {"ok": True}
+
+
+# ======================================================================================================== the command
+
+
+def default_env(environ: Mapping[str, str]) -> Env:
+    """The real machine: registry, custody availability, the store for Finish setup, the real host ports."""
+    import os
+
+    from orch.ops.runtime import state_dir
+
+    from . import steps
+
+    home = Path(environ.get("HOME") or os.path.expanduser("~"))
+    state = state_dir(environ)
+    uid = os.getuid()
+
+    def entries() -> list[dict[str, Any]]:
+        from orch.host.handoff import _own_workspaces
+
+        try:
+            return _own_workspaces(state, uid, None)
+        except Exception:  # noqa: BLE001 - an unreadable registry: no workspace is "registered" (the dir check then
+            return []  # refuses a directory that holds store files)
+
+    def registered(root: str) -> Any:
+        for e in entries():
+            if os.path.realpath(str(e.get("root"))) == root:
+                return e
+        return None
+
+    def click() -> tuple[bool, str | None]:
+        from orch.custody.select import DevHostRefused, refuse_dev_host
+
+        try:
+            refuse_dev_host(state)
+        except DevHostRefused:
+            return False, "dev_host"
+        return True, None
+
+    def read_facts(entry: Any) -> facts_mod.Facts:
+        from orch.custody import select
+        from orch.runner import enablement
+        from orch.store import Store
+
+        wid, person = str(entry["workspace_id"]), str(entry["peers"][str(uid)]["person"])
+        try:
+            store = Store.open(entry["root"], expected_workspace_id=wid, host_state_dir=state, load="lazy")
+        except Exception:  # noqa: BLE001
+            raise SetupError("setup.facts_unreadable", "the workspace could not be opened", 500) from None
+        try:
+            confirmed = False
+            try:
+                link = steps.RealPorts(environ, state, uid).workspace(wid)
+                try:
+                    runner = (link.call("whoami", {}).get("data") or {}).get("runner") or {}
+                    confirmed = runner.get("grant") is not None
+                finally:
+                    link.close()
+            except Exception:  # noqa: BLE001 - not confirmed unless the host says so
+                confirmed = False
+            return facts_mod.read_facts(
+                store,
+                person,
+                runner=enablement.state_of(state, wid, uid),
+                deposit_confirmed=confirmed,
+                convenience=select.status(state, wid).get("custody") == "convenience",
+            )
+        finally:
+            store.close()
+
+    def reserved(root: Path, prefix: str, name: str) -> None:
+        from orch.ops.workspace_init import check_reserved_prefix
+
+        check_reserved_prefix(root, state, prefix, name)
+
+    return Env(
+        env=environ,
+        home=home,
+        state_dir=state,
+        config_dirs=(home / ".config" / "orch",),
+        registered=registered,
+        click=click,
+        reserved=reserved,
+        read_facts=read_facts,
+        ports=lambda: steps.RealPorts(environ, state, uid),
+    )
+
+
+USAGE = "usage: orch setup   (run it in the folder you want to make a workspace; it opens the setup page)\n"
+
+
+def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) -> bool:
+    """Open the dashboard on ``/setup`` with the single-use setup code. The code travels in the query of the dashboard's
+    own launch path, which the page strips with ``history.replaceState`` before any request (R8)."""
+    import subprocess
+
+    from orch.cli.dashboard import find_entry_point
+
+    cmd = find_entry_point(environ, err)
+    if cmd is None:
+        return False
+    path = f"/setup?code={launch['code']}&id={launch['setup_id']}"
+    try:
+        res = subprocess.run(
+            [*cmd, "open", path],
+            env=dict(environ),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return res.returncode == 0
+
+
+def main(
+    argv: list[str],
+    *,
+    env: Mapping[str, str],
+    out: Any,
+    err: Any,
+    make_env: Callable[[Mapping[str, str]], Env] | None = None,
+    ensure_host: Callable[[Mapping[str, str], Any], None] | None = None,
+    open_browser: Callable[[Mapping[str, str], Any, dict[str, Any]], bool] | None = None,
+    run_dir: Path | None = None,
+    cwd: str | None = None,
+) -> int:
+    """``orch setup``: the SETUP PROCESS. A person's command: refused under an agent's environment and without a
+    terminal; needs the host (``host enable`` once, dev checkouts refused there); stays running until the page is done,
+    cancelled, or Ctrl-C. Exit 0 only when the workspace was set up."""
+    import os
+
+    from orch.ops import workspace_init as wi
+
+    from .server import SetupServer
+    from .steps import set_no_core_dumps
+
+    if argv:
+        err.write(USAGE)
+        return 2
+    if "ORCH_GRANT" in env or env.get("ORCH_SESSION"):
+        err.write("orch setup: setting up a workspace is a person's job; an agent never does it\n")
+        return 3
+    if not wi.TERMINAL.available():
+        err.write("orch setup: needs your own terminal (/dev/tty)\n")
+        return 3
+    set_no_core_dumps()
+    denv = (make_env or default_env)(env)
+    try:
+        (ensure_host or _ensure_host)(env, err)
+    except SetupError as e:
+        err.write(f"orch setup: {e.message}\n")
+        return 1
+    from orch.host.enable import run_dir_for
+
+    sock_dir = run_dir if run_dir is not None else run_dir_for(denv.state_dir, None, env)
+    flow = SetupFlow(denv)
+    server = SetupServer(Path(sock_dir) / "setup.sock", flow, notify=lambda line: err.write(f"orch setup: {line}\n"))
+    try:
+        server.start()
+        launch = server.launch(cwd if cwd is not None else os.path.realpath(os.getcwd()))
+    except SetupError as e:
+        server.stop()
+        err.write(f"orch setup: {e.message}\n")
+        return 1
+    err.write(
+        f"orch setup: {flow.dir} ({'finishing an existing workspace' if flow.mode == 'finish' else 'new workspace'})\n"
+    )
+    if (open_browser or _open_browser)(env, err, launch):
+        err.write("orch setup: the setup page is open in your browser; this terminal stays with it (Ctrl-C cancels)\n")
+    else:
+        err.write("orch setup: could not open the dashboard; install it (pip install orch-dashboard) and run again\n")
+        server.stop()
+        return 1
+    try:
+        with wi._hangup_as_interrupt():
+            while not server.stop_event.wait(0.5):
+                pass
+    except KeyboardInterrupt:
+        flow.cancel_run()
+        if flow.thread is not None:
+            flow.thread.join(120)
+        server.die("cancel")
+        err.write("orch setup: cancelled\n")
+    finally:
+        server.stop()
+    ok = flow.phase == "done" or (flow._closed and flow.run is not None and flow.run.done)
+    if ok and flow.run is not None:
+        ws = flow.run.workspace or {}
+        out.write(f"workspace {ws.get('prefix', '')} set up in {flow.dir}\n")
+    return 0 if ok else 1
+
+
+def _ensure_host(environ: Mapping[str, str], err: Any) -> None:
+    """``host enable`` if no host answers (idempotent); a dev checkout is refused by it."""
+    import io
+
+    from orch.host import cli as host_cli
+    from orch.ops import workspace_init as wi
+    from orch.ops.runtime import state_dir
+
+    state = state_dir(environ)
+    try:
+        wi.connect_host(state).close()
+        return
+    except Exception:  # noqa: BLE001 - nobody answers: enable it
+        pass
+    buf = io.StringIO()
+    if host_cli.main(["enable"], env=environ, out=buf) != 0:
+        raise SetupError("host.unavailable", "the orch host could not be started (orch host enable)", 500)
+    for _ in range(40):
+        try:
+            wi.connect_host(state).close()
+            return
+        except Exception:  # noqa: BLE001
+            time.sleep(0.25)
+    raise SetupError("host.unavailable", "the orch host did not come up", 500)

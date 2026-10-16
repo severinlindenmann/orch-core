@@ -55,6 +55,7 @@ LOCAL_RELAY = "local"
 DEV_RELAY = "https://relay.dev.severin.io"
 SOCKET_LIMIT = 100  # orch.host.listener.SOCKET_PATH_LIMIT
 KILL_GRACE_S = 10.0
+RUN_MODE = 0o711  # the host checks its run directory for exactly this (orch.host.listener)
 MAX_PUBLICATION = 4 * 1024 * 1024
 ORIGIN_ALLOW = (re.compile(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}"), re.compile(r"http://localhost:[1-9][0-9]{0,4}"),
                 re.compile(re.escape(DEV_RELAY)))  # fmt: skip
@@ -121,7 +122,26 @@ def check_root_path(root: str, *, uid: int | None = None) -> Path:
         raise Refused(f"--root: the parent {parent} must be owned by you and not group- or world-writable")
     if not socket_path_ok(path):
         raise Refused(f"--root: too long for a socket path (limit {SOCKET_LIMIT} bytes); use a shorter path")
+    problem = sticky_problem(parent)
+    if problem:
+        raise Refused(f"--root: {problem}")
     return path
+
+
+def sticky_problem(parent: Path) -> str | None:
+    """The host's run-directory rule, checked early (``orch.host._unix.CheckedDirectory``): a directory directly below a
+    sticky root-owned directory (``/tmp``) must itself be root-owned 0755, so a sandbox root cannot live there. Returns
+    the reason, or ``None``."""
+    prev_sticky = False
+    for d in (Path("/"), *reversed(parent.parents), parent):
+        st = os.lstat(d)
+        if prev_sticky and not (st.st_uid == 0 and stat.S_IMODE(st.st_mode) == 0o755):
+            return (f"{d} is directly below a sticky directory, where the host refuses a run directory; "
+                    "use a root below your home directory (not under /tmp)")  # fmt: skip
+        prev_sticky = st.st_uid == 0 and bool(st.st_mode & stat.S_ISVTX)
+    if prev_sticky:
+        return f"{parent} is itself a sticky directory (/tmp): use a directory of yours below your home"
+    return None
 
 
 def child_env(root: str | os.PathLike[str], path: str, *, no_convenience: bool = True, term: str | None = None,
@@ -198,6 +218,7 @@ class Sandbox:
 
     def mkdir(self, name: str, mode: int = 0o700) -> None:
         os.mkdir(name, mode, dir_fd=self.fd)
+        os.chmod(name, mode, dir_fd=self.fd)  # the umask never narrows it
 
     def write(self, rel: str, data: bytes, *, mode: int = 0o600, exclusive: bool = True) -> None:
         """A private file below the root through the pinned descriptor (no link followed); ``rel`` is one or two
@@ -748,7 +769,7 @@ def pinned_path() -> tuple[str, str, str]:
         raise Refused("uv is not on PATH")
     uv = os.path.realpath(uv)
     path = ":".join(dict.fromkeys([os.path.dirname(uv), "/usr/bin", "/bin"]))
-    return path, os.path.realpath(sys.executable), uv
+    return path, os.path.abspath(sys.executable), uv  # not resolved: a venv python is a link to its base
 
 
 def relay_checkout() -> Path:
@@ -933,6 +954,7 @@ def step_sim(ctx: Ctx, sid: str) -> None:
     ds = _devsandbox()
     manifest_update(ctx.root, person_id=ctx.person_id, workspaces=[
         {"id": ctx.workspace_id, **ds._ident(ctx.ws_dir)}])  # fmt: skip
+    os.makedirs(ctx.root / "state" / "host", mode=0o700, exist_ok=True)
     ds.write_marker(ctx.ws_dir, sid, ctx.workspace_id)
     ds.write_dev_json(ctx.root, sid, ctx.origin)
 
@@ -1073,7 +1095,7 @@ def up(args: argparse.Namespace) -> int:
     ctx = Ctx(sb=sb, args=args, path_env=path_env, py=py, uv=uv)
     try:
         for name in TOP_ENTRIES:
-            sb.mkdir(name)
+            sb.mkdir(name, RUN_MODE if name == "run" else 0o700)
         fifo_name = Path(args.expect_code_from).name if args.expect_code_from else None
         manifest_update(
             root, entries=[*TOP_ENTRIES, "pair.json", "primary-cert.json", *([fifo_name] if fifo_name else [])]

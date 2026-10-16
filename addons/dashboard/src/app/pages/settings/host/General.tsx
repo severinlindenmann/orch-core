@@ -1,3 +1,4 @@
+import { AccessLength } from '../AccessLength'
 import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -123,7 +124,9 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         ) : (
           <>
             <div className="grid gap-4 @[40rem]/page:grid-cols-3">
-              {DURATIONS.map((d) => (
+              {DURATIONS.map((d) => d.key === 'grant_hours' ? (
+                <AccessLength key={d.key} value={Number(value(d.key))} disabled={!!why} onChange={(hours) => setDraft({ ...draft, grant_hours: String(hours) })} />
+              ) : (
                 <div key={d.key} className="space-y-1.5">
                   <Label htmlFor={`set-${d.key}`}>
                     {d.label} ({d.unit})

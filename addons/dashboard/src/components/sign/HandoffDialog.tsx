@@ -80,6 +80,8 @@ export interface HandoffDialogProps {
   /** The signer's event is in the log. */
   onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void
   onPending?: (pending: boolean) => void
+  /** A click signature was rejected or cancelled. */
+  onInterrupted?: () => void
   onClose: () => void
   initialFocus?: () => HTMLElement | null
 }
@@ -131,6 +133,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
     setSwitching(false)
     startMethod(m, retryFloor)
   }
+  useEffect(() => {
+    if (!switching && (click.phase === 'cancelled' || (click.phase === 'failed' && click.problem?.next !== 'check'))) p.onInterrupted?.()
+  }, [click.phase, click.problem, switching, p.onInterrupted])
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))

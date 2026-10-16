@@ -620,9 +620,7 @@ const CASES: Case[] = [
     name: 'agent grant length (settings)',
     path: '/settings/general',
     open: async (user) => {
-      const f = await screen.findByLabelText('Agent grant length (hours)', {}, T)
-      await user.clear(f)
-      await user.type(f, '24')
+      await user.click(await screen.findByRole('button', { name: '1 day' }, T))
       await user.click(screen.getAllByRole('button', { name: 'Save' })[1])
       return screen.findByRole('dialog', {}, T)
     },
@@ -742,12 +740,13 @@ it('records current-destination confirmation warning preserves the exact URL thr
 // M7b: Start agent (Tier A, no signature) shows exactly the host's preview and posts exactly the previewed values plus
 // its spec; the runner grant (the one signed step) is the signer's View with the deposit line and the word, confirmed by holding Sign.
 describe('start agent', () => {
-  it('posts exactly what the preview showed, and the grant View carries the deposit line before Sign', async () => {
+  it.each([false, true])('runner grant (extend=%s) carries the deposit line and word before Sign', async (extend) => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { agentsApi } = await import('@/api/agents')
     const { CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK } = await import('@/api/click')
-    const { StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
+    const { RunnerGrantCard, StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
     const WS = 'b'.repeat(32)
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 8 }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
     const display = "codex 'work on DEMO-7'‮"
     vi.spyOn(agentsApi, 'preview').mockResolvedValue({
       spec: 'e'.repeat(64), ticket: 'DEMO-7', display, display_hidden: false, cwd: { kind: 'workspace' }, cwd_path: '/w/demo', cwd_path_hidden: false,
@@ -761,16 +760,21 @@ describe('start agent', () => {
       lines: ['grant', '', DEPOSIT_RISK, DEPOSIT_LINE], confirm: { kind: 'word', word: 'DEMO~bbbbbbbb/GRANT' }, expires_at: new Date(Date.now() + 6e5).toISOString(),
       auth: 'convenience', device: 'd_x', deposit: true, deposit_line: DEPOSIT_LINE } })
     vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
-    render(<QueryClientProvider client={new QueryClient()}><StartAgentDialog ws={WS} ticket="DEMO-7" open onClose={() => {}} /></QueryClientProvider>)
-    const shown = await screen.findByTestId('agent-preview', {}, T)
-    expect(shown.textContent).toContain("codex 'work on DEMO-7'\\u{202e}") // escaped, never repaired
+    render(<QueryClientProvider client={new QueryClient()}>{extend
+      ? <RunnerGrantCard ws={WS} runner={{ enabled: true, connected: true, terminals: false, grant: null }} loading={false} blocked={null} extend={{ id: 'gr_old', scope: 'workable' }} onChanged={() => {}} />
+      : <StartAgentDialog ws={WS} ticket="DEMO-7" open onClose={() => {}} />}</QueryClientProvider>)
+    if (!extend) {
+      const shown = await screen.findByTestId('agent-preview', {}, T)
+      expect(shown.textContent).toContain("codex 'work on DEMO-7'\\u{202e}") // escaped, never repaired
+    }
+    await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled(), T)
     screen.getByTestId('runner-grant-issue').click()
     const panel = await screen.findByTestId('click-panel', {}, T)
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
     expect(within(panel).getByTestId('click-hold-hint').textContent).toBe('Hold Sign to confirm DEMO~bbbbbbbb/GRANT')
     expect(within(panel).getByRole('button', { name: 'Hold to sign' })).toBeInTheDocument()
-    expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
+    expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
   })
 })

@@ -33,17 +33,14 @@ describe('Settings', () => {
   })
   it('the owner sets the agent grant length in General (signed, 1 to 168 h)', async () => {
     const { user } = renderApp('/settings/general')
-    const field = await screen.findByLabelText('Agent grant length (hours)')
-    expect(field).toHaveValue(8)
+    expect(await screen.findByRole('button', { name: '8 h' })).toHaveAttribute('aria-pressed', 'true')
     const save = screen.getAllByRole('button', { name: 'Save' })[1]
-    expect(save).toBeDisabled() // unchanged
-    await user.clear(field)
-    await user.type(field, '169')
-    expect(save).toBeDisabled() // out of range
-    await user.clear(field)
-    await user.type(field, '24')
+    expect(save).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '1 day' }))
     await user.click(save)
     expect(await screen.findByText(/Default length of a grant: 24 hours \(was 8 hours\)/)).toBeInTheDocument()
+    expect(screen.getByText('Owners and maintainers can sign up to 7 days for all tickets')).toBeInTheDocument()
+    expect(screen.queryByText(/up to 168 h/)).not.toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     await waitFor(() => expect(mockStore.workspaces[0].grant_hours).toBe(24))
   })

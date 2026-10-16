@@ -117,10 +117,24 @@ def _parser() -> argparse.ArgumentParser:
     relay = sub.add_parser(
         "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
     )
-    relay.add_argument("action", choices=("stop", "start", "unlink"))
+    relay.add_argument("action", choices=("stop", "start", "unlink", "pair", "primary"))
+    relay.add_argument("sub", nargs="?", help="pair: list|cancel|abandon (none: make an offer); primary: set")
     relay.add_argument("--workspace", required=True, help="workspace id or prefix")
     relay.add_argument("--state", type=Path)
     relay.add_argument("--run", type=Path)
+    # R6c-2 (orch-v2-host 11A.15.9): relay pairing, human only
+    relay.add_argument("--scopes", help="pair: the phone's scopes (default look,decide; operate and type refused)")
+    relay.add_argument("--ttl", help="pair: the offer's life, at most 10m")
+    relay.add_argument("--json", action="store_true", help="pair: one JSON object per state change")
+    relay.add_argument("--json-fd", type=int, help="pair --json: write to this descriptor when stdout is no TTY")
+    relay.add_argument("--no-qr", action="store_true")
+    relay.add_argument("--resume", action="store_true", help="pair: attach to --offer (made here or by the dashboard)")
+    relay.add_argument("--offer", help="pair: the offer id")
+    relay.add_argument(
+        "--primary", choices=("inline", "external"), help="pair: who signs the phone's certificate (inline: not built)"
+    )
+    relay.add_argument("--cert", help="primary set: the primary's certificate file (JSON)")
+    relay.add_argument("--label", help="primary set: your name for the primary")
     rdr = sub.add_parser(
         "readers",
         help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "
@@ -695,6 +709,12 @@ def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int
 
     state = _state(args.state, env)
     uid = os.getuid()
+    if args.action in ("pair", "primary"):
+        from . import paircli
+
+        return paircli.main(args, env, out, state=state, control=_control_path(args.run, state, env))
+    if args.sub is not None:
+        return write_error(out, False, "invalid.input", f"orch host relay {args.action} takes no {args.sub!r}")
     if args.action in ("start", "unlink") and env.get("ORCH_GRANT"):
         return write_error(out, False, "human_only", f"an agent never runs orch host relay {args.action}")
     try:

@@ -17,8 +17,8 @@ committed list it is re-checked, in this order, and any failure serves NO member
    (expiry, revocations).
 
 The verified :class:`~orch.relay.keys.MemberList` is cached against ``(list_seq, epoch, list_hash)``; the check runs
-again whenever the committed record changes. No lock is taken that a seal span could hold (``MembershipKeys.committed``
-is lock-free), so R2 may call it anywhere.
+again whenever the committed record changes. No lock is taken that a seal span could hold
+(``MembershipKeys.committed_record`` is lock-free), so R2 may call it anywhere.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ class CommittedView:
         return f"CommittedView(workspace={self._keys.workspace_id})"
 
     def member_list(self) -> MemberList | None:
-        c = self._keys.committed()
+        c = self._keys.committed_record()
         if c is None:
             return None
         key = (c["list_seq"], c["epoch"], c["list_hash"])

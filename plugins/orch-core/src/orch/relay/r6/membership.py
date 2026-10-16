@@ -470,7 +470,7 @@ class MembershipPublisher:
         keys.set_h8(0, False)
         if not ok:
             return 0.0  # a late 2xx for a body already abandoned: ignored, never activated
-        committed = keys.committed()
+        committed = keys.committed_record()
         assert committed is not None
         before = {m["device_id"] for m in head["committed"]["list"]["members"]} if head["committed"] else set()
         added = sorted({m["device_id"] for m in o["members"]} - before)

@@ -976,7 +976,7 @@ class MembershipKeys:
             self._dir.write_json(HEAD, new)
             self._head = new
 
-    def committed(self) -> dict[str, Any] | None:
+    def committed_record(self) -> dict[str, Any] | None:
         """A copy of ``head.json`` ``committed`` (``None``: none, or the state is unsafe). Lock-free: ``_head`` is
         replaced whole by every write, never mutated, so this is safe inside a seal span and on R2's threads."""
         if self._forked() or self._unsafe is not None:

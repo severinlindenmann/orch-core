@@ -436,13 +436,13 @@ def test_expose_records_the_holders_exclude_and_h8_are_durable_and_committed_is_
     from orch.relay.r6.keystore import CustodyRefused
 
     mk = open_keys(tmp_path, clock=Clock())
-    assert mk.committed() is None
+    assert mk.committed_record() is None
     r6kit.rotate(mk, devices=[r6kit.DEVICE])
     assert mk.head()["holders"] == {"1": [r6kit.DEVICE]}
-    c = mk.committed()
+    c = mk.committed_record()
     assert c["epoch"] == 1 and c["list"]["members"][0]["device_id"] == r6kit.DEVICE
     c["epoch"] = 99
-    assert mk.committed()["epoch"] == 1  # a copy
+    assert mk.committed_record()["epoch"] == 1  # a copy
     other = "e" * 32
     mk.exclude(other, "abandoned")
     mk.exclude(other, "again")  # idempotent: the first reason stays

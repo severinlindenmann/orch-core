@@ -496,7 +496,7 @@ class PairEngine:
         post: Callable[[Callable[[], None]], None],
         draw: Callable[[int], bytes] = secrets.token_bytes,
     ) -> None:
-        self.ctx, self.store, self.signer, self.host, self.relay = ctx, store, signer, host, relay
+        self.ctx, self.store, self.signer, self.host, self.routes = ctx, store, signer, host, relay
         self.membership = membership
         self.now_ms, self.post, self._draw = now_ms, post, draw
         self._budget: dict[str, collections.deque[int]] = {}
@@ -1005,7 +1005,7 @@ class PairEngine:
 
     def _post(self, offer_id: str, rid: str, env: bytes) -> None:
         try:
-            self.relay.post_answer(offer_id, rid, env)
+            self.routes.post_answer(offer_id, rid, env)
         except PairRelayError as e:
             log.info("pairing: answer POST %s", e.kind)  # the device resends; the rid replays these bytes
 
@@ -1042,7 +1042,7 @@ class PairEngine:
     def _post_request(self, rec: dict[str, Any]) -> dict[str, Any]:
         req = rec["request"]
         try:
-            self.relay.post_cert_request(self.ctx.owner_person_id, req["signed"])
+            self.routes.post_cert_request(self.ctx.owner_person_id, req["signed"])
         except PairRelayError as e:
             if e.kind == "request_open":  # a foreign or stale request: R6 never makes two (alarm, retry the POST)
                 self._alarm("pairing_request_open", rec["offer_id"])
@@ -1072,7 +1072,7 @@ class PairEngine:
         req = rec["request"]
         self._last_poll[rec["offer_id"]] = self.now_ms()
         try:
-            got = self.relay.get_cert_request(req["request_id"])
+            got = self.routes.get_cert_request(req["request_id"])
         except PairRelayError as e:
             if e.kind in ("not_found", "gone", "expired"):
                 return rec  # the deadline decides
@@ -1285,7 +1285,7 @@ class PairEngine:
         device = rec["consumed"]["device_id"]
         if not rec.get("device_put"):
             try:
-                self.relay.put_device(device, rec["cert"])
+                self.routes.put_device(device, rec["cert"])
             except PairRelayError as e:
                 if e.kind in ("cert_conflict", "refused"):  # definite: the device never becomes relay-reachable
                     self._alarm("pairing_cert_conflict" if e.kind == "cert_conflict" else "pairing_device_refused",
@@ -1337,7 +1337,7 @@ class PairEngine:
             self._alarm("pairing_baseline_missing", offer_id)  # a linked workspace always holds a checkpoint
             return
         try:
-            self.relay.post_baseline(cp["hash"], offer_id)
+            self.routes.post_baseline(cp["hash"], offer_id)
         except PairRelayError as e:
             self._retry_at[offer_id] = now + BASELINE_RETRY_MS
             if e.kind == "quota":
@@ -1464,6 +1464,10 @@ class PairThread:
         self._thread = threading.Thread(target=self._main, name=name, daemon=True)
         engine.post = self.post
 
+    @property
+    def thread(self) -> threading.Thread:
+        return self._thread
+
     def start(self) -> None:
         self._thread.start()
 
@@ -1503,6 +1507,11 @@ class PairThread:
                 return
             self._items += 1
         self._q.put(("item", (n, envelope, rid, device), None))
+
+    def notice(self, request_ids: list[str]) -> None:
+        """A ``notices.cert_requests`` wake from R2's poll."""
+        ids = list(request_ids)
+        self.post(lambda: self.engine.notice(ids))
 
     def completed(self, n: int) -> bool:
         with self._lock:

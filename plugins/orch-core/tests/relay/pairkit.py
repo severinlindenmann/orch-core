@@ -111,7 +111,7 @@ class FakeRelay:
         self._maybe("answer")
 
     def post_cert_request(self, person_id, signed):
-        assert person_id == OWNER
+        assert person_id == signed["o"]["person_id"]
         self._maybe("request")
         self.requests.append(signed)
 
@@ -189,6 +189,7 @@ class Phone:
     def __init__(self, link: str, *, attempt: str | None = None, sig=None, kx=None) -> None:
         parsed = pairing.parse_pair_link(link)
         self.offer, self.secret = parsed.fields.offer_id, parsed.fields.secret
+        self.ws = parsed.fields.workspace_id
         self.sig = sig or crypto.generate_private_key()
         self.kx = kx or crypto.generate_private_key()
         self.attempt = attempt or secrets.token_hex(16)
@@ -213,10 +214,10 @@ class Phone:
     def envelope(self, meta: dict[str, Any], *, ts: int, rid: str | None = None, signer=None) -> tuple[bytes, str]:
         rid = rid or secrets.token_hex(16)
         hdr = wire.Header(
-            2, 1, 0, crypto.SUITE_ID, bytes.fromhex(WS), crypto.device_id(self.sig_pub), bytes.fromhex(rid),
+            2, 1, 0, crypto.SUITE_ID, bytes.fromhex(self.ws), crypto.device_id(self.sig_pub), bytes.fromhex(rid),
             bytes.fromhex(self.offer), 1, ts, 0, secrets.token_bytes(16),
         ).pack()  # fmt: skip
-        k = wire.k_pair(self.secret, bytes.fromhex(WS), bytes.fromhex(self.offer))
+        k = wire.k_pair(self.secret, bytes.fromhex(self.ws), bytes.fromhex(self.offer))
         body = wire.seal_body(k, hdr, wire.build_plaintext(meta, b""))
         sig = crypto.sign(signer or self.sig, wire.bridge_signed_bytes(hdr, body))
         return wire.build_envelope(hdr, body, sig), rid
@@ -236,19 +237,20 @@ class Phone:
         return meta
 
 
-def pk_sign(label: str, o: dict[str, Any]) -> dict[str, Any]:
-    return {"o": o, "sig": crypto.b64u(crypto.sign(OWNER_PRIV, L[label] + canon.dumps(o)))}
+def pk_sign(label: str, o: dict[str, Any], priv: Any = None) -> dict[str, Any]:
+    return {"o": o, "sig": crypto.b64u(crypto.sign(priv or OWNER_PRIV, L[label] + canon.dumps(o)))}
 
 
-def make_challenge(request_o: dict[str, Any], phone: Phone) -> dict[str, Any]:
+def make_challenge(request_o: dict[str, Any], phone: Phone, priv: Any = None) -> dict[str, Any]:
     o = {
         "v": 2, "suite": crypto.SUITE_ID, "kind": "cert_challenge", "request_id": request_o["request_id"],
-        "workspace_id": WS, "person_id": OWNER, "offer_id": request_o["offer_id"], "attempt": request_o["attempt"],
+        "workspace_id": request_o["workspace_id"], "person_id": request_o["person_id"],
+        "offer_id": request_o["offer_id"], "attempt": request_o["attempt"],
         "device_id": request_o["device_id"], "dk_sig_pub": crypto.b64u(phone.sig_pub),
         "dk_kx_pub": crypto.b64u(phone.kx_pub), "primary_nonce": crypto.b64u(secrets.token_bytes(32)),
         "expires_ms": request_o["expires_ms"],
     }  # fmt: skip
-    return pk_sign("sig_cert_challenge", o)
+    return pk_sign("sig_cert_challenge", o, priv)
 
 
 def make_rejection(request_o: dict[str, Any]) -> dict[str, Any]:

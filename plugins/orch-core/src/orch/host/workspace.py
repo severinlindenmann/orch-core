@@ -224,6 +224,11 @@ class WorkspaceService:
             self.sync_git()  # pins at workspace open (F7), under this workspace's principal
             try:
                 self.outcomes.open()
+                from .relaypair import register as pair_register
+
+                # R6c (11A.15.19 item 13): the relay.pair_device source BEFORE human.recover, so an interrupted
+                # pairing submit rolls forward through R6's hooks; R6's own open-time recovery runs here too
+                pair_register(self)
                 if self.requests is not None:
                     from .human import recover
 

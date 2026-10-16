@@ -74,6 +74,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           'session.required',
           'session.expired',
           'secrets.shown',
+          'secrets.gone',
           'setup.ended',
           'setup.token',
           'setup.code_invalid',
@@ -113,9 +114,9 @@ export function Setup({ api }: { api: SetupAPI }) {
           ...s.suggested,
           addons: s.addons.filter((a) => a.required || a.default).map((a) => a.id),
         }))
-        if (s.phase !== 'profile') {
+        if (s.error || s.phase !== 'profile') {
           setEnded(true)
-          setError('Return to the terminal to resume setup safely. Run orch setup again if this page was reloaded.')
+          if (!s.error) setError('Return to the terminal to resume setup safely. Run orch setup again if this page was reloaded.')
         }
       })
       .catch(() => {
@@ -272,6 +273,11 @@ export function Setup({ api }: { api: SetupAPI }) {
       {error && (
         <p role="alert" className="warning">
           {error}
+        </p>
+      )}
+      {state?.error && (
+        <p role="alert" className="warning">
+          <Raw>{state.error.message}</Raw> Check your terminal, then run <code>orch setup</code> in this folder to resume.
         </p>
       )}
       {!state && !error && <p role="status">Connecting to setup…</p>}
@@ -619,6 +625,15 @@ export function Setup({ api }: { api: SetupAPI }) {
                 Match <Raw>{review.fingerprint?.join(' ') ?? ''}</Raw> and confirm in the terminal that started setup.
               </p>
             )}
+          {progress?.waiting && (
+            <p role="status">
+              {progress.waiting === 'waiting for terminal'
+                ? 'Confirm in your terminal'
+                : progress.waiting === 'runner' || progress.waiting === 'waiting for runner'
+                  ? 'Waiting for the agent runner to connect…'
+                  : <Raw>{progress.waiting}</Raw>}
+            </p>
+          )}
           <ol className="progress">
             {progress?.steps.map((s) => (
               <li key={s.id}>

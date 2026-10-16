@@ -646,3 +646,7 @@ an update**; Settings → Devices shows the levels when the host serves `reader/
 Open through `orch setup` after the parallel core branch is integrated. `/setup#launch=<single-use code>` uses the setup process, not mock workspace storage. A normal dashboard launch token is intentionally refused. In development, `/setup` uses the same API; tests provide an in-process fetch fake and a real private Unix socket contract fake.
 
 Review Welcome → You → Agents may → Approval → Secret words → Review, then progress and Done. Check One click disables relay with its reason, recovery words form a numbered four-column/six-row grid, Print includes only recovery words, and confirmed words disappear. Check three-day runner access requires the core's typed word and matching terminal fingerprint. Existing workspaces say “Finish setup” and skip secret screens. Failures show per-step status and a “Finish setup later” path.
+
+### B9 core-aligned setup (2026-10-16)
+
+From a supported installed checkout, run `orch setup` in a new project folder. The browser opens plain `/setup`; the server consumes the private setup.code file and claims its listening port. A second tab cannot claim again. Review GRANT for runner access or AGENTS for extended access, terminal confirmation, and waiting/failure text. Finish navigates to `/` as core currently specifies; a normal dashboard session is not created by setup. Automated coverage includes the real core socket boundary and the UI contract.

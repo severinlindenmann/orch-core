@@ -317,6 +317,14 @@ def open_dashboard(path="/", print_url=False):
             if attempt == 19:
                 raise
             time.sleep(0.05)
+    if path == "/setup":
+        # Setup's separate code travels only through setup.code and the socket claim.
+        url = f"http://127.0.0.1:{launch['port']}/setup"
+        if print_url:
+            print(url)
+        elif not webbrowser.open(url):
+            raise RuntimeError("no browser could be opened; use --print-url in your own terminal")
+        return
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
     url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
     if print_url:

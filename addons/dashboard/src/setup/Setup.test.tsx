@@ -51,6 +51,9 @@ function fake(
     finish?: boolean
     attempts?: number
     typed?: boolean
+    agents?: boolean
+    waiting?: string
+    stateError?: boolean
     failure?: boolean
     done?: boolean
     click?: boolean
@@ -66,6 +69,7 @@ function fake(
     if (path === 'state')
       result = {
         ...state,
+        ...(options.stateError ? {phase: 'failed', error: {code: 'demo.failure', message: 'Runner could not connect'}} : {}),
         ...(options.relayUnavailable ? { relay: { available: false, enabled: false } } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish ? ['runner_grant'] : [],
@@ -82,19 +86,22 @@ function fake(
       result = {
         ...review,
         tty_confirm: !!options.finish,
+        ...(options.agents ? { typed_word: 'AGENTS' } : {}),
         ...(options.typed
           ? {
-              typed_word: 'CONFIRM',
+              typed_word: 'GRANT',
               tty_confirm: true,
               runner_grant: { hours: 72, scope: 'tickets', holder: "this machine's runner, never shown" },
             }
           : {}),
       }
+    if (path === 'finish') result = { url: '/' }
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
         steps: [{ id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : 'todo' }],
         done: !!options.done,
+        waiting: options.waiting,
         error: options.failure
           ? { code: 'demo.failure', message: 'Could not create workspace', finishable: !!options.finish }
           : null,
@@ -123,18 +130,19 @@ async function check() {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
   history.replaceState(null, '', '/')
   sessionStorage.clear()
   localStorage.clear()
 })
 
-test('scrubs the entire fragment before the first fetch and never stores tokens', async () => {
+test('claims through the server without reading launch material or storing tokens', async () => {
   history.replaceState(null, '', '/setup#launch=demo-not-a-real-code&to=/elsewhere')
   const fetcher = vi.fn(async (_url, init) => {
-    expect(location.hash).toBe('')
+    expect(location.hash).toBe('#launch=demo-not-a-real-code&to=/elsewhere')
     expect(location.pathname).toBe('/setup')
-    expect(init.body).toBe(JSON.stringify({ code: 'demo-not-a-real-code' }))
+    expect(init.body).toBe('{}')
     return new Response(JSON.stringify({ token: 'demo-not-a-real-token' }))
   })
   await bootstrapSetup(fetcher as typeof fetch)
@@ -207,14 +215,14 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   expect(screen.getByText('Agents may work for 3 days.')).toBeInTheDocument()
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
-  fireEvent.change(screen.getByLabelText(/Type.*CONFIRM/), { target: { value: 'CONFIRM' } })
+  fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
   expect(screen.getByText('demo not real')).toBeInTheDocument()
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',
-    typed_word: 'CONFIRM',
+    typed_word: 'GRANT',
   })
 })
 
@@ -281,14 +289,13 @@ test('long access cannot be submitted when core omits its required typed word', 
   expect(screen.getByRole('alert')).toHaveTextContent('typed confirmation is required')
 })
 
-test('a service-worker-controlled page scrubs the fragment and refuses the exchange', async () => {
+test('a service-worker-controlled page refuses the exchange', async () => {
   history.replaceState(null, '', '/setup#launch=demo-not-a-real-code')
   const previous = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker')
   Object.defineProperty(navigator, 'serviceWorker', { value: { controller: {} }, configurable: true })
   const fetcher = vi.fn()
   try {
     await expect(bootstrapSetup(fetcher)).rejects.toThrow('setup.service_worker')
-    expect(location.hash).toBe('')
     expect(fetcher).not.toHaveBeenCalled()
   } finally {
     if (previous) Object.defineProperty(navigator, 'serviceWorker', previous)
@@ -305,6 +312,10 @@ test('successful progress offers the workspace, while finish mode never reveals 
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
   expect(screen.getByRole('button', { name: 'Open your workspace →' })).toBeEnabled()
+  const assign = vi.fn()
+  vi.stubGlobal('location', { origin: location.origin, assign })
+  fireEvent.click(screen.getByRole('button', { name: 'Open your workspace →' }))
+  await waitFor(() => expect(assign).toHaveBeenCalledWith('/'))
   expect(f.calls.some((c) => c.path.startsWith('secrets/'))).toBe(false)
 })
 
@@ -313,4 +324,37 @@ test('relay is only offered when the add-on is available and enabled', async () 
   render(<Setup api={f.api} />)
   await approval()
   expect(screen.queryByLabelText(/Connect relay and phone/)).not.toBeInTheDocument()
+})
+
+test('state failure shows core message and a next step', async () => {
+  render(<Setup api={fake({ stateError: true }).api} />)
+  expect(await screen.findByText('Runner could not connect')).toBeInTheDocument()
+  expect(screen.getByText(/in this folder to resume/)).toBeInTheDocument()
+})
+
+test('AGENTS gates extended access without a runner grant', async () => {
+  const f = fake({ agents: true })
+  render(<Setup api={f.api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: '1 day' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText(/Type.*AGENTS/), { target: { value: 'AGENTS' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  await waitFor(() => expect(f.calls.find(c => c.path === 'create')?.body).toMatchObject({ typed_word: 'AGENTS' }))
+  expect(f.calls.find(c => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 24 })
+})
+
+test.each(['waiting for terminal', 'waiting for runner'])('shows progress waiting: %s', async (waiting) => {
+  const f = fake({ waiting })
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    waiting === 'waiting for terminal' ? 'Confirm in your terminal' : 'Waiting for the agent runner to connect…')
 })

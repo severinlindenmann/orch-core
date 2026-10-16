@@ -1,6 +1,7 @@
 /** Setup is deliberately independent of dashboard session storage and query caches. */
 export interface SetupState {
   phase: 'profile' | 'secrets' | 'review' | 'confirming' | 'running' | 'done' | 'failed' | 'cancelled'
+  error?: { code: string; message: string } | null
   mode: 'new' | 'finish'
   dir: string
   dir_name: string
@@ -47,6 +48,7 @@ export interface Review {
   tty_confirm: boolean
 }
 export interface Progress {
+  waiting?: string | null
   steps: { id: string; label: string; status: 'todo' | 'doing' | 'done' | 'failed' | 'skipped' }[]
   done: boolean
   error: { code: string; message: string; finishable: boolean } | null
@@ -83,24 +85,16 @@ export class SetupAPI {
   }
 }
 export async function bootstrapSetup(fetcher: typeof fetch = fetch): Promise<SetupAPI> {
-  let fragment = new URLSearchParams(location.hash.slice(1))
-  let code = fragment.get('launch') ?? fragment.get('code') ?? ''
-  history.replaceState(null, '', '/setup') // MUST precede every fetch, including the exchange.
-  fragment = new URLSearchParams()
   if (navigator.serviceWorker?.controller) throw new SetupError('setup.service_worker')
-  try {
-    const res = await fetcher('/auth/setup', {
-      method: 'POST',
-      credentials: 'omit',
-      cache: 'no-store',
-      redirect: 'error',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
-    })
-    if (!res.ok) throw new SetupError('session.required')
-    const value = (await res.json()) as { token: string }
-    return new SetupAPI(value.token, fetcher)
-  } finally {
-    code = ''
-  }
+  const res = await fetcher('/auth/setup', {
+    method: 'POST',
+    credentials: 'omit',
+    cache: 'no-store',
+    redirect: 'error',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!res.ok) throw new SetupError('session.required')
+  const value = (await res.json()) as { token: string }
+  return new SetupAPI(value.token, fetcher)
 }

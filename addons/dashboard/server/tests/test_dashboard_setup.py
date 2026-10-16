@@ -4,6 +4,7 @@ import json
 import socketserver
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -33,7 +34,11 @@ def setup(tmp_path):
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             status, out = 200, {"ok": True}
             if self.path == "/claim":
-                if facts["claimed"] or now[0] >= 30 or json.loads(raw) != {"code": "demo-not-a-real-code"}:
+                if (
+                    facts["claimed"]
+                    or now[0] >= 30
+                    or json.loads(raw) != {"code": "demo-not-a-real-code", "port": PORT}
+                ):
                     status, out = 403, {"error": {"code": "setup.code_invalid", "message": "expired"}}
                 else:
                     facts["claimed"] = True
@@ -74,6 +79,13 @@ def setup(tmp_path):
     path.chmod(0o600)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    code_path = path.parent / "setup.code"
+    code_path.write_text(
+        json.dumps(
+            {"setup_id": "demo-not-a-real-setup", "code": "demo-not-a-real-code", "expires_at": time.time() + 30}
+        )
+    )
+    code_path.chmod(0o600)
     auth = Auth()
     (tmp_path / "index.html").write_text("<head></head><main>setup shell</main>")
     (tmp_path / "assets").mkdir()
@@ -89,7 +101,7 @@ def setup(tmp_path):
 
 
 def claim(client):
-    res = client.post("/auth/setup", json={"code": "demo-not-a-real-code"}, headers={"Origin": ORIGIN})
+    res = client.post("/auth/setup", json={}, headers={"Origin": ORIGIN})
     assert res.status_code == 200
     return {"X-Setup-Token": res.json()["token"], "Origin": ORIGIN}
 
@@ -104,9 +116,7 @@ def test_scope_claim_and_no_workspace(setup):
     assert client.get("/api/workspaces", headers={"Authorization": f"Bearer {token}"}).status_code == 401
     normal = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
     assert client.get("/api/setup/state", headers={"X-Setup-Token": normal}).status_code == 401
-    assert (
-        client.post("/auth/setup", json={"code": "demo-not-a-real-code"}, headers={"Origin": ORIGIN}).status_code == 403
-    )
+    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
     assert client.get("/api/setup/state", headers=headers).json()["phase"] == "profile"
     for path in ("launch", "claim", "shutdown", "../shutdown"):
         assert client.post("/api/setup/" + path, json={}, headers=headers).status_code in (401, 404)
@@ -176,9 +186,7 @@ def test_launch_expiry_idle_and_run_exception(setup):
 def test_code_ttl_and_cancel(setup):
     client, _, _, _, now = setup
     now[0] = 30
-    assert (
-        client.post("/auth/setup", json={"code": "demo-not-a-real-code"}, headers={"Origin": ORIGIN}).status_code == 403
-    )
+    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
 
 
 def test_cancel_revokes_and_socket_permissions(setup):
@@ -186,15 +194,90 @@ def test_cancel_revokes_and_socket_permissions(setup):
     headers = claim(client)
     assert client.post("/api/setup/cancel", json={}, headers=headers).status_code == 200
     assert not auth.valid_setup(headers["X-Setup-Token"])
-    proxy.path.chmod(0o666)
-    assert (
-        client.post("/auth/setup", json={"code": "demo-not-a-real-code"}, headers={"Origin": ORIGIN}).status_code == 503
+    (proxy.path.parent / "setup.code").write_text(
+        json.dumps(
+            {"setup_id": "demo-not-a-real-setup", "code": "demo-not-a-real-code", "expires_at": time.time() + 30}
+        )
     )
+    (proxy.path.parent / "setup.code").chmod(0o600)
+    proxy.path.chmod(0o666)
+    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 503
 
 
 def test_agent_refused(setup, monkeypatch):
     client, *_ = setup
     monkeypatch.setenv("ORCH_GRANT", "demo-not-a-real-grant")
+    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
+
+
+def test_code_file_consumed_and_browser_codes_refused(setup):
+    client, _, proxy, *_ = setup
+    path = proxy.path.parent / "setup.code"
+    assert client.get("/api/setup/state").status_code == 401
     assert (
-        client.post("/auth/setup", json={"code": "demo-not-a-real-code"}, headers={"Origin": ORIGIN}).status_code == 403
+        client.post("/auth/setup", json={"code": "demo-not-a-real-code"}, headers={"Origin": ORIGIN}).status_code == 400
     )
+    assert path.exists()
+    claim(client)
+    assert not path.exists()
+    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code == 403
+
+
+@pytest.mark.parametrize("kind", ["expired", "permissions", "symlink"])
+def test_unsafe_or_expired_code_refused(setup, kind):
+    client, _, proxy, facts, _ = setup
+    path = proxy.path.parent / "setup.code"
+    if kind == "expired":
+        value = json.loads(path.read_text())
+        value["expires_at"] = time.time() - 1
+        path.write_text(json.dumps(value))
+    elif kind == "permissions":
+        path.chmod(0o644)
+    else:
+        target = path.with_name("other.code")
+        path.rename(target)
+        path.symlink_to(target)
+    assert client.post("/auth/setup", json={}, headers={"Origin": ORIGIN}).status_code in (403, 503)
+    assert not facts["claimed"]
+
+
+def test_real_core_claim_and_proxy(tmp_path):
+    from orch.setup.server import SetupServer
+
+    class Flow:
+        busy = False
+        finished = False
+
+        def launch(self, directory):
+            self.directory = directory
+
+        def end(self, why):
+            pass
+
+        def dispatch(self, method, route, query, body):
+            if route == "finish":
+                self.finished = True
+                return 200, {"url": "/"}
+            return 200, {"route": route, "query": query, "body": body}
+
+    with tempfile.TemporaryDirectory(prefix="b9-core-", dir="/tmp") as directory:
+        core = SetupServer(Path(directory) / "setup.sock", Flow())
+        core.start()
+        try:
+            core.launch(str(tmp_path))
+            proxy = SetupProxy(core.path)
+            app = create_app(PORT, auth=Auth(), setup_proxy=proxy)
+            with TestClient(app, base_url=ORIGIN) as client:
+                assert client.get("/api/setup/state").status_code == 401
+                headers = claim(client)
+                assert not core.code_path.exists()
+                assert core.ports == frozenset({f"127.0.0.1:{PORT}", f"localhost:{PORT}"})
+                res = client.post("/api/setup/profile", json={"agent_grant": True}, headers=headers)
+                assert res.json()["body"] == {"agent_grant": True}
+                res = client.get("/api/setup/progress?run_id=demo-run", headers=headers)
+                assert res.json()["query"] == {"run_id": "demo-run"}
+                assert res.headers["cache-control"] == "no-store"
+                assert client.post("/api/setup/finish", json={}, headers=headers).json() == {"url": "/"}
+                assert client.get("/api/setup/state", headers=headers).status_code == 401
+        finally:
+            core.stop()

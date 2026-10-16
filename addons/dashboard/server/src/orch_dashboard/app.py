@@ -143,7 +143,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
             "runner": who.runner,
         }
 
-    register_setup(app, auth, setup_proxy or SetupProxy(run_dir(state_dir()) / "setup.sock"))
+    register_setup(app, auth, setup_proxy or SetupProxy(run_dir(state_dir()) / "setup.sock"), port)
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)

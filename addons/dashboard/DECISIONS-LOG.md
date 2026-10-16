@@ -1905,3 +1905,11 @@ foreground runner's PID under `ORCH_DEV=1` with `.orch-dev` markers).
 - **Decision:** `/setup` has a dedicated in-memory session and a closed proxy to the setup process's private Unix socket. Core's `/claim` consumes the 30-second launch code; core owns run-aware idle expiry. Dashboard tokens and setup tokens cannot cross scopes. The proxy streams replies and wipes its transient request buffer; neither bodies nor secrets enter logs, caches, storage or the dashboard gateway.
 - **Why:** rev 2 of batch-9 is authoritative over the earlier mockup: permissions and approval precede secret generation; recovery-only Copy/Print; digest-bound review, typed word and terminal fingerprint gates; local workspace by default. Secret responses are removed after confirmation and on page exit. No service worker participates.
 - **Revert:** remove the setup entry branches, setup adapter/routes, setup-only security/auth additions, and `src/setup` / `src/api/setup.ts`. Preserve ordinary dashboard authentication.
+
+## 2026-10-16 — B9 alignment with merged core
+
+**Decision:** Consume the private setup.code file on the dashboard server, delete it before the socket claim, and name the listening port. Open plain /setup; keep the returned setup credential only in browser memory. Show core waiting/error facts and use GRANT / AGENTS fixtures.
+
+**Why:** The dated B9-C launch note supersedes the URL fragment contract. Core owns single use and run-aware idle expiry; real-core transport tests now cover the boundary.
+
+**Revert:** Revert these dashboard changes only together with a replacement core launch/auth contract.

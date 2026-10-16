@@ -386,3 +386,16 @@ def test_exchange_and_timer_delete_the_exact_handed_out_file(tmp_path, monkeypat
         assert not redirect.exists()
     assert not auth.files
     assert not list(server_dir.glob("launch-*.html"))
+
+
+def test_setup_launcher_opens_plain_path(tmp_path, monkeypatch):
+    from orch_dashboard import __main__ as launcher
+
+    opened = []
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url) or True)
+    launcher.open_dashboard("/setup")
+    assert opened == [f"http://127.0.0.1:{PORT}/setup"]
+    assert not list(tmp_path.rglob("launch-*.html"))

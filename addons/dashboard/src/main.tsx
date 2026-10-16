@@ -6,7 +6,7 @@ import { RouterProvider } from '@tanstack/react-router'
 import { createAppRouter } from './app/router'
 import './styles/tokens.css'
 
-if (location.pathname === '/setup' || new URLSearchParams(location.hash.slice(1)).get('to') === '/setup') {
+if (location.pathname === '/setup') {
   const session = bootstrapSetup()
   void session.catch(() => {})
   void import('./setup/Setup').then(({mount}) => mount(session))

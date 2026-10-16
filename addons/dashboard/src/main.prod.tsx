@@ -2,8 +2,8 @@ import { bootstrapSetup } from './api/setup'
 import { bootstrap } from './api/bootstrap'
 import './styles/tokens.css'
 
-// Dynamic import intentionally follows the fragment scrub and launch exchange.
-const setup = location.pathname === '/setup' || new URLSearchParams(location.hash.slice(1)).get('to') === '/setup'
+// Setup claims through the server; normal dashboard launch uses its separate bootstrap.
+const setup = location.pathname === '/setup'
 if (setup) {
   const session = bootstrapSetup()
   void session.catch(() => {})

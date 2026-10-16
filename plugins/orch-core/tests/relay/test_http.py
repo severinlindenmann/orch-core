@@ -4,6 +4,7 @@ no redirects, no environment proxies, and redaction. Fault injection against the
 from __future__ import annotations
 
 import logging
+import socket
 import ssl
 import threading
 import time
@@ -864,8 +865,18 @@ class _ClosingServer:
                 if not d:
                     return
                 buf += d
+            head, _, rest = buf.partition(b"\r\n\r\n")
+            length = next(
+                (int(x.split(b":")[1]) for x in head.split(b"\r\n") if x.lower().startswith(b"content-length:")), 0
+            )
+            while len(rest) < length:  # the whole request is read: an unread byte at close would make the FIN a RST
+                d = s.recv(4096)
+                if not d:
+                    return
+                rest += d
             self.requests += 1
             s.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}")
+            s.shutdown(socket.SHUT_WR)
         finally:
             s.close()  # no `Connection: close` was announced: the client believes the connection is alive
 
@@ -902,6 +913,7 @@ def test_a_reused_connection_the_peer_closed_is_reopened_and_resent_once_within_
         except http.TransportError:
             second = None
         assert srv.requests == (2 if second == 200 else 1)
+        clock[0] += http.IDLE_REUSE_S + 1  # the server closes after every answer: the next call must start afresh
         assert call(c).status == 200
         assert srv.requests <= 3
     finally:

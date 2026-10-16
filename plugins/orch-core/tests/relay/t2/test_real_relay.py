@@ -293,3 +293,26 @@ def test_an_idle_linked_host_keeps_its_lease_and_its_aux_thread_for_two_lease_pe
                    body={"gen": None, "take_over": False}, keys={"gen", "lease_s", "cursor"})  # fmt: skip
     assert e.value.code == "holder_conflict"
     assert side.loop.error is None
+
+
+def test_a_read_after_a_quiet_spell_is_answered_on_the_first_attempt_with_no_transport_error(bridged, caplog):
+    """The relay closes an idle keep-alive after 5 s. The poster's connection has been idle through 7 s of silence: the
+    answer's POST must go out at once (the connection is replaced before sending), not fail and wait for a resend."""
+    side, phone, epoch = bridged
+    side.start()
+    rid0, env0 = phone.request({"op": "whoami", "args": {}}, epoch=epoch)  # the poster's connection is in use once
+    assert phone.post(rid0, env0)[0] == 202
+    phone.answer(rid0, epoch)
+    time.sleep(7)
+    caplog.set_level("INFO", logger="orch.relay")
+    t0 = time.monotonic()
+    rid, env = phone.request({"op": "whoami", "args": {}}, epoch=epoch)
+    assert phone.post(rid, env)[0] == 202
+    meta, _ = answer_of(phone.answer(rid, epoch, timeout_s=15.0)[0])
+    assert meta == {"status": "ok"}
+    assert len(side.loop.for_rid(rid)) == 1  # the answer's POST went out once: no retry, no phone resend
+    assert time.monotonic() - t0 < 10
+    assert side.loop.error is None and not side.alarms
+    bad = [r.getMessage() for r in caplog.records if "TransportError" in r.getMessage() or "poll failed" in r.getMessage()
+           or "failed" in r.getMessage()]  # fmt: skip
+    assert not bad, bad

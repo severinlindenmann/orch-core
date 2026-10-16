@@ -11,7 +11,7 @@ local path belongs to its owner's machine). A `remote` is shown only as a canoni
 
 import re
 
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel, Field, model_serializer
 
 from ..errors import fail
 from ..text import hidden
@@ -59,6 +59,8 @@ class Settings(BaseModel):
     lease_ttl_min: int | None = None
     #: B6: the workspace's allowed ways to sign (`terminal` always). Absent when the host did not say (an older core).
     sign_methods: list[str] | None = None
+    #: whether the host reported sign_methods at all (an explicit null = not set, every way allowed)
+    sign_methods_known: bool = Field(default=False, exclude=True)
     defaults: list[str] | None = None
     gates: dict[str, dict] | None = None
     repos: list[Repo] | None = None
@@ -69,8 +71,8 @@ class Settings(BaseModel):
     @model_serializer(mode="wrap")
     def _omit_unknown_sign_methods(self, handler):
         out = handler(self)
-        if out.get("sign_methods") is None:
-            out.pop("sign_methods", None)
+        if out.get("sign_methods") is None and not self.sign_methods_known:
+            out.pop("sign_methods", None)  # an older core said nothing: absent (the UI shows it read-only)
         return out
 
 
@@ -176,6 +178,7 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
         return Settings(
             **out,
             sign_methods=methods,
+            sign_methods_known="sign_methods" in first,
             defaults=sorted(set(defaults)),
             gates={g: policy(p) for g, p in gates.items()},
             repos=repos,

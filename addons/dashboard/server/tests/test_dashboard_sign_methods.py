@@ -24,7 +24,9 @@ def handoff(world, body):
 def test_the_settings_read_says_which_ways_are_allowed(worlds, owner):
     world = worlds(owner.owner.ref)
     got = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert "sign_methods" not in got  # never set: every way is allowed (the model judges none); nothing is invented
+    # never set: the host reports null (every way allowed, the model judges none) and the dashboard passes the null
+    # through, so the UI can tell "not set" from an older core that says nothing (absent)
+    assert "sign_methods" in got and got["sign_methods"] is None
 
 
 def test_sign_methods_is_a_typed_owner_setting_and_terminal_is_always_there(worlds, owner):

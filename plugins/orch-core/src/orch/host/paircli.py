@@ -9,8 +9,10 @@ the pairing control ops (``host.relay_pair_*``, ``host.relay_primary_set``).
   attempts; an empty line rejects), waits while the separate primary signs the certificate (``--primary external``),
   drives the ``relay.pair_device`` signature with the inline terminal passphrase signer (step 9; never click or
   convenience), and shows the progress to ``approved``.
-* ``--primary inline`` (the design's default) runs the primary steps itself through ``orch.relay_owner``; it is **not
-  built yet** (JUDGEMENT CALL, R6c-2: a follow-up), so it is refused with a fix naming ``--primary external``.
+* ``--primary inline`` (the default, B1b, 11A.15.23) runs the primary steps itself in this process
+  (:func:`orch.relay_owner.inline.serve_request`): the primary passphrase, then the owner's recovery code (typed once,
+  after the request is verified and shown), then the phone's second code; ``--primary external`` waits for a separate
+  primary.
 * ``orch host relay pair list|cancel|abandon --workspace W [--offer O]`` and ``orch host relay primary set
   --workspace W --cert FILE --label TEXT``.
 
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -54,6 +57,10 @@ def safe(text: object, cap: int = 80) -> str:
     return " ".join(kept.split())[:cap]
 
 
+def tries_left(n: int) -> str:
+    return "no tries left" if n <= 0 else "1 try left" if n == 1 else f"{n} tries left"
+
+
 def _word(value: object, allowed: frozenset[str] | None = None) -> str:
     """A token the host sends (a state, a scope, an id): shown only when it is one we know, else ``?``."""
     if not isinstance(value, str) or not value or (allowed is not None and value not in allowed):
@@ -70,6 +77,35 @@ def _link(value: object) -> str:
 
 
 POLL_S = 1.0
+LINK_NOTICE = "valid 10 min, single use; anyone who sees this can pair. It leaves the screen once the phone connects."
+
+
+def _is_tty(out: TextIO) -> bool:
+    try:
+        return bool(out.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+def _width() -> int:
+    import shutil
+
+    return max(20, shutil.get_terminal_size((80, 24)).columns)
+
+
+def _rows(text: str, width: int) -> int:
+    """Terminal rows ``text`` takes at ``width`` columns (a long line wraps); QR half-blocks count one cell each."""
+    return sum(max(1, -(-len(line) // width)) for line in text.split("\n")[:-1])
+
+
+def _erase(out: TextIO, rows: int) -> None:
+    """Move up ``rows`` rows and clear to the end of the screen (``ESC[nA`` ``ESC[J``). Never ``ESC[3J``: the
+    scrollback is the terminal's, not ours (best effort, stated in the owner note)."""
+    out.write(f"\x1b[{rows}A\x1b[J")
+    out.write("the pairing link was removed from the screen (your terminal's scrollback may still hold it)\n")
+    out.flush()
+
+
 FALLBACK = "fallback: your relay operator's page can read it"
 
 
@@ -104,8 +140,11 @@ def _caller(client: Any) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
 
 
 def _qr(link: str) -> str | None:
+    """The link as a Unicode half-block QR (``segno``, a hard dependency of orch-core, pinned in the lock; in memory
+    only). ``None`` only when the import fails (a broken install): the caller says so and the link text is still
+    shown."""
     try:
-        import segno  # type: ignore[import-not-found]  # optional: orch[qr]
+        import segno  # type: ignore[import-not-found]
     except ImportError:
         return None
     import io
@@ -115,14 +154,22 @@ def _qr(link: str) -> str | None:
     return buf.getvalue()
 
 
-def _tty_ask(prompt: str) -> str:
-    """One line from the person's terminal (``/dev/tty``; never stdin, which a script may feed)."""
+def _tty_ask(prompt: str, timeout: float | None = None) -> str | None:
+    """One line from the person's terminal (``/dev/tty``; never stdin, which a script may feed). With ``timeout``
+    (seconds) ``None`` when nothing was typed in time (L1: the read ends with the request, the caller then closes the
+    person-key source)."""
+    import select
+
     try:
         # two handles, not "r+": a terminal is not seekable, so a read-write text file on it raises
         # UnsupportedOperation (an OSError) on macOS and the prompt could never be answered
         with open("/dev/tty", "w", encoding="utf-8") as out, open("/dev/tty", encoding="utf-8") as tty:
             out.write(prompt)
             out.flush()
+            if timeout is not None and not select.select([tty], [], [], max(0.0, timeout))[0]:
+                out.write("\n")
+                out.flush()
+                return None
             return tty.readline().strip()
     except OSError:
         raise HostError("custody.no_prompt", "the code is typed at a terminal: run this in one") from None
@@ -139,20 +186,38 @@ def attach(
     emit: Callable[[dict[str, Any]], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_polls: int | None = None,
+    primary: Callable[[str, str, Mapping[str, Any]], Any] | None = None,
+    erase: Callable[[], None] | None = None,
 ) -> int:
-    """The attached part (11A.15.9): one line per state; the typed SAS; the external primary's wait; step 9 once the
-    certificate is in hand; progress to ``approved``. Returns the exit code (0 approved, 3 otherwise)."""
+    """The attached part (11A.15.9): one line per state; the typed SAS; the primary's step (``primary`` inline, else
+    the external primary's wait); step 9 once the certificate is in hand; progress to ``approved``. Returns the exit
+    code (0 approved, 3 otherwise).
+
+    ``primary(offer_id, request_id, offer)`` is the inline primary (:func:`orch.relay_owner.inline.serve_request`); it
+    is called once, when the offer waits for the certificate and the host reports the request, and returns an object
+    with ``cert`` / ``rejection``, which is handed to ``host.relay_pair_cert``. If it raises, the offer is cancelled
+    and the command ends (never a hang): a ``KeyboardInterrupt`` leaves the offer for ``--resume``."""
     last: str | None = None
     signed = False
     waiting_shown = False
+    primary_done = False
+    sas_bad = 0
     polls = 0
+    was_open = erase is not None  # armed from the moment the link block was printed (a fast phone is pending already)
+    issued: list[str] = []  # device ids a certificate was issued for by the inline primary
     while True:
         offer = call("host.relay_pair_show", {"workspace_id": wid, "offer_id": offer_id})["offer"]
         state = _word(offer.get("state"), STATES)
         scopes = ", ".join(_word(x, frozenset({"look", "decide"})) for x in offer.get("scopes") or [])
         label = safe(offer.get("label"))
         if state != last:
+            if was_open and erase is not None and state != "open":
+                # L3: the QR and both link lines leave the screen once the phone has used the link; without a
+                # "state: open" line printed yet (the first look already shows more) there is one line less to erase
+                erase(last is not None)
+                was_open = False
             last = state
+            was_open = was_open or state == "open"
             out.write(f"state: {state}\n")
             out.flush()
             if emit is not None:
@@ -162,20 +227,36 @@ def attach(
             return 0
         if state in TERMINAL:
             out.write(f"the pairing ended: {state}\n")
+            for dev in issued:
+                out.write(_issued_notice(dev))
             return 3
         if state == "pending":
             if offer.get("second_key"):
                 out.write("WARNING: someone else has this link (a second key used it): reject\n")
             out.write(f"request from: [{label}] (named by the device; not authenticated)\n")
             out.write(f"scopes: {scopes}\n")
-            code = ask("type the 6 characters the phone shows (empty: reject): ")
+            code = ask(SAS_PROMPT)
+            if code.strip():
+                from orch.identity.pairing import normalize_code
+
+                norm = normalize_code(code)
+                if norm is None:  # M2: not the shape of a code (maybe a secret typed in the wrong place): sent nowhere
+                    sas_bad += 1
+                    more = len(code.split()) >= 2
+                    code = ""
+                    out.write("that did not look like the phone's code; nothing was sent"
+                              + ("; never type your recovery code here" if more else "") + "\n")  # fmt: skip
+                    if sas_bad < 3:
+                        continue
+                else:
+                    code = norm
             got = call(
                 "host.relay_pair_answer",
                 {"workspace_id": wid, "offer_id": offer_id, "code": code, "approve": bool(code)},
             )
             if got["state"] == "pending":
                 left = got.get("attempts_left")
-                out.write(f"that is not the code: {left if type(left) is int else '?'} attempt(s) left\n")
+                out.write(f"that is not the code: {tries_left(left) if type(left) is int else '?'}\n")
             continue
         if state in ("confirmed", "cert_pending") and offer.get("has_cert") and not signed:
             signed = True
@@ -183,13 +264,120 @@ def attach(
             out.flush()
             step9(offer_id)
             continue
-        if state == "cert_pending" and not offer.get("has_cert") and not waiting_shown:
+        if state == "cert_pending" and not offer.get("has_cert") and primary is not None and not primary_done:
+            rid = offer.get("outstanding_request")
+            if rid:
+                primary_done = True
+                if not _inline_primary_step(call, wid, offer_id, str(rid), offer, primary, out, issued):
+                    return 3
+                continue
+        if state == "cert_pending" and not offer.get("has_cert") and primary is None and not waiting_shown:
             waiting_shown = True
             out.write("waiting for the primary (external) to sign the certificate; compare its code with the phone\n")
         polls += 1
         if max_polls is not None and polls >= max_polls:
             return 3
         sleep(POLL_S)
+
+
+SAS_PROMPT = "pairing code: type the 6 characters the phone shows (empty: reject): "
+
+
+def _describe(exc: BaseException) -> str:
+    """A failure of the inline primary as one line of our own words (never the relay's text, a body or a secret)."""
+    code = getattr(exc, "code", None)
+    if isinstance(exc, _Refused):  # the host's own refusal: its code is a fixed token
+        return _cut(f"the host refused: {_word(exc.error.get('code'))}")
+    if type(getattr(exc, "status", None)) is int and type(exc).__name__ == "OwnerRefused":
+        return f"the relay refused a request ({exc.status} {code or 'no code'})"
+    if isinstance(exc, HostError):
+        return _cut(f"{exc.code}: {exc.message}")
+    if hasattr(exc, "message") and isinstance(code, str):
+        return _cut(f"{code}: {exc.message}")
+    if isinstance(code, str) and type(exc).__module__.startswith("orch.custody"):
+        return _cut(f"{code}: {exc}")
+    return f"{type(exc).__name__}"
+
+
+def _when_new_offer(until_ms: object) -> str:
+    """When ``orch host relay pair`` can make a new offer again: R6 keeps a verified cert request outstanding until it
+    expires (plus a minute), and refuses a new offer meanwhile (``relay.pair_open``)."""
+    if type(until_ms) is not int:
+        return "start a new one with orch host relay pair --workspace W"
+    left = (until_ms + 60_000 - int(time.time() * 1000)) / 60_000
+    if left <= 0:
+        return "start a new one with orch host relay pair --workspace W"
+    minutes = max(1, -int(-left // 1))
+    return (
+        f"the phone's request stays open on the relay, so a new offer is possible in about {minutes} minute(s) "
+        "(orch host relay pair --workspace W; until then relay.pair_open)"
+    )
+
+
+def _issued_notice(device_id: str) -> str:
+    """The owner is told when the primary signed a device certificate and the pairing then did not complete. There is
+    no command that revokes or removes a device (``device.removed`` has no CLI op yet), so the text says so."""
+    bare = _word(device_id[2:] if device_id.startswith("d_") else device_id)
+    short = "d_" + bare[:8] if bare != "?" else "?"
+    return (
+        f"a certificate was issued for device {short} but the pairing did not complete; there is no command to "
+        "revoke it yet. The device has no membership in the workspace (device.added was never signed), so it cannot "
+        "act in it; ask the relay operator to remove it if you want it gone\n"
+    )
+
+
+def _inline_primary_step(
+    call: Callable[[str, dict[str, Any]], dict[str, Any]],
+    wid: str,
+    offer_id: str,
+    rid: str,
+    offer: Mapping[str, Any],
+    primary: Callable[..., Any],
+    out: TextIO,
+    issued: list[str] | None = None,
+) -> bool:
+    """Run the inline primary and hand its certificate (or rejection) to R6 (``relay.pair_cert``, which verifies it
+    itself). On any failure the offer is cancelled and the person is told a new pairing can start; ``False``."""
+    got = None
+    try:
+        got = primary(offer_id, rid, offer)
+        if issued is not None and getattr(got, "cert", None) is not None:
+            issued.append(str(getattr(got, "device_id", None) or "?"))
+        args: dict[str, Any] = {"workspace_id": wid, "offer_id": offer_id}
+        if got.cert is not None:
+            args["cert"] = got.cert
+        elif got.rejection is not None:
+            args["rejection"] = got.rejection
+        else:  # pragma: no cover - the outcome always holds one of the two
+            raise HostError("internal", "the primary decided nothing")
+        try:
+            call("host.relay_pair_cert", args)
+        except _Refused as exc:
+            # a rejection posted to the relay can reach R6's own poll before this call does: the offer is then
+            # already rejected (or has the certificate), and the hand-over is moot, not a failure
+            if exc.error.get("code") != "relay.pair_closed":
+                raise
+            now = call("host.relay_pair_show", {"workspace_id": wid, "offer_id": offer_id})["offer"]
+            if not (now.get("state") in TERMINAL or now.get("has_cert")):
+                raise
+        return True
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any failure ends the pairing cleanly; nothing hangs
+        out.write(f"the primary step ended: {_describe(exc)}\n")
+        if got is not None and getattr(got, "cert", None) is not None:
+            if issued is not None and issued:
+                issued.pop()  # told here; not again at a terminal state
+            out.write(_issued_notice(str(getattr(got, "device_id", None) or "?")))
+        try:
+            call("host.relay_pair_cancel", {"workspace_id": wid, "offer_id": offer_id})
+            out.write("the pairing is cancelled; " + _when_new_offer(getattr(exc, "until_ms", None)) + "\n")
+        except Exception as cancel_exc:  # noqa: BLE001
+            why = _describe(cancel_exc)
+            out.write(
+                f"the offer could not be cancelled ({why}); orch host relay pair cancel --offer {_word(offer_id)}\n"
+            )
+        return False
 
 
 def _workspace(state: Path, given: str) -> dict[str, Any]:
@@ -302,6 +490,86 @@ def _cut(text: object) -> str:
     return safe(str(text), 200)
 
 
+def _install_origin(state: Path, given: str | None) -> str | None:
+    """One relay per install (owner decision 15 Oct, 11A.15.23): the relay the primary was registered on
+    (``relay.json``, or the pending registration's) is the default for ``--relay``; another origin is
+    ``primary.relay_mismatch``. ``None`` and nothing stored: the caller asks for ``--relay``."""
+    from orch.custody import primary_register
+
+    try:
+        stored = primary_register.stored_origin(state)
+    except primary_register.RegisterError as exc:
+        raise HostError(exc.code, str(exc)) from None
+    if given is not None:
+        try:
+            given = primary_register.check_origin(given)
+        except primary_register.RegisterError as exc:
+            raise HostError(exc.code, str(exc)) from None
+    if stored is None or given is None:
+        return given or stored
+    if given != stored:
+        raise HostError(
+            "primary.relay_mismatch",
+            "this install already uses another relay (one relay per install)",
+            hint=f"use --relay {safe(stored, 200)}",
+        )
+    return given
+
+
+def _primary_set_args(state: Path, entry: Mapping[str, Any], args: Any) -> tuple[dict[str, Any], str]:
+    """``orch host relay primary set --workspace W [--cert FILE --label TEXT]``: without ``--cert`` the certificate and
+    label are the registered primary's (``cert.json``/``relay.json``, made by ``orch keys primary init``), refused
+    unless the certificate is for **this** machine's primary device and the workspace owner's person, and the relay is
+    the one the workspace is linked to (R6 re-verifies the certificate anyway, S:7870)."""
+    from orch.custody import primary, primary_register
+    from orch.custody.base import CustodyError
+
+    if args.cert:  # an explicit certificate (an external primary, the dev path): as before; R6 verifies it
+        if not args.label:
+            raise HostError("invalid.input", "orch host relay primary set --workspace W [--cert FILE --label TEXT]")
+        return json.loads(Path(args.cert).read_text()), str(args.label)
+    try:
+        stored, rel = primary_register.read_cert(state), primary_register.read_relay(state)
+        if stored is None or rel is None or not stored["registered"]:
+            raise HostError(
+                "primary.not_registered",
+                "this install has no registered primary",
+                hint="orch keys primary init --workspace W --relay ORIGIN --invite-file F",
+            )
+        cert, label = stored["cert"], args.label or rel.get("label") or "primary"
+        o = cert.get("o") if isinstance(cert, dict) else None
+        if not isinstance(o, dict):
+            raise HostError("invalid.input", "the stored certificate is not a device certificate")
+        if o.get("device_id") != primary.load(state).device_id.hex():
+            raise HostError("invalid.input", "the stored certificate is not for this machine's primary device")
+        from orch import crypto
+        from orch.custody.cli import _Fail, owner_pk_from_workspace
+
+        try:
+            owner = owner_pk_from_workspace(state, entry)
+        except _Fail as exc:
+            raise HostError(exc.code, exc.message) from None
+        if o.get("person_id") != crypto.person_id(owner).hex():
+            raise HostError("invalid.input", "the stored certificate is not for the workspace owner's person")
+        _link_origin_check(state, entry)
+    except (CustodyError, primary_register.RegisterError) as exc:
+        raise HostError(str(getattr(exc, "code", "custody")), _cut(str(exc))) from None
+    return cert, str(label)
+
+
+def _link_origin_check(state: Path, entry: Mapping[str, Any]) -> None:
+    """The stored relay must be the one the workspace is linked to (else ``primary.relay_mismatch``)."""
+    from orch.custody import primary_register
+
+    from .custody import read_json
+    from .relaylink import link_path
+
+    link = read_json(link_path(state, entry["workspace_id"]), int(entry.get("host_uid", os.getuid())))
+    mine = primary_register.stored_origin(state)
+    if isinstance(link, dict) and mine is not None and link.get("origin") != mine:
+        raise HostError("primary.relay_mismatch", "the workspace is linked to another relay than this primary's")
+
+
 LINK_WAIT_S = 90.0
 OFF_GRACE_S = 5.0
 
@@ -313,11 +581,12 @@ def _link_run(call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapp
     terminal (:func:`sign_genesis_pin`), then ``host.relay_start``: the worker drives the card, login, hold, genesis,
     the first publication and ``linked``. Waits (bounded) for ``linked`` and says where it stopped otherwise."""
     wid = entry["workspace_id"]
-    if not args.relay or not args.max_publication_bytes:
+    origin = _install_origin(state, args.relay)
+    if not origin or not args.max_publication_bytes:
         raise HostError("invalid.input", "orch host relay link --workspace W --relay ORIGIN --max-publication-bytes N")
     req: dict[str, Any] = {
         "workspace_id": wid,
-        "origin": args.relay,
+        "origin": origin,
         "max_publication_bytes": args.max_publication_bytes,
     }
     if args.ca_file:
@@ -366,6 +635,24 @@ def _genesis_guard(run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         raise HostError(str(exc.code), _cut(str(exc))) from None
     except (OSError, ConnectionError, TimeoutError, frames.FrameError) as exc:
         raise HostError("host.unavailable", _cut(f"lost the connection to the orch host ({exc})")) from None
+
+
+def _inline_driver(
+    env: Mapping[str, str], state: Path, entry: Mapping[str, Any], out: TextIO,
+    ask_timed: Callable[[str, float | None], str | None],
+) -> Callable[[str, str, Mapping[str, Any]], Any]:  # fmt: skip
+    """The product's inline primary (B1b) for :func:`attach`: :func:`orch.custody.pairinline.driver` (the owner client
+    is the person path's, never imported by the host daemon, N4) with this module's terminal text rules."""
+    from orch.custody import pairinline
+
+    def show(text: str) -> None:
+        out.write(safe(text, 300) + "\n")
+        out.flush()
+
+    return pairinline.driver(
+        state, entry, show=show, ask_timed=ask_timed, link_check=lambda: _link_origin_check(state, entry),
+        fail=lambda code, message, hint=None: HostError(code, message, hint=hint),
+    )  # fmt: skip
 
 
 def _guarded(step9: Callable[[str], None]) -> Callable[[str], None]:
@@ -433,11 +720,16 @@ def main(
     *,
     state: Path,
     control: Path,
-    ask: Callable[[str], str] = _tty_ask,
+    ask: Callable[[str], str] = _tty_ask,  # type: ignore[assignment]
     step9: Callable[[str], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    primary: Callable[[str, str, Mapping[str, Any]], Any] | None = None,
+    ask_timed: Callable[[str, float | None], str | None] | None = None,
+    err: TextIO | None = None,
 ) -> int:
     from orch.custody.cli import write_error
+
+    err = sys.stderr if err is None else err
 
     from .control_client import ControlClient
 
@@ -457,19 +749,19 @@ def main(
             if args.action == "link":
                 data = _genesis_guard(lambda: _link_run(call, entry, state, args, out, sleep))
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                err.write(f"next: orch host relay primary set --workspace {wid}\n")
                 return 0
             if args.action == "genesis-pin":
                 data = _genesis_guard(lambda: _genesis_pin_run(call, entry, state))
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
                 return 0
             if args.action == "primary":
-                if sub != "set" or not args.cert or not args.label:
-                    raise HostError(
-                        "invalid.input", "orch host relay primary set --workspace W --cert FILE --label TEXT"
-                    )
-                cert = json.loads(Path(args.cert).read_text())
-                data = call("host.relay_primary_set", {"workspace_id": wid, "cert": cert, "label": args.label})
+                if sub != "set":
+                    raise HostError("invalid.input", "orch host relay primary set --workspace W")
+                cert, label = _primary_set_args(state, entry, args)
+                data = call("host.relay_primary_set", {"workspace_id": wid, "cert": cert, "label": label})
                 out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
+                err.write(f"next: orch host relay pair --workspace {wid}\n")
                 return 0
             if sub == "list":
                 data = call("host.relay_pair_list", {"workspace_id": wid})
@@ -491,13 +783,9 @@ def main(
                 return 0
             if sub is not None:
                 raise HostError("invalid.input", "orch host relay pair [list|cancel|abandon]")
-            if (args.primary or "inline") != "external":
-                raise HostError(
-                    "invalid.input",
-                    "the inline primary is not built yet: pass --primary external (the separate primary signs the "
-                    "certificate)",
-                )
+            inline = (args.primary or "inline") != "external"
             emit = None
+            erase = None
             if as_json:
                 sink = _json_sink(getattr(args, "json_fd", None), out)
 
@@ -522,15 +810,31 @@ def main(
                           "native_link": link["native"], "expires_ms": offer["expires_ms"]})  # fmt: skip
                 else:
                     exp = offer.get("expires_ms")
-                    out.write(f"offer {offer_id} expires_ms={exp if type(exp) is int else '?'}\n")
                     qr = None if args.no_qr else _qr(link["native"])
-                    out.write(qr if qr else ("" if args.no_qr else "install orch[qr] for a QR\n"))
-                    out.write(f"link: {link['native']}\n")
-                    out.write(f"{FALLBACK}: {link['https']}\n")
+                    text = f"offer {offer_id} expires_ms={exp if type(exp) is int else '?'}\n"
+                    if qr:
+                        text += qr
+                    elif not args.no_qr:
+                        text += "no QR (the QR library is missing from this install); use the link below\n"
+                    text += f"link: {link['native']}\n"
+                    text += f"{FALLBACK}: {link['https']}\n"
+                    text += LINK_NOTICE + "\n"
+                    out.write(text)
                     out.flush()
+                    if _is_tty(out):
+                        rows = _rows(text, _width())
+
+                        def erase(state_line: bool = True, out: TextIO = out, rows: int = rows) -> None:
+                            _erase(out, rows + (1 if state_line else 0))  # + the "state: open" line after the block
+
                 del link
             driver = _guarded(step9 or _step9(env, state, entry))
-            return attach(call, wid, offer_id, out, ask=ask, step9=driver, emit=emit, sleep=sleep)
+            inline_primary = None
+            if inline:
+                timed = ask_timed or ((lambda p, t: _tty_ask(p, t)) if ask is _tty_ask else (lambda p, _t: ask(p)))
+                inline_primary = primary or _inline_driver(env, state, entry, out, timed)
+            return attach(call, wid, offer_id, out, ask=ask, step9=driver, emit=emit, sleep=sleep,
+                          primary=inline_primary, erase=erase)  # fmt: skip
     except _Refused as exc:  # the host's refusal, JSON-encoded (ASCII: every control character escaped)
         out.write(json.dumps({"ok": False, "error": exc.error, "exit": exc.exit}, sort_keys=True, ensure_ascii=True))
         out.write("\n")

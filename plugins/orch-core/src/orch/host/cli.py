@@ -131,14 +131,22 @@ def _parser() -> argparse.ArgumentParser:
     relay.add_argument("--resume", action="store_true", help="pair: attach to --offer (made here or by the dashboard)")
     relay.add_argument("--offer", help="pair: the offer id")
     relay.add_argument(
-        "--primary", choices=("inline", "external"), help="pair: who signs the phone's certificate (inline: not built)"
+        "--primary",
+        choices=("inline", "external"),
+        help="pair: who signs the phone's certificate (default inline: this Mac, with your recovery code)",
     )
-    relay.add_argument("--relay", help="link: the relay origin, scheme://host[:port], stored verbatim")
+    relay.add_argument(
+        "--relay",
+        help="link: the relay origin, scheme://host[:port], stored verbatim (default: the registered primary's relay)",
+    )
     relay.add_argument("--max-publication-bytes", type=int, help="link: the checkpoint cap C (1 MiB to 1 GiB)")
     relay.add_argument("--ca-file", help="link: a PEM file of the relay's CA (a private relay)")
     relay.add_argument("--proxy", help="link: an http proxy URL")
-    relay.add_argument("--cert", help="primary set: the primary's certificate file (JSON)")
-    relay.add_argument("--label", help="primary set: your name for the primary")
+    relay.add_argument(
+        "--cert",
+        help="primary set: the primary's certificate file (JSON); default: the one orch keys primary init made",
+    )
+    relay.add_argument("--label", help="primary set: your name for the primary; default: the one chosen at init")
     rdr = sub.add_parser(
         "readers",
         help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "

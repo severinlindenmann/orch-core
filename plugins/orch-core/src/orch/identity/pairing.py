@@ -114,6 +114,18 @@ def _lp16(b: bytes) -> bytes:
     return len(b).to_bytes(2, "big") + b
 
 
+_CODE_SHAPE = re.compile(r"[A-Z2-7]{6}")
+
+
+def normalize_code(text: object) -> str | None:
+    """A typed pairing code (the SAS or ``cert_code``) as the host compares it: stripped, upper-cased, exactly six
+    base32 characters (``A-Z2-7``); anything else is ``None`` (B1b: the typed text is then discarded, never sent)."""
+    if type(text) is not str:
+        return None
+    t = text.strip().upper()
+    return t if _CODE_SHAPE.fullmatch(t) else None
+
+
 def _code(digest: bytes) -> str:
     """The first 6 characters of RFC 4648 base32 (``A-Z2-7``, 30 bits) of a 32-byte digest."""
     return base64.b32encode(digest).decode("ascii")[:6]

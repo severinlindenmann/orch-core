@@ -927,7 +927,7 @@ def _refs(names: set[str]) -> dict[str, set[str]]:
 
 
 # Each entry is a reviewed caller. R6 (orch-29) adds its add-device and revoke call sites here, with the review.
-SOURCE_CALLERS = {"custody/personkey.py"}
+SOURCE_CALLERS = {"custody/personkey.py", "custody/cli.py"}  # B1b: orch keys primary init (account creation)
 SCALAR_CALLERS = {
     "identity/recovery.py",  # the derivation itself
     "identity/__init__.py",  # the re-export

@@ -303,6 +303,7 @@ def _cut(text: object) -> str:
 
 
 LINK_WAIT_S = 90.0
+OFF_GRACE_S = 5.0
 
 
 def _link_run(call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapping[str, Any], state: Path, args: Any,
@@ -328,11 +329,17 @@ def _link_run(call: Callable[[str, dict[str, Any]], dict[str, Any]], entry: Mapp
     out.flush()
     _genesis_pin_run(call, entry, state)
     started = call("host.relay_start", {"workspace_id": wid})
-    deadline = time.monotonic() + LINK_WAIT_S
+    begun = time.monotonic()
+    deadline = begun + LINK_WAIT_S
     relay: dict[str, Any] = {}
     while time.monotonic() < deadline:
         relay = call("host.relay_status", {"workspace_id": wid}).get("relay") or {}
-        if relay.get("link") == "linked" or relay.get("worker") in ("failed", "off"):
+        # "off" right after the start can be the starter thread not having registered the worker yet: it ends the
+        # wait only when the start itself answered "off" or after OFF_GRACE_S
+        off = relay.get("worker") == "off" and (
+            started.get("worker") == "off" or time.monotonic() - begun >= OFF_GRACE_S
+        )
+        if relay.get("link") == "linked" or relay.get("worker") == "failed" or off:
             break
         sleep(POLL_S)
     return {

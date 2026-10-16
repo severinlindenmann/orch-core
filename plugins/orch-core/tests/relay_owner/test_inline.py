@@ -188,6 +188,7 @@ def test_no_valid_recovery_code_in_three_tries_cancels_and_signs_nothing():
     with pytest.raises(InlineRefused) as e:
         run(ev, pk=pk)
     assert e.value.code == "no_key" and ev.count("pk:enter") == 3
+    assert e.value.until_ms == 1_000_000  # the verified request stays outstanding on the relay until then
     assert "challenge" not in ev and "sign" not in ev and "reject" not in ev and ev[-1] == "close:cancelled"
 
 

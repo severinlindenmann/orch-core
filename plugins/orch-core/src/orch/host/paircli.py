@@ -99,6 +99,8 @@ def _erase(out: TextIO, rows: int) -> None:
     out.write(f"\x1b[{rows}A\x1b[J")
     out.write("the pairing link was removed from the screen (your terminal's scrollback may still hold it)\n")
     out.flush()
+
+
 FALLBACK = "fallback: your relay operator's page can read it"
 
 
@@ -274,6 +276,8 @@ SAS_PROMPT = "step 1 of 2, pairing code: type the 6 characters the phone shows (
 def _describe(exc: BaseException) -> str:
     """A failure of the inline primary as one line of our own words (never the relay's text, a body or a secret)."""
     code = getattr(exc, "code", None)
+    if isinstance(exc, _Refused):  # the host's own refusal: its code is a fixed token
+        return _cut(f"the host refused: {_word(exc.error.get('code'))}")
     if type(getattr(exc, "status", None)) is int and type(exc).__name__ == "OwnerRefused":
         return f"the relay refused a request ({exc.status} {code or 'no code'})"
     if isinstance(exc, HostError):
@@ -283,6 +287,21 @@ def _describe(exc: BaseException) -> str:
     if isinstance(code, str) and type(exc).__module__.startswith("orch.custody"):
         return _cut(f"{code}: {exc}")
     return f"{type(exc).__name__}"
+
+
+def _when_new_offer(until_ms: object) -> str:
+    """When ``orch host relay pair`` can make a new offer again: R6 keeps a verified cert request outstanding until it
+    expires (plus a minute), and refuses a new offer meanwhile (``relay.pair_open``)."""
+    if type(until_ms) is not int:
+        return "start a new one with orch host relay pair --workspace W"
+    left = (until_ms + 60_000 - int(time.time() * 1000)) / 60_000
+    if left <= 0:
+        return "start a new one with orch host relay pair --workspace W"
+    minutes = max(1, -int(-left // 1))
+    return (
+        f"the phone's request stays open on the relay, so a new offer is possible in about {minutes} minute(s) "
+        "(orch host relay pair --workspace W; until then relay.pair_open)"
+    )
 
 
 def _inline_primary_step(
@@ -305,7 +324,16 @@ def _inline_primary_step(
             args["rejection"] = got.rejection
         else:  # pragma: no cover - the outcome always holds one of the two
             raise HostError("internal", "the primary decided nothing")
-        call("host.relay_pair_cert", args)
+        try:
+            call("host.relay_pair_cert", args)
+        except _Refused as exc:
+            # a rejection posted to the relay can reach R6's own poll before this call does: the offer is then
+            # already rejected (or has the certificate), and the hand-over is moot, not a failure
+            if exc.error.get("code") != "relay.pair_closed":
+                raise
+            now = call("host.relay_pair_show", {"workspace_id": wid, "offer_id": offer_id})["offer"]
+            if not (now.get("state") in TERMINAL or now.get("has_cert")):
+                raise
         return True
     except KeyboardInterrupt:
         raise
@@ -313,7 +341,7 @@ def _inline_primary_step(
         out.write(f"the primary step ended: {_describe(exc)}\n")
         try:
             call("host.relay_pair_cancel", {"workspace_id": wid, "offer_id": offer_id})
-            out.write("the pairing is cancelled; start a new one with orch host relay pair --workspace W\n")
+            out.write("the pairing is cancelled; " + _when_new_offer(getattr(exc, "until_ms", None)) + "\n")
         except Exception as cancel_exc:  # noqa: BLE001
             why = _describe(cancel_exc)
             out.write(
@@ -758,6 +786,7 @@ def main(
 
                         def erase(out: TextIO = out, rows: int = rows) -> None:
                             _erase(out, rows + 1)  # + the "state: open" line printed after the block
+
                 del link
             driver = _guarded(step9 or _step9(env, state, entry))
             inline_primary = None

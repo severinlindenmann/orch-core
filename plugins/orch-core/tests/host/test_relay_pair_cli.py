@@ -753,3 +753,55 @@ def test_attach_erases_exactly_when_the_offer_leaves_open():
     paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "", step9=lambda o: None, sleep=lambda t: None,
                    erase=lambda: calls.append(out.getvalue().count("state:")))  # fmt: skip
     assert calls == [1]  # once, after "state: open" and before "state: pending"
+
+
+def test_a_failed_primary_step_says_when_a_new_offer_is_possible():
+    import time
+
+    soon = int(time.time() * 1000) + 5 * 60_000
+    assert "about 6 minute(s)" in paircli._when_new_offer(soon - 1000) and "relay.pair_open" in paircli._when_new_offer(
+        soon
+    )
+    assert paircli._when_new_offer(None).startswith("start a new one")
+    assert paircli._when_new_offer(1).startswith("start a new one")
+    s = InlineScript([("pending", False), ("cert_pending", False)])
+    out = io.StringIO()
+
+    class NoKey(Exception):
+        until_ms = soon
+
+    def primary(*a):
+        raise NoKey
+
+    assert paircli.attach(s, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
+                          sleep=lambda t: None, primary=primary) == 3  # fmt: skip
+    assert "a new offer is possible in about" in out.getvalue()
+
+
+def test_a_rejection_that_r6_already_saw_is_not_a_failure():
+    """The rejection posted to the relay can reach R6's own poll before ``relay.pair_cert`` does (T2 saw it once)."""
+    s = InlineScript([("pending", False), ("cert_pending", False), ("rejected", False)])
+    base = s.__call__
+
+    def refuse_once(op, args):
+        if op == "host.relay_pair_cert":
+            s.states = [("rejected", False)]
+            raise paircli._Refused({"code": "relay.pair_closed"}, 3)
+        return base(op, args)
+
+    out = io.StringIO()
+    rc = paircli.attach(refuse_once, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
+                        sleep=lambda t: None, primary=lambda *a: Outcome(rejection={"o": {}, "sig": "r"}))  # fmt: skip
+    assert rc == 3 and "the pairing ended: rejected" in out.getvalue() and "primary step ended" not in out.getvalue()
+    s2 = InlineScript([("pending", False), ("cert_pending", False)])
+    base2 = s2.__call__
+
+    def refuse_always(op, args):
+        if op == "host.relay_pair_cert":
+            raise paircli._Refused({"code": "relay.pair_closed"}, 3)
+        return base2(op, args)
+
+    out = io.StringIO()
+    rc = paircli.attach(refuse_always, "w" * 32, "o" * 32, out, ask=lambda p: "ABCDEF", step9=lambda o: None,
+                        sleep=lambda t: None, primary=lambda *a: Outcome(rejection={"o": {}, "sig": "r"}))  # fmt: skip
+    assert rc == 3 and "the host refused: relay.pair_closed" in out.getvalue() and s2.cancelled

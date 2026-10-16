@@ -4305,6 +4305,15 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     R5 T2 test `test_r5_pairing_real_relay` and the Opus review rounds 1-2 (checklist items 1-5). A linked workspace's relay
     worker now starts; `whoami.relay.r6_ready` and `host.status.relay.gate.r6_ready` read `true`, `gate.reason` is null.
     No wire, hash, F1 or error-code change.
+67. **B1b: the real owner pairs the real Mac (17 Oct 2026; §11A.15.23):** `orch keys primary init --workspace W --relay ORIGIN
+    --invite-file F` makes the primary's certificate and the relay account (write-ahead, resumable, 409 `account_exists`
+    joins by `PUT /v2/devices`); `orch host relay link --relay` and `primary set --cert --label` default to the registered
+    primary's relay, certificate and label (one relay per install); `orch host relay pair` defaults to `--primary inline`
+    (the Mac signs the phone's certificate with the owner's recovery code typed once per new device); the terminal QR of
+    the native link needs `segno`, now a hard dependency pinned in the lock; the QR and link lines are erased from the
+    screen once the phone connects. Six host codes (§0.6): `primary.invite_file`, `primary.invite_unusable`,
+    `primary.account_exists`, `primary.account_failed`, `primary.relay_mismatch`, `primary.not_registered`. No wire,
+    hash or F1 change.
 
 ---
 
@@ -8444,9 +8453,10 @@ request is left alone and shown as a warning: "a request this command did not cr
   (once, in the direct answer of `pair.offer`);
 - `--json` writes it only to a TTY or to the caller's private descriptor.
 
-**QR (Q11).** A terminal QR (Unicode half blocks) of the native link, from an optional pure-Python dependency (`orch[qr]`,
-`segno`, BSD-3, compatible with PolyForm Noncommercial distribution). Without it, the CLI prints the links and "install
-orch[qr] for a QR".
+**QR (Q11).** A terminal QR (Unicode half blocks) of the native link, from a pure-Python dependency (`segno`, BSD-3,
+compatible with PolyForm Noncommercial distribution). *B1b changed this:* `segno` is a **hard dependency** of orch-core,
+pinned in the lock with hashes (owner/lead decision, Opus review L4); there is no `orch[qr]` extra. If the import fails
+(a broken install) the CLI says so and prints the links.
 
 **New host codes** (added to the §0.6 table with R6's implementation): `relay.pair_open` (a live offer or an outstanding
 cert request exists), `relay.not_linked`, `relay.no_primary`, `relay.quota` and `relay.pair_closed` (cancel of an
@@ -9155,7 +9165,8 @@ snapshot and the typed refusal builders.
 
 **Q10. R6a before R5.** DECIDED (orch-52): yes, and R5's T2 creates the owner account through the test owner client.
 
-**Q11. QR dependency.** DECIDED (orch-52): optional `orch[qr]` with `segno` (BSD-3), link-only fallback.
+**Q11. QR dependency.** DECIDED (orch-52): optional `orch[qr]` with `segno` (BSD-3), link-only fallback. *Superseded in B1b
+(lead decision, review L4): `segno` is a hard dependency pinned in the lock.*
 
 **Q12. The member list holds relay-paired devices only.** DECIDED (orch-52): yes; the empty rotation when the last one
 leaves.
@@ -9737,7 +9748,7 @@ and a relayed refusal.
 **Judgement calls.**
 - J-R6c2-1 **`--primary inline` is refused** (`invalid.input`, the fix names `--primary external`) until the inline
   primary (`orch.relay_owner`'s `PrimaryQueue` with `RecoveryCodeSource`) is built: a follow-up group, with its own
-  Opus review (it types the recovery code).
+  Opus review (it types the recovery code). **Built in B1b (11A.15.23): the refusal is gone, `inline` is the default.**
 - J-R6c2-2 **"Already in F1" is not reachable** through any op or the CLI: `allocate_existing` calls
   `adopt_existing`, a settlement path the hard rule keeps away from ops. A follow-up decides where it runs (a
   host-internal check inside `relay.pair_device`'s prepare is the likely place).
@@ -9882,6 +9893,98 @@ exclusions, a repost, the thread, the view's refusals, H7, the key store's new t
 `tests/host/test_b1_genesis_pin.py` and `tests/host/test_b1_link.py` (the pin and the link),
 `tests/host/test_b1_wiring.py` (the seam install, `card_accepted`, the R3 factory, the wake chaining, the attach and the
 standing job), `tests/relay/test_worker.py` (companions).
+
+#### 11A.15.23 As built in B1b (17 Oct 2026; the real owner on the real Mac)
+
+B1b removes the dev-pair sandbox from the owner's path: four commands on the real install, no test client. Design of
+record: `~/orch-dev/state/b1b-design.md` with the Opus review round 1 changes (M1 to M4, L1 to L7); the review text
+overrides the design where they differ.
+
+**The owner's command sequence** (all at a real terminal, never under `ORCH_GRANT`; `W` is the workspace id or prefix):
+
+1. `orch keys primary init --workspace W --relay https://relay.example --invite-file ~/invite [--label TEXT]`. Prompts:
+   the primary's **new passphrase** (twice), then the owner's **recovery code** (once, not shown). Makes the primary key
+   pair if absent (11A.15.1), the primary's PK-signed certificate (`scopes_max ["look"]`), `POST /v2/accounts`, and
+   stores `person/primary/cert.json` and `relay.json`.
+2. `orch host relay link --workspace W --max-publication-bytes N` (`--relay` defaults to the registered primary's relay;
+   another origin is `primary.relay_mismatch`). Prompts: the genesis-pin review line and the **workspace passphrase**.
+3. `orch host relay primary set --workspace W` (no `--cert`/`--label`: the stored certificate and label; refused unless
+   the certificate is this machine's primary device and the workspace owner's person, and the workspace is linked to the
+   same relay).
+4. `orch host relay pair --workspace W` (`--primary inline` is the default). It prints the offer, the QR of the native link,
+   the link and the labelled https fallback, then prompts, in this order: **1 of 2, the six characters the phone shows**
+   (the pairing code, SAS) -> the **primary passphrase** -> (the request is verified and shown) the **recovery code** ->
+   **2 of 2, the six characters the phone shows now** (`cert_code`) -> the review line and the **workspace passphrase**
+   (step 9, `relay.pair_device`). Have the recovery code ready before the phone scans (review L6).
+
+**Account creation (S:8390; deviations).** The invite comes from a file only (`--invite-file`: a regular 0600 file of the
+user, `O_NOFOLLOW`, `fstat` on the descriptor, one line; no `--invite CODE` flag: argv and shell history). `--workspace`
+is required: the expected person is the workspace owner's `PK` from the workspace's own genesis event
+(`members.check_genesis` on the store, read directly, so neither a running host nor a relay link is needed), and the
+typed recovery code must derive that person before anything is signed (`PersonMismatch`: nothing is sent). Order inside
+the command: keys if absent -> recovery code (`RecoveryCodeSource`, label `sig_device_cert` only) -> certificate ->
+**write-ahead** `cert.json` (`registered: false`, public data only) -> `POST /v2/accounts` -> `registered: true` and
+`relay.json {origin, person_id, device_id, label}`. A crash in between resumes without the recovery code or the invite:
+`login` first (the account exists), else the **stored** certificate bytes are sent again (never a second certificate for
+the device). `409 account_exists` (the person has an account, M4) sends the same stored certificate with
+`PUT /v2/devices/{d}` and logs in; `cert_conflict` / `other_person` map to `primary.account_exists`; `403 not_eligible` or
+`revoked` to `primary.invite_unusable`; anything else to `primary.account_failed` (retryable). The invite is never printed,
+logged, stored or put in an error text (L5; tests grep stderr and the state directory after a forced 5xx and a connection
+reset). The CLI does not delete the invite file. `orch keys primary status` shows the certificate and relay records.
+
+**One relay per install (owner decision 15 Oct).** `relay.json` (or the pending `cert.json`) names the install's relay;
+`primary init --relay`, `link --relay` and `primary set` refuse any other origin (`primary.relay_mismatch`), compared
+as the literal the host signs (11A.4).
+
+**The inline primary (S:8387-8401).** `orch.relay_owner.inline.serve_request` is the one implementation (N6): the test
+owner client (`tests/relay/owner.py`) calls it with its sandbox key and a single try, and keeps its own sandbox guard.
+The CLI-side driver is `orch.custody.pairinline` (the host daemon never imports `orch.relay_owner`, N4). Steps: (M1)
+wait until the queue has the request **verified** (card from the genesis owner, `check_cert_request`, kx unseal) with
+no person key; (L2) assert the request's `offer_id` is the attached offer and its device is the one the host consumed;
+show the label (own bracketed line, "named by the device, not authenticated"), the short device id, the scopes and the
+`client_hosted` warning; only then **one** `RecoveryCodeSource` covers the challenge, the typed `cert_code` and the
+signature or rejection. The recovery prompt's action is a fixed string that never contains the label. **Tries (M3):**
+the recovery code up to 3 tries, each a fresh source, while the request is live; none obtained -> nothing signed, the
+request closed locally, the offer cancelled and the command says when a new offer is possible (R6 keeps the verified
+request outstanding until its expiry plus a minute, `relay.pair_open` meanwhile); `cert_code` up to 3 typed tries, then
+the rejection is signed while the key is held. **Input rules (M2):** the pairing code and `cert_code` must match
+`^[A-Z2-7]{6}$` after strip and upper-case; anything else is discarded, nothing is sent ("that did not look like the
+phone's code; nothing was sent", plus "never type your recovery code here" when it has two or more words); the SAS
+prompt and the `cert_code` prompt have distinct wording ("step 1 of 2" / "step 2 of 2"). **Deadline (L1):** the
+`cert_code` read ends at the request's `expires_ms` (a `select` on the terminal) and then rejects. A Ctrl-C leaves the
+request challenged and nothing signed; `pair --resume --offer O` re-enters the same step (journal first, a challenge is
+never signed twice, a new recovery-code prompt). If the primary step fails the offer is cancelled (no hang).
+
+**Deviations and invariants (review notes).**
+- *Deviation from S:8396 step 4:* the Mac does **not** display its own `cert_code`; the human types the phone's, and the
+  CLI compares in constant time. **Invariant:** the expected `cert_code` is computed from the CLI's own journaled
+  challenge, never from `host.relay_pair_show` or anything the host or relay says.
+- The owner's `PK` comes from the workspace genesis, not the relay or a file; `primary set` re-checks device and person.
+- The relay-side `rejection` can reach R6's poll before `relay.pair_cert` does; a `relay.pair_closed` answer to the
+  hand-over is then moot when the offer is already terminal or holds the certificate.
+- Cancelling an offer does not end its outstanding cert request (R6, 11A.15.6): a new pairing waits for the request to
+  expire. *Follow-up:* a recovery that signed but crashed before `relay.pair_cert` leaves the offer without a
+  certificate; cancel and pair again.
+- **L7 (accepted exposure):** with the recovery code typed on the same Mac, a same-UID keylogger or screen reader
+  gets the permanent `PK` at that moment (Q1 = B, S:9115). `--primary external` (a separate machine for the code) is the
+  stronger option for the cautious owner.
+
+**Terminal QR and link text (L3, L4).** The link goes to the terminal only (stdout TTY or `--json-fd`), never a file,
+never an argument, no `open`/`pbcopy`. `segno` makes the half-block QR in memory. The block ends with "valid 10 min, single
+use; anyone who sees this can pair". When stdout is a TTY, the block (QR, both link lines, the notice and the
+`state: open` line) is erased with `ESC[nA ESC[J` once the offer leaves `open` (never `ESC[3J`: scrollback is the
+terminal's; best effort, listed as residual). `--no-qr` omits the QR only. Scanning from Terminal.app in a light and a
+dark theme is a manual check (T3).
+
+**Tests.** `tests/custody/test_primary_register.py` (write-ahead, resume, 409, invite file rules, forced 5xx and reset,
+no secret in the state directory, the CLI), `tests/relay_owner/test_inline.py` (order, tries, input rules, binding,
+deadline, Ctrl-C), `tests/host/test_relay_pair_cli.py` (the attach loop with the inline primary, defaults of `link` and
+`primary set`, the QR and its erasure), `tests/relay/test_owner_phone_kit.py` (the sandbox owner on the product step),
+and the T2 test `tests/relay/t2/test_b1b_owner_pairing_real_relay.py`: the **product CLI under a pty** against the real
+relay (no manifest, no dev-pair, no `owner.py`): `orch init`, host, account, link, `primary set`, a wrong `cert_code`
+three times (rejection, the phone is refused), a kill at the recovery prompt then `--resume` to `approved` with the phone's
+column-R read, a wrong recovery code three times (nothing signed, offer cancelled), and the 409 join of a second
+install. The run takes about 20 s.
 
 ### 11A.16 H13: push and Drop, host end (the H13 design of record)
 

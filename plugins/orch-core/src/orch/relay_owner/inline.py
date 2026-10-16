@@ -61,6 +61,9 @@ class InlineRefused(Exception):
     def __init__(self, code: str, message: str, detail: str | None = None) -> None:
         super().__init__(f"{code}: {message}")
         self.code, self.message, self.detail = code, message, detail
+        #: when the relay request ends (``expires_ms``) if one was verified: R6 keeps it outstanding, so a new offer
+        #: is possible only after that (``relay.pair_open``); ``None`` before a request was seen
+        self.until_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -140,8 +143,6 @@ def serve_request(
     context manager); ``ask_cert_code(prompt, pending, deadline_s)`` returns what the person typed or ``None`` (no
     answer in ``deadline_s`` seconds, or a reject); ``show`` writes one line to the person's terminal.
     ``offer_id``/``device_id`` are what the host attached (L2); ``None`` skips that check (the sandbox owner)."""
-    from orch.custody.personkey import BadRecoveryCode, PersonMismatch
-
     # 1. the request, verified, without the person key
     deadline = time.monotonic() + wait_s
     pending = None
@@ -157,6 +158,35 @@ def serve_request(
             if time.monotonic() >= deadline:
                 raise InlineRefused("timeout", "the cert request did not reach the primary")
             sleep(0.2)
+
+    try:
+        return _serve_pending(
+            queue, request_id, pending, pk_factory=pk_factory, ask_cert_code=ask_cert_code, show=show,
+            owner_pk=owner_pk, offer_id=offer_id, device_id=device_id, recovery_tries=recovery_tries,
+            code_tries=code_tries, now_ms=now_ms,
+        )  # fmt: skip
+    except InlineRefused as exc:
+        if exc.until_ms is None:
+            exc.until_ms = pending.expires_ms  # the relay request stays outstanding until then
+        raise
+
+
+def _serve_pending(
+    queue: PrimaryQueue,
+    request_id: str,
+    pending: Pending,
+    *,
+    pk_factory: Callable[..., Any],
+    ask_cert_code: Callable[[str, Pending, float | None], str | None],
+    show: Callable[[str], None],
+    owner_pk: bytes,
+    offer_id: str | None,
+    device_id: str | None,
+    recovery_tries: int,
+    code_tries: int,
+    now_ms: Callable[[], int],
+) -> PairOutcome:
+    from orch.custody.personkey import BadRecoveryCode, PersonMismatch
 
     # 2. bind to the attached offer and device (L2); show what the human decides on
     if offer_id is not None and pending.offer_id != offer_id:

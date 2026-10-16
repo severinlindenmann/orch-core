@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "host.dev_refused",
+    "message": "refused by the Simulator dev gate",
+    "hint": "a dev host serves throwaway dev-pair sandboxes only and a normal host never serves one; use a real workspace",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

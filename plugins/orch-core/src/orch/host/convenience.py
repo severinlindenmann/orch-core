@@ -57,6 +57,8 @@ __all__ = [
 ]
 
 REASONS = ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
+#: §11A.17.2 F3: the click signer on a dev host or against a sandbox's state (not a readers reason: never from why)
+DEV_HOST = "dev_host"
 
 AUTH = "convenience"
 
@@ -87,7 +89,27 @@ def enabled(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
     return isinstance(entry, dict) and entry.get("enabled") is True
 
 
+def flag_or_gate(service: Any) -> bool:
+    """``required_reader`` 1 (§0.8.6 item 9.4): the per-workspace flag is on, or the Simulator dev gate passes for
+    this workspace (§11A.17.4, the lock-free :func:`orch.host.devmode.gated`)."""
+    from .devmode import gated
+
+    return enabled(service.state_dir, service.workspace_id, service.host_uid) or gated(service)
+
+
+def refuse_dev_host(state_dir: Path, env: Any = None) -> None:
+    """§11A.17.2 F3, D2: the click signer's switches (``orch host convenience on``, the dashboard switch) refuse on
+    a dev host's or a sandbox's state, or with ``HOME`` under a sandbox root (``sign.convenience_unavailable``,
+    reason ``dev_host``). The way back (``off``) never calls it."""
+    from orch.devsandbox import click_refusal
+
+    if click_refusal(state_dir, os.environ if env is None else env) is not None:
+        raise unavailable(DEV_HOST, [])
+
+
 def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> dict[str, Any]:
+    if on:
+        refuse_dev_host(state_dir)
     with _flock(state_dir, "convenience.lock", host_uid):  # one flag file for every workspace: no lost update
         doc = _doc(state_dir, host_uid)
         if on:
@@ -120,7 +142,7 @@ def _model_knows() -> bool:
 
 
 def why(
-    store: Any, state_dir: Path, workspace_id: str, host_uid: int, person: str, device: str
+    store: Any, state_dir: Path, workspace_id: str, host_uid: int, person: str, device: str, *, gated: bool = False
 ) -> tuple[str, list[str]] | None:
     """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
     H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
@@ -128,7 +150,7 @@ def why(
     level is below 1 or was never read (H12d-3); ``reader_version`` qualifies the signing device itself."""
     from orch.ops.readers import below_level, levels
 
-    if not enabled(state_dir, workspace_id, host_uid):
+    if not gated and not enabled(state_dir, workspace_id, host_uid):  # §11A.17.4: the dev gate stands in
         return "disabled", []
     if _relay_paired(state_dir, workspace_id):
         return "relay_paired", []
@@ -154,6 +176,8 @@ _TEXT = {
     "signatures",
     "phone_device": "another device of yours (a phone or another machine) has not declared that it knows them",
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
+    "dev_host": "this is a Simulator dev host or a dev-pair sandbox: click-to-sign is off here for good (only "
+    "column R's dev gate accepts Simulator answers, orch-v2-host 11A.17)",
     "pair_device": "pairing a device (relay.pair_device) is signed in your terminal with your passphrase, never with "
     "convenience custody",
 }
@@ -186,10 +210,17 @@ def refuse_pair_device() -> HostError:
     )
 
 
-def check(service: Any, person: str, device: str) -> None:
+def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
     """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the
-    condition holds."""
-    found = why(service.store, service.state_dir, service.workspace_id, service.host_uid, person, device)
+    condition holds. §11A.17: on a dev host every path but column R's gate is ``dev_host``; for a column-R event
+    with a :class:`~orch.host.devmode.DevGate` of this workspace, the gate stands in for the flag (``disabled`` does
+    not apply; every other reason does)."""
+    from .devmode import DevGate
+
+    gated = isinstance(gate, DevGate) and gate.workspace_id == service.workspace_id
+    if getattr(service, "dev", None) is not None and not gated:
+        raise unavailable(DEV_HOST, [])
+    found = why(service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated)
     if found is not None:
         raise unavailable(*found)
 
@@ -254,7 +285,7 @@ def refuse_reader_op(
             hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)." + READER_UPGRADE,
             detail={"reason": reason, "devices": []},
         )
-    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+    if flag_or_gate(service):  # §11A.17.4: the dev gate counts as the flag
         raise HostError(
             "sign.convenience_readers",
             f"{reason}: {op} adds a reader while convenience signing is on for this workspace",
@@ -267,7 +298,7 @@ def refuse_reader_op(
 def _required(service: Any, *, history: bool) -> int:
     """``required_reader`` (9.4) for an early check: the flag or the durable mark, and with ``history`` a scan of the
     merged history (which sets the mark when it finds one)."""
-    if enabled(service.state_dir, service.workspace_id, service.host_uid):
+    if flag_or_gate(service):  # §11A.17.4: 1 while the dev gate passes, as while the flag is on
         return 1
     if convenience_seen(service.state_dir, service.workspace_id):
         return 1

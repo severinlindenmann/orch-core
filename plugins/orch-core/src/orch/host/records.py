@@ -444,6 +444,15 @@ def _mark_seen(ctx: Ctx) -> None:
 
 
 def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    from .devmode import refuse_push
+
+    # §11A.17.3 F5, F2: no push from a dev host, none of a dev-pair sandbox (SBX genesis or marker), before any write
+    holder = ctx.holder
+    refuse_push(
+        SimpleNamespace(dev=getattr(holder, "dev", None), store=ctx.store, entry=getattr(holder, "entry", None))
+    )
     now = float(ctx.clock())
     doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
     # the tool's scan of the event logs reachable from sha (#441): it refuses this push only and never writes the

@@ -23,9 +23,17 @@ from .errors import HostError
 __all__ = ["default_peers", "disable", "enable", "ensure_service", "main"]
 
 
+class _Exact(argparse.ArgumentParser):
+    """No abbreviated long option (``--dev-sim`` never means ``--dev-sim-convenience``), in every subcommand."""
+
+    def __init__(self, *args: Any, **kw: Any) -> None:
+        kw["allow_abbrev"] = False
+        super().__init__(*args, **kw)
+
+
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="orch host", description="the orch host service")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = _Exact(prog="orch host", description="the orch host service")
+    sub = p.add_subparsers(dest="cmd", required=True, parser_class=_Exact)
     run = sub.add_parser("run", help="serve every registered workspace (the service manager runs this)")
     run.add_argument("--foreground", action="store_true", help="dev mode: run directory <state>/run")
     run.add_argument(
@@ -33,6 +41,12 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="dev and tests only, with --foreground: also admit a runner of your UID started with orch runner run "
         "--foreground (no service manager needed); never with a service run directory",
+    )
+    run.add_argument(
+        "--dev-sim-convenience",
+        action="store_true",
+        help="dev only, with --foreground, inside a dev-pair sandbox (orch-v2-host 11A.17): accept Simulator "
+        "convenience answers on throwaway SBX sandbox workspaces; never in a service unit",
     )
     run.add_argument("--state", type=Path)
     run.add_argument("--run", type=Path)
@@ -177,8 +191,21 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             run_dir = run_dir_for(state, args.run, env)  # tier A (phase 1); the units always pass --run
             if args.dev_runner:
                 _check_dev_runner(args.foreground, run_dir, env)
+            dev = None
+            if args.dev_sim_convenience:  # §11A.17.2: the proof runs before anything binds; a failure never falls back
+                from . import devmode
+
+                devmode.check_launch(args.foreground, env, run_dir, state)
+                dev = devmode.prove(state, env)
+                from orch import devsandbox
+
+                devsandbox.mark_dev_process()  # the click signer refuses in this process whatever its arguments
             preload()
-            host = Host(state, run_dir, dev_runner=args.dev_runner)
+            host = Host(state, run_dir, dev_runner=args.dev_runner, dev=dev)
+            if dev is not None:
+                from .devmode import status_line
+
+                sys.stderr.write(f"orch host: {status_line(dev)}\n")
             if args.dev_runner:
                 sys.stderr.write(
                     f"orch host: DEV RUNNER MODE: a foreground runner of UID {os.getuid()} announced in {run_dir} is "

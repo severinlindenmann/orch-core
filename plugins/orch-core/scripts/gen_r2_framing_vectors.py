@@ -99,6 +99,15 @@ def main() -> None:
                                 hash="sha256:" + "0" * 64, option="yes", based_on="sha256:" + "1" * 64)  # fmt: skip
             run("answer_write", {"op": "answer", "args": {"log": m["args"]["log"], "events": [ans]}, "idem": ans["id"]},
                 "an answer write: relay.submit of one device-signed question.answered (scope decide)")  # fmt: skip
+            # -- D1 (11A.17): a convenience-signed answer on a host without the dev gate --
+            conv = w.phone.event(m["args"]["log"], "question.answered", eid=ulid(T0), question="Q2",
+                                 hash="sha256:" + "0" * 64, option="yes", based_on="sha256:" + "1" * 64,
+                                 auth="convenience")  # fmt: skip
+            run("answer_convenience_refused",
+                {"op": "answer", "args": {"log": m["args"]["log"], "events": [conv]}, "idem": conv["id"]},
+                "auth convenience on a normal host or a real workspace (no Simulator dev gate, 11A.17): "
+                "op.not_allowed (14.6 P5), D; only a dev host's sandbox workspace admits it, and whoami.relay.dev "
+                "says so")  # fmt: skip
             run(
                 "ticket_key_not_next",
                 w.new_ticket(key="DEMO-0007"),

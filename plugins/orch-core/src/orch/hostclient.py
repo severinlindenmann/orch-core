@@ -163,7 +163,10 @@ def _connect(target: Target) -> Any:
     from orch.host.errors import HostError
 
     try:
-        return Connection(Pin(target.host_uid, target.workspace_id, target.socket), client="orch cli")
+        conn = Connection(Pin(target.host_uid, target.workspace_id, target.socket), client="orch cli")
+        _SEEN["release"] = (conn.welcome or {}).get("release") if isinstance(conn.welcome, dict) else None
+        _SEEN["connected"] = True
+        return conn
     except PinMismatch as exc:  # the process behind the socket is not the registry's host: a hard refusal
         raise HostFailure(HostError("host.untrusted", f"{target.socket}: {exc}; refusing to talk to it")) from None
     except UnsafePath as exc:
@@ -172,6 +175,30 @@ def _connect(target: Target) -> Any:
         raise _unavailable(f"the orch host is not serving this workspace (no one listens on {target.socket})") from None
     except (OSError, ConnectionError, TimeoutError, frames.FrameError) as exc:
         raise _unavailable(f"cannot talk to the orch host: {exc}") from None
+
+
+_SEEN: dict[str, Any] = {"connected": False, "release": None}
+
+
+def forget_host() -> None:
+    _SEEN.update(connected=False, release=None)
+
+
+def stale_host_warning() -> str | None:
+    """B5b: a one-line warning when the host that answered runs another release than this CLI. A host that predates
+    the ``release`` field in its welcome is older by definition. ``None`` when no host answered or they match."""
+    if not _SEEN["connected"]:
+        return None
+    from orch.host.release import code_digest
+
+    try:
+        mine = code_digest()
+    except OSError:
+        return None
+    theirs = _SEEN["release"]
+    if theirs == mine:
+        return None
+    return f"the orch host runs an older release ({theirs or 'unknown'}) than this CLI ({mine}): run `orch host enable`"
 
 
 def _sleep(i: int) -> None:
@@ -658,15 +685,12 @@ def _human(op: Operation, args: dict[str, Any], ctx: Any, target: Target, dry_ru
         raise OrchError("invalid.input", f"a file you sign is at most {INLINE_MAX} bytes")
     wire = {n: {"b64": base64.b64encode(b).decode()} for n, b in files.items()} or None
     wid = target.workspace_id
-    directory = human.keys_dir(target.state, wid)
-    if not (directory / human.KEY_FILE).is_file():
-        raise OrchError("custody.no_key", "this machine holds no device key of yours for this workspace")
+    backend = human.device_backend(target.state, wid, convenience=True)  # the one key lookup; before connecting
     name = Path(str(entry.get("root") or wid)).name
     conn = _connect(target)
     idem = new_idem()
     link = [conn]
     try:
-        backend = human.open_backend(directory)
         device = device_ref(backend.public_key(human.KEY_ID))
         if dry_run:
             doc = conn.call(

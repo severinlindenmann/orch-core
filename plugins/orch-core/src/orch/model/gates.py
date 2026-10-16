@@ -171,7 +171,7 @@ def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
             return Refusal(Code.GATE_STATUS, f"{gate} decisions are accepted only in testing")
     elif kind == "changes" and t.status not in ("backlog", "open", "in_progress", "testing"):
         return Refusal(Code.GATE_STATUS, "wrong status")
-    if not policies.eligible(pol, policies.person_tokens(ws, t, person)):
+    if not policies.may_decide(ws, t, gate, person, pol):
         return Refusal(Code.GATE_NOT_ELIGIBLE, f"{person} may not decide {gate}")
     if kind in ("approve", "pass") and (pol["independent"] or gate == "code") and person in t.workers:
         # §5.11 refusal order, step 7: independence sits beside the token check, before anything stale or incomplete

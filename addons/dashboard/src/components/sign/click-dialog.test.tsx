@@ -64,7 +64,7 @@ async function open(action: Parameters<typeof mount>[0] = PLAN) {
   flag(true)
   const m = await mount(action)
   const dialog = await screen.findByRole('dialog', {}, T)
-  await waitFor(() => expect(within(dialog).getByRole('button', { name: /^(Sign|Approve on your phone)$/ })).toBeEnabled(), T)
+  await waitFor(() => expect(within(dialog).getAllByRole('button', { name: /^(Sign|Sign in Terminal)$/ }).find(el => !el.closest('details'))).toBeEnabled(), T)
   return { ...m, dialog }
 }
 async function toPanel() {
@@ -271,7 +271,8 @@ describe('the action dialog with click-to-sign', () => {
 
   it('shows the custody and the device of the View', async () => {
     const { dialog } = await toPanel()
-    expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('convenience (no presence), device d_x')
+    expect(within(dialog).getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
+    expect(within(dialog).getByText('d_x').closest('details')).not.toHaveAttribute('open')
   })
 
   it('a rate limit keeps Sign off for the time the signer names (fake timers: no wall-clock race)', async () => {
@@ -477,21 +478,32 @@ describe('every error code and reason has an honest message', () => {
   })
 })
 
-it.each([null, ['terminal', 'click', 'phone']])('uses the personal default with allowed methods %j, including the phone stub', async (sign_methods) => {
+it.each([null, ['terminal', 'click', 'phone']])('disables phone approval and uses the usable fallback with allowed methods %j', async (sign_methods) => {
   s.prepare.mockResolvedValue(fakeRequest())
   s.get.mockResolvedValue(state(fakeRequest()))
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'phone', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
   const { dialog } = await open()
-  const phone = await within(dialog).findByRole('button', { name: 'Approve on your phone' })
-  await waitFor(() => expect(phone).toBeEnabled())
+  fireEvent.click(within(dialog).getByText('Other ways'))
+  const phone = within(dialog).getByRole('button', { name: 'Approve on your phone · coming soon' })
+  expect(phone).toBeDisabled()
   fireEvent.click(phone)
-  expect(within(dialog).getByText('Waiting for your phone…')).toBeVisible()
-  expect(dialog).toHaveTextContent('No notification was sent')
-  fireEvent.click(within(dialog).getByText('Other ways ▾'))
+  expect(within(dialog).queryByText('Waiting for your phone…')).toBeNull()
   fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in Terminal' }))
   await within(dialog).findByTestId('handoff-command')
   expect(c.prepare).not.toHaveBeenCalled()
+})
+
+it('omits One click from Other ways when the signer is unavailable', async () => {
+  flag('unavailable')
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
+  await mount(PLAN)
+  const dialog = await screen.findByRole('dialog')
+  await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign in Terminal' })).toBeEnabled())
+  fireEvent.click(within(dialog).getByText('Other ways'))
+  expect(within(dialog).queryByRole('button', { name: 'One click' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: /Approve on your phone/ })).toBeDisabled()
 })
 
 it('cancels the click review before switching to a fresh terminal intent', async () => {
@@ -500,7 +512,7 @@ it('cancels the click review before switching to a fresh terminal intent', async
   s.prepare.mockResolvedValue(fakeRequest())
   s.get.mockResolvedValue(state(fakeRequest()))
   const { dialog, ws, ticket } = await toPanel()
-  fireEvent.click(within(dialog).getByText('Other ways ▾'))
+  fireEvent.click(within(dialog).getByText('Other ways'))
   fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in Terminal' }))
   await within(dialog).findByTestId('handoff-command')
   expect(c.cancel).toHaveBeenCalledWith(ws, REQ)

@@ -196,6 +196,9 @@ export function CommandLine({ code }: { code: string }) {
 /** The open request: command, fingerprint, content hash, countdown and the preview. Cancel lives in the dialog footer. */
 export function HandoffPanel({ request, workspace = null }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null }) {
   const remaining = useRemaining(request.expires_at)
+  const { material } = request
+  const word = material.ticket ? confirmWord(material.ticket.key, material.ticket.uid) : workspaceConfirmWord(request, workspace)
+  const hostStated = !!Object.keys(material.policy ?? {}).length || !!Object.keys(material.before ?? {}).length || material.review.some(r => Object.keys(r.derived).length > 0)
   return (
     <div data-handoff-panel className="space-y-3">
       {request.content && <SignContent content={request.content} />}
@@ -204,6 +207,8 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
       </p>
       {request.code ? <CommandLine code={request.code} /> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
       <p className="text-[11px] text-text-muted">Fingerprint <code data-testid="handoff-fingerprint">{request.fingerprint}</code> · match in Terminal</p>
+      {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
+      {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values are stated by the host (see details)</p>}
       <SignDetails>
       <p>The ticket key is host-local, not proven; the signed ticket id identifies the ticket. The requester’s client name is self-declared, unverified.</p>
       <p>Request <Raw>{request.id}</Raw> · Workspace <Raw>{workspace?.id ?? ''}</Raw></p>

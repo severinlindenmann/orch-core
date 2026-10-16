@@ -105,11 +105,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const [switching, setSwitching] = useState(false)
   const terminalRequired = p.action?.action === 'settings_set' && !!p.action.sign_methods
   const canClick = !terminalRequired && clickReady(here) && clickEligible(p.action)
-  const allowed = methods.allowed?.filter(m => terminalRequired ? m === 'terminal' : m !== 'click' || clickEligible(p.action))
+  const allowed = methods.allowed?.filter(m => terminalRequired ? m === 'terminal' : m !== 'click' || canClick)
   const preferred = methods.preference?.method
   const fallback = methods.preference?.fallback
-  const available = (m: SignMethod) => m !== 'click' || canClick
-  const method: SignMethod = chosen && allowed?.includes(chosen) ? chosen
+  const available = (m: SignMethod) => m !== 'phone' && (m !== 'click' || canClick)
+  const method: SignMethod = chosen && available(chosen) && allowed?.includes(chosen) ? chosen
     : allowed ? (preferred && allowed.includes(preferred) && available(preferred) ? preferred
       : fallback && allowed.includes(fallback) && available(fallback) ? fallback
         : !preferred && canClick && allowed.includes('click') ? 'click' : 'terminal')

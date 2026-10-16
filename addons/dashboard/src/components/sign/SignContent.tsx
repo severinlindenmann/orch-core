@@ -3,7 +3,7 @@ import type { SignContent as Content } from '@/api/signing'
 import { Raw } from './visible'
 
 export function SignDetails({ children }: { children: ReactNode }) {
-  return <details className="space-y-3 text-[12px] text-text-muted"><summary className="cursor-pointer">Details</summary>{children}</details>
+  return <details className="space-y-3 text-[12px] text-text-muted"><summary className="cursor-pointer">Technical details</summary>{children}</details>
 }
 // Keep host-flattened ⏎ markers verbatim. Literal newlines (older hosts and block
 // text) stay inside the value, with a visible mark and indentation on each line.

@@ -27,7 +27,7 @@ function RiskLine({ text }: { text: string }) {
 /** The risk line alone: the workspace card and the dialog before the request exists. */
 export const ClickRisk = () => <RiskLine text={CLICK_RISK} />
 
-export const ClickBadge = () => <TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" className="w-fit rounded border border-border px-2 py-0.5 text-[11px] text-text-muted">One-click</button></TooltipTrigger><TooltipContent className="max-w-xs">{CLICK_RISK}</TooltipContent></Tooltip></TooltipProvider>
+export const ClickBadge = () => <div className="space-y-1"><TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" className="w-fit rounded border border-border px-2 py-0.5 text-[11px] text-text-muted">One-click</button></TooltipTrigger><TooltipContent className="max-w-xs">{CLICK_RISK}</TooltipContent></Tooltip></TooltipProvider><p className="text-[12px] text-warning sm:hidden">{CLICK_RISK}</p></div>
 
 function When({ stamp }: { stamp: string }) {
   const t = Date.parse(stamp)
@@ -77,6 +77,11 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       <ClickBadge />
       {view.content && <SignContent content={view.content} />}
+      <p data-testid="click-custody" role="note" className="text-[13px] text-warning">
+        {view.auth === 'convenience' ? 'One click on this computer, no fingerprint/passphrase' : <Raw>{view.auth}</Raw>}
+      </p>
+      {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
+      {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
       <SignDetails>
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">
         <dt className="text-text-muted">Action</dt>
@@ -95,10 +100,8 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
         <dd className="font-mono" data-testid="click-fingerprint">
           {view.fingerprint}
         </dd>
-        <dt className="text-text-muted">Signed with</dt>
-        <dd data-testid="click-custody">
-          {view.auth === 'convenience' ? 'convenience (no presence)' : <Raw>{view.auth}</Raw>}, device <Raw>{view.device}</Raw>
-        </dd>
+        <dt className="text-text-muted">Device</dt>
+        <dd><Raw>{view.device}</Raw></dd>
         <dt className="text-text-muted">Expires</dt>
         <dd>
           <When stamp={view.expires_at} />
@@ -121,9 +124,9 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           ))}
         </ul>
       )}
-      {view.artifacts && (
+      {view.artifacts === 'checked' && (
         <p data-testid="click-artifacts" className="text-[12px] text-text-muted">
-          {view.artifacts === 'checked' ? 'The signer checked the artifact bytes it signs.' : 'The signer did not see the artifact bytes: only their hash is signed.'}
+          The signer checked the artifact bytes it signs.
         </p>
       )}
       </SignDetails>

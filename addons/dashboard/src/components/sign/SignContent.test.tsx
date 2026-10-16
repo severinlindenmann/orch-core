@@ -38,3 +38,34 @@ it('marks and indents every block and continuation without creating items or row
   expect(screen.getAllByRole('listitem')).toHaveLength(2)
   expect(screen.getByText('Single note')).toBeVisible()
 })
+
+it('renders every display string in fully populated content', () => {
+  const content = {
+    headline: 'Review all changes',
+    ticket: { key: 'FULL-0001', title: 'Complete ticket title', uid_tail: '1234abcd', key_note: 'Host-local ticket key' },
+    sections: [{ id: 'plan', title: 'Complete plan', text: 'First section line\nSecond section line' }],
+    acceptance: [{ id: 'AC-yes', text: 'Checked criterion', checked: true }, { id: 'AC-no', text: 'Unchecked criterion', checked: false }],
+    tasks: [{ n: 3, id: 'TASK-three', title: 'Complete task', verify: ['First verification', 'Second verification'] }],
+    fields_changed: [
+      { field: 'title', before: 'Previous title', before_note: 'Previous value from host', after: 'Updated title' },
+      { field: 'removed', before: 'Removed value', after: null },
+      { field: 'added', before: null, after: 'Added value' },
+    ],
+    notes: ['Current note one', 'Current note two'],
+    note: ['Legacy note one', 'Legacy note two'],
+  }
+  // The dialog owns the headline; section ids are structural keys, not display values.
+  render(<><h2>{content.headline}</h2><SignContent content={content} /></>)
+  for (const text of [
+    content.headline, ...Object.values(content.ticket),
+    content.sections[0].title, ...content.sections[0].text.split('\n'),
+    ...content.acceptance.flatMap(a => [a.id, a.text]),
+    ...content.tasks.flatMap(t => [t.id, t.title, ...t.verify]),
+    ...content.fields_changed.flatMap(f => [f.field, f.before, f.before_note, f.after]).filter((v): v is string => typeof v === 'string'),
+    ...content.notes, ...content.note,
+  ]) expect(screen.getByText(text)).toBeVisible()
+  expect(screen.getByLabelText('Checked')).toBeVisible()
+  expect(screen.getByLabelText('Unchecked')).toBeVisible()
+  expect(screen.getByText('TASK-three').closest('li')).toHaveAttribute('value', '3')
+  expect(screen.getAllByText('—')).toHaveLength(2)
+})

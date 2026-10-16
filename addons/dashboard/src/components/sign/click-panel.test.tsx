@@ -331,3 +331,26 @@ it('renders structured content while retaining the full lines in Details', () =>
   expect(screen.getByText('per host, not signed')).toBeVisible()
   expect(screen.getByTestId('click-lines').closest('details')).not.toHaveAttribute('open')
 })
+
+it('keeps custody and warnings visible with structured content and technical details collapsed', () => {
+  mount(answer({ content: { headline: 'Approve', notes: ['Review this'] }, artifacts: 'unseen',
+    checks: [{ repo: 'dirty-repo', clean: false, attested_by: 'worker', at: '2026-10-12T11:00:00Z' }] }))
+  expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByTestId('click-custody')).toBeVisible()
+  expect(screen.getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
+  expect(screen.getByText('dirty-repo', { selector: 'p *' }).closest('p')).toBeVisible()
+  expect(screen.getByTestId('click-artifacts')).toBeVisible()
+  expect(screen.getByTestId('click-fingerprint')).not.toBeVisible()
+  expect(screen.getByTestId('click-lines')).not.toBeVisible()
+})
+
+it('shows the full terminal lines when structured content is absent', () => {
+  mount(answer({ lines: ['Fallback first line', 'Fallback second line'] }))
+  expect(screen.getByText('Fallback first line')).toBeVisible()
+  expect(screen.getByText('Fallback second line')).toBeVisible()
+})
+
+it('makes the badge risk text available inline on small touch screens', () => {
+  mount()
+  expect(screen.getByText(CLICK_RISK)).toHaveClass('sm:hidden')
+})

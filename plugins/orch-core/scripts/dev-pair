@@ -24,7 +24,8 @@ running as root, under ``ORCH_GRANT``, with a host already listening on the root
 prevention, not containment**: same-UID code can forge it.
 
 ``ask`` and ``check-answer`` are the end-to-end helpers (batch B3): ``ask`` plays the agent in a running sandbox (the
-host's ``orch grant`` typed with the sandbox's own passphrase, then ``orch new`` and an ``orch ask`` with the one option ``e2e_ok_<N>``) and
+host's ``orch grant`` typed with the sandbox's own passphrase, then ``orch new`` and an ``orch ask`` with the one
+option ``e2e_ok_<N>``) and
 prints ``{"ticket", "question", "nonce"}``; ``check-answer`` reads the sandbox workspace's own event logs until a
 ``question.answered`` with the option ``e2e_ok_<N>`` for that question, signed by a paired device that is neither the
 owner's nor the primary's. Both print JSON on stdout and never a secret (the grant stays in this process).

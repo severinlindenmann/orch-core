@@ -155,3 +155,29 @@ def test_the_settings_read_carries_sign_methods(human, served):
     assert ok(human.c.req("workspace.settings", {}))["data"]["sign_methods"] is None
     human.run("settings.set", {"set": {"sign_methods": ["phone", "terminal", "click"]}})
     assert ok(human.c.req("workspace.settings", {}))["data"]["sign_methods"] == ["terminal", "click", "phone"]
+
+
+def test_a_key_left_in_convenience_custody_counts_as_click_even_with_the_flag_off(monkeypatch, tmp_path):
+    """B6 (Opus round 2): "Turn off" leaves the key in convenience custody; the person path must still be refused
+    when sign_methods leaves out click, and an unreadable selection fails closed."""
+    import types
+
+    from orch.custody import select
+    from orch.host import convenience
+
+    svc = types.SimpleNamespace(
+        state_dir=tmp_path, workspace_id="a" * 32, host_uid=501,
+        store=types.SimpleNamespace(state=types.SimpleNamespace(workspace=types.SimpleNamespace(
+            settings={"sign_methods": ["terminal"]}))),
+    )  # fmt: skip
+    monkeypatch.setattr(convenience, "enabled", lambda *a: False)
+    monkeypatch.setattr(select, "read_selection", lambda *a: {"custody": "convenience"})
+    assert convenience.refuse_excluded_click_custody(svc) is not None
+    monkeypatch.setattr(select, "read_selection", lambda *a: {"custody": "passphrase"})
+    assert convenience.refuse_excluded_click_custody(svc) is None
+
+    def boom(*a):
+        raise select.CustodyError("bad")
+
+    monkeypatch.setattr(select, "read_selection", boom)
+    assert convenience.refuse_excluded_click_custody(svc) is not None

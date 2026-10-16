@@ -50,6 +50,14 @@ CODE_WORDS = 24
 CHECKS = 3
 
 
+def batch_labels() -> tuple[bytes, ...]:
+    """The domain labels the one unlock may sign: the setup batch is WORKSPACE-log person events only
+    (``settings.changed``, ``addon.granted``, ``grant.issued``: ``sig_ws_event``), never a ticket's."""
+    from orch import canon
+
+    return (canon.LABELS["sig_ws_event"].encode("ascii"),)
+
+
 def set_no_core_dumps() -> None:
     """RLIMIT_CORE=0: a crash of the setup process leaves no core file holding the passphrase or the recovery code."""
     try:
@@ -688,7 +696,6 @@ class RealPorts:
     def unlock(
         self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]
     ) -> Iterator[Any]:
-        from orch import canon
         from orch.custody import select
 
         if passphrase is not None:  # a new setup: the passphrase this process generated
@@ -701,7 +708,7 @@ class RealPorts:
         if opener is None:  # convenience custody signs without a factor: one signature at a time
             yield backend
             return
-        labels = (canon.LABELS["sig_ticket_event"].encode("ascii"),)
+        labels = batch_labels()
         with opener("dk", action="orch setup", digest=digest.split(":")[-1][:32], fields=fields, labels=labels) as raw:
             yield _UnlockedBackend(str(backend.auth), raw)
 

@@ -323,3 +323,17 @@ def test_b8_the_deferred_grant_is_still_checked_against_the_review(tmp):
     assert p["error"]["code"] == "review.mismatch" and "grant.issued" not in ports.submits
     assert ports.submits[0] == "settings.changed"  # the earlier, already checked requests landed; finishable
     assert p["error"]["finishable"] is True
+
+
+def test_unlock_labels_cover_every_event_the_batch_signs(monkeypatch):
+    """Regression (found by the real e2e): the unlocked key signed only the ticket-event label, so the first workspace
+    event (settings.changed) was refused by the custody. The labels must be those the workspace-log events really sign
+    under (a person event whose log is "workspace"), and nothing wider."""
+    from orch import canon
+    from orch.canon import hashing
+    from orch.setup import steps
+
+    seen = []
+    monkeypatch.setattr(hashing, "signed_context", lambda key, *a, **k: seen.append(key) or b"")
+    hashing.person_signing_bytes("w" * 32, "workspace", {"type": "settings.changed"})
+    assert [canon.LABELS[k].encode("ascii") for k in seen] == list(steps.batch_labels())

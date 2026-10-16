@@ -14,7 +14,7 @@ from .adapters.setup import SetupProxy
 from .adapters.setup import register as register_setup
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
-from .gateway import Gateway, run_dir, state_dir
+from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
 from .security import Security
 
@@ -143,7 +143,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
             "runner": who.runner,
         }
 
-    register_setup(app, auth, setup_proxy or SetupProxy(run_dir(state_dir()) / "setup.sock"), port)
+    register_setup(app, auth, setup_proxy or SetupProxy(state_dir() / "setup" / "setup.sock"), port)
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)

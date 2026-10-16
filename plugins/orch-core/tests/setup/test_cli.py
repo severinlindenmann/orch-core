@@ -184,3 +184,31 @@ def test_ctrl_c_before_the_run_starts_stops_between_steps(tmp):
     f.thread.join(10)
     p = f.dispatch("GET", "progress", {"run_id": out["run_id"]}, None)[1]
     assert p["error"]["code"] == "stop" and p["error"]["finishable"] is False and ports.log == []
+
+
+def test_default_socket_directory_is_private_not_the_host_run_directory(tmp):
+    """The host's run directory is 0711 (tier A); the setup socket and launch-code file must not live there."""
+    (tmp.state / "run").mkdir(parents=True, mode=0o711)
+    (tmp.state / "run").chmod(0o711)
+    seen = {}
+
+    def browser(env, err, launch):
+        sock = tmp.state / "setup" / "setup.sock"
+        seen["mode"] = (tmp.state / "setup").stat().st_mode & 0o777
+        seen["sock"] = sock.exists()
+        call(str(sock), "POST", "/shutdown", {})
+        return True
+
+    out, err = io.StringIO(), io.StringIO()
+    rc = flow_mod.main(
+        [],
+        env={"USER": "ann"},
+        out=out,
+        err=err,
+        make_env=lambda e: make_env(tmp, ports=lambda: FakePorts()),
+        ensure_host=lambda e, er: None,
+        open_browser=browser,
+        cwd=str(tmp.work),
+    )
+    assert seen == {"mode": 0o700, "sock": True} and rc == 1, err.getvalue()
+    assert not (tmp.state / "run" / "setup.sock").exists()

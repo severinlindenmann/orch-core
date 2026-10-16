@@ -465,7 +465,7 @@ USAGE = "usage: orch setup   (run it in the folder you want to make a workspace;
 
 def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any]) -> bool:
     """Open the dashboard on ``/setup``. The launch code is NOT in the path or in any argument: it is in the 0600 file
-    ``<run>/setup.code`` that the dashboard server reads and deletes, and claims with its own port."""
+    ``<state>/setup/setup.code`` that the dashboard server reads and deletes, and claims with its own port."""
     import subprocess
 
     from orch.cli.dashboard import find_entry_point
@@ -525,9 +525,9 @@ def main(
     except SetupError as e:
         err.write(f"orch setup: {e.message}\n")
         return 1
-    from orch.host.enable import run_dir_for
-
-    sock_dir = run_dir if run_dir is not None else run_dir_for(denv.state_dir, None, env)
+    # NOT the host run directory: that one is 0711 (peers reach their sockets through it), the setup socket and the
+    # launch-code file need a directory only this user can enter.
+    sock_dir = run_dir if run_dir is not None else denv.state_dir / "setup"
     flow = SetupFlow(denv)
     server = SetupServer(Path(sock_dir) / "setup.sock", flow, notify=lambda line: err.write(f"orch setup: {line}\n"))
     try:

@@ -1,4 +1,4 @@
-"""The setup process's socket server: HTTP/1.1 over ``<run>/setup.sock`` (0600, in a 0700 directory).
+"""The setup process's socket server: HTTP/1.1 over ``<state>/setup/setup.sock`` (0600, in a 0700 directory).
 
 * Socket-only routes (the CLI and the dashboard server, never a browser): ``POST /launch {dir, port?}`` ->
   ``{setup_id, code}``, ``POST /claim {code, port}`` -> ``{token, setup_id}``, ``POST /shutdown``.
@@ -8,8 +8,8 @@
 
 Session binding: the launch code is single use, lives 30 s and is bound to the ``setup_id``; the first claim wins, a
 second one is refused (409) and reported to the terminal. The code never travels in a URL or an argument: it is written
-to ``<run>/setup.code`` (0600, in the 0700 run directory), which the dashboard server reads and deletes, and claimed
-over this socket together with the dashboard's own port; the browser is bound to that port (``Host``/``Origin``), and
+to ``<state>/setup/setup.code`` (0600, in the 0700 setup directory), which the dashboard server reads and deletes,
+and claimed over this socket together with the dashboard's own port; the browser is bound to that port (``Host``/``Origin``), and
 no browser request is answered before a claim named one. The session dies on done, cancel or 10 minutes without a
 request, never while a run is in progress (the flow says so through ``busy``).
 """
@@ -90,7 +90,7 @@ class SetupServer:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         st = parent.stat()
         if st.st_uid != os.getuid() or st.st_mode & 0o077:
-            raise SetupError("setup.socket_unsafe", "the run directory is not private to this user", 500)
+            raise SetupError("setup.socket_unsafe", "the setup directory is not private to this user", 500)
         with contextlib.suppress(FileNotFoundError):
             if self.path.is_socket():
                 self.path.unlink()

@@ -1,4 +1,4 @@
-"""The wire of ``<run>/setup.sock`` and the closed profile schema (batch-9.md "## Contract").
+"""The wire of ``<state>/setup/setup.sock`` and the closed profile schema (batch-9.md "## Contract").
 
 HTTP/1.1 over the unix socket, JSON bodies, errors ``{"error": {"code", "message"}}`` (codes, never free text from a
 caller). Browser routes live under ``/api/setup/`` (the dashboard proxies them unchanged and adds nothing but the

@@ -4425,7 +4425,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `AGENTS.orch.md` has headings and up to 40 lines; `INSTRUCTIONS_REV` is 2, so `orch status` says `run orch
     instructions sync`. No wire, hash, F1 or error-code change.
 73. **B9: `orch setup` (16 Oct 2026; "As built in B9" at the end of this document; the number may be renumbered when a parallel change lands first):** a
-    CLI-side command, not a host op: it serves the onboarding page over `<run>/setup.sock` (HTTP, 0600), generates the passphrase and the recovery code
+    CLI-side command, not a host op: it serves the onboarding page over `<state>/setup/setup.sock` (HTTP, 0600), generates the passphrase and the recovery code
     itself, and signs in-process through the existing host ops. No new host op, frame or error code; one hosted-bootstrap helper is shared with `orch init --host`.
 
 72. **B8: agent access 1 / 3 / 7 days (owner decision D of 16 Oct 2026; D60, D-P2-27):** `grant_hours` (workspace setting) and
@@ -12816,11 +12816,11 @@ off-by-default machine switch. The dashboard stream builds §12.11 against a stu
 
 `orch setup` (`orch.setup`, dispatched in `cli/main.py` like `runner`) is the **setup process**: refused under `ORCH_GRANT`
 or `ORCH_SESSION` and without `/dev/tty`; it runs `host enable` once if no host answers (a dev checkout is refused there),
-sets `RLIMIT_CORE=0`, serves `<run>/setup.sock` and stays until the page is finished, cancelled or Ctrl-C.
+sets `RLIMIT_CORE=0`, serves `<state>/setup/setup.sock` and stays until the page is finished, cancelled or Ctrl-C.
 
 * **Wire** (`protocol.py`, `server.py`): HTTP/1.1 over the unix socket. Browser routes are `/api/setup/*` only (the dashboard
   proxies them); `/launch`, `/claim`, `/shutdown` have no such prefix. The launch code is single use, 30 s, bound to the
-  `setup_id`; it never travels in a URL or an argument: it is a 0600 file `<run>/setup.code` that the dashboard server reads
+  `setup_id`; it never travels in a URL or an argument: it is a 0600 file `<state>/setup/setup.code` that the dashboard server reads
   and deletes, and claims over the socket together with its own port (`POST /claim {code, port}`); the first claim wins, a
   second one is refused and printed, and the browser is bound to that port (no browser request is answered before it). Every browser call checks `X-Setup-Token`,
   the `Host` header (127.0.0.1 or localhost, the claimed port) and, on a POST, `Origin == http://<Host>`

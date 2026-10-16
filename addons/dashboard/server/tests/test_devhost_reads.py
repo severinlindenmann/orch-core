@@ -415,21 +415,19 @@ def test_a_receipt_label_is_passed_through_ticket_get_and_the_log(rich, stub):
 
 
 def test_the_parent_fallback_is_logged_never_silent(rich, stub, monkeypatch, caplog):
-    """#546: git's honest "no common ancestor" (a lookup that answers None) falls back to the parent commit with one
-    warning line (the error code only, no repo content), so the fallback is never silent. A lookup with NO answer is
-    "diff unavailable" instead (test_a_base_lookup_without_an_answer_is_diff_unavailable)."""
+    """#546: no common ancestor with the default branch falls back to the parent commit with one warning line (the
+    error code only, no repo content), so the fallback is never silent. A merge base the reader cannot establish is
+    "diff unavailable" instead (test_a_diff_the_reader_cannot_produce_is_unavailable_never_empty). Since #565 the read
+    is orch's reader in-process (no git process)."""
     import logging
 
-    from devhost import reads
+    from orch.gitread.repo import Repo
 
     with caplog.at_level(logging.WARNING, logger="orch_dashboard.devhost"):
         normal = stub.call("diff", {"ref": "DEMO-0001"})["data"]
     assert not [r for r in caplog.records if "merge base unavailable" in r.getMessage()]  # the real merge base
     caplog.clear()
-    real = reads.observe.lookup
-    monkeypatch.setattr(
-        reads.observe, "lookup", lambda path, op, **kw: None if op == "merge_base" else real(path, op, **kw)
-    )
+    monkeypatch.setattr(Repo, "merge_base", lambda self, a, b: None)  # no common ancestor
     with caplog.at_level(logging.WARNING, logger="orch_dashboard.devhost"):
         data = stub.call("diff", {"ref": "DEMO-0001"})["data"]
     lines = [r for r in caplog.records if "merge base unavailable" in r.getMessage()]
@@ -438,42 +436,24 @@ def test_the_parent_fallback_is_logged_never_silent(rich, stub, monkeypatch, cap
     assert data["sources"][0]["base_sha"] != normal["sources"][0]["head_sha"]
 
 
-@pytest.mark.parametrize("op", ["diff_numstat", "diff_names", "diff_patch"])
-def test_a_diff_git_cannot_produce_is_unavailable_never_empty(rich, stub, monkeypatch, caplog, op):
-    """#561 R7-M1: observe.git answers None when git fails, is refused or passes its timeout; the diff read is then
-    "diff unavailable" (observe.unavailable), never counts with an empty patch or "no changes"."""
+@pytest.mark.parametrize("where", ["merge_base", "commit", "blob", "tree", "refs"])
+def test_a_diff_the_reader_cannot_produce_is_unavailable_never_empty(rich, stub, monkeypatch, caplog, where):
+    """#561 R7-M1 and Opus R8-L2, in orch's reader (#565): whatever part of the read cannot be established (the merge
+    base, a commit, a blob, a tree, the ref store) is "diff unavailable" (observe.unavailable), never counts with an
+    empty patch, "no changes" or a diff against another base."""
     import logging
 
-    from devhost import reads
+    from orch.gitread.errors import Unavailable
+    from orch.gitread.repo import Repo
 
-    real = reads.observe.git
-    monkeypatch.setattr(reads.observe, "git", lambda path, o, **kw: None if o == op else real(path, o, **kw))
+    stub.call("diff", {"ref": "DEMO-0001"})  # positive control: it reads
+
+    def refuse(*a, **k):
+        raise Unavailable(f"cannot read the {where}")
+
+    monkeypatch.setattr(Repo, where, property(refuse) if where == "refs" else refuse)
     with caplog.at_level(logging.WARNING, logger="orch_dashboard.devhost"):
         with pytest.raises(HostError, match="observe.unavailable") as e:
             stub.call("diff", {"ref": "DEMO-0001"})
     assert "diff unavailable" in e.value.error["message"]
     assert [r.getMessage() for r in caplog.records if "diff unavailable" in r.getMessage()]
-
-
-@pytest.mark.parametrize("op", ["commit", "ref", "merge_base", "parent"])
-def test_a_base_lookup_without_an_answer_is_diff_unavailable(rich, stub, monkeypatch, op):
-    """Opus R8-L2 on #561: a revision lookup that gets no answer (a refusal, a timeout, a failure) is "diff
-    unavailable", never a diff against another base."""
-    from devhost import reads
-
-    stub.call("diff", {"ref": "DEMO-0001"})  # positive control: it reads
-    real = reads.observe.lookup
-
-    def lookup(path, o, **kw):
-        if o == op:
-            raise reads.observe.NoAnswer("TimeoutExpired")
-        return real(path, o, **kw)
-
-    monkeypatch.setattr(reads.observe, "lookup", lookup)
-    if op == "parent":  # the parent is read only after git's honest "no merge base"
-        monkeypatch.setattr(
-            reads.observe, "lookup", lambda p, o, **kw: None if o == "merge_base" else lookup(p, o, **kw)
-        )
-    with pytest.raises(HostError, match="observe.unavailable") as e:
-        stub.call("diff", {"ref": "DEMO-0001"})
-    assert f"diff unavailable: git did not answer ({op})" in e.value.error["message"]

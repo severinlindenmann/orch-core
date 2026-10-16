@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -175,10 +176,17 @@ def test_a_repos_own_config_and_hooks_run_nothing_in_any_command(d):
     assert d.run("list", "--check").code == 0
     open(os.path.join(path, "scratch.txt"), "w").write("x\n")
     assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
-    d.ws.git("config", "filter.x.clean", str(script))  # planted after create: remove and list --check refuse git
-    assert doc(d.run("remove", d.key))["code"] == "observe.unavailable"
+    # planted after create (#565): list --check and remove's clean check are orch's reader (no git process), so the
+    # filter never runs and the answer is the real one; git's remove itself is still gated, and refused
+    open(os.path.join(path, ".gitattributes"), "w").write("* filter=x\n")
+    d.ws.git("config", "filter.x.clean", str(script))
+    assert doc(d.run("remove", d.key))["code"] == "worktree.dirty"
     listed = doc(d.run("list", "--check"))["data"][0]
-    assert listed["dirty"] is None and listed["head"] is None
+    assert listed["dirty"] == 2 and listed["head"], listed
+    os.remove(os.path.join(path, "scratch.txt"))
+    os.remove(os.path.join(path, ".gitattributes"))
+    assert doc(d.run("remove", d.key))["code"] == "observe.unavailable"  # clean: git's remove is next, the gate refuses
+    assert os.path.exists(path)
     d.ws.git("config", "--unset-all", "filter.x.clean")
     assert d.run("remove", d.key, "--force").code == 0
     assert not marker.exists()
@@ -398,12 +406,24 @@ def test_d58_direct_precommit_refuses_a_registration_changed_since_the_first_loo
     assert not any("working tree is on refs/heads/main" in p for p in got)  # never judged on the declared copy
 
 
-def test_d58_direct_refuses_a_registered_worktree_whose_config_names_a_program(problems):
+def test_d58_direct_runs_nothing_a_registered_worktrees_config_names(problems):
+    """#565: direct D58 reads the registered worktree with orch's reader (no git process): a clean filter its config
+    names never runs, and the tree's answer is the real one. Positive control: plain git status runs it."""
     path = doc(problems.d.run("create", problems.d.key))["data"]["path"]
-    problems.d.ws.git("config", "filter.x.clean", "/bin/false")
+    marker = problems.d.ws.tmp / "d58-filter-ran"
+    script = problems.d.ws.tmp / "d58-filter.sh"
+    script.write_text(f"#!/bin/sh\necho x >> {marker}\ncat\n")
+    script.chmod(0o755)
+    problems.d.ws.git("config", "filter.x.clean", str(script))
+    with open(os.path.join(path, ".git"), "rb") as f:
+        assert f.read().startswith(b"gitdir: ")
+    open(os.path.join(path, ".gitattributes"), "w").write("* filter=x\n")
     got = problems.run()
-    assert any("filter.x.clean" in p for p in got), got
-    assert path
+    assert any("uncommitted changes" in p for p in got), got  # .gitattributes is untracked: dirty, read without git
+    assert not any("cannot be read" in p for p in got), got
+    assert not marker.exists()
+    subprocess.run(["git", "-C", path, "add", "-A"], capture_output=True, check=False)  # control: git runs it
+    assert marker.exists()
 
 
 def test_forced_remove_keeps_observe_unavailable_from_a_gate_refusal(d):
@@ -440,7 +460,8 @@ def _submodule_in(path: str, tmp, marker) -> None:
 
 def test_a_populated_submodule_is_never_inspected_or_reported_clean(d):
     """Codex #439 High/Medium: direct ``list --check`` and ``remove`` never run a submodule's own filter and never call
-    a tree with a checked-out submodule clean (``dirty`` null: unknown)."""
+    a tree with a checked-out submodule clean (``dirty`` null: unknown; remove: ``observe.unavailable``, orch's reader
+    refuses it, #565)."""
     path = doc(d.run("create", d.key))["data"]["path"]
     marker = d.ws.tmp / "submodule-filter-ran"
     _submodule_in(path, d.ws.tmp, marker)
@@ -458,3 +479,57 @@ def test_d58_direct_refuses_a_registered_worktree_with_a_populated_submodule(pro
     got = problems.run()
     assert any("submodule" in p for p in got), got
     assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    "gitconfig,xdg",
+    [("[include]\n\tpath = ~/.gc2\n", None), ('[includeIf "gitdir:/"]\n\tpath = ~/.gc2\n', None),
+     (None, "[core]\n\texcludesFile =\n")],
+    ids=["include", "includeIf", "empty"],
+)  # fmt: skip
+def test_remove_refuses_a_file_git_shows_whatever_the_persons_ignore_config(d, gitconfig, xdg):
+    """Opus M2 on #583: git's own remove runs --force since #565, so orch's clean check is the only guard. When the
+    person's config sets excludesFile through an include, or sets it empty, git does not use its default ignore file;
+    the reader must not either, or z.def (untracked to git) would be deleted with the worktree."""
+    home = Path(os.environ["HOME"])
+    (home / ".config" / "git").mkdir(parents=True, exist_ok=True)
+    (home / ".config" / "git" / "ignore").write_text("*.def\n")
+    (home / ".gc2").write_text(f"[core]\n\texcludesFile = {home / '.gi_other'}\n")
+    (home / ".gi_other").write_text("*.oth\n")
+    for p, text in ((home / ".gitconfig", gitconfig), (home / ".config" / "git" / "config", xdg)):
+        if text is not None:
+            p.write_text(text)
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "z.def"), "w").write("keep me\n")
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty", got
+    assert os.path.exists(os.path.join(path, "z.def"))
+    assert d.run("remove", d.key, "--force").code == 0  # the person's explicit force still removes it
+
+
+def test_d58_direct_reads_head_and_tree_in_one_read_of_the_registered_pins(problems, monkeypatch):
+    """Opus L4 on #583: direct D58 takes HEAD, its branch and the tree from ONE reader call on the registration's
+    pins (as host mode's tree.check), never from separate reads that find the repository by path again."""
+    from orch.gitread import local
+    from orch.ops.caps import Git
+
+    problems.d.run("create", problems.d.key)
+
+    def no(*a, **k):
+        raise AssertionError("a separate read")
+
+    monkeypatch.setattr(Git, "head", no)
+    monkeypatch.setattr(Git, "symbolic_head", no)
+    monkeypatch.setattr(Git, "dirty", no)
+    seen = []
+    real = local.LocalGitReader.tree_check
+
+    def tree_check(self, path, env=None, *, pins=None):
+        seen.append(pins)
+        return real(self, path, env, pins=pins)
+
+    monkeypatch.setattr(local.LocalGitReader, "tree_check", tree_check)
+    got = problems.run()
+    assert any("not recorded" in p for p in got), got  # judged (nothing is signed here), no "cannot be read"
+    assert not any("cannot be read" in p for p in got), got
+    assert len(seen) == 1 and seen[0] is not None  # one read, of the registered pins

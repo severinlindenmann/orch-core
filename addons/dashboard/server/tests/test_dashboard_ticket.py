@@ -190,11 +190,15 @@ def test_null_priority_stays_null(client, token, stub, gateway, rich, monkeypatc
 
 
 def test_a_diff_git_cannot_produce_reaches_the_page_as_diff_unavailable(client, token, stub, rich, monkeypatch):
-    """#561 R7-M1, the server route: an error the Changes tab shows as "Diff unavailable", not an empty diff."""
-    from devhost import reads
+    """#561 R7-M1, the server route: an error the Changes tab shows as "Diff unavailable", not an empty diff. Since
+    #565 the diff is orch's reader in-process: a refusal of it (here: a blob it cannot read) is that error."""
+    from orch.gitread.errors import Unavailable
+    from orch.gitread.repo import Repo
 
-    real = reads.observe.git
-    monkeypatch.setattr(reads.observe, "git", lambda p, o, **kw: None if o == "diff_patch" else real(p, o, **kw))
+    def blob(self, oid):
+        raise Unavailable("an object is missing")
+
+    monkeypatch.setattr(Repo, "blob", blob)
     res = client.get(url(stub, "DEMO-0001/changes"), headers=headers(token))
     assert res.status_code == 409 and res.json()["error"]["code"] == "observe.unavailable"
     assert "diff unavailable" in res.json()["error"]["message"]

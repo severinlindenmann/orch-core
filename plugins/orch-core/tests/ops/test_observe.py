@@ -97,7 +97,7 @@ def test_git_environment_is_scrubbed(tmp_path, monkeypatch):
 
     monkeypatch.setenv("GIT_DIR", "/nowhere")
     monkeypatch.setenv("git_work_tree", "/nowhere")
-    env = gitsafe.isolated_env(os.environ)  # the environment observe.git runs git in (#546)
+    env = gitsafe.isolated_env(os.environ)  # the environment every remaining isolated git runs in (#546)
     assert "GIT_DIR" not in env and "git_work_tree" not in env
     assert {k for k in env if k.upper().startswith("GIT_")} <= _OURS  # only what the isolation sets itself
     assert observe.head(tmp_path) is None  # not a repository, and GIT_DIR did not make it one
@@ -132,15 +132,15 @@ def test_git_runs_with_an_allow_listed_environment(monkeypatch):
     monkeypatch.setenv("LC_ALL", "C")
     from orch import gitsafe
 
-    env = gitsafe.isolated_env(os.environ)  # the environment observe.git runs git in (#546)
+    env = gitsafe.isolated_env(os.environ)  # the environment every remaining isolated git runs in (#546)
     assert all(k in {"PATH", "HOME", "LANG", "TMPDIR", "USER", "LOGNAME", "XDG_CONFIG_HOME"} or k in _OURS for k in env)
     assert env["LC_ALL"] == "C"
 
 
 def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
-    """A clean filter set in the repository's own config would run inside ``git status``: since #546 the gate of
-    orch.gitsafe refuses the repository (``None``, unknown) and the filter never runs; nothing observe starts could
-    open the person's tty anyway (own session)."""
+    """A clean filter set in the repository's own config would run inside ``git status``: since #565 observe runs no
+    git at all (orch's reader in-process), so the filter never runs and the answer is the real one: the same bytes are
+    clean (before, #546's gate refused the repository: ``None``, unknown)."""
     import sys
     import time
 
@@ -159,7 +159,7 @@ def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
     ws.git("config", "filter.probe.clean", f"{sys.executable} {script}")
     time.sleep(1.1)
     (repo / "impl.txt").write_text("broken\n")  # same content, new mtime: git runs the filter to compare
-    assert observe.dirty(repo) is None
+    assert observe.dirty(repo) == ""  # same bytes as committed: clean, read without git
     assert not marker.exists()
     # positive control: plain git status runs that filter, so the assertions above can fail
     done = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, check=False)

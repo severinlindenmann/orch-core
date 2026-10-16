@@ -839,49 +839,19 @@ def get(host, store, views, args, person):
     return out
 
 
-def _unified_files(text):
-    """Counts per file from a git numstat; rename and binary handling as git prints it."""
-    files = []
-    for line in text.splitlines():
-        add, _, rest = line.partition("\t")
-        delete, _, path = rest.partition("\t")
-        binary = add == "-"
-        files.append(
-            {
-                "path": path,
-                "old_path": None,
-                "status": "M",
-                "add": 0 if binary else int(add),
-                "del": 0 if binary else int(delete),
-                "binary": binary,
-            }
-        )
-    return files
-
-
 DIFF_UNAVAILABLE = "diff unavailable"
-
-
-def _diff_part(name: str, out: str | None) -> str:
-    """One part of a repo's diff; ``None`` (git failed, was refused or timed out) is the error the Changes tab shows
-    as "Diff unavailable", never an empty diff."""
-    if out is None:
-        _LOG.warning("%s for a linked repo (git failed, was refused or timed out)", DIFF_UNAVAILABLE)
-        raise fail("observe.unavailable", f"{name}: {DIFF_UNAVAILABLE}: git could not produce it in time", exit=3)
-    return out
-
-
-def _lookup(name: str, path, op: str, rev):
-    """A revision lookup of ``observe.lookup``: its answer, or ``None`` for git's honest "no result"; no answer at all
-    (a refusal, a timeout, a failure) is "diff unavailable"."""
-    try:
-        return observe.lookup(path, op, rev=rev)
-    except observe.NoAnswer as exc:
-        _LOG.warning("%s: no answer from the %s lookup (%s)", DIFF_UNAVAILABLE, op, exc)
-        raise fail("observe.unavailable", f"{name}: {DIFF_UNAVAILABLE}: git did not answer ({op})", exit=3) from None
+_PLAIN_HUNK = re.compile(r"(?m)^(@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@).*$")
 
 
 def diff(store, views, args):
+    """The Changes tab's diff, read with orch's own reader in-process (``orch.gitread.local``, #565): no git process,
+    so nothing in the repository's config can run and there is no gate-then-spawn window to race. The commits are
+    compared tree to tree (the index plays no part); renames show as a deletion and an addition. The base is the merge
+    base with ``main`` or ``master``, else the head's first parent (as before). Whatever the reader cannot produce (a
+    refused repository, a missing object, a limit) is "diff unavailable" (409, #561), never an empty diff."""
+    from orch.gitread.errors import Unavailable
+    from orch.gitread.local import READER
+
     if set(args) - {"ref", "repo", "context", "max_bytes"}:
         raise bad("unknown argument")
     v = _find(views, args.get("ref"))
@@ -904,41 +874,33 @@ def diff(store, views, args):
         recorded = next((e for e in v.source_list if e["repo"] == identity), None)
         if recorded is None:
             raise fail("observe.unavailable", f"{name}: the host has not observed a branch head", exit=3)
-        # operations of orch.gitsafe.OPS only (#546): no free git arguments. The revision lookups tell git's honest
-        # "no result" (None) from no answer at all (a refusal, a timeout, a failure: NoAnswer), which is "diff
-        # unavailable", never a diff against some other base (Opus R8-L2 on #561).
-        head = _lookup(name, path, "commit", f"refs/heads/{branch}")
+        try:
+            got = READER.diff(path, branch=branch, default_branch=None, context=context, max_bytes=limit)
+        except Unavailable as exc:
+            _LOG.warning("%s for a linked repo (the reader refused or failed)", DIFF_UNAVAILABLE)
+            raise fail("observe.unavailable", f"{name}: {DIFF_UNAVAILABLE}: {exc.reason}"[:300], exit=3) from None
         # Bound to D58: the head shown is the source_sha a verdict would sign. A branch that moved since the host
         # observed it is refused, never shown as if it were that commit.
-        if head != recorded["sha"]:
+        if got["head_sha"] != recorded["sha"]:
             raise fail("observe.unavailable", f"{name}: the branch moved since it was observed", exit=3)
-        default = next(
-            (f"refs/heads/{b}" for b in ("main", "master") if _lookup(name, path, "ref", f"refs/heads/{b}")), None
-        )
-        base = _lookup(name, path, "merge_base", (head, default)) if head and default else None
-        if not base and head:  # git answered: no default branch, or no common ancestor; never silently (#546)
-            code = "git.no_default_branch" if not default else "git.no_merge_base"
-            _LOG.warning("merge base unavailable, using the parent commit (%s)", code)
-            base = _lookup(name, path, "parent", head)
-        if not base:
-            raise fail("observe.unavailable", f"{name}: no base to compare with", exit=3)
-        sources.append({"repo": name, "branch": branch, "base_sha": base, "head_sha": head})
-        # A diff git could not produce (failed, refused or past its timeout) is "diff unavailable", never "no changes"
-        # or an empty patch (#561 R7-M1): observe.git answers None then, "" only for a real empty diff.
-        numstat = _diff_part(name, observe.git(path, "diff_numstat", rev=(base, head)))
-        names = _diff_part(name, observe.git(path, "diff_names", rev=(base, head)))
-        status = {}
-        for line in names.splitlines():
-            code, *paths = line.split("\t")
-            status[paths[-1]] = (code[:1] if code[:1] in "AMDRT" else "M", paths[0] if code[:1] == "R" else None)
-        for f in _unified_files(numstat):
-            real = f["path"]
-            if " => " in real:  # git prints a rename as `old => new` (possibly with braces)
-                real = next((p for p in status if real.endswith(p)), real)
-            code, old = status.get(real, ("M", None))
-            files.append({**f, "path": real, "repo": name, "status": code, "old_path": old})
-        text = _diff_part(name, observe.git(path, "diff_patch", rev=(str(context), base, head), strip=False))
-        parts.append(text)
+        if got["base_source"] == "first_parent":  # no default branch, or no common ancestor: never silently (#546)
+            _LOG.warning("merge base unavailable, using the parent commit (git.no_merge_base)")
+        sources.append({"repo": name, "branch": branch, "base_sha": got["base_sha"], "head_sha": got["head_sha"]})
+        for f in got["files"]:
+            files.append(
+                {
+                    "path": f["path"],
+                    "old_path": f.get("old_path"),
+                    "status": f["status"],
+                    "add": f["add"],
+                    "del": f["del"],
+                    "binary": f["binary"],
+                    "repo": name,
+                }
+            )
+        # whole hunk lines only, as since #561 (DECISIONS-LOG): no function text after a hunk header's second @@
+        parts.append(_PLAIN_HUNK.sub(r"\1", base64.b64decode(got["patch"]).decode("utf-8", errors="replace")))
+        truncated = truncated or bool(got["truncated"])
     unified = "".join(parts)
     if len(unified.encode()) > limit:
         cut = unified.encode()[:limit].decode(errors="ignore")

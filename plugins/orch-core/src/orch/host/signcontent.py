@@ -17,7 +17,8 @@ fails when a key is added without being classified here.
 The shape (``SignContent``) is the contract the dashboard reads (batch-6.md "Contract")::
 
     {headline, ticket?: {key, title}, sections?: [{id, title, text}], acceptance?: [{id, text, checked?}],
-     tasks?: [{n, title, verify?: [str]}], fields_changed?: [{field, before, after, before_note?}], note?: str}
+     tasks?: [{n, id, title, verify?: [str]}], fields_changed?: [{field, before, after, before_note?}], notes?: [str]}
+    ticket = {key, title, uid_tail, key_note}   // key_note: the key is the host's word; uid_tail is the signed id's end
 
 ``before_note`` is set when ``before`` is the host's word and not checked against anything signed. The ticket title is
 shown only when a signed event states it (a ``ticket.created``): a gate does not bind the title, so ``ticket.title`` is
@@ -98,6 +99,13 @@ def _s(value: Any) -> str:
     return value if isinstance(value, str) else canon.dumps(value).decode("utf-8")
 
 
+def one(value: Any) -> str:
+    """The ONE helper every single-line value goes through (security review: a newline inside a title, a verify command,
+    an acceptance text or a field must not fake structure such as a second task). Each line break is made visible as
+    `` ⏎ ``; a block (a section's text) is rendered by :func:`text` under a ``| `` mark on every line instead."""
+    return " ⏎ ".join(_s(value).replace("\r\n", "\n").replace("\r", "\n").split("\n"))
+
+
 def _line1(value: Any, limit: int = 80) -> str:
     one = " ".join(_s(value).split())
     return one if len(one) <= limit else one[: limit - 1] + "…"
@@ -111,10 +119,10 @@ def _show(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
-        return value
+        return one(value)
     if isinstance(value, list) and all(isinstance(x, str) for x in value):
-        return ", ".join(value) if value else "(none)"
-    return _s(value)
+        return one(", ".join(value)) if value else "(none)"
+    return one(_s(value))
 
 
 def _short(digest: Any) -> str:
@@ -143,17 +151,26 @@ def _ticket(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> dic
     for ev in events:
         if ev.get("type") == "ticket.created" and isinstance(ev.get("title"), str):
             title = ev["title"]
-    return {"key": t["key"], "title": title}
+    tail = _s(t.get("uid"))[-8:]
+    return {
+        "key": t["key"],
+        "title": title,
+        "uid_tail": tail,
+        "key_note": f"key per host, not proven; the ticket's signed id ends …{tail}",
+    }
 
 
 def _ref(ticket: Mapping[str, str] | None) -> str:
+    """The ticket as the headline names it: the host's key (not proven), the title only when a signed event states it,
+    and the tail of the ticket's signed id (the key is the host's word, the id is what the signature names)."""
     if ticket is None:
         return "the workspace"
-    return f"{ticket['key']} · {ticket['title']}" if ticket["title"] else ticket["key"]
+    name = f"{ticket['key']} · {one(ticket['title'])}" if ticket["title"] else ticket["key"]
+    return f"{name} (…{ticket['uid_tail']})"
 
 
 def _row(out: dict[str, Any], field: str, after: Any, before: Any = None, note: str | None = None) -> None:
-    row: dict[str, Any] = {"field": field, "before": _show(before), "after": _show(after)}
+    row: dict[str, Any] = {"field": one(field), "before": _show(before), "after": _show(after)}
     if note and before is not None:
         row["before_note"] = note
     out.setdefault("fields_changed", []).append(row)
@@ -165,7 +182,7 @@ def _acceptance(items: Any) -> list[dict[str, Any]]:
         if not isinstance(a, Mapping):
             raise PlainUnavailable("an acceptance criterion is not an object")
         _check_keys("acceptance keys", a, _AC_SHOWN)
-        out.append({"id": _s(a.get("id")), "text": _s(a.get("text")), "checked": False})
+        out.append({"id": one(a.get("id")), "text": one(a.get("text")), "checked": False})
     return out
 
 
@@ -175,10 +192,10 @@ def _tasks(items: Any) -> list[dict[str, Any]]:
         if not isinstance(t, Mapping):
             raise PlainUnavailable("a task is not an object")
         _check_keys("task keys", t, _TASK_SHOWN)
-        title = _s(t.get("text"))
+        title = one(t.get("text"))
         if t.get("proves"):
-            title += f" (proves {', '.join(_s(x) for x in t['proves'])})"
-        task: dict[str, Any] = {"n": n, "title": title}
+            title += f" (proves {one(', '.join(_s(x) for x in t['proves']))})"
+        task: dict[str, Any] = {"n": n, "id": one(t.get("id")), "title": title}
         verify = t.get("verify")
         if isinstance(verify, Mapping):
             _check_keys("verify keys", verify, frozenset({"cmd"}))
@@ -186,7 +203,7 @@ def _tasks(items: Any) -> list[dict[str, Any]]:
             raise PlainUnavailable("a task verify is not an object")
         cmd = verify.get("cmd") if isinstance(verify, Mapping) else None
         if cmd:
-            task["verify"] = [_s(cmd)]
+            task["verify"] = [one(cmd)]
         out.append(task)
     return out
 
@@ -312,12 +329,18 @@ def _gate(
         _row(out, f"file {name}", f"{_s(a.get('kind'))}, digest {_short(a.get('digest'))}{extra}")
     for tid, r in sorted((inp.get("receipts") or {}).items()):
         _check_keys("gate receipt keys", r, _RECEIPT_SHOWN)
-        _row(out, f"result of {tid}", f"{_s(r.get('repo'))} commit {_short(r.get('commit'))}, exit {_s(r.get('exit'))}")
-    for item in inp.get("source_sha") or []:
-        _row(out, "code", f"{_s(item.get('repo'))} {_s(item.get('ref'))} at {_short(item.get('sha'))}")
-    for item in ev.get("source_sha") or []:
-        _row(out, "code you decide on", f"{_s(item.get('repo'))} {_s(item.get('ref'))} at {_short(item.get('sha'))}")
+        _row(
+            out,
+            f"result of {tid}",
+            f"{_s(r.get('repo'))} commit {_short(r.get('commit'))}, exit {_s(r.get('exit'))}, "
+            f"event {_s(r.get('event'))}",
+        )
+    for label, items in (("code", inp.get("source_sha")), ("code you decide on", ev.get("source_sha"))):
+        for item in items or []:
+            _check_keys("source_sha keys", item, frozenset({"repo", "ref", "sha"}))
+            _row(out, label, f"{_s(item.get('repo'))} {_s(item.get('ref'))} at {_short(item.get('sha'))}")
     for earlier, p in sorted((inp.get("prior") or {}).items()):
+        _check_keys("prior gate keys", p, frozenset({"gen", "approvals"}))
         who = ", ".join(_s(x) for x in p.get("approvals") or []) or "nobody"
         _row(out, f"earlier gate {earlier}", f"generation {_s(p.get('gen'))}, approved by {who}")
     policy = material.get("policy")
@@ -394,10 +417,11 @@ def _event(
     """The headline of one event; everything it shows is added to ``out``."""
     if typ == "ticket.created":
         title = _s(ev.get("title"))
-        out["ticket"] = {"key": _s(ev.get("key")), "title": title}
+        out["ticket"] = {**(out.get("ticket") or {}), "key": _s(ev.get("key")), "title": one(title)}
         _row(out, "type", ev.get("ticket_type"))
         _row(out, "owner", ev.get("owner"))
-        return f"Create ticket {_s(ev.get('key'))} · {title}"
+        tail = (out.get("ticket") or {}).get("uid_tail")
+        return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (f" (…{tail})" if tail else "")
     if typ == "ticket.updated":
         return _updated(ev, ref, out, before, texts, ctx)
     if typ == "log.added":
@@ -426,7 +450,9 @@ def _event(
         _row(out, "from", ev.get("issued_at"))
         _row(out, "until", ev.get("expires_at"))
         _row(out, "grant id", ev.get("grant"))
-        out["note"] = f"Agents can act for you for {hours} hours, as far as the scope and verbs above allow."
+        out.setdefault("notes", []).append(
+            f"Agents can act for you for {hours} hours, as far as the scope and verbs above allow."
+        )
         return f"Give agents access for {hours} hours (scope {_s(ev.get('scope'))}, verbs {_s(ev.get('verbs'))})"
     if typ == "grant.revoked":
         _row(out, "grant id", ev.get("grant"))
@@ -460,7 +486,9 @@ def _event(
                 _row(out, k, ev[k])
         _row(out, "size", f"{_s(ev.get('bytes'))} bytes")
         _row(out, "digest", _short(ev.get("sha256")))
-        out["note"] = "The file itself is not shown here; compare the digest with the file you meant (details: d)."
+        out.setdefault("notes", []).append(
+            "The file itself is not shown here; compare the digest with the file you meant (details: d)."
+        )
         return f"{'Add' if typ == 'artifact.added' else 'Replace'} the file {_s(ev.get('name'))} on {ref}"
     if typ in ("addon.disabled", "addon.purged", "addon.granted"):
         verb = {"addon.granted": "Grant", "addon.disabled": "Disable", "addon.purged": "Purge"}[typ]
@@ -530,38 +558,46 @@ def _updated(
 
 def text(content: Mapping[str, Any], clean: Callable[[Any], str], *, workspace: str | None = None) -> list[str]:
     """``content`` as the terminal's plain view. Every value goes through ``clean`` (control characters never reach
-    the terminal); a newline inside a value starts another line of the same indented block."""
+    the terminal) and :func:`one` (a line break never starts a line of its own: structure such as ``2. task`` cannot be
+    faked); only a section's text is a block, every line of it under a ``| `` mark."""
+
+    def v(value: Any) -> str:
+        return clean(one(value))
 
     def block(value: Any) -> list[str]:
         lines = _s(value).split("\n") if value not in (None, "") else ["(empty)"]
-        return ["  " + clean(line) for line in lines]
+        return ["  | " + clean(line) for line in lines]
 
-    out = [clean(content["headline"])]
+    out = [v(content["headline"])]
     if workspace:
-        out.append(f"in workspace {clean(workspace)}")
+        out.append(f"in workspace {v(workspace)}")
+    ticket = content.get("ticket") or {}
+    if ticket.get("key_note"):
+        out.append(f"ticket {v(ticket['key'])}: {v(ticket['key_note'])}")
     out.append("")
     for sec in content.get("sections") or []:
-        out += [clean(sec["title"]), *block(sec["text"]), ""]
+        out += [v(sec["title"]), *block(sec["text"]), ""]
     if content.get("acceptance"):
         out.append("Acceptance criteria")
-        out += [f"  [ ] {clean(a['id'])}  {clean(a['text'])}" for a in content["acceptance"]]
+        out += [f"  [ ] {v(a['id'])}  {v(a['text'])}" for a in content["acceptance"]]
         out.append("")
     if content.get("tasks"):
         out.append("Plan")
         for t in content["tasks"]:
-            out.append(f"  {t['n']}. {clean(t['title'])}")
-            out += [f"       verify: {clean(v)}" for v in t.get("verify") or []]
+            ident = f" [{v(t['id'])}]" if t.get("id") else ""
+            out.append(f"  {t['n']}.{ident} {v(t['title'])}")
+            out += [f"       verify: {v(x)}" for x in t.get("verify") or []]
         out.append("")
     if content.get("fields_changed"):
         out.append("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields")
         for c in content["fields_changed"]:
-            new = "(not set)" if c["after"] is None else clean(c["after"])
+            new = "(not set)" if c["after"] is None else v(c["after"])
             if c["before"] is None:
-                out.append(f"  {clean(c['field'])}: {new}")
+                out.append(f"  {v(c['field'])}: {new}")
             else:
-                note = f" ({clean(c['before_note'])})" if c.get("before_note") else ""
-                out.append(f"  {clean(c['field'])}: {clean(c['before'])}{note} -> {new}")
+                note = f" ({v(c['before_note'])})" if c.get("before_note") else ""
+                out.append(f"  {v(c['field'])}: {v(c['before'])}{note} -> {new}")
         out.append("")
-    if content.get("note"):
-        out += [clean(content["note"]), ""]
+    for note in content.get("notes") or []:
+        out += [v(note), ""]
     return out

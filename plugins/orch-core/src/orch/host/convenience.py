@@ -40,7 +40,6 @@ __all__ = [
     "REASONS",
     "check",
     "enabled",
-    "refuse_pair_device",
     "pair_gate",
     "flag_path",
     "pending_handoffs",
@@ -243,11 +242,7 @@ _TEXT = {
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
     "dev_host": "this is a Simulator dev host or a dev-pair sandbox: click-to-sign is off here for good (only "
     "column R's dev gate accepts Simulator answers, orch-v2-host 11A.17)",
-    "pair_device": "pairing a device (relay.pair_device) is signed in your terminal with your passphrase, never with "
-    "convenience custody",
 }
-#: the fix of ``pair_device`` (11A.15.6 "Convenience custody is refused for pairing"): back to passphrase custody
-PAIR_DEVICE_FIX = "orch keys custody passphrase --workspace W --in-place"
 
 
 def unavailable(reason: str, devices: list[str]) -> HostError:
@@ -261,17 +256,6 @@ def unavailable(reason: str, devices: list[str]) -> HostError:
         f"{reason}: {_TEXT[reason]}{named}",
         hint=hint,
         detail={"reason": reason, "devices": devices},
-    )
-
-
-def refuse_pair_device() -> HostError:
-    """``sign.convenience_unavailable`` with reason ``pair_device`` (H12c-e, 11A.15.6): ``relay.pair_device`` refuses
-    ``auth:"convenience"`` whatever the flag, the readers or any dev opt-in; the fix names passphrase custody."""
-    return HostError(
-        "sign.convenience_unavailable",
-        f"pair_device: {_TEXT['pair_device']}",
-        hint=f"sign it with orch sign CODE; a key converted to convenience custody goes back with {PAIR_DEVICE_FIX}",
-        detail={"reason": "pair_device", "devices": []},
     )
 
 

@@ -416,7 +416,9 @@ def _step9(env: Mapping[str, str], state: Path, entry: Mapping[str, Any]) -> Cal
         idem = new_idem()
         name = Path(str(entry.get("root") or wid)).name
         try:
-            backend = _device_backend(state, wid)
+            backend = _device_backend(
+                state, wid, convenience=True
+            )  # B10: a key in one-click custody signs it too (word-confirmed)
             device = device_ref(backend.public_key(human.KEY_ID))
             signer.run(
                 _durable(target, link, idem), "relay.pair_device", {"offer_id": offer_id}, backend=backend,

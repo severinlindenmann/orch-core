@@ -33,6 +33,42 @@ from .errors import HostError
 __all__ = ["main", "parse_ttl"]
 
 TERMINAL = ("rejected", "expired", "cancelled", "failed")
+STATES = frozenset({"open", "pending", "confirmed", "cert_pending", "allocated", "published", "approved", *TERMINAL})
+_LINK_CHARS = frozenset(chr(c) for c in range(0x21, 0x7F))
+
+
+def safe(text: object, cap: int = 80) -> str:
+    """Terminal-safe text from the relay, a phone or the host (output injection): ``clean_label`` (protocol §2.5:
+    C0/C1 controls, format and bidi characters, zero-width and other default-ignorable code points removed), then
+    every whitespace (a newline too) a space, only printable characters, runs collapsed, at most ``cap`` characters.
+    Never printed raw next to the code the person compares."""
+    from orch.identity.pairing import clean_label
+
+    if not isinstance(text, str):
+        return "?"
+    try:
+        cleaned = clean_label(text.replace("\n", " "))
+    except Exception:  # noqa: BLE001 - lone surrogates
+        return "?"
+    kept = "".join(" " if c.isspace() else c for c in cleaned if c.isspace() or c.isprintable())
+    return " ".join(kept.split())[:cap]
+
+
+def _word(value: object, allowed: frozenset[str] | None = None) -> str:
+    """A token the host sends (a state, a scope, an id): shown only when it is one we know, else ``?``."""
+    if not isinstance(value, str) or not value or (allowed is not None and value not in allowed):
+        return "?"
+    return value if all(c.isalnum() or c in "_-." for c in value) and len(value) <= 64 else "?"
+
+
+def _link(value: object) -> str:
+    """A pairing link: printable ASCII only (the host builds it from a checked origin and b64u fields); anything
+    else is never written to the terminal."""
+    if not isinstance(value, str) or not value or len(value) > 2048 or not set(value) <= _LINK_CHARS:
+        raise HostError("internal", "the host returned a link that is not printable ASCII; nothing is shown")
+    return value
+
+
 POLL_S = 1.0
 FALLBACK = "fallback: your relay operator's page can read it"
 
@@ -110,15 +146,17 @@ def attach(
     polls = 0
     while True:
         offer = call("host.relay_pair_show", {"workspace_id": wid, "offer_id": offer_id})["offer"]
-        state = offer["state"]
+        state = _word(offer.get("state"), STATES)
+        scopes = ", ".join(_word(x, frozenset({"look", "decide"})) for x in offer.get("scopes") or [])
+        label = safe(offer.get("label"))
         if state != last:
             last = state
             out.write(f"state: {state}\n")
             out.flush()
             if emit is not None:
-                emit({"offer_id": offer_id, "state": state, "expires_ms": offer["expires_ms"]})
+                emit({"offer_id": offer_id, "state": state, "expires_ms": offer.get("expires_ms")})
         if state == "approved":
-            out.write(f"approved: {offer.get('label') or 'the device'} is paired ({', '.join(offer['scopes'])})\n")
+            out.write(f"approved: {label or 'the device'} is paired ({scopes})\n")
             return 0
         if state in TERMINAL:
             out.write(f"the pairing ended: {state}\n")
@@ -126,15 +164,16 @@ def attach(
         if state == "pending":
             if offer.get("second_key"):
                 out.write("WARNING: someone else has this link (a second key used it): reject\n")
-            out.write(f"request from: {offer.get('label')!r} (named by the device; not authenticated)\n")
-            out.write(f"scopes: {', '.join(offer['scopes'])}\n")
+            out.write(f"request from: [{label}] (named by the device; not authenticated)\n")
+            out.write(f"scopes: {scopes}\n")
             code = ask("type the 6 characters the phone shows (empty: reject): ")
             got = call(
                 "host.relay_pair_answer",
                 {"workspace_id": wid, "offer_id": offer_id, "code": code, "approve": bool(code)},
             )
             if got["state"] == "pending":
-                out.write(f"that is not the code: {got['attempts_left']} attempt(s) left\n")
+                left = got.get("attempts_left")
+                out.write(f"that is not the code: {left if type(left) is int else '?'} attempt(s) left\n")
             continue
         if state in ("confirmed", "cert_pending") and offer.get("has_cert") and not signed:
             signed = True
@@ -247,10 +286,11 @@ def main(
                     out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
                 else:
                     for o in data["offers"]:
-                        label, req = o.get("label") or "-", o.get("outstanding_request") or "-"
-                        out.write(
-                            f"{o['offer_id']}  {o['state']:<12} {','.join(o['scopes'])}  {label}  request={req}\n"
-                        )
+                        label = safe(o.get("label")) or "-"
+                        req = _word(o.get("outstanding_request")) if o.get("outstanding_request") else "-"
+                        sc = ",".join(_word(x, frozenset({"look", "decide"})) for x in o.get("scopes") or [])
+                        st = _word(o.get("state"), STATES)
+                        out.write(f"{_word(o.get('offer_id'))}  {st:<12} {sc}  [{label}]  request={req}\n")
                 return 0
             if sub in ("cancel", "abandon"):
                 if not args.offer:
@@ -290,13 +330,14 @@ def main(
                     "host.relay_pair_offer",
                     {"workspace_id": wid, "scopes": scopes, "ttl_ms": parse_ttl(args.ttl)},
                 )
-                offer_id = offer["offer_id"]
-                link = offer["link"]
+                offer_id = _word(offer.get("offer_id"))
+                link = {"native": _link(offer["link"]["native"]), "https": _link(offer["link"]["https"])}
                 if emit is not None:
                     emit({"offer_id": offer_id, "state": offer["state"], "link": link["https"],
                           "native_link": link["native"], "expires_ms": offer["expires_ms"]})  # fmt: skip
                 else:
-                    out.write(f"offer {offer_id} expires_ms={offer['expires_ms']}\n")
+                    exp = offer.get("expires_ms")
+                    out.write(f"offer {offer_id} expires_ms={exp if type(exp) is int else '?'}\n")
                     qr = None if args.no_qr else _qr(link["native"])
                     out.write(qr if qr else ("" if args.no_qr else "install orch[qr] for a QR\n"))
                     out.write(f"link: {link['native']}\n")
@@ -305,15 +346,17 @@ def main(
                 del link
             driver = step9 or _step9(env, state, entry)
             return attach(call, wid, offer_id, out, ask=ask, step9=driver, emit=emit, sleep=sleep)
-    except _Refused as exc:
-        out.write(json.dumps({"ok": False, "error": exc.error, "exit": exc.exit}, sort_keys=True) + "\n")
+    except _Refused as exc:  # the host's refusal, JSON-encoded (ASCII: every control character escaped)
+        out.write(json.dumps({"ok": False, "error": exc.error, "exit": exc.exit}, sort_keys=True, ensure_ascii=True))
+        out.write("\n")
         return exc.exit
     except HostError as exc:
-        return write_error(out, as_json, exc.code, exc.message, hint=exc.hint)
+        hint = safe(exc.hint, 300) if exc.hint else None
+        return write_error(out, as_json, _word(exc.code) if exc.code else "internal", safe(exc.message, 400), hint=hint)
     except (FileNotFoundError, ConnectionRefusedError):
         return write_error(out, as_json, "host.unavailable", "the orch host is not running: orch host start")
     except (OSError, ValueError) as exc:
-        return write_error(out, as_json, "invalid.input", f"{type(exc).__name__}: {exc}"[:300])
+        return write_error(out, as_json, "invalid.input", safe(f"{type(exc).__name__}: {exc}", 300))
     except KeyboardInterrupt:
         out.write("interrupted: the offer stays; attach again with --resume --offer\n")
         return 130

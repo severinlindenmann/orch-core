@@ -9463,6 +9463,15 @@ refused without R6b, a crash after the append rolled forward at open).
   the `needs` items and the in-memory drop count. **`pairing_dropped`** is written durably at most once a minute
   (the alarm's `count` is the total).
 
+**Output injection (orch-07's scan of `paircli.py`).** Everything the CLI prints that came from the relay, a phone
+or the host goes through `paircli.safe` (`clean_label`: C0/C1, DEL, format, bidi and zero-width characters removed;
+every whitespace, a newline too, a space; printable characters only; capped) or is shown only when it is a token
+the CLI knows (`_word`: states, scopes, ids; else `?`); the label is bracketed and on one line next to the typed
+code; a link is printed only when it is printable ASCII; errors are cleaned the same way; every JSON output is
+built by the JSON encoder (ASCII, every control character escaped). Tests: `\x1b[2J`, a bidi override, a newline,
+zero-width and C1 characters in a device label (the attached loop, `pair list` text and JSON) and in a host error
+and a relayed refusal.
+
 **Judgement calls.**
 - J-R6c2-1 **`--primary inline` is refused** (`invalid.input`, the fix names `--primary external`) until the inline
   primary (`orch.relay_owner`'s `PrimaryQueue` with `RecoveryCodeSource`) is built: a follow-up group, with its own

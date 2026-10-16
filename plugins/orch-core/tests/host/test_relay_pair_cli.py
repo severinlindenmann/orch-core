@@ -307,3 +307,77 @@ def test_the_host_cli_parses_pair_and_primary_and_routes_them(tmp_path):
     out = io.StringIO()
     code = main(["relay", "stop", "list", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
     assert code != 0 and "invalid.input" in out.getvalue()
+
+
+# -- output injection (orch-07 scan): nothing from the relay or a phone reaches the terminal raw -----------------------
+
+EVIL = ["Sev\x1b[2J\x1b[Hphone", "Sev‮enohp", "Sev\nscopes: look, decide, operate", "​Sev\x07\x9b31m",
+        "x" * 500]  # fmt: skip
+BAD_CHARS = ["\x1b", "‮", "​", "\x07", "\x9b"]
+
+
+@pytest.mark.parametrize("label", EVIL)
+def test_a_device_label_is_terminal_safe_in_the_attached_loop(label):
+    class S(Script):
+        def __call__(self, op, args):
+            if op == "host.relay_pair_show":
+                st = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+                return {"offer": {"state": st, "has_cert": False, "label": label, "scopes": ["look", "decide\x1b[2J"],
+                                  "second_key": False, "expires_ms": 1}}  # fmt: skip
+            return super().__call__(op, args)
+
+    out = io.StringIO()
+    paircli.attach(S(["pending", "approved"]), "w" * 32, "o" * 32, out, ask=lambda p: "", step9=lambda o: None,
+                   sleep=lambda t: None)  # fmt: skip
+    text = out.getvalue()
+    assert not any(c in text for c in BAD_CHARS)
+    request_lines = [ln for ln in text.splitlines() if ln.startswith("request from:")]
+    assert len(request_lines) == 1 and len(request_lines[0]) < 160  # one line, capped: no injected second line
+    assert not any(ln.startswith("scopes: look, decide, operate") for ln in text.splitlines())
+    assert "scopes: look, ?" in text  # a scope the host never sends is shown as ?
+
+
+def test_list_output_and_relay_errors_are_terminal_safe(host):
+    lab, h, wid, service, engine, owner, primary = host
+    relaypair.primary_set(service, primary.cert(scopes=("look",)), "Mac")
+    hd = engine.offer()
+    phone = Phone(hd.link.native)
+    engine.receive(*phone.envelope(phone.meta(label=EVIL[0] + EVIL[1]), ts=engine.now_ms()))
+    rc, text = run(lab, h, ns(sub="list", workspace=wid))
+    assert rc == 0 and not any(c in text for c in BAD_CHARS)
+    rc, text = run(lab, h, ns(sub="list", workspace=wid, json=True))
+    assert not any(c in text for c in BAD_CHARS)  # the JSON encoder escapes them
+
+
+def test_an_error_text_with_control_characters_is_cleaned(monkeypatch, host):
+    lab, h, wid, *_ = host
+
+    def boom(state, given):
+        raise HostError_("relay.pair_closed", "bad\x1b[2J‮line\nnext", hint="hint\x1b[31m")
+
+    from orch.host.errors import HostError as HostError_
+
+    monkeypatch.setattr(paircli, "_workspace", boom)
+    rc, text = run(lab, h, ns(workspace=wid))
+    assert rc != 0 and not any(c in text for c in BAD_CHARS) and text.count("\n") == 1
+
+
+def test_a_refusal_from_the_host_is_json_with_every_control_character_escaped(monkeypatch, host):
+    lab, h, wid, *_ = host
+
+    def caller(client):
+        def call(op, args):
+            raise paircli._Refused({"code": "relay.pair_closed", "message": "x\x1b[2J\u202e\nfake: ok"}, 3)
+
+        return call
+
+    monkeypatch.setattr(paircli, "_caller", caller)
+    rc, text = run(lab, h, ns(sub="list", workspace=wid))
+    assert rc == 3 and not any(c in text for c in BAD_CHARS) and text.count("\n") == 1
+    assert json.loads(text)["error"]["message"].startswith("x")
+
+
+def test_a_link_that_is_not_printable_ascii_is_never_printed():
+    with pytest.raises(Exception):  # noqa: B017 - HostError internal
+        paircli._link("orch://pair?relay=x#v2.\x1b[2J")
+    assert paircli.safe("a\x1b[2Jb‮c\nd") == "a[2Jbc d"

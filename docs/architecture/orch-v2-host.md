@@ -6996,80 +6996,132 @@ relay's largest set is never held in memory: it is built and sent in pieces.
   `attention: [{what, fix}]`; `orch host status` lists a problem with the same text and the fix chosen from the
   store's state (above). **SEAM (#572): promote `unpublished_held` to a host-originated `needs` item ("publish
   this revocation") when those exist** (`orch/host/relayr4.py`, `orch/relay/unpublished.py`).
-- **R4 held ledger: the sticky-ledger DESIGN (round 4, 16 Oct 2026; DESIGN ONLY, under challenge by Codex and orch-07
-  before any code; it supersedes the "held list replaced by a full read" and `_settle` text above and the code at
-  82da2203, which predates it).** Three reviews found the same class (a security notice hidden by relay behaviour), so
-  the structure changes instead of the paths: the owner's view is a **monotone ledger** and the relay is a write-only
-  input to it.
-  - **Ledger.** Persisted in `relay/unpublished.json` as `held` (rows), `unverifiable` (a count) and `overflow` (a
-    count). A row is keyed by the exact `(d_device, p_person)` pair and carries `need`, the reason of the strongest
-    verified item seen for it (the required strength is `revoke_strength(need)`: compromised 2 > lost = retired 1),
-    the item's digest, `at_ms` and a derived `state` (below). At most 4,096 rows (the relay's ever-device quota).
-  - **ONE write API** (`Ledger` in `relay/unpublished.py`): `add_or_raise(row)` (relay input: adds a pair, or raises
-    its `need`; an equal or weaker item changes nothing) and `settle_from_store(standings)` (the only removal: a
-    row goes when the store says `settled`; every other standing only rewrites the derived `state` text). An AST test
-    pins that no other code mutates `held`, `unverifiable` or `overflow`.
-  - **Settle source (orch-07, core owner).** `Store.pair_settled(device, person, need)` (and `pair_standings` for a
-    batch) is a read-only function of the workspace's own verified state under the store lock:
-    `rec = state.revocations[device][person]` and `revoke_strength(rec.revocation.reason) >= revoke_strength(need)`.
-    `ws.revocations` is written by every accepted `device.revoked` (live devices AND restore tombstones, which
-    live there too); it is NOT `dev.revoked`. The model accepts a `compromised` upgrade over a tombstone's
-    `lost`/`retired` (for a device it does not know it takes `previous` from that person's tombstone entry and applies
-    the same rule, `model/workspace.py:203`: only non-compromised -> compromised lands; lost after retired or the
-    reverse does not, equal strength is already covered). It needs THAT person's entry: a tombstone holding only other
-    persons' evidence refuses this person's revocation (`DEVICE_CERT`, `workspace.py:187`) and a device with no
-    tombstone at all is `DEVICE_UNKNOWN`: both stay **held** and visible, with their own text.
-  - **Standing of a row** (derived, re-judged by the host on every aux turn, and again after the aux turn that follows
-    a commit that can revoke, always under the store lock; a store commit that can revoke (`device.revoked`, `member.removed`, a restore) also WAKES the R4 aux turn, still not synchronous): `settled` (removed) | `stronger` (state holds a weaker
-    revocation of the pair) | `revoke` (the device is the person's and nothing revokes it) | `other` (the device is
-    another person's, or a tombstone holds other persons' evidence only: `DEVICE_CERT`) | `unknown` (no device and no
-    tombstone: `DEVICE_UNKNOWN`). Person-visible text per row: `revoke` "an owner signs a `device.revoked` for that
-    device with reason X (F1 §5.3)"; `stronger` "an owner signs a `device.revoked` with the stronger reason X: it
+- **R4 held ledger: the sticky-ledger DESIGN, revision 2 (round 4, 16 Oct 2026; DESIGN ONLY: revised after the Codex
+  challenge (nine findings) and orch-07's adjustments, before any code; it supersedes the "held list replaced by a full
+  read" and `_settle` text above and the code at 82da2203, which predates it).** Three reviews found one class (a
+  security notice hidden by relay behaviour), so the structure changes instead of the paths: the owner's view is a
+  **monotone ledger** and the relay is a write-only input to it.
+  - **Ledger.** Persisted in `relay/unpublished.json`: `held` (rows), `unverifiable` `{n, first_ms, last_seen_ms,
+    clean_scans}`, `overflow` (a count), `rebuilding` (bool), `last_complete_ms`, `ledger_seq`. A row is keyed by the
+    exact `(d_device, p_person)` pair and carries `need` (the reason of the strongest verified item seen for it; required
+    strength `revoke_strength(need)`: compromised 2 > lost = retired 1), `ver` (incremented on every raise), the
+    item's digest, `at_ms` and a derived `state` (below). At most 4,096 rows (the relay's ever-device quota).
+  - **ONE write API** (`Ledger` in `relay/unpublished.py`): `add_or_raise(row)` (relay input: adds a pair, or raises its
+    `need`; an equal or weaker item changes nothing), `settle_from_store(judged)` (the only removal: a row goes only
+    when the store judged it `settled` AND its current `(need, ver)` still equals the judged `(need, ver)`: a
+    compare-and-set, so an answer computed before a raise can never delete the raised requirement) and
+    `note_unverifiable(n)`; `rebuilding`, `overflow` and the freshness fields have their own single setters. An AST test
+    pins that no other code mutates any of them or the persisted `held` list. Raising compares reasons with a function
+    INJECTED by `relayr4` (built on `orch.identity.certs.revoke_strength`; `orch.relay` cannot import `orch.identity`,
+    and no second strength table exists), pinned for all 3x3 reason pairs.
+  - **Settle source (orch-07).** `Store.pair_settled(device, person, need)` (`pair_standings` for a batch) is a
+    read-only function of the workspace's own verified state under the store lock: `rec =
+    state.revocations[device][person]` and `revoke_strength(rec.revocation.reason) >= revoke_strength(need)`.
+    `ws.revocations` is written by every accepted `device.revoked`, for live devices AND restore tombstones; it is NOT
+    `dev.revoked`. The model accepts a `compromised` upgrade over a tombstone's `lost`/`retired` (`model/workspace.py:203`:
+    only non-compromised -> compromised lands; lost after retired or the reverse is already covered). It needs THAT
+    person's entry: a tombstone holding only other persons' evidence refuses this person's revocation (`DEVICE_CERT`,
+    `workspace.py:187`), a device with no tombstone at all is `DEVICE_UNKNOWN`: both stay held and visible. The model
+    verifies against `ws.members.get(p) or ws.former.get(p)` (`workspace.py:191`), so a FORMER member's device is a
+    normal row.
+  - **Standing of a row** (derived; judged by the host on every aux turn, which a store commit that can revoke
+    (`device.revoked`, `member.removed`, a restore) WAKES, still not synchronously; always under the store lock):
+    `settled` (row removed) | `stronger` (state holds a weaker revocation) | `revoke` (the device is the person's, no
+    revocation) | `other` (the device is another person's, or a tombstone holds other persons' evidence only) |
+    `unknown` (no device, no tombstone). **Honest text per row** (`orch host status` and `host.status.relay`
+    `attention`, each with `actionable`): `revoke` (actionable) "an owner signs a `device.revoked` for that device with
+    reason X (F1 §5.3)"; `stronger` (actionable) "an owner signs a `device.revoked` with the stronger reason X; it
     replaces the weaker one; the relay may keep listing the item until the next restore, which is harmless"; `other`
-    "cannot be settled here: the workspace holds only other persons' evidence for this device; nothing for this
-    workspace to sign"; `unknown` "the device is not known to this workspace yet; nothing to sign until it is". Never an
-    instruction to re-append an equal-strength revocation (relay obligation 5).
-  - **Store result per item** (`Store.note_forwarded_revocation`, one lock): `unverifiable` (does not verify, parse,
-    fit the size caps, or an outer field differs from the signed objects), `dropped` (verified, but NO person key is known here: the person is neither a member nor a former member and has no tombstone entry; counted as `unverifiable`, see the table. A former member's device IS verifiable, the model verifies against `ws.members.get(p) or ws.former.get(p)` (`workspace.py:191`), so it is a normal ledger row settled by `pair_settled`),
-    `settled` (state covers it), `held` (everything else: no revocation, a weaker one, `other`, `unknown`, no host
-    state, a cap that kept the record out of `HostPins`). `pending` no longer exists: a member's pair is always
-    visible. An exception is no result at all.
-  - **Durability.** The file is written atomically (`StateDir`: temp, fsync, rename, directory fsync, 0600) before the
-    ack. At every process start the ledger is **seeded** from `Store.forwarded_evidence()` (what `HostPins` holds
-    durably), so a lost or older `unpublished.json` can never make the ledger smaller than the evidence the host
-    already holds; it only costs a re-read.
+    (NOT actionable from this host) "cannot be settled from this host: the workspace holds only other persons'
+    evidence for this device (the model refuses this person's revocation, DEVICE_CERT); shown so it is never hidden;
+    it settles only if the state changes (a restore that carries this person's revocation, or the device is
+    re-associated)"; `unknown` (NOT actionable yet) "the device is not known to this workspace: nothing to sign until
+    it is added (the row then becomes `revoke`); shown so it is never hidden". Never an instruction to re-append an
+    equal-strength revocation (relay obligation 5).
+  - **Store result per item** (`Store.note_forwarded_revocation`, one lock): `unverifiable` (does not verify, parse, fit
+    the size caps, or an outer field differs from the signed objects), `dropped` (verified, but NO person key is known
+    here: neither member nor former member, no tombstone entry for that person; counted as `unverifiable`), `settled`
+    (state covers it), `held` (everything else: no revocation, a weaker one, `other`, `unknown`, no host state, a cap
+    that kept the record out of `HostPins`). `pending` no longer exists. An exception is no result at all.
+  - **Per-item durability (H3).** The ledger file is written atomically (`StateDir`: temp, fsync, rename, directory
+    fsync, 0600) after EACH item that changes it, before the next item is judged, and `ledger_seq` is incremented; a
+    failure or crash at item k therefore keeps the results of items 1..k-1. The page's ack still goes out only after
+    every item of the page has a result and the position is saved.
+  - **Loss and rebuilding (H2).** `HostPins` cannot recover every obligation: its caps are smaller than the ledger's and
+    it stores a stronger forwarded reason beside a chain record in `upgrade`; a record it REJECTED at its cap exists only
+    in the relay's derived view. So: at every start the ledger is seeded (union) from `Store.forwarded_evidence()`, which
+    returns each record AND its `upgrade`; and when the ledger file is LOST (missing), unparseable, fails validation, or
+    is OLDER than its mirror (`ledger_seq` below the sequence mirrored beside `HostPins`, written after every ledger
+    save) the host enters `rebuilding`: the ledger starts from the seed, a full read from the start of the relay's view
+    begins, and `orch host status` is NOT ok ("the held list is being rebuilt") until a COMPLETE full read, started after
+    the loss, finishes with every item given a result (no exception, `more` false). An older backup of the whole state
+    directory (file and mirror together) is undetectable, as for every local state (11A.3).
+  - **`unverifiable` is sticky (H1).** Relay behaviour never clears it. It is cleared only when BOTH at least 2
+    consecutive COMPLETE full scans did not see an unverifiable item (`clean_scans`) AND at least 7 days passed since
+    `last_seen_ms`; any sighting resets both. Justification: an unverifiable item carries no verified evidence, a
+    relay can withhold anything before first delivery anyway, but the counter exists so the owner sees tampering; a
+    single empty or short answer must not erase it, and a week gives the owner time to look. An owner acknowledge
+    command is a later option, not in R4.
+  - **Overflow (M5).** At 4,096 rows a new pair is NOT stored: `overflow` +1, an alarm, `orch host status` not ok, and
+    nothing is evicted. Pairs beyond the cap are not tracked, so they are neither settled nor raised; the evidence is
+    in `HostPins` within ITS caps. The overflow count never clears by relay behaviour (those pairs were delivered and
+    not stored); it stays until an owner reset (unreachable by design: 4,096 is the relay's ever-device quota).
+  - **Status freshness (M9).** `last_complete_ms` is the end of the last COMPLETE full read. `orch host status` shows its
+    age and is NOT ok ("stale") when the worker is linked and the last complete read is older than 2 x 24 h, or when
+    scans keep failing (3 consecutive failed turns in a row after the last complete read: the alarm stays open). A scan in
+    `unpublished_scan_long` slow mode is still fresh while it advances.
+
+  **Ledger and item states** (rows of the ledger or counters): *no row*; *row `revoke`* (need S); *row `stronger`*
+  (need S); *row `other`*; *row `unknown`*; *`unverifiable` n>0*; *`overflow` n>0*; *`rebuilding`*; *stale*; *settled*
+  (the row is gone; only through `pair_settled` with an unchanged `(need, ver)`).
 
   | Input | Ledger | `note_forwarded_revocation` | Alarm | `orch host status` | Ack |
   |---|---|---|---|---|---|
-  | New verified item, device is the person's, no revocation in state | no row -> row `revoke`, need S | `held` | `unpublished_held` (once per new row or raise) | not ok: "sign device.revoked, reason X" | yes, after every item of the page has a result and the file is saved |
-  | New item, state holds a weaker revocation (compromised over lost/retired) | row `stronger`, need S | `held` | `unpublished_held` | not ok: "sign device.revoked with the stronger reason X" | yes |
-  | New item, state revocation of the exact pair at >= S (equal strength included) | no row | `settled` | none | ok (if nothing else is held) | yes |
-  | Item for a device that is only a restore tombstone, tombstone has THIS person's entry | by strength: `settled` (no row), or row `stronger` | `settled` / `held` | as above | as above | yes |
-  | Same, but the tombstone holds only other persons' evidence, or the device is another person's | row `other` | `held` | `unpublished_held` | not ok: "cannot be settled here" | yes |
-  | Item for a member's device the workspace does not know and no tombstone | row `unknown` | `held` | `unpublished_held` | not ok: "device not known yet" | yes |
-  | Item for a FORMER member's device | normal row by standing (`settled` when state covers it, else as the rows above) | `held` / `settled` | as above | as above | yes |
-  | Item whose person key is unknown (neither member nor former member, no tombstone entry for that person) | counted in `unverifiable` | `dropped` | `unpublished_unverifiable` (once per page) | not ok: "N items the relay serves could not be verified" | yes |
-  | Re-served EQUAL item (same pair, same reason) | unchanged | `held` or `settled` | none (not a new row) | unchanged | yes |
-  | Re-served WEAKER item for a pair whose row needs more | unchanged: never lowers, never removes | `held`/`settled` by its own reason | none | unchanged | yes |
-  | Re-served STRONGER item | row `need` raised to S | `held` | `unpublished_held` | text follows the new need | yes |
-  | Item with a wrong outer field (reason, ids, digest), unknown shape, over the size cap | `unverifiable` count +1 (no per-item row) | `unverifiable` | `unpublished_unverifiable` (once per page) | not ok: "N items ... could not be verified" | yes: it has a result |
+  | New verified item, device is the person's, no revocation in state | no row -> row `revoke`, need S, ver 1 | `held` | `unpublished_held` (once per new row or raise) | not ok: "sign device.revoked, reason X" | yes, after every item has a result and the file is saved |
+  | New item, state holds a weaker revocation | row `stronger`, need S | `held` | `unpublished_held` | not ok: "sign device.revoked with the stronger reason X" | yes |
+  | New item, state revocation of the exact pair at >= S (equal strength included) | no row | `settled` | none | ok (if nothing else is open) | yes |
+  | Item for a restore-tombstone-only device, the tombstone has THIS person's entry | by strength: no row, or row `stronger` | `settled` / `held` | as above | as above | yes |
+  | Same, but the tombstone holds only other persons' evidence, or the device is another person's | row `other` | `held` | `unpublished_held` | not ok, NOT actionable: "cannot be settled from this host" | yes |
+  | Item for a member's (or FORMER member's) device the workspace does not know, no tombstone | row `unknown` | `held` | `unpublished_held` | not ok, not actionable yet: "device not known" | yes |
+  | Item whose person key is unknown (no member, no former member, no tombstone entry) | `unverifiable` +1 (`last_seen_ms` now, `clean_scans` 0) | `dropped` | `unpublished_unverifiable` (once per page) | not ok: "N items could not be verified" | yes |
+  | Item with a wrong outer field, unknown shape, over the size cap | `unverifiable` +1 as above (no per-item row) | `unverifiable` | as above | as above | yes |
+  | Re-served EQUAL item | unchanged | `held` or `settled` | none (not a new row) | unchanged | yes |
+  | Re-served WEAKER item for a pair whose row needs more | unchanged: never lowers, never removes | by its own reason | none | unchanged | yes |
+  | Re-served STRONGER item | row `need` raised to S, `ver`+1 | `held` | `unpublished_held` | text follows the new need | yes |
+  | Sequence: lost item -> compromised item -> lost item again (HostPins keeps the compromised one in `upgrade` beside a chain record) | need 1 -> 2 -> stays 2; the row is removed only when state holds compromised | `held`, `held`, by own reason | one per raise | text follows need 2 | yes |
+  | Sequence: state `lost`, relay compromised (row `stronger`), owner signs compromised, relay re-serves lost and compromised | row `stronger` -> removed at the next judging; both re-served items are `settled` | `held`, then `settled` | none after the first | not ok -> ok | yes |
   | Item omitted or "forgotten" by the relay (any page, any read) | unchanged: no input is no change | not called | none | unchanged | n/a |
-  | A full read completes WITH the item / WITHOUT it | held rows unchanged either way; `unverifiable` is replaced by this scan's count (the only expiry: it carries no verified evidence); `last_full_ms` set | per item | none | unverifiable text may clear | yes |
-  | Restart, or a new holder generation | ledger kept; scan, `ack`, `resume`, counters restart; ledger re-seeded from `HostPins` (union) | none | none | unchanged | the old gen's ack is dropped |
-  | A restored OLDER `unpublished.json` | fewer rows -> seeded back from `HostPins`, re-added by the next full read; an older cursor re-reads; a newer one gets `cursor_ahead` (restart) | `held` again, idempotent | `unpublished_held` for the re-added rows | not ok again | yes |
-  | A LOST or unparseable `unpublished.json` | fresh record + seeding + full read from the start | as above | as above | as above | yes |
-  | A store commit that adds a revocation (`device.revoked`, `member.removed`, a restore, an upgrade; it WAKES the aux turn) | at the next aux turn `pair_standings` runs under the store lock: `settled` -> row removed; otherwise `state` rewritten (`revoke` -> `stronger`) | `pair_standings` (not `note_...`) | none | ok when the ledger is empty | n/a |
-  | An exception inside the store job (`hold` or the judging job) | unchanged | none (no result) | the aux guard's one alarm per class | unchanged | NO: no ack, 30 s back-off, the page is read again |
+  | A complete full read WITH or WITHOUT the item | held rows unchanged either way; `last_complete_ms` set; `unverifiable.clean_scans` +1 if it saw no unverifiable item | per item | none | freshness refreshed; `unverifiable` clears only by its own rule (>= 2 clean complete scans AND 7 days) | yes |
+  | An EMPTY complete full read (hostile or genuine) | nothing removed; `clean_scans` +1 at most once per scan | none | none | `unverifiable` stays for 7 days | yes |
+  | Restart, or a new holder generation | ledger kept; scan, `ack`, `resume`, counters restart; ledger re-seeded (union) from `Store.forwarded_evidence()` incl. `upgrade` entries | none | none | unchanged | the old gen's ack is dropped |
+  | Ledger file LOST, unparseable, invalid, or OLDER than its mirror | `rebuilding` = true; seeded from `HostPins`; full read from the start | `held` again, idempotent | `unpublished_held` for the re-added rows; one `unpublished_rebuilding` | NOT ok: "rebuilding" until a complete full read started after the loss finishes with every item given a result | yes (ack as usual) |
+  | An obligation HostPins REJECTED at its cap, then the file is lost | not in the seed; recovered only by the rebuild scan from the relay's view; `rebuilding` stays on until it completes | `held` | as above | NOT ok: rebuilding | yes |
+  | A store commit that adds a revocation (`device.revoked`, `member.removed`, a restore, an upgrade); it WAKES the aux turn | next aux turn: `pair_standings` under the store lock: `settled` -> row removed (only if `(need, ver)` unchanged); otherwise `state` rewritten | `pair_standings` (not `note_...`) | none | ok when nothing else is open | n/a |
+  | A raise racing a settle (judged at need 1, a stronger item raises to 2 before the answer is applied) | the settle is refused (CAS on `(need, ver)`); the row stays, judged again next turn | n/a | none | unchanged | n/a |
+  | Crash or exception MID-PAGE at item k | rows of items 1..k-1 are already persisted; nothing is lost | no result for k | the aux guard's one alarm per class | unchanged | NO: no ack, 30 s back-off, the page is read again (`resume` skips what is already held) |
+  | An exception inside the judging job | unchanged | none | one alarm per class | unchanged | n/a |
   | No host state / store closed | judging returns `unknown` for every row, nothing is removed; a new verified item becomes a row `unknown` | `held` | `unpublished_held` | not ok | yes |
-  | Ledger at 4,096 rows and a new pair arrives | NOT stored; `overflow` +1; nothing is ever evicted | `held` | `unpublished_overflow` (once per process) | not ok: "ledger full" (permanent until an owner reset: unreachable by design, the quota is the relay's) | yes |
+  | Ledger at 4,096 rows and a new pair arrives | NOT stored; `overflow` +1; nothing evicted | `held` | `unpublished_overflow` (once per process) | not ok: "ledger full" (until an owner reset) | yes |
+  | Scans keep failing (relay unreachable, repeated refusals) or no complete scan for > 48 h | unchanged; `last_complete_ms` ages | none | the existing transport/refusal alarms stay open | NOT ok: "stale: last complete scan <age> ago" | n/a |
 
-  - **Invariants (pinned by tests).** (0) Raising a row's `need` uses a comparison INJECTED by `relayr4` (host side, built on `orch.identity.certs.revoke_strength`; `orch.relay` cannot import `orch.identity`, and no second strength table exists); a test pins that the injected function agrees with `revoke_strength` for all 3x3 reason pairs. (1) Relay input can only ADD a row or RAISE its `need`: a full read, an omitted
-    item, a re-served weaker item, a restarted page, a new holder gen or a lost file never remove or lower anything.
-    (2) Only `Store.pair_settled` (the store's own verified state, `ws.revocations[device][person]`, the one
-    `revoke_strength`) removes a row, re-judged by the host, never driven by what the relay says. (3) Every item
-    the relay serves gets a result: `settled` (no row needed), `held` (a row), or `unverifiable` (a visible counter);
-    there is no path from relay behaviour to a smaller ledger. (4) `orch host status` is ok only when the ledger is
-    empty and `unverifiable` and `overflow` are 0.
+  - **Invariants (pinned by tests).** (0) Raising a row's `need` uses the comparison injected by `relayr4` (3x3 test
+    against `revoke_strength`). (1) Relay input can only ADD a row or RAISE its `need`: a full read (empty or not), an
+    omitted item, a re-served weaker item, a restarted page, a new holder gen, a lost or older file never remove or lower
+    anything. (2) Only `Store.pair_settled` (the store's own verified state, `ws.revocations[device][person]`, the one
+    `revoke_strength`) removes a row, by compare-and-set on `(need, ver)`, re-judged by the host, never driven by what
+    the relay says. (3) Every item the relay serves gets a result: `settled` (no row needed), `held` (a row, persisted
+    before the next item), or `unverifiable` (a sticky counter); there is no path from relay behaviour to a smaller
+    ledger; an ack follows only complete results. (4) `orch host status` is ok only when the ledger is empty,
+    `unverifiable` and `overflow` are 0, the host is not `rebuilding`, and the last complete scan is fresh.
+  - **Test plan.** Cell tests for every row above, the probes of rounds 2 and 3 as regressions, the mutants of both
+    rounds as regression targets, plus a **model-based stateful test**: a pure oracle (the set of obligations
+    `(pair, need)` delivered by the relay and not yet settled by the store's state) against the real
+    `UnpublishedConsumer` and the real store, over random sequences of {relay inputs: new, equal, weaker, stronger,
+    wrong-field, empty page, omitted item, restarted or reordered page, more-forever} x {restart, new gen, ledger file
+    lost, older file restored} x {store commits: `device.revoked` of each reason, `member.removed`, restore} x {crash or
+    exception at any item}. The invariant checked after every step: the ledger never lacks an obligation that the
+    oracle holds and the store has not settled (and every row the store has settled disappears at the next judging),
+    plus the status is not ok whenever the oracle is non-empty or `rebuilding`/`unverifiable`/`overflow` is set.
 - JUDGEMENT CALLS (R4): the held list is display data only, never evidence (the evidence is the store's
   `HostPins`); the store's per-pair dedup makes a re-read after a lost ack idempotent; positions are opaque, so the
   stored position is the last acked page's `cursor` (a read from it only moves forward; a completed full read ends

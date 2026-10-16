@@ -24,6 +24,7 @@ class Auth:
         # The exact file handed out per code, so later directory resolution can never change what is deleted.
         self.files: dict[str, Path] = {}
         self.sessions: dict[str, tuple[float, float]] = {}
+        self.setup_sessions: dict[str, str] = {}
         self.attempts = deque()
         self.lock = threading.Lock()
 
@@ -109,3 +110,20 @@ class Auth:
     def logout(self, token):
         with self.lock:
             self.sessions.pop(token, None)
+
+    def bind_setup(self, token, setup_id):
+        """Setup scope only. Core owns the 30 s single-use claim and 10 min idle/run-aware lifetime.
+
+        Retain only a credential hash and setup id; never any setup request or response body.
+        """
+        with self.lock:
+            self.setup_sessions.clear()  # one setup process / bound browser per local socket
+            self.setup_sessions[hashlib.sha256(token.encode()).hexdigest()] = setup_id
+
+    def valid_setup(self, token):
+        with self.lock:
+            return bool(token) and hashlib.sha256(token.encode()).hexdigest() in self.setup_sessions
+
+    def forget_setup(self, token):
+        with self.lock:
+            self.setup_sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)

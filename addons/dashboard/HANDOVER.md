@@ -1220,3 +1220,21 @@ Fixture: `src/dev/dropFixture.ts` (`createDropFixture`, `installDropFixture`, `e
 `src/dev/layoutGuardPages.test.ts`. No new dependency.
 To do when the ops are agreed: the server's `drop` feature and op passthrough, the download route with the headers above, `realDropApi`.
 
+
+## B9 setup HTTP boundary (16 Oct 2026)
+
+Task U implements the batch-9 rev-2 browser contract without importing setup/custody code. The production and development entries select `/setup` (or fragment `to=/setup`), remove the fragment before requests, and bypass dashboard shared sessions. `POST /auth/setup {code}` forwards only to socket-private `POST /claim`; its `{token,setup_id}` reply registers a setup-only hashed credential. The core process enforces 30-second single-use launch codes and 10-minute idle expiry except while running.
+
+| Browser | Unix socket | Purpose |
+|---|---|---|
+| POST /auth/setup | POST /claim | Claim setup code; no workspace needed |
+| GET /api/setup/state | unchanged | Initial facts and mode |
+| POST /api/setup/profile | unchanged | Exact closed profile |
+| POST /api/setup/secrets/reveal, secrets/confirm | unchanged | One-shot text reveal and three-word check |
+| POST /api/setup/review, create | unchanged | Core rows, digest, typed word and terminal confirmation |
+| GET /api/setup/progress?run_id | unchanged | Step statuses / failure / retry facts |
+| POST /api/setup/finish, cancel | unchanged | Complete or defer; drop setup scope |
+
+Transport is HTTP/1.1 over `<run>/setup.sock`; ownership, peer UID, private parent and socket mode 0600 are checked. Host is exactly `127.0.0.1:<port>` or `localhost:<port>` for setup, POST Origin must match, and only `X-Setup-Token` authorizes setup APIs. Launch/shutdown are never proxied. No events are authored by the dashboard. The contract fake tests this boundary independently of the parallel core branch.
+
+Integration note: the CLI must pass the setup process's launch code in the setup fragment (not a normal dashboard launch code). `finish.url` may include a fresh, same-origin dashboard launch fragment; the wizard preserves it when navigating, and never promotes the setup token to a dashboard session. Core must allow the finishing request after a successful progress response so that the browser can obtain that URL.

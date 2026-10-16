@@ -247,3 +247,67 @@ def test_the_skipped_remote_head_symref_is_never_answered_and_changes_nothing_el
     assert READER.head(r.path) == ("refs/heads/main", second)
     assert same_or_refused(r, "refs/heads/main") == second
     assert same_or_refused(r, "refs/remotes/origin/main") == second
+
+
+#: Opus delta L2 on #583 (p583d2/apfsfold.out): 22 (stored, looked-up) code point pairs APFS opens as one file, which
+#: NFC + casefold kept apart
+APFS_PAIRS = [
+    (0x0390, (938, 769)),
+    (0x0390, (921, 776, 769)),
+    (0x03B0, (939, 769)),
+    (0x03B0, (933, 776, 769)),
+    (0x1FB7, (913, 834, 837)),
+    (0x1FB7, (8124, 834)),
+    (0x1FC7, (8140, 834)),
+    (0x1FC7, (919, 834, 837)),
+    (0x1FD2, (921, 776, 768)),
+    (0x1FD2, (938, 768)),
+    (0x1FD3, (938, 769)),
+    (0x1FD3, (921, 776, 769)),
+    (0x1FD7, (921, 776, 834)),
+    (0x1FD7, (938, 834)),
+    (0x1FE2, (939, 768)),
+    (0x1FE2, (933, 776, 768)),
+    (0x1FE3, (939, 769)),
+    (0x1FE3, (933, 776, 769)),
+    (0x1FE7, (933, 776, 834)),
+    (0x1FE7, (939, 834)),
+    (0x1FF7, (8188, 834)),
+    (0x1FF7, (937, 834, 837)),
+]
+
+
+@pytest.mark.parametrize(
+    "stored,asked", APFS_PAIRS, ids=[f"{s:04x}" + "-".join(f"{c:04x}" for c in a) for s, a in APFS_PAIRS]
+)
+def test_a_ref_lookup_the_file_system_folds_is_unknown_never_another_answer(make_repo, stored, asked):
+    """Round 3, L2: only a byte-exact match against the refs directory is an answer. On a folding file system the
+    file system decides what git opens; anything it adds is unknown."""
+    r, _, second = repo(make_repo)
+    name = "refs/heads/x" + chr(stored)
+    put(r, name, (second + "\n").encode())
+    asked_name = "refs/heads/x" + "".join(chr(c) for c in asked)
+    got = same_or_refused(r, asked_name)
+    if git_commit(r, asked_name) is not None:  # the file system opened the loose file under the other name
+        assert got == REFUSED
+
+
+def test_head_through_an_apfs_folded_name_is_unknown_never_the_packed_commit(make_repo):
+    """Opus delta probe 5b: packed refs/heads/U+0390 = A, loose refs/heads/U+03AA U+0301 = B, HEAD -> U+0390. git
+    opens the loose file on APFS and says B; the reader must never say A."""
+    r, first, second = repo(make_repo)
+    n1, n2 = "\u0390", "\u03aa\u0301"
+    put(
+        r,
+        "packed-refs",
+        f"# pack-refs with: peeled fully-peeled sorted \n{first} refs/heads/main\n{first} refs/heads/{n1}\n".encode(),
+    )
+    os.remove(r.gitdir / "refs" / "heads" / "main")
+    put(r, f"refs/heads/{n2}", (second + "\n").encode())
+    put(r, "HEAD", f"ref: refs/heads/{n1}\n".encode())
+    git_head = git_commit(r, "HEAD")
+    try:
+        got = READER.head(r.path)[1]
+    except Unavailable:
+        got = REFUSED
+    assert got in (git_head, REFUSED), (got, git_head)  # never the packed A where git says B

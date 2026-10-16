@@ -264,10 +264,10 @@ class IgnorePolicy:
         """The stack in force inside directory ``d`` (``rel`` from the top), from the stack ``ign`` of its parent:
         ``(stack, pushed)``. A ``.gitignore`` that is not certain gives an empty new stack (it and every lower source
         dropped for this subtree)."""
+        if self.budget is not None:
+            self.budget.check()  # the clock, per directory, whatever the policy
         if self.why is not None:
             return ign, False
-        if self.budget is not None:
-            self.budget.check()  # the clock, per directory
         data, sure = self._take(d, ".gitignore")
         if not sure:
             return Ignores(self.budget), False

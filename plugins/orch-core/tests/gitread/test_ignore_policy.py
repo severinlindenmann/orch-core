@@ -32,7 +32,7 @@ def test_no_other_code_parses_or_applies_an_ignore_pattern():
         if p in allowed:
             continue
         text = p.read_text()
-        if re.search(r"\bcompile_glob\b|\b_parse\(|\bPattern\(|parse_ignore|\.gitignore\"\)|info/exclude\"\)", text):
+        if re.search(r"\bcompile_glob\b|\bparse_ignore\b|ignorepolicy\._parse|\bIgnores\(|[\"']info/exclude[\"']", text):
             offenders.append(str(p.relative_to(SRC)))
     assert offenders == []
 

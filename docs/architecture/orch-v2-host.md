@@ -4287,13 +4287,20 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     toward "nothing ignored" when their config has an include, an `includeIf`, an empty or unreadable value; a
     `packed-refs` that claims `sorted` and is not, a name that differs from a loose ref only in case or Unicode
     normalisation, and the skipped `refs/remotes/<r>/HEAD` are unknown, never a different answer; direct D58 reads
-    `HEAD` and the tree in one read of the registration's pins. **Behaviour changes:** direct mode reads what the reader
-    reads: a repository with an extension it does not support (`worktreeConfig`, `refStorage`, `partialClone`, ...), a
-    split or sparse index, objects only in an alternate, or a ref name that is not UTF-8 or that git's rules refuse is
-    "cannot be told" (`None`, `observe.unavailable`, "diff unavailable"), never clean; a repository whose own config
-    names a program is read (the config is data), no longer refused; `core.autocrlf`/`core.eol` are not applied (the raw
-    bytes are hashed: only ever dirtier); dirty lines are `why: path` (`modified`, `untracked`, `deleted`, `type`,
-    `flag`); the dev host's diff shows a rename as a deletion and an addition. No op, code, wire, hash or schema change.
+    `HEAD` and the tree in one read of the registration's pins. Round 3 (orch-07, structural): removal never depends on
+    ignore rules (`orch worktree remove` lists every file that is not tracked-and-unchanged, ignored ones too, with
+    sizes; `--discard-untracked` deletes exactly that set after a re-check); ignore rules apply only when the reader is
+    certain (`gitread.ignorepolicy`, the one entry point: none on a case-insensitive file system, with
+    `core.ignorecase=true`, with an uncertain person config, or in host mode); ignore bytes are capped at 256 KiB; a ref
+    lookup the file system folds but the listing does not name exactly is unknown. **Behaviour changes:** ignored files
+    now count as untracked on macOS (case-insensitive file systems) and in host mode, so a clean check there needs them
+    committed, deleted or outside the worktree; direct mode reads what the reader reads: a repository with an extension
+    it does not support (`worktreeConfig`, `refStorage`, `partialClone`, ...), a split or sparse index, objects only in
+    an alternate, or a ref name that is not UTF-8 or that git's rules refuse is "cannot be told" (`None`,
+    `observe.unavailable`, "diff unavailable"), never clean; a repository whose own config names a program is read (the
+    config is data), no longer refused; `core.autocrlf`/`core.eol` are not applied (the raw bytes are hashed: only ever
+    dirtier); dirty lines are `why: path` (`modified`, `untracked`, `deleted`, `type`, `flag`); the dev host's diff
+    shows a rename as a deletion and an addition. No op, code, wire, hash or schema change.
 
 ---
 
@@ -11458,7 +11465,24 @@ worktree.remove {ticket:Ref, repo?:RepoName, force?:bool = false} → {removed:t
   and the clean-tree check read that worktree's pins; refs and objects still come from the common dir (`branch.pushed`,
   `diff`, `commit.list` unchanged). The prepared request, each binding and the precommit carry the generation; a
   changed generation, pin, or a HEAD not on the current branch is `observe.unavailable`, never a fallback.
-- **Remove:** `tree.check` first; dirty is `worktree.dirty` unless `force` (P only); a live run with that cwd is
+- **Ignore rules and removal (#583 round 3, orch-07's structural rule):** *removal never depends on ignore rules;
+  ignore rules apply only when gitread is sure it matches git, otherwise none.* `orch.gitread.ignorepolicy` is the
+  one place that decides:
+  - a **removal** check (host `worktree.remove`, `orch worktree remove`) applies no ignore rule: every file that is
+    not tracked-and-unchanged blocks it, ignored or not, listed with paths and, for an untracked directory, its file
+    count and size. Direct mode's `--discard-untracked` deletes exactly the listed untracked set: it prints it, checks
+    again right before deleting (a fingerprint of every untracked path, size, mtime and mode) and refuses when it
+    changed; modified tracked files still block. The host keeps `force` (P only);
+  - a **status** check applies a source's rules only when the reader is certain: none at all on a case-insensitive
+    file system, with `core.ignorecase=true` in any configuration git reads, when the person's configuration cannot
+    be read with certainty (an include, an environment that redirects it, a relative `XDG_CONFIG_HOME`), or in host
+    mode (the reader child cannot read the person's configuration). A source with a BOM, a non-ASCII or control byte,
+    or a backslash other than a leading `\!`/`\#` is dropped **with every source of lower precedence below it**; the
+    person's `excludesFile` is dropped when the repository's config sets one. Every answer is dirtier than git's or
+    equal, never cleaner;
+  - all ignore files of one check together are capped at 256 KiB (more: unknown), and the reader's 30 s budget reads
+    the clock per directory, per pattern and per ignore file; a bracket class compiles in O(members + 256).
+- **Remove:** `tree.check` first (the removal check above); dirty is `worktree.dirty`, listing the files, unless `force` (P only); a live run with that cwd is
   `worktree.in_use`; no registration is `worktree.none`; the branch is never deleted; the registration and pin go
   after the runner reports success, and the removal bumps the registration generation, so any request prepared against
   the removed worktree is invalidated (`observe.unavailable`).

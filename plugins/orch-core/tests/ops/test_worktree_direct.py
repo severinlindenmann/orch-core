@@ -533,3 +533,64 @@ def test_d58_direct_reads_head_and_tree_in_one_read_of_the_registered_pins(probl
     assert any("not recorded" in p for p in got), got  # judged (nothing is signed here), no "cannot be read"
     assert not any("cannot be read" in p for p in got), got
     assert len(seen) == 1 and seen[0] is not None  # one read, of the registered pins
+
+
+# -- #583 round 3 (orch-07): removal never depends on ignore rules
+
+
+def test_the_keep_log_probe_blocks_remove_whatever_the_ignore_rules_say(d):
+    """Opus delta M1 end to end: info/exclude ``*.log`` / ``!Keep.log``; git lists keep.log as untracked, a
+    case-sensitive match hid it, and remove deleted it. A removal applies no ignore rule: it blocks, names the file."""
+    path = doc(d.run("create", d.key))["data"]["path"]
+    info = d.repo / ".git" / "info"
+    info.mkdir(exist_ok=True)
+    (info / "exclude").write_text("*.log\n!Keep.log\n")
+    open(os.path.join(path, "keep.log"), "w").write("the person's notes\n")
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty" and "keep.log" in got["message"], got
+    assert "--discard-untracked" in got["message"]
+    assert os.path.exists(os.path.join(path, "keep.log"))
+
+
+def test_an_ignored_directory_blocks_with_its_size(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, ".gitignore"), "w").write("node_modules/\n")
+    os.makedirs(os.path.join(path, "node_modules", "pkg"))
+    for i in range(3):
+        open(os.path.join(path, "node_modules", "pkg", f"f{i}.js"), "w").write("x" * 1000)
+    got = doc(d.run("remove", d.key))
+    assert got["code"] == "worktree.dirty" and "node_modules/ (3 files, 2.9 KB)" in got["message"], got
+
+
+def test_discard_untracked_deletes_exactly_the_listed_set_and_prints_it_first(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    for name in ("a.tmp", "build/out.o"):
+        os.makedirs(os.path.dirname(os.path.join(path, name)), exist_ok=True)
+        open(os.path.join(path, name), "w").write("x\n")
+    r = d.run("remove", d.key, "--discard-untracked")
+    assert r.code == 0, r.out
+    printed = r.err
+    assert printed.startswith("discarding exactly these untracked files:"), printed
+    assert "a.tmp" in printed and "build/ (1 files" in printed
+    assert doc(r)["data"]["discarded"] == ["untracked: a.tmp", "untracked: build/ (1 files, 2 B)"]
+    assert not os.path.exists(path)
+
+
+def test_discard_untracked_refuses_when_a_file_appears_between_the_listing_and_the_delete(d, monkeypatch):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    monkeypatch.setattr(worktree_cli.Direct, "_between",
+                        lambda self: open(os.path.join(path, "late.txt"), "w").write("new\n"))  # fmt: skip
+    r = d.run("remove", d.key, "--discard-untracked")
+    got = doc(r)
+    assert r.code != 0 and got["code"] == "worktree.dirty" and "changed since they were listed" in got["message"]
+    assert os.path.exists(os.path.join(path, "a.tmp")) and os.path.exists(os.path.join(path, "late.txt"))
+
+
+def test_discard_untracked_never_discards_a_modified_tracked_file(d):
+    path = doc(d.run("create", d.key))["data"]["path"]
+    open(os.path.join(path, "impl.txt"), "a").write("edited\n")
+    open(os.path.join(path, "a.tmp"), "w").write("x\n")
+    got = doc(d.run("remove", d.key, "--discard-untracked"))
+    assert got["code"] == "worktree.dirty" and "impl.txt" in got["message"]
+    assert os.path.exists(os.path.join(path, "a.tmp"))

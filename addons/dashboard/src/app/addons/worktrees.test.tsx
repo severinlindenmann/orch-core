@@ -52,7 +52,7 @@ describe('worktrees page', () => {
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     const item = await moreAction(user, row, /^Remove/)
     expect(item).toHaveAttribute('aria-disabled', 'true')
-    expect(item).toHaveTextContent('Commit or stash the changes first')
+    expect(item).toHaveTextContent('Commit, stash or delete its files first (ignored files count too)')
     expect((await wts()).some((w) => w.path === 'wt/DEMO-0043-energy-dbt')).toBe(true)
   })
   it('Add worktree stands apart from the filters: its own primary button above the Show chips', async () => {

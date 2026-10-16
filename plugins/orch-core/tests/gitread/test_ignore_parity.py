@@ -95,6 +95,7 @@ def test_the_matcher_is_linear_on_the_old_redos_line():
 def test_a_tree_check_past_its_budget_is_unknown_never_clean(make_repo, monkeypatch, sure_ignores):
     """M1 / L5: direct mode has no child wall clock; the reader's own budget ends a long check as unknown."""
     r = make_repo()
+    r.git("config", "core.ignorecase", "false")
     r.write(".gitignore", "".join(f"p{i}*q\n" for i in range(3000)))
     r.commit("many patterns")
     for i in range(300):
